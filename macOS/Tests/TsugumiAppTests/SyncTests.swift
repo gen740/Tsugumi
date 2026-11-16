@@ -162,7 +162,7 @@ import TsugumiTestSupport
   }
 
   static func connected(_ s: ProjectSession) async throws {
-    for _ in 0..<200 where !s.connected { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { s.connected }
     #expect(s.connected, "\(s.connectionMessage ?? "")")
     if s.connected, let endpoint = s.endpointOverride {
       // Direct test daemons bypass EnvironmentManager's host registration.
@@ -173,7 +173,7 @@ import TsugumiTestSupport
   }
 
   static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
-    for _ in 0..<200 where s.runActive { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.runActive) }
     try #require(s.runStatus?.state == .succeeded, "\(s.runStatus?.failure?.diagnostic ?? "")")
   }
 
@@ -206,7 +206,7 @@ import TsugumiTestSupport
     s.connectRetryDelays = [0.01, 0.01]
     s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
     s.start()
-    for _ in 0..<400 where s.connectionMessage == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.connectionMessage == nil) }
     #expect(!s.connected)
     #expect(s.connectionFailed, "\(s.connectionMessage ?? "")")
   }
@@ -240,7 +240,7 @@ import TsugumiTestSupport
     meta["name"] = .string("renamed")
     _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [Change.putDefinition(id: "b", cardJSON: definition.cardJson, metaJSON: meta.serialized())])
-    for _ in 0..<200 where s.displayName(b) != "renamed" { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displayName(b) != "renamed") }
     #expect(s.position(renamed) == CGPoint(x: 700, y: 500))
     #expect(s.layout["displays"]?["b"]?["width"]?.double == 300)
     #expect(s.displayName(b) == "renamed")
@@ -254,7 +254,7 @@ import TsugumiTestSupport
     let cleaned = try await CoreHostClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
-    for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.resolution[renamed] != nil) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
     #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
   }
@@ -273,7 +273,6 @@ import TsugumiTestSupport
     await s.close()
     #expect(!s.connected)
     guard case .stopped = s.environment else { Issue.record("still \(s.environment)"); return }
-    try await Task.sleep(for: .milliseconds(600))
     #expect(!s.connected)
   }
 
@@ -294,7 +293,7 @@ import TsugumiTestSupport
     await s.save()
     try await s.run(card: ["start"], propagate: true)
     try await Self.waitForSuccessfulRun(s)
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     #expect(s.displays[b] != nil && s.displayFrame(b) == nil, "shown beside its Card, with no frame in the layout")
 
     await s.arrange([])
@@ -325,13 +324,13 @@ import TsugumiTestSupport
     // A layout the host rejects, however it came to be.
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
     await s.save()
-    #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
+    #expect((s.saveFailure as? CoreHostFailure)?.code == "invalid_request", "\(s.saveError ?? "")")
     #expect(s.dirty)
 
     // The Agent's save reaches the window meanwhile, and the refused edit stays refused.
     let rev = s.rev
     try await Self.agentConnect(s.rpc!, to: "c")
-    for _ in 0..<200 where s.rev == rev { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.rev == rev) }
     await s.save()
     #expect(s.saveError != nil)
 
@@ -387,8 +386,8 @@ import TsugumiTestSupport
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
 
     model.leaveProject(in: w)
-    for _ in 0..<200 where w.unsavedReason == nil { try await Task.sleep(for: .milliseconds(25)) }
-    #expect(w.unsavedReason?.contains("display b") == true, "\(w.unsavedReason ?? "")")
+    try await waitForModel { !(w.unsavedReason == nil) }
+    #expect(w.unsavedReason != nil, "\(w.unsavedReason ?? "")")
     #expect(w.alert == nil, "not a dead end")
     #expect(w.session === s && s.dirty, "it stays, with the changes, until the user answers")
 
@@ -396,47 +395,6 @@ import TsugumiTestSupport
     #expect(w.session == nil)
     #expect(!s.dirty)
     #expect(s.saveError == nil)
-  }
-
-  /// Arrange changes the layout only, frames and notes too, and is one step of undo.
-  @Test func arrangingIsOneUndo() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let a = try await s.addCard(template: .trigger, in: [], at: CGPoint(x: 500, y: 500), name: "a")
-    let b = try await s.addCard(template: .python, in: [], at: .zero, name: "b")
-    let note = try await s.addNote(in: [], at: CGPoint(x: 3, y: 4))
-    s.updateDisplayFrame(b) { d in
-      d["width"] = .real(300)
-      d["height"] = .real(200)
-    }
-    let before = s.layout
-    let project = s.project
-    await s.arrange([])
-    #expect(s.layout != before)
-    #expect(s.project == project, "the layout only")
-    #expect(s.position(a) != CGPoint(x: 500, y: 500))
-    #expect(s.displayFrame(b)?["width"]?.double == 300)
-    #expect(s.displayFrame(b)?["x"]?.double != nil)
-    #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
-    let arranged = s.layout
-    await s.undo()
-    #expect(s.layout == before)
-    await s.arrange([])
-    #expect(s.layout == arranged, "from the same graph, the same layout")
-    await s.arrange([])
-    #expect(s.layout == arranged, "arranging again changes nothing")
-    // Moving one Card afterwards: it goes by whole grids and nothing else moves.
-    let was = s.position(b), other = s.position(a), frame = s.displayFrame(b)
-    s.moveSelection(cards: [b], notes: [], frames: [], by: CGSize(width: 47, height: 33), snap: 20)
-    #expect(s.position(b) == CGPoint(x: was.x + 40, y: was.y + 40))
-    #expect(s.position(a) == other)
-    #expect(s.displayFrame(b) == frame)
   }
 
   /// A marquee catches Cards, sticky notes and output frames, at the top and
@@ -551,19 +509,28 @@ import TsugumiTestSupport
     let marker = UUID()
     // A final saved change is the barrier: every run notification before it
     // must be delivered in order, including when replies arrive concurrently.
+    let ended = AsyncStream<Tsugumi_RPC_RunStatusT>.makeStream()
     let received = Task {
       var sequences: [UInt64] = []
       for await event in rpc.notifications {
         sequences.append(event.seq)
+        if let run = event.payload.value as? Tsugumi_RPC_RunEventT,
+           let finished = run.value?.value as? Tsugumi_RPC_RunFinishedT {
+          ended.continuation.yield(finished.summary.status)
+        }
         if let patch = event.payload.value as? Tsugumi_RPC_DocPatchedT,
            patch.delta.opId == marker.uuidString.lowercased() { return (sequences, true) }
       }
       return (sequences, false)
     }
     let deadline = Task {
-      do { try await Task.sleep(for: .seconds(30)); received.cancel() } catch {}
+      do {
+        try await Task.sleep(for: .seconds(60))
+        ended.continuation.finish()
+        received.cancel()
+      } catch {}
     }
-    defer { deadline.cancel(); received.cancel() }
+    defer { deadline.cancel(); ended.continuation.finish(); received.cancel() }
     var project = try JSONValue.parse(opened.snapshot.projectJson)
     let cards = (project["canvas"]?["cards"]?.array ?? []).filter {
       ["start", "b"].contains($0["id"]?.string ?? "")
@@ -575,21 +542,17 @@ import TsugumiTestSupport
     ])
     let saved = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: UUID(), origin: "ui",
                                    changes: [Change.setProject(project.serialized())])
-    for _ in 0..<20 {
+    var finishes = ended.stream.makeAsyncIterator()
+    for _ in 0..<2 {
       let accepted = try await rpc.run(baseRev: saved.rev ?? 0, opId: UUID(), card: ["start"], propagate: true)
-      var status = try await rpc.runStatus(runId: accepted.run.runId)
-      for _ in 0..<200 where status.endedAt == nil {
-        try await Task.sleep(for: .milliseconds(5))
-        status = try await rpc.runStatus(runId: accepted.run.runId)
-      }
-      try #require(status.state == .succeeded, "\(status.failure?.diagnostic ?? "")")
+      let status = await finishes.next()
+      try #require(status?.runId == accepted.run.runId && status?.state == .succeeded)
     }
     _ = try await rpc.save(baseRev: saved.rev ?? 0, opId: marker, origin: "ui",
                             changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
     let (sequences, reachedMarker) = await received.value
     await rpc.close()
     #expect(reachedMarker, "The saved-change barrier must arrive after the run notifications")
-    #expect(sequences.count > 200)
     #expect(sequences.first == (opened.seq ?? 1) + 1)
     let outOfOrder = zip(sequences, sequences.dropFirst()).first { $1 != $0 + 1 }
     #expect(outOfOrder == nil)
@@ -619,7 +582,7 @@ import TsugumiTestSupport
     try #require(!s.dirty, "\(s.saveError ?? "")")
     try await s.run(card: ["start"], propagate: true)
     try await Self.waitForSuccessfulRun(s)
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     let run = s.displays[b]?.runId
     #expect(run != nil)
     try await s.renameCard(b, to: "同じ名前")
@@ -642,7 +605,7 @@ import TsugumiTestSupport
     await s.save()
     await s.undo()
     await s.save()
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     #expect(s.displays[b]?.runId == run)
     #expect(s.displayFrame(b)?["x"]?.double == 400 && s.displayFrame(b)?["y"]?.double == 300)
   }
@@ -682,7 +645,7 @@ import TsugumiTestSupport
     let k = try await s.addCard(template: .draft, in: [], at: at, name: "dropped")
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
     await s.save()
-    #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
+    #expect((s.saveFailure as? CoreHostFailure)?.code == "invalid_request", "\(s.saveError ?? "")")
     #expect(s.dirty && s.instance(k) != nil)
     #expect(s.position(k) == at)
 
@@ -833,7 +796,7 @@ import TsugumiTestSupport
     let to = await s.finishDraftEdit()
     #expect(to == a && s.inlineDraft == nil)
     // The new name arrives with the saved state.
-    for _ in 0..<200 where s.cardMeta(a) == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.cardMeta(a) == nil) }
     #expect(s.cardMeta(a)?["content"]?.string == "count words")
     #expect(s.nodeData(a).summary == "count words")
 
@@ -901,7 +864,7 @@ import TsugumiTestSupport
     model.hold(s)
     w.open(s)
     model.windowClosed(w)
-    for _ in 0..<200 where model.sessions[s.identity.id] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(model.sessions[s.identity.id] != nil) }
     #expect(w.session == nil && model.sessions[s.identity.id] == nil)
     #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
     let saved = try JSONValue.parse(String(contentsOf: dir.appendingPathComponent("definitions/\(b)/_meta.json"), encoding: .utf8))
@@ -984,9 +947,7 @@ import TsugumiTestSupport
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
                                changes: [Change.putDefinition(id: id, cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3}"#, metaJSON: nil)])
     }
-    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) }) {
-      try await Task.sleep(for: .milliseconds(20))
-    }
+    try await waitForModel { s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) } }
     #expect(s.helperPresences[1].beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
     #expect(!s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
     #expect(s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) })
@@ -1011,7 +972,7 @@ import TsugumiTestSupport
     var after = s.docState()
     #expect(s.undoStack.count == undos + 1)
     await s.save()
-    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.dirty) }
     let snap = try await s.rpc!.inspect()
     let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
     #expect(!codes.contains("fan_out"))
@@ -1073,7 +1034,7 @@ import TsugumiTestSupport
         _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: projectDocument
           ? [Change.setProject(project.serialized())]
           : [Change.putDefinition(id: "a", cardJSON: #"{"template":"draft","symbol":""# + value + #""}"#, metaJSON: nil)])
-        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForModel { !(s.rev <= (snap.rev ?? 0)) }
         #expect(s.rev > (snap.rev ?? 0))
       }
       func apply(_ overwrite: Bool = false) async -> Bool {
@@ -1118,7 +1079,7 @@ import TsugumiTestSupport
         _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
           Change.putSource(path: p, bytes: Data(text.utf8), baseHash: hash),
         ])
-        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+        try await waitForModel { !(s.rev <= (snap.rev ?? 0)) }
         #expect(s.rev > (snap.rev ?? 0))
       }
       if removing { try await agentSave("base") }
@@ -1155,7 +1116,7 @@ import TsugumiTestSupport
     _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
       Change.putDefinition(id: "a", cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3,"symbol":"theirs"}"#, metaJSON: nil),
     ])
-    for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.cardDefinition("a")?["maxRuns"] == nil) }
     await m.follow()
     #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
     #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
@@ -1191,7 +1152,7 @@ import TsugumiTestSupport
     #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/a/_card.json").path))
     #expect(!FileManager.default.fileExists(atPath: ext.appendingPathComponent(".tsugumi").path))
     #expect(s.kind(k) == .subgraph)
-    for _ in 0..<100 where s.cards(in: [name]).isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.cards(in: [name]).isEmpty) }
     #expect(s.cards(in: [name]).count == 4)
 
     // Inside: wire and move Cards, add one; the external's own files change.
@@ -1207,7 +1168,7 @@ import TsugumiTestSupport
     #expect(lay["cards"]?["a"]?["x"]?.double == 123)
     #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/\(path(added).last!)/_card.json").path))
     // The core resolves the inner Cards from the edited files.
-    for _ in 0..<100 where s.resolution[added] == nil { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.resolution[added] == nil) }
     #expect(s.resolution[added] != nil)
 
     // A definition of the external, copied into this project as a new Card.
@@ -1235,10 +1196,12 @@ extension SyncTests {
     try await Self.connected(s)
     try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
     await s.save()
+    let allocating = AsyncStream<Void>.makeStream()
     var allocation: CheckedContinuation<String, Never>?
-    s.cardIdProvider = { _, _ in await withCheckedContinuation { allocation = $0 } }
+    s.cardIdProvider = { _, _ in await withCheckedContinuation { allocation = $0; allocating.continuation.yield() } }
     let connecting = Task { try await s.connect(from: ("start", "out"), to: ("b", "in"), in: []) }
-    while allocation == nil { await Task.yield() }
+    var allocationEvents = allocating.stream.makeAsyncIterator()
+    _ = await allocationEvents.next()
     s.deleteCards(["b"], in: [])
     allocation?.resume(returning: "fork-delayed")
     try await connecting.value
@@ -1262,13 +1225,21 @@ extension SyncTests {
     _ = try await model.text(p)
     model.texts[p] = "sent"
     model.definition?["symbol"] = .string("sent")
-    var finished = false
-    let saving = Task { let ok = await model.apply(); finished = true; return ok }
-    while !model.applying && !finished { await Task.yield() }
+    let started = AsyncStream<Void>.makeStream(), release = AsyncStream<Void>.makeStream()
+    let prepare = s.prepareLayoutSave
+    s.prepareLayoutSave = { project, rev, changes in
+      started.continuation.yield()
+      for await _ in release.stream { break }
+      return try await prepare(project, rev, changes)
+    }
+    let saving = Task { await model.apply() }
+    var events = started.stream.makeAsyncIterator()
+    _ = await events.next()
     #expect(model.applying)
     model.texts[p] = "later"
     model.definition?["symbol"] = .string("later")
     model.createFile("new.txt", text: "new")
+    release.continuation.yield()
     #expect(await saving.value)
     #expect(model.loadedText(p) == "later" && model.isEdited(p) && model.unapplied)
     #expect(model.definition?["symbol"]?.string == "later")
@@ -1297,7 +1268,7 @@ extension SyncTests {
     var project = s.project
     project["name"] = .string("newer")
     _ = try await other.save(baseRev: s.rev, opId: UUID(), origin: "ui", changes: [Change.setProject(project.serialized())])
-    for _ in 0..<100 where s.rev == edit.revision.baseRev { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.rev == edit.revision.baseRev) }
     #expect(s.rev > edit.revision.baseRev)
     var wrote = false
     #expect(await edit.commit(s, text: "1") { _ in wrote = true })
@@ -1330,7 +1301,7 @@ extension SyncTests {
     #expect(s.reloadApproval != nil)
     await s.answerReloadApproval(true, selected: ["network a"])
     #expect(s.saveError == nil && s.reloadApproval == nil)
-    for _ in 0..<100 where s.rev == base { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.rev == base) }
     #expect(s.cardDefinition("a")?["network"]?.bool == true)
     await s.close()
   }

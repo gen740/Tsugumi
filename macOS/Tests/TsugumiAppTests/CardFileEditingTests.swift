@@ -78,7 +78,7 @@ import TsugumiTestSupport
     let made = try #require(await s.duplicate(["a"], in: []).first)
     let target = try #require(s.definitionDir(made)) + "data.bin"
     await s.save()
-    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.dirty) }
     #expect(s.sourceEdits[target] == nil)
     await s.undo()
     #expect(s.instance(made) == nil)

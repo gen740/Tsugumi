@@ -12,7 +12,7 @@ import pytest
 
 from conftest import SharedVM, VMEnv
 from projects import card
-from projects import run_and_wait, write
+from projects import run_and_wait, wait_run, write
 from test_cards_container import bash, log
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -78,24 +78,23 @@ def test_project_cannot_read_cache_credentials_or_change_daemon_trust(tmp_path):
 
 
 def test_stopping_one_project_keeps_the_other_running(tmp_path):
-    slow = project(tmp_path / "slow", 'sleep 6; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "slow")
+    slow = project(tmp_path / "slow", 'echo HOLDING; exec tail -f /dev/null', "slow")
     other = project(tmp_path / "other", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "other")
     try:
         c = slow.client()
         snap = c.call("ProjectInspectRequest")
         acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
         run_id = text(acc.run.runId)
-        # Wait until the slow Card runs, then stop the other project.
-        # Wait until the slow Card's process runs (seen from the project's own view).
-        deadline = time.time() + 600
-        while "sleep" not in slow.exec("for f in /proc/[0-9]*/comm; do cat $f; done 2>/dev/null"):
-            assert time.time() < deadline, "the Card never started"
+        # The worker cannot finish by racing a six-second settling window.
+        deadline = time.monotonic() + 600
+        while "HOLDING" not in log(c, run_id, "step", 1):
+            assert time.monotonic() < deadline, "the Card never started"
             assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded)
-            time.sleep(0.2)
+            time.sleep(0.05)
         other.stop()
-        while c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed, RunState.cancelled):
-            time.sleep(0.2)
-        assert c.call("RunStatusRequest", runId=run_id).state == RunState.succeeded, log(c, run_id, "step", 2)
+        assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded, RunState.cancelled)
+        c.call("RunCancelRequest", runId=run_id)
+        assert wait_run(c, run_id, timeout=60).state == RunState.cancelled
         # The stopped project starts again in the same VM.
         other.start()
         _, st = run_and_wait(other.client(), "start")

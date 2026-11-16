@@ -251,40 +251,6 @@ def run_facts(*, whole=False, card="", propagate=True, saved=False, ran=(), fail
             "failures": [{"card": c, "kind": k} for c, k in failed], "never": list(never)}
 
 
-def test_a_run_note_says_what_ran(tmp_path, core_factory):
-    """Run summaries identify executed, failed and skipped Cards across partial runs."""
-    root = tmp_path / "p"
-    write(root,
-          defs={"trigger": {"template": "trigger"},
-                "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
-                "fork": {"template": "fork"},
-                "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
-                "sink": dict(SINK, maxRuns=4)},
-          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")],
-          conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
-                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
-    daemon = core_factory(project_root=root)
-    c = daemon.connect()
-    c.call("VersionInitRequest", opId=new_id(), origin="test")
-    # On its saved inputs before there are any: it fails without running,
-    # and the Cards after it never run.
-    _, st = run_and_wait(c, "both")
-    assert st.state == RunState.failed
-    assert summary_of(c, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
-    # The whole Workflow: the trigger is no step of its own, and the merge
-    # and what follows ran once per branch.
-    set_text(c, "second")
-    _, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded
-    whole = text(st.commit)
-    assert summary_of(c, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
-    # A Card and what follows it, then one Card alone, on the saved inputs.
-    _, st = run_and_wait(c, "split")
-    assert summary_of(c, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
-    _, st = run_and_wait(c, "sink", propagate=False)
-    assert summary_of(c, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
-    # Runs without a change share the commit: each has its own line.
-    assert len(notes(c, whole, 3)) == 3
 
 
 

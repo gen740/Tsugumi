@@ -138,8 +138,8 @@ private func hostileDocument(_ out: Outside) -> String {
   defer { out.stop() }
   let plain = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
   plain.loadHTMLString("<!DOCTYPE html><script>document.documentElement.dataset.ran = 'inline'</script><img src=\"\(out.address("control.png"))\">", baseURL: nil)
-  #expect(await until(20) { !out.requests.isEmpty }, "the listener does not see a web view's requests")
-  #expect(await until(20) { await state(plain)["ran"] as? String == "inline" }, "the script marker is not readable")
+  try #require(await until(60) { !out.requests.isEmpty }, "the listener does not see a web view's requests")
+  try #require(await until(60) { await state(plain)["ran"] as? String == "inline" }, "the script marker is not readable")
 }
 
 @MainActor @Test func theHTMLArtifactPreviewRunsNothingAndLoadsNothingFromOutside() async throws {
@@ -154,16 +154,10 @@ private func hostileDocument(_ out: Outside) -> String {
   #expect(web.configuration.websiteDataStore.isPersistent == false)
 
   // The document is shown: its text and the image embedded in it.
-  let loaded = await until(30) {
-    host.layoutSubtreeIfNeeded()
-    let s = await state(web)
-    return s["ready"] as? Bool == true && s["image"] as? Bool == true
-  }
+  let coordinator = try #require(web.navigationDelegate as? ArtifactHTMLPreview.Coordinator)
+  try await waitForModel("HTML preview navigation finished") { coordinator.loaded }
   var shown = await state(web)
-  #expect(loaded, "the preview did not show the document: \(shown)")
-  // Time for the refresh, late loads and media to try.
-  try await Task.sleep(for: .milliseconds(1500))
-  shown = await state(web)
+  try #require(shown["ready"] as? Bool == true && shown["image"] as? Bool == true)
   #expect((shown["text"] as? String ?? "").contains("Result 21"))
   #expect(shown["ran"] as? String == "", "a script of the document ran")
   #expect(shown["address"] as? String == "about:blank", "the document was redirected")
@@ -172,7 +166,14 @@ private func hostileDocument(_ out: Outside) -> String {
 
   // A person clicking a link or sending the form does not leave the document either.
   _ = try? await web.callAsyncJavaScript("document.getElementById('out').click(); document.getElementById('js').click(); document.getElementById('send').submit()", contentWorld: .defaultClient)
-  try await Task.sleep(for: .milliseconds(700))
+  let prevented = try await web.callAsyncJavaScript("""
+    const click = new MouseEvent('click', {bubbles:true, cancelable:true});
+    const submit = new Event('submit', {bubbles:true, cancelable:true});
+    document.getElementById('out').dispatchEvent(click);
+    document.getElementById('send').dispatchEvent(submit);
+    return click.defaultPrevented && submit.defaultPrevented;
+    """, contentWorld: .defaultClient)
+  #expect(prevented as? Bool == true)
   shown = await state(web)
   #expect(shown["address"] as? String == "about:blank")
   #expect(shown["ran"] as? String == "")

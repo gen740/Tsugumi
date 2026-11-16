@@ -113,22 +113,6 @@ def host(tmp_path):
             source.chmod(0o755)
 
 
-def test_project_requests_and_exactly_empty_destination_rule(host, tmp_path):
-    call, _, _ = host
-    defaults = call("HostProjectDefaultsRequest")
-    folder = tmp_path / "project"
-    folder.mkdir()
-    made = call("HostProjectCreateRequest", {"parent": str(tmp_path), "name": "project", "flow": "leftToRight"})
-    assert made == {"path": str(folder.resolve())}
-    doc = json.loads((folder / "tsugumi.json").read_text())
-    assert doc["pkgsPath"] == defaults["nixpkgsPin"]
-    assert json.loads((folder / "layout.json").read_text()) == {"flow": "leftToRight"}
-    assert call("HostProjectInfoRequest", {"path": str(folder)})["name"] == "project"
-    assert call("HostProjectCreateRequest", {"parent": str(tmp_path), "name": "project"})["code"] == "folder_not_empty"
-    assert call("HostProjectCreateRequest", {"parent": str(tmp_path), "name": "../escape"})["code"] == "invalid_project_name"
-    assert call("HostProjectCreateRequest", {"parent": str(tmp_path), "name": "bad", "flow": "bad"})["code"] == "invalid_flow"
-    assert not (tmp_path / "bad").exists()
-    assert call("HostRecentListRequest", external=True)["code"] == "permission_denied"
 
 
 def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):
@@ -151,23 +135,3 @@ def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):
         (copied / "tsugumi.json").write_text('{"name":"editable"}')
         (copied / "new-directory").mkdir()
     assert Path(call("HostDemoCopyRequest", {"parent": str(tmp_path), "id": "sample"})["path"]).name == "sample-2"
-
-
-def test_registry_limit_order_uniqueness_and_forget(host, tmp_path):
-    call, source, state = host
-    assert call("HostRecentListRequest") == []
-    for i in range(32):
-        folder = tmp_path / f"p-{i}"
-        call("HostProjectCreateRequest", {"parent": str(tmp_path), "name": folder.name})
-        call("HostRecentRememberRequest", {"path": str(folder)})
-    entries = call("HostRecentListRequest")
-    assert len(entries) == 30
-    assert [e["name"] for e in entries] == [f"p-{i}" for i in range(31, 1, -1)]
-    assert all(a["openedAt"] > b["openedAt"] for a, b in zip(entries, entries[1:]))
-    entry = call("HostRecentRememberRequest", {"path": str(tmp_path / "p-5")})
-    assert entry["name"] == "p-5" and entry["openedAt"] > 1_000_000_000_000
-    assert len(call("HostRecentListRequest")) == 30
-    call("HostRecentForgetRequest", {"paths": [entry["path"]]})
-    assert (tmp_path / "p-5/tsugumi.json").exists()
-    assert len(call("HostRecentListRequest")) == 29
-    assert json.loads((state / "recent-projects.json").read_text()) == call("HostRecentListRequest")

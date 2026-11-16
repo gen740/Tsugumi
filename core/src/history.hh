@@ -22,6 +22,13 @@
 
 namespace tsugumi {
 
+enum class HistoryOpenCode { NotRegular, ArchiveConflict };
+struct HistoryOpenError : std::runtime_error {
+  HistoryOpenCode code;
+  HistoryOpenError(HistoryOpenCode reason, std::string message)
+      : std::runtime_error(std::move(message)), code(reason) {}
+};
+
 struct IncompatibleHistory : std::runtime_error {
   std::string found, expected, source;
   IncompatibleHistory(std::string message, std::string stored, std::string required, std::string location)

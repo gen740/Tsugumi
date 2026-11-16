@@ -46,8 +46,10 @@ import TsugumiTestSupport
     try await s.connect(from: ("source", "a"), to: ("right", "in"), in: [])
     try await s.connect(from: ("source", "b"), to: ("left", "in"), in: [])
     // The daemon keeps the saved Cards, so measure from the state it has taken in.
-    for _ in 0..<400 where s.dirty || s.saving { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.dirty || s.saving) }
     #expect(!s.dirty, "\(s.saveError ?? "")")
+    let note = try await s.addNote(in: [], at: CGPoint(x: 3, y: 4))
+    s.updateDisplayFrame("left") { $0["width"] = .real(300); $0["height"] = .real(200) }
     let before = s.layout, graph = s.project, definitions = s.definitionEdits, steps = s.undoStack.count
     await s.untangle([])
     #expect(s.geometry("source").outputs == ["b", "a"])
@@ -60,6 +62,15 @@ import TsugumiTestSupport
     await s.arrange([])
     #expect(s.undoStack.count == steps + 1)
     #expect(s.project == graph && s.definitionEdits == definitions)
+    #expect(s.displayFrame("left")?["width"]?.double == 300)
+    #expect(s.displayFrame("left")?["x"]?.double != nil)
+    #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
+    await s.undo()
+    #expect(s.layout == before)
+    let was = s.position("left"), other = s.position("source"), frame = s.displayFrame("left")
+    await s.moveSelection(cards: ["left"], notes: [], frames: [], by: CGSize(width: 47, height: 33), snap: 20).value
+    #expect(s.position("left") == CGPoint(x: was.x + 40, y: was.y + 40))
+    #expect(s.position("source") == other && s.displayFrame("left") == frame)
     await s.undo()
     #expect(s.layout == before)
     await s.moveSelection(cards: ["left"], notes: [], frames: [], by: CGSize(width: 1000, height: 0), snap: nil).value

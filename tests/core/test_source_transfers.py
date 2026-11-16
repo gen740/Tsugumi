@@ -248,8 +248,8 @@ def test_disconnect_during_streamed_save_discards_all_changes(project, core_fact
               if shell_changes else tmp_path / "attached/data.bin")
     source.parent.mkdir(parents=True)
     with source.open("wb") as output:
-        output.truncate(512 << 20)
-    daemon = core_factory()
+        output.truncate(2 << 16)
+    daemon = core_factory(fault="transfer_gate")
     caller, observer = daemon.connect(), daemon.connect()
     operation = new_id()
     staging = project / ".tsugumi/document-files"
@@ -257,7 +257,7 @@ def test_disconnect_during_streamed_save_discards_all_changes(project, core_fact
         pending = threads.submit(caller.call, "ProjectSaveRequest", baseRev=0, opId=operation,
                                  origin="agent", changes=[], transfers=[transfer(source)])
         deadline = time.monotonic() + 10
-        while not staging.exists() or not list(staging.iterdir()):
+        while not (project / ".tsugumi/transfer.started").exists():
             assert not pending.done(), "save completed before cancellation was observed"
             assert time.monotonic() < deadline
             time.sleep(0.001)

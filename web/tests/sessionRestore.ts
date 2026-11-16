@@ -1,6 +1,7 @@
 // What the session shows without having been told as it happened: the Cards of
 // the last run when a project is opened, and a run while the tab is in the background.
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 import { parse } from '../src/shared/json'
 import * as R from '../src/gen/tsugumi/rpc'
 import * as D from '../src/gen/tsugumi/data'
@@ -70,13 +71,16 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
 
 // In the background a notification is still applied, without a frame.
 {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
   const { s, inner } = session()
   const client: { onNotification?: (e: unknown) => void } = {}
   inner.listen(client)
   client.onNotification?.({ subscriptionId: 'stale', seq: 1n })
   assert.equal(s.notificationCount, 0, 'batched, not at once')
-  await new Promise((r) => setTimeout(r, 350))
+  mock.timers.tick(250)
   assert.equal(s.notificationCount, 1, 'applied though no frame came')
+  } finally { mock.timers.reset() }
 }
 
 console.log('session restore: passed')

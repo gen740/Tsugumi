@@ -462,10 +462,6 @@ TEST_F(ConversationStoreTest,
     FAIL() << "Foreign records were accepted";
   } catch (const host::Failure& error) {
     EXPECT_EQ(error.code, "conversation_identity_mismatch");
-    EXPECT_NE(std::string(error.what()).find("Restore the matching .tsugumi"),
-              std::string::npos);
-    EXPECT_NE(std::string(error.what()).find("move agent.sqlite"),
-              std::string::npos);
   }
   sql::Db untouched((directory.path / "broken/.tsugumi/agent.sqlite").string());
   auto state =

@@ -153,9 +153,12 @@ def test_an_entry_has_to_be_a_locked_flake(core_factory, tmp_path, entry, why):
     builtin_project(root)
     daemon = core_factory(project_root=root)
     c = daemon.connect()
-    doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
-    with pytest.raises(RpcFailure, match=why):
+    before = c.call("ProjectInspectRequest")
+    doc = json.loads(text(before.projectJson))
+    with pytest.raises(RpcFailure) as failure:
         save(c, [change("SetProject", json=json.dumps(dict(doc, nixSources=[entry])))], origin="user")
+    assert failure.value.kind == "invalid_document"
+    assert c.call("ProjectInspectRequest").rev == before.rev
 
 
 def test_an_agent_save_adding_a_source_needs_the_users_approval(core_factory, tmp_path):
@@ -205,8 +208,9 @@ def test_an_address_is_looked_up_for_the_settings(core_factory, tmp_path):
         assert len(text(found.rev)) == 40 and text(found.narHash).startswith("sha256-")
         assert "ciao" in [text(p) for p in found.packages]
     for wrong in ("nixpkgs", "path:/etc", "file:///etc"):
-        with pytest.raises(RpcFailure, match="not a flake reference"):
+        with pytest.raises(RpcFailure) as failure:
             c.call("NixSourceResolveRequest", ref=wrong)
+        assert failure.value.kind == "invalid_document"
     after = c.call("ProjectInspectRequest")
     assert after.rev == before.rev and text(after.projectJson) == text(before.projectJson)
 

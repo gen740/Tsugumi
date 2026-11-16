@@ -6,97 +6,34 @@ import Testing
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
 
-/// Real SwiftUI hit testing and gesture arbitration, without launching the app
-/// or putting a window on the user's screen.
+/// Geometry used by the production hit shapes, without synthetic mouse events
+/// whose delivery depends on an off-screen WindowServer window.
 @Suite(.serialized) @MainActor struct CanvasWindowTests {
-  @Observable fileprivate final class Interaction {
-    var position = CGPoint(x: 60, y: 60)
-    var moved = CGSize.zero
-    var wires = 0
-    var runs = 0
-    var edits = 0
-  }
-
-  private struct RoutingCanvas: View {
-    let data: CardNodeData
-    let flow: FlowDirection
-    let zoom: Double
-    let interaction: Interaction
-
-    var body: some View {
-      CardNodeView(data: data, flow: flow, zoom: zoom,
-        onParamCommit: { _, _, _, _ in interaction.edits += 1; return true },
-        onPortDrag: { _, _ in interaction.wires += 1 }, onInputDrag: { _, _ in interaction.wires += 1 },
-        onRun: { interaction.runs += 1 })
-        .placeScaled(at: interaction.position, size: CardGeometry(data, flow: flow).size, zoom: zoom)
-        .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onEnded {
-          interaction.moved = $0.translation
-          interaction.position.x += $0.translation.width
-          interaction.position.y += $0.translation.height
-        })
-        .frame(width: 360, height: 240)
-        .coordinateSpace(name: "canvas")
-    }
-  }
-
-  private func send(_ type: NSEvent.EventType, at point: CGPoint, to window: NSWindow) async throws {
-    let event = try #require(NSEvent.mouseEvent(with: type,
-      location: CGPoint(x: point.x, y: window.frame.height - point.y), modifierFlags: [],
-      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-      context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-    window.sendEvent(event)
-    try await Task.sleep(for: .milliseconds(25))
-  }
-
-  @Test func routingBodiesMoveWithoutStartingAWire() async throws {
+  @Test func routingHitRegionsLeaveTheBodyForMoving() {
     for flow in [FlowDirection.topToBottom, .leftToRight] {
       for zoom in [1.0, 0.2] {
         for kind in [CardKind.trigger, .branch, .fork, .merge, .collect, .switchCard] {
-          let ports = kind == .branch ? [PortData(name: "value"), PortData(name: "condition")] : [PortData(name: "in")]
+          let inputs = kind == .trigger || kind == .switchCard ? [] :
+            (kind == .branch ? [PortData(name: "value"), PortData(name: "condition")] : [PortData(name: "in")])
           let outputs = kind == .branch || kind == .fork ? [PortData(name: "a"), PortData(name: "b")] : [PortData(name: "out")]
-          let data = CardNodeData(title: "start", kind: kind, inputs: kind == .trigger || kind == .switchCard ? [] : ports, outputs: outputs)
+          let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)
           let g = CardGeometry(data, flow: flow)
-          let c = Interaction()
-          let host = NSHostingView(rootView: RoutingCanvas(data: data, flow: flow, zoom: zoom, interaction: c))
-          let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 360, height: 240),
-                                styleMask: [.borderless], backing: .buffered, defer: false)
-          window.contentView = host
-          window.orderBack(nil)
-          defer { window.orderOut(nil); window.contentView = nil }
-          host.layoutSubtreeIfNeeded()
-          try await Task.sleep(for: .milliseconds(50))
-          // The start's title, or the middle of the routing body.
+          let node = CardNodeView(data: data, flow: flow, zoom: zoom)
+          let outline = g.outline(in: g.outlineRect)
+          let scaled = outline.applying(CGAffineTransform(scaleX: zoom, y: zoom))
+          let hit = node.hitShape(g, outline: scaled)
           let body = kind == .trigger ? CGPoint(x: 55, y: 17) : g.iconCenter(in: g.outlineRect)
-          // Mouse events land on screen pixels; keep the translation exact.
-          let from = CGPoint(x: (60 + body.x * zoom).rounded(), y: (60 + body.y * zoom).rounded())
-          try await send(.leftMouseDown, at: from, to: window)
-          for step in 1...4 {
-            try await send(.leftMouseDragged, at: CGPoint(x: from.x + Double(step) * 10, y: from.y + Double(step) * 5), to: window)
-          }
-          try await send(.leftMouseUp, at: CGPoint(x: from.x + 40, y: from.y + 20), to: window)
-          #expect(c.moved == CGSize(width: 40, height: 20), "\(kind), \(flow), \(zoom)")
-          #expect(c.position == CGPoint(x: 100, y: 80))
-          #expect(c.wires == 0 && c.runs == 0 && c.edits == 0, "\(kind), \(flow), \(zoom)")
-          // Input and output ports still start a wire, exclusively, at either zoom.
-          for output in [false, true] {
-            guard let p = (output ? data.outputs : data.inputs).first else { continue }
-            c.wires = 0
-            c.moved = .zero
-            let port = g.port(p.name, output: output)
-            let fromPort = CGPoint(x: c.position.x + port.x * zoom, y: c.position.y + port.y * zoom)
-            try await send(.leftMouseDown, at: fromPort, to: window)
-            // Several steps, as a real drag arrives: one event alone can be consumed deciding between gestures.
-            for step in 1...4 {
-              try await send(.leftMouseDragged, at: CGPoint(x: fromPort.x + Double(step) * 5, y: fromPort.y + Double(step) * 5), to: window)
+          let point = CGPoint(x: body.x * zoom, y: body.y * zoom)
+          #expect(hit.contains(point), "\(kind), \(flow), \(zoom)")
+          for (ports, output) in [(inputs, false), (outputs, true)] {
+            for port in ports {
+              let pt = g.port(port.name, output: output)
+              let rect = CGRect(x: pt.x * zoom - g.portHitSize(zoom: zoom) / 2,
+                                y: pt.y * zoom - g.portHitSize(zoom: zoom) / 2,
+                                width: g.portHitSize(zoom: zoom), height: g.portHitSize(zoom: zoom))
+              #expect(!rect.contains(point), "The wire target must leave the body free")
+              #expect(hit.contains(CGPoint(x: pt.x * zoom, y: pt.y * zoom)))
             }
-            try await send(.leftMouseUp, at: CGPoint(x: fromPort.x + 20, y: fromPort.y + 20), to: window)
-            #expect(c.wires > 0 && c.moved == .zero, "\(kind), \(flow), \(zoom), output=\(output)")
-          }
-          if kind == .trigger {
-            let button = CGPoint(x: c.position.x + 17 * zoom, y: c.position.y + 17 * zoom)
-            try await send(.leftMouseDown, at: button, to: window)
-            try await send(.leftMouseUp, at: button, to: window)
-            #expect(c.runs == 1)
           }
         }
       }

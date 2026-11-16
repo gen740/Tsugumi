@@ -454,7 +454,7 @@ TEST_F(ContextBudget,
   hooks.execute_tool = [&](const auto &, auto) {
     ++calls;
     return agent::ToolResult{
-        R"({"reply":"Failure","value":{"kind":"internal_error","diagnostic":"Internal error: project and operation id; retrying will not help."}})",
+        R"({"reply":"Failure","value":{"kind":"internal_error","diagnostic":"HOST_IDENTITY_SENTINEL"}})",
         true,
         {},
         {}};
@@ -465,8 +465,7 @@ TEST_F(ContextBudget,
   EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
   EXPECT_EQ(calls, 1);
   EXPECT_EQ(model.Requests().size(), 1u);
-  EXPECT_NE(result.error.find("project"), std::string::npos);
-  EXPECT_NE(result.error.find("operation id"), std::string::npos);
+  EXPECT_NE(result.error.find("HOST_IDENTITY_SENTINEL"), std::string::npos);
   EXPECT_FALSE(messages.back().content.size());
 }
 

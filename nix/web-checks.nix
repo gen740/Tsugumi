@@ -24,6 +24,7 @@ runCommand "tsugumi-web-checks"
       fileset = lib.fileset.unions [
         ../web/scripts/test.mjs
         ../web/tests
+        ../tests/bench/wire-frames.ts
         ../core/src/host/document_edits.cc
         ../core/src/host/document_edits.hh
         ../core/src/host/templates.cc

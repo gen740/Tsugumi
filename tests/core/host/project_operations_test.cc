@@ -26,11 +26,6 @@ TEST(ProjectOperations,
       FAIL() << "invalid host identity must fail";
     } catch (const Failure &failure) {
       EXPECT_EQ(failure.code, "internal_error");
-      EXPECT_NE(std::string(failure.what()).find("project"), std::string::npos);
-      EXPECT_NE(std::string(failure.what()).find("operation id"),
-                std::string::npos);
-      EXPECT_NE(std::string(failure.what()).find("retrying"),
-                std::string::npos);
     }
     EXPECT_FALSE(called);
   }

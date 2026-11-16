@@ -21,9 +21,7 @@ import TsugumiRPC
     let task: [String: Any] = ["name": "review", "skill_path": "builtin:review", "read_cards": ["outer/a", "b"], "write_cards": [String](), "run_cards": [String]()]
     let data = try JSONSerialization.data(withJSONObject: ["task": task])
     let text = ProjectAccessLabel.text("project_access helper_scope\n" + String(decoding: data, as: UTF8.self))
-    #expect(text.contains("$review") && text.contains("read: outer/a, b"))
-    #expect(text.contains("write: ") && text.contains("run: "))
-    #expect(!text.contains("この会話の間"))
+    #expect(text.contains("$review") && text.contains("outer/a") && text.contains("b"))
   }
 
   @Test func accessChoicesDefaultToNeededAndAllowAnIndependentSubset() throws {

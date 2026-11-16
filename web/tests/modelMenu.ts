@@ -4,7 +4,7 @@ import { chatRoutes } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { ModelListRefresher } from '../src/model/modelLists'
 
-const tick = () => new Promise((r) => setTimeout(r, 0))
+
 
 // Each opening lists again; a failure is only that connection's; a slow
 // connection holds nothing back and is not asked twice.
@@ -18,14 +18,22 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
     return Promise.resolve()
   })
   const finished: [string, boolean][] = []
-  r.refresh(['fast', 'broken', 'slow'], (id, ok) => finished.push([id, ok]))
-  await tick()
+  const pending = new Map<number, () => void>()
+  const waitFor = (n: number) => new Promise<void>(resolve => pending.set(n, resolve))
+  const record = (id: string, ok: boolean) => {
+    finished.push([id, ok]); pending.get(finished.length)?.()
+  }
+  const first = waitFor(2)
+  r.refresh(['fast', 'broken', 'slow'], record)
+  await first
   assert.deepEqual(finished, [['fast', true], ['broken', false]])
-  r.refresh(['fast', 'broken', 'slow'], (id, ok) => finished.push([id, ok]))
-  await tick()
+  const again = waitFor(4)
+  r.refresh(['fast', 'broken', 'slow'], record)
+  await again
   assert.deepEqual(calls, ['fast', 'broken', 'slow', 'fast', 'broken'])
+  const last = waitFor(5)
   slow.release!()
-  await tick()
+  await last
   assert.deepEqual(finished.at(-1), ['slow', true])
   r.refresh(['slow'], () => {})
   assert.equal(calls.at(-1), 'slow')

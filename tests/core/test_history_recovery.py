@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 import pytest
-from harness.daemon import Daemon
+from harness.daemon import Daemon, StartupFailure
 
 
 def history_fixture(path, *, portable=False):
@@ -29,10 +29,12 @@ def test_incompatible_history_requires_explicit_archive(project, tmp_path, exter
     original = history_fixture(database, portable=portable)
     daemon = Daemon(project, history_dir=history)
     try:
-        with pytest.raises(RuntimeError, match="schema version 999"):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
         marker = json.loads((daemon.control / "server.startup-error.json").read_text())
         assert marker["kind"] == "incompatible_history"
+        assert marker == failure.value.record
+        assert marker["expected"].isdigit()
         assert marker["found"] == "999"
         assert marker["source"] == ("portable" if portable else "local")
         assert database.read_bytes() == original
@@ -56,12 +58,12 @@ def test_recovery_validates_both_histories_before_archiving(project, tmp_path):
     copy.write_bytes(b"not a sqlite database")
     daemon = Daemon(project, history_dir=history, args=["--archive-incompatible-history"])
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
         assert local.read_bytes() == original
         assert copy.read_bytes() == b"not a sqlite database"
         assert not list(history.glob("history-archive-*"))
-        assert not (daemon.control / "server.startup-error.json").exists()
+        assert failure.value.kind == "project_open_failed"
     finally:
         daemon.close()
 
@@ -127,8 +129,9 @@ def test_interrupted_archive_blocks_fresh_start_and_resumes_existing_intent(proj
     archive_flag = "--archive-incompatible-history"
     daemon = Daemon(project, history_dir=history, args=[archive_flag], fault="archive_after_main_move")
     try:
-        with pytest.raises(RuntimeError, match=r"daemon exited \(97\)"):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
+        assert failure.value.returncode == 97
         destination = history / ("history-archive-" + intent.read_text()) / database.name
         assert not database.exists()
         assert destination.read_bytes() == original_db
@@ -136,7 +139,7 @@ def test_interrupted_archive_blocks_fresh_start_and_resumes_existing_intent(proj
 
         daemon.fault = None
         daemon.args.remove(archive_flag)
-        with pytest.raises(RuntimeError, match="unfinished archive"):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
         marker = json.loads((daemon.control / "server.startup-error.json").read_text())
         assert marker["kind"] == "incompatible_history" and marker["found"] == "pending"
@@ -170,8 +173,9 @@ def test_recovery_checks_history_files_before_sqlite_opens_them(project, tmp_pat
     suspect.symlink_to(target)
     daemon = Daemon(project, history_dir=history, args=["--archive-incompatible-history"])
     try:
-        with pytest.raises(RuntimeError, match="not a regular file"):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
+        assert failure.value.kind == "history_not_regular"
         assert suspect.is_symlink()
         assert not target.exists()
         assert not list(history.glob("history-archive-*"))
@@ -191,8 +195,9 @@ def test_recovery_rejects_conflicting_source_and_archive_destination(project, tm
     destination.write_bytes(b"preexisting archive evidence")
     daemon = Daemon(project, history_dir=history, args=["--archive-incompatible-history"])
     try:
-        with pytest.raises(RuntimeError, match="both source and destination"):
+        with pytest.raises(StartupFailure) as failure:
             daemon.start()
+        assert failure.value.kind == "history_archive_conflict"
         assert database.read_bytes() == original
         assert destination.read_bytes() == b"preexisting archive evidence"
         assert intent.read_text() == archive_id

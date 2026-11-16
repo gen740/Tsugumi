@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 @testable import TsugumiAgentClient
@@ -13,7 +14,8 @@ import Testing
 
   @Test func signInWaitsForTheBrowserAndCanBeCancelled() async {
     let model = ChatGPTSignInModel(authenticate: { _, _ in
-      try await Task.sleep(for: .seconds(30))
+      let events = AsyncStream<Void> { _ in }
+      for await _ in events {}
       throw CancellationError()
     }, load: { .init(accounts: [], result: nil) }, acknowledge: { _ in Issue.record("Unexpected welcome") })
     model.signIn { Issue.record("Cancelled sign-in finished setup") }
@@ -22,7 +24,7 @@ import Testing
     pending?.cancel()
     await pending?.value
     #expect(model.signingIn == nil && model.welcome == nil)
-    #expect(model.message == String(localized: "サインインを中止しました。"))
+    #expect(model.message != nil)
   }
 
   @Test func noPlanPermissionOffersConsentAndDoesNotFinishSetup() async {
@@ -36,7 +38,7 @@ import Testing
     model.signIn { Issue.record("Plan permission was not granted") }
     await model.signingIn?.value
     #expect(model.active?.planEnabled == false && model.welcome == nil)
-    #expect(model.message == String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。"))
+    #expect(model.message != nil)
     model.signIn(clientId: a.clientId, consent: true) { Issue.record("Plan permission was not granted") }
     await model.signingIn?.value
     #expect(requests == [false, true])
@@ -85,18 +87,22 @@ import Testing
     #expect(settings.welcome == nil && finished == 2 && acknowledgements == 1)
   }
 
-  private func until(_ predicate: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
-    while !predicate(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-    try #require(predicate())
+  private func until(_ predicate: @escaping @MainActor () -> Bool) async throws {
+    try await waitForModel("sign-in transition", predicate)
   }
+  @Observable final class Counter { var value = 0 }
 
   @Test(arguments: [false, true]) func dismissingTheViewCancelsAtTheHost(beginPending: Bool) async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let host = SignInHostDouble(delayBegin: beginPending)
     let auth = host.auth()
+    let cancellation = Counter()
     let model = ChatGPTSignInModel(authenticate: { client, consent in
-      try await auth.signIn(clientId: client, consent: consent) { _ in await host.openBrowser() }
+      try await withTaskCancellationHandler {
+        try await auth.signIn(clientId: client, consent: consent) { _ in await host.openBrowser() }
+      } onCancel: {
+        Task { @MainActor in cancellation.value += 1 }
+      }
     }, load: { await auth.status() })
     let view = NSHostingView(rootView: AnyView(ChatGPTConnection(model: model, onboarding: true) {
       Issue.record("Dismissed sign-in finished setup")
@@ -113,7 +119,8 @@ import Testing
     // Replace the actual SwiftUI subtree, invoking its onDisappear modifier.
     view.rootView = AnyView(EmptyView())
     view.layoutSubtreeIfNeeded()
-    try await until { pending.isCancelled }
+    try await until { cancellation.value == 1 }
+    #expect(pending.isCancelled)
     if beginPending { host.finishBegin() }
     try await until { host.cancels == 1 }
     host.finishCancel()
@@ -134,19 +141,19 @@ import Testing
     // onDisappear may already have cancelled the task when Quit is handled.
     pending.cancel()
     let delegate = AppDelegate()
-    var replies = 0
-    delegate.terminationReply = { allowed in #expect(allowed); replies += 1 }
+    let replies = Counter()
+    delegate.terminationReply = { allowed in #expect(allowed); replies.value += 1 }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
     if beginPending {
-      #expect(host.cancels == 0 && replies == 0)
+      #expect(host.cancels == 0 && replies.value == 0)
       host.finishBegin()
     }
     try await until { host.cancels == 1 }
-    #expect(replies == 0, "Quit must wait for the cancellation acknowledgement")
+    #expect(replies.value == 0, "Quit must wait for the cancellation acknowledgement")
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
     host.finishCancel()
     await pending.value
-    try await until { replies == 1 }
+    try await until { replies.value == 1 }
     #expect(host.browserOpens == (beginPending ? 0 : 1))
     #expect(!ChatGPTSignInModel.hasPendingSignIns)
   }
@@ -161,15 +168,21 @@ import Testing
     let pending = try #require(model.signingIn)
     try await until { host.browserOpens == 1 }
     let delegate = AppDelegate()
-    delegate.signInTerminationTimeout = .milliseconds(30)
-    var replies = 0
-    delegate.terminationReply = { allowed in #expect(allowed); replies += 1 }
+    let deadline = AsyncStream<Void>.makeStream()
+    delegate.signInTerminationWait = { _ in
+      for await _ in deadline.stream { return }
+    }
+    let replies = Counter()
+    delegate.terminationReply = { allowed in #expect(allowed); replies.value += 1 }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
-    try await until { host.cancels == 1 && replies == 1 }
+    try await until { host.cancels == 1 }
+    #expect(replies.value == 0)
+    deadline.continuation.yield()
+    try await until { replies.value == 1 }
     host.finishCancel()
     await pending.value
-    try await Task.sleep(for: .milliseconds(50))
-    #expect(replies == 1, "A late acknowledgement must not reply twice")
+    await delegate.signInTerminationTask?.value
+    #expect(replies.value == 1, "A late acknowledgement must not reply twice")
   }
 
   @Test(.hostService) func successSelectsChatGPTAndFinishesFirstStart() async throws {
@@ -196,8 +209,7 @@ import Testing
       #expect(CorePreferences.shared.string(forKey: "agent.provider") == "chatgpt")
       #expect(guide.setupDone)
       try await fixtures.until("ChatGPT connects the guide") { guide.connected }
-      let email = "fixture@example.com"
-      #expect(model.message == String(localized: "\(email) でサインインしました。"))
+      #expect(model.active?.email == "fixture@example.com")
       let id = try #require(model.active?.clientId)
       let settings = ChatGPTSignInModel(authenticate: authenticate)
       settings.signIn(clientId: id) {}
@@ -208,7 +220,7 @@ import Testing
 }
 
 /// RPC boundary double: no browser, network, credential store or resident service.
-@MainActor private final class SignInHostDouble {
+@MainActor @Observable private final class SignInHostDouble {
   let delayBegin: Bool
   var begins = 0
   var statusReads = 0

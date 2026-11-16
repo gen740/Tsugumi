@@ -27,9 +27,14 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 11"):
+    from harness.daemon import StartupFailure
+    with pytest.raises(StartupFailure) as failure:
         core_factory(history_dir=history_dir)
 
+    assert failure.value.kind == "incompatible_history"
+    assert failure.value.record["found"] == str(version)
+    assert failure.value.record["expected"].isdigit()
+    assert failure.value.record["source"] == "local"
     assert database.read_bytes() == original
 
 

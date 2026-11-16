@@ -51,7 +51,6 @@ const session = (dir = '/p', key = 'k') => {
   // A session that was left does not start its environment again by reconnecting.
   calls.length = 0
   left.reconnect()
-  await new Promise((r) => setTimeout(r, 20))
   assert.deepEqual(calls.filter((c) => c === '/api/env/start'), [])
 }
 

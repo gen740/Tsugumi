@@ -179,7 +179,7 @@ TEST(EnvironmentAdapterTest,
     options.directory = directory.path / "environments";
     options.socket_directory = directory.path / "sockets";
     options.run_scratch_directory = directory.path / "run-scratch";
-    options.start_timeout = std::chrono::milliseconds(1);
+    options.start_timeout = std::chrono::milliseconds(0);
     options.process = helper;
     host::Environments service(
         options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
@@ -188,9 +188,8 @@ TEST(EnvironmentAdapterTest,
     input.action = H::EnvironmentAction::Start;
     const auto failed = service.Handle(input);
     EXPECT_EQ(failed.phase, H::EnvironmentPhase::Failed);
-    EXPECT_NE(
-        failed.message.find(die ? "tsugumid exited" : "did not become ready"),
-        std::string::npos);
+    EXPECT_EQ(failed.failure_code, die ? H::EnvironmentFailureCode::ProcessExit
+                                       : H::EnvironmentFailureCode::ReadinessTimeout);
     EXPECT_NE(failed.message.find("final stderr diagnosis"), std::string::npos);
     EXPECT_NE(failed.message.find("*******"), std::string::npos);
     EXPECT_EQ(failed.message.find("discarded beginning"), std::string::npos);

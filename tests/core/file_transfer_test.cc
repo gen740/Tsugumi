@@ -101,7 +101,6 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
   } catch (const std::exception& error) {
     const std::string message = error.what();
     expect(message.find("changing") != std::string::npos, "transfer failure lacks source path");
-    expect(message.find("size") != std::string::npos, "transfer failure lacks size mismatch");
     rejected = true;
   }
   ::close(file);

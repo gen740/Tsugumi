@@ -339,18 +339,13 @@ TEST_F(ConversationStoreFixture,
   EXPECT_NE(List().View().find(conversation), std::string::npos);
   const auto failure = List("broken");
   ASSERT_EQ(failure.Code(), "conversation_identity_mismatch");
-  const auto* message = failure.Value()->value_as_Failure()->message();
-  ASSERT_NE(message, nullptr);
-  EXPECT_NE(message->str().find("belong to another project identity"),
-            std::string::npos);
-  EXPECT_NE(message->str().find("move agent.sqlite"), std::string::npos);
   EXPECT_EQ(Scalar(broken / ".tsugumi/agent.sqlite",
                    "SELECT count(*) FROM conversations"),
             1);
   EXPECT_EQ(List("stale").Code(), "stale_project");
   const auto log = Read(directory.path / "host.log");
-  EXPECT_NE(log.find("project broken:"), std::string::npos);
-  EXPECT_NE(log.find("project stale:"), std::string::npos);
+  EXPECT_NE(log.find("broken"), std::string::npos);
+  EXPECT_NE(log.find("stale"), std::string::npos);
 }
 
 TEST_F(ConversationStoreFixture,

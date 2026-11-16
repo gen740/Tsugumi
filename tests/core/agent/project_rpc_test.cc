@@ -59,13 +59,14 @@ TEST_F(AgentProjectFixture,
 TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
   namespace json = tsugumi::agent::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
+  project_fault = "transfer_gate";
   StartProject();
   const auto conversation = Conversation("cancel-copy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
   const auto folder = directory.path / "attached";
   Write(folder / "large.csv", "x");
-  std::filesystem::resize_file(folder / "large.csv", 512u << 20);
+  std::filesystem::resize_file(folder / "large.csv", 2u << 16);
   ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
     return H::CreateRegisterFolderRequest(b, b.CreateString(project_id), b.CreateString("folder:cancel"), b.CreateString(folder.string())).Union();
   }).Code().empty());
@@ -80,7 +81,7 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
   auto copying = std::async(std::launch::async, [&] { return Tool(conversation, "project_copy", args); });
   const auto staging = directory.path / "project/.tsugumi/document-files";
   const auto deadline = std::chrono::steady_clock::now() + 10s;
-  while (!std::filesystem::exists(staging) || std::filesystem::is_empty(staging)) {
+  while (!std::filesystem::exists(directory.path / "project/.tsugumi/transfer.started")) {
     ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
     ASSERT_LT(std::chrono::steady_clock::now(), deadline);
     std::this_thread::sleep_for(1ms);
@@ -109,6 +110,7 @@ INSTANTIATE_TEST_SUITE_P(PublicFileCancellation, CancelledCopy, ::testing::Bool(
 
 TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
   Write(directory.path / "project/definitions/edit/_card.json", R"({"template":"draft"})");
+  project_fault = "transfer_gate";
   StartProject(true);
   const auto conversation = Conversation("cancel-shell-import");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
@@ -116,11 +118,11 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
     Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
   auto saving = std::async(std::launch::async, [&] {
     return Tool(conversation, "project_shell",
-        R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=128 2>/dev/null"})");
+        R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=1 2>/dev/null"})");
   });
   const auto staging = directory.path / "project/.tsugumi/document-files";
   const auto deadline = std::chrono::steady_clock::now() + 20s;
-  while (!std::filesystem::exists(staging) || std::filesystem::is_empty(staging)) {
+  while (!std::filesystem::exists(directory.path / "project/.tsugumi/transfer.started")) {
     if (saving.wait_for(0ms) == std::future_status::ready) {
       FAIL() << "The successful isolated shell could not reach import: " << saving.get().View();
       return;

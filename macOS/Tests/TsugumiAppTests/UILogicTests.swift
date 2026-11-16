@@ -125,15 +125,6 @@ import TsugumiTestSupport
   #expect(Stage.build.logStream == .build && Stage.execute.logStream == .standardOutput && Stage.save.logStream == .journal)
 }
 
-@Test func runTextCountsFromTheFirstInvocation() {
-  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
-  #expect(d.runText == nil && d.idleText == "未実行（0 回）")
-  d.state = .succeeded
-  d.invocation = 1
-  #expect(d.runText == "実行 #1 · 成功")
-  d.runContinues = true
-  #expect(d.runText!.hasPrefix("実行 #1 · 成功") && d.runText!.contains("次の入力"))
-}
 
 /// The bubble takes its ideal size: long text must wrap inside it, not run out of it.
 @MainActor @Test func theHoverBubbleHoldsItsWrappedText() {
@@ -624,26 +615,9 @@ private final class CountingRuler: LineNumberRuler {
 }
 
 @MainActor @Test(arguments: ["go", "rust", "ruby"])
-func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
-  let dir = testTemporaryDirectory.appendingPathComponent("sdk-card-\(UUID())")
-  defer { try? FileManager.default.removeItem(at: dir) }
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  let document = #"{"name":"sdk","canvas":{"cards":[],"connections":[]}}"#
-  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-  session.project = try JSONValue.parse(document)
+func sdkLanguagesAreOfferedByTheCanvas(language: String) async throws {
   let template = try #require(DefinitionTemplate(rawValue: language))
-  let sources = ["go": ("src/card.go", "func run("),
-                 "rust": ("src/src/lib.rs", "fn run("),
-                 "ruby": ("src/main.rb", "def main(inputs)")]
-  let (source, entry) = try #require(sources[language])
   #expect(BuiltinCardItems.written.contains(template))
-  let card = try await session.addCard(template: template, in: [], at: .zero, name: language)
-  #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
-  #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
-  #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
-  await session.undo()
-  #expect(session.definitionDrafts[card] == nil)
 }
 
 

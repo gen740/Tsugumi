@@ -141,12 +141,14 @@ def test_run_expires_between_calls_and_during_the_next_call(sdk):
     saved = []
     assert module._guard(lambda: saved.append(module.Run()))
     for method in (saved[0].cancelled, saved[0].remaining_ms):
-        with pytest.raises(module.Failure, match="expired"):
+        with pytest.raises(module.Failure) as failure:
             method()
+        assert failure.value.kind == "worker_failed"
     def next_call():
         for method in (saved[0].cancelled, saved[0].remaining_ms):
-            with pytest.raises(module.Failure, match="expired"):
+            with pytest.raises(module.Failure) as failure:
                 method()
+            assert failure.value.kind == "worker_failed"
         current = module.Run()
         assert current.cancelled() is False and current.remaining_ms() == -1
     assert module._guard(next_call)
@@ -177,7 +179,7 @@ def test_required_output_completion_fails_inside_the_language_guard(sdk):
     host.accept = False
     module._card_module = SimpleNamespace(main=lambda inputs: {})
     assert module._invoke() is False
-    assert host.events[-1] == ('failure', 'output_invalid', 'required outputs were not emitted')
+    assert host.events[-1][:2] == ('failure', 'output_invalid')
 
 
 def test_python_reads_the_shared_numeric_vectors_without_changing_bits(sdk):

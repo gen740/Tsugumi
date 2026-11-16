@@ -569,7 +569,7 @@ auto unix_listener(const stdfs::path& path) -> int {
   ::chmod(path.c_str(), 0600);
   return fd;
 }
-auto tcp_listener(const Config& config) -> int {
+auto tcp_listener(Config& config) -> int {
   const bool v6 = config.host.find(':') != std::string::npos;
   int fd = ::socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   const int one = 1;
@@ -592,6 +592,12 @@ auto tcp_listener(const Config& config) -> int {
              v6 ? sizeof b : sizeof a) != 0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on TLS TCP");
+  sockaddr_storage bound{};
+  socklen_t size = sizeof bound;
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &size) != 0)
+    throw std::runtime_error("cannot read TLS listener port");
+  config.port = ntohs(v6 ? reinterpret_cast<sockaddr_in6*>(&bound)->sin6_port
+                         : reinterpret_cast<sockaddr_in*>(&bound)->sin_port);
   return fd;
 }
 auto run(Config config) -> int {
@@ -618,6 +624,9 @@ auto run(Config config) -> int {
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
+  fs::write_atomic(config.root / "worker.ready.json",
+                   "{\"port\":" + std::to_string(config.port) +
+                       ",\"pid\":" + std::to_string(::getpid()) + "}", 0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);
@@ -709,7 +718,7 @@ auto remote_workerd_main(int argc, char** argv) -> int {
         c.host = value;
       else if (option == "--port") {
         const auto n = std::stoul(value);
-        if (!n || n > 65535) throw std::runtime_error("invalid port");
+        if (n > 65535) throw std::runtime_error("invalid port");
         c.port = static_cast<uint16_t>(n);
       } else if (option == "--max-jobs") {
         const auto n = std::stoul(value);

@@ -150,8 +150,8 @@ class Parser {
 
   auto parse() -> std::unique_ptr<const Condition> {
     const auto result = expression(1, 0);
-    if (token_.op != Op::kEnd) fail("Unexpected token", token_.position);
-    if (!result.boolean) fail("Condition must be boolean", result.position);
+    if (token_.op != Op::kEnd) fail(Code::UnexpectedToken, "Unexpected token", token_.position);
+    if (!result.boolean) fail(Code::BooleanRequired, "Condition must be boolean", result.position);
     return std::make_unique<SimpleCondition>(std::move(code_));
   }
 
@@ -162,9 +162,9 @@ class Parser {
     std::size_t position;
   };
 
-  [[noreturn]] static auto fail(std::string message, std::size_t position)
+  [[noreturn]] static auto fail(Code code, std::string message, std::size_t position)
       -> void {
-    throw Diagnostic{std::move(message), position};
+    throw Diagnostic{code, std::move(message), position};
   }
 
   auto advance() -> void {
@@ -191,9 +191,9 @@ class Parser {
       const auto [end, error] = std::from_chars(
           digits.data(), digits.data() + digits.size(), number, base);
       if (error == std::errc::result_out_of_range)
-        fail("Integer literal exceeds uint64", start);
+        fail(Code::IntegerOverflow, "Integer literal exceeds uint64", start);
       if (error != std::errc{} || end != digits.data() + digits.size())
-        fail("Invalid integer literal", start);
+        fail(Code::InvalidInteger, "Invalid integer literal", start);
       token_ = {Op::kLiteral, start, number};
       return;
     }
@@ -232,7 +232,7 @@ class Parser {
         return;
       }
     }
-    fail("Unexpected character", start);
+    fail(Code::UnexpectedCharacter, "Unexpected character", start);
   }
 
   auto prefix(std::size_t nesting) -> Value {
@@ -247,18 +247,19 @@ class Parser {
     }
     if (token.op != Op::kOpen && token.op != Op::kNot &&
         token.op != Op::kInvert)
-      fail("Expected expression", token.position);
-    if (nesting == kMaxNesting) fail("Nesting exceeds 64", token.position);
+      fail(Code::ExpressionExpected, "Expected expression", token.position);
+    if (nesting == kMaxNesting) fail(Code::NestingLimit, "Nesting exceeds 64", token.position);
     advance();
     if (token.op == Op::kOpen) {
       auto value = expression(1, nesting + 1);
-      if (token_.op != Op::kClose) fail("Expected ')'", token_.position);
+      if (token_.op != Op::kClose) fail(Code::CloseExpected, "Expected ')'", token_.position);
       advance();
       return value;
     }
     auto value = prefix(nesting + 1);
     if (value.boolean != (token.op == Op::kNot))
-      fail(token.op == Op::kNot ? "Expected boolean operand"
+      fail(token.op == Op::kNot ? Code::BooleanOperand : Code::IntegerOperand,
+           token.op == Op::kNot ? "Expected boolean operand"
                                 : "Expected integer operand",
            token.position);
     code_.push_back({token.op});
@@ -276,12 +277,12 @@ class Parser {
       const auto right = expression(priority + 1, nesting);
       const bool logical = priority <= 2;
       if (left.boolean != logical || right.boolean != logical)
-        fail(
+        fail(logical ? Code::BooleanOperand : Code::IntegerOperand,
             logical ? "Expected boolean operands" : "Expected integer operands",
             token.position);
       if ((token.op == Op::kShiftLeft || token.op == Op::kShiftRight) &&
           right.literal && *right.literal >= 64)
-        fail("Literal shift count must be less than 64", right.position);
+        fail(Code::ShiftLimit, "Literal shift count must be less than 64", right.position);
       code_.push_back({token.op});
       left.boolean = priority <= 3;
       left.literal.reset();
@@ -297,7 +298,7 @@ class Parser {
 
 auto compile_simple(std::string_view expression) -> CompileResult {
   if (expression.size() > kMaxBytes)
-    return Diagnostic{"Condition exceeds 4096 bytes", kMaxBytes};
+    return Diagnostic{Code::SizeLimit, "Condition exceeds 4096 bytes", kMaxBytes};
   try {
     return Parser(expression).parse();
   } catch (Diagnostic& diagnostic) {
@@ -319,7 +320,7 @@ auto compile(Text text) -> CompileResult {
     if (language.name == text.language)
       return language.compile(text.expression);
   }
-  return Diagnostic{"Unknown condition language", 0};
+  return Diagnostic{Code::UnknownLanguage, "Unknown condition language", 0};
 }
 
 }  // namespace tsugumi::worker_condition

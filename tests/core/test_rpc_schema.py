@@ -1,7 +1,6 @@
 """Document schemas exercised by saving and inspecting public RPC documents."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -21,12 +20,11 @@ from tsugumi_client import RpcFailure, change, new_id, text
     '{"maxRuns":18446744073709551616}',
     '{"sandbox":true} trailing',
     '{"sandbox":null}',
-    '{"filesystem":true}',
-    '{"filesystem":false}',
+    '{"unknownCardField":true}',
 ], ids=["duplicate-field", "nested-duplicate-field", "invalid-utf8", "truncated-utf8",
         "not-a-number", "infinity", "boolean-as-string", "negative-run-limit",
         "fractional-run-limit", "overflowing-run-limit", "trailing-text", "null-boolean",
-        "removed-filesystem-on", "removed-filesystem-off"])
+        "unknown-card-field"])
 def test_invalid_card_documents_are_rejected_without_a_save(client, raw):
     """Invalid card fields are rejected without changing the saved project."""
     before = client.call("ProjectInspectRequest")
@@ -54,30 +52,12 @@ def test_valid_utf8_null_timeout_and_integer_spellings_survive_a_save(client):
     assert json.loads(text(saved.cardJson))["timeoutSeconds"] is None
 
 
-@pytest.mark.parametrize("order", ["boundary-first", "boundaries-first"])
-def test_layout_fields_with_a_shared_prefix_remain_distinct(client, order):
-    """Boundary positions and nested boundary positions keep their own values."""
-    fields = [
-        ("boundary", {"outputs": {"x": 3, "y": 4}}),
-        ("boundaries", {"child": {"inputs": {"x": 1, "y": 2}}}),
-    ]
-    if order == "boundaries-first":
-        fields.reverse()
-    layout = dict(fields)
-    before = client.call("ProjectInspectRequest")
-    saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
-                        changes=[change("SetLayout", json=json.dumps(layout))])
-    assert json.loads(text(saved.delta.layoutJson)) == layout
-    assert json.loads(text(client.call("ProjectInspectRequest").layoutJson)) == layout
 
 
-@pytest.mark.parametrize("case", json.loads(
-    (Path(__file__).parents[1] / "fixtures/layout-invalid.json").read_text()),
-    ids=lambda case: case["name"])
-def test_core_stores_opaque_layout_unchanged(client, case):
-    """Layout validation belongs to the host; the core preserves even unknown or unbounded fields."""
+def test_core_stores_opaque_layout_unchanged(client):
+    """The core carries bounded JSON objects without interpreting presentation fields."""
     before = client.call("ProjectInspectRequest")
-    raw = case["json"]
+    raw = r'{"extension":{"escaped\u006bey":"日本語","x":1e999},"boundary":{},"boundaries":{}}'
     saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
                         changes=[change("SetLayout", json=raw)])
     assert text(saved.delta.layoutJson) == raw

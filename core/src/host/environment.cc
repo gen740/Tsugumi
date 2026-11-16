@@ -227,11 +227,13 @@ struct Environments::Impl {
     entry.state.pid = 0;
   }
   auto Failed(Entry& entry, const std::string& message,
-              const EnvironmentFailure* failure = nullptr) -> void {
+              const EnvironmentFailure* failure = nullptr,
+              H::EnvironmentFailureCode code = H::EnvironmentFailureCode::LaunchFailed) -> void {
     RememberSecrets(entry);
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
+    entry.state.failure_code = code;
     entry.state.recovery =
         failure ? failure->recovery : "Check the log and retry.";
     entry.state.log = failure ? Redact(entry, failure->log) : LogTail(entry);
@@ -268,7 +270,8 @@ struct Environments::Impl {
       entry.state.message.clear();
       Notify(entry);
     } else {
-      Failed(entry, "tsugumid exited. Retry to start it again.");
+      Failed(entry, "tsugumid exited. Retry to start it again.", nullptr,
+             H::EnvironmentFailureCode::ProcessExit);
     }
     entry.pid = 0;
     entry.child = false;
@@ -317,6 +320,7 @@ struct Environments::Impl {
       ready.recovery.clear();
       ready.log.clear();
       ready.startup_error_json.clear();
+      ready.failure_code = H::EnvironmentFailureCode::None;
       entry.state = std::move(ready);
       return true;
     } catch (const std::exception&) {
@@ -417,6 +421,7 @@ struct Environments::Impl {
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
+    entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
     Stage(entry, "starting tsugumid");
     try {
@@ -487,8 +492,7 @@ struct Environments::Impl {
       Stage(entry, "waiting for tsugumid to become ready");
       const auto deadline =
           std::chrono::steady_clock::now() + options.start_timeout;
-      while (!shutdown.stop_requested() &&
-             std::chrono::steady_clock::now() < deadline) {
+      while (!shutdown.stop_requested()) {
         if (CheckDeath(entry)) return;
         if (ReadReady(entry)) {
           auto accepted = options.process->Requirements(entry.state);
@@ -500,12 +504,15 @@ struct Environments::Impl {
           Notify(entry);
           return;
         }
+        if (std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(50ms);
       }
       Stop(entry);
       Failed(entry, shutdown.stop_requested()
                         ? "Environment start cancelled"
-                        : "tsugumid did not become ready within 60 seconds");
+                        : "tsugumid did not become ready within 60 seconds", nullptr,
+             shutdown.stop_requested() ? H::EnvironmentFailureCode::Cancelled
+                                       : H::EnvironmentFailureCode::ReadinessTimeout);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       Failed(entry, error.what(),
@@ -562,6 +569,7 @@ struct Environments::Impl {
     entry.state.recovery.clear();
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
+    entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
   }
 };

@@ -301,6 +301,9 @@ final class ProjectSession {
   var prepareCopy: (String, [String], String, String, String?) async throws -> (edits: String, files: [(from: String, to: String)]) = {
     try await CoreHostClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4)
   }
+  var prepareLayoutSave: (String, UInt64, [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] = {
+    try await CoreHostClient.shared.prepareLayoutSave(project: $0, baseRev: $1, changes: $2)
+  }
   var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
     try await CoreHostClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
   }
@@ -370,7 +373,10 @@ final class ProjectSession {
   var sourceBases: [String: String] = [:]
   private(set) var undoStack: [UndoEntry] = []
   private(set) var redoStack: [UndoEntry] = []
-  private(set) var saveError: String?
+  private(set) var saveFailure: Error?
+  private(set) var saveError: String? {
+    didSet { if saveError == nil { saveFailure = nil } }
+  }
   private(set) var saving = false
   /// Edits wait for the run to end (the core keeps Card changes back while it runs).
   private(set) var savingAfterRun = false
@@ -1526,7 +1532,7 @@ final class ProjectSession {
     await fillUndoSources()
     guard mergeConflict == nil else { return }
     do { guard try await rebase() else { return } }
-    catch { saveError = String(describing: error); return }
+    catch { saveFailure = error; saveError = String(describing: error); return }
     guard dirty else {
       saveError = nil
       return
@@ -1552,6 +1558,7 @@ final class ProjectSession {
       forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
       adoptSavedPlaces(sentState, layouts: layouts)
     } catch let f as RPCFailure {
+      saveFailure = f
       switch f.kind {
       case .revisionConflict, .hashConflict:
         if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
@@ -1578,6 +1585,7 @@ final class ProjectSession {
         saveError = f.description
       }
     } catch {
+      saveFailure = error
       saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
     }
   }
@@ -1644,7 +1652,7 @@ final class ProjectSession {
     if !editor { canvasSaveOp = op.uuidString.lowercased() }
     defer { if !editor { canvasSaveOp = nil } }
     guard let projectId else { throw RPCError.disconnected }
-    let changes = try await CoreHostClient.shared.prepareLayoutSave(project: projectId, baseRev: baseRev, changes: changes)
+    let changes = try await prepareLayoutSave(projectId, baseRev, changes)
     let result: Tsugumi_RPC_SaveResultT
     do {
       result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)

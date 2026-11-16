@@ -38,6 +38,7 @@ table SignInStatus { attempt_id:string; state:string (required); message:string;
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
+enum EnvironmentFailureCode:ubyte { None, ProcessExit, ReadinessTimeout, Cancelled, LaunchFailed }
 table EnvironmentRequest {
   project:string (required);
   action:EnvironmentAction;
@@ -51,6 +52,7 @@ table EnvironmentState {
   project:string (required);
   key:string (required);
   phase:EnvironmentPhase;
+  failure_code:EnvironmentFailureCode;
   endpoint:string;
   token:string;
   project_id:string;

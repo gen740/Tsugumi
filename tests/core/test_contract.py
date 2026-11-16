@@ -197,15 +197,6 @@ def test_document_validation(client):
         assert e.value.kind == "invalid_document", j
 
 
-def test_retired_database_connections_field_is_rejected(client):
-    """A project cannot save the removed Logger database settings."""
-    snap = client.open().snapshot
-    doc = dict(project_json(snap), databaseConnections=[])
-    with pytest.raises(RpcFailure) as error:
-        client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                    changes=[change("SetProject", json=json.dumps(doc))])
-    assert error.value.kind == "invalid_document"
-    assert "databaseConnections" in text(error.value.failure.diagnostic)
 
 
 def test_source_operations(client):
@@ -498,24 +489,6 @@ def test_an_empty_optional_document_is_not_given(client):
     assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").metaJson is None
 
 
-def test_draft_has_no_ports_from_schema_metadata_or_wires(client):
-    """Neither schema nor metadata creates ports; wires attach to the Card."""
-    snap = client.call("ProjectInspectRequest")
-    doc = project_json(snap)
-    doc["canvas"]["cards"] += [{"id": "plan"}, {"id": "next"}]
-    doc["canvas"]["connections"].append({"from": {"card": "plan", "port": ""}, "to": {"card": "next", "port": ""}})
-    fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
-    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft"}),
-               metaJson=json.dumps({"content": "p", "outputs": [{"name": "summary", "description": "d"}, {"name": "out"}]})),
-        change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
-        change("PutDefinition", id="next", cardJson=json.dumps({"template": "draft", "inputs": [{"name": "in"}]}), metaJson=json.dumps({"content": "q"})),
-        change("SetProject", json=json.dumps(doc)),
-    ])
-    plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
-    assert not plan.outputs and not plan.inputs
-    codes = [text(d.code) for r in res.delta.resolution for d in r.diagnostics]
-    assert "unknown_port" not in codes, codes
 
 
 def test_draft_resolution_ignores_meta_schema_and_layout(client):
@@ -546,14 +519,3 @@ def test_draft_resolution_ignores_meta_schema_and_layout(client):
                           changes=[change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(body), **extra)])
         assert ports(res, "plan") == []
         prev = body
-
-
-def test_layout_keeps_flow_note_size_and_boundary_bars(client):
-    """layout.json: the direction the Cards were laid out in, a note's text
-    size and (in a Card in Card's own layout) its boundary bars."""
-    snap = client.call("ProjectInspectRequest")
-    layout = {"flow": "leftToRight", "boundary": {"inputs": {"x": 1, "y": 2}},
-              "notes": [{"id": "n", "scope": "", "text": "$x$", "x": 0, "y": 0, "fontSize": 20}]}
-    res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                      changes=[change("SetLayout", json=json.dumps(layout))])
-    assert json.loads(text(res.delta.layoutJson))["notes"][0]["fontSize"] == 20

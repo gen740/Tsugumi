@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Darwin
 import Foundation
+import Observation
 import FlatBuffers
 import Testing
 @testable import TsugumiLauncher
@@ -101,20 +102,13 @@ extension ChatResumeTests {
     }
     let session = ProjectSession(identity: identity, environments: EnvironmentManager(support: support, image: nil))
     func waitForProblem(found: String?) async throws {
-      let deadline = ContinuousClock.now + .seconds(60)
-      while true {
-        if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil {
-          switch session.environment {
-          case .incompatibleHistory(let issue) where issue.found == found: return
-          case .failed where found == nil: return
-          default: break
-          }
+      try await waitForModel {
+        guard EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil else { return false }
+        switch session.environment {
+        case .incompatibleHistory(let issue): return issue.found == found
+        case .failed: return found == nil
+        default: return false
         }
-        guard ContinuousClock.now < deadline else {
-          Issue.record("Expected history startup state \(found ?? "failed"), got \(session.environment.label)")
-          throw POSIXError(.ETIMEDOUT)
-        }
-        try await Task.sleep(for: .milliseconds(10))
       }
     }
     session.start()
@@ -201,7 +195,7 @@ extension ChatResumeTests {
   #expect(session.saveError == nil)
   let before = ExecutionHistoryRefresh(session: session, card: "start")
   try await session.run(card: ["start"], propagate: true)
-  for _ in 0..<200 where session.runActive { try await Task.sleep(for: .milliseconds(25)) }
+  try await waitForModel { !(session.runActive) }
   #expect(!session.runActive)
   #expect(session.runStatus?.state == .succeeded)
   let after = ExecutionHistoryRefresh(session: session, card: "start")
@@ -218,13 +212,18 @@ extension ChatResumeTests {
 
 /// These hosts stay offscreen: no application launch, activation or saved settings.
 @MainActor @Suite(.serialized) struct ExecutionHistoryLayoutTests {
+  @Observable final class Measurement {
+    var frames: [String: NSView] = [:]
+    var controls: [String: CGRect] = [:]
+  }
   @Test(arguments: [860.0, 760.0, 620.0], ["ja", "en"])
   func panesUseTheAvailableCardWindow(width: Double, language: String) async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
-    var frames: [String: NSView] = [:]
-    var controlFrames: [String: CGRect] = [:]
+    let measurement = Measurement()
+    var frames: [String: NSView] { measurement.frames }
+    var controlFrames: [String: CGRect] { measurement.controls }
     func probe(_ name: String) -> HistoryLayoutProbe {
-      HistoryLayoutProbe { frames[name] = $0 }
+      HistoryLayoutProbe { measurement.frames[name] = $0 }
     }
     let header = ExecutionHistoryDetailHeader(detail: .constant(.packages)) {
       ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2))
@@ -247,7 +246,7 @@ extension ChatResumeTests {
                   Color.clear.preference(key: HistoryMeasuredBounds.self, value: anchors.mapValues { geometry[$0] })
                 }
               }
-              .onPreferenceChange(HistoryMeasuredBounds.self) { controlFrames = $0 }
+              .onPreferenceChange(HistoryMeasuredBounds.self) { measurement.controls = $0 }
             Color.clear
           }.background(probe("detail"))
         }
@@ -257,9 +256,10 @@ extension ChatResumeTests {
                           styleMask: [.borderless], backing: .buffered, defer: true)
     window.contentView = host
     defer { window.contentView = nil }
-    for _ in 0..<5 {
-      host.layoutSubtreeIfNeeded()
-      try await Task.sleep(for: .milliseconds(20))
+    host.layoutSubtreeIfNeeded()
+    try await waitForModel {
+      Set(measurement.frames.keys).isSuperset(of: ["runs", "detail", "header"]) &&
+        Set(measurement.controls.keys) == ["label", "invocation", "tabs"]
     }
     func rect(_ name: String) throws -> CGRect {
       let view = try #require(frames[name])

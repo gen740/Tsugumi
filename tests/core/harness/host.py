@@ -20,6 +20,13 @@ from Tsugumi.Host.Request import RequestT
 from Tsugumi.Host.RequestPayload import RequestPayload
 
 
+class HostFailure(RuntimeError):
+    def __init__(self, failure):
+        self.code = string(failure.code)
+        self.request_id = failure.requestId
+        super().__init__(string(failure.message))
+
+
 class Host:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
@@ -83,7 +90,7 @@ class Host:
         assert response.requestId == self.request_id and response.payloadType == Payload.Reply
         reply = response.payload
         if reply.valueType == ReplyPayload.Failure:
-            raise RuntimeError(string(reply.value.code) + ": " + string(reply.value.message))
+            raise HostFailure(reply.value)
         # Python's generated native API uses None for absent vectors.
         # All optional Host lists have the same omission-means-empty rule.
         value = reply.value

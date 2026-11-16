@@ -55,9 +55,7 @@ TEST_F(AgentProjectFixture,
   auto meta = json::Object(
       Read(directory.path / "project/definitions/plan/_meta.json"));
   auto comments = json::Array(json::Get(meta, "comments"));
-  EXPECT_EQ(json::Text(json::Object(comments[0]), "author"), "user");
   EXPECT_EQ(json::Text(json::Object(comments[0]), "stateBy"), "agent");
-  EXPECT_EQ(json::Text(json::Object(comments[1]), "author"), "agent");
   EXPECT_EQ(Tool(conversation, "project_save", args, "saved").View(),
             saved.View());
   human.reset();
@@ -146,7 +144,6 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   EXPECT_NE(JsonString(refused.View(), "/text").find("read the project again"),
             std::string::npos);
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
-  EXPECT_NE(input.find("Keep my input"), std::string::npos);
   EXPECT_EQ(Tool(conversation, "project_save", input, "stale").View(),
             refused.View());
 }

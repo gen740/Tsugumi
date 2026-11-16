@@ -2,6 +2,7 @@
 // change, and how it may be shown (the Card setting `displayMode`). A picture
 // is never shown at full strength as a result it is not a picture of.
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 import { FigurePicture, FigurePreview, FigureState, FigureWanted, ThumbnailRequest, figureLook, figureMode } from '../src/model/moduleThumbnails'
 import { parse } from '../src/shared/json'
 import * as R from '../src/gen/tsugumi/rpc'
@@ -15,7 +16,7 @@ page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 const { FrameRenderer } = await import('../src/ui/moduleRenderer')
 
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => new Promise<void>(r => setImmediate(r))
 const want = (json: string, lineage = 'r1#1', size = 160): FigureWanted => ({ name: 'plotly', json, width: size, height: size, lineage })
 const update = (running = false, stale = false): FigureState => ({ mode: 'update', running, stale })
 const live = (running = false, stale = false): FigureState => ({ mode: 'live', running, stale })
@@ -253,11 +254,15 @@ assert.equal(figureMode('smooth'), 'update')
   header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 4, 0, 0, 0, 2])
   const png = (tag: string) => `data:image/png;base64,${btoa(String.fromCharCode(...header))}${tag}`
   const req = (json: string): ThumbnailRequest => ({ key: json, name: 'plotly', json, width: 16, height: 16 })
+  mock.timers.enable({ apis: ['setTimeout'] })
   try {
     const renderer = new FrameRenderer(20, async () => 'export function initialise() {}')
     const first = renderer.draw(req('first'))
     send(frames[0], { tsugumi: 'ready' })
-    await assert.rejects(first, /timed out/)
+    const rejected = assert.rejects(first, /timed out/)
+    await tick()
+    mock.timers.tick(20)
+    await rejected
     const id1 = frames[0].contentWindow.posted[0].requestId
     let settled: unknown = 'pending'
     const second = renderer.draw(req('second')).then(v => (settled = v), e => (settled = e))
@@ -291,6 +296,7 @@ assert.equal(figureMode('smooth'), 'update')
     renderer.close()
     assert.equal(listeners.size, 0)
   } finally {
+    mock.timers.reset()
     win.addEventListener = before.add; win.removeEventListener = before.remove
     Object.assign(page.document as object, { createElement: before.create, body: before.body })
   }

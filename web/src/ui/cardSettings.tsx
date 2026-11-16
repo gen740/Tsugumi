@@ -682,7 +682,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const resources = get(def, 'executionResources')
   const resource = (name: string, label: string, example: string) => (
     <Row label={label}>
-      <TextField value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+      <TextField name={name} value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
         onChange={(value) => {
           const text = value.trim()
           const next = isObj(resources) ? clone(resources) as JObj : obj()

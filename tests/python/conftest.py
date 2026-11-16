@@ -245,9 +245,10 @@ class VMEnv:
 '''.join(lines)
 
     def crash(self):
-        """Abnormal termination: the project's tsugumid is killed."""
-        self.exec("for f in /proc/[0-9]*/comm; do [ \"$(< $f)\" = tsugumid ] && p=${f#/proc/} && kill -9 ${p%/comm}; done; true")
-        time.sleep(1)
+        """Abnormal termination: await the old core's actual transport EOF."""
+        with self.client() as observer:
+            self.exec("for f in /proc/[0-9]*/comm; do [ \"$(< $f)\" = tsugumid ] && p=${f#/proc/} && kill -9 ${p%/comm}; done; true")
+            observer.wait_closed()
 
     def stop(self):
         if self.id:

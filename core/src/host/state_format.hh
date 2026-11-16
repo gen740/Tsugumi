@@ -13,6 +13,7 @@ inline constexpr std::string_view kStateSchemaDigest =
 
 class StateFormatError final : public std::runtime_error {
  public:
+  const std::filesystem::path directory;
   explicit StateFormatError(const std::filesystem::path& directory);
 };
 

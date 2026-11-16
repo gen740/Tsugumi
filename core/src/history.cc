@@ -305,7 +305,7 @@ auto history_file(const stdfs::path& path, const char* suffix) -> stdfs::path {
 auto regular_history_file(const stdfs::path& path) -> bool {
   const auto status = stdfs::symlink_status(path);
   if (!stdfs::exists(status)) return false;
-  if (!stdfs::is_regular_file(status)) throw std::runtime_error("history is not a regular file: " + path.string());
+  if (!stdfs::is_regular_file(status)) throw HistoryOpenError(HistoryOpenCode::NotRegular, "history is not a regular file: " + path.string());
   return true;
 }
 
@@ -349,7 +349,7 @@ auto history_archive(const stdfs::path& database, std::string id, bool pending) 
     const bool has_source = regular_history_file(source);
     const bool has_destination = regular_history_file(destination);
     if (has_source && has_destination)
-      throw std::runtime_error("history archive has both source and destination: " + source.string());
+      throw HistoryOpenError(HistoryOpenCode::ArchiveConflict, "history archive has both source and destination: " + source.string());
     if (!*suffix && !has_source && !has_destination)
       throw std::runtime_error("history archive is missing its database: " + database.string());
   }

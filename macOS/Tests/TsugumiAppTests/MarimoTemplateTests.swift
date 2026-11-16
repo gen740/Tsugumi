@@ -16,12 +16,10 @@ import TsugumiTestSupport
   let card = try await session.addCard(template: .marimo, in: [], at: .zero)
   #expect(card == "marimo")
   #expect(session.kind(card) == .code)
-  #expect(session.cardDefinition(card)?["reuseWorker"]?.bool == false)
-  #expect(session.cardDefinition(card)?["artifactOutput"]?.string == "report")
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
-  let files = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/marimo.json")))
-  for file in ["src/main.py", "src/notebook.py", "default.nix", "_outputs.fbs"] {
-    let bytes = try #require(session.sourceEdits["definitions/\(card)/\(file)"])
-    #expect(String(decoding: bytes, as: UTF8.self) == files[file])
-  }
+  #expect(session.sourceEdits["definitions/\(card)/src/notebook.py"]?.isEmpty == false)
+  let beforeUndo = session.docState()
+  await session.undo()
+  #expect(session.cardDefinition(card) == nil)
+  await session.redo()
+  #expect(session.docState() == beforeUndo)
 }

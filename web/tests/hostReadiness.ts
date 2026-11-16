@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { CoreHost } from '../server/coreHost'
+import { CoreHost, CoreHostError } from '../server/coreHost'
 import { setLanguage } from '../server/i18n'
 import type { Environments } from '../server/environment'
 
@@ -21,10 +21,9 @@ try {
     setLanguage(language)
     const host = new CoreHost(directory, directory, {} as Environments)
     await assert.rejects(host.ready(), (error: Error) => {
-      assert.ok(error.message.includes(state))
-      assert.match(error.message, language === 'en' ? /another version of Tsugumi/ : /別のバージョンの Tsugumi/)
-      assert.match(error.message, language === 'en' ? /Move or rename.*start Tsugumi again/ : /移動または改名.*起動し直して/)
-      assert.doesNotMatch(error.message, /did not become ready/)
+      assert.ok(error instanceof CoreHostError)
+      assert.equal(error.code, "state_format")
+      assert.equal(error.path, state)
       return true
     })
   }
@@ -32,7 +31,7 @@ try {
   // A missing state folder must be left for the service to create and number.
   process.env.TSUGUMI_HOST_STATE = path.join(directory, 'fresh')
   fs.writeFileSync(binary, '#!/bin/sh\nif [ -e "$2" ]; then exit 1; fi\nexit 5\n', { mode: 0o700 })
-  await assert.rejects(new CoreHost(directory, directory, {} as Environments).ready(), /another version of Tsugumi/)
+  await assert.rejects(new CoreHost(directory, directory, {} as Environments).ready(), (error: CoreHostError) => error.code === 'state_format')
   assert.ok(!fs.existsSync(process.env.TSUGUMI_HOST_STATE))
   // Successful first startup also leaves the log at its persistent host path.
   fs.writeFileSync(binary, `#!${process.execPath}

@@ -232,6 +232,12 @@ class Client:
         if threading.current_thread() is not self._reader:
             self._reader.join(timeout=2)
 
+    def wait_closed(self, timeout: float = 60.0) -> None:
+        """Wait for transport EOF, not an assumed process settling delay."""
+        with self._cv:
+            if not self._cv.wait_for(lambda: self.closed, timeout):
+                raise TimeoutError("connection did not close")
+
     def __enter__(self):
         return self
 
