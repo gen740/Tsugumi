@@ -378,6 +378,24 @@ TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
   EXPECT_EQ(service->heartbeat_interval_seconds(), UINT32_MAX);
   EXPECT_EQ(service->missed_heartbeats(), UINT32_MAX);
 }
+TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
+  const auto capability = Authorize("project");
+  ASSERT_TRUE(Put().Code().empty());
+  const auto catalog = Broker(R::CatalogRequestT{}, capability);
+  const auto* services = catalog->payload.AsReply()->body.AsCatalog();
+  ASSERT_NE(services, nullptr);
+  ASSERT_EQ(services->services.size(), 2u);
+  const auto& worker = *services->services[1];
+  EXPECT_FALSE(worker.available);
+  EXPECT_NE(worker.unavailable_reason.find(worker.id), std::string::npos);
+  EXPECT_NE(worker.unavailable_reason.find("approval"), std::string::npos);
+  EXPECT_NE(worker.unavailable_reason.find("project"), std::string::npos);
+  EXPECT_EQ(Authorize("project"), capability);
+  const auto granted = Broker(R::CatalogRequestT{}, capability);
+  const auto& approved = *granted->payload.AsReply()->body.AsCatalog()->services[1];
+  EXPECT_TRUE(approved.available);
+  EXPECT_TRUE(approved.unavailable_reason.empty());
+}
 TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
   ASSERT_TRUE(Put().Code().empty());
   auto a = Authorize("a"), b = Authorize("b", "different-directory");

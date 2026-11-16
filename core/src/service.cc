@@ -417,18 +417,28 @@ auto Service::start_remote_cleanup() -> void {
 auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag> {
   const auto& settings = node.settings;
   if (node.kind != Template::Code) return std::nullopt;
-  if (settings.execution_service == "auto") {
-    if (std::ranges::any_of(targets, [&](const auto& target) {
-      return !settings.worker_condition || settings.worker_condition->matches(target.grade);
-    })) return std::nullopt;
-    return Diag{true, "invalid_setting", "no registered worker satisfies workerCondition", node.path, {}, {}};
-  }
-  const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   const auto error = [&](std::string message) -> Diag {
     return {true, "invalid_setting", std::move(message), node.path, {}, {}};
   };
-  if (target == targets.end() || !target->available || (settings.worker_condition && !settings.worker_condition->matches(target->grade)))
+  const auto unavailable = [&](const RemoteTarget& target) {
+    return error(target.unavailable_reason.empty()
+        ? "execution service " + target.id + " is not available"
+        : target.unavailable_reason);
+  };
+  if (settings.execution_service == "auto") {
+    const RemoteTarget* blocked = nullptr;
+    for (const auto& target : targets) {
+      if (settings.worker_condition && !settings.worker_condition->matches(target.grade)) continue;
+      if (target.available) return std::nullopt;
+      if (!blocked) blocked = &target;
+    }
+    if (blocked) return unavailable(*blocked);
+    return Diag{true, "invalid_setting", "no registered worker satisfies workerCondition", node.path, {}, {}};
+  }
+  const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+  if (target == targets.end() || (settings.worker_condition && !settings.worker_condition->matches(target->grade)))
     return error("execution service " + settings.execution_service + " is not available");
+  if (!target->available) return unavailable(*target);
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
   // or checking resources.

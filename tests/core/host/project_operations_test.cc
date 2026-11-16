@@ -1,4 +1,6 @@
 #include "host/project_operations.hh"
+#include "host/agent_exclude.hh"
+#include "../agent_fixture_server.hh"
 
 #include "host/document_edits.hh"
 #include <filesystem>
@@ -320,13 +322,14 @@ public:
       {"externals/inner/externals/deep/definitions/c/raw.bin",
        std::string("\xff\0\x81", 3)}};
   int saves = 0;
+  OperationContext context{"ui", {}, {}, {}};
   auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
     H::ProjectOperateRequestT request;
     request.project_id = "p";
     request.op_id = crypto::uuid4();
     request.body = std::move(body);
     const auto reply =
-        ProjectOperations().Execute("p", request, {"ui", {}, {}, {}},
+        ProjectOperations().Execute("p", request, context,
                                     [&](const auto &method, const auto &args) {
                                       return Call(method, args);
                                     });
@@ -446,6 +449,76 @@ private:
             {}};
   }
 };
+TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
+  test::TemporaryDirectory temporary;
+  for (const auto* excluded : {"definitions/a/data.bin",
+                              "externals/inner/externals/deep/definitions/c/raw.bin"}) {
+    for (const auto* action : {"delete", "subgraph", "rename", "document"}) {
+      SCOPED_TRACE(std::string(excluded) + ':' + action);
+      TransformationProject project;
+      auto document = json::Object(project.files.at("tsugumi.json"));
+      document["agentExclude"] = json::Encode(std::vector<std::string>{json::Quote(excluded)});
+      project.files["tsugumi.json"] = json::Encode(document);
+      const auto before = project.files;
+      AgentExclude policy(temporary.path, project.files.at("tsugumi.json"));
+      project.context.origin = "agent";
+      project.context.authorize = [&](const auto& plan, const auto& base) {
+        policy.CheckSave(plan, base);
+      };
+      H::ProjectOperationBodyUnion body;
+      const std::string id = std::string(excluded).starts_with("definitions/") ? "a" : "sub";
+      if (std::string(action) == "delete") {
+        H::ProjectSelectionT selection;
+        selection.action = H::ProjectSelectionAction::Delete;
+        selection.cards = {id};
+        body.Set(std::move(selection));
+      } else if (std::string(action) == "subgraph") {
+        H::ProjectMakeSubgraphT convert;
+        convert.cards = {id};
+        convert.id = "converted";
+        body.Set(std::move(convert));
+      } else if (std::string(action) == "rename") {
+        H::ProjectEditsT edits;
+        H::ProjectTreeEditT tree;
+        tree.prefix = "definitions/" + id + '/';
+        for (const auto& [path, bytes] : project.files) {
+          if (!path.starts_with(tree.prefix)) continue;
+          auto hash = std::make_unique<H::ProjectFileHashT>();
+          hash->path = path;
+          hash->hash = crypto::sha256_hex(bytes);
+          tree.expected.push_back(std::move(hash));
+          H::ProjectFilePutT put;
+          put.file_path = "definitions/renamed/" + path.substr(tree.prefix.size());
+          put.expect_missing = true;
+          put.bytes.assign(bytes.begin(), bytes.end());
+          auto entry = std::make_unique<H::ProjectEditT>();
+          entry->value.Set(std::move(put));
+          edits.edits.push_back(std::move(entry));
+        }
+        auto entry = std::make_unique<H::ProjectEditT>();
+        entry->value.Set(std::move(tree));
+        edits.edits.push_back(std::move(entry));
+        body.Set(std::move(edits));
+      } else {
+        H::ProjectReplaceDocumentsT replacement;
+        auto file = std::make_unique<H::ProjectDocumentT>();
+        file->path = "tsugumi.json";
+        document["canvas"] = R"({"cards":[],"connections":[]})";
+        file->json = json::Encode(document);
+        replacement.documents.push_back(std::move(file));
+        body.Set(std::move(replacement));
+      }
+      try {
+        project.Apply(std::move(body));
+        FAIL() << "expected refusal";
+      } catch (const Failure& failure) {
+        EXPECT_EQ(failure.code, "not_found");
+      }
+      EXPECT_EQ(project.saves, 0);
+      EXPECT_EQ(project.files, before);
+    }
+  }
+}
 TEST(ProjectOperationTransform,
      ConvertCopyAndUndoKeepBinaryAndNestedDocuments) {
   TransformationProject project;

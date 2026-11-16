@@ -173,6 +173,59 @@ TEST_F(AgentExcludeTest, ExclusionDoesNotIdentifyARun) {
   const auto after = load_from_disk(root);
   EXPECT_EQ(before->execution_fingerprint, after->execution_fingerprint);
 }
+TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
+  AgentExclude policy(root, R"({"agentExclude":["definitions/a/private.txt"]})");
+  SaveBase base;
+  Refused([&] {
+    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a"}}]})"), base);
+  });
+  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a-other"}}]})"), base));
+  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"a","card_json":"{}"}}]})"), base));
+}
+TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
+  for (const auto& prefix : {std::string{}, std::string{"externals/nested/"}}) {
+    const std::string project = j::Encode(j::Members{
+        {"agentExclude", j::Encode(std::vector<std::string>{j::Quote(prefix + "definitions/a/private.txt")})},
+        {"canvas", R"({"cards":[{"id":"a"},{"id":"public"}],"connections":[]})"}});
+    AgentExclude policy(root, project);
+    SaveBase base;
+    base.files[prefix + "tsugumi.json"] = project;
+    auto save = [&](const std::string& graph) {
+      auto changed = j::Object(project);
+      changed["canvas"] = graph;
+      const auto bytes = j::Encode(changed);
+      const auto value = prefix.empty()
+          ? j::Members{{"json", j::Quote(bytes)}}
+          : j::Members{{"path", j::Quote(prefix + "tsugumi.json")}, {"bytes", j::Quote(bytes)}};
+      return j::Members{{"changes", j::Encode(std::vector<std::string>{j::Encode(j::Members{
+          {"value_type", j::Quote(prefix.empty() ? "SetProject" : "PutSource")},
+          {"value", j::Encode(value)}})})}};
+    };
+    Refused([&] { policy.CheckSave(save(R"({"cards":[{"id":"public"}],"connections":[]})"), base); });
+    Refused([&] { policy.CheckSave(save(R"({"cards":[{"id":"renamed"},{"id":"public"}],"connections":[]})"), base); });
+    EXPECT_NO_THROW(policy.CheckSave(save(R"({"cards":[{"id":"a"}],"connections":[]})"), base));
+    // Subgraph conversion removes the selected Card from this graph too.
+    const auto nested = MakeSubgraph(project, {"a"}, "group");
+    Refused([&] {
+      policy.CheckSave(save(j::Get(j::Object(nested.project_json), "canvas")), base);
+    });
+  }
+}
+TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
+  AgentExclude policy(root, R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
+  SaveBase base;
+  base.files["definitions/group/_link.json"] = R"({"external":"original"})";
+  Refused([&] {
+    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"group"}}]})"), base);
+  });
+  Refused([&] {
+    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"elsewhere\"}"}}]})"), base);
+  });
+  Refused([&] {
+    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/group/_link.json"}}]})"), base);
+  });
+  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"original\"}"}}]})"), base));
+}
 TEST_F(AgentExcludeTest,
        DraftCreationResolvesBothCounterpartsAndKeepsDefaults) {
   const auto demos = temporary.path / "demos";

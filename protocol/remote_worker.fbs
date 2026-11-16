@@ -46,7 +46,8 @@ table Capabilities {
   worker_contract:uint;
   active_jobs:uint;
 }
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong; }
+// The host decides availability and supplies its reason; the core only carries it.
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; }
