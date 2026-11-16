@@ -121,6 +121,7 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'ProjectOperateRequest': return H.ProjectOperateRequest.getRootAsProjectOperateRequest(new fb.ByteBuffer(new Uint8Array(v.bytes))).unpack()
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
     case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
@@ -272,6 +273,11 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.
+  if (host && reply.valueType === H.ReplyPayload.ProjectOperationResult) {
+    const builder = new fb.Builder()
+    builder.finish(reply.value.pack(builder))
+    return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
+  }
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,

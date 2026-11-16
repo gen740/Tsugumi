@@ -219,7 +219,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
                     return bytes ? std::optional<LayoutFile>{{*bytes, {}}}
                                  : std::nullopt;
                   },
-                  layout->action == H::ProjectLayoutAction::Untangle));
+                  layout->action == H::ProjectLayoutAction::Untangle,
+                  layout->scene.get()));
   }
   auto plan = edits.edits.empty()
                   ? json::Members{{"base_rev", json::Get(base.snapshot, "rev")},
@@ -393,6 +394,17 @@ auto ProjectOperations::Execute(const std::string& project,
       if (context.authorize) context.authorize(plan, inspection.base);
       plan["check_permissions"] = context.origin == "agent" ? "true" : "false";
       plan["save_intent"] = json::Quote(intent);
+      if (context.origin == "ui") {
+        // Opaque to the core: carried in its existing save reply and replay.
+        const auto inverse = ReverseProjectChanges(plan, inspection.base, read);
+        flatbuffers::FlatBufferBuilder undo_builder;
+        undo_builder.Finish(H::ProjectEdits::Pack(undo_builder, &inverse));
+        plan["operation_data"] = json::Encode(
+            json::Members{{"base64", json::Quote(crypto::base64(std::string(
+                                         reinterpret_cast<const char *>(
+                                             undo_builder.GetBufferPointer()),
+                                         undo_builder.GetSize())))}});
+      }
       const auto result = call("project_save", plan);
       const auto envelope = json::Object(result.json);
       if (json::Text(envelope, "reply") != "Failure" ||

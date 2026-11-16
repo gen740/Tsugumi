@@ -120,3 +120,5 @@ await import('./projectImport')
 await import("./cardFileEdits")
 
 await import('./marimo')
+
+await import('./projectOperations')

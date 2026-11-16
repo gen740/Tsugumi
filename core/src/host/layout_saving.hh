@@ -6,6 +6,10 @@
 #include <string_view>
 #include <vector>
 
+namespace Tsugumi::Host {
+struct LayoutSceneT;
+}
+
 namespace tsugumi::host {
 struct LayoutFile {
   std::string text;
@@ -23,7 +27,8 @@ auto CompleteLayout(const std::string& project, const std::string& layout,
                     const LayoutRead& read = {}) -> std::string;
 // Explicit Agent operation, using the same host geometry as missing placement.
 auto ArrangeProjectLayout(const std::string& project, const std::string& layout,
-                          const LayoutRead& read, bool untangle) -> std::string;
+                          const LayoutRead& read, bool untangle,
+    const Tsugumi::Host::LayoutSceneT *measurements = nullptr) -> std::string;
 // Every saving client includes missing places and deletion cleanup in its
 // single revision/hash-guarded transaction. Reads use that revision.
 auto PrepareLayoutSave(

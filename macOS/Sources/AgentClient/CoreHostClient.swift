@@ -263,6 +263,15 @@ public actor CoreHostClient {
     return result.json
   }
 
+  public func operateProject(_ request: Tsugumi_Host_ProjectOperateRequestT) async throws -> Tsugumi_RPC_SaveResultT {
+    let result: Tsugumi_Host_ProjectOperationResultT = try await layoutCall(.projectoperaterequest, request)
+    if let failure = result.reply.value?.value as? Tsugumi_Data_FailureT { throw RPCFailure(failure) }
+    guard let saved = result.reply.value?.value as? Tsugumi_RPC_SaveResultT else {
+      throw RPCError.protocolViolation("Missing operation result")
+    }
+    return saved
+  }
+
   public func prepareLayoutSave(project: String, baseRev: UInt64, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] {
     let request = Tsugumi_Host_LayoutPrepareSaveRequestT()
     request.project = project

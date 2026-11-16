@@ -252,6 +252,7 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),

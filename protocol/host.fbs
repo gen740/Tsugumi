@@ -204,7 +204,12 @@ table ProjectConnect {
 }
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
-table ProjectLayout { project_path:string; action:ProjectLayoutAction; }
+table ProjectLayout {
+  project_path:string;
+  action:ProjectLayoutAction;
+  // Measurements only; the host uses the current graph and saved positions.
+  scene:LayoutScene;
+}
 union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout }
 table ProjectOperateRequest {
   project_id:string (required);

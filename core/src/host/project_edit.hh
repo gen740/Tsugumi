@@ -18,6 +18,11 @@ auto PreserveProjectBytes(const std::string& before, const std::string& after)
     -> std::string;
 using EditFileRead =
     std::function<std::optional<std::string>(const std::string&)>;
+// Guarded reverse edits for the exact concrete plan accepted by the host.
+// JSON fields are addressed by identity so unrelated later edits survive Undo.
+auto ReverseProjectChanges(const agent::json::Members &plan,
+                           const SaveBase &base, const EditFileRead &read)
+    -> Tsugumi::Host::ProjectEditsT;
 // Prepare one atomic concrete save against a revision-pinned confirmed state.
 auto PrepareProjectEdits(
     const Tsugumi::Host::ProjectEditsT& edits, const SaveBase& base,

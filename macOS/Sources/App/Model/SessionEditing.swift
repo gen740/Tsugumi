@@ -534,9 +534,19 @@ extension ProjectSession {
     let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if let problem = cardNameProblem(k, name) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
     guard name != displayName(k) else { return }
-    edit { s in s.updateMeta(k) { $0["name"] = .string(name) } }
-    await save()
-    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
+    guard let prefix = projectPrefix(Array(path(k).dropLast())), let id = path(k).last else { return }
+    let file = prefix + "definitions/\(id)/_meta.json"
+    let edit: Tsugumi_Host_ProjectEditT
+    if let meta = cardMeta(k) {
+      edit = fieldEdit(file, [.string("name")], old: meta["name"], new: .string(name))
+    } else {
+      let put = Tsugumi_Host_ProjectFilePutT()
+      put.filePath = file; put.expectMissing = true
+      put.bytes = Array(JSONValue.object([("name", .string(name))]).serialized().utf8)
+      edit = Tsugumi_Host_ProjectEditT()
+      edit.value = Tsugumi_Host_ProjectEditValueUnion(put, type: .projectfileput)
+    }
+    try await operateFields([edit])
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
@@ -1015,9 +1025,13 @@ extension ProjectSession {
 
   /// The host proposes the layout; it is saved as one ordinary edit with undo.
   func arrange(_ scope: [String]) async {
-    let scene = layoutScene(scope)
-    guard let placed = await proposed(scope, scene: scene, arrange: true) else { return }
-    edit { $0.applyArranged(scope, scene: scene, placed: placed) }
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectLayoutT()
+    body.projectPath = prefix.isEmpty ? "" : String(prefix.dropLast())
+    body.action = .arrange
+    body.scene = layoutScene(scope)
+    do { try await operate(.projectlayout, body: body) }
+    catch { notice = String(describing: error) }
   }
 
   /// Measurements only. Geometry and saved port order belong to presentation;
@@ -1111,45 +1125,15 @@ extension ProjectSession {
     }
   }
 
-  private func applyArranged(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, placed: Tsugumi_Host_LayoutProposalT) {
-    for c in placed.cards.compactMap({ $0 }) { setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
-    applyPortOrders(scope, placed.portOrders.compactMap { $0 })
-    updateLayout(of: scope) { l in
-      if !placed.frames.isEmpty {
-        var displays = l["displays"] ?? .object([])
-        for f in placed.frames.compactMap({ $0 }) {
-          let lk = layoutKey(key(scope + [f.id]))
-          var d = displays[lk] ?? .object([])
-          d["x"] = .real(f.x)
-          d["y"] = .real(f.y)
-          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-          if let size = scene.frames.compactMap({ $0 }).first(where: { $0.id == f.id }) {
-            d["width"] = .real(size.width)
-            d["height"] = .real(size.height)
-          }
-          displays[lk] = d
-        }
-        l["displays"] = displays
-      }
-      if !placed.notes.isEmpty, let list = l["notes"]?.array {
-        l["notes"] = .array(list.map { n in
-          guard let at = placed.notes.compactMap({ $0 }).first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
-          var copy = n
-          copy["x"] = .real(at.x)
-          copy["y"] = .real(at.y)
-          return copy
-        })
-      }
-      // The bars of a Card in Card go back to following the Cards.
-      l["boundary"] = nil
-    }
-  }
-
   /// Reduces crossings while keeping all positions, as one undo step.
   func untangle(_ scope: [String]) async {
-    let scene = layoutScene(scope)
-    guard let proposal = await proposed(scope, scene: scene, arrange: false), !proposal.portOrders.isEmpty else { return }
-    edit { $0.applyPortOrders(scope, proposal.portOrders.compactMap { $0 }) }
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectLayoutT()
+    body.projectPath = prefix.isEmpty ? "" : String(prefix.dropLast())
+    body.action = .untangle
+    body.scene = layoutScene(scope)
+    do { try await operate(.projectlayout, body: body) }
+    catch { notice = String(describing: error) }
   }
 
   private func untangleAround(_ scope: [String], moved: Set<CardKey>, step: UndoEntry) async {
@@ -1170,19 +1154,24 @@ extension ProjectSession {
   }
 
   /// Back to the declared order of the ports, in one undo step.
-  func resetPortOrder(_ keys: Set<CardKey>) {
+  @discardableResult
+  func resetPortOrder(_ keys: Set<CardKey>) -> Task<Void, Never> {
     let targets = keys.filter { hasPortOrder($0) }
-    if targets.isEmpty { return }
-    edit { s in
-      for k in targets {
-        s.updateLayout(of: Array(path(k).dropLast())) { l in
-          guard var cards = l["cards"], var entry = cards[s.layoutKey(k)] else { return }
-          entry["inputOrder"] = nil
-          entry["outputOrder"] = nil
-          cards[s.layoutKey(k)] = entry
-          l["cards"] = cards
+    if targets.isEmpty { return Task {} }
+    var edits: [Tsugumi_Host_ProjectEditT] = []
+    for k in targets.sorted() {
+      let scope = Array(path(k).dropLast())
+      guard let prefix = projectPrefix(scope) else { continue }
+      let entry = layout(of: scope)["cards"]?[layoutKey(k)]
+      for field in ["inputOrder", "outputOrder"] {
+        if let value = entry?[field] {
+          edits.append(fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
         }
       }
+    }
+    return Task { @MainActor in
+      do { try await operateFields(edits) }
+      catch { notice = String(describing: error) }
     }
   }
 

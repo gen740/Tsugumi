@@ -430,6 +430,7 @@ final class ProjectSession {
   /// One saved operation: undo applies `before` over what is there now, so
   /// changes made since by the Agent or another window stay.
   final class UndoEntry {
+    var operation: Tsugumi_Host_ProjectEditsT?
     var before: DocState
     var after: DocState
     var sourcesBefore: [String: SourceValue]
@@ -450,6 +451,11 @@ final class ProjectSession {
     let project: JSONValue
     let layout: JSONValue
     let definitions: [String: DefinitionDraft]
+  }
+  @ObservationIgnored private let documentRevisions = DocumentRevisions()
+  @ObservationIgnored private var operationTask: Task<Tsugumi_RPC_SaveResultT, Error>?
+  var operateProject: (Tsugumi_Host_ProjectOperateRequestT) async throws -> Tsugumi_RPC_SaveResultT = {
+    try await CoreHostClient.shared.operateProject($0)
   }
   @ObservationIgnored private var draftBase: DraftBase?
   /// Confirmed externals when each external's edit started.
@@ -609,6 +615,7 @@ final class ProjectSession {
   }
 
   private func setConnected(_ value: Bool) {
+    if !value { documentRevisions.disconnect(RPCError.disconnected) }
     connected = value
     terminals.environment(connected: value)
   }
@@ -887,6 +894,7 @@ final class ProjectSession {
 
   private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT, resetDraft: Bool) {
     rev = s.rev ?? 0
+    documentRevisions.reset(rev)
     executionRev = s.executionRev ?? 0
     executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
@@ -924,6 +932,7 @@ final class ProjectSession {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
       scheduleSave()
     }
+    documentRevisions.drain { delta, saved in applyOrderedDelta(delta, fromSave: saved) }
   }
 
   private func applyResolution(_ res: [Tsugumi_RPC_ResolvedCardT], _ diags: [Tsugumi_Data_DiagnosticT]) {
@@ -1023,6 +1032,12 @@ final class ProjectSession {
   }
 
   private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
+    documentRevisions.receive(d, fromSave: fromSave) { delta, saved in
+      applyOrderedDelta(delta, fromSave: saved)
+    }
+  }
+
+  private func applyOrderedDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
     guard d.baseRev == rev else {
       if let r = d.rev, r <= rev { return }  // already applied (our own save reply)
       reconnect()
@@ -1317,6 +1332,16 @@ final class ProjectSession {
   private struct RevertResult { let inverse: UndoEntry? }
 
   private func revert(_ e: UndoEntry, undo: Bool) async -> RevertResult? {
+    if let operation = e.operation {
+      do {
+        let result = try await operate(.projectedits, body: operation, record: false)
+        let inverse = try operationInverse(result)
+        let state = docState()
+        let entry = UndoEntry(before: state, after: state, sourcesBefore: [:], sourcesAfter: [:])
+        entry.operation = inverse
+        return RevertResult(inverse: inverse.edits.isEmpty ? nil : entry)
+      } catch { saveError = String(describing: error); return nil }
+    }
     let cur = docState(), curSnap = snapshot()
     let revision = rev
     let reply: (value: JSONValue, conflicts: [String])
@@ -1512,7 +1537,79 @@ final class ProjectSession {
   }
 
   /// Waits until what was edited so far is saved (or cannot be saved now).
+  /// One human action completes when its reply has entered the ordered document.
+  @discardableResult
+  func operate(_ type: Tsugumi_Host_ProjectOperationBody, body: NativeObject, record: Bool = true) async throws -> Tsugumi_RPC_SaveResultT {
+    let previous = operationTask
+    let task = Task { @MainActor in
+      _ = try? await previous?.value
+      if dirty || saveTask != nil { await saveLegacy() }
+      if dirty { throw RPCFailure(kind: .busy, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
+      guard connected, let client, let projectId else { throw RPCError.disconnected }
+      let request = Tsugumi_Host_ProjectOperateRequestT()
+      request.projectId = projectId
+      request.opId = UUID().uuidString.lowercased()
+      request.body = Tsugumi_Host_ProjectOperationBodyUnion(body, type: type)
+      let result = try await operateProject(request)
+      guard connected, self.client === client else { throw RPCError.disconnected }
+      if let delta = result.delta { applyDelta(delta) }
+      try await documentRevisions.applied(result.rev ?? rev)
+      let inverse = try operationInverse(result)
+      if record && !inverse.edits.isEmpty {
+        let state = docState()
+        let entry = UndoEntry(before: state, after: state, sourcesBefore: [:], sourcesAfter: [:])
+        entry.operation = inverse
+        undoStack.append(entry)
+        if undoStack.count > 500 { undoStack.removeFirst() }
+        redoStack = []
+      }
+      saveError = nil
+      return result
+    }
+    operationTask = task
+    // A later action may already own operationTask when this one finishes.
+    // Keeping the completed tail is harmless and preserves submission order.
+    return try await task.value
+  }
+
+  private func operationInverse(_ result: Tsugumi_RPC_SaveResultT) throws -> Tsugumi_Host_ProjectEditsT {
+    guard !result.operationData.isEmpty else { throw RPCError.protocolViolation("Missing operation changes") }
+    var buffer = ByteBuffer(bytes: result.operationData)
+    let root: Tsugumi_Host_ProjectEdits = try getCheckedRoot(byteBuffer: &buffer)
+    return root.unpack()
+  }
+
+  func fieldEdit(_ file: String, _ selector: [JSONValue], old: JSONValue?, new: JSONValue?) -> Tsugumi_Host_ProjectEditT {
+    let field = Tsugumi_Host_ProjectFieldEditT()
+    field.filePath = file
+    field.selector = selector.map { step in
+      let value = Tsugumi_Host_ProjectSelectorT()
+      if let name = step.string { value.field = name }
+      else { value.matchJson = step.serialized() }
+      return value
+    }
+    field.oldValue = Tsugumi_Host_ProjectValueT()
+    field.oldValue.present = old != nil; field.oldValue.json = old?.serialized()
+    field.newValue = Tsugumi_Host_ProjectValueT()
+    field.newValue.present = new != nil; field.newValue.json = new?.serialized()
+    let edit = Tsugumi_Host_ProjectEditT()
+    edit.value = Tsugumi_Host_ProjectEditValueUnion(field, type: .projectfieldedit)
+    return edit
+  }
+
+  func operateFields(_ edits: [Tsugumi_Host_ProjectEditT]) async throws {
+    if edits.isEmpty { return }
+    let body = Tsugumi_Host_ProjectEditsT()
+    body.edits = edits.map(Optional.some)
+    try await operate(.projectedits, body: body)
+  }
+
   func save() async {
+    _ = try? await operationTask?.value
+    await saveLegacy()
+  }
+
+  private func saveLegacy() async {
     if saveTask == nil { scheduleSave() } else { saveAgain = true }
     while let t = saveTask { await t.value }
   }

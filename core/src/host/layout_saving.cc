@@ -81,7 +81,8 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool {
 }
 
 static auto TransformLayout(const std::string& project, const std::string& text,
-                            const LayoutRead& read, int action) -> std::string {
+                            const LayoutRead& read, int action,
+                const Tsugumi::Host::LayoutSceneT *measurements = nullptr) -> std::string {
   ValidateLayout(text);
   auto doc = json::Object(text);
   auto positions = json::Object(json::Get(doc, "cards", "{}"));
@@ -192,6 +193,85 @@ static auto TransformLayout(const std::string& project, const std::string& text,
                            number(b, "y", 0), number(b, "width", 240),
                            number(b, "height", 160)});
   }
+  if (measurements) {
+    const auto measured = MeasuredScene(*measurements);
+    if (!doc.contains("flow"))
+      scene.top_to_bottom = measured.top_to_bottom;
+    // Flow may have changed while the request travelled. Current-document
+    // geometry remains the fallback for new Cards and stale measurements.
+    if (measured.top_to_bottom == scene.top_to_bottom) {
+      scene.grid = measured.grid;
+      scene.snap = measured.snap;
+      for (auto &card : scene.cards) {
+        const auto found = std::find_if(
+            measured.cards.begin(), measured.cards.end(),
+            [&](const auto &value) { return value.id == card.id; });
+        if (found == measured.cards.end())
+          continue;
+        auto covers = [](const auto &required, const auto &ports) {
+          return std::all_of(required.begin(), required.end(),
+                             [&](const auto &port) {
+                               return std::any_of(ports.begin(), ports.end(),
+                                                  [&](const auto &p) {
+                                                    return p.name == port.name;
+                                                  });
+                             });
+        };
+        if (!covers(card.inputs, found->inputs) ||
+            !covers(card.outputs, found->outputs))
+          continue;
+        const auto x = card.x, y = card.y;
+        card = *found;
+        card.x = x;
+        card.y = y;
+      }
+      for (auto &frame : scene.frames)
+        for (const auto &size : measured.frames)
+          if (size.id == frame.id) {
+            frame.width = size.width;
+            frame.height = size.height;
+          }
+      for (auto &note : scene.notes)
+        for (const auto &size : measured.notes)
+          if (size.id == note.id) {
+            note.width = size.width;
+            note.height = size.height;
+          }
+      // A displayed default frame has no saved rectangle yet. Its dimensions
+      // come from the UI; ownership and the current Card position come here.
+      for (const auto &frame : measured.frames) {
+        if (displays.contains(frame.id))
+          continue;
+        const auto card =
+            std::find_if(scene.cards.begin(), scene.cards.end(),
+                         [&](const auto &c) { return c.id == frame.id; });
+        const auto old =
+            std::find_if(measured.cards.begin(), measured.cards.end(),
+                         [&](const auto &c) { return c.id == frame.id; });
+        if (card != scene.cards.end() && old != measured.cards.end())
+          scene.frames.push_back({frame.id, card->x + frame.x - old->x,
+                                  card->y + frame.y - old->y, frame.width,
+                                  frame.height});
+      }
+    }
+    const auto boundary =
+        json::Object(json::Get(json::Object(project), "boundary", "{}"));
+    const auto places = json::Object(json::Get(doc, "boundary", "{}"));
+    auto bar = [&](const std::string &side, auto &destination) {
+      for (const auto &[name, raw] :
+           json::Object(json::Get(boundary, side, "{}"))) {
+        const auto end = json::Object(raw);
+        destination.ends.push_back(
+            {name, json::Text(end, "card"), json::Text(end, "port")});
+      }
+      if (places.contains(side)) {
+        const auto at = json::Object(places.at(side));
+        destination.at = layout::Point{number(at, "x", 0), number(at, "y", 0)};
+      }
+    };
+    bar("inputs", scene.inputs);
+    bar("outputs", scene.outputs);
+  }
   const auto proposal = action < 0    ? layout::place_missing(scene, missing)
                         : action == 0 ? layout::arrange(scene)
                                       : layout::untangle(scene, {});
@@ -216,6 +296,13 @@ static auto TransformLayout(const std::string& project, const std::string& text,
       auto frame = json::Object(json::Get(frames, p.id, "{}"));
       frame["x"] = std::to_string(p.x);
       frame["y"] = std::to_string(p.y);
+      const auto size =
+          std::find_if(scene.frames.begin(), scene.frames.end(),
+                       [&](const auto &f) { return f.id == p.id; });
+      if (size != scene.frames.end()) {
+        frame["width"] = std::to_string(size->width);
+        frame["height"] = std::to_string(size->height);
+      }
       frames[p.id] = json::Encode(frame);
     }
     if (!proposal.frames.empty()) doc["displays"] = json::Encode(frames);
@@ -232,6 +319,8 @@ static auto TransformLayout(const std::string& project, const std::string& text,
     if (!proposal.notes.empty()) doc["notes"] = json::Encode(notes);
   }
   doc["cards"] = json::Encode(positions);
+  if (action == 0)
+    doc.erase("boundary");
   return json::Encode(doc);
 }
 
@@ -240,9 +329,10 @@ auto CompleteLayout(const std::string& project, const std::string& text,
   return TransformLayout(project, text, read, -1);
 }
 auto ArrangeProjectLayout(const std::string& project, const std::string& text,
-                          const LayoutRead& read, bool untangle)
+                          const LayoutRead& read, bool untangle,
+                          const Tsugumi::Host::LayoutSceneT *measurements)
     -> std::string {
-  return TransformLayout(project, text, read, untangle ? 1 : 0);
+  return TransformLayout(project, text, read, untangle ? 1 : 0, measurements);
 }
 
 auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,

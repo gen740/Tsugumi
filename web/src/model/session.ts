@@ -1,6 +1,8 @@
+import { DocumentRevisions } from './documentRevisions'
+import { projectOperation, operationInverse } from './projectOperation'
 import { connectionsOf, SavePresence } from './presence'
 import { readViewState, writeViewState } from '../shared/clientViewState'
-import { layoutHost, H } from '../shared/hostLayout'
+import { layoutHost, H, sceneRequest } from '../shared/hostLayout'
 import { VersionCommentT } from '../gen/tsugumi/host/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
@@ -378,6 +380,7 @@ const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !=
 /** One saved operation: undo applies `before` over what is there now, so
  *  changes made since by the Agent or another window stay. */
 export interface UndoEntry {
+  operation?: H.ProjectEditsT
   before: DocState
   after: DocState
   sourcesBefore: Map<string, SourceValue>
@@ -506,6 +509,9 @@ export class ProjectSession extends Observable {
   private cacheNoticeShown = false
   notice?: string
 
+  private readonly documentRevisions = new DocumentRevisions()
+  operateProject = projectOperation
+  private operationTask?: Promise<R.SaveResultT>
   private draftBase?: DraftBase
   /** Confirmed externals when each external's edit started. */
   private externalBases = new Map<string, ExternalProject | null>()
@@ -757,6 +763,7 @@ export class ProjectSession extends Observable {
       this.listen(c)
       c.onClose = () => {
         if (this.client !== c) return
+        this.documentRevisions.disconnect(new RPCError('disconnected', L('接続していません')))
         this.connected = false
         this.changed()
         this.reconnect()
@@ -1001,6 +1008,7 @@ export class ProjectSession extends Observable {
   private apply(snap: R.ProjectSnapshotT, resetDraft: boolean) {
     this.executionServices = snap.executionServices
     this.rev = snap.rev ?? 0n
+    this.documentRevisions.reset(this.rev)
     this.executionRev = snap.executionRev ?? 0n
     this.confirmedProject = tryParse(s(snap.projectJson)) ?? obj()
     this.confirmedLayout = tryParse(s(snap.layoutJson)) ?? obj()
@@ -1035,6 +1043,7 @@ export class ProjectSession extends Observable {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
       this.scheduleSave()
     }
+    this.documentRevisions.drain((delta, saved) => this.applyOrderedDelta(delta, saved))
   }
 
   private applyResolution(res: R.ResolvedCardT[], diags: D.DiagnosticT[]) {
@@ -1058,6 +1067,10 @@ export class ProjectSession extends Observable {
   }
 
   private applyDelta(d: R.DocumentDeltaT, fromSave = false) {
+    this.documentRevisions.receive(d, (delta, saved) => this.applyOrderedDelta(delta, saved), fromSave)
+  }
+
+  private applyOrderedDelta(d: R.DocumentDeltaT, fromSave = false) {
     if (d.baseRev !== this.rev) {
       if (d.rev !== null && d.rev <= this.rev) return // already applied (our own save reply)
       this.reconnect()
@@ -1395,6 +1408,13 @@ export class ProjectSession extends Observable {
   /** Puts back what an entry changed (its `before`), over the current state.
    *  Returns the entry that does it again. */
   private async revert(e: UndoEntry, undo: boolean): Promise<{ inverse?: UndoEntry } | undefined> {
+    if (e.operation) {
+      try {
+        const result = await this.operate(H.ProjectOperationBody.ProjectEdits, e.operation, false)
+        const state = this.docState(), inverse = operationInverse(result)
+        return { inverse: inverse.edits.length ? { operation: inverse, before: state, after: state, sourcesBefore: new Map(), sourcesAfter: new Map() } : undefined }
+      } catch (error) { this.saveError = errorText(error); this.changed(); return }
+    }
     const cur = this.docState(), curSnap = this.snapshot()
     const revision = this.rev
     let reply: Awaited<ReturnType<ProjectSession['mergeStates']>>
@@ -1600,6 +1620,49 @@ export class ProjectSession extends Observable {
     return out
   }
 
+  /** Submit one action, then complete only after its reply is in the confirmed state. */
+  async operate(bodyType: H.ProjectOperationBody, body: H.ProjectOperateRequestT['body'], record = true): Promise<R.SaveResultT> {
+    const previous = this.operationTask
+    const task = (async () => {
+      await previous?.catch(() => undefined)
+      if (this.dirty || this.saveTask) await this.saveLegacy()
+      if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.busy, diagnostic: this.saveError ?? L('変更を保存できませんでした。') })
+      const client = this.client
+      if (!this.connected || !client || !this.projectId) throw new RPCError('disconnected', L('接続していません'))
+      const request = new H.ProjectOperateRequestT(this.projectId, uuid(), bodyType, body)
+      const result = await this.operateProject(request)
+      if (!this.connected || this.client !== client) throw new RPCError('disconnected', L('接続していません'))
+      if (result.delta) this.applyDelta(result.delta)
+      await this.documentRevisions.applied(result.rev ?? this.rev)
+      const inverse = operationInverse(result)
+      if (record && inverse.edits.length) {
+        const state = this.docState()
+        this.undoStack.push({ operation: inverse, before: state, after: state, sourcesBefore: new Map(), sourcesAfter: new Map() })
+        if (this.undoStack.length > 500) this.undoStack.shift()
+        this.redoStack = []
+      }
+      this.saveError = undefined
+      this.changed()
+      return result
+    })()
+    this.operationTask = task
+    try { return await task }
+    finally { if (this.operationTask === task) this.operationTask = undefined }
+  }
+
+  /** Field values are captured at the gesture, never diffed against an editor save base. */
+  fieldEdit(file: string, selector: (string | JObj)[], oldValue: J | undefined, newValue: J | undefined): H.ProjectEditT {
+    return new H.ProjectEditT(H.ProjectEditValue.ProjectFieldEdit,
+      new H.ProjectFieldEditT(file, selector.map(step => typeof step === 'string'
+        ? new H.ProjectSelectorT(step) : new H.ProjectSelectorT(null, serialize(step))),
+      new H.ProjectValueT(oldValue !== undefined, oldValue === undefined ? null : serialize(oldValue)),
+      new H.ProjectValueT(newValue !== undefined, newValue === undefined ? null : serialize(newValue))))
+  }
+
+  async operateFields(edits: H.ProjectEditT[]) {
+    if (edits.length) await this.operate(H.ProjectOperationBody.ProjectEdits, new H.ProjectEditsT(edits))
+  }
+
   /** Starts saving what the draft holds (edits made meanwhile are saved next). */
   scheduleSave() {
     if (!this.connected || !this.client) return
@@ -1628,6 +1691,11 @@ export class ProjectSession extends Observable {
 
   /** Waits until what was edited so far is saved (or cannot be saved now). */
   async save(): Promise<void> {
+    await this.operationTask?.catch(() => undefined)
+    await this.saveLegacy()
+  }
+
+  private async saveLegacy(): Promise<void> {
     if (!this.saveTask) this.scheduleSave()
     else this.saveAgain = true
     while (this.saveTask) await this.saveTask
@@ -1785,7 +1853,7 @@ export class ProjectSession extends Observable {
     if (!editor) this.canvasSaveOp = op
     try {
       changes = await this.layoutHost.prepareSave(this.projectId!, baseRev, changes)
-      if (this.client !== client) throw new RPCError('disconnected', L('接続していません'))
+      if (!this.connected || this.client !== client) throw new RPCError('disconnected', L('接続していません'))
       let result: R.SaveResultT
       try { result = await client.save(baseRev, op, this.origin, changes) }
       catch (error) {
@@ -2833,9 +2901,14 @@ export class ProjectSession extends Observable {
     const problem = this.cardNameProblem(k, name)
     if (problem) throw new Error(problem)
     if (name === this.displayName(k)) return
-    this.edit((s) => s.updateMeta(k, (m) => m.set('name', name)))
-    await this.save()
-    if (this.dirty) throw new Error(this.saveError ?? L('変更を保存できませんでした。'))
+    const prefix = this.projectPrefix(path(k).slice(0, -1))
+    if (prefix === undefined) return
+    const id = path(k).at(-1)!, meta = this.cardMeta(k)
+    const file = `${prefix}definitions/${id}/_meta.json`
+    const edit = meta === undefined
+      ? new H.ProjectEditT(H.ProjectEditValue.ProjectFilePut, new H.ProjectFilePutT(file, null, true, Array.from(new TextEncoder().encode(serialize(obj([['name', name]]))))))
+      : this.fieldEdit(file, ['name'], get(meta, 'name'), name)
+    await this.operateFields([edit])
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -3308,9 +3381,10 @@ export class ProjectSession extends Observable {
   layoutHost = layoutHost
 
   async arrange(scope: string[]) {
-    const scene = this.layoutScene(scope)
-    const placed = await this.proposed(scope, scene, (c) => c.layoutArrange(scene))
-    if (placed) this.edit((x) => x.applyArranged(scope, scene, placed))
+    const prefix = this.projectPrefix(scope)
+    if (prefix === undefined) return
+    try { await this.operate(H.ProjectOperationBody.ProjectLayout, new H.ProjectLayoutT(prefix.replace(/\/$/, ''), H.ProjectLayoutAction.Arrange, sceneRequest(this.layoutScene(scope)))) }
+    catch (error) { this.cardEditFailed(error) }
   }
 
   /** What the canvas draws in a scope, for tsugumi-hostd to lay out. Sizes and port
@@ -3368,52 +3442,6 @@ export class ProjectSession extends Observable {
     }
   }
 
-  /** A step of an edit: the places tsugumi-hostd proposed for the scene it was sent.
-   *  What is no longer on the canvas is left out. */
-  private applyArranged(scope: string[], scene: LayoutScene, placed: LayoutProposal) {
-    const there = new Set(this.cards(scope).map((c) => str(get(c, 'id'))))
-    const cards = placed.cards.filter((c) => there.has(c.id)), frames = placed.frames.filter((f) => there.has(f.id))
-    for (const c of cards) this.setPosition(key([...scope, c.id]), c)
-    this.updateLayout(scope, (l) => {
-      if (frames.length) {
-        let displays = l.get('displays')
-        if (!isObj(displays)) {
-          displays = obj()
-          l.set('displays', displays)
-        }
-        for (const f of frames) {
-          const lk = this.layoutKey(key([...scope, f.id]))
-          let d = (displays as JObj).get(lk)
-          if (!isObj(d)) {
-            d = obj()
-            ;(displays as JObj).set(lk, d)
-          }
-          ;(d as JObj).set('x', real(f.x))
-          ;(d as JObj).set('y', real(f.y))
-          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-          const size = scene.frames.find((x) => x.id === f.id)
-          if (size) {
-            ;(d as JObj).set('width', real(size.width))
-            ;(d as JObj).set('height', real(size.height))
-          }
-        }
-      }
-      if (placed.notes.length) {
-        l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
-          const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
-          const copy = clone(n)
-          if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
-            copy.set('x', real(at.x))
-            copy.set('y', real(at.y))
-          }
-          return copy
-        }))
-      }
-      // The bars of a Card in Card go back to following the Cards.
-      l.set('boundary', undefined)
-    })
-    this.applyPortOrders(scope, placed.portOrders.filter((o) => there.has(o.id)))
-  }
 
   // ---- Definitions ---------------------------------------------------------------
 
@@ -3843,9 +3871,10 @@ export class ProjectSession extends Observable {
 
   /** Keep the layout while reducing crossings (LayoutUntangle); one undo restores every port. */
   async untangle(scope: string[]) {
-    const scene = this.layoutScene(scope)
-    const orders = (await this.proposed(scope, scene, (c) => c.layoutUntangle(scene, [])))?.portOrders ?? []
-    if (orders.length) this.edit((s) => s.applyPortOrders(scope, orders))
+    const prefix = this.projectPrefix(scope)
+    if (prefix === undefined) return
+    try { await this.operate(H.ProjectOperationBody.ProjectLayout, new H.ProjectLayoutT(prefix.replace(/\/$/, ''), H.ProjectLayoutAction.Untangle, sceneRequest(this.layoutScene(scope)))) }
+    catch (error) { this.cardEditFailed(error) }
   }
 
   /** After an edit that moved Cards: the ports of what moved and of the Cards
@@ -3871,17 +3900,20 @@ export class ProjectSession extends Observable {
   }
 
   /** Back to the declared order of the ports, in one undo step. */
-  resetPortOrder(keys: Iterable<CardKey>) {
+  async resetPortOrder(keys: Iterable<CardKey>) {
     const targets = [...keys].filter(k => this.hasPortOrder(k))
     if (!targets.length) return
-    this.edit(x => {
-      for (const k of targets) x.updateLayout(path(k).slice(0, -1), l => {
-        const entry = get(l, 'cards', x.layoutKey(k))
-        if (!isObj(entry)) return
-        entry.set('inputOrder', undefined)
-        entry.set('outputOrder', undefined)
-      })
-    })
+    const edits: H.ProjectEditT[] = []
+    for (const k of targets) {
+      const scope = path(k).slice(0, -1), prefix = this.projectPrefix(scope)
+      if (prefix === undefined) continue
+      const entry = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
+      for (const field of ['inputOrder', 'outputOrder']) {
+        const value = get(entry, field)
+        if (value !== undefined) edits.push(this.fieldEdit(`${prefix}layout.json`, ['cards', this.layoutKey(k), field], value, undefined))
+      }
+    }
+    try { await this.operateFields(edits) } catch (error) { this.cardEditFailed(error) }
   }
 
   private applyPortOrders(scope: string[], orders: LayoutPortOrder[]) {

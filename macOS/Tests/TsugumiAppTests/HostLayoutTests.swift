@@ -85,7 +85,7 @@ import TsugumiTestSupport
     await s.undo()
     #expect(s.geometry("source").outputs == ["b", "a"])
     #expect(s.hasPortOrder("source"))
-    s.resetPortOrder(["source"])
+    await s.resetPortOrder(["source"]).value
     #expect(s.geometry("source").outputs == ["a", "b"])
     #expect(!s.hasPortOrder("source"))
     await s.undo()

@@ -113,6 +113,13 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
 }
 }  // namespace
 
+auto MeasuredScene(const R::LayoutSceneT &scene) -> layout::Scene {
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(R::LayoutScene::Pack(builder, &scene));
+  return scene_of(
+      *flatbuffers::GetRoot<R::LayoutScene>(builder.GetBufferPointer()));
+}
+
 auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
   auto l = decode_layout(text);
   if (const auto* cards = schema::get(l.cards))
