@@ -55,7 +55,7 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](
 
 Prose and `README.md` run the documentation build/tests; `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Web, SDK, shared UI and demos run Web/player checks and documentation; demos also run SDK, Guide RPC and Swift tests. Native core/worker changes run runtime consumers on both Linux architectures and macOS; client changes also run Web/player checks. Swift changes run Mac tests; CLI/plugin changes run adapter tests (CLI also selects Mac tests). Build prerequisites follow each selected job. Site tooling also runs Swift help tests.
 
-`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts still run their full suites. Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
+`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
 | Location | Coverage |
 | --- | --- |
@@ -121,3 +121,56 @@ TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials macOS/tools/run-ui.sh dist/Tsugumi.ap
 ```
 
 Like the script's `setting` command, this registers a host setting, which remains until removed in Settings. Supply `TSUGUMI_HOST_STATE` to select an isolated host for a trial when needed. A direct scripted launch can use: `open -g -n --env TSUGUMI_UI_SCRIPT=/absolute/trial.script --env TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials --env TSUGUMI_HOST_STATE=/absolute/output/host-core dist/Tsugumi.app`. The trust input is ignored without a readable UI script and is never read from a project. Scripts and smoke runs leave the app in the background, including when an existing project window is selected.
+
+## Execution ownership and timing
+
+Actions and `ci-local.sh` use [ci/run-suite.sh](ci/run-suite.sh) for the same
+command lists, gtest filters and pytest marker expressions. The canonical CI
+owner of shared rules is **x86_64 Linux**. ARM Linux and macOS retain native
+transport/client smokes and filesystem, process, worker, ABI and sandbox tests.
+The exact shared Python files/cases and package smokes are listed in
+[conftest.py](conftest.py), under `shared_rules`, `sdk_pure` and `package_smoke`.
+Unlisted cases keep running on their existing platforms; selection never assumes
+that a newly added test is platform neutral.
+
+| Checks | Full owner | Further targets |
+| --- | --- | --- |
+| Host document/layout/validation/policy and context rules | x86_64 Linux | Explicit negative gtest filter; wire/auth, filesystem/privacy and OS adapters remain |
+| Project document/schema/graph/definition/version matrices | x86_64 Linux | `not environment and not shared_rules`; Unix/WebSocket save smoke and process/filesystem scenarios remain |
+| Web type and behavior corpus | x86_64 Linux | Web/Wasm package build and packaged server/CLI smoke on ARM Linux |
+| CLI/plugin/Web adapter corpus | x86_64 Linux | `package_smoke`: authenticated packaged server, Wasm policy, resident CLI startup |
+| Python SDK pure libraries | x86_64 Linux | `not sdk_pure or package_smoke`; native plot/notebook import/render and child cleanup remain |
+| SDK ABI/language runtimes, C# sandbox, runnable examples | Both Linux targets | Full native coverage |
+| Swift and Seatbelt | macOS | Full native coverage |
+| Real remote execution | x86_64 Linux | Separate worker admission/protocol and core-to-worker execution suites |
+
+`tsugumi_worker_condition_tests` runs with the canonical core suite;
+`tsugumi_definition_evaluation_tests` runs on every native target because it
+validates embedded Nix dependencies and filesystem invalidation.
+
+The local Linux pass represents the canonical full Linux job even on an ARM
+Mac (`TSUGUMI_FULL_RULES=1`); its Mac pass omits shared rules. It runs the same
+C# sandbox step and separate SDK example step as Actions, rather than collecting
+these in the parallel SDK invocation. It also runs the real remote worker suite
+on the available local Linux architecture (`TSUGUMI_LOCAL_REMOTE=0` explicitly
+omits that separate integration job). `ci-local.sh agent` runs all Host rules
+and public Agent transports on the local target. Local Nix builds use four cores
+and one build job; local pytest uses two workers by default. Actions preserves
+its automatic worker count through `TSUGUMI_PYTEST_WORKERS=auto`; the variable
+can select a different local count without changing test ownership.
+
+Use events, explicit gates or virtual time for test transitions. A watchdog
+bounds a missing event; it is not a throughput assertion. Web background-tab,
+renderer timeout and thumbnail idle/linger tests use virtual timers. Swift model
+waits subscribe to Observation rather than exhausting a fixed number of ticks.
+Real process/socket startup polls wait for an actual readiness record and retain
+watchdogs. Deliberate performance checks are opt-in:
+
+- `TSUGUMI_WIRE_BENCH=1 npm --prefix web test` runs [bench/wire-frames.ts](bench/wire-frames.ts).
+- `TSUGUMI_HEARTBEAT_BENCH=1 build-ci/bin/tsugumi-test-env python3 -m pytest -q tests/core/test_remote_recovery.py -k registered_heartbeat` enables [bench/heartbeat.py](bench/heartbeat.py).
+
+The complete 340-case layout golden oracle remains in
+`HostLayout.EveryGoldenRequestReturnsACorrelatedProposal`. Clients retain rich
+wire specimens and their own proposal application, undo, staleness and retry
+behavior. The core keeps one opaque-layout byte round trip; Host validation
+keeps all invalid-layout vectors.

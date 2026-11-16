@@ -231,7 +231,23 @@ int run_daemon(int argc, char** argv) {
     }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
+  } catch (const HistoryOpenError& e) {
+    if (!opt.control_dir.empty()) {
+      schema::StartupError error;
+      *error.kind = e.code == HistoryOpenCode::NotRegular
+                        ? "history_not_regular" : "history_archive_conflict";
+      *error.message = e.what();
+      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+    }
+    log::error(std::string("cannot open the project: ") + e.what());
+    return 6;
   } catch (const std::exception& e) {
+    if (!opt.control_dir.empty()) {
+      schema::StartupError error;
+      *error.kind = "project_open_failed";
+      *error.message = e.what();
+      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+    }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
   }

@@ -1536,6 +1536,7 @@ struct BuiltinCardItems: View {
 
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
+  static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
   static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .collect]
 
   var body: some View {
@@ -1548,7 +1549,7 @@ struct BuiltinCardItems: View {
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Menu("可視化（図を描く Card）") {
-      ForEach([DefinitionTemplate.matplotlib, .plotly, .altair], id: \.self) { t in
+      ForEach(Self.visualizations, id: \.self) { t in
         Button(t.label) { add(t) }
       }
     }

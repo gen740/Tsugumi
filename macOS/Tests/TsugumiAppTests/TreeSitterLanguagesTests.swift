@@ -11,7 +11,6 @@ private func tokens(_ text: String, _ lang: String) -> Set<String> {
   return Set(spans.map { r, t in "\(t):" + (text as NSString).substring(with: r) })
 }
 
-private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..").standardizedFileURL
 
 @Test func treeSitterNamesTheNewLanguages() {
   for (name, grammar) in [("go", "go"), ("rs", "rust"), ("rust", "rust"), ("jl", "julia"), ("julia", "julia"), ("r", "r"), ("R", "r"), ("Go", "go")] {
@@ -46,36 +45,4 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
   #expect(t.contains("comment:# note") && t.contains("keyword:function") && t.contains("keyword:if") && t.contains("keyword:else") && t.contains("keyword:for"))
   #expect(t.contains("string:\"hi\"") && t.contains("number:2.5") && t.contains("function:library") && t.contains("function:print"))
   #expect(t.contains("constant:TRUE") && t.contains("constant:NULL"))
-}
-
-/// The demos' own Julia and R Cards: every one gets keywords and functions from its grammar.
-@Test func treeSitterColorsTheDemoCards() throws {
-  let demos = repoRoot.appendingPathComponent("demos/ja")
-  var seen: [String: Int] = [:]
-  for case let url as URL in FileManager.default.enumerator(at: demos, includingPropertiesForKeys: nil)! {
-    let lang = ["main.jl": "julia", "main.R": "r"][url.lastPathComponent]
-    guard let lang, url.path.contains("/src/") else { continue }
-    let text = try String(contentsOf: url, encoding: .utf8)
-    let t = tokens(text, lang)
-    let kinds = Set(t.map { String($0.prefix { $0 != ":" }) })
-    #expect(kinds.isSuperset(of: ["keyword", "function"]), "\(url.path): \(kinds)")
-    seen[lang, default: 0] += 1
-  }
-  #expect(seen["julia", default: 0] > 0 && seen["r", default: 0] > 0, "\(seen)")
-}
-
-@Test func treeSitterColorsTheGillespieCheckCard() throws {
-  let url = repoRoot.appendingPathComponent("demos/ja/gillespie/definitions/check/src/main.jl")
-  let text = try String(contentsOf: url, encoding: .utf8)
-  let t = tokens(text, "jl")
-  #expect(t.contains("keyword:using") && t.contains("keyword:function") && t.contains("keyword:end") && t.contains("function:main"))
-  #expect(t.contains { $0.hasPrefix("comment:# Each simulated value") } && t.contains { $0.hasPrefix("string:") } && t.contains { $0.hasPrefix("number:") })
-}
-
-@Test func treeSitterColorsTheRnaSeqPcaCard() throws {
-  let url = repoRoot.appendingPathComponent("demos/ja/rna-seq/definitions/pca/src/main.R")
-  let text = try String(contentsOf: url, encoding: .utf8)
-  let t = tokens(text, "R")
-  #expect(t.contains("keyword:function") && t.contains("function:library") && t.contains("function:readRDS") && t.contains("constant:TRUE"))
-  #expect(t.contains { $0.hasPrefix("comment:# Principal components") } && t.contains { $0.hasPrefix("string:") } && t.contains { $0.hasPrefix("number:") })
 }

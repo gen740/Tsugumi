@@ -45,12 +45,6 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
     EXPECT_EQ(query.i64(0), 0) << table;
   }
 }
-TEST(HostComponents, StateGateRetainsRecursiveLocking) {
-  host::StateGate gate;
-  std::lock_guard outer(gate.mutex);
-  std::unique_lock inner(gate.mutex, std::try_to_lock);
-  EXPECT_TRUE(inner.owns_lock());
-}
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);

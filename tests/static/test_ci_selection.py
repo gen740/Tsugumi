@@ -34,7 +34,8 @@ def test_demos_cover_guide_rpc_sdk_web_and_swift_without_unrelated_core_tests():
         jobs = entry["checks"]
         assert jobs["native"] and jobs["agent-rpc"] and not jobs["rpc"]
         if entry["system"].endswith("linux"):
-            assert jobs["sdk"] and jobs["web"] and jobs["web-contracts"] and jobs["adapters"]
+            assert jobs["sdk"] and jobs["web"] and jobs["adapters"]
+            assert jobs["web-contracts"] == (entry["system"] == "x86_64-linux")
         else:
             assert jobs["swift"]
 

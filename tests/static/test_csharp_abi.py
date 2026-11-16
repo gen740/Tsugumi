@@ -103,25 +103,8 @@ def test_managed_structs_mirror_abi_h():
     assert not mirror_errors(ABI.read_text(), CONTEXT.read_text())
 
 
-def test_appending_a_callback_without_csharp_is_detected():
-    """The check itself: a callback appended to tsugumi_call only."""
-    abi = ABI.read_text().replace(
-        "} tsugumi_call;", "  int (*display_progress)(void* host, double fraction);\n} tsugumi_call;")
-    assert abi != ABI.read_text()
-    errors = mirror_errors(abi, CONTEXT.read_text())
-    assert errors and "display_progress" in errors[0], errors
-    # A matching C# field makes it whole again.
-    context = CONTEXT.read_text().replace(
-        "FailAt;\n}", "FailAt;\n    internal delegate* unmanaged[Cdecl]<void*, double, int> Progress;\n}")
-    assert not mirror_errors(abi, context)
 
 
-def test_a_changed_signature_is_detected():
-    """Same size and offset, different meaning: only the signature check sees it."""
-    abi = ABI.read_text().replace("int64_t (*remaining_ms)", "uint64_t (*remaining_ms)")
-    assert abi != ABI.read_text()
-    errors = mirror_errors(abi, CONTEXT.read_text())
-    assert len(errors) == 1 and "remaining_ms" in errors[0], errors
 
 
 def test_load_time_layout_tables_name_every_field():

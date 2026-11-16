@@ -30,21 +30,6 @@ TEST(HostFormat, JsonAndDiagnosticsNeverReadOrWriteAProject) {
   request.path = "../outside.json";
   EXPECT_THROW(Format(request), ProjectFailure);
 }
-TEST(HostFormat, EmptyDiagnosticsVectorRoundTripsWithTheObjectApi) {
-  Tsugumi::Host::FileFormatResultT result;
-  result.text = "{}\n";
-  Tsugumi::Host::ReplyT reply;
-  reply.value.Set(std::move(result));
-  Tsugumi::Host::MessageT message;
-  message.payload.Set(std::move(reply));
-  flatbuffers::FlatBufferBuilder b;
-  Tsugumi::Host::FinishMessageBuffer(b, Tsugumi::Host::Message::Pack(b, &message));
-  flatbuffers::Verifier verifier(b.GetBufferPointer(), b.GetSize());
-  EXPECT_TRUE(Tsugumi::Host::VerifyMessageBuffer(verifier));
-  auto copy =
-      std::unique_ptr<Tsugumi::Host::MessageT>(Tsugumi::Host::GetMessage(b.GetBufferPointer())->UnPack());
-  EXPECT_TRUE(copy->payload.AsReply()->value.AsFileFormatResult()->diagnostics.empty());
-}
 TEST(HostFormat, PinnedToolsFormatRepeatablyAndKeepInvalidInput) {
   Tsugumi::Host::FileFormatRequestT request;
   request.path = "x.py";

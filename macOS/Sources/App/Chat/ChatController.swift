@@ -568,13 +568,13 @@ final class ChatController {
   }
 
   /// A window releases its UI subscriptions without cancelling core work.
-  func detach() {
+  @discardableResult func detach() -> Task<Void, Never> {
     opening?.cancel()
     opening = nil
     answer += 1
     let remote = agent
     agent = nil
-    Task {
+    return Task {
       await GuideController.shared.detach(from: session)
       await remote?.detach()
       // Both observers are cancelled before releasing a pending UI answer.

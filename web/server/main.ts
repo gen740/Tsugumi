@@ -57,7 +57,7 @@ function update(): number {
   }
   const r = spawnSync('/bin/sh', ['-c', L('script="$(curl -fsSL "$1/install.sh")" || { echo "$1/install.sh を取得できませんでした。" >&2; exit 1; }\nprintf \'%s\\n\' "$script" | /bin/sh'), 'sh', base], { stdio: 'inherit' })
   if (r.status === 0) console.log(L('動いている tsugumi があれば、Ctrl-C で止めて起動し直すと新しい版で開きます。'))
-  return r.status ?? 1
+  return r.status === 1 ? 69 : r.status ?? 70
 }
 
 const chosenPort = opt('--port') ?? process.env.TSUGUMI_WEB_PORT

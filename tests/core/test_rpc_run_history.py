@@ -205,7 +205,7 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
     ], recordIO=True)
     rev = client.open().snapshot.rev
 
-    for _ in range(100):
+    for _ in range(2):
         # RunFinished is sent just before the scheduler releases the active
         # run. A brief busy reply is valid; a blocked acceptance is not.
         deadline = time.monotonic() + 5

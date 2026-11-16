@@ -495,6 +495,7 @@ export class ProjectSession extends Observable {
   sourceBases = new Map<string, string>()
   undoStack: UndoEntry[] = []
   redoStack: UndoEntry[] = []
+  saveFailure?: unknown
   saveError?: string
   saving = false
   /** Edits wait for the run to end (the core keeps Card changes back while it runs). */
@@ -1410,7 +1411,7 @@ export class ProjectSession extends Observable {
       }
       reply = await this.mergeStates(e.after, e.before, cur)
     }
-    catch (error) { this.saveError = errorText(error); this.changed(); return }
+    catch (error) { this.saveFailure = error; this.saveError = errorText(error); this.changed(); return }
     if (revision !== this.rev || !snapEq(curSnap, this.snapshot())) return
     if (reply.conflicts.length) {
       this.mergeConflict = { rev: revision, snapshot: curSnap, state: cur, apply: () => {
@@ -1558,7 +1559,7 @@ export class ProjectSession extends Observable {
     this.externalBases = new Map()
     this.saveAgain = false
     this.conflictRetries = 0
-    this.saveError = undefined
+    this.saveFailure = undefined; this.saveError = undefined
     this.mergeConflict = undefined
     this.mergeEdit.reload(this.rev)
     this.savingAfterRun = false
@@ -1640,16 +1641,16 @@ export class ProjectSession extends Observable {
     if (!client) return
     // Nothing left to save (undone, or met by what arrived): no failure is left either.
     if (!this.dirty) {
-      this.saveError = undefined
+      this.saveFailure = undefined; this.saveError = undefined
       return
     }
     await this.fillUndoSources()
     if (this.mergeConflict) return
     try {
       if (!(await this.rebase())) return
-    } catch (error) { this.saveError = errorText(error); this.changed(); return }
+    } catch (error) { this.saveFailure = error; this.saveError = errorText(error); this.changed(); return }
     if (!this.dirty) {
-      this.saveError = undefined
+      this.saveFailure = undefined; this.saveError = undefined
       return
     }
     this.saving = true
@@ -1671,11 +1672,12 @@ export class ProjectSession extends Observable {
           const external = merged.get(prefix)
           if (external) external.layout = layout
         }
-        this.saveError = undefined
+        this.saveFailure = undefined; this.saveError = undefined
         this.conflictRetries = 0
         this.forgetSaved(sent, layoutOnly, merged)
         this.adoptSavedPlaces(sentState, layouts)
       } catch (e) {
+        this.saveFailure = e
         if (e instanceof RPCFailure) {
           switch (e.kind) {
             case D.FailureKind.revision_conflict:
@@ -1973,11 +1975,11 @@ export class ProjectSession extends Observable {
     this.changed()
     try {
       await this.client.reload(baseRev, uuid(), 'ui', approved)
-      this.saveError = undefined
+      this.saveFailure = undefined; this.saveError = undefined
     } catch (e) {
       if (e instanceof RPCFailure && e.kind === D.FailureKind.approval_required && e.permissions.length) {
         this.reloadApproval = { baseRev, permissions: [...new Set([...approved, ...e.permissions])] }
-        this.saveError = undefined
+        this.saveFailure = undefined; this.saveError = undefined
       } else this.saveError = errorText(e)
     } finally { this.reloadingExternal = false }
     this.changed()

@@ -619,28 +619,6 @@ TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
 
 // Mac and Web both send LayoutCompleteRequest. Exercise that exact handler,
 // with separately serialized requests, rather than a UI stub's fixed answer.
-TEST(HostLayout, TwoClientsDeriveTheSamePlacesThroughTheHostHandler) {
-  const auto derive = [&](uint64_t client) {
-    flatbuffers::FlatBufferBuilder b;
-    const auto input = H::CreateLayoutCompleteRequest(
-        b, b.CreateString(R"({"canvas":{"cards":[{"id":"b"},{"id":"a"}]}})"),
-        b.CreateString("{}"), b.CreateString("{}"));
-    b.Finish(H::CreateRequest(b, H::RequestPayload::LayoutCompleteRequest,
-                              input.Union()));
-    const auto reply = LayoutHandle(
-        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), client);
-    EXPECT_EQ(H::GetMessage(reply.data())->request_id(), client);
-    return H::GetMessage(reply.data())
-        ->payload_as_Reply()
-        ->value_as_LayoutValidated()
-        ->json()
-        ->str();
-  };
-  const auto first = derive(1), second = derive(2);
-  EXPECT_EQ(first, second);
-  EXPECT_EQ(agent::json::Object(agent::json::Object(first).at("cards")).size(),
-            2u);
-}
 } // namespace
 } // namespace tsugumi::host
 

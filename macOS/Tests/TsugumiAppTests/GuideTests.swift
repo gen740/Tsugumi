@@ -105,10 +105,7 @@ import TsugumiRPC
   let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: true)
   window.contentView = view
   view.layoutSubtreeIfNeeded()
-  for _ in 0..<100 where stage.perch == nil {
-    try await Task.sleep(for: .milliseconds(20))
-    view.layoutSubtreeIfNeeded()
-  }
+  try await waitForModel { stage.perch != nil }
   #expect(stage.perch?.id == "card:\(card)")
   #expect(stage.perch?.spot.zoom == 0.39)
   window.contentView = nil

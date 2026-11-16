@@ -1037,7 +1037,7 @@ struct CardNodeView: View {
     .alignmentGuide(.top) { $0.height / 2 - outline.minY }
   }
 
-  private func hitShape(_ g: CardGeometry, outline: Path) -> Path {
+  func hitShape(_ g: CardGeometry, outline: Path) -> Path {
     // A rotated outline can wind opposite to a port rectangle. Appending
     // subpaths would then cut holes in their overlap, so take their union.
     var p = outline

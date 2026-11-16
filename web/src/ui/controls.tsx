@@ -90,18 +90,18 @@ export function Select<T extends string | number>({ value, options, onChange, di
   return <label className="select-row"><span>{label}</span>{sel}</label>
 }
 
-export function TextField({ value, onChange, placeholder, onCommit, disabled, mono, style, autoFocus, small, help, multiline, rows, onKeyDown, inputRef }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; onCommit?: (v: string) => void; disabled?: boolean; mono?: boolean
+export function TextField({ name, value, onChange, placeholder, onCommit, disabled, mono, style, autoFocus, small, help, multiline, rows, onKeyDown, inputRef }: {
+  name?: string; value: string; onChange: (v: string) => void; placeholder?: string; onCommit?: (v: string) => void; disabled?: boolean; mono?: boolean
   style?: CSSProperties; autoFocus?: boolean; small?: boolean; help?: string; multiline?: boolean; rows?: number
   onKeyDown?: (e: React.KeyboardEvent) => void; inputRef?: React.Ref<HTMLInputElement & HTMLTextAreaElement>
 }) {
   const cls = `field${mono ? ' mono' : ''}${small ? ' field-small' : ''}`
   if (multiline) {
-    return <textarea ref={inputRef} className={cls} value={value} rows={rows ?? 3} placeholder={placeholder} disabled={disabled} title={help} style={style}
+    return <textarea name={name} ref={inputRef} className={cls} value={value} rows={rows ?? 3} placeholder={placeholder} disabled={disabled} title={help} style={style}
       autoFocus={autoFocus} onChange={(e) => onChange(e.target.value)} onBlur={() => onCommit?.(value)} onKeyDown={onKeyDown} />
   }
   return (
-    <input ref={inputRef} className={cls} value={value} placeholder={placeholder} disabled={disabled} title={help} style={style} autoFocus={autoFocus}
+    <input name={name} ref={inputRef} className={cls} value={value} placeholder={placeholder} disabled={disabled} title={help} style={style} autoFocus={autoFocus}
       spellCheck={false} onChange={(e) => onChange(e.target.value)} onBlur={() => onCommit?.(value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !e.nativeEvent.isComposing) onCommit?.((e.target as HTMLInputElement).value)

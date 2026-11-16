@@ -211,12 +211,12 @@ export class CoreHost {
           return next
         }
         if (child.exitCode !== null) {
-          if (child.exitCode === 5) throw new Error(L('ホストの状態フォルダ「{0}」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。', this.state))
-          throw new Error(`Host service exited during startup; see ${logPath}`)
+          if (child.exitCode === 5) throw new CoreHostError('state_format', L('ホストの状態フォルダ「{0}」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。', this.state), undefined, this.state)
+          throw new CoreHostError('startup_exit', `Host service exited during startup; see ${logPath}`, undefined, logPath)
         }
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
-      throw new Error(`Host service did not become ready; see ${logPath}`)
+      throw new CoreHostError('readiness_timeout', `Host service did not become ready; see ${logPath}`, undefined, logPath)
     })().finally(() => { this.starting = undefined })
   }
 

@@ -32,12 +32,7 @@ TEST(HostStateFormat, AnotherFormatIsRefusedWithoutChangingState) {
     host::PrepareStateDirectory(state);
     FAIL() << "Another format must be refused";
   } catch (const host::StateFormatError& error) {
-    const std::string message = error.what();
-    EXPECT_NE(message.find(std::filesystem::absolute(state).string()),
-              std::string::npos);
-    EXPECT_NE(message.find("another version of Tsugumi"), std::string::npos);
-    EXPECT_NE(message.find("Move or rename"), std::string::npos);
-    EXPECT_NE(message.find("start Tsugumi again"), std::string::npos);
+    EXPECT_EQ(error.directory, std::filesystem::absolute(state).lexically_normal());
   }
   EXPECT_EQ(fs::read_file_or_throw(state / "format"), "999999\n");
   EXPECT_EQ(fs::read_file_or_throw(state / "host.sqlite"),

@@ -205,15 +205,22 @@ class Events(threading.Thread):
         self.r = self.c.getresponse()
         assert self.r.status == 200
         self.events: list[dict] = []
+        self.changed = threading.Condition()
 
     def run(self):
         try:
             for raw in self.r:
                 line = raw.decode().strip()
                 if line.startswith("data:"):
-                    self.events.append(json.loads(line[5:]))
+                    with self.changed:
+                        self.events.append(json.loads(line[5:]))
+                        self.changed.notify_all()
         except Exception:
             pass
+
+    def wait(self, predicate, timeout=60):
+        with self.changed:
+            assert self.changed.wait_for(predicate, timeout), self.events
 
     def shows(self, project: Path | None):
         """Tells the server what this page shows (none: Home), as the page does."""
@@ -483,10 +490,7 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj")})
     assert not error and "The open web UI page shows it now" in text and not text.endswith(rules)
     assert json.loads(info_file.read_text())["pid"] == info["pid"]
-    for _ in range(50):
-        if any(e.get("type") == "agentOpen" for e in page.events):
-            break
-        time.sleep(0.1)
+    page.wait(lambda: any(e.get("type") == "agentOpen" for e in page.events))
     permissions = [e for e in page.events if e.get("type") == "chat" and e.get("event", {}).get("kind") == "permission"]
     assert len(permissions) >= 2
     assert all(e["project"] == str((root / "proj").resolve()) for e in permissions)
@@ -512,7 +516,6 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
     on_a, home = Events(port, cookie, "page-a"), Events(port, cookie, "page-home")
     on_a.start()
     home.start()
-    time.sleep(0.3)
     on_a.shows(a)
     # The project of a tab: it stays where it is, nobody is told to switch.
     text, error = mcp.call("tsugumi_open", {"folder": "a"})
@@ -520,24 +523,17 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
     # Another project: the tab on Home takes it, the other keeps its own.
     text, error = mcp.call("tsugumi_open", {"folder": "b"})
     assert not error and "The open web UI page shows it now" in text
-    for _ in range(50):
-        if home.told():
-            break
-        time.sleep(0.1)
+    home.wait(lambda: bool(home.told()))
     assert home.told() == [str(b)] and on_a.told() == []
     # No tab free: nobody loses a project (the plugin opens a window unless told not to).
     text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
     assert not error and "No web UI page is free" in text
-    time.sleep(0.3)
     assert home.told() == [str(b)] and on_a.told() == []
     # A tab back on Home is free again.
     on_a.shows(None)
     text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
     assert not error and "The open web UI page shows it now" in text
-    for _ in range(50):
-        if on_a.told():
-            break
-        time.sleep(0.1)
+    on_a.wait(lambda: bool(on_a.told()))
     assert on_a.told() == [str(c)]
 
 

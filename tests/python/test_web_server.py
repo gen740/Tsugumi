@@ -155,10 +155,7 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
     assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
     # The last page detaches its views while core remains available.
     assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": False}
-    for _ in range(50):
-        if [e for e in pages[2].events if e.get("type") == "projectClosed"]:
-            break
-        time.sleep(0.1)
+    pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
     assert {"type": "projectClosed", "project": real} in pages[2].events
     after = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
@@ -222,11 +219,7 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
         return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
 
     def until(text: str):
-        for _ in range(100):
-            if text in printed():
-                return
-            time.sleep(0.1)
-        raise AssertionError(f"no {text!r} in {printed()!r}")
+        page.wait(lambda: text in printed())
 
     def send(data: str):
         post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
@@ -242,20 +235,15 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
 ''')
     until("now=30 100")
     # A key: ⌃C stops what runs, not the shell.
-    send('''sleep 100
+    send('''printf '\\0SLEEPING\\0'; sleep 100
 ''')
-    time.sleep(0.3)
+    until('\0SLEEPING\0')
     send("\x03")
     send('''echo after-interrupt-$((1 + 1))
 ''')
     until("after-interrupt-2")
     post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
-    for _ in range(100):
-        if [e for e in list(page.events) if e.get("type") == "terminal-exit" and e["id"] == t["id"]]:
-            break
-        time.sleep(0.1)
-    else:
-        raise AssertionError("the terminal did not end")
+    page.wait(lambda: any(e.get("type") == "terminal-exit" and e["id"] == t["id"] for e in page.events))
 
 
 def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tmp_path):

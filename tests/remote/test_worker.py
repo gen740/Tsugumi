@@ -26,9 +26,7 @@ class Worker:
         self.identity = TLS.identity(root)
         self.scope = "c" * 64
         self.core_life_id = "e" * 64
-        with socket.socket() as temporary:
-            temporary.bind(("127.0.0.1", 0))
-            self.port = temporary.getsockname()[1]
+        self.port = 0
         self.state = root / "state"
         self.state.mkdir(mode=0o700)
         self.authorized = self.state / "authorized_keys"
@@ -48,15 +46,20 @@ class Worker:
 
     def start(self):
         self.log = (self.root / "worker.log").open("ab")
+        ready = self.state / "worker.ready.json"
+        ready.unlink(missing_ok=True)
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=self.log)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise RuntimeError((self.root / "worker.log").read_text())
             try:
+                self.port = json.loads(ready.read_text())["port"]
+                # Reconnect scenarios deliberately keep the same real endpoint.
+                self.command[self.command.index("--port") + 1] = str(self.port)
                 with socket.create_connection(("127.0.0.1", self.port), timeout=0.1):
                     return
-            except OSError:
+            except (OSError, ValueError):
                 time.sleep(0.02)
         raise TimeoutError("worker did not start")
 

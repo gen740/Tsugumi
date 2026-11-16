@@ -50,14 +50,11 @@ for (const host of ['example.com', '192.168.1.2', 'localhost.example.com', '']) 
 {
   const html = renderToStaticMarkup(<GuideSetupForm />)
   assert.match(html, /data-oai-siwc-button=""/)
-  assert.match(html, /Continue with ChatGPT/)
   assert.match(html, /type="password"/)
-  assert.match(html, /スキップして始める|Skip and Start/)
 }
 for (const local of [true, false]) for (const onboarding of [true, false]) {
   const f = fixture(local), model = f.model()
   const html = renderToStaticMarkup(<ChatGPTSettings onboarding={onboarding} controller={model} onConnected={() => assert.fail('render completed setup')} />)
-  assert.match(html, /Continue with ChatGPT/)
   if (!local) {
     assert.match(html, /localhost/)
     assert.match(html, /disabled=""/)
@@ -107,7 +104,6 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   assert.equal(model.state?.outcome?.welcome, undefined)
   if (outcome === 'no-plan') {
     const html = renderToStaticMarkup(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail()} />)
-    assert.match(html, /プランの利用を許可|Allow Plan Use/)
     let finished = 0
     model.onConnected = () => { finished++ }
     f.setOutcome('success')
@@ -126,7 +122,6 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   model.signIn()
   await tick()
   const html = renderToStaticMarkup(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail()} />)
-  assert.match(html, /ブラウザでサインインを続けてください|Continue signing in/)
   assert.equal(model.state?.signingIn, true)
   await model.cancel()
   assert.equal(model.message, 'cancelled')

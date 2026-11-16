@@ -84,8 +84,20 @@ auto Store::stage_file(const stdfs::path& root, const std::string& from,
   fs::fsync_dir(state_dir());
   file->path = directory / crypto::uuid4();
   crypto::Sha256 hash;
+  bool entered = false;
   file->size = fs::copy_beneath(root, from, file->path, [&](std::string_view chunk) {
     check_cancelled();
+    if (opts_.fault == "transfer_gate" && !entered) {
+      entered = true;
+      fs::write_atomic(state_dir() / "transfer.started", "ready");
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+      while (!stdfs::exists(state_dir() / "transfer.release")) {
+        check_cancelled();
+        if (std::chrono::steady_clock::now() >= deadline)
+          throw std::runtime_error("transfer fault gate was not released");
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
     hash.update(chunk);
   });
   file->hash = hash.finish_hex();

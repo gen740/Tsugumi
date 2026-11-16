@@ -18,6 +18,8 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   TemporaryDirectory directory;
   const auto home = directory.path / "empty home";
   std::filesystem::create_directory(home);
+  // Readiness is emitted by Bash after its login startup, before accepting input.
+  Write(home / ".bash_profile", "printf '\\0READY\\0'\n");
   const auto shell = directory.path / "login-shell";
   // Capture the environment at the exec boundary, before system profiles can
   // rewrite it. This account shell then starts a normal Bash login session.
@@ -88,6 +90,13 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   const auto opened = service.Handle(request);
   request.session = opened.session;
   ASSERT_GT(request.session, 0u);
+  {
+    std::unique_lock lock(mutex);
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30), [&] {
+      return output.find(std::string("\0READY\0", 7)) != output.npos || closed;
+    }));
+    ASSERT_FALSE(closed);
+  }
   request.action = H::TerminalAction::Resize;
   request.rows = 31;
   request.cols = 23;
@@ -104,7 +113,7 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   service.Handle(request);
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5),
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30),
                                  [&] { return closed; }));
     EXPECT_EQ(output.find("MUST_NOT_CROSS"), output.npos);
     // Actual NUL bytes distinguish command output from echoed/readline-wrapped

@@ -14,7 +14,10 @@ struct Text {
   std::string_view expression;
 };
 
+enum class Code { UnexpectedToken, BooleanRequired, IntegerOverflow, InvalidInteger, UnexpectedCharacter, ExpressionExpected, NestingLimit, CloseExpected, BooleanOperand, IntegerOperand, ShiftLimit, SizeLimit, UnknownLanguage };
+
 struct Diagnostic {
+  Code code;
   std::string message;
   // Zero-based byte offset in expression; its size denotes end of input.
   // An unknown language is reported at zero.

@@ -369,16 +369,18 @@ console.log('note and group edits retain their opening revision: passed')
   s.confirmedDefinitions.set('a', parse('{"template":"draft","symbol":"base","maxRuns":3}'))
   const original = s.prepareMerge
   let release!: () => void
+  let onStart!: () => void
+  const started = new Promise<void>(resolve => { onStart = resolve })
   let held = false
   s.prepareMerge = async (...args) => {
     const reply = await original.apply(s, args)
     if (held) return reply
     held = true
-    return new Promise(resolve => { release = () => resolve(reply) })
+    return new Promise(resolve => { release = () => resolve(reply); onStart() })
   }
   const first = m.apply()
   assert.equal(await m.apply(), false)
-  for (let i = 0; i < 20 && !release; i++) await new Promise(resolve => setTimeout(resolve, 0))
+  await started
   release()
   assert.equal(await first, true)
   assert.deepEqual(requests, [1n])

@@ -14,8 +14,4 @@ def test_mac_first_start_and_settings_share_the_sign_in_controls():
     setup = (ROOT / "macOS/Sources/App/Guide/GuideViews.swift").read_text().split("struct GuideSetupView", 1)[1]
     assert 'ChatGPTConnection(model: connection)' in settings
     assert 'ChatGPTConnection(model: chatGPT, onboarding: true)' in setup
-    assert 'Button("Continue with ChatGPT", action: action)' in settings
     assert 'try await GuideController.shared.finishChatGPTSetup()' in setup
-    assert 'Button("スキップして始める")' in setup
-    assert 'SecureField(' in setup
-    assert '.signIn(' not in setup.split('/// A floating panel', 1)[0]

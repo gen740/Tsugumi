@@ -52,9 +52,11 @@ function session() {
   mine(); remote(3)
   const original = s.prepareMerge
   let finish!: () => void
-  s.prepareMerge = async (...args) => { const reply = await original.apply(s, args); return new Promise(resolve => { finish = () => resolve(reply) }) }
+  let started!: () => void
+  const onStart = new Promise<void>(resolve => { started = resolve })
+  s.prepareMerge = async (...args) => { const reply = await original.apply(s, args); return new Promise(resolve => { finish = () => resolve(reply); started() }) }
   const pending = save()
-  for (let n = 0; n < 20 && !finish; n++) await new Promise(resolve => setTimeout(resolve, 0))
+  await onStart
   s.edit(x => { x.project = parse('{"settings":{"n":5},"canvas":{"cards":[],"connections":[]}}') })
   finish(); await pending
   assert.equal(numText(get(s.project, 'settings', 'n')), '5', 'a late host reply cannot replace an edit made while waiting')

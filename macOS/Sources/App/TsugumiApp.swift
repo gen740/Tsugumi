@@ -150,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var editsSettled = false
 
   @MainActor var signInTerminationTimeout: Duration = .seconds(3)
+  @MainActor var signInTerminationWait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+  @MainActor private(set) var signInTerminationTask: Task<Void, Never>?
   @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
   @MainActor private var waitingForSignIn = false
 
@@ -163,10 +165,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       // Unstructured tasks let the deadline bound quit even if the service is
       // unresponsive; a task group would wait for the blocked RPC on scope exit.
       let deadline = Task {
-        try? await Task.sleep(for: signInTerminationTimeout)
+        try? await signInTerminationWait(signInTerminationTimeout)
         if !Task.isCancelled { finishSignInTermination() }
       }
-      Task {
+      signInTerminationTask = Task {
         await ChatGPTSignInModel.cancelPendingSignIns()
         deadline.cancel()
         finishSignInTermination()

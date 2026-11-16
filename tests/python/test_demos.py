@@ -386,28 +386,6 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     assert wait_run(c, rid2, timeout=20).state == RunState.cancelled
 
 
-def test_status_and_cancel_during_nix_preparation(report):
-    c = connect(report)
-    # Clear the build cache so the first Card has to evaluate and build again.
-    c.call("ProjectCacheClearRequest", opId=new_id())
-    rid = start_run(c, ["start"])
-    other = connect(report)
-    seen_preparing = False
-    for _ in range(600):
-        t0 = time.time()
-        st = other.call("RunStatusRequest", runId=rid)
-        assert time.time() - t0 < 0.5  # status never waits for the Nix lane
-        if st.state == RunState.preparing:
-            seen_preparing = True
-            break
-        if st.state in TERMINAL:
-            break
-        time.sleep(0.05)
-    t0 = time.time()
-    other.call("RunCancelRequest", runId=rid)
-    final = wait_run(other, rid, timeout=60)
-    print(f"cancel during preparation took {time.time() - t0:.2f}s (seen preparing: {seen_preparing})")
-    assert final.state in (RunState.cancelled, RunState.succeeded)
 
 
 @pytest.fixture

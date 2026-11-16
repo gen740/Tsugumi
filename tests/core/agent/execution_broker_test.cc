@@ -563,7 +563,6 @@ TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {
   Socket socket{ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
   auto first = frame.substr(0, 1);
   Transfer(socket.fd, first, true);
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   auto rest = frame.substr(1);
   Transfer(socket.fd, rest, true);
   ::shutdown(socket.fd, SHUT_WR);

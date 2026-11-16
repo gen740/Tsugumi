@@ -112,7 +112,7 @@ extension SyncTests {
       _ = try await agent.save(baseRev: snapshot.rev ?? 0, opId: UUID(), origin: "agent", changes: [
         Change.putDefinition(id: "a", cardJSON: #"{"template":"draft"}"#, metaJSON: meta.serialized()),
       ])
-      for _ in 0..<100 where session.rev <= (snapshot.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+      try await waitForModel { !(session.rev <= (snapshot.rev ?? 0)) }
       #expect(session.rev > (snapshot.rev ?? 0))
     }
     try await save("base", "base")

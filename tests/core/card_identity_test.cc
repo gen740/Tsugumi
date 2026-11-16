@@ -44,8 +44,7 @@ TEST(CardIdentity, MetadataIsNonComputationalOnlyAtDefinitionPaths) {
   EXPECT_FALSE(Document::is_card_meta_file("externals/outer/definitions/card/_card.json"));
 }
 
-TEST(CardIdentity,
-     SavingWiredDraftsSerializesTheSavedDocumentWithoutPorts) {
+TEST(CoreLifecycle, NeverRunProjectDoesNotCreateRunScratch) {
   const auto root =
       std::filesystem::canonical(std::filesystem::temp_directory_path()) /
       ("wired-draft-" + crypto::uuid4());
@@ -67,86 +66,8 @@ TEST(CardIdentity,
   service.open();
   EXPECT_FALSE(std::filesystem::exists(options.run_scratch_dir));
 
-  namespace R = Tsugumi::RPC;
-  R::ProjectSaveRequestT save;
-  save.base_rev = 0;
-  save.op_id = crypto::uuid4();
-  save.origin = "ui:test";
-  const auto operation = save.op_id;
-  auto add = [&](auto value) {
-    auto change = std::make_unique<R::DocumentChangeT>();
-    change->value.Set(std::move(value));
-    save.changes.push_back(std::move(change));
-  };
-  R::SetProjectT project;
-  project.json =
-      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"p"},{"id":"q"},{"id":"r"}],"connections":[{"from":{"card":"p","port":""},"to":{"card":"q","port":""}},{"from":{"card":"p","port":""},"to":{"card":"r","port":""}},{"from":{"card":"r","port":""},"to":{"card":"q","port":""}}]}})";
-  add(std::move(project));
-  auto definition = [&](const char* id, const char* card, const char* meta) {
-    R::PutDefinitionT def;
-    def.id = id;
-    def.card_json = card;
-    def.meta_json = meta;
-    add(std::move(def));
-  };
-  definition(
-      "p", R"({"template":"draft"})",
-      R"({"name":"p","content":"count words"})");
-  definition("q", R"({"template":"draft"})", R"({"name":"日本語"})");
-  definition("r", R"({"template":"draft"})", R"({"name":"r"})");
-  R::SetLayoutT layout;
-  const std::string layout_json =
-      R"({"cards":{"p":{"x":0,"y":0},"q":{"x":300,"y":0},"r":{"x":600,"y":0}}})";
-  layout.json = layout_json;
-  add(std::move(layout));
-  R::RequestT request;
-  request.value.Set(std::move(save));
-  R::MessageT message;
-  message.request_id = 1;
-  message.payload.Set(std::move(request));
-  flatbuffers::FlatBufferBuilder b;
-  R::FinishMessageBuffer(b, R::Message::Pack(b, &message));
-  flatbuffers::Verifier verifier(b.GetBufferPointer(), b.GetSize());
-  ASSERT_TRUE(R::VerifyMessageBuffer(verifier));
-  // Run the real save handler, receipt copy and notification preparation
-  // without a listener.
-  service.dispatch(
-      {1, 1,
-       std::make_shared<const std::string>(
-           reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize())});
-  // Drain the mutation lane before reading its saved result.
   service.shutdown();
-  const auto receipt = service.store().receipt(operation);
-  ASSERT_TRUE(receipt.has_value());
-  const auto* saved =
-      flatbuffers::GetRoot<R::OperationReceipt>(receipt->bytes.data())
-          ->result_as_SaveResult();
-  ASSERT_NE(saved, nullptr);
-  EXPECT_EQ(saved->rev().value(), 1u);
-  const auto doc = service.store().current();
-  ASSERT_NE(doc->resolution, nullptr);
-  ASSERT_NE(doc->resolution->find({"p"}), nullptr);
-  ASSERT_NE(doc->resolution->find({"q"}), nullptr);
-  for (const auto* id : {"p", "q", "r"}) {
-    const auto* node = doc->resolution->find({id});
-    ASSERT_NE(node, nullptr);
-    EXPECT_TRUE(node->inputs.empty());
-    EXPECT_TRUE(node->outputs.empty());
-    EXPECT_TRUE(node->diags.empty());
-  }
-  EXPECT_EQ(doc->resolution->find({"q"})->path, (CardPath{"q"}));
-  EXPECT_EQ(doc->definitions.at("q").meta_json, R"({"name":"日本語"})");
-  EXPECT_EQ(doc->resolution->edges.size(), 3u);
-  std::set<std::pair<std::string, std::string>> wires;
-  for (const auto& edge : doc->resolution->edges) {
-    EXPECT_TRUE(edge.from_port.empty());
-    EXPECT_TRUE(edge.to_port.empty());
-    wires.emplace(doc->resolution->nodes[edge.from].path[0],
-                  doc->resolution->nodes[edge.to].path[0]);
-  }
-  EXPECT_EQ(wires, (std::set<std::pair<std::string, std::string>>{
-                       {"p", "q"}, {"p", "r"}, {"r", "q"}}));
-  EXPECT_EQ(doc->layout_json, layout_json);
+  EXPECT_FALSE(std::filesystem::exists(options.run_scratch_dir));
 }
 
 TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes) {

@@ -98,7 +98,7 @@ import { GuideAdvanceRequestT } from '../src/gen/tsugumi/host/guide-advance-requ
 import { GuideInputT } from '../src/gen/tsugumi/host/guide-input'
 
 export class CoreHostError extends Error {
-  constructor(readonly code: string, message: string, readonly requestId?: string) { super(message) }
+  constructor(readonly code: string, message: string, readonly requestId?: string, readonly path?: string) { super(message) }
 }
 
 function enumValue(e: any, value: unknown): number {

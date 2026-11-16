@@ -54,6 +54,8 @@ for (const failure of ['validation', 'save']) {
   const k = await s.addCard('draft', [], at, 'dropped')
   await saveOnce(s)
   assert.ok(s.saveError, failure)
+  assert.ok(s.saveFailure instanceof RPCFailure)
+  assert.equal(s.saveFailure.kind, D.FailureKind.invalid_document)
   assert.ok(s.dirty)
   assert.ok(s.instance(k), 'the unsaved Card stays on the canvas')
   assert.deepEqual(s.position(k), at, 'a failed save does not move the Card')
@@ -95,7 +97,8 @@ for (const failure of ['validation', 'save']) {
   } as never
   s.edit((x) => x.setPosition('a', { x: 10, y: 20 }))
   await saveOnce(s)
-  assert.ok(s.saveError?.includes('display b'), s.saveError)
+  assert.ok(s.saveError)
+  assert.equal((s.saveFailure as RPCFailure).kind, D.FailureKind.invalid_document)
   assert.ok(s.dirty)
 
   s.discardDraft()
@@ -131,20 +134,21 @@ for (const outcome of ['refused', 'saved']) {
   const s = session()
   Reflect.deleteProperty(s, 'scheduleSave')
   s.connected = true
-  let answer: (() => void) | undefined
+  let answer!: () => void
+  let started!: () => void
+  const onStart = new Promise<void>(resolve => { started = resolve })
   s.client = {
     save: () => new Promise((done, reject) => {
       answer = () => outcome === 'refused' ? reject(refused) : done({ rev: 1n })
+      started()
     }),
   } as never
   s.edit((x) => x.setPosition('a', { x: 10, y: 20 }))
-  for (let i = 0; i < 50 && !answer; i++) await new Promise((r) => setTimeout(r, 1))
-  assert.ok(answer, 'the save is on its way')
+  await onStart
   s.discardDraft()
   const saving = (s as unknown as { saveTask: Promise<void> }).saveTask
   answer!()
   await saving
-  await new Promise((r) => setTimeout(r, 1))
   assert.ok(!s.dirty, outcome)
   assert.equal(s.saveError, undefined, s.saveError)
   assert.equal(s.syncState.kind, 'saved', outcome)
@@ -169,7 +173,7 @@ for (const outcome of ['refused', 'saved']) {
   // (Saved by hand: no tsugumid connected here.)
   s.save = () => saveOnce(s)
   assert.equal(await s.settleBeforeLeaving(async (reason) => { asked.push(reason); return false }), false, 'staying')
-  assert.ok(asked[0]?.includes('display b'), 'it says why')
+  assert.equal(asked.length, 1)
   assert.ok(s.dirty, 'and the changes stay')
   assert.equal(await s.settleBeforeLeaving(async () => true), true, 'giving them up')
   assert.ok(!s.dirty)

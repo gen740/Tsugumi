@@ -53,6 +53,8 @@ class AgentProjectFixture : public AgentFixture {
                                   TSUGUMI_WORKER_BINARY,
                                   "--sdk-dir",
                                   TSUGUMI_TEST_SDK};
+    if (!project_fault.empty())
+      args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1", "TSUGUMI_FAULT=" + project_fault});
     if (shell) args.push_back("--project-shell");
     project.Start(args, directory.path / "project.log");
     project_ready =
@@ -88,6 +90,7 @@ class AgentProjectFixture : public AgentFixture {
     StartProject();
   }
 
+  std::string project_fault;
   ChildProcess project;
   std::string project_ready;
 };

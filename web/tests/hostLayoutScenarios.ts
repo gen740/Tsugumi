@@ -21,8 +21,11 @@ const { WorkflowTab } = await import('../src/model/workspace')
 // The host service wire encodes the measured scene, preserving golden inputs.
 const { encodeRequest, decodeReply } = await import('../server/serviceWire')
 const { H } = await import('../src/shared/hostLayout')
-const vectors: { request: string; scene: LayoutScene; around?: string[]; expect: LayoutProposal }[] = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/layout-golden.json'), 'utf8'))
-for (const v of vectors) {
+const vectors: { name: string; request: string; scene: LayoutScene; around?: string[]; expect: LayoutProposal }[] = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/layout-golden.json'), 'utf8'))
+// Rich specimens include both boundary bars, frame/note positions and port order.
+for (const name of ['arrange: inner-scope topToBottom grid20',
+  'untangle: inner-scope topToBottom grid20 arranged, around the first Card']) {
+  const v = vectors.find(v => v.name === name)!
   const method = v.request === 'arrange' ? 'LayoutArrangeRequest' : 'LayoutUntangleRequest'
   const bytes = encodeRequest(method, { scene: v.scene, around: v.around ?? [] }, 1n, true)
   const message = H.Message.getRootAsMessage(new ByteBuffer(bytes)).unpack()
@@ -70,7 +73,7 @@ for (const v of vectors) {
 }
 
 // A UI consumes the host proposal without touching a document, revision or autosave.
-// Real derivation agreement is covered by HostLayout.TwoClientsDeriveTheSamePlacesThroughTheHostHandler.
+// Real derivation agreement is covered by HostLayout.EveryGoldenRequestReturnsACorrelatedProposal.
 // A person's immediate editor save materializes them in that same transaction.
 {
   const sessions = [0].map(() => {
@@ -258,7 +261,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   assert.deepEqual(before(s), was)
   assert.equal(s.notice, 'layout failed')
 }
-console.log(`layout RPC: ${vectors.length} golden round trips; proposal application, undo and stale responses passed`)
+console.log(`layout RPC: two representative wire round trips; proposal application, undo and stale responses passed`)
 
 // Save replies complete the same undo edit in both canvas and editor paths.
 // Placement geometry itself is tested through the real host handler; this
