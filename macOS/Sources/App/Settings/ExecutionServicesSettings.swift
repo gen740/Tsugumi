@@ -36,11 +36,13 @@ struct ExecutionServicesSettings: View {
       if let entry = draft {
         Section {
           TextField("名前", text: field(\.name))
+          TextField("ワーカーの grade", text: field(\.grade))
+            .help("64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。")
           TextField("サービス ID", text: field(\.id)).disabled(original != nil).monospaced()
           TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "tls://worker.example:8765"))
-            .monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
+            .disabled(entry.id == "local").monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
           TextField("実行デーモンの公開鍵", text: field(\.workerPublicKey))
-            .monospaced().help("公開鍵は ed25519: で始まる SPKI 形式です。")
+            .disabled(entry.id == "local").monospaced().help("公開鍵は ed25519: で始まる SPKI 形式です。")
           TextField("ハートビート間隔（秒）", value: numberField(\.heartbeatIntervalSeconds), format: .number.grouping(.never))
             .help("1〜4294967295 秒で指定してください。")
           TextField("停止までの連続未受信回数", value: numberField(\.missedHeartbeats), format: .number.grouping(.never))
@@ -69,7 +71,7 @@ struct ExecutionServicesSettings: View {
                 } catch { report(error.localizedDescription, failed: true) }
               }
             }.buttonStyle(.borderedProminent).disabled(!valid(entry))
-            if let original {
+            if let original, original != "local" {
               Button("削除", role: .destructive) {
                 Task {
                   busy = true
@@ -112,6 +114,7 @@ struct ExecutionServicesSettings: View {
       next.workerPublicKey = entry.workerPublicKey
       next.heartbeatIntervalSeconds = entry.heartbeatIntervalSeconds
       next.missedHeartbeats = entry.missedHeartbeats
+      next.grade = entry.grade
     }
     draft = next
     original = entry?.id
@@ -133,8 +136,10 @@ struct ExecutionServicesSettings: View {
   }
 
   private func valid(_ entry: ExecutionServiceRegistration) -> Bool {
-    guard [entry.id, entry.name, entry.endpoint].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
-    return entry.heartbeatIntervalSeconds >= 1 && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    guard [entry.id, entry.name].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
+    let hex = entry.grade.lowercased().hasPrefix("0x")
+    guard UInt64(hex ? String(entry.grade.dropFirst(2)) : entry.grade, radix: hex ? 16 : 10) != nil else { return false }
+    return entry.heartbeatIntervalSeconds >= 1 && (entry.id == "local" || (!entry.endpoint.isEmpty && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
   }
 
   private func adopt(_ result: ExecutionServicesState) {

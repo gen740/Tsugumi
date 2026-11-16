@@ -247,7 +247,8 @@ using Inode = std::pair<dev_t, ino_t>;
 auto copy_entry(int root, int source, const std::filesystem::path& physical,
                 const std::filesystem::path& label,
                 const std::filesystem::path& destination,
-                const std::atomic<bool>& cancel, std::vector<Inode>& ancestors)
+                const std::atomic<bool>& cancel, std::vector<Inode>& ancestors,
+                const TransferProgress& progress)
     -> void {
   check_copy_cancel(cancel);
   const auto st = status_of(source, label);
@@ -259,8 +260,14 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) failed("open destination", destination);
     Handle written(fd);
-    copy_sparse_file(source, fd, label, destination,
-                     [&](std::string_view) { check_copy_cancel(cancel); });
+    uint64_t done = 0;
+    const auto total = static_cast<uint64_t>(st.st_size);
+    if (progress) progress(label, 0, total);
+    copy_sparse_file(source, fd, label, destination, [&](std::string_view chunk) {
+      check_copy_cancel(cancel);
+      done += chunk.size();
+      if (progress) progress(label, done, total);
+    });
     return;
   }
   if (!S_ISDIR(st.st_mode))
@@ -295,7 +302,7 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
     if (name == "." || name == "..") continue;
     auto child = resolve_entry(root, physical / name, label / name, cancel);
     copy_entry(root, child.handle.get(), child.path, label / name,
-               destination / name, cancel, ancestors);
+               destination / name, cancel, ancestors, progress);
   }
   ancestors.pop_back();
 }
@@ -316,7 +323,8 @@ auto clear_staging(const std::filesystem::path& path, const std::function<void(i
 
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
-                         bool directory, const std::atomic<bool>& cancel)
+                         bool directory, const std::atomic<bool>& cancel,
+                         const TransferProgress& progress)
     -> void {
   if (relative.empty() || relative.is_absolute())
     reject(relative, "output path", "expected a path relative to staging");
@@ -338,7 +346,7 @@ auto copy_staging_output(int staging, const std::filesystem::path& relative,
         directory ? "expected a Directory output" : "expected a File output");
   std::filesystem::create_directories(destination.parent_path());
   std::vector<Inode> ancestors;
-  copy_entry(source, source, {}, relative, destination, cancel, ancestors);
+  copy_entry(source, source, {}, relative, destination, cancel, ancestors, progress);
 }
 
 }  // namespace tsugumi::fs

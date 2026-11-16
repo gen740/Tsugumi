@@ -127,6 +127,11 @@ struct ExecutionResourcesJson {
   Opt<"memoryBytes", v::Uint64> memory_bytes;
 };
 
+struct WorkerConditionJson {
+  t::String<"language"> language;
+  t::String<"expression"> expression;
+};
+
 struct CardDefinition {
   Opt<"symbol", v::String> symbol;
   Opt<"language", v::String> language;
@@ -146,6 +151,7 @@ struct CardDefinition {
   Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
   Opt<"executionService", v::String> execution_service;
+  Opt<"workerCondition", Obj<WorkerConditionJson>> worker_condition;
   Opt<"executionResources", Obj<ExecutionResourcesJson>> execution_resources;
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.

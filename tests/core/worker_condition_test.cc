@@ -1,4 +1,5 @@
 #include "worker_condition.hh"
+#include "worker_selection.hh"
 
 #include <gtest/gtest.h>
 
@@ -351,3 +352,40 @@ TEST(WorkerCondition, SeededValidProgramsAgreeWithUnsignedOperations) {
 
 }  // namespace
 }  // namespace tsugumi::worker_condition
+
+namespace tsugumi {
+TEST(WorkerSelection, LowestFreeGradeAndRegistrationOrder) {
+  std::array workers{WorkerCandidate{"first", 9, true},
+                     WorkerCandidate{"second", 3, true},
+                     WorkerCandidate{"third", 3, true},
+                     WorkerCandidate{"local", 0, false}};
+  EXPECT_EQ(select_worker(workers, nullptr).index, 1);
+  workers[1].free = false;
+  EXPECT_EQ(select_worker(workers, nullptr).index, 2);
+  workers[3].free = true;
+  EXPECT_EQ(select_worker(workers, nullptr).index, 3);
+}
+TEST(WorkerSelection, ConditionUsesAll64BitsAndSeparatesNoMatchFromBusy) {
+  auto compiled = worker_condition::compile({"simple", "x & 0x8000000000000000 != 0"});
+  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  std::array workers{WorkerCandidate{"local", 0, true},
+                     WorkerCandidate{"large", UINT64_MAX, false}};
+  auto result = select_worker(workers, condition.get());
+  EXPECT_TRUE(result.matches);
+  EXPECT_FALSE(result.index);
+  workers[1].free = true;
+  EXPECT_EQ(select_worker(workers, condition.get()).index, 1);
+  result = select_worker(std::span(workers).first(1), condition.get());
+  EXPECT_FALSE(result.matches);
+  EXPECT_FALSE(result.index);
+}
+TEST(WorkerSelection, ResidentWaitsForItsOwnWorker) {
+  std::array workers{WorkerCandidate{"cheap", 0, true},
+                     WorkerCandidate{"resident", 100, false}};
+  auto result = select_worker(workers, nullptr, "auto", "resident");
+  EXPECT_TRUE(result.matches);
+  EXPECT_FALSE(result.index);
+  workers[1].free = true;
+  EXPECT_EQ(select_worker(workers, nullptr, "auto", "resident").index, 1);
+}
+}  // namespace tsugumi

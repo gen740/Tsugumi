@@ -110,7 +110,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   s.execution_service = target_;
   s.execution_job_id = crypto::sha256_hex(service_.project_id() + "\n" + s.run_id + "\n" + path_key(node.path) + "\n" +
                                           std::to_string(s.invocation));
-  const auto archive_digest = stage_remote_archive(client_, target_, server_id_, instance_, s.execution_job_id, archive_, request.cancel);
+  const auto archive_digest = stage_remote_archive(client_, target_, server_id_, instance_, s.execution_job_id, archive_, request.cancel, [&](uint64_t done, uint64_t total) {
+    if (request.transfer) request.transfer("upload", "Nix", done, total);
+  });
   auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, s.execution_job_id, service_.project_id(), service_.file_roots(),
                                       archive_digest, request,
                                       heartbeat_interval_seconds_, missed_heartbeats_);
@@ -140,6 +142,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
     try {
       reply = poll_remote_job(client_, job);
       s.execution_state = remote_execution_state(reply->state);
+      if (request.transfer && !reply->transfer_name.empty())
+        request.transfer("copy", reply->transfer_name, reply->transfer_done, reply->transfer_total);
     } catch (const BrokerInstanceChanged& error) {
       s.execution_state = RemoteExecutionState::interrupted;
       output.outcome.failure = FailureData::make(FailureKind::interrupted, error.what());
@@ -160,7 +164,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
         auto result = import_remote_result(client_, target_, server_id_, instance_, s.execution_job_id, reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules",
             node.outputs, [&](LogStream stream, const std::string& line) { output.logs.emplace_back(stream, line); },
-            request.display, request.detach);
+            request.display, request.detach, [&](std::string_view name, uint64_t done, uint64_t total) {
+              if (request.transfer) request.transfer("download", name, done, total);
+            });
         if (!result.environment.paths.empty()) {
           s.build_cached = !result.built;
           history.write_sync([&](sql::Db &db) {
@@ -192,6 +198,8 @@ RemoteExecutionService::RemoteExecutionService(Service& service, RemoteJobClient
 auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& directory, BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
   const auto& settings = node.settings;
+  if (!settings.sandbox || settings.reuse_worker || !settings.host_folders.empty())
+    throw Failed(FailureKind::unsupported, "remote worker requires sandbox, no worker reuse or host folders");
   const auto targets = service_.remote_targets();
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   if (target == targets.end())

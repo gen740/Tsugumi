@@ -353,7 +353,7 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
     result.heartbeat_interval_seconds = s->heartbeat_interval_seconds;
     result.missed_heartbeats = s->missed_heartbeats;
     result.fingerprint = fingerprint;
-    result.deadline = now_ms() + uint64_t{s->timeout_seconds} * 1000;
+    result.deadline = 0;
     write(dir, result);
   });
   return result;
@@ -405,7 +405,7 @@ auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
   bool claimed = false;
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
-    if (state.state != R::JobState::Queued || now_ms() >= state.deadline)
+    if (state.state != R::JobState::Queued)
       return;
     state.state = R::JobState::Running;
     state.pid = pid;
@@ -458,14 +458,10 @@ auto Journal::expire(std::string_view job) -> void {
       erase_scratch(dir);
       return;
     }
-    if (state.deadline > now_ms()) return;
+    if (!state.deadline || state.deadline > now_ms()) return;
     if (state.state == R::JobState::Uploading) {
       // Never accepted: no job fingerprint or result to recover.
       discard_tree(dir);
-    } else if (state.state == R::JobState::Queued) {
-      state.state = R::JobState::Failed;
-      state.diagnostic = "timed out after waiting for an execution slot";
-      write(dir, state);
     }
   });
 }

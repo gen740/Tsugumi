@@ -663,7 +663,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const params = arr(get(def, 'params')) ?? []
   const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
   const kind = model.kind
-  const serviceSetting = string('executionService', 'local')
+  const serviceSetting = string('executionService', 'auto')
   const serviceId = serviceSetting.value
   const service = session.executionServices.find((e) => s(e.id) === serviceId)
   const nativeSystem = s(service?.nativeSystem)
@@ -753,18 +753,22 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
+              <Row label={L('ワーカーの条件式')} help={L('x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。')}>
+                <TextField value={str(get(get(def, 'workerCondition'), 'expression')) ?? ''} mono onChange={(value) => model.setSetting('workerCondition', value.trim() ? obj([['language', 'simple'], ['expression', value]]) : undefined)} />
+              </Row>
               {session.executionServices.length > 1 || !service && session.executionServices.length ? (
                 <Row label={L('実行サービス')}>
                   <Select {...serviceSetting} options={[
+                    { value: 'auto', label: L('条件から自動選択') },
                     ...session.executionServices.map((entry) => ({ value: s(entry.id), label: serviceLabel(entry), disabled: !entry.available })),
-                    ...(!service ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
+                    ...(!service && serviceId !== 'auto' ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
                   ]} />
                 </Row>
               ) : <Value label={L('実行サービス')} value={serviceLabel(service)} />}
               {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
                 <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
               )}
-              {serviceId !== 'local' && (!service || !service.available) && (
+              {serviceId !== 'local' && serviceId !== 'auto' && (!service || !service.available) && (
                 <Row><span className="caption">{L('選択した実行サービスに接続できません。')}</span></Row>
               )}
               <Row label={L('CPU アーキテクチャ')} help={L('選択した実行サービスで利用できる CPU アーキテクチャを選びます。')}>
@@ -788,8 +792,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
-                serviceId !== 'local' && bool(get(def, 'reuseWorker')) !== true)}
-              {serviceId !== 'local' && bool(get(def, 'reuseWorker')) === true && (
+                serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) !== true)}
+              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) === true && (
                 <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
               )}
               <Row label={L('ファイルアクセスを制限')}>

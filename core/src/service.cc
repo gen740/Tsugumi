@@ -12,6 +12,7 @@
 #include <set>
 
 #include "execution_service.hh"
+#include "worker_selection.hh"
 #include "remote_execution_service.hh"
 #include "nix.hh"
 #include "cache_usage.hh"
@@ -262,7 +263,8 @@ auto Service::file_roots() const -> std::vector<stdfs::path> {
 }
 
 auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
-                              const std::atomic<bool>& stop) -> Value {
+                              const std::atomic<bool>& stop,
+                              const std::function<void(std::string_view, uint64_t, uint64_t)>& progress) -> Value {
   if (value.kind == PortKind::FlatBuffer) return value;
   const auto source = path_value(value);
   if (!source) throw Failed(FailureKind::output_invalid, "file value has no path");
@@ -275,7 +277,13 @@ auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
     const auto destination = directory / rel.filename();
     const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
       check();
-      fs::copy_beneath(root, from, to, [&](std::string_view) { check(); });
+      const auto total = stdfs::file_size(root / from);
+      uint64_t done = 0;
+      if (progress) progress(from.generic_string(), 0, total);
+      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
+        check(); done += chunk.size();
+        if (progress) progress(from.generic_string(), done, total);
+      });
     };
     if (value.kind == PortKind::File) copy(rel, destination);
     else {
@@ -299,13 +307,106 @@ auto Service::execution_service(const std::string& id) -> ExecutionService& {
   return *remote_execution_;
 }
 
+namespace {
+class SelectedExecution final : public PreparedExecution {
+ public:
+  SelectedExecution(std::unique_ptr<PreparedExecution> execution, std::function<void()> release)
+      : execution_(std::move(execution)), release_(std::move(release)) {}
+  ~SelectedExecution() override { release_(); }
+  auto stage(const std::atomic<bool>& cancel) -> void override { execution_->stage(cancel); }
+  auto execute(const ExecutionRequest& request) -> ExecutionResult override { return execution_->execute(request); }
+ private:
+  std::unique_ptr<PreparedExecution> execution_;
+  std::function<void()> release_;
+};
+}
+
+auto Service::prepare_execution(const Node& node, const stdfs::path& directory, BuildRequest& build)
+    -> std::unique_ptr<PreparedExecution> {
+  auto targets = remote_targets();
+  const auto card = path_key(node.path);
+  std::unique_lock lock(worker_selection_mutex_);
+  if (!node.settings.reuse_worker) resident_targets_.erase(card);
+  std::string selected;
+  for (;;) {
+    std::vector<WorkerCandidate> candidates;
+    for (const auto& target : targets) {
+      const auto capacity = target.id == "local" ? opts_.env_cpus : target.max_jobs;
+      candidates.push_back({target.id, target.grade,
+          target.available && (!capacity || worker_slots_[target.id] < capacity)});
+    }
+    const auto resident = resident_targets_.find(card);
+    const auto resident_id = resident == resident_targets_.end() ? std::string{} : resident->second;
+    for (;;) {
+      const auto choice = select_worker(candidates, node.settings.worker_condition.get(),
+          node.settings.execution_service, resident_id);
+      if (!choice.matches) throw Failed(FailureKind::invalid_request, "no registered worker satisfies workerCondition");
+      if (!choice.index) break;
+      const auto target = targets[*choice.index];
+      if (target.id != "local") {
+        lock.unlock();
+        RemoteProbe live;
+        try {
+          live = remote_jobs_.probe(target.id, target.server_id, target.heartbeat_interval_seconds);
+        } catch (...) { lock.lock(); throw; }
+        lock.lock();
+        if (live.max_jobs && (live.active_jobs >= live.max_jobs || worker_slots_[target.id] >= live.max_jobs)) {
+          candidates[*choice.index].free = false;
+          continue;
+        }
+      }
+      selected = target.id;
+      break;
+    }
+    if (!selected.empty()) break;
+    if (build.cancel && build.cancel->load()) throw Failed(FailureKind::cancelled, "worker selection cancelled");
+    worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    lock.unlock();
+    targets = remote_targets();
+    lock.lock();
+  }
+  ++worker_slots_[selected];
+  lock.unlock();
+  auto release = [this, selected] {
+    std::lock_guard guard(worker_selection_mutex_);
+    --worker_slots_[selected];
+    worker_selection_cv_.notify_all();
+  };
+  try {
+    Node chosen = node;
+    chosen.settings.execution_service = selected;
+    auto execution = execution_service(selected).prepare(chosen, directory, build);
+    if (node.settings.reuse_worker) {
+      std::lock_guard guard(worker_selection_mutex_);
+      resident_targets_[card] = selected;
+    }
+    return std::make_unique<SelectedExecution>(std::move(execution), release);
+  } catch (...) { release(); throw; }
+}
+
 auto Service::remote_execution() -> RemoteExecutionService& { return *remote_execution_; }
 
 auto Service::remote_targets() const -> std::vector<RemoteTarget> {
   try {
-    return remote_jobs_.catalog();
+    auto targets = remote_jobs_.catalog();
+    auto local = std::ranges::find(targets, kLocalExecutionService, &RemoteTarget::id);
+    if (local == targets.end()) {
+      RemoteTarget target;
+      target.id = kLocalExecutionService;
+      targets.insert(targets.begin(), std::move(target));
+      local = targets.begin();
+    }
+    local->available = true;
+    local->native_system = native_system();
+    local->systems = NixRunner::execution_systems();
+    return targets;
   } catch (const std::exception&) {
-    return {};
+    RemoteTarget local;
+    local.id = kLocalExecutionService;
+    local.available = true;
+    local.native_system = native_system();
+    local.systems = NixRunner::execution_systems();
+    return {std::move(local)};
   }
 }
 
@@ -315,12 +416,18 @@ auto Service::start_remote_cleanup() -> void {
 
 auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag> {
   const auto& settings = node.settings;
-  if (settings.execution_service == kLocalExecutionService) return std::nullopt;
+  if (node.kind != Template::Code) return std::nullopt;
+  if (settings.execution_service == "auto") {
+    if (std::ranges::any_of(targets, [&](const auto& target) {
+      return !settings.worker_condition || settings.worker_condition->matches(target.grade);
+    })) return std::nullopt;
+    return Diag{true, "invalid_setting", "no registered worker satisfies workerCondition", node.path, {}, {}};
+  }
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   const auto error = [&](std::string message) -> Diag {
     return {true, "invalid_setting", std::move(message), node.path, {}, {}};
   };
-  if (target == targets.end() || !target->available)
+  if (target == targets.end() || !target->available || (settings.worker_condition && !settings.worker_condition->matches(target->grade)))
     return error("execution service " + settings.execution_service + " is not available");
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
@@ -731,14 +838,11 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
   auto lj = b.CreateString(doc.layout_json);
-  auto local = R::CreateExecutionService(b, b.CreateString(kLocalExecutionService),
-                                         b.CreateString(native_system()),
-                                         b.CreateVectorOfStrings(NixRunner::execution_systems()));
-  std::vector<flatbuffers::Offset<R::ExecutionService>> services{local};
+  std::vector<flatbuffers::Offset<R::ExecutionService>> services;
   for (const auto& target : targets)
     services.push_back(R::CreateExecutionService(b, b.CreateString(target.id), b.CreateString(target.native_system),
-        b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::remote_daemon, target.available,
-        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt));
+        b.CreateVectorOfStrings(target.systems), target.id == "local" ? R::ExecutionServiceKind::local : R::ExecutionServiceKind::remote_daemon, target.available,
+        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt, target.grade));
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::String> view;
   flatbuffers::Offset<flatbuffers::String> vid;

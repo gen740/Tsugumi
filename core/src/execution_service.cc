@@ -40,6 +40,8 @@ auto LocalExecutionService::clear() -> void { workers_.clear(); }
 
 auto LocalExecutionService::prepare(const Node& node, const std::filesystem::path& /*directory*/,
                                     BuildRequest& build) -> std::unique_ptr<PreparedExecution> {
+  if (node.settings.execution_resources)
+    throw Failed(FailureKind::unsupported, "local worker cannot enforce executionResources");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native, node.settings.system.empty() ? native_system() : node.settings.system};
   build.transport = &transport;
@@ -54,7 +56,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request) -> ExecutionRes
 
   s.build_cached = build.cached;
   s.emulator = build.emulator;
-  s.execution_service = node.settings.execution_service;
+  s.execution_service = kLocalExecutionService;
   // The environment and its invocation association must survive a crash
   // before the worker can execute any code, including a reused build.
   try {
@@ -158,11 +160,17 @@ auto LocalExecutionService::run(const ExecutionRequest& request) -> ExecutionRes
       if (inputs[i].kind == PortKind::FlatBuffer) continue;
       const auto destination = std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
       std::filesystem::create_directories(destination);
-      inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
+      inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel,
+          [&](std::string_view name, uint64_t done, uint64_t total) {
+            if (request.transfer) request.transfer("copy", name, done, total);
+          });
     }
     return inputs;
   };
   invocation.validate = request.validate;
+  invocation.transfer = [&](const std::filesystem::path& name, uint64_t done, uint64_t total) {
+    if (request.transfer) request.transfer("copy", name.generic_string(), done, total);
+  };
   return workerd::run_invocation([&](auto worker, bool keep, const auto& reason) {
     workers_.release(std::move(worker), keep, reason);
   }, lease, reuse, invocation);

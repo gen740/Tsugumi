@@ -104,6 +104,7 @@ table ExecutionService {
   resource_limits:bool (id: 5);
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
+  grade:uint64 (id: 7);
 }
 
 table ProjectSnapshot {
@@ -1032,6 +1033,10 @@ table InvocationSummary {
   batch_index:uint32 = null (id: 23);
   batch_size:uint32 = null (id: 24);
   implementation_index:uint32 = null (id: 25);
+  transfer_name:string (id: 26);
+  transfer_direction:string (id: 27);
+  transfer_done:uint64 (id: 28);
+  transfer_total:uint64 (id: 29);
 }
 
 table StageTime {

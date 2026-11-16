@@ -267,6 +267,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
     std::optional<CardBuildPlan> build;
+    std::optional<ExecutionTarget> build_target;
     std::shared_ptr<BatchCancellation> cancellation;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
@@ -687,7 +688,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                     std::unique_ptr<PreparedExecution>& prepared) -> const CardBuildPlan& {
     const auto& node = *rt.node;
     auto& s = *work.prepared;
-    auto& execution = svc_.execution_service(node.settings.execution_service);
+
     BuildRequest request;
     request.node = &node;
     request.doc = doc_;
@@ -697,8 +698,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.max_implementations = max_implementations;
     request.cancel = &work.cancellation->stop;
     // Resolve worker kind and system before any Card or source evaluation.
-    prepared = execution.prepare(node, invocation_dir(node, work.invocation), request);
-    if (rt.build && execution.reuses_builds()) {
+    prepared = svc_.prepare_execution(node, invocation_dir(node, work.invocation), request);
+    const bool reuses_builds = request.target.kind == WorkerKind::native;
+    if (rt.build && reuses_builds && rt.build_target && rt.build_target->kind == request.target.kind &&
+        rt.build_target->system == request.target.system) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
       return *rt.build;
@@ -716,8 +719,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     };
     set_state(RunState::preparing);
     rt.build = svc_.nix().build(request);
+    rt.build_target = request.target;
     trace_phase();
-    if (execution.reuses_builds()) {
+    if (reuses_builds) {
       journal("build", "output", node.path, s.invocation,
               rt.build->common.cached ? "evaluated; the store already had the result" : "built");
       if (rt.build->common.cached) stage_begin(s, Phase::build, StageOutcome::cached);
@@ -1519,6 +1523,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                 const std::vector<InputSourceData>& sources, uint32_t lane) -> Produced {
     const Node& node = *rt.node;
     const auto inv = s.invocation;
+    int64_t last_transfer = 0;
     auto result = w.execution->execute(
         {node, *w.implementation, in, sources, s, invocation_dir(node, inv), w.cancellation->stop,
          [&] { return explicit_cancel_.load() || w.cancellation->failed.load(); }, detaching_,
@@ -1550,7 +1555,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              svc_.server()->broadcast(timeline_note(run_id_, node.path, inv, Phase::validate, lane, started, now_ms()));
              throw;
            }
+         }, kInvocationLogLimitBytes,
+         [&](std::string_view direction, std::string_view name, uint64_t done, uint64_t total) {
+           const auto now = now_ms();
+           if (done && done != total && s.transfer_name == name && now - last_transfer < 100) return;
+           last_transfer = now;
+           s.transfer_direction = direction;
+           s.transfer_name = name;
+           s.transfer_done = done;
+           s.transfer_total = total;
+           card_status(s);
          }});
+    s.transfer_direction.clear();
+    s.transfer_name.clear();
     w.out_alias = std::move(result.out_alias);
     Produced p;
     p.failure = result.outcome.failure;

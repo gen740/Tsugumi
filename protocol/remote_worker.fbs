@@ -14,7 +14,7 @@ table GetBlobRequest { digest:string (required); offset:ulong; limit:uint = 1048
 table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
-  cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:uint;
+  cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:ulong; build_timeout_ms:ulong;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
   // The registration policy at submission. Zero missed heartbeats means never.
@@ -42,13 +42,14 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 6.
+  // Zero means no advertised contract; writers explicitly send contract 7.
   worker_contract:uint;
+  active_jobs:uint;
 }
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
-table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; }
+table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
