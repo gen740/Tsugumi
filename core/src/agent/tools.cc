@@ -261,7 +261,11 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     return LayoutToolFailure("invalid_document", e.what());
   } catch (const Cancelled&) {
     throw;
-  } catch (const Failure&) {
+  } catch (const Failure& e) {
+    // Policy validation failed before sending a save to the core. Keep that
+    // refusal as a terminal receipt so replay cannot become outcome_unknown.
+    if (e.code == "validation_failed")
+      return LayoutToolFailure(e.code, e.what());
     throw;
   } catch (const std::exception& e) {
     return LayoutToolFailure("validation_failed", e.what());

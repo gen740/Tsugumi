@@ -248,10 +248,10 @@ TEST(AgentApprovalDescription,
           R"({"rev":"7","project_json":"{\"name\":\"Actual project\"}"})");
     EXPECT_EQ(name, "version_graph");
     return json::Object(
-        R"({"head":"full-id","enabled":true,"dirty":false,"commits":[{"id":"full-id","summary":"Actual version"}]})");
+        R"({"head":"0123456789abcdef0123456789abcdef01234567","enabled":true,"dirty":false,"commits":[{"id":"0123456789abcdef0123456789abcdef01234567","summary":"Actual version"}]})");
   };
   const auto checkout = DescribeOperation(
-      "version_checkout", {{"commit", "\"full-id\""}}, "project", read);
+      "version_checkout", {{"commit", "\"0123456789abcdef0123456789abcdef01234567\""}}, "project", read);
   EXPECT_NE(checkout.find("Actual version"), std::string::npos);
   EXPECT_NE(checkout.find("Actual project"), std::string::npos);
   EXPECT_THROW(DescribeOperation("version_checkout", {{"commit", "\"HEAD\""}},

@@ -119,7 +119,7 @@ TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
   Write(directory.path / "demos/en/index.json",
         R"({"demos":[{"id":"source","path":"source","title":"Source"}]})");
   const auto c = Open({".git"});
-  const auto result = ApprovedTool(
+  const auto result = Tool(
       c, "project_copy",
       R"({"source":"demo","demo":"en/source","card":"step","id":"copied","base_rev":"0"})");
   ASSERT_EQ(Error(result), "") << result.View();

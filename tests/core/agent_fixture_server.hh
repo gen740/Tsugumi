@@ -84,6 +84,9 @@ auto AnthropicText(std::string_view text, uint64_t input_tokens = 12)
     -> std::string;
 auto AnthropicTool(std::string_view id, std::string_view name,
                    std::string_view arguments) -> std::string;
+auto AnthropicFamilyTool(std::string_view id, std::string_view family,
+                         std::string_view action, std::string_view arguments)
+    -> std::string;
 auto ResponsesText(std::string_view text) -> std::string;
 auto Quote(std::string_view text) -> std::string;
 auto JsonString(std::string_view json, std::string_view pointer) -> std::string;

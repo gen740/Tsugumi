@@ -23,6 +23,34 @@ class AgentProjectFixture : public AgentFixture {
     return Tool(conversation, name, arguments, id);
   }
 
+  auto Delegate(const std::string &conversation, const std::string &arguments,
+                const std::string &operation) -> Reply {
+    // This call runs all descendants and several isolated commands. The
+    // ordinary fixture's five-second RPC budget is for a single operation.
+    auto result =
+        external
+            ->Call(
+                [&](uint64_t id) {
+                  Builder b;
+                  const auto value = A::CreateToolCallRequest(
+                      b, b.CreateString(conversation),
+                      b.CreateString(project_id), b.CreateString("delegate"),
+                      b.CreateString(arguments), b.CreateString(operation));
+                  const auto request = A::CreateRequest(
+                      b, A::RequestPayload::ToolCallRequest, value.Union());
+                  A::FinishMessageBuffer(
+                      b, A::CreateMessage(b, id, A::Payload::Request,
+                                          request.Union()));
+                  return client::Bytes(b.GetBufferPointer(),
+                                       b.GetBufferPointer() + b.GetSize());
+                },
+                30s)
+            .get();
+    if (result.error)
+      throw std::runtime_error(result.error.message);
+    return {std::move(result.bytes)};
+  }
+
   auto TearDown() -> void override {
     AgentFixture::TearDown();
     project.Stop();

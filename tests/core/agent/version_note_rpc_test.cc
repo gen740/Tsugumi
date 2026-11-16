@@ -14,7 +14,7 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   // assertions rather than waiting forever for another provider response.
   model.Queue(AnthropicText("Workflow の設定を変更しました。"));
   Configure(model, "anthropic");
-  StartProject();
+  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
@@ -67,7 +67,7 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   EXPECT_EQ(model.Requests().size(), 2u);
 }
 TEST_F(AgentProjectFixture, HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
-  StartProject();
+  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
@@ -92,7 +92,7 @@ TEST_F(AgentProjectFixture, VersionNoteFailureCanBeRetriedAndEmptyDiffNeverCalls
   model.Queue(AnthropicText(""));
   model.Queue(AnthropicText("Workflow settings changed."));
   Configure(model);
-  StartProject();
+  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-note-retry");
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
