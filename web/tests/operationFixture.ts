@@ -3,13 +3,20 @@ import { createHash } from 'node:crypto'
 import { Builder } from 'flatbuffers'
 import * as H from '../src/gen/tsugumi/host'
 import { D, R, cardPath } from '../src/shared/rpc'
-import { arr, clone, get, parse, serialize, str } from '../src/shared/json'
+import { arr, get, jeq, parse, serialize, str } from '../src/shared/json'
 import type { ProjectSession } from '../src/model/session'
 import { hostDocumentReply } from './hostDocument'
 
 export function operationFixture<T extends ProjectSession>(s: T): T {
   let files = new Map<string, Uint8Array>()
-  const text = (path: string, value: unknown) => { if (value !== undefined) files.set(path, new TextEncoder().encode(serialize(value as never))) }
+  const text = (path: string, value: unknown) => {
+    if (value === undefined) return
+    // Keep the executor's exact bytes: its inverse operations select file hashes.
+    // Only a fixture installing a different initial document should replace them.
+    const previous = files.get(path)
+    if (previous && jeq(parse(new TextDecoder().decode(previous)), value as never)) return
+    files.set(path, new TextEncoder().encode(serialize(value as never)))
+  }
   const definitions = (prefix: string, values: ProjectSession['definitionDrafts']) => {
     for (const [id, d] of values) {
       const dir = prefix + 'definitions/' + id + '/'
@@ -20,7 +27,7 @@ export function operationFixture<T extends ProjectSession>(s: T): T {
   s.projectId = 'fixture'
   s.connected = true
   const session = s as any
-  session.client ??= { readFile: async (path: string) => {
+  session.client ??= { close() {}, readFile: async (path: string) => {
     const bytes = files.get(path)
     if (!bytes) throw new Error('Missing fixture file: ' + path)
     return bytes.slice()

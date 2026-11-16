@@ -131,6 +131,7 @@ const ports = (s: Session, k: string) => {
   assert.equal((two.port(NEW_PORT, false).y + two.port(NEW_PORT, false).y) / 2, two.height / 2)
   assert.equal(empty.height, wired.height, 'wires do not change the size of a Draft')
   s.setCollapsed([b], true)
+  await s.save()
   assert.equal(new CardGeometry(offGrid(b), 'topToBottom').newPort(true), undefined)
 }
 console.log('draft behavior: passed')

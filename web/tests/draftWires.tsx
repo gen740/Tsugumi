@@ -65,7 +65,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   s.cardStates.clear()
 
   // Implement the Draft and rebind its wire ends: the wires are solid again.
-  s.edit((x) => {
+  await s.applyMutation((x) => {
     x.updateCard(draft, (c) => {
       c.set('template', undefined)
       c.set('language', 'python')
@@ -93,6 +93,8 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   assert.equal(s.kind(outer), 'subgraph')
   assert.ok(Object.values(dotted(s)).length > 0)
   assert.ok(Object.values(dotted(s)).every((d) => !d), 'a Card in Card is not a Draft')
+  // External documents are read after the operation's confirmed delta.
+  await new Promise<void>(resolve => setImmediate(resolve))
   const inside = new Scene(s, [outer])
   assert.ok(inside.boundary)
   const bars = inside.wires.filter((w) => w.connection === undefined && w.style !== 'display')

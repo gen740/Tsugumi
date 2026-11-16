@@ -17,6 +17,8 @@ session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 session.connected = true
 const card = await session.addCard('python', [], { x: 0, y: 0 })
+session.updateCard(card, def => def.set('executionService', 'local'))
+await session.save()
 const show = (nativeSystem: string, systems: string[]) => {
   session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem, systems })]
   return renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
@@ -26,10 +28,12 @@ const linux = show('aarch64-linux', ['aarch64-linux', 'x86_64-linux'])
 assert.match(linux, /<option value="x86_64-linux">/)
 
 session.updateCard(card, (def) => def.set('system', 'x86_64-linux'))
+await session.save()
 const unavailable = show('aarch64-linux', ['aarch64-linux'])
 assert.match(unavailable, /<option value="x86_64-linux" disabled="" selected="">/)
 
 session.updateCard(card, (def) => def.set('system', undefined))
+await session.save()
 const darwin = show('aarch64-darwin', ['aarch64-darwin'])
 assert.doesNotMatch(darwin, /<option value="x86_64-linux"/)
 
@@ -42,6 +46,7 @@ session.updateCard(card, (def) => {
   def.set('executionResources', parse('{"cpuMillis":1000,"memoryBytes":1073741824}'))
   def.set('sandbox', false)
 })
+await session.save()
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(remote, /<option value="worker" selected="">worker/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)

@@ -198,6 +198,7 @@ extension ProjectSession {
     body.id = id; body.template = t.rawValue; body.name = name ?? t.baseName
     body.x = point.x; body.y = point.y; body.automaticPlacement = automaticPlacement
     try await operate(.projectcreatecard, body: body)
+    forgetResult(key(scope + [id]))
     return key(scope + [id])
   }
 
@@ -240,6 +241,7 @@ extension ProjectSession {
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.path = folder.path; body.id = id; body.x = point.x; body.y = point.y
     try await operate(.projectimport, body: body)
+    forgetResult(key(scope + [id]))
     return key(scope + [id])
   }
 
@@ -248,6 +250,7 @@ extension ProjectSession {
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.items = items.map(Optional.some); body.copyConnections = connections
     try await operate(.projectcopy, body: body)
+    for item in items { forgetResult(key(scope + [item.id])) }
   }
 
   func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
