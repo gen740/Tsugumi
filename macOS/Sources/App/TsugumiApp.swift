@@ -226,7 +226,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if icon == nil { icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/AppIcon.icns") }
     #endif
     if let icon, let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
-    NSApp.activate(ignoringOtherApps: true)
     Task { @MainActor in
       AppPreferences.shared.applyTheme()
       SmokeTest.runIfRequested(AppModel.shared)

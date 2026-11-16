@@ -353,7 +353,7 @@ def test_tools_and_instructions(plugin):
     init = mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})["result"]
     assert init["capabilities"] == {"tools": {}}
     # Claude Code keeps the first 4096 characters of a server's instructions.
-    assert "tsugumi_open" in init["instructions"] and len(init["instructions"]) <= 4096
+    assert len(init["instructions"]) <= 4096
     tools = mcp.request("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
     by_name = {t["name"]: t for t in tools}
@@ -369,8 +369,6 @@ def test_tools_and_instructions(plugin):
     assert project_names <= set(names)
     approval_names = {tool_name(request) for request in shared["approvalRequests"]}
     assert approval_names <= set(names)
-    for name in approval_names:
-        assert "Requires the person's approval for this call" in by_name[name]["description"], name
     assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello", "agent_tool_call_cancel"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
@@ -454,7 +452,6 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert error and "create: true" in text
     text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
     assert not error, text
-    assert "Opened" in text and "project_inspect" in text  # the rules come with the first open
     rules = (ROOT / "agent/Shared/system-prompt.md").read_text().split("- Making a Draft (", 1)[0]
     assert text.endswith(rules)  # initialize's size limit must not truncate the rules
     # The host it started is found through server.json, readable by this user alone.
@@ -484,7 +481,7 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert json.loads((root / "proj" / "tsugumi.json").read_text())["name"] == "renamed by Claude Code"
     # A second open (another session) reuses the running host; the open page is told to show the project.
     text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj")})
-    assert not error and "The open web UI page shows it now" in text and "Rules" not in text
+    assert not error and "The open web UI page shows it now" in text and not text.endswith(rules)
     assert json.loads(info_file.read_text())["pid"] == info["pid"]
     for _ in range(50):
         if any(e.get("type") == "agentOpen" for e in page.events):

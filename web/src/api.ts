@@ -10,7 +10,7 @@ let settingsRevision: Record<string, number> | undefined
 export async function api<T = any>(path: string, body?: unknown): Promise<T> {
   if (path === '/api/settings' && body !== undefined) {
     if (!settingsRevision) await api('/api/settings')
-    body = { ...(body as object), revision: settingsRevision }
+    body = { revision: settingsRevision, ...(body as object) }
   }
   const r = await fetch(path, body === undefined
     ? { headers: { 'x-tsugumi': '1' } }

@@ -273,14 +273,18 @@ struct DisplaySnapshot {
 @Observable
 final class ProjectSession {
   var projectTrust: Int?
+  var trustedFolder = ""
   func refreshProjectTrust() async throws {
+    try await UIScript.shared.registerTrustedFolderIfRequested()
     let result = try await CoreHostClient.shared.call("ProjectTrustRequest", ["path": identity.url.path])
     projectTrust = result["decision"] as? Int ?? 0
+    trustedFolder = result["trusted_folder"] as? String ?? ""
   }
   func setProjectTrust(_ trusted: Bool) async {
     do {
       let result = try await CoreHostClient.shared.call("ProjectTrustRequest", ["path": identity.url.path, "decision": UInt8(trusted ? 1 : 2)])
       projectTrust = result["decision"] as? Int ?? 0
+      trustedFolder = result["trusted_folder"] as? String ?? ""
     } catch { connectionMessage = String(describing: error) }
   }
 

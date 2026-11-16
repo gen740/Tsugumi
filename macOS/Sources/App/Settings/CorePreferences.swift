@@ -31,6 +31,7 @@ final class CorePreferences {
   private func loadSnapshot() async {
     do {
       let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
       revision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),
@@ -42,6 +43,9 @@ final class CorePreferences {
         _ = try await CoreHostClient.shared.usable(config)
       }
       AppPreferences.shared.syncHostSettings()
+      if previousFolders != (stringArray(forKey: "agent.trustedFolders") ?? []) {
+        for session in AppModel.shared.sessions.values { try? await session.refreshProjectTrust() }
+      }
     } catch { self.error = String(describing: error) }
   }
   func string(forKey key: String) -> String? { values[key] as? String }

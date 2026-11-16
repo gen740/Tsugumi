@@ -173,6 +173,7 @@ extension Workspace {
   /// To the front, also out of the Dock or from behind another tab.
   func bringForward() {
     guard let window else { return }
+    if GuideController.quiet { window.orderBack(nil); return }
     NSApp.activate()
     if window.isMiniaturized { window.deminiaturize(nil) }
     window.makeKeyAndOrderFront(nil)

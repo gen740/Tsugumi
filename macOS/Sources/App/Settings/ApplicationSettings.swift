@@ -214,6 +214,7 @@ private struct GeneralSettings: View {
         ForEach(AppPreferences.Motion.allCases) { Text($0.label).tag($0) }
       }
       .help("Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。")
+      TrustedFoldersSettings()
       UpdateSettings()
     }
     .formStyle(.grouped)

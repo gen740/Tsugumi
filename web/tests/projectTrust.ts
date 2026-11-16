@@ -9,7 +9,7 @@ globalThis.fetch = (async (url, init) => {
   const request = JSON.parse(String(init?.body))
   requests.push(request)
   if (request.decision) decisions.set(request.path, request.decision)
-  return new Response(JSON.stringify({ decision: decisions.get(request.path) ?? 0 }))
+  return new Response(JSON.stringify({ decision: request.path === '/trials/project' ? 1 : decisions.get(request.path) ?? 0, trusted_folder: request.path === '/trials/project' ? '/trials' : '' }))
 }) as typeof fetch
 try {
   const session = new ProjectSession('/trust-project', 'trust-key', 'Project')
@@ -23,6 +23,11 @@ try {
   await reopened.setProjectTrust(true)
   assert.equal(reopened.projectTrust, 1)
   assert.deepEqual(requests.map(x => x.decision), [undefined, 2, undefined, 1])
+  const inherited = new ProjectSession('/trials/project', 'folder-key', 'Project')
+  await inherited.refreshProjectTrust()
+  assert.equal(inherited.projectTrust, 1)
+  assert.equal(inherited.trustedFolder, '/trials')
+  inherited.dispose()
   session.dispose()
   reopened.dispose()
 } finally { globalThis.fetch = originalFetch }

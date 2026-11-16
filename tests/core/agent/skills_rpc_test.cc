@@ -7,6 +7,44 @@ namespace tsugumi::test {
 namespace {
 class SkillsFixture : public AgentProjectFixture {
  protected:
+  auto Roots(const std::vector<std::string>& folders) -> Reply {
+    const auto before =
+        Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
+          return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))
+              .Union();
+        });
+    std::string encoded = "[";
+    for (const auto& folder : folders) {
+      if (encoded.size() > 1) encoded += ',';
+      encoded += Quote(folder);
+    }
+    encoded += ']';
+    return Call(
+        *host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
+          const auto item =
+              H::CreateSetting(b, b.CreateString("agent.trustedFolders"),
+                               b.CreateString(encoded));
+          return H::CreateSettingsUpdateRequest(
+                     b, b.CreateString("desktop"),
+                     before.HostValue()->value_as_Settings()->revision(),
+                     b.CreateVector(std::vector{item}))
+              .Union();
+        });
+  }
+  auto Trust(const std::filesystem::path& path, bool web = false,
+             H::ProjectTrustDecision decision =
+                 H::ProjectTrustDecision::Unknown) -> H::ProjectTrustDecision {
+    auto connection = web ? ConnectHost(true) : nullptr;
+    const auto reply =
+        Call(connection ? *connection : *host,
+             H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+               return H::CreateProjectTrustRequest(
+                          b, b.CreateString(path.string()), decision)
+                   .Union();
+             });
+    if (!reply.Code().empty()) throw std::runtime_error(reply.Code());
+    return reply.HostValue()->value_as_ProjectTrust()->decision();
+  }
   auto List(const std::vector<std::string>& folders = {}, bool project = true,
             bool websocket = false, const std::string& conversation = {})
       -> Reply {
@@ -27,6 +65,95 @@ class SkillsFixture : public AgentProjectFixture {
         });
   }
 };
+TEST_F(SkillsFixture,
+       TrustedFoldersResolveLinksAndUsePathComponentsOnBothTransports) {
+  const auto root = directory.path / "trusted";
+  const auto nested = root / "nested/deep/project";
+  const auto outside = directory.path / "trusted-sibling/project";
+  Write(root / "tsugumi.json", "{}");
+  Write(nested / "tsugumi.json", "{}");
+  Write(outside / "tsugumi.json", "{}");
+  std::filesystem::create_directory_symlink(
+      root, directory.path / "registration-link");
+  std::filesystem::create_directory_symlink(outside, root / "escape");
+  std::filesystem::create_directory_symlink(nested, directory.path / "entry");
+  ASSERT_TRUE(
+      Roots({(directory.path / "registration-link").string(), root.string()})
+          .Code()
+          .empty());
+  const auto settings =
+      Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
+        return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))
+            .Union();
+      });
+  for (const auto* item : *settings.HostValue()->value_as_Settings()->values())
+    if (item->key()->str() == "agent.trustedFolders")
+      EXPECT_EQ(item->value_json()->str(),
+                "[" + Quote(std::filesystem::canonical(root).string()) + "]");
+  for (const auto web : {false, true}) {
+    EXPECT_EQ(Trust(root, web), H::ProjectTrustDecision::Trusted);
+    EXPECT_EQ(Trust(nested, web), H::ProjectTrustDecision::Trusted);
+    EXPECT_EQ(Trust(directory.path / "entry", web),
+              H::ProjectTrustDecision::Trusted);
+    EXPECT_EQ(Trust(outside, web), H::ProjectTrustDecision::Unknown);
+    EXPECT_EQ(Trust(root / "escape", web), H::ProjectTrustDecision::Unknown);
+  }
+  host.reset();
+  human.reset();
+  external.reset();
+  service.Stop();
+  StartHost();
+  EXPECT_EQ(Trust(nested), H::ProjectTrustDecision::Trusted);
+  const auto individual = root / "individual";
+  Write(individual / "tsugumi.json", "{}");
+  EXPECT_EQ(Trust(individual, false, H::ProjectTrustDecision::Trusted),
+            H::ProjectTrustDecision::Trusted);
+  ASSERT_TRUE(Roots({}).Code().empty());
+  for (const auto web : {false, true}) {
+    EXPECT_EQ(Trust(nested, web), H::ProjectTrustDecision::Unknown);
+    EXPECT_EQ(Trust(individual, web), H::ProjectTrustDecision::Trusted);
+  }
+}
+
+TEST_F(SkillsFixture, ReplacingARegisteredRootWithALinkDoesNotTrustItsTarget) {
+  const auto root = directory.path / "trusted";
+  const auto outside = directory.path / "outside";
+  Write(root / "project/tsugumi.json", "{}");
+  Write(outside / "project/tsugumi.json", "{}");
+  ASSERT_TRUE(Roots({root.string()}).Code().empty());
+  std::filesystem::rename(root, directory.path / "moved");
+  std::filesystem::create_directory_symlink(outside, root);
+  EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Unknown);
+}
+
+TEST_F(SkillsFixture, FolderTrustIsAppliedAndRevokedAtTheModelBoundary) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  Write(directory.path / "project/skills/automatic.md",
+        "---\nalways: true\n---\nFOLDER_SKILL_SENTINEL");
+  ASSERT_TRUE(Roots({directory.path.string()}).Code().empty());
+  const auto conversation = Conversation("folder-trust");
+  Grant(conversation);
+  model.Queue(AnthropicText("Applied."));
+  ASSERT_TRUE(Send(conversation, "Read this project.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  WaitUntilIdle(conversation);
+  const auto request = model.Requests()[0];
+  const auto at = request.find("FOLDER_SKILL_SENTINEL");
+  ASSERT_NE(at, std::string::npos);
+  EXPECT_EQ(request.find("FOLDER_SKILL_SENTINEL", at + 1), std::string::npos);
+  ASSERT_TRUE(Roots({}).Code().empty());
+  const auto next = Conversation("after-folder-removal");
+  Grant(next);
+  model.Queue(AnthropicText("No automatic project Skill."));
+  ASSERT_TRUE(Send(next, "Read this project.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(2));
+  WaitUntilIdle(next);
+  EXPECT_EQ(model.Requests()[1].find("FOLDER_SKILL_SENTINEL"),
+            std::string::npos);
+}
+
 TEST_F(SkillsFixture, TrustIsUnknownUntilAnsweredAndPersistsAcrossHostRestart) {
   Write(directory.path / "project/tsugumi.json", "{}");
   auto trust = [&](H::ProjectTrustDecision decision =
@@ -114,8 +241,7 @@ TEST_F(SkillsFixture, AutomaticSkillsReachTheModelOnlyFromTrustedProjects) {
   ASSERT_TRUE(Send(untrusted, "Read this project.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
   WaitUntilIdle(untrusted);
-  EXPECT_NE(model.Requests()[0].find("Do not split work among sub-agents"),
-            std::string::npos);
+  EXPECT_NE(model.Requests()[0].find("[Skill helpers]"), std::string::npos);
   EXPECT_EQ(model.Requests()[0].find("PROJECT_HELPERS_POLICY"),
             std::string::npos);
   EXPECT_EQ(model.Requests()[0].find("PROJECT_AUTOMATIC_POLICY"),
@@ -155,8 +281,7 @@ TEST_F(SkillsFixture, AutomaticSkillsReachTheModelOnlyFromTrustedProjects) {
   ASSERT_TRUE(Send(trusted, "Read this project.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(3));
   WaitUntilIdle(trusted);
-  EXPECT_EQ(model.Requests()[2].find("Do not split work among sub-agents"),
-            std::string::npos);
+
   EXPECT_NE(model.Requests()[2].find("PROJECT_HELPERS_POLICY"),
             std::string::npos);
   EXPECT_NE(model.Requests()[2].find("PROJECT_AUTOMATIC_POLICY"),

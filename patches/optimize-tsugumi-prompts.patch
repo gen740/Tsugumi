@@ -1,0 +1,9 @@
+diff --git a/.agents/skills/optimize-tsugumi-prompts/SKILL.md b/.agents/skills/optimize-tsugumi-prompts/SKILL.md
+--- a/.agents/skills/optimize-tsugumi-prompts/SKILL.md
++++ b/.agents/skills/optimize-tsugumi-prompts/SKILL.md
+@@ -21,1 +21,5 @@
++## 文面を短く保つ
++
++禁止はまず削って試し、外すと振る舞いが壊れると試行で分かったものだけ残す。能力は何ができ、何が得られ、何がかかるかを正確に短く説明し、使う場面を列挙しない。文言をテストで固定しない。生成の同期・tool の構造・コード例の正しさはテストで、文面の採否は実モデルで確かめる。
++
+ ## 少ない試行で採否を決める

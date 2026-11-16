@@ -40,6 +40,7 @@ export function chatStatus() {
 type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
 
 interface Settings {
+  trustedFolders: string[]
   skillFolders: { path: string; enabled: boolean }[]
   provider: ProviderId
   /** The Anthropic model, the OpenAI one and the ChatGPT plan's (each provider keeps its own). */
@@ -73,6 +74,7 @@ const SHARED_KEYS: Record<string, string> = {
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
+const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
@@ -82,7 +84,7 @@ const settings = (): Settings => snapshot
 async function loadSettings() {
   await core.provisionEnvironment()
   const next: any = {}
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
     const reply = await core.getSettings(profile)
     revisions[profile] = reply.revision
     const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
@@ -93,7 +95,7 @@ async function loadSettings() {
 }
 async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
   const patches = new Map<string, { key: string; value_json: string }[]>()
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
     const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
     if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
   }
@@ -444,7 +446,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
   core.observeHost((event) => {
-    if (event.type === 'SettingsChanged' && event.value.profile === settingsProfile()) c.broadcast({ type: 'settingsChanged' })
+    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) c.broadcast({ type: 'settingsChanged' })
   })
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {

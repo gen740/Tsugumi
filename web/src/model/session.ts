@@ -417,15 +417,18 @@ type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
 export class ProjectSession extends Observable {
   projectTrust: number | undefined
+  trustedFolder = ''
   async refreshProjectTrust() {
-    const result = await api<{ decision: number }>('/api/project/trust', { path: this.dir })
+    const result = await api<{ decision: number; trusted_folder?: string }>('/api/project/trust', { path: this.dir })
     this.projectTrust = result.decision
+    this.trustedFolder = result.trusted_folder ?? ''
     this.changed()
   }
   async setProjectTrust(trusted: boolean) {
     try {
-      const result = await api<{ decision: number }>('/api/project/trust', { path: this.dir, decision: trusted ? 1 : 2 })
+      const result = await api<{ decision: number; trusted_folder?: string }>('/api/project/trust', { path: this.dir, decision: trusted ? 1 : 2 })
       this.projectTrust = result.decision
+      this.trustedFolder = result.trusted_folder ?? ''
     } catch (error) { this.connectionMessage = errorText(error) }
     this.changed()
   }
@@ -562,6 +565,7 @@ export class ProjectSession extends Observable {
     this.viewId = v
     this.origin = `ui:${v}`
     this.offEvents = onServerEvent((e) => {
+      if (e.type === 'settingsChanged') void this.refreshProjectTrust().catch(() => {})
       if (e.type === 'reconnected' && !this.connected) {
         // The environment's progress may have been missed while the stream was down.
         void api<{ key: string; state: EnvPublicState }[]>('/api/env/list').then((list) => {

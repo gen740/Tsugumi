@@ -308,6 +308,8 @@ private struct GeneralProjectSettings: View {
         Toggle("このプロジェクトを信頼する", isOn: Binding(get: { session.projectTrust == 1 }, set: { trusted in
           Task { await session.setProjectTrust(trusted) }
         }))
+        .disabled(!session.trustedFolder.isEmpty)
+        TrustedFoldersSettings()
         Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。").font(.caption).foregroundStyle(.secondary)
         LabeledContent("場所", value: session.identity.url.path)
         NixSourceSettings(session: session)

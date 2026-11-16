@@ -1,15 +1,19 @@
+import Foundation
 import Testing
-import TsugumiAgentClient
+@testable import TsugumiAgentClient
 
 struct AgentRequestsTests {
-  @Test func generationButtonsRequestSavedValidatedRunResults() {
+  @Test func generationButtonsSubstituteScopeAndCardList() throws {
+    let shared = try #require(JSONSerialization.jsonObject(with: Data(Shared.agentJSON.utf8)) as? [String: Any])
+    let location = try #require(shared["draftRequest"] as? [String: String])
     for kind in ["draftRequest", "commentRequest"] {
-      let text = AgentRequests.make(kind, scope: ["outer"], cards: ["outer/work", "outer/render"])
-      #expect(text.contains("the child workflow outer"))
-      #expect(text.contains("- outer/work\n- outer/render"))
-      #expect(text.contains("save") && text.contains("project_validate") && text.contains("run_record"))
-      #expect(!text.contains("delegate") && !text.contains("{where}") && !text.contains("{list}"))
+      let request = try #require(shared[kind] as? [String: String])
+      for scope in [[], ["outer"], ["outer", "inner"]] {
+        let whereText = scope.isEmpty ? location["root"]! : location["child"]!.replacingOccurrences(of: "{scope}", with: scope.joined(separator: "/"))
+        let expected = request["text"]!.replacingOccurrences(of: "{where}", with: whereText)
+          .replacingOccurrences(of: "{list}", with: "- outer/work\n- outer/render")
+        #expect(AgentRequests.make(kind, scope: scope, cards: ["outer/work", "outer/render"]) == expected)
+      }
     }
-    #expect(AgentRequests.make("draftRequest", scope: [], cards: ["work"]).contains("the root workflow"))
   }
 }

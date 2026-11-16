@@ -1445,5 +1445,7 @@
   "0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。": "0 means never. Use 0 to keep jobs running while this computer sleeps.",
   "接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。": "You can use all of Tsugumi through the UI without a connection (the guide gives fixed demo tours meanwhile). Add a key or sign in with ChatGPT under “API” in Settings later to ask questions too.",
   "ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。": "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only in this host’s Keychain (a 0600 file outside macOS), never in projects, conversation records or logs.",
-  "ChatGPT のサインインは、Web UI のサーバーと同じマシンで localhost または 127.0.0.1 のページを開いて行ってください。ここでは API キーを使えます。": "To sign in with ChatGPT, open the Web UI at localhost or 127.0.0.1 in a browser on the server’s machine. You can use an API key here."
+  "ChatGPT のサインインは、Web UI のサーバーと同じマシンで localhost または 127.0.0.1 のページを開いて行ってください。ここでは API キーを使えます。": "To sign in with ChatGPT, open the Web UI at localhost or 127.0.0.1 in a browser on the server’s machine. You can use an API key here.",
+ "信頼するフォルダ": "Trusted folders",
+ "このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。": "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded."
 }

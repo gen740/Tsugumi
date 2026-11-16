@@ -13,7 +13,7 @@ Put the latest version from [GitHub Releases](https://github.com/gen740/Tsugumi/
 Open `Tsugumi.dmg` and drag it to `Applications`, or install with this command:
 
 ```bash
-curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
+curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open -g /Applications/Tsugumi.app
 ```
 
 Releases are signed ad hoc (with the virtualization entitlement needed to run the VM), without a Developer ID signature or Apple's notarisation. An app taken out of a zip downloaded in a browser is stopped by Gatekeeper, so fetch it with `curl` as above, or remove the quarantine attribute after taking it out:

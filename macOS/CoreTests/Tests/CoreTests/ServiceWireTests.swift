@@ -58,6 +58,18 @@ final class ServiceWireTests: XCTestCase {
     }
   }
 
+  func testInheritedProjectTrustCarriesItsHostFolder() throws {
+    let trust = Tsugumi_Host_ProjectTrustT()
+    trust.decision = .trusted
+    trust.trustedFolder = "/trials"
+    let reply = try ServiceWire.decode(hostReply(trust, type: .projecttrust), host: true)
+    XCTAssertEqual(reply["decision"] as? Int, 1)
+    XCTAssertEqual(reply["trusted_folder"] as? String, "/trials")
+    trust.trustedFolder = nil
+    let individual = try ServiceWire.decode(hostReply(trust, type: .projecttrust), host: true)
+    XCTAssertEqual(individual["trusted_folder"] as? String, "")
+  }
+
   func testAttachmentIsOneHostRequestWithReadyEndpointAndResources() throws {
     let bytes = try ServiceWire.encode("AttachFoldersRequest", fields: ["project": "/project", "folders": [String]()], id: 1, host: true)
     var buffer = ByteBuffer(data: bytes)

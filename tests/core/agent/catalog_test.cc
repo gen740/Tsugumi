@@ -17,14 +17,10 @@ extern const unsigned char tsugumi_rpc_bfbs[];
 namespace tsugumi::agent {
 namespace {
 
-TEST(AgentCatalog, DraftSaveDescriptionReachesTheModelAndPreservesEmptyEnds) {
+TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   const Catalog catalog;
   const auto* tool = catalog.Find("project_save");
   ASSERT_NE(tool, nullptr);
-  EXPECT_NE(tool->spec.description.find("Drafts have no ports"),
-            std::string::npos);
-  EXPECT_NE(tool->spec.description.find("single possible port must be stated"),
-            std::string::npos);
   const auto request = catalog.Request(
       "project_save",
       R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
@@ -275,7 +271,6 @@ TEST(AgentCatalog, RunToolsOfferTheSameHostWait) {
     const auto properties = json::Object(
         json::Get(json::Object(tool->spec.input_schema), "properties"));
     EXPECT_TRUE(properties.contains("wait_seconds"));
-    EXPECT_NE(tool->spec.description.find("capped at 300"), std::string::npos);
   }
 }
 }  // namespace tsugumi::agent
