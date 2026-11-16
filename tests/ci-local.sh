@@ -78,7 +78,8 @@ linux_in_container() {
       git config --global --add safe.directory /src
       git init -q && git add -A
       echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
-      bash tests/ci-local.sh linux'
+      # The image has no ps, which the isolated test runner uses to clean up.
+      nix shell --inputs-from . nixpkgs#procps -c bash tests/ci-local.sh linux'
 }
 
 mac_job() {
