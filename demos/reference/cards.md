@@ -13,7 +13,7 @@ project_edit writes the context field itself. Boundary endpoints in tsugumi.json
 
 For example, plan starts with _card.json {"template":"draft"} and _meta.json
 {"description":"Make a greeting","content":"Return hello."}, with no context or source files. Its incoming wire is
-start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). These project_edit
+start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field:
 
 ```json
