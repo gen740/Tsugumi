@@ -127,7 +127,7 @@ enum SmokeTest {
       if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
         try? data.write(to: URL(fileURLWithPath: out))
       }
-      NSApp.terminate(nil)
+      requestQuit()
     }
   }
 }

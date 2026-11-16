@@ -232,7 +232,7 @@ final class Updater {
   }
 
   /// Language changes use the same normal quit and wait-for-exit relaunch.
-  func restart(terminate: @MainActor () -> Void = { NSApp.terminate(nil) }) {
+  func restart(terminate: @MainActor () -> Void = { requestQuit() }) {
     relaunch = true
     terminate()
   }

@@ -146,6 +146,20 @@ struct OpenConsoleButton: View {
   }
 }
 
+/// Quits the app from code. Quit waits in a nested run loop for work on the
+/// main queue, and that queue is not drained from inside one of its own blocks
+/// (a main-actor task, a main-queue source): the app would hang half quit. So
+/// the request is handed to the run loop instead of calling terminate in place.
+func requestQuit(_ before: @escaping @MainActor () -> Void = {}) {
+  CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+    MainActor.assumeIsolated {
+      before()
+      NSApp.terminate(nil)
+    }
+  }
+  CFRunLoopWakeUp(CFRunLoopGetMain())
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
   @MainActor private let termination = AppTermination()
   @MainActor private var signalled = false
@@ -233,12 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // VM stop in order with it instead of staying behind.
     for number in [SIGTERM, SIGINT] {
       signal(number, SIG_IGN)
-      let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
       source.setEventHandler { [weak self] in
-        MainActor.assumeIsolated {
-          self?.signalled = true
-          NSApp.terminate(nil)
-        }
+        requestQuit { self?.signalled = true }
       }
       source.resume()
       signalSources.append(source)

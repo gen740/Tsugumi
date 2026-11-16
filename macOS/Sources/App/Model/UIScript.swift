@@ -231,7 +231,7 @@ final class UIScript {
           s.setParam(w[1], w[2], parseParam(w[3], "uint64"))
           say("offlineedit \(s.identity.url.lastPathComponent) dirty=\(s.dirty)")
         }
-        NSApp.terminate(nil)
+        requestQuit()
       case "closewindow": workspace?.window?.performClose(nil)
       case "menu":
         let title = w.dropFirst().joined(separator: " ")
@@ -564,7 +564,7 @@ final class UIScript {
           }
         }
       case "save": if let s = session { await s.save() }
-      case "quit": NSApp.terminate(nil)
+      case "quit": requestQuit()
       default: say("unknown " + line)
       }
       try? await Task.sleep(for: .milliseconds(500))
