@@ -22,7 +22,7 @@ Releases are signed ad hoc (with the virtualization entitlement needed to run th
 xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 ```
 
-From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. To use the Agent, set the model provider and API key under "API" in the settings, or choose the ChatGPT plan and sign in with "Continue with ChatGPT". The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
+From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
 
 ### Automatic updates
 

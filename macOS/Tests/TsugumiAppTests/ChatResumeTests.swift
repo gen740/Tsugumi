@@ -75,6 +75,13 @@ import TsugumiRPC
       try await CoreHostClient.shared.configure(.fixture, conversationID: conversationID)
     }
 
+    /// The existing local OAuth fixture replaces the browser and OpenAI.
+    func signInChatGPT(clientId: String? = nil, consent: Bool = false) async throws -> ChatGPTAuth.SignInResult {
+      let auth = ChatGPTAuth.shared(endpoints: .init(issuer: "http://127.0.0.1:\(port)", resource: "https://api.openai.com/v1"))
+      let browser = URLSession(configuration: .ephemeral)
+      return try await auth.signIn(clientId: clientId, consent: consent) { url in _ = try await browser.data(from: url) }
+    }
+
     func restartAgent() async throws {
       let binary = core.executableURL
       let arguments = core.arguments

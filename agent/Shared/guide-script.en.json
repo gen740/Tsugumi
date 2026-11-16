@@ -28,7 +28,7 @@
               "Tell me more"
             ]
           },
-          "text": "\"Data to report\" is the classic demo that connects, with Cards, making a table, aggregating it and keeping a report.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "text": "\"Data to report\" is the classic demo that connects, with Cards, making a table, aggregating it and keeping a report.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
           "next": {
             "Other demos": "exoplanet-transit/pick",
             "Tell me more": "about"
@@ -171,7 +171,7 @@
               "Tell me more"
             ]
           },
-          "text": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "text": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
           "next": {
             "Other demos": "pharmacokinetics/pick",
             "Tell me more": "about"
@@ -315,7 +315,7 @@
               "Tell me more"
             ]
           },
-          "text": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
+          "text": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
           "next": {
             "Other demos": "report/pick",
             "Tell me more": "about"
@@ -431,7 +431,7 @@
   },
   "noConnection": {
     "show": {
-      "say": "Sorry, I can't answer free questions right now. Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under \"API\" in the settings and I can. In a demo's copy, sending $demo in the chat starts the guide.",
+      "say": "Sorry, I can't answer free questions right now. Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings and I can. In a demo's copy, sending $demo in the chat starts the guide.",
       "actions": [
         {
           "kind": "open_settings",
@@ -466,6 +466,6 @@
         }
       ]
     },
-    "text": "Only copies of these three demos have a fixed guide. Open one and the guide begins.\n\nConnect Claude or Codex (ChatGPT) under \"API\" in the settings, and I can guide you in any project and answer questions."
+    "text": "Only copies of these three demos have a fixed guide. Open one and the guide begins.\n\nConnect Claude or Codex (ChatGPT) on first start or under \"API\" in the settings, and I can guide you in any project and answer questions."
   }
 }
