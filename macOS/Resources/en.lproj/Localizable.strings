@@ -306,8 +306,8 @@
 "このデモを開く" = "Open This Demo";
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このビルドには既定の Nixpkgs が設定されていません。" = "This build has no default Nixpkgs pin.";
-"このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。" = "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.";
 "このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。" = "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.";
+"このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。" = "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトに根拠の記録がありません" = "This evidence is not available in this project";
