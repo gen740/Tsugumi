@@ -124,7 +124,6 @@
     "AccessResolveRequest",
     "AccessRevokeRequest",
     "AccessListRequest",
-    "ConversationSummarizeRequest",
-    "ToolCallCancelRequest"
+    "ConversationSummarizeRequest"
   ]
 }
