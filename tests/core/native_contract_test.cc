@@ -6,8 +6,18 @@
 #include <gtest/gtest.h>
 #include <bit>
 #include <filesystem>
+#include <sstream>
 
 namespace {
+// NixOS and the nixos/nix container have no /bin/bash; use the one on PATH there.
+std::string host_bash() {
+  if (::access("/bin/bash", X_OK) == 0) return "/bin/bash";
+  std::istringstream path(std::getenv("PATH") ? std::getenv("PATH") : "");
+  for (std::string directory; std::getline(path, directory, ':');)
+    if (::access((directory + "/bash").c_str(), X_OK) == 0) return directory + "/bash";
+  return "/bin/bash";
+}
+
 class NativeContract : public testing::Test {
  protected:
   flatbuffers::FlatBufferBuilder message;
@@ -127,7 +137,7 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   write_text(base + "/body", ":\n");
   write_text(base + "/post", "printf '%s' \"$TSUGUMI_FAILED\" > " + base + "/failed\n");
   Options options;
-  options.bash = "/bin/bash";
+  options.bash = host_bash();
   options.run = base + "/body";
   options.post = base + "/post";
   execute(options, call);

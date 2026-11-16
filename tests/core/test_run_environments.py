@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 from harness.fixtures import worker_project
-from harness.scenario import STRING_OUTPUT, Project, run, wait_run
+from harness.scenario import HOST_BASH, STRING_OUTPUT, Project, run, wait_run
 from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
@@ -396,7 +396,7 @@ def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_pa
         tools = tmp_path / version
         tools.mkdir()
         shell = tools / "bash"
-        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec /bin/bash "$@"\n')
+        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec {HOST_BASH} "$@"\n')
         shell.chmod(0o755)
         jq = tools / "jq"
         jq.write_text(f'#!/bin/sh\nprintf %s {version}\n')
