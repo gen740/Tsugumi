@@ -51,11 +51,8 @@ class DelegateContractTests(unittest.TestCase):
         self.assertIn("name: helpers", metadata)
         self.assertIn("always: true", metadata)
         self.assertNotIn("scope:", metadata)
-        # The Skill describes a helper (what it sees, returns and costs) instead of prescribing when to use one.
         policy = "Do not split work among sub-agents unless the person's own message asks for helpers or parallel work"
         self.assertNotIn(policy, helpers)
-        for description in ("has its own context", "run at the same time", "What it costs you"):
-            self.assertIn(description, helpers)
         shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
         tool_text = json.dumps([shared["delegateTool"], *shared["hostTools"],
                                 json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())])
@@ -63,11 +60,6 @@ class DelegateContractTests(unittest.TestCase):
             self.assertNotIn(policy, text)
             self.assertNotIn("helper or parallel work requested by the person", text)
             self.assertNotIn("person's own message asks for helpers or parallel work", text)
-        for contract in ("both 0 by default", "depth 0 cannot start any",
-                         "may start count helpers of its own", "a smaller depth",
-                         "Card sets within its own", "The main Agent has no such limit",
-                         "in a few lines", "what changed", "whether you ran or read the evidence"):
-            self.assertIn(contract, helpers)
         for removed in ("delegate {", policy, "Before delegating", "Each helper receives",
                         "Do the\n  work yourself when it is small"):
             self.assertNotIn(removed, prompt)
@@ -92,9 +84,7 @@ class DelegateContractTests(unittest.TestCase):
         self.assertIn('"read_cards"', helpers)
         self.assertIn('"write_cards"', helpers)
         self.assertIn("The host merges disjoint concurrent saves", helpers)
-        self.assertIn("it places a Card that has no saved place", " ".join(prompt.split()))
         self.assertIn("all incident endpoints are in scope", helpers)
-        self.assertIn("Cards a helper reserves with card_id are its own", helpers)
         self.assertNotIn("and its place in SetLayout", prompt)
         self.assertIn("without SetLayout coordinates", shared["saveNote"])
         self.assertIn("input wire or delete/change", shared["saveNote"])

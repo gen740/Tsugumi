@@ -49,6 +49,36 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->nodes.front().diags.empty());
   EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
 }
+TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
+  // A wire to an undeclared input of a code Card and an unknown param type: each
+  // message carries the fix (the inputs entry, the valid types) on one line.
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
+  fs::write_atomic(root / "definitions/b/_card.json",
+                   R"({"language":"python","params":[{"name":"x","type":"float","data":1}]})");
+  Store store({root, ""});
+  store.open();
+  const auto doc = store.current();
+  const auto* node = doc->resolution->find({"b"});
+  ASSERT_NE(node, nullptr);
+  bool port = false, param = false;
+  for (const auto& d : node->diags) {
+    EXPECT_EQ(d.message.find('\n'), std::string::npos);
+    if (d.code == "unknown_port") {
+      port = true;
+      EXPECT_NE(d.message.find("{\"name\": \"config\"}"), std::string::npos) << d.message;
+      EXPECT_NE(d.message.find("\"inputs\""), std::string::npos) << d.message;
+    }
+    if (d.code == "invalid_param") {
+      param = true;
+      for (const auto* type : {"bool", "int64", "uint64", "double", "string", "[]"})
+        EXPECT_NE(d.message.find(type), std::string::npos) << d.message;
+    }
+  }
+  EXPECT_TRUE(port);
+  EXPECT_TRUE(param);
+}
 TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   Store store({root, ""});
   store.open();
