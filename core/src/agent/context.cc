@@ -1,11 +1,33 @@
 #include "agent/context.hh"
 
 #include <algorithm>
+#include <exception>
 #include <map>
 
+#include "agent/catalog.hh"
 #include "agent/json.hh"
 
 namespace tsugumi::agent {
+namespace {
+// A `tools` call runs the family action it names, so its result has that
+// tool's shape. Anything else, including a schema listing, keeps its own name.
+auto ResultTool(const ContentBlock& call) -> std::string {
+  if (call.name != "tools") return call.name;
+  static const auto families = json::Object(json::Get(
+      json::Object(json::Get(Catalog().shared(), "modelTools")), "families"));
+  try {
+    const auto args = json::Object(call.input);
+    const auto family = families.find(json::Text(args, "family"));
+    if (family == families.end()) return call.name;
+    const auto name =
+        json::Text(json::Object(family->second), json::Text(args, "action"));
+    return name.empty() ? call.name : name;
+  } catch (const std::exception&) {
+    return call.name;
+  }
+}
+}  // namespace
+
 auto ClipMiddle(std::string_view text, size_t limit, std::string_view reference)
     -> std::string {
   if (text.size() <= limit) return std::string(text);
@@ -50,12 +72,12 @@ auto RequestMessages(const std::vector<Message>& messages,
                      "; " + reference + "]";
         block.images.clear();
       } else {
-        const auto& call = calls[block.id];
+        const auto name = ResultTool(calls[block.id]);
         if (!block.is_error &&
-            (call.name == "project_shell" || call.name == "project_file_read" ||
-             call.name == "attached_folder_read"))
+            (name == "project_shell" || name == "project_file_read" ||
+             name == "attached_folder_read"))
           block.text = FileResultForModel(block.text, result_limit, reference);
-        else if (call.name != "input_types")
+        else if (name != "input_types")
           block.text = ClipMiddle(block.text, result_limit, reference);
       }
     }
