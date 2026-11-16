@@ -221,13 +221,12 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_copy",
       "mutating": true,
-      "description": "Copy files into Card sources without loading bytes into the model; returns paths, sizes and SHA-256 hashes. source selects attached (folder required), card (project-relative), or scratch (conversation-relative); files map from to project-relative destinations. base_rev is the inspected revision.",
+      "description": "Copy files into Card sources without loading bytes into the model, or copy a bundled demo Card and its complete definition closure. source: attached (folder + files), card or scratch (files), demo (demo = language-qualified demo_list path, card = source Card id, id = destination Card id; optional name, project_path, x, y). base_rev is the inspected revision.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "source",
-          "files",
           "base_rev"
         ],
         "properties": {
@@ -236,7 +235,8 @@ the result; do not require confirmations of checks or a detailed explanation of 
             "enum": [
               "attached",
               "card",
-              "scratch"
+              "scratch",
+              "demo"
             ]
           },
           "folder": {
@@ -265,6 +265,27 @@ the result; do not require confirmations of checks or a detailed explanation of 
                 }
               }
             }
+          },
+          "demo": {
+            "type": "string"
+          },
+          "card": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_path": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
           }
         }
       }

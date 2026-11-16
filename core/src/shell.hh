@@ -23,7 +23,7 @@ struct Mount {
 };
 struct View {
   std::filesystem::path hidden_root;
-  std::vector<std::filesystem::path> writable, protected_files;
+  std::vector<std::filesystem::path> writable, protected_files, excluded;
   std::vector<Mount> mounts;
   std::filesystem::path output_prefix;
 };

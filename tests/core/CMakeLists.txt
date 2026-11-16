@@ -83,7 +83,7 @@ else()
   set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
   set(_test_guide_root ${PROJECT_SOURCE_DIR})
 endif()
-add_executable(tsugumi_agent_rpc_tests agent/conversation_store_rpc_test.cc agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/run_wait_rpc_test.cc agent/version_note_rpc_test.cc agent/save_rpc_test.cc agent/layout_rpc_test.cc agent/edit_rpc_test.cc agent/mnist_save_rpc_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_agent_rpc_tests agent/conversation_store_rpc_test.cc agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/exclude_rpc_test.cc agent/run_wait_rpc_test.cc agent/version_note_rpc_test.cc agent/save_rpc_test.cc agent/layout_rpc_test.cc agent/edit_rpc_test.cc agent/mnist_save_rpc_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_agent_rpc_tests PRIVATE PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
@@ -166,7 +166,7 @@ endif()
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
 add_executable(tsugumi_host_settings_tests agent/file_result_test.cc agent/store_test.cc agent/context_measure_test.cc agent/context_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/model_catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc host/schema_encode_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/tool_arguments_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
-target_sources(tsugumi_host_settings_tests PRIVATE short_identifiers_test.cc host/save_inspection_test.cc host/project_edit_test.cc host/project_operations_test.cc host/file_miss_test.cc)
+target_sources(tsugumi_host_settings_tests PRIVATE host/agent_exclude_test.cc short_identifiers_test.cc host/save_inspection_test.cc host/project_edit_test.cc host/project_operations_test.cc host/file_miss_test.cc)
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
   TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
   TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")

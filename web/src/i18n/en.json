@@ -1447,5 +1447,7 @@
  "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）": "Checking and repairing Nix store contents (first boot and after a VM image update)",
  "共有 store を検査・修復…": "Check and repair shared store…",
  "すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。": "Stops all project environments, checks store contents and repairs them from caches. Results and affected paths stay in the VM log.",
- "Nix store の検査・修復が完了しました。": "Nix store checking and repair completed."
+ "Nix store の検査・修復が完了しました。": "Nix store checking and repair completed.",
+ "Agent から除外するパス": "Paths excluded from the Agent",
+ "Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。": "Enter one path per line, relative to the project or absolute. Each path excludes the file and everything below it from the Agent. People can still see it."
 }

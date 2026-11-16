@@ -98,6 +98,8 @@ Closing a project window leaves its execution environment resident. Stop it expl
 
 ## Working with the Agent
 
+**Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. The absent setting defaults to `.git` (repository internals) and `.DS_Store` (Finder metadata); the settings editor shows these editable entries. An explicit empty list disables the defaults. `.tsugumi` contains the person's run records, conversations and scratch, so it is not a default exclusion. Only a person can change this setting; Agent saves and edits cannot change it. A bundled demo Card can be copied with `project_copy` using `source: "demo"`, its language-qualified demo path, source `card` id and destination `id`; nested definitions and source files follow the Card.
+
 Drafts have no ports; any number of wires can attach to the Card itself. To implement one by hand, choose **Implement Draft by hand** in Card settings → General, then specify every real endpoint under **Ports → Rebind wires** and Apply. Even a single candidate must be stated. The definition and all endpoint choices are saved together.
 
 To implement a plan, describe Drafts, connect their wires and choose **Generate Cards**. Review the saved source and each Card's run record. On failure or cancellation, completed saves remain; the save in progress is not applied. Saves widening permissions require [approval](security.md#the-agents-permission-boundary).

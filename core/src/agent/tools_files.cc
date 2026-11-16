@@ -14,6 +14,7 @@
 namespace tsugumi::agent {
 namespace {
 using host::Failure;
+namespace H = Tsugumi::Host;
 const std::set<std::string> kProtected{
     "tsugumi.json", "layout.json", "_card.json",   "_meta.json",
     "_link.json",   "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
@@ -169,6 +170,7 @@ auto Tools::FileOperation(const std::string& conversation,
       throw Failure("invalid_request",
                     "base_rev must be an unsigned decimal integer");
   }
+  const auto policy = Exclusions(project, stop);
   const auto snapshot =
       Value(ProjectCall(project, "project_inspect", "{}", stop));
   const auto revision = json::Get(snapshot, "rev");
@@ -177,9 +179,51 @@ auto Tools::FileOperation(const std::string& conversation,
           json::UInt(json::String(revision, revision)))
     throw Failure("revision_conflict",
                   "The document changed since base_rev; inspect and retry");
+  std::filesystem::path root;
+  {
+    std::lock_guard lock(mutex);
+    root = registry.Root(project);
+  }
+  if (name == "project_copy" && json::Text(args, "source") == "demo") {
+    H::ProjectOperateRequestT request;
+    request.project_id = project;
+    request.op_id = operation;
+    H::ProjectCopyT copy;
+    copy.project_path = json::Text(args, "project_path");
+    auto item = std::make_unique<H::ProjectCopyItemT>();
+    item->demo = json::Text(args, "demo");
+    item->from = json::Text(args, "card");
+    item->id = json::Text(args, "id");
+    item->name = json::Text(args, "name");
+    item->x = std::stod(json::Get(args, "x", "0"));
+    item->y = std::stod(json::Get(args, "y", "0"));
+    if (item->demo.empty()) throw Failure("invalid_request", "demo is required");
+    copy.items.push_back(std::move(item));
+    request.body.Set(std::move(copy));
+    host::OperationContext context;
+    context.origin = "agent";
+    context.authorize_file = [&](const auto& path, const auto& base) {
+      host::AgentExclude(root, json::Text(base.snapshot, "project_json")).Check(path);
+    };
+    context.authorize = [&](auto& plan, const auto& base) {
+      host::AgentExclude(root, json::Text(base.snapshot, "project_json")).CheckSave(plan, base);
+      {
+        std::lock_guard lock(mutex);
+        const auto resource = boundary && !boundary->authorization().empty() ? boundary->authorization() : project;
+        for (const auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
+          if (!access_service.HasGrant(resource, conversation, access))
+            throw Failure("permission_denied", "Project access was revoked before saving");
+      }
+      if (args.contains("approved_permissions")) plan["approved_permissions"] = args.at("approved_permissions");
+      if (boundary && boundary->scoped())
+        boundary->CheckCurrentSave(plan, HelperReader(conversation, stop, json::Get(base.snapshot, "rev"), boundary->authorization()));
+    };
+    return OperateProject(project, request, context, stop).json;
+  }
   const auto read_scope = HelperReader(
       conversation, stop, revision, boundary ? boundary->authorization() : "");
   auto check = [&](const std::string& path, bool writing) {
+    policy.Check(path);
     if (!boundary || !boundary->scoped()) return;
     if (writing)
       boundary->Check(
@@ -194,11 +238,6 @@ auto Tools::FileOperation(const std::string& conversation,
       boundary->Check("project_file_read", {{"path", json::Quote(path)}},
                       read_scope);
   };
-  std::filesystem::path root;
-  {
-    std::lock_guard lock(mutex);
-    root = registry.Root(project);
-  }
   const auto private_path = ".tsugumi/agent-files/" + conversation +
                             (boundary && !boundary->scratch_identity().empty()
                                  ? "/helpers/" + boundary->scratch_identity()
@@ -265,13 +304,16 @@ auto Tools::FileOperation(const std::string& conversation,
       if (source == "attached") {
         const auto folder = json::Text(args, "folder");
         std::lock_guard lock(mutex);
-        stage(to, from, registry.AttachedRoot(project, folder));
+        const auto attached = registry.AttachedRoot(project, folder);
+        policy.Check(std::filesystem::path(folder) / from);
+        stage(to, from, attached);
       } else if (source == "card") {
         check(from, false);
         if (!hashes.contains(from))
           throw Failure("not_found", "Not a confirmed Card source: " + from);
         stage(to, from, "", hashes.at(from));
       } else if (source == "scratch") {
+        policy.Check(root / scratch_path / from);
         if (!fs::valid_relative_path(from)) throw Failure("invalid_path", "Invalid scratch path: " + from);
         stage(to, scratch_path + '/' + from);
       } else
@@ -281,6 +323,8 @@ auto Tools::FileOperation(const std::string& conversation,
   } else {
     const auto work_path = private_path + "/commands/" + operation;
     const auto work = root / work_path;
+    policy.Check(work);
+    policy.Check(root / scratch_path);
     // A command has a fresh view; scratch and full output are conversation
     // data.
     if (std::filesystem::exists(work))
@@ -298,7 +342,7 @@ auto Tools::FileOperation(const std::string& conversation,
     std::set<std::string> writable, protected_paths;
     std::map<std::string, std::string> initial;
     for (const auto& [path, hash] : hashes) {
-      if (CardRoot(path).empty()) continue;
+      if (CardRoot(path).empty() || policy.Contains(path)) continue;
       // Write scope permits creating/replacing sources without exposing an
       // existing file when this Card is absent from the separate read set.
       try {
@@ -340,7 +384,7 @@ auto Tools::FileOperation(const std::string& conversation,
         protected_paths.insert(path);
         initial[path] = fs::sha256_file(work / path);
       }
-    std::vector<std::string> mounts, writable_json, protected_json;
+    std::vector<std::string> mounts, writable_json, protected_json, excluded_aliases;
     std::vector<std::string> folder_resources;
     {
       std::lock_guard lock(mutex);
@@ -352,8 +396,15 @@ auto Tools::FileOperation(const std::string& conversation,
                                      Tsugumi::Service::Access::Read))
           continue;
         const auto folder = folders.text(1);
+        if (policy.Contains(folder)) continue;
         const auto tag = crypto::sha256_hex(folder).substr(0, 16);
         std::filesystem::create_directories(work / "attached" / tag);
+        const auto real_folder = std::filesystem::weakly_canonical(folder);
+        for (const auto& excluded : policy.Paths()) {
+          const auto relative = excluded.lexically_relative(real_folder);
+          if (!relative.empty() && *relative.begin() != "..")
+            excluded_aliases.push_back(json::Quote("attached/" + tag + '/' + relative.generic_string()));
+        }
         mounts.push_back(json::Encode(json::Members{
             {"path", json::Quote(registry.AttachedRoot(project, folder))},
             {"name", json::Quote("attached/" + tag)}}));
@@ -381,6 +432,21 @@ auto Tools::FileOperation(const std::string& conversation,
     shell_args["protected_paths"] = json::Encode(protected_json);
     shell_args["mounts"] = json::Encode(mounts);
     shell_args["workspace_only"] = "true";
+    std::vector<std::string> excluded = excluded_aliases;
+    for (const auto& path : policy.Paths()) {
+      excluded.push_back(json::Quote(path.string()));
+      const auto relative = path.lexically_relative(std::filesystem::weakly_canonical(root));
+      // Only content copied into the view gets an alias. Internal state is
+      // never staged; it holds the generated workspace itself.
+      if (!relative.empty() && *relative.begin() != "..")
+        excluded.push_back(json::Quote(relative.generic_string()));
+    }
+    for (const auto& raw : excluded) {
+      const std::filesystem::path path(json::String(raw));
+      if (!path.is_absolute() && !path.string().starts_with("attached/") && !std::filesystem::exists(work / path))
+        std::filesystem::create_directories(work / path);
+    }
+    shell_args["excluded_paths"] = json::Encode(excluded);
     shell_args["output_prefix"] = json::Quote(output_path);
     shell_args.erase("base_rev");
     const auto shell_reply =
@@ -484,7 +550,7 @@ auto Tools::FileOperation(const std::string& conversation,
           {"check_permissions", "true"}};
   if (stop.stop_requested()) throw Cancelled();
   auto saved = json::Object(
-      ProjectCall(project, "project_save", json::Encode(args), stop));
+      SaveProject(project, args, stop));
   if (json::Text(saved, "reply") == "Failure") return json::Encode(saved);
   const auto value = json::Object(json::Get(saved, "value", "{}"));
   const auto delta = json::Object(json::Get(value, "delta", "{}"));

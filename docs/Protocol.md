@@ -130,6 +130,7 @@ No fields.
 | `output_prefix` | `string` |  | Persist full stdout/stderr below this project-relative prefix. |
 | `workspace_only` | `bool` |  | Hide the original project while exposing only the workspace. |
 | `protected_paths` | `[string]` |  | Read-only files inside writable subtrees (including reserved placeholders). |
+| `excluded_paths` | `[string]` |  | Host-selected absolute paths denied in this shell view, including mounts. |
 
 ### ProjectCacheClear
 

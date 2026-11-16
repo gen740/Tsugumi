@@ -107,6 +107,10 @@
         "Nix で固定",
         "天文",
         "画像"
+      ],
+      "agentExclude": [
+        "ja/casa",
+        "en/casa"
       ]
     },
     {
@@ -133,6 +137,10 @@
         "ネットワーク",
         "物理",
         "画像"
+      ],
+      "agentExclude": [
+        "ja/gw150914",
+        "en/gw150914"
       ]
     },
     {
@@ -159,6 +167,10 @@
         "ネットワーク",
         "生物",
         "画像"
+      ],
+      "agentExclude": [
+        "ja/protein-6lu7",
+        "en/protein-6lu7"
       ]
     },
     {
@@ -185,6 +197,10 @@
         "ネットワーク",
         "天文",
         "画像"
+      ],
+      "agentExclude": [
+        "ja/exoplanet-transit",
+        "en/exoplanet-transit"
       ]
     },
     {
@@ -211,6 +227,10 @@
         "ネットワーク",
         "地球科学",
         "画像"
+      ],
+      "agentExclude": [
+        "ja/seismic-trench",
+        "en/seismic-trench"
       ]
     },
     {
@@ -442,6 +462,10 @@
         "Python",
         "機械学習",
         "分岐・分配・合流"
+      ],
+      "agentExclude": [
+        "ja/mnist-classifiers",
+        "en/mnist-classifiers"
       ]
     },
     {
@@ -506,6 +530,10 @@
         "R Markdown",
         "Artifacts",
         "Draft"
+      ],
+      "agentExclude": [
+        "ja/r-reports",
+        "en/r-reports"
       ]
     },
     {
@@ -531,6 +559,10 @@
         "C++",
         "Draft",
         "Agent"
+      ],
+      "agentExclude": [
+        "ja/go-pipeline",
+        "en/go-pipeline"
       ]
     },
     {
@@ -556,6 +588,10 @@
         "C++",
         "Draft",
         "Agent"
+      ],
+      "agentExclude": [
+        "ja/rust-pipeline",
+        "en/rust-pipeline"
       ]
     }
   ]

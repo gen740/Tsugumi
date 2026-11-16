@@ -31,6 +31,8 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"Agent から除外するパス": "Paths excluded from the Agent",
+"Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。": "Enter one path per line, relative to the project or absolute. Each path excludes the file and everything below it from the Agent. People can still see it.",
     'このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。': "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.",
     'このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。': "This project's conversation records belong to another project identity. Restore the matching .tsugumi folder from a backup. To start new conversations, close the project, move agent.sqlite out of .tsugumi to preserve it, then reopen the project. Conversation records have not been deleted.",
 

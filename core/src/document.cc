@@ -293,7 +293,8 @@ auto execution_json(const std::string& text, const char* omitted) -> std::string
   if (auto error = schema::decode(text, object)) throw DocumentError("invalid_document", error->message);
   std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields;
   for (const auto& [key, value] : object.value())
-    if (key != omitted) fields.emplace_back(key, &value);
+    if (key != omitted && !(std::string_view(omitted) == "name" && key == "agentExclude"))
+      fields.emplace_back(key, &value);
   return execution_value(schema::capture(schema::object_text(fields)));
 }
 }  // namespace

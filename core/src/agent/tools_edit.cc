@@ -146,6 +146,8 @@ auto Tools::EditProjectTool(const std::string& conversation,
   context.origin = "agent";
   context.authorize_file = [&](const std::string& path,
                                const host::SaveBase& base) {
+    Exclusions(project, stop).Check(path);
+    if (std::filesystem::path(path).is_absolute()) return;
     if (!boundary || !boundary->scoped()) return;
     // Project documents are read by the host only; the expanded graph diff is
     // checked below. Source and definition reads require the exact read set.
@@ -185,6 +187,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
           conversation, stop, json::Get(base.snapshot, "rev"), authorization);
       boundary->CheckCurrentSave(plan, read);
     }
+    Exclusions(project, stop).CheckSave(plan, base);
     if (args.contains("approved_permissions"))
       plan["approved_permissions"] = args.at("approved_permissions");
   };

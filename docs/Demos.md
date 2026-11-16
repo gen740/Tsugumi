@@ -3,6 +3,8 @@
 What Cards each bundled demo connects, how, and what happens when it runs.
 Choose "Open a Copy" from "Browse Demos" on the home screen and an editable copy is made in `~/Documents/Tsugumi/<demo>` (the bundled original is not changed).
 The demos come as a Japanese set and an English set (`demos/ja`, `demos/en`), the same demos with their text in one language; the app shows the set of its language. Choose the language in settings; inspect values in each demo's own run records.
+Draft entries with a finished counterpart declare both language-qualified counterpart folders in `agentExclude` in their catalog metadata. When the host creates a project from the demo, it appends those resource folders' absolute paths in this installation to the project's ordinary `agentExclude` list. Moving the application later leaves these entries stale; nothing repairs or relocates them automatically.
+
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
 | Demo | Subject | What it shows |

@@ -280,17 +280,20 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const savedPaths = (arr(get(session.project, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
   const [versionPaths, setVersionPaths] = useState(savedPaths)
+  const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? app.status?.agentExclude ?? []).map(x => typeof x === 'string' ? x : str(x) ?? '').join('\n')
+  const [agentExclude, setAgentExclude] = useState(() => excludeText(session.project))
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
   const initialPaths = (arr(get(selectedProject, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
-  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths
+  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject)
   const load = () => {
     setSelectedProject(clone(session.project))
     setName(str(get(session.project, 'name')) ?? '')
     setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
     setVersionPaths(savedPaths)
+    setAgentExclude(excludeText(session.project))
     revisionEdit.reload(session.rev)
   }
   const save = async (overwrite = false) => {
@@ -300,6 +303,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     if (name !== (str(get(selectedProject, 'name')) ?? '')) after.set('name', name)
     if (pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '')) after.set('pkgsPath', pkgs || 'tsugumi:default')
     if (versionPaths !== initialPaths) after.set('versionPaths', paths)
+    if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
     if (!await revisionEdit.apply(session, overwrite, x => x.appendEdits([x.jsonEdit('tsugumi.json', selectedProject, after)]))) return
     setSelectedProject(after)
     setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
@@ -326,6 +330,9 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section footer={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
             <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
+          <Section footer={L('Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。')}>
+            <Row label={L('Agent から除外するパス')}><TextField value={agentExclude} onChange={setAgentExclude} multiline rows={5} style={{ width: 320 }} /></Row>
+          </Section>
           <Section footer={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
             <Row label={L('このプロジェクトを信頼する')}><Toggle checked={session.projectTrust === 1} disabled={!!session.trustedFolder} onChange={(trusted) => void session.setProjectTrust(trusted)} /></Row>
           </Section>
@@ -336,7 +343,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}`}
+      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}\nagentExclude:\n${agentExclude}`}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}

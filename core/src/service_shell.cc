@@ -199,6 +199,9 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
     }
     for (const auto& path : view.protected_files)
       profile += "(deny file-write* (literal " + quote(path.string()) + "))";
+    for (const auto& path : view.excluded) {
+      profile += "(deny file-read* file-write* (subpath " + quote(path.string()) + "))";
+    }
     // The control directory remains hidden even if it is under the project.
     if (hide_credentials && !control.empty())
       profile += "(deny file-read* (subpath " +
@@ -307,6 +310,23 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
                                          mount.source.string(), mount.target.string()});
     for (const auto& path : view.protected_files)
       isolation.insert(isolation.end(), {"--ro-bind", path.string(), path.string()});
+    for (const auto& path : view.excluded) {
+      const auto under = [](const auto& parent, const auto& child) {
+        const auto relative = child.lexically_relative(parent);
+        return !relative.empty() && *relative.begin() != "..";
+      };
+      bool exposed = view.hidden_root.empty() || under(std::filesystem::path(root), path);
+      for (const auto& mount : view.mounts) exposed = exposed || under(mount.target, path);
+      for (const auto& runtime : runtime_store) exposed = exposed || under(std::filesystem::path(runtime), path) || under(path, std::filesystem::path(runtime));
+      auto native = path;
+      for (const auto& mount : view.mounts)
+        if (under(mount.target, path)) native = mount.source / path.lexically_relative(mount.target);
+      if (!exposed || !std::filesystem::exists(native)) continue;
+      if (std::filesystem::is_directory(native))
+        isolation.insert(isolation.end(), {"--tmpfs", path.string(), "--remount-ro", path.string()});
+      else
+        isolation.insert(isolation.end(), {"--ro-bind", "/dev/null", path.string()});
+    }
     // A control directory inside the project must be covered after root.
     if (hide_credentials && !control.empty())
       isolation.insert(
@@ -558,6 +578,10 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
       std::filesystem::create_directory_symlink(source, target);
 #endif
       view.mounts.push_back({source, target, mount->writable()});
+    }
+    if (request->excluded_paths()) for (const auto* path : *request->excluded_paths()) {
+      const std::filesystem::path denied(path->str());
+      view.excluded.push_back(std::filesystem::weakly_canonical(denied.is_absolute() ? denied : cwd / denied));
     }
     const auto output =
         shell::Execute(command, cwd.string(), timeout, cancelled,
