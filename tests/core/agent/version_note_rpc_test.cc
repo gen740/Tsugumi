@@ -35,15 +35,17 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   EXPECT_TRUE(model.Requests().empty());
   ASSERT_TRUE(SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("agent")}}).Code().empty());
   auto other = ConnectHost();
-  auto uppercase = commit;
-  std::transform(uppercase.begin(), uppercase.end(), uppercase.begin(),
+  // A shorter spelling always differs, even when the hash has only digits.
+  // Both spellings must resolve to one saved summary and generation gate.
+  auto alternate = commit.substr(0, 7);
+  std::transform(alternate.begin(), alternate.end(), alternate.begin(),
                  [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-  ASSERT_NE(uppercase, commit);
+  ASSERT_NE(alternate, commit);
   auto first = std::async(std::launch::async, [&] { return note(*host); });
   const bool requested = model.WaitForRequests(1);
   if (!requested) model.Release();
   EXPECT_TRUE(requested);
-  auto second = std::async(std::launch::async, [&] { return note(*other, "en", uppercase); });
+  auto second = std::async(std::launch::async, [&] { return note(*other, "en", alternate); });
   model.Release();
   const auto a = first.get(), b = second.get();
   ASSERT_TRUE(a.Code().empty()) << a.View();

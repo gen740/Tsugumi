@@ -173,6 +173,7 @@ TEST_F(AgentExclusionRPC, AttachedAliasesCannotReadOrCopyExcludedSources) {
 // Keep it separate from the other host tests so it can be selected explicitly.
 TEST_F(AgentExclusionRPC,
        ShellProfileDeniesExcludedProjectDemoAndMountedPaths) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   const auto demo = directory.path / "demos/en/finished";
   Write(demo / "secret.txt", "EXCLUDED_DEMO");
   Write(directory.path / "project/.git/config", "EXCLUDED_GIT");

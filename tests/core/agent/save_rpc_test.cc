@@ -451,8 +451,8 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
   Configure(model);
   model.Queue(AnthropicTool("save", tool, args));
   model.Queue(AnthropicText("Saved."));
-  const auto delegated = Tool(
-      conversation, "delegate",
+  const auto delegated = Delegate(
+      conversation,
       R"({"tasks":[{"name":"source","instruction":"Save the supplied source edits.","read_cards":["a","outer/a"],"write_cards":["a","outer/a"],"run_cards":[]}]})",
       "source-delegate");
   ASSERT_TRUE(delegated.Code().empty()) << delegated.Code();

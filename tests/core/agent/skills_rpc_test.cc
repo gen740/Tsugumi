@@ -420,12 +420,16 @@ TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {
   ASSERT_TRUE(reply.Code().empty());
   const auto* result = reply.HostValue()->value_as_SkillsList();
   const auto* list = result->skills();
-  ASSERT_EQ(ListSize(list), 8u);
+  ASSERT_GE(ListSize(list), 7u);
   EXPECT_EQ(list->Get(4)->status()->str(), "ready");
   EXPECT_EQ(list->Get(5)->status()->str(), "too_large");
   EXPECT_EQ(list->Get(6)->status()->str(), "too_large");
-  EXPECT_EQ(list->Get(7)->status()->str(), "unreadable");
-  EXPECT_EQ(result->folders()->Get(1)->status()->str(), "unreadable");
+  // Root can read the mode-0000 file and traverse the locked folder.
+  if (::geteuid() != 0) {
+    ASSERT_EQ(ListSize(list), 8u);
+    EXPECT_EQ(list->Get(7)->status()->str(), "unreadable");
+    EXPECT_EQ(result->folders()->Get(1)->status()->str(), "unreadable");
+  }
 }
 TEST_F(SkillsFixture,
        CollisionsRemainInSourceOrderAndDirectorySymlinksAreNotFollowed) {

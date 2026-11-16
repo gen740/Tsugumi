@@ -109,6 +109,7 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
 INSTANTIATE_TEST_SUITE_P(PublicFileCancellation, CancelledCopy, ::testing::Bool());
 
 TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/edit/_card.json", R"({"template":"draft"})");
   project_fault = "transfer_gate";
   StartProject(true);
@@ -213,6 +214,7 @@ TEST_F(AgentProjectFixture, LargeReadsReachTheModelAsContiguousJsonPages) {
 }
 
 TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/own/_card.json", R"({"template":"draft"})");
   StartProject(true);
   const auto conversation = Conversation("private-helper-shell");
@@ -282,6 +284,7 @@ using NestedFileFixture = AgentProjectFixture;
 
 // Exercise real nested Helpers::RunHelper boundaries, not synthetic scopes.
 TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   namespace json = agent::json;
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
@@ -633,6 +636,7 @@ TEST_F(AgentProjectFixture, ShellEditsAreAgentSavesAndFailedCommandsDoNotApplySo
 }
 
 TEST_F(AgentProjectFixture, CancelledShellAndConcurrentExternalEditsNeverOverwriteCardSources) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/edit/_card.json", R"({"template":"draft"})");
   Write(directory.path / "project/definitions/edit/src/data.txt", "original");
   StartProject(true);
@@ -681,6 +685,7 @@ TEST_F(AgentProjectFixture, CancelledShellAndConcurrentExternalEditsNeverOverwri
 }
 
 TEST_F(AgentProjectFixture, ShellAttachedMountsNeedReadAndRemainReadOnly) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
   StartProject(true);
   const auto conversation = Conversation("shell-attached");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
@@ -712,8 +717,12 @@ TEST_F(AgentProjectFixture, ShellAttachedMountsNeedReadAndRemainReadOnly) {
 }
 
 class NestedHelperFiles : public NestedFileFixture,
-                          public ::testing::WithParamInterface<int> {};
-TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
+                          public ::testing::WithParamInterface<int> {
+ protected:
+  auto CheckFileScope(bool shell) -> void;
+};
+
+auto NestedHelperFiles::CheckFileScope(bool shell) -> void {
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/own/src/note.txt", "original");
@@ -725,7 +734,7 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/writer/src/private.txt",
         "WRITE_ONLY_SENTINEL");
-  StartProject(true);
+  StartProject(shell);
   const auto conversation = Conversation("helper-files");
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
@@ -757,15 +766,17 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
   model.Queue(AnthropicTool(
       "denied-read", "project_copy",
       R"({"source":"card","base_rev":"0","files":[{"from":"definitions/other/src/note.txt","to":"definitions/own/copied.txt"}]})"));
-  model.Queue(AnthropicFamilyTool(
-      "denied-shell", "files", "shell",
-      R"({"command":"printf forbidden > definitions/other/src/note.txt"})"));
-  model.Queue(AnthropicFamilyTool(
-      "write-without-reading", "files", "shell",
-      R"({"command":"printf created > definitions/writer/new.txt"})"));
-  model.Queue(
-      AnthropicFamilyTool("cannot-read-writer", "files", "shell",
-                    R"({"command":"cat definitions/writer/src/private.txt"})"));
+  if (shell) {
+    model.Queue(AnthropicFamilyTool(
+        "denied-shell", "files", "shell",
+        R"({"command":"printf forbidden > definitions/other/src/note.txt"})"));
+    model.Queue(AnthropicFamilyTool(
+        "write-without-reading", "files", "shell",
+        R"({"command":"printf created > definitions/writer/new.txt"})"));
+    model.Queue(AnthropicFamilyTool(
+        "cannot-read-writer", "files", "shell",
+        R"({"command":"cat definitions/writer/src/private.txt"})"));
+  }
   model.Queue(AnthropicText("Checked file scope."));
   for (int depth = 0; depth < GetParam(); ++depth)
     model.Queue(AnthropicText("Ancestor finished."));
@@ -774,17 +785,19 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
       Delegate(conversation, json::Encode(tasks), "nested-files");
   ASSERT_TRUE(delegated.Code().empty()) << delegated.View();
   const auto requests = model.Requests();
-  ASSERT_EQ(requests.size(), 6u + 2 * GetParam());
+  ASSERT_EQ(requests.size(), (shell ? 6u : 3u) + 2 * GetParam());
   const auto leaf = static_cast<size_t>(GetParam());
   for (size_t i = 0; i < 2; ++i) {
     EXPECT_TRUE(JsonBool(requests[leaf + i + 1],
                          "/messages/" + std::to_string(2 * (i + 1)) +
                              "/content/0/is_error"));
   }
-  EXPECT_EQ(requests[leaf + 5].find("other-original"), std::string::npos);
-  EXPECT_EQ(requests[leaf + 5].find("WRITE_ONLY_SENTINEL"), std::string::npos);
-  EXPECT_EQ(Read(directory.path / "project/definitions/writer/new.txt"),
-            "created");
+  if (shell) {
+    EXPECT_EQ(requests[leaf + 5].find("other-original"), std::string::npos);
+    EXPECT_EQ(requests[leaf + 5].find("WRITE_ONLY_SENTINEL"), std::string::npos);
+    EXPECT_EQ(Read(directory.path / "project/definitions/writer/new.txt"),
+              "created");
+  }
   EXPECT_EQ(Read(directory.path / "project/definitions/own/src/note.txt"),
             "original");
   EXPECT_EQ(Read(directory.path / "project/definitions/other/src/note.txt"),
@@ -793,6 +806,15 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
                                        "project/definitions/other/copied.txt"));
   EXPECT_FALSE(std::filesystem::exists(directory.path /
                                        "project/definitions/own/copied.txt"));
+}
+
+TEST_P(NestedHelperFiles, CopyStaysInsideEveryParentsExactSets) {
+  CheckFileScope(false);
+}
+
+TEST_P(NestedHelperFiles, ShellStaysInsideEveryParentsExactSets) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  CheckFileScope(true);
 }
 
 INSTANTIATE_TEST_SUITE_P(NestedDepths, NestedHelperFiles,
