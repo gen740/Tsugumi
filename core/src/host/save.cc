@@ -243,7 +243,13 @@ auto RebaseSave(json::Members args, const SaveBase& base,
       if (json::Get(value, "base_hash", "null") != get(hashes, path))
         conflict(path + " (base_hash)");
       if (!DocumentPath(path)) {
-        if (get(hashes, path) != get(current_hashes, path)) conflict(path);
+        const bool applied =
+            kind == "PutSource"
+                ? json::Text(current_hashes, path) ==
+                      crypto::sha256_hex(Content(json::Get(value, "bytes")))
+                : kind == "RemoveSource" && !current_hashes.contains(path);
+        if (!applied && get(hashes, path) != get(current_hashes, path))
+          conflict(path);
         continue;
       }
       if (kind == "RemoveSource")
@@ -309,8 +315,8 @@ auto RebaseSave(json::Members args, const SaveBase& base,
         conflict(path + "/canvas/connections input " + key);
     }
   }
-  // Wrap by file path: the UI's layout-local preference does not apply to an
-  // unattended save. Every collision, including placement, is reported.
+  // Wrap by file path so every document, including nested layout, uses the
+  // same strict merge. Every collision is reported.
   const auto merge = MergeDocuments(
       json::Encode(base.files), json::Encode(ours), json::Encode(latest.files));
   if (!merge.conflicts.empty()) {
@@ -382,6 +388,13 @@ auto RebaseSave(json::Members args, const SaveBase& base,
     const auto kind = json::Text(c, "value_type");
     auto value = json::Object(json::Get(c, "value", "{}"));
     const auto path = json::Text(value, "path"), id = json::Text(value, "id");
+    if (kind == "RemoveDefinition" &&
+        !latest.files.contains("definitions/" + id + "/_card.json") &&
+        !latest.files.contains("definitions/" + id + "/_link.json"))
+      continue;
+    if (kind == "RemoveSource" && !current_hashes.contains(path)) continue;
+    if (kind == "PutSource" && !DocumentPath(path))
+      value["base_hash"] = get(current_hashes, path);
     if (kind == "SetProject" || kind == "SetLayout")
       value["json"] = json::Quote(
           merged.at(kind == "SetProject" ? "tsugumi.json" : "layout.json"));
@@ -394,6 +407,9 @@ auto RebaseSave(json::Members args, const SaveBase& base,
         if (merged.contains(dir + file))
           value[key] = json::Quote(merged.at(dir + file));
       }
+      // The wire field is required even for a link, which carries an empty
+      // string (a nonempty Card document and link_json are mutually exclusive).
+      if (!value.contains("card_json")) value["card_json"] = json::Quote("");
       value.erase("keep_meta");
     } else if ((kind == "PutSource" || kind == "PatchSource") &&
                DocumentPath(path)) {
@@ -406,8 +422,41 @@ auto RebaseSave(json::Members args, const SaveBase& base,
     c["value"] = json::Encode(value);
     rebased.push_back(json::Encode(c));
   }
+  // A removal-only retry can have nothing left to remove. Submit an ordinary
+  // no-op document save so the core still checks the inspected revision and
+  // returns its typed SaveResult without moving the revision.
+  if (rebased.empty() && !changes.empty())
+    rebased.push_back(json::Encode(json::Members{
+        {"value_type", json::Quote("SetProject")},
+        {"value", json::Encode(json::Members{
+                      {"json", json::Quote(latest.files.at("tsugumi.json"))}})}}));
   args["changes"] = json::Encode(rebased);
   args["base_rev"] = json::Get(latest.snapshot, "rev");
   return args;
+}
+auto SaveWithMerge(
+    const json::Members &original, const SaveBase &base, const SaveRead &read,
+    const std::function<json::Members(const json::Members &)> &send)
+    -> json::Members {
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    const auto latest = InspectForSave(read).base;
+    auto args = original;
+    try {
+      // External documents can finish loading behind a newer root snapshot.
+      // Merge their actual read values even when the root revision matches.
+      args = RebaseSave(args, base, latest);
+    } catch (const std::exception &error) {
+      throw Failure("revision_conflict", error.what());
+    }
+    // A refused CAS has a durable core receipt; never reuse its operation id.
+    args["op_id"] = json::Quote(crypto::uuid4());
+    const auto result = send(args);
+    const auto value = json::Object(json::Get(result, "value", "{}"));
+    if (json::Text(result, "reply") != "Failure" ||
+        json::Text(value, "kind") != "revision_conflict")
+      return result;
+  }
+  throw Failure("revision_conflict",
+                "Project kept changing during save; your edit is retained");
 }
 }  // namespace tsugumi::host
