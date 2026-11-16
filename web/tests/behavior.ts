@@ -62,6 +62,7 @@ await import("./thumbnails")
 await import("./liveCode")
 
 await import("./helperBirds")
+await import("./presence")
 await import("./leaveProject")
 await import("./terminalInput")
 

@@ -984,12 +984,12 @@ import TsugumiTestSupport
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
                                changes: [Change.putDefinition(id: id, cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3}"#, metaJSON: nil)])
     }
-    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .write("c", reveal: false) }) {
+    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) }) {
       try await Task.sleep(for: .milliseconds(20))
     }
-    #expect(s.helperPresences[1].beats.contains { $0.beat == .write("b", reveal: false) })
-    #expect(!s.presence.beats.contains { $0.beat == .write("b", reveal: false) })
-    #expect(s.presence.beats.contains { $0.beat == .write("c", reveal: false) })
+    #expect(s.helperPresences[1].beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
+    #expect(!s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
+    #expect(s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) })
     #expect(s.presence(forCard: "a") === s.helperPresences[0] && s.presence(forCard: "c") === s.presence)
     await s.close()
   }

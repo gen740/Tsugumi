@@ -1073,6 +1073,7 @@ final class ProjectSession {
     guard let v = e.value else { return }
     switch v.type {
     case .runacceptedevent:
+      for bird in presences { bird.running() }
       if let s = (v.value as? Tsugumi_RPC_RunAcceptedEventT)?.status, currentRunId != s.runId {
         runBatches = [:]
         runStatus = s

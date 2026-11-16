@@ -543,6 +543,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
 // ---- Wires ------------------------------------------------------------------------------------
 
 export interface WireDraw {
+  drawProgress?: number
   /** Screen units. */
   d: string
   style: WireStyle
@@ -580,7 +581,8 @@ export function WireLayer({ wires, animate = false, zoom = 1, width, height }: {
         return (
           <g key={i}>
             <path d={wire.d} fill="none" stroke={st.color} strokeWidth={wire.dotted ? Math.max(thick, WIRE_DOT_MIN) : thick} strokeLinecap="round" strokeLinejoin="round"
-              strokeDasharray={wire.dotted ? (wire.style === 'selected' ? WIRE_DOT_SELECTED : WIRE_DOT) : st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
+              pathLength={wire.drawProgress === undefined ? undefined : 1}
+              strokeDasharray={wire.drawProgress !== undefined ? `${wire.drawProgress} 1` : wire.dotted ? (wire.style === 'selected' ? WIRE_DOT_SELECTED : WIRE_DOT) : st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
             {wire.countLabel && wire.countAt && <text x={wire.countAt.x} y={wire.countAt.y - 7} textAnchor="middle"
               fill="var(--label)" stroke="var(--window-bg)" strokeWidth={3} paintOrder="stroke" className="mono"
               fontSize={11}>{wire.countLabel}</text>}

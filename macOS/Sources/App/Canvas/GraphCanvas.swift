@@ -474,10 +474,13 @@ struct GraphCanvas: View {
   /// Where Cards and wires are, for the Agent's presence on this canvas.
   private func presenceGeometry(_ routed: [RoutedWire]) -> PresenceGeometry {
     let shown = Set(cardKeys)
+    // This layer is moved by CanvasPanHost. Its own transform must stay at
+    // the camera of the layout pass, including while TimelineView ticks.
+    let base = cam
     return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
                             wire: { w in routed.first { $0.thread == w }?.path },
                             dotted: { w in session.isDraftWire(from: w.from, to: w.to) },
-                            screen: { screen($0) }, zoom: camera.zoom,
+                            camera: base,
                             obstacles: { cardKeys.map(cardRect) + outputKeys.map(frameRect) })
   }
 

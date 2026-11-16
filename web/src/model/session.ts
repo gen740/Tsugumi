@@ -1,3 +1,4 @@
+import { connectionsOf, SavePresence } from './presence'
 import { readViewState, writeViewState } from '../shared/clientViewState'
 import { layoutHost, H } from '../shared/hostLayout'
 import { VersionCommentT } from '../gen/tsugumi/host/version-comment'
@@ -416,6 +417,8 @@ class Unreached extends Error {
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
 export class ProjectSession extends Observable {
+  readonly presence = new SavePresence()
+
   projectTrust: number | undefined
   async refreshProjectTrust() {
     const result = await api<{ decision: number }>('/api/project/trust', { path: this.dir })
@@ -1055,6 +1058,8 @@ export class ProjectSession extends Observable {
       this.reconnect()
       return
     }
+    const beforePresence = connectionsOf(this.confirmedProject)
+    this.presence.finish()
     const wasClean = !this.dirty
     // The Cards that send displays, before this change (definitions and
     // resolution are replaced below).
@@ -1081,6 +1086,13 @@ export class ProjectSession extends Observable {
     this.readDefinitions(d.definitionsUpsert)
     for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
+    if (d.origin === 'agent') {
+      const cards = [...d.definitionsUpsert.map(x => s(x.id)), ...d.sourcesUpsert.flatMap(x => {
+        const parts = s(x.path).split('/')
+        return parts[0] === 'definitions' && parts.length >= 3 ? [parts[1]] : []
+      })]
+      this.presence.saved(cards, beforePresence, connectionsOf(this.confirmedProject), Date.now() / 1000)
+    }
     this.refreshExternals()
     this.refreshDerivedLayout()
     this.applyResolution(d.resolution, d.diagnostics)
@@ -1101,6 +1113,7 @@ export class ProjectSession extends Observable {
   private applyRunEvent(e: R.RunEventT) {
     switch (e.valueType) {
       case R.RunEventValue.RunAcceptedEvent: {
+        this.presence.finish()
         const st = (e.value as R.RunAcceptedEventT).status
         if (st && this.currentRunId !== s(st.runId)) {
           this.runBatches = new Map()
