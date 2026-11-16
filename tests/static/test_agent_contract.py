@@ -87,7 +87,7 @@ def test_file_copy_schema():
     tools = {tool["name"]: tool for tool in shared["hostTools"]}
     copy = tools["project_copy"]
     assert copy["mutating"]
-    assert set(copy["inputSchema"]["properties"]["source"]["enum"]) == {"attached", "card", "scratch"}
+    assert set(copy["inputSchema"]["properties"]["source"]["enum"]) == {"attached", "card", "demo", "scratch"}
     assert "maxItems" not in copy["inputSchema"]["properties"]["files"]
     assert "bytes" not in copy["inputSchema"]["properties"]
     assert "base_rev" in copy["inputSchema"]["required"]
