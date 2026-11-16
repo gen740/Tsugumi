@@ -53,6 +53,8 @@ Listing list_tree(const stdfs::path& root);
 // checked file for a link after the check gets an error, never another file.
 // `rel` is relative to root.
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel);
+// A complete regular-file transfer: reject EOF before the size observed at
+// open, rather than presenting a truncated stream as a successful transfer.
 auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
                     const std::function<void(std::string_view)>& consume) -> uint64_t;
 // Copy a regular file below root into a destination owned by the caller.

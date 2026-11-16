@@ -318,6 +318,9 @@ auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t li
     consume({buf, static_cast<size_t>(n)});
     size += static_cast<uint64_t>(n);
   }
+  if (size != static_cast<uint64_t>(st.st_size))
+    throw Error("file size changed during transfer " + (root / rel).string() +
+                ": expected " + std::to_string(st.st_size) + " bytes, read " + std::to_string(size));
   return size;
 }
 
