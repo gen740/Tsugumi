@@ -1,3 +1,4 @@
+import * as R from '../src/gen/tsugumi/rpc'
 import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
 import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
 import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
@@ -132,6 +133,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
     case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
     case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
+    case 'LayoutCompleteRequest': return new H.LayoutCompleteRequestT(v.project_json, v.layout_json, v.definitions_json)
+    case 'LayoutPrepareSaveRequest': return new H.LayoutPrepareSaveRequestT(v.project, R.ProjectSaveRequest.getRootAsProjectSaveRequest(new fb.ByteBuffer(new Uint8Array(v.saveBytes))).unpack())
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
     case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
       v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
@@ -217,6 +220,11 @@ export function encodeRequest(method: string, value: unknown, id: bigint, host: 
 // Adapt generated native objects to the existing HTTP/SSE presentation DTOs.
 // This walks typed fields; it does not parse or generate a JSON envelope.
 function view(value: any): any {
+  if (value instanceof H.LayoutPreparedSaveT) {
+    const builder = new fb.Builder()
+    builder.finish(value.save!.pack(builder))
+    return { saveBytes: Array.from(builder.asUint8Array()) }
+  }
   if (value === null || value === undefined) return undefined
   if (Array.isArray(value)) return value.map(view)
   if (typeof value === 'bigint') {

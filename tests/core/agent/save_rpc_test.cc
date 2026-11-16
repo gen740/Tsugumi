@@ -538,3 +538,119 @@ TEST_F(AgentProjectFixture,
 }
 }  // namespace
 }  // namespace tsugumi::test
+
+namespace tsugumi::test {
+namespace {
+TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
+  namespace json = agent::json;
+  const auto nested = directory.path / "project/externals/storage";
+  const std::string document =
+      R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":{},"outputs":{}},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
+  Write(nested / "tsugumi.json", document);
+  Write(nested / "definitions/upstream/_card.json", R"({"template":"draft"})");
+  Write(nested / "definitions/secret/_card.json", R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("nested-creator");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto initial = json::Object(
+      json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
+                "value"));
+  const auto root =
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
+  const auto seeded = Tool(
+      conversation, "project_save",
+      json::Encode(json::Members{
+          {"base_rev", json::Get(initial, "rev")},
+          {"changes",
+           json::Encode(std::vector<std::string>{
+               json::Encode(json::Members{
+                   {"value_type", json::Quote("SetProject")},
+                   {"value",
+                    json::Encode(json::Members{{"json", json::Quote(root)}})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"outer","card_json":"","link_json":"{\"external\":\"storage\"}"}})"})}}),
+      "seed");
+  ASSERT_FALSE(JsonBool(seeded.View(), "/isError")) << seeded.View();
+  const auto snapshot = json::Object(
+      json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
+                "value"));
+  const auto rev = json::Get(snapshot, "rev");
+  std::string hash;
+  for (const auto &raw : json::Array(json::Get(snapshot, "sources"))) {
+    const auto source = json::Object(raw);
+    if (json::Text(source, "path") == "externals/storage/tsugumi.json")
+      hash = json::Text(source, "hash");
+  }
+  ASSERT_FALSE(hash.empty());
+  const auto before_layout = json::Object(Read(nested / "layout.json"));
+  ModelServer model;
+  Configure(model);
+  model.Queue(AnthropicTool(
+      "reserve", "card_id",
+      R"({"name":"Nested helper","project_path":"externals/storage/"})"));
+  auto delegated = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "delegate",
+        R"({"tasks":[{"name":"nested","instruction":"Add a Card wired to upstream.","read_cards":["outer/upstream"],"write_cards":["outer/upstream"],"run_cards":[]}]})",
+        "nested-delegate");
+  });
+  const std::shared_ptr<void> finish(
+      &model, [&](void *) { model.Queue(AnthropicText("End.")); });
+  ASSERT_TRUE(model.WaitForRequests(2));
+  const auto reserved = JsonString(model.Requests()[1], "/messages/2/content/0/content");
+  ASSERT_TRUE(reserved.starts_with('{')) << reserved;
+  const auto id = JsonString(reserved, "/value/id");
+  ASSERT_FALSE(id.empty());
+  auto scoped = json::Object(document);
+  scoped["canvas"] = json::Encode(json::Members{
+      {"cards", json::Encode(std::vector<std::string>{
+                    R"({"id":"upstream"})",
+                    json::Encode(json::Members{{"id", json::Quote(id)}})})},
+      {"connections",
+       json::Encode(std::vector<std::string>{json::Encode(json::Members{
+           {"from", R"({"card":"upstream","port":""})"},
+           {"to",
+            json::Encode(json::Members{{"card", json::Quote(id)},
+                                       {"port", json::Quote("")}})}})})}});
+  const auto args = json::Encode(json::Members{
+      {"base_rev", rev},
+      {"changes",
+       json::Encode(std::vector<std::string>{
+           json::Encode(json::Members{
+               {"value_type", json::Quote("PutSource")},
+               {"value",
+                json::Encode(json::Members{
+                    {"path", json::Quote("externals/storage/tsugumi.json")},
+                    {"bytes", json::Quote(json::Encode(scoped))},
+                    {"base_hash", json::Quote(hash)}})}}),
+           json::Encode(json::Members{
+               {"value_type", json::Quote("PutSource")},
+               {"value",
+                json::Encode(json::Members{
+                    {"path", json::Quote("externals/storage/definitions/" + id +
+                                         "/_card.json")},
+                    {"bytes", json::Quote(R"({"template":"draft"})")}})}})})}});
+  model.Queue(AnthropicTool("save", "project_save", args));
+  model.Queue(AnthropicText("Saved."));
+  ASSERT_TRUE(delegated.get().Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(3));
+  const auto response =
+      JsonString(model.Requests()[2], "/messages/4/content/0/content");
+  EXPECT_FALSE(JsonBool(model.Requests()[2], "/messages/4/content/0/is_error"))
+      << response;
+  const auto final = json::Object(
+      json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
+                "value"));
+  EXPECT_EQ(json::UInt(json::Text(final, "rev")),
+            json::UInt(json::String(rev, rev)) + 1);
+  const auto positions =
+      json::Object(json::Object(Read(nested / "layout.json")).at("cards"));
+  EXPECT_TRUE(positions.contains(id));
+  for (const auto &[key, value] : json::Object(before_layout.at("cards")))
+    EXPECT_EQ(positions.at(key), value);
+  EXPECT_NE(Read(nested / "tsugumi.json").find("secret"), std::string::npos);
+  EXPECT_EQ(response.find("secret"), std::string::npos);
+}
+} // namespace
+} // namespace tsugumi::test

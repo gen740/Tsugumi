@@ -367,6 +367,15 @@ table VersionCanvas {
 /// Card references. The caller includes the returned JSON in the same save.
 table LayoutValidateRequest { json:string (required); removed_cards:[string]; }
 table LayoutValidated { json:string (required); }
+/// Pure display derivation for one workflow. definitions_json maps Card ids to
+/// their _card.json text. Same document yields the same places on every client.
+/// The returned layout is presentation only; opening never saves it.
+table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
+/// Add missing places and deletion cleanup to the caller's exact CAS save.
+/// No write, retry or merge occurs here. The caller sends the returned save to
+/// the core as its single transaction. Agent saves use the same implementation.
+table LayoutPrepareSaveRequest { project:string (required); save:Tsugumi.RPC.ProjectSaveRequest (required); }
+table LayoutPreparedSave { save:Tsugumi.RPC.ProjectSaveRequest (required); }
 /// -> VersionCanvas. Draw the raw definition data and layout returned by the
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {
@@ -417,7 +426,7 @@ union RequestPayload {
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -428,7 +437,7 @@ union ReplyPayload {
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
-  ModelSelection,
+  ModelSelection, LayoutPreparedSave,
   DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries
 }
 table Reply { value:ReplyPayload; }

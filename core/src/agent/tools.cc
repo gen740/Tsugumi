@@ -193,8 +193,12 @@ auto Tools::PrepareLayoutSave(const std::string& project,
                                      {"offset", std::to_string(offset)},
                                      {"limit_bytes", "1048576"}}),
           stop));
-      if (json::Text(response, "reply") == "Failure")
-        throw Failure("conflict", "Layout source changed while preparing save");
+      if (json::Text(response, "reply") == "Failure") {
+        const auto failure = json::Object(json::Get(response, "value", "{}"));
+        if (json::Text(failure, "kind") == "revision_conflict")
+          throw StaleRevision{};
+        throw Failure(json::Text(failure, "kind"), json::Text(failure, "diagnostic"));
+      }
       const auto chunk = json::Object(json::Get(response, "value", "{}"));
       const auto bytes = json::Get(chunk, "bytes");
       if (!bytes.empty() && bytes.front() == '"')
@@ -218,7 +222,14 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     return host::LayoutFile{std::move(text), hash};
   };
   try {
-    return host::PrepareLayoutSave(args, read);
+    (void)read("tsugumi.json");
+    std::vector<std::string> documents{"tsugumi.json"};
+    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
+      const auto path = json::Text(json::Object(raw), "path");
+      if (host::IsExternalDocument(path, "tsugumi.json"))
+        documents.push_back(path);
+    }
+    return host::PrepareLayoutSave(args, read, documents);
   } catch (const StaleRevision&) {
     return args;
   }  // Let the core issue its normal CAS receipt.

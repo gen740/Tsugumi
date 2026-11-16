@@ -288,6 +288,9 @@ final class ProjectSession {
   var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
     try await CoreHostClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
   }
+  var prepareLayout: (String, String, [String: String]) async throws -> String = {
+    try await CoreHostClient.shared.completeLayout(project: $0, layout: $1, definitions: $2)
+  }
   var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
@@ -874,6 +877,7 @@ final class ProjectSession {
     sources = [:]
     for src in s.sources.compactMap({ $0 }) { sources[src.path] = (src.hash ?? "", src.sizeBytes ?? 0) }
     refreshExternals()
+    refreshDerivedLayout()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     if currentRunId != s.run.runId { runBatches = [:] }
     runStatus = s.run
@@ -1035,6 +1039,7 @@ final class ProjectSession {
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
     for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
     refreshExternals()
+    refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
     // A Draft implemented (or any Card that became code) sends its displays too.
@@ -1519,7 +1524,9 @@ final class ProjectSession {
     }
     let op = UUID()
     do {
-      try await commitChanges(baseRev: base.rev, op: op, changes: changes)
+      let (_, layouts) = try await commitChanges(baseRev: base.rev, op: op, changes: changes)
+      var merged = merged
+      for (prefix, value) in layouts { merged[prefix]?.layout = value }
       saveError = nil
       conflictRetries = 0
       forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
@@ -1617,35 +1624,30 @@ final class ProjectSession {
   /// it actually edited; this function never advances it or retries.
   @discardableResult
   private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
-                             editor: Bool = false) async throws -> Tsugumi_RPC_SaveResultT {
+                             editor: Bool = false) async throws -> (Tsugumi_RPC_SaveResultT, [String: JSONValue]) {
     guard let client else { throw RPCError.disconnected }
     if !editor { canvasSaveOp = op.uuidString.lowercased() }
     defer { if !editor { canvasSaveOp = nil } }
-    var changes = changes
-    let projectChange = changes.compactMap { $0.value?.value as? Tsugumi_RPC_SetProjectT }.first
-    let layoutChange = changes.compactMap { $0.value?.value as? Tsugumi_RPC_SetLayoutT }.first
-    if let projectChange, let next = try? JSONValue.parse(projectChange.json) {
-      func ids(_ value: JSONValue) -> Set<String> { Set((value["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string }) }
-      let removed = ids(confirmedProject).subtracting(ids(next))
-      if !removed.isEmpty {
-        let original = layoutChange?.json ?? confirmedLayout.serialized()
-        let cleaned = try await CoreHostClient.shared.validateLayout(original, removedCards: removed.sorted())
-        if let layoutChange { layoutChange.json = cleaned } else { changes.append(Change.setLayout(cleaned)) }
-      }
-    }
-    for change in changes {
-      if let value = change.value?.value as? Tsugumi_RPC_SetLayoutT {
-        _ = try await CoreHostClient.shared.validateLayout(value.json)
-      } else if let value = change.value?.value as? Tsugumi_RPC_PutSourceT, value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
-        _ = try await CoreHostClient.shared.validateLayout(String(decoding: value.bytes, as: UTF8.self))
-      }
-    }
+    guard let projectId else { throw RPCError.disconnected }
+    let changes = try await CoreHostClient.shared.prepareLayoutSave(project: projectId, baseRev: baseRev, changes: changes)
     let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
                                        changes: changes)
     if let d = result.delta {
       if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
     }
-    return result
+    var layouts: [String: JSONValue] = [:]
+    if rev == result.rev {
+      for change in changes {
+        if let value = change.value?.value as? Tsugumi_RPC_PutSourceT,
+           value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
+          let prefix = String(value.path.dropLast("layout.json".count))
+          let layout = try JSONValue.parse(String(decoding: value.bytes, as: UTF8.self))
+          layouts[prefix] = layout
+          externals[prefix]?.layout = layout
+        }
+      }
+    }
+    return (result, layouts)
   }
 
   /// Applies an editor's working copy without putting a rejected edit into
@@ -1666,9 +1668,11 @@ final class ProjectSession {
     let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
     await fillUndoSources()
     // Reading undo sources can yield to another client. Keep baseRev fixed.
-    let result = try await commitChanges(baseRev: baseRev, op: UUID(), changes: prepared.changes, editor: true)
+    let (result, layouts) = try await commitChanges(baseRev: baseRev, op: UUID(), changes: prepared.changes, editor: true)
     if rev == result.rev {
-      for (prefix, ext) in prepared.merged {
+      for (prefix, value) in prepared.merged {
+        var ext = value
+        if let layout = layouts[prefix] { ext.layout = layout }
         externals[prefix] = ext
         for rel in ext.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
       }
@@ -2070,8 +2074,29 @@ final class ProjectSession {
   /// A setting of the Card (its _card.json).
   func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
+  private(set) var derivedLayouts: [String: JSONValue] = [:]
+
+  @discardableResult
+  func refreshDerivedLayout(prefix: String = "") -> Task<Void, Never> {
+    let graph = prefix.isEmpty ? confirmedProject : externals[prefix]?.project ?? .object([])
+    let saved = prefix.isEmpty ? confirmedLayout : externals[prefix]?.layout ?? .object([])
+    let definitions = prefix.isEmpty ? confirmedDefinitionDrafts : externals[prefix]?.definitions ?? [:]
+    return Task {
+      do {
+        let text = try await prepareLayout(graph.serialized(), saved.serialized(),
+          definitions.filter { $0.value.link == nil }.mapValues { $0.card.serialized() })
+        let currentGraph = prefix.isEmpty ? confirmedProject : externals[prefix]?.project ?? .object([])
+        let currentLayout = prefix.isEmpty ? confirmedLayout : externals[prefix]?.layout ?? .object([])
+        let currentDefinitions = prefix.isEmpty ? confirmedDefinitionDrafts : externals[prefix]?.definitions ?? [:]
+        guard graph == currentGraph, saved == currentLayout, definitions == currentDefinitions else { return }
+        derivedLayouts[prefix] = try JSONValue.parse(text)
+      } catch { notice = String(describing: error) }
+    }
+  }
+
   func position(_ k: CardKey) -> CGPoint {
-    let p = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]
+    let scope = Array(path(k).dropLast())
+    let p = layout(of: scope)["cards"]?[layoutKey(k)] ?? derivedLayouts[projectPrefix(scope) ?? ""]?["cards"]?[layoutKey(k)]
     return CGPoint(x: p?["x"]?.double ?? 0, y: p?["y"]?.double ?? 0)
   }
 
@@ -2118,6 +2143,7 @@ final class ProjectSession {
       }
       guard self.externalsKey == key else { return }
       self.externals = found
+      for prefix in found.keys { self.refreshDerivedLayout(prefix: prefix) }
       self.externalHashes = read
       self.normalizeExternalEdits()
       self.settleDraftBase()

@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tsugumi::host {
 struct LayoutFile {
@@ -17,9 +18,9 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool;
 // entries (including a person's drop) are preserved byte-for-byte as values.
 auto CompleteLayout(const std::string& project, const std::string& layout,
                     const LayoutRead& read = {}) -> std::string;
-// The Agent's saving client validates changed layouts and includes deletion
-// cleanup in the same revision/hash-guarded transaction. Reads use that
-// revision.
-auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read)
+// Every saving client includes missing places and deletion cleanup in its
+// single revision/hash-guarded transaction. Reads use that revision.
+auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
+                       const std::vector<std::string>& documents = {"tsugumi.json"})
     -> std::string;
 }  // namespace tsugumi::host

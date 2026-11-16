@@ -26,7 +26,6 @@
 #include "host/failure.hh"
 #include "host/format.hh"
 #include "host/guide.hh"
-#include "host/layout_observer.hh"
 #include "host/layout_service.hh"
 #include "host/models.hh"
 #include "host/permission_kinds.hh"
@@ -194,11 +193,6 @@ struct Service::State {
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
         });
-    layout_observer = std::make_unique<host::LayoutObserver>(
-        [this](const auto& project, const auto& method, const auto& args) {
-          return tools->RawProjectCall(project, method, args,
-                                       shutdown.get_token());
-        });
     skills_service = std::make_unique<host::SkillsService>(db);
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
@@ -290,11 +284,6 @@ struct Service::State {
         }
       }
     }
-    auto registered = db.prepare("SELECT id FROM projects");
-    while (registered.step()) {
-      const auto id = registered.text(0);
-      layout_observer->Watch(id, registry.Lookup(id));
-    }
   }
 
   HostOptions options;
@@ -318,7 +307,6 @@ struct Service::State {
   std::unique_ptr<host::SkillsService> skills_service;
   std::unique_ptr<host::Models> models;
   std::unique_ptr<host::Versions> versions;
-  std::unique_ptr<host::LayoutObserver> layout_observer;
   std::unique_ptr<host::HostEvents> events;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
@@ -333,8 +321,6 @@ struct Service::State {
     std::lock_guard lock(mutex);
     if (state.phase == H::EnvironmentPhase::Ready) {
       registry.RegisterReady(state);
-      layout_observer->Watch(state.project_id,
-                             registry.Lookup(state.project_id));
     } else if (state.phase == H::EnvironmentPhase::Stopped ||
                state.phase == H::EnvironmentPhase::Failed) {
       registry.UnregisterEnvironment(state.key);
@@ -621,6 +607,34 @@ struct Service::State {
         return wire::HostReply(request.request_id,
                                host::PermissionKinds(Text(p->language())));
       }
+      case H::RequestPayload::LayoutPrepareSaveRequest: {
+        const auto *p = r->value_as_LayoutPrepareSaveRequest();
+        Tsugumi::RPC::RequestT save;
+        auto input = std::unique_ptr<Tsugumi::RPC::ProjectSaveRequestT>(
+            p->save()->UnPack());
+        save.value.Set(std::move(*input));
+        Tsugumi::RPC::MessageT message;
+        message.payload.Set(std::move(save));
+        flatbuffers::FlatBufferBuilder builder;
+        Tsugumi::RPC::FinishMessageBuffer(
+            builder, Tsugumi::RPC::Message::Pack(builder, &message));
+        const auto envelope = json::Object(agent::Catalog().Reply(
+            {reinterpret_cast<const char *>(builder.GetBufferPointer()),
+             builder.GetSize()}));
+        const auto project = p->project()->str();
+        const auto arguments = json::Get(envelope, "value");
+        lock.unlock();
+        const auto prepared =
+            tools->PrepareLayoutSave(project, arguments, shutdown.get_token());
+        const auto bytes =
+            agent::EncodeProjectRequest("project_save", prepared, 0);
+        H::LayoutPreparedSaveT result;
+        result.save.reset(Tsugumi::RPC::GetMessage(bytes.data())
+                              ->payload_as_Request()
+                              ->value_as_ProjectSaveRequest()
+                              ->UnPack());
+        return wire::HostReply(request.request_id, std::move(result));
+      }
       case H::RequestPayload::DocumentTemplateRequest: {
         const auto* p = r->value_as_DocumentTemplateRequest();
         return wire::HostReply(
@@ -667,9 +681,6 @@ struct Service::State {
       case H::RequestPayload::RegisterProjectRequest: {
         Human(human);
         registry.RegisterProject(*r->value_as_RegisterProjectRequest());
-        const auto project =
-            r->value_as_RegisterProjectRequest()->project_id()->str();
-        layout_observer->Watch(project, registry.Lookup(project));
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
       case H::RequestPayload::RegisterFolderRequest: {
@@ -708,7 +719,6 @@ auto Service::Shutdown() -> void {
     }
   }
   state_->access->changed.notify_all();
-  state_->layout_observer->Stop();
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();

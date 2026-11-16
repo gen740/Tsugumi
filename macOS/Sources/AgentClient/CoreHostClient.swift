@@ -249,6 +249,24 @@ public actor CoreHostClient {
     return result
   }
 
+  public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {
+    let request = Tsugumi_Host_LayoutCompleteRequestT()
+    request.projectJson = project; request.layoutJson = layout
+    request.definitionsJson = String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
+    let result: Tsugumi_Host_LayoutValidatedT = try await layoutCall(.layoutcompleterequest, request)
+    return result.json
+  }
+
+  public func prepareLayoutSave(project: String, baseRev: UInt64, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] {
+    let request = Tsugumi_Host_LayoutPrepareSaveRequestT()
+    request.project = project
+    let save = Tsugumi_RPC_ProjectSaveRequestT()
+    save.baseRev = baseRev; save.opId = UUID().uuidString; save.origin = "ui"; save.changes = changes
+    request.save = save
+    let result: Tsugumi_Host_LayoutPreparedSaveT = try await layoutCall(.layoutpreparesaverequest, request)
+    return result.save.changes.compactMap { $0 }
+  }
+
   public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
     let request = Tsugumi_Host_LayoutValidateRequestT()
     request.json = json; request.removedCards = removedCards.map(Optional.some)

@@ -1,10 +1,10 @@
-"""The host fills absent Card positions after writers, reloads and opening."""
+"""Display derivation never writes; placement shares the adding save's revision."""
 import json
-import time
 import uuid
 
 from harness.host import Host
 from tsugumi_client import change as doc_change, text
+from Tsugumi.RPC.ProjectSaveRequest import ProjectSaveRequestT
 
 
 def register(host, daemon):
@@ -13,52 +13,30 @@ def register(host, daemon):
               path=str(daemon.project))
 
 
-def placed(client, ids):
-    until = time.monotonic() + 5
-    while True:
-        snapshot = client.call("ProjectInspectRequest")
-        layout = json.loads(text(snapshot.layoutJson))
-        if all(card in layout.get("cards", {}) for card in ids):
-            return layout
-        assert time.monotonic() < until, f"host did not place {ids}: {layout}"
-        time.sleep(0.01)
+def display(host, project_json, layout="{}", definitions=None):
+    return json.loads(text(host.call("LayoutCompleteRequest", projectJson=project_json,
+        layoutJson=layout, definitionsJson=json.dumps(definitions or {})).json))
 
 
-def test_host_places_external_saves_and_reload_without_moving_drop(core_factory, project, tmp_path):
-    """CLI saves and imported Git edits get positions without any UI/Agent save."""
-    daemon = core_factory(mocked_builds=True)
-    client = daemon.connect()
-    host = Host(tmp_path / "host")
-    try:
-        register(host, daemon)
-        snapshot = client.call("ProjectInspectRequest")
-        project_json = json.loads(text(snapshot.projectJson))
-        project_json["canvas"]["cards"] = [{"id": "dropped"}, {"id": "unplaced"}]
-        client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=str(uuid.uuid4()), origin="user",
-                    changes=[doc_change("SetProject", json=json.dumps(project_json)),
-                             doc_change("PutDefinition", id="dropped", cardJson='{"template":"draft"}'),
-                             doc_change("PutDefinition", id="unplaced", cardJson='{"template":"draft"}'),
-                             doc_change("SetLayout", json='{"cards":{"dropped":{"x":17,"y":29}}}')])
-        first = placed(client, ["dropped", "unplaced"])
-        assert first["cards"]["dropped"] == {"x": 17, "y": 29}
-        assert first["cards"]["unplaced"] != first["cards"]["dropped"]
-        # The same on-disk document change produced by checkout/pull plus reload.
-        project_json["canvas"]["cards"].append({"id": "from-git"})
-        (project / "tsugumi.json").write_text(json.dumps(project_json))
-        definition = project / "definitions/from-git"
-        definition.mkdir(parents=True)
-        (definition / "_card.json").write_text('{"template":"draft"}')
-        snapshot = client.call("ProjectInspectRequest")
-        client.call("ProjectReloadRequest", baseRev=snapshot.rev, opId=str(uuid.uuid4()), origin="user")
-        second = placed(client, ["dropped", "unplaced", "from-git"])
-        assert second["cards"]["dropped"] == first["cards"]["dropped"]
-        assert second["cards"]["unplaced"] == first["cards"]["unplaced"]
-    finally:
-        host.close()
+def save(host, daemon, client, snapshot, changes):
+    request = ProjectSaveRequestT()
+    request.baseRev = snapshot.rev
+    request.opId = str(uuid.uuid4())
+    request.origin = "user"
+    request.changes = changes
+    prepared = host.call("LayoutPrepareSaveRequest", project=daemon.ready["project_id"], save=request).save
+    # Preparation itself is read-only, even when called repeatedly.
+    assert client.call("ProjectInspectRequest").rev == snapshot.rev
+    return client.call("ProjectSaveRequest", baseRev=prepared.baseRev, opId=prepared.opId,
+                       origin=prepared.origin, changes=prepared.changes)
 
 
-def test_opening_a_workflow_places_its_missing_cards(core_factory, project, tmp_path):
-    """A project first registered with missing layout needs no edit to be placed."""
+def documents(project):
+    return {str(p.relative_to(project)): p.read_bytes() for p in project.rglob("*")
+            if p.is_file() and ".tsugumi" not in p.relative_to(project).parts}
+
+
+def test_open_notice_and_reload_derive_without_writing(core_factory, project, tmp_path):
     graph = json.loads((project / "tsugumi.json").read_text())
     graph["canvas"]["cards"] = [{"id": "opened"}]
     (project / "tsugumi.json").write_text(json.dumps(graph))
@@ -69,41 +47,120 @@ def test_opening_a_workflow_places_its_missing_cards(core_factory, project, tmp_
     client = daemon.connect()
     host = Host(tmp_path / "host")
     try:
+        before = client.call("ProjectInspectRequest")
+        files = documents(project)
         register(host, daemon)
-        assert "opened" in placed(client, ["opened"])["cards"]
+        first = display(host, text(before.projectJson), text(before.layoutJson))
+        # Two clients derive exactly the same display from the same document.
+        assert display(host, text(before.projectJson), text(before.layoutJson)) == first
+        assert "opened" in first["cards"]
+        assert client.call("ProjectInspectRequest").rev == before.rev
+        assert documents(project) == files
+        # The very next person's edit uses the revision read before opening.
+        result = save(host, daemon, client, before, [doc_change("PutSource",
+            path="definitions/opened/note.txt", bytes=b"person's edit")])
+        assert result.rev == before.rev + 1
+        assert json.loads(text(result.delta.layoutJson))["cards"] == first["cards"]
+        assert client.call("ProjectInspectRequest").rev == result.rev
+
+        # A direct writer and a reload can introduce another absent place.
+        graph["canvas"]["cards"].append({"id": "from-git"})
+        (project / "tsugumi.json").write_text(json.dumps(graph))
+        new = project / "definitions/from-git"
+        new.mkdir(parents=True)
+        (new / "_card.json").write_text('{"template":"draft"}')
+        client.call("ProjectReloadRequest", baseRev=result.rev, opId=str(uuid.uuid4()), origin="user")
+        reloaded = client.call("ProjectInspectRequest")
+        files = documents(project)
+        layout = display(host, text(reloaded.projectJson), text(reloaded.layoutJson))
+        assert "from-git" in layout["cards"]
+        assert layout["cards"]["opened"] == first["cards"]["opened"]
+        assert client.call("ProjectInspectRequest").rev == reloaded.rev
+        assert documents(project) == files
     finally:
         host.close()
 
 
-def test_opening_places_cards_inside_a_card_in_card(core_factory, project, tmp_path):
-    """Nested workflows own their layout and get positions on host registration."""
-    graph = json.loads((project / "tsugumi.json").read_text())
-    graph["canvas"]["cards"] = [{"id": "outer"}]
-    (project / "tsugumi.json").write_text(json.dumps(graph))
-    outer = project / "definitions/outer"
-    outer.mkdir(parents=True)
-    (outer / "_link.json").write_text('{"external":"inner"}')
-    inner = project / "externals/inner"
-    definition = inner / "definitions/inside"
-    definition.mkdir(parents=True)
-    (definition / "_card.json").write_text('{"template":"draft"}')
-    (inner / "tsugumi.json").write_text(json.dumps({"name": "Inner", "pkgsPath": "tsugumi:default",
-        "boundary": {"inputs": {}, "outputs": {}}, "canvas": {"cards": [{"id": "inside"}], "connections": []}}))
+def test_adding_cards_and_nested_documents_places_in_one_revision(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
     host = Host(tmp_path / "host")
     try:
         register(host, daemon)
-        placed(client, ["outer"])
-        until = time.monotonic() + 5
-        while True:
-            try:
-                layout = json.loads((inner / "layout.json").read_text())
-                if "inside" in layout.get("cards", {}):
-                    break
-            except FileNotFoundError:
-                pass
-            assert time.monotonic() < until, "nested workflow was not placed"
-            time.sleep(0.01)
+        snapshot = client.call("ProjectInspectRequest")
+        graph = json.loads(text(snapshot.projectJson))
+        graph["canvas"]["cards"] = [{"id": "dropped"}, {"id": "automatic"}, {"id": "outer"}]
+        nested = json.dumps({"name": "Inner", "pkgsPath": "tsugumi:default", "boundary": {"inputs": {}, "outputs": {}},
+            "canvas": {"cards": [{"id": "inside"}], "connections": []}})
+        result = save(host, daemon, client, snapshot, [
+            doc_change("SetProject", json=json.dumps(graph)),
+            doc_change("PutDefinition", id="dropped", cardJson='{"template":"draft"}'),
+            doc_change("PutDefinition", id="automatic", cardJson='{"template":"draft"}'),
+            doc_change("PutDefinition", id="outer", cardJson="", linkJson='{"external":"inner"}'),
+            doc_change("PutSource", path="externals/inner/tsugumi.json", bytes=nested.encode()),
+            doc_change("PutSource", path="externals/inner/definitions/inside/_card.json", bytes=b'{"template":"draft"}'),
+            doc_change("SetLayout", json='{"cards":{"dropped":{"x":17,"y":29}}}')])
+        assert result.rev == snapshot.rev + 1
+        layout = json.loads(text(result.delta.layoutJson))
+        assert set(layout["cards"]) == {"dropped", "automatic", "outer"}
+        assert layout["cards"]["dropped"] == {"x": 17, "y": 29}
+        assert "inside" in json.loads((project / "externals/inner/layout.json").read_text())["cards"]
+        assert client.call("ProjectInspectRequest").rev == result.rev
+        # A source-only save also materializes legacy nested places.
+        (project / "externals/inner/layout.json").unlink()
+        client.call("ProjectReloadRequest", baseRev=result.rev, opId=str(uuid.uuid4()), origin="user")
+        snapshot = client.call("ProjectInspectRequest")
+        result = save(host, daemon, client, snapshot, [doc_change("PutSource",
+            path="definitions/automatic/note.txt", bytes=b"next edit")])
+        assert result.rev == snapshot.rev + 1
+        assert "inside" in json.loads((project / "externals/inner/layout.json").read_text())["cards"]
+    finally:
+        host.close()
+
+
+def test_document_patch_adds_a_card_two_workflows_deep_in_one_save(core_factory, project, tmp_path):
+    def graph(ids):
+        return json.dumps({"name": "Nested", "pkgsPath": "tsugumi:default",
+            "boundary": {"inputs": {}, "outputs": {}},
+            "canvas": {"cards": [{"id": card} for card in ids], "connections": []}})
+
+    for prefix, card, external in [("", "outer", "one"), ("externals/one/", "middle", "two")]:
+        directory = project / prefix
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "tsugumi.json").write_text(graph([card]))
+        definition = directory / "definitions" / card
+        definition.mkdir(parents=True)
+        (definition / "_link.json").write_text(json.dumps({"external": external}))
+    prefix = "externals/one/externals/two/"
+    deep = project / prefix
+    definition = deep / "definitions/legacy"
+    definition.mkdir(parents=True)
+    (definition / "_card.json").write_text('{"template":"draft"}')
+    before = graph(["legacy"])
+    (deep / "tsugumi.json").write_text(before)
+    daemon = core_factory(mocked_builds=True)
+    client = daemon.connect()
+    host = Host(tmp_path / "host")
+    try:
+        register(host, daemon)
+        snapshot = client.call("ProjectInspectRequest")
+        derived = display(host, before)
+        assert not (deep / "layout.json").exists()
+        source = next(s for s in snapshot.sources if text(s.path) == prefix + "tsugumi.json")
+        from Tsugumi.RPC.SourcePatch import SourcePatchT
+        patch = SourcePatchT()
+        patch.offset = 0
+        patch.remove = len(before.encode())
+        patch.text = graph(["added", "legacy"])
+        result = save(host, daemon, client, snapshot, [
+            doc_change("PatchSource", path=prefix + "tsugumi.json", baseHash=source.hash, patches=[patch]),
+            doc_change("PutSource", path=prefix + "definitions/added/_card.json", bytes=b'{"template":"draft"}')])
+        assert result.rev == snapshot.rev + 1
+        positions = json.loads((deep / "layout.json").read_text())["cards"]
+        assert set(positions) == {"added", "legacy"}
+        assert positions["legacy"] == derived["cards"]["legacy"]
+        assert positions["added"] != positions["legacy"]
+        assert "outer" in json.loads(text(result.delta.layoutJson))["cards"]
+        assert "middle" in json.loads((project / "externals/one/layout.json").read_text())["cards"]
     finally:
         host.close()

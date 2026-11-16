@@ -988,6 +988,7 @@ export class ProjectSession extends Observable {
     this.sources = new Map()
     for (const src of snap.sources) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     this.refreshExternals()
+    this.refreshDerivedLayout()
     this.applyResolution(snap.resolution, snap.diagnostics)
     if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
     this.runStatus = snap.run ?? undefined
@@ -1066,6 +1067,7 @@ export class ProjectSession extends Observable {
     for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
     this.refreshExternals()
+    this.refreshDerivedLayout()
     this.applyResolution(d.resolution, d.diagnostics)
     // A Draft implemented (or any Card that became code) sends its displays too.
     if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
@@ -1631,7 +1633,11 @@ export class ProjectSession extends Observable {
       }
       const op = uuid()
       try {
-        await this.commitChanges(base.rev, op, changes)
+        const { layouts } = await this.commitChanges(base.rev, op, changes)
+        for (const [prefix, layout] of layouts) {
+          const external = merged.get(prefix)
+          if (external) external.layout = layout
+        }
         this.saveError = undefined
         this.conflictRetries = 0
         this.forgetSaved(sent, layoutOnly, merged)
@@ -1749,34 +1755,27 @@ export class ProjectSession extends Observable {
     if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (!editor) this.canvasSaveOp = op
     try {
-      const projectChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetProject)?.value as R.SetProjectT | undefined
-      const layoutChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetLayout)?.value as R.SetLayoutT | undefined
-      const ids = (project: J) => new Set((arr(get(project, 'canvas', 'cards')) ?? []).map(c => str(get(c, 'id'))))
-      const next = projectChange ? tryParse(s(projectChange.json)) : undefined
-      const nextIds = next ? ids(next) : undefined
-      const removed = nextIds ? [...ids(this.confirmedProject)].filter((id): id is string => !!id && !nextIds.has(id)) : []
-      if (removed.length) {
-        const original = layoutChange ? s(layoutChange.json) : serialize(this.confirmedLayout)
-        const cleaned = await this.layoutHost.validate(original, removed)
-        if (layoutChange) layoutChange.json = cleaned
-        else changes = [...changes, Change.setLayout(cleaned)]
-      }
-      for (const change of changes) {
-        if (change.valueType === R.DocumentChangeValue.SetLayout) {
-          const value = change.value as R.SetLayoutT
-          await this.layoutHost.validate(s(value.json))
-        } else if (change.valueType === R.DocumentChangeValue.PutSource) {
-          const value = change.value as R.PutSourceT
-          if (/^(?:externals\/[^/]+\/)+layout\.json$/.test(s(value.path))) await this.layoutHost.validate(new TextDecoder().decode(new Uint8Array(value.bytes)))
-        }
-      }
+      changes = await this.layoutHost.prepareSave(this.projectId!, baseRev, changes)
       if (this.client !== client) throw new RPCError('disconnected', L('接続していません'))
       const result = await client.save(baseRev, op, this.origin, changes)
       if (result.delta) {
         if (editor) this.applyDelta(result.delta)
         else this.applyDeltaFromSave(result.delta)
       }
-      return result
+      const layouts = new Map<string, J>()
+      if (this.rev === result.rev) {
+        for (const change of changes) {
+          if (change.valueType !== R.DocumentChangeValue.PutSource) continue
+          const value = change.value as R.PutSourceT, file = s(value.path)
+          if (!/^(?:externals\/[^/]+\/)+layout\.json$/.test(file)) continue
+          const prefix = file.slice(0, -'layout.json'.length)
+          const layout = parse(new TextDecoder().decode(new Uint8Array(value.bytes)))
+          layouts.set(prefix, layout)
+          const external = this.externals.get(prefix)
+          if (external) external.layout = layout
+        }
+      }
+      return { result, layouts }
     } finally {
       if (!editor) this.canvasSaveOp = undefined
     }
@@ -1798,9 +1797,11 @@ export class ProjectSession extends Observable {
     const step = this.record(before, beforeSnap, after, prepared.sent)
     await this.fillUndoSources()
     // Reading undo sources may yield to another client. Keep baseRev fixed.
-    const result = await this.commitChanges(baseRev, uuid(), prepared.changes, true)
+    const { result, layouts } = await this.commitChanges(baseRev, uuid(), prepared.changes, true)
     if (this.rev === result.rev) {
       for (const [prefix, ext] of prepared.merged) {
+        const layout = layouts.get(prefix)
+        if (layout) ext.layout = layout
         this.externals.set(prefix, ext)
         for (const rel of externalFiles(ext).keys()) {
           const hash = this.sources.get(prefix + rel)?.hash
@@ -2237,8 +2238,27 @@ export class ProjectSession extends Observable {
     return get(this.cardDefinition(k), name)
   }
 
+  derivedLayouts = new Map<string, J>()
+
+  refreshDerivedLayout(prefix = '') {
+    const graph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
+    const saved = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
+    const definitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
+    return this.layoutHost.complete(serialize(graph), serialize(saved),
+      Object.fromEntries([...definitions].filter(([, d]) => d.link === undefined).map(([id, d]) => [id, serialize(d.card)])))
+      .then(text => {
+        const currentGraph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
+        const currentLayout = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
+        const currentDefinitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
+        if (!jeq(graph, currentGraph) || !jeq(saved, currentLayout) || !mapEq(definitions, currentDefinitions, defEq)) return
+        this.derivedLayouts.set(prefix, parse(text))
+        this.changed()
+      }).catch(error => { this.notice = errorText(error); this.changed() })
+  }
+
   position(k: CardKey): { x: number; y: number } {
-    const p = get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k))
+    const scope = path(k).slice(0, -1)
+    const p = get(this.layoutOf(scope), 'cards', this.layoutKey(k)) ?? get(this.derivedLayouts.get(this.projectPrefix(scope) ?? ''), 'cards', this.layoutKey(k))
     return { x: dbl(get(p, 'x')) ?? 0, y: dbl(get(p, 'y')) ?? 0 }
   }
 
@@ -2319,6 +2339,7 @@ export class ProjectSession extends Observable {
       }
       if (this.externalsKey !== k) return
       this.externals = found
+      for (const prefix of found.keys()) this.refreshDerivedLayout(prefix)
       this.externalHashes = read
       this.normalizeExternalEdits()
       this.settleDraftBase()

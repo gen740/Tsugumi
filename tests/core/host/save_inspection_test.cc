@@ -7,8 +7,7 @@ namespace tsugumi::host {
 namespace {
 namespace json = agent::json;
 
-TEST(HostSaveInspection,
-     PlacementBetweenSnapshotAndExternalReadsRestartsCapture) {
+TEST(HostSaveInspection, WriterBetweenSnapshotAndExternalReadsRestartsCapture) {
   const std::string path = "externals/storage/layout.json";
   const std::string before = R"({"cards":{}})",
                     placed = R"({"cards":{"child":{"x":40,"y":80}}})";
@@ -33,7 +32,7 @@ TEST(HostSaveInspection,
         if (reads == 1) {
           EXPECT_EQ(json::Text(args, "at_rev"), "7");
           EXPECT_EQ(json::Text(args, "if_hash"), "before");
-          // Return one page before the observer's placement commits. The next
+          // Return one page before another client's edit commits. The next
           // page must be rejected, and even these bytes must be discarded.
           snapshot["rev"] = json::Quote("8");
           snapshot["sources"] =

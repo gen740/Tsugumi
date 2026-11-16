@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import fs from 'node:fs'
 import path from 'node:path'
-import { D } from '../src/shared/rpc'
+import { D, R } from '../src/shared/rpc'
 import { parse, serialize, get, dbl } from '../src/shared/json'
 import type { LayoutProposal, LayoutScene } from '../src/model/layoutScene'
 
@@ -48,6 +48,70 @@ for (const v of vectors) {
   const reply = new H.MessageT(1n, H.Payload.Reply, new H.ReplyT(H.ReplyPayload.LayoutProposal, proposal))
   const builder = new Builder(1024); builder.finish(reply.pack(builder), 'TSH1')
   assert.deepEqual(JSON.parse(JSON.stringify(decodeReply(builder.asUint8Array(), true).value)), v.expect)
+}
+
+// Preparing a UI save carries the core's typed transaction unchanged over HTTP
+// and Host RPC, including binary source bytes and revisions above JS precision.
+{
+  const save = Object.assign(new R.ProjectSaveRequestT(), { baseRev: 1n << 60n, opId: 'prepare', origin: 'ui',
+    changes: [new R.DocumentChangeT(R.DocumentChangeValue.PutSource, new R.PutSourceT('definitions/a/data.bin', [0, 255, 128], 'hash'))] })
+  const packed = new Builder(); packed.finish(save.pack(packed))
+  const bytes = encodeRequest('LayoutPrepareSaveRequest', { project: 'p', saveBytes: Array.from(packed.asUint8Array()) }, 7n, true)
+  const request = H.Message.getRootAsMessage(new ByteBuffer(bytes)).unpack().payload as H.RequestT
+  const prepared = request.value as H.LayoutPrepareSaveRequestT
+  assert.equal(prepared.save!.baseRev, save.baseRev)
+  assert.deepEqual((prepared.save!.changes[0].value as R.PutSourceT).bytes, [0, 255, 128])
+  const reply = new H.MessageT(7n, H.Payload.Reply, new H.ReplyT(H.ReplyPayload.LayoutPreparedSave, new H.LayoutPreparedSaveT(prepared.save)))
+  const wire = new Builder(); H.Message.finishMessageBuffer(wire, reply.pack(wire))
+  const dto = decodeReply(wire.asUint8Array(), true).value
+  const restored = R.ProjectSaveRequest.getRootAsProjectSaveRequest(new ByteBuffer(new Uint8Array(dto.saveBytes))).unpack()
+  assert.equal(restored.baseRev, save.baseRev)
+  assert.deepEqual(restored.changes, save.changes)
+}
+
+// Opening derives positions without touching a document, revision or autosave.
+// A person's immediate editor save materializes them in that same transaction.
+{
+  const sessions = [0, 1].map(() => {
+    const session = new ProjectSession('/unplaced', 'unplaced', 'unplaced')
+    session.project = parse('{"canvas":{"cards":[{"id":"a"}],"connections":[]}}')
+    session.confirmedProject = parse(serialize(session.project))
+    session.confirmedDefinitions.set('a', parse('{"template":"draft"}'))
+    session.projectId = 'p'; session.connected = true
+    session.layout = parse('{}'); session.confirmedLayout = parse('{}')
+    return session
+  })
+  const placed = '{"cards":{"a":{"x":120,"y":240}}}'
+  let saves = 0, scheduled = 0
+  for (const session of sessions) {
+    session.scheduleSave = () => { scheduled++ }
+    session.layoutHost = { ...session.layoutHost, complete: async () => placed,
+      prepareSave: async (_project, baseRev, changes) => {
+        assert.equal(baseRev, 0n)
+        return [...changes, new R.DocumentChangeT(R.DocumentChangeValue.SetLayout, new R.SetLayoutT(placed))]
+      } }
+    session.client = { save: async (baseRev, opId, origin, changes) => {
+      saves++
+      const delta = Object.assign(new R.DocumentDeltaT(), { baseRev, rev: baseRev + 1n, opId, origin })
+      for (const change of changes) {
+        if (change.valueType === R.DocumentChangeValue.SetLayout) delta.layoutJson = (change.value as R.SetLayoutT).json
+        if (change.valueType === R.DocumentChangeValue.PutDefinition) delta.definitionsUpsert.push(Object.assign(new R.DefinitionT(), change.value))
+      }
+      return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta })
+    } } as never
+  }
+  await Promise.all(sessions.map(session => session.refreshDerivedLayout()))
+  for (const session of sessions) {
+    assert.deepEqual(session.position('a'), { x: 120, y: 240 })
+    assert.equal(session.rev, 0n)
+    assert.equal(session.dirty, false)
+    assert.equal(serialize(session.confirmedLayout), '{}\n')
+  }
+  assert.equal(saves, 0); assert.equal(scheduled, 0)
+  assert.equal(await sessions[0].applyEdit(0n, session => session.updateMeta('a', meta => meta.set('description', 'Immediate edit'))), 1n)
+  assert.equal(saves, 1)
+  assert.equal(sessions[0].dirty, false)
+  assert.deepEqual(sessions[0].position('a'), { x: 120, y: 240 })
 }
 
 const make = async () => {

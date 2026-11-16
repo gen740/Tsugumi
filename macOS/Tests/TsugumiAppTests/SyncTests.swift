@@ -164,6 +164,12 @@ import TsugumiTestSupport
   static func connected(_ s: ProjectSession) async throws {
     for _ in 0..<200 where !s.connected { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.connected, "\(s.connectionMessage ?? "")")
+    if s.connected, let endpoint = s.endpointOverride {
+      // Direct test daemons bypass EnvironmentManager's host registration.
+      _ = try await CoreHostClient.shared.call("RegisterProjectRequest", [
+        "project_id": endpoint.projectId, "endpoint": endpoint.url.absoluteString,
+        "token": endpoint.token, "path": s.identity.url.path])
+    }
   }
 
   static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
