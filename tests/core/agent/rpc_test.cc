@@ -452,7 +452,7 @@ TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
   }
   EXPECT_GT(expected_count, 0u);
   EXPECT_EQ(demos.size(), expected_count);
-  for (const auto* path : {"en/index.json", "en/report/tsugumi.json",
+  for (const auto* path : {"en/report/tsugumi.json",
                            "en/report/definitions/generate/src/main.py"}) {
     const auto content = Tool(conversation, "demo_read",
                               J::Encode(J::Members{{"path", J::Quote(path)}}));

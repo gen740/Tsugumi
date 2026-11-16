@@ -11,7 +11,7 @@ TEST_F(AgentProjectFixture,
   Write(
       directory.path / "project/definitions/plan/_meta.json",
       R"({"description":"Plan","content":"Keep these words","comments":[{"id":"c1","text":"Ask","author":"user"}]})");
-  StartProject();
+  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
@@ -218,8 +218,8 @@ TEST_F(AgentProjectFixture,
                R"({"file_path":"definitions/writer/_card.json","selector":[{"field":"network"}],"old_value":{"present":false},"new_value":{"present":true,"value":true}})"})}})));
   model.Queue(AnthropicText("Finished."));
   auto delegated = std::async(std::launch::async, [&] {
-    return Tool(
-        conversation, "delegate",
+    return Delegate(
+        conversation,
         R"({"tasks":[{"name":"scoped","instruction":"Save the supplied edits.","read_cards":["outer/child","writer"],"write_cards":["outer/child","writer"],"run_cards":[]}]})",
         "delegate");
   });
@@ -288,8 +288,7 @@ TEST_F(AgentProjectFixture,
     const auto envelope = json::Object(raw);
     if (json::Text(envelope, "reply") != "Failure") continue;
     const auto failure = json::Object(json::Get(envelope, "value", "{}"));
-    if (json::Text(failure, "message").find("Helper scope denied") !=
-        std::string::npos)
+    if (json::Text(failure, "kind") == "permission_denied")
       scope_denied = true;
   }
   EXPECT_TRUE(scope_denied) << history.View();

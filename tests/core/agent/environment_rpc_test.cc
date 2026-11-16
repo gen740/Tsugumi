@@ -83,12 +83,12 @@ class EnvironmentFixture : public AgentFixture {
     return static_cast<size_t>(
         std::count(launches.begin(), launches.end(), '\n'));
   }
-  auto Restart() -> void {
+  auto Restart(bool crash = false) -> void {
     host->OnEvent({});
     host.reset();
     human.reset();
     external.reset();
-    service.Stop();
+    service.Stop(crash);
     StartHost();
     Observe();
   }
@@ -324,7 +324,7 @@ TEST_F(EnvironmentFixture,
        LeftoverDaemonIsReauthenticatedAndReusedAfterHostRestart) {
   const auto first = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(first.phase, H::EnvironmentPhase::Ready);
-  Restart();
+  Restart(true);
   const auto adopted = Environment(H::EnvironmentAction::State);
   EXPECT_EQ(adopted.phase, H::EnvironmentPhase::Ready);
   EXPECT_EQ(adopted.pid, first.pid);
@@ -337,7 +337,7 @@ TEST_F(EnvironmentFixture,
        RestartObservesResidentDeathWithoutAClientStateQuery) {
   const auto started = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(started.phase, H::EnvironmentPhase::Ready);
-  Restart();
+  Restart(true);
   ASSERT_EQ(::kill(static_cast<pid_t>(started.pid), SIGKILL), 0);
   EXPECT_TRUE(WaitForEvent(H::EventPayload::EnvironmentStopped));
   EXPECT_EQ(Environment(H::EnvironmentAction::State).phase,
@@ -369,7 +369,7 @@ TEST_F(EnvironmentFixture, StaleReadinessCannotAdoptOrSignalAnUnrelatedPid) {
   forged.replace(offset, actual.size(),
                  "\"pid\":" + std::to_string(::getpid()));
   Write(started.ready_file, forged);
-  Restart();
+  Restart(true);
   EXPECT_EQ(Environment(H::EnvironmentAction::State).phase,
             H::EnvironmentPhase::Stopped);
   EXPECT_EQ(Environment(H::EnvironmentAction::Stop).phase,

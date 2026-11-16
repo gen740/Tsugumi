@@ -217,16 +217,12 @@ auto Tools::EditProjectTool(const std::string& conversation,
   } catch (const Cancelled&) {
     throw;
   } catch (const Failure& error) {
-    // A host-authored scope refusal names the offending field without file
-    // contents. Keep it as a typed failure; generic project-result filtering
-    // would otherwise hide that actionable diagnostic from the helper.
-    if (error.code == "permission_denied" &&
-        std::string_view(error.what()).starts_with("Helper scope denied: "))
-      throw;
     if (!error.request_id.empty() || error.code == "outcome_unknown" ||
         error.code == "unavailable" || error.code == "busy" ||
         error.code == "internal_error")
       throw;
+    // Preflight scope refusals also need a terminal receipt. ScopedResult
+    // redacts the diagnostic when delivering it to a helper.
     return refused(error.code, error.what());
   } catch (const std::exception& error) {
     return refused("validation_failed", error.what());

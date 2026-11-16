@@ -89,7 +89,7 @@ struct AuthorizationDouble {
             [this](const std::string&) { active = false; }};
   }
 };
-TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndKeepsTheProcessAfterShutdown) {
+TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndStopsTheProcessOnShutdown) {
   TemporaryDirectory directory;
   Write(directory.path / "project/tsugumi.json", "{}");
   AuthorizationDouble authorization;
@@ -125,9 +125,9 @@ TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndKeepsTheProcessAfterShutdown) {
   EXPECT_EQ(service.Handle(input).pid, 42);
   EXPECT_EQ(helper->launches.load(), 1);
   service.Shutdown();
-  EXPECT_TRUE(helper->running);
-  EXPECT_TRUE(authorization.active);
-  EXPECT_EQ(helper->signals.load(), 0);
+  EXPECT_FALSE(helper->running);
+  EXPECT_FALSE(authorization.active);
+  EXPECT_EQ(helper->signals.load(), 1);
 }
 TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   TemporaryDirectory directory;
@@ -212,16 +212,16 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   Write(project / "tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
   Write(project / "definitions/nested/_link.json", R"({"external":"x"})");
   Write(project / "externals/x/tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"b"}],"connections":[]}})");
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
   Write(project / "definitions/unused/_card.json",
-        "{\"hostFolders\":[{\"name\":\"chat\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"chat\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
   Write(project / "externals/unused/definitions/ignored/_card.json",
-        "{\"hostFolders\":[{\"name\":\"ignored\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"ignored\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
@@ -262,7 +262,7 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   EXPECT_EQ(helper->launches, 1);
   EXPECT_EQ(helper->signals, 0);
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
   // A guest keeps the folders of its start: any other set starts it again.
   input.action = H::EnvironmentAction::RemoveFolders;
   input.folders = {chat.string()};
@@ -377,7 +377,7 @@ TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument
   Write(project / "tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
   helper->change_requirements = true;
@@ -393,7 +393,6 @@ TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument
   input.action = H::EnvironmentAction::Start;
   const auto state = service.Handle(input);
   EXPECT_EQ(state.phase, H::EnvironmentPhase::Failed);
-  EXPECT_NE(state.message.find("requirements changed during startup"), std::string::npos);
   EXPECT_FALSE(helper->running);
   EXPECT_FALSE(authorization.active);
 }

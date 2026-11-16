@@ -105,9 +105,10 @@ protected:
   auto Release() -> void {
     Write(directory.path / "mock/run-wait.release", "ready");
   }
-  auto ToolStarted(const std::string &conversation) -> void {
+  auto ToolStarted(const std::string &conversation,
+                   const std::string &tool = "run_status") -> void {
     const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (Events(conversation).View().find("run_status") ==
+    while (Events(conversation).View().find(tool) ==
            std::string::npos) {
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("Wait tool did not start");
@@ -405,12 +406,12 @@ TEST_F(AgentRunWaitFixture,
   Entered();
   ModelServer model;
   model.Queue(
-      AnthropicTool("wait-model", "run_status", WaitArguments(run, 300)));
+      AnthropicFamilyTool("wait-model", "runs", "status", WaitArguments(run, 300)));
   model.Queue(AnthropicText("Run ended."));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Wait for the result.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
-  ToolStarted(conversation);
+  ToolStarted(conversation, "tools");
   const auto other = Conversation("other-conversation");
   Grant(other);
   ASSERT_TRUE(Inspect(other).Code().empty());
@@ -431,11 +432,11 @@ TEST_F(AgentRunWaitFixture, StopInterruptsAModelWaitWithoutAnotherModelStep) {
   Entered();
   ModelServer model;
   model.Queue(
-      AnthropicTool("wait-stop", "run_status", WaitArguments(run, 300)));
+      AnthropicFamilyTool("wait-stop", "runs", "status", WaitArguments(run, 300)));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Wait for this run.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
-  ToolStarted(conversation);
+  ToolStarted(conversation, "tools");
   ASSERT_TRUE(Stop(conversation).Code().empty());
   WaitUntilIdle(conversation);
   EXPECT_EQ(model.Requests().size(), 1u);
@@ -495,7 +496,7 @@ TEST_F(AgentRunWaitFixture, HelperCannotWaitOnAnUnownedRun) {
   Entered();
   ModelServer model;
   model.Queue(
-      AnthropicTool("helper-wait", "run_status", WaitArguments(run, 300)));
+      AnthropicFamilyTool("helper-wait", "runs", "status", WaitArguments(run, 300)));
   model.Queue(AnthropicText("Run is outside my scope."));
   Configure(model);
   const auto delegated = Tool(

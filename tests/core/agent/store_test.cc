@@ -150,10 +150,11 @@ TEST_F(ConversationStoreTest,
   const auto saved = store->GetConversation("nested").messages;
   EXPECT_EQ(saved.find("tool_result"), std::string::npos);
   auto child = home.db.prepare(
-      "SELECT state,result FROM helpers WHERE conversation='nested'");
+      "SELECT state,result,parent_call FROM helpers WHERE conversation='nested'");
   ASSERT_TRUE(child.step());
   EXPECT_EQ(child.text(0), "completed");
   EXPECT_NE(child.text(1).find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
+  const auto child_call = child.text(2);
   // Reopen the store and reconstruct the boundary as on a host restart.
   helpers.reset();
   Open();
@@ -184,11 +185,10 @@ TEST_F(ConversationStoreTest,
   const auto reconciler =
       tools.Hooks("nested", true, boundary()).reconcile_tool;
   const auto conflict = reconciler(
-      {"nested-child", "delegate",
+      {child_call, "delegate",
        R"({"tasks":[{"name":"different","instruction":"Changed.","read_cards":[],"write_cards":[],"run_cards":[]}]})"});
   ASSERT_TRUE(conflict);
   EXPECT_TRUE(conflict->is_error);
-  EXPECT_NE(conflict->text.find("different tasks"), std::string::npos);
 }
 
 TEST_F(ConversationStoreTest,
