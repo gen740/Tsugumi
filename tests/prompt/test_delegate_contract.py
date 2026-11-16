@@ -89,13 +89,14 @@ class DelegateContractTests(unittest.TestCase):
                 self.assertNotIn(stale, prompt)
         self.assertIn('"read_cards"', helpers)
         self.assertIn('"write_cards"', helpers)
-        self.assertIn("The host merges disjoint concurrent saves", helpers)
+        self.assertIn("Small changes use project_edit", helpers)
+        self.assertIn("stale whole-document project_save is refused", helpers)
         self.assertIn("Do not send coordinates for new Cards", prompt)
         self.assertIn("all incident endpoints are in scope", helpers)
         self.assertIn("own card_id reservations", helpers)
         self.assertNotIn("and its place in SetLayout", prompt)
         self.assertIn("without SetLayout coordinates", shared["saveNote"])
-        self.assertIn("input wire or delete/change", shared["saveNote"])
+        self.assertIn("A stale base_rev is refused", shared["saveNote"])
 
 
 if __name__ == "__main__":

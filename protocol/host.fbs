@@ -158,10 +158,6 @@ table DocumentTemplate { definition_json:string (required); files:[DocumentTempl
 table DocumentMergeRequest { base_json:string (required); ours_json:string (required); theirs_json:string (required); }
 table DocumentMerge { merged_json:string (required); conflicts:[string]; }
 
-// Human UI saves use the same strict document merge as Agent saves. base_json
-// contains {snapshot:{rev,sources},files:{path:document}} from the actual read.
-// The core request/reply stay typed; snapshot catches up a UI whose change
-// notifications have not arrived yet. No run data is retained by this operation.
 // Intent editing, shared by all clients. Object fields and keyed array entities
 // are selected by identity; numeric array offsets are never entity identities.
 table ProjectSelector {
@@ -198,25 +194,22 @@ table ProjectFileMove {
 union ProjectEditValue { ProjectFieldEdit, ProjectTextEdit, ProjectFilePut, ProjectFileRemove, ProjectFileMove }
 table ProjectEdit { value:ProjectEditValue; }
 table ProjectEdits { edits:[ProjectEdit]; }
-union ProjectOperationBody { ProjectEdits }
+table ProjectConnect {
+  project_path:string;
+  from_card:string (required); from_port:string (required);
+  to_card:string (required); to_port:string (required);
+  fork_id:string;
+}
+table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
+enum ProjectLayoutAction:ubyte { Arrange, Untangle }
+table ProjectLayout { project_path:string; action:ProjectLayoutAction; }
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout }
 table ProjectOperateRequest {
   project_id:string (required);
-  operation:Tsugumi.RPC.OperationSubmission (required);
+  op_id:string (required);
   body:ProjectOperationBody;
 }
-table ProjectWriterOpenRequest { project_id:string (required); }
-table ProjectOperationStatusRequest { project_id:string (required); operation:Tsugumi.RPC.OperationSubmission (required); }
-table ProjectOperationAcknowledgeRequest {
-  project_id:string (required);
-  identity:Tsugumi.RPC.OperationIdentity (required);
-  incorporated_cursor:uint64;
-  retire:bool;
-}
-// The original outcome/cursor only; never a separately inspected document.
 table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
-
-table UISaveRequest { project:string (required); base_json:string (required); save:Tsugumi.RPC.ProjectSaveRequest (required); }
-table UISaveResult { reply:Tsugumi.RPC.Reply (required); snapshot:Tsugumi.RPC.ProjectSnapshot; }
 
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
@@ -435,6 +428,15 @@ table VersionCanvas {
 /// Card references. The caller includes the returned JSON in the same save.
 table LayoutValidateRequest { json:string (required); removed_cards:[string]; }
 table LayoutValidated { json:string (required); }
+/// Pure display derivation for one workflow. definitions_json maps Card ids to
+/// their _card.json text. Same document yields the same places on every client.
+/// The returned layout is presentation only; opening never saves it.
+table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
+/// Add missing places and deletion cleanup to the caller's exact CAS save.
+/// No write, retry or merge occurs here. The caller sends the returned save to
+/// the core as its single transaction. Agent saves use the same implementation.
+table LayoutPrepareSaveRequest { project:string (required); save:Tsugumi.RPC.ProjectSaveRequest (required); }
+table LayoutPreparedSave { save:Tsugumi.RPC.ProjectSaveRequest (required); }
 /// -> VersionCanvas. Draw the raw definition data and layout returned by the
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {
@@ -483,10 +485,11 @@ union RequestPayload {
   RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ProjectTrustRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
-  DocumentSubgraphRequest, DocumentMergeRequest, UISaveRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
-  ProjectOperateRequest, ProjectWriterOpenRequest, ProjectOperationStatusRequest, ProjectOperationAcknowledgeRequest,
+  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
+  ProjectOperateRequest,
+
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -497,8 +500,8 @@ union ReplyPayload {
   RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
-  DocumentSubgraph, DocumentMerge, UISaveResult, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
-  ModelSelection,
+  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
+  ModelSelection, LayoutPreparedSave,
   DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries
 }
 table Reply { value:ReplyPayload; }

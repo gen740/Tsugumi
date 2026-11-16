@@ -3,6 +3,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -13,8 +14,9 @@
 #include "agent/helper_scope.hh"
 #include "agent/runtime.hh"
 #include "agent/store.hh"
-#include "host/save.hh"
+#include "host/layout_saving.hh"
 #include "host/project_operations.hh"
+#include "host/save.hh"
 #include "host/state_gate.hh"
 #include "server.hh"
 
@@ -51,36 +53,34 @@ struct Tools {
         Providers& providers, host::Settings& settings,
         host::DemoReferences& demos, Turns& turns, std::stop_source& shutdown,
         host::Access& access, Dependencies dependencies);
-  auto RememberBase(const std::string& project, const json::Members& snapshot,
-                    std::stop_token stop) -> host::SaveBase;
-  auto StoreBase(const std::string& project, const host::SaveBase& base)
-      -> void;
   auto SaveProject(const std::string& project, json::Members args,
                    std::stop_token stop,
-                   const std::function<void(const host::SaveBase&)>& check = {}) -> std::string;
-  auto SavedBase(const std::string& project, const std::string& rev)
-      -> host::SaveBase;
+                   const std::function<void(const host::SaveBase&)>& check = {},
+                   const host::LayoutWrite& may_write = {}) -> std::string;
   std::recursive_mutex save_mutex;
   host::ProjectOperations operations;
-  auto EditProjectTool(const std::string& conversation, const std::string& project,
-                       const ToolCall& call, const json::Members& args, const std::string& operation,
-                       HelperScope* boundary, bool recovering, std::stop_token stop) -> std::string;
-  auto AcknowledgeEdit(const std::string& project, const std::string& operation, std::stop_token stop) -> void;
-  auto OperateProject(const std::string& project, const Tsugumi::RPC::OperationSubmissionT& operation,
-                      const Tsugumi::Host::ProjectEditsT& edits, const host::OperationContext& context,
+  auto EditProjectTool(const std::string& conversation,
+                       const std::string& project, const ToolCall& call,
+                       const json::Members& args, const std::string& operation,
+                       HelperScope* boundary, bool recovering,
+                       std::stop_token stop) -> std::string;
+  auto OperateProject(const std::string& project,
+                      const Tsugumi::Host::ProjectOperateRequestT& operation,
+                      const host::OperationContext& context,
                       std::stop_token stop) -> host::OperationReply;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
-                         std::stop_token stop) -> std::string;
+                         std::stop_token stop,
+                         const host::LayoutWrite& may_write = {})
+      -> std::string;
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {})
       -> std::string;
-  auto FileOperation(const std::string& conversation, const std::string& project,
-                     const std::string& name, json::Members& args,
-                     const std::string& operation, HelperScope* boundary,
-                     std::stop_token stop, std::vector<std::string>& resources) -> std::string;
-  auto AnnotateSave(const std::string& operation, const std::string& result)
-      -> std::string;
+  auto FileOperation(const std::string& conversation,
+                     const std::string& project, const std::string& name,
+                     json::Members& args, const std::string& operation,
+                     HelperScope* boundary, std::stop_token stop,
+                     std::vector<std::string>& resources) -> std::string;
   auto RawProjectCall(const std::string& project, const std::string& name,
                       const std::string& arguments, std::stop_token stop = {},
                       std::string* raw = nullptr) -> std::string;
@@ -96,8 +96,8 @@ struct Tools {
                    HelperScope* boundary = nullptr) -> ToolResult;
   auto Hooks(const std::string& id, bool helper = false,
              std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks;
-  auto RequireHelperPermission(const std::string &conversation,
-                               const HelperScope &boundary) -> void;
+  auto RequireHelperPermission(const std::string& conversation,
+                               const HelperScope& boundary) -> void;
   auto Handle(const RequestIn& request, bool human,
               std::unique_lock<std::recursive_mutex>& lock) -> std::string;
 

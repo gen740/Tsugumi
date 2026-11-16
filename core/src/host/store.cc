@@ -7,9 +7,6 @@ HostStore::HostStore(const std::filesystem::path& directory)
     : db((directory / "host.sqlite").string()) {
   ::chmod((directory / "host.sqlite").c_str(), 0600);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-  db.exec("CREATE TABLE IF NOT EXISTS operation_writers(operation TEXT PRIMARY KEY, "
-          "project TEXT NOT NULL, conversation TEXT NOT NULL, call TEXT NOT NULL, "
-          "lane TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, created INTEGER NOT NULL)");
   db.exec("CREATE TABLE IF NOT EXISTS project_trust(path TEXT PRIMARY KEY, "
           "device INTEGER NOT NULL, inode INTEGER NOT NULL, "
       "decision INTEGER NOT NULL)");
@@ -28,13 +25,6 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "INTEGER NOT NULL);"
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");
-  db.exec(
-      "CREATE TABLE IF NOT EXISTS save_bases(project TEXT NOT NULL, rev TEXT "
-      "NOT NULL, "
-      "snapshot TEXT NOT NULL, files TEXT NOT NULL, PRIMARY KEY(project,rev))");
-  db.exec(
-      "CREATE TABLE IF NOT EXISTS save_preparations(operation TEXT PRIMARY "
-      "KEY, arguments TEXT NOT NULL, comments TEXT NOT NULL)");
   db.exec(
       "CREATE TABLE IF NOT EXISTS access_prompt_items(request TEXT NOT NULL, "
       "access INTEGER NOT NULL, "

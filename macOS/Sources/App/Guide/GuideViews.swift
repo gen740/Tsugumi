@@ -1104,10 +1104,8 @@ struct GuideInviteView: View {
 
 // MARK: - First start
 
-/// The first start: choose Anthropic or OpenAI and enter that provider's API
-/// key (one is enough), checked by connecting, or start without a guide.
-/// The key is saved in the login Keychain and provisioned to hostd in memory,
-/// as in Settings > API.
+/// First start: connect an API key or ChatGPT plan, or skip. Key storage and
+/// ChatGPT sign-in are the same as Settings > API.
 struct GuideSetupView: View {
   let onDone: () -> Void
   @State private var provider = CorePreferences.shared.string(forKey: "agent.provider") == "openai" ? "openai" : "anthropic"
@@ -1115,6 +1113,7 @@ struct GuideSetupView: View {
   @State private var working = false
   @State private var message: String?
   @State private var saved = false
+  @State private var chatGPT = ChatGPTSignInModel()
 
   private var config: ProviderConfig { provider == "openai" ? .openAI : .anthropic }
 
@@ -1127,8 +1126,13 @@ struct GuideSetupView: View {
           Text("右下のツグミが、使い方の質問に答えたりデモを案内したりします。").foregroundStyle(.secondary)
         }
       }
-      Text("ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。")
+      Text("ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。")
         .font(.callout).fixedSize(horizontal: false, vertical: true)
+      ChatGPTConnection(model: chatGPT, onboarding: true) {
+        try await GuideController.shared.finishChatGPTSetup()
+        onDone()
+      }
+      Divider()
       Picker("使うモデル", selection: $provider) {
         Text("Anthropic").tag("anthropic")
         Text("OpenAI").tag("openai")
@@ -1142,7 +1146,7 @@ struct GuideSetupView: View {
         Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
       }
-      Text("キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。")
+      Text("接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("スキップして始める") {
@@ -1156,7 +1160,7 @@ struct GuideSetupView: View {
         }
         Button("接続して始める", action: connect)
           .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-          .disabled(working || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          .disabled(working || chatGPT.signingIn != nil || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
     }
     .padding(24)
@@ -1166,7 +1170,7 @@ struct GuideSetupView: View {
 
   private func connect() {
     let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !k.isEmpty, !working else { return }
+    guard !k.isEmpty, !working, chatGPT.signingIn == nil else { return }
     Task {
     do {
       try await ProviderCredentials.save(k, account: config.name)

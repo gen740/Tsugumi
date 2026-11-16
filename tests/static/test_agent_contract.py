@@ -171,5 +171,5 @@ def test_narrow_edit_contract_precedes_whole_document_save():
     assert "keyed selectors" in tools["project_edit"]["description"]
     assert "for creating a project and for a large restructuring" in shared["saveNote"]
     fixture = json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())
-    ordered = [tool["name"] for tool in fixture if tool["name"] in ("project_edit", "project_copy", "project_save")]
-    assert ordered == ["project_edit", "project_copy", "project_save"]
+    ordered = [tool["name"] for tool in fixture if tool["name"] in ("project_edit", "project_connect", "project_make_subgraph", "project_layout", "project_copy", "project_save")]
+    assert ordered == ["project_edit", "project_connect", "project_make_subgraph", "project_layout", "project_copy", "project_save"]

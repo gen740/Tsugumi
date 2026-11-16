@@ -23,9 +23,9 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   EXPECT_EQ(journal.text(0), "wal");
   for (const auto* table :
        {"projects", "folders", "access_requests", "grants", "providers",
-        "save_preparations", "access_prompt_items", "operation_approvals",
-        "credentials", "environment_projects", "project_paths",
-        "skill_catalogs", "model_lists"}) {
+        "access_prompt_items", "operation_approvals", "credentials",
+        "environment_projects", "project_paths", "skill_catalogs",
+        "model_lists"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -84,7 +84,13 @@ TEST(HostComponents, DemoReferencesKeepTheConfiguredRootAndReadLimit) {
   TemporaryDirectory directory;
   Write(directory.path / "example.md", "reference");
   host::DemoReferences demos(directory.path);
-  EXPECT_EQ(demos.List(), R"(["example.md"])");
+  EXPECT_EQ(demos.ListFiles(), R"(["example.md"])");
+  Write(
+      directory.path / "ja/index.json",
+      R"({"demos":[{"path":"sample","title":"Sample","description":"One line"}]})");
+  EXPECT_EQ(
+      demos.List(),
+      R"([{"description":"One line","name":"Sample","path":"ja/sample"}])");
   EXPECT_EQ(demos.Read("example.md"), "reference");
   EXPECT_THROW(demos.Read("../example.md"), host::Failure);
   EXPECT_THROW(demos.Read("/example.md"), host::Failure);

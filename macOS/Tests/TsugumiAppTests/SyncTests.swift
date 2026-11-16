@@ -115,10 +115,7 @@ import TsugumiTestSupport
       let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
       try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
         .write(to: p.appendingPathComponent("tsugumi.json"))
-      // Ordinary sync tests start from a fully placed workflow. Placement
-      // races are injected explicitly by PlacementSaveTests, not by timing.
-      try Data(#"{"cards":{"a":{"x":0,"y":0},"b":{"x":400,"y":0},"c":{"x":800,"y":0},"start":{"x":1200,"y":0}}}"#.utf8)
-        .write(to: p.appendingPathComponent("layout.json"))
+      try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
       return p
     } catch {
       try? FileManager.default.removeItem(at: p)
@@ -167,19 +164,17 @@ import TsugumiTestSupport
   static func connected(_ s: ProjectSession) async throws {
     for _ in 0..<200 where !s.connected { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.connected, "\(s.connectionMessage ?? "")")
+    if s.connected, let endpoint = s.endpointOverride {
+      // Direct test daemons bypass EnvironmentManager's host registration.
+      _ = try await CoreHostClient.shared.call("RegisterProjectRequest", [
+        "project_id": endpoint.projectId, "endpoint": endpoint.url.absoluteString,
+        "token": endpoint.token, "path": s.identity.url.path])
+    }
   }
 
   static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
     for _ in 0..<200 where s.runActive { try await Task.sleep(for: .milliseconds(25)) }
-    var diagnostic = s.runStatus?.failure?.diagnostic ?? s.cardStates.values.compactMap(\.failure).joined(separator: "; ")
-    if s.runStatus?.state != .succeeded, let run = s.runStatus?.runId, let rpc = s.rpc {
-      for (card, state) in s.cardStates.sorted(by: { $0.key < $1.key }) where state.invocation > 0 {
-        if let log = try? await rpc.logRange(runId: run, card: path(card), invocation: state.invocation, stream: .standardError, tail: true) {
-          diagnostic += "\n\(card): \(log.text)"
-        }
-      }
-    }
-    try #require(s.runStatus?.state == .succeeded, "\(diagnostic)")
+    try #require(s.runStatus?.state == .succeeded, "\(s.runStatus?.failure?.diagnostic ?? "")")
   }
 
   @Test func defaultDisplayRectTransformsTheHostGeometry() throws {
@@ -582,14 +577,12 @@ import TsugumiTestSupport
                                    changes: [Change.setProject(project.serialized())])
     for _ in 0..<20 {
       let accepted = try await rpc.run(baseRev: saved.rev ?? 0, opId: UUID(), card: ["start"], propagate: true)
-      let runId = try #require(accepted.run.runId)
       var status = try await rpc.runStatus(runId: accepted.run.runId)
       for _ in 0..<200 where status.endedAt == nil {
         try await Task.sleep(for: .milliseconds(5))
         status = try await rpc.runStatus(runId: accepted.run.runId)
       }
-      let stderr = status.state == .succeeded ? nil : try? await rpc.logRange(runId: runId, card: ["b"], invocation: 1, stream: .standardError, tail: true)
-      try #require(status.state == .succeeded, "\(status.failure?.diagnostic ?? "No run failure diagnostic") \(stderr?.text ?? "")")
+      try #require(status.state == .succeeded, "\(status.failure?.diagnostic ?? "")")
     }
     _ = try await rpc.save(baseRev: saved.rev ?? 0, opId: marker, origin: "ui",
                             changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
@@ -1012,21 +1005,35 @@ import TsugumiTestSupport
     s.start()
     try await Self.connected(s)
     try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
-    await s.save()
-    let before = s.docState(), undos = s.undoStack.count
+    var before = s.docState()
+    let undos = s.undoStack.count
     try await s.connect(from: ("start", "out"), to: ("b", "in"), in: [])
+    var after = s.docState()
     #expect(s.undoStack.count == undos + 1)
     await s.save()
     for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
     let snap = try await s.rpc!.inspect()
     let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
     #expect(!codes.contains("fan_out"))
-    let after = s.docState()
+    // The save stores places for previously unplaced Cards too. Those Cards
+    // already existed before this connection edit, so undo must keep their
+    // stored places. Only the new fork and its place belong solely to after.
+    // Keep exact DocState equality below; normalize just the expected places.
+    let savedLayout = try JSONValue.parse(snap.layoutJson)
+    func expectedLayout(_ state: ProjectSession.DocState) -> JSONValue {
+      var layout = state.layout, places = layout["cards"] ?? .object([])
+      let ids = Set((state.project["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string })
+      for (id, position) in savedLayout["cards"]?.object ?? [] where ids.contains(id) && places[id] == nil {
+        places[id] = position
+      }
+      layout["cards"] = places
+      return layout
+    }
+    before.layout = expectedLayout(before)
+    after.layout = expectedLayout(after)
     await s.undo()
-    await s.save()
     #expect(s.docState() == before)
     await s.redo()
-    await s.save()
     #expect(s.docState() == after)
     await s.close()
   }

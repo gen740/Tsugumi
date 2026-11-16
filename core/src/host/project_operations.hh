@@ -1,11 +1,9 @@
 #pragma once
 
 #include <functional>
-#include <map>
-#include <memory>
-#include <mutex>
 #include <string>
 
+#include "host/layout_saving.hh"
 #include "host/project_edit.hh"
 
 namespace tsugumi::host {
@@ -18,24 +16,14 @@ using OperationCall = std::function<OperationReply(
 struct OperationContext {
   std::string origin;
   std::function<void(const std::string&, const SaveBase&)> authorize_file;
-  // Recheck grants, aliases and the complete implicit write footprint against
-  // this pinned state immediately before submitting the concrete plan.
   std::function<void(agent::json::Members&, const SaveBase&)> authorize;
+  std::function<LayoutWrite(const SaveBase&)> layout_scope;
 };
 class ProjectOperations {
  public:
-  auto Queue(const std::string& project)
-      -> std::shared_ptr<std::recursive_mutex>;
-  static auto Digest(const Tsugumi::Host::ProjectEditsT& edits,
-                     const std::string& origin) -> std::string;
   auto Execute(const std::string& project,
-               const Tsugumi::RPC::OperationSubmissionT& operation,
-               const Tsugumi::Host::ProjectEditsT& edits,
+               const Tsugumi::Host::ProjectOperateRequestT& operation,
                const OperationContext& context, const OperationCall& call)
       -> OperationReply;
-
- private:
-  std::mutex mutex_;
-  std::map<std::string, std::weak_ptr<std::recursive_mutex>> queues_;
 };
 }  // namespace tsugumi::host

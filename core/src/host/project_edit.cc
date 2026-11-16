@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <utility>
 
 #include "host/document_edits.hh"
@@ -25,9 +26,7 @@ struct Span {
 class Spans {
  public:
   explicit Spans(const std::string& text) : text_(text) {}
-  auto Value(size_t depth = 0) -> Span {
-    if (depth > 64)
-      throw Failure("validation_failed", "JSON selector nesting exceeds 64");
+  auto Value() -> Span {
     Space();
     Span node;
     node.start = pos_;
@@ -47,7 +46,7 @@ class Spans {
           Space();
           ++pos_;
         }
-        auto child = Value(depth + 1);
+        auto child = Value();
         child.key = std::move(key);
         child.member_start = start;
         node.children.push_back(std::move(child));
@@ -126,11 +125,6 @@ auto EditProjectField(const std::string& document,
                   "old_value and new_value require explicit presence");
   if (edit.old_value->present) ValidJson(edit.old_value->json);
   if (edit.new_value->present) ValidJson(edit.new_value->json);
-  if (!edit.selector.empty() && edit.selector.back()->field == "id" &&
-      (!edit.new_value->present ||
-       !DocumentsEqual(edit.old_value->json, edit.new_value->json)))
-    throw Failure("invalid_request",
-                  edit.file_path + ": permanent entity ids cannot be edited");
   auto tree = Spans(document).Value();
   const Span* target = &tree;
   const Span* parent = nullptr;
@@ -222,6 +216,65 @@ auto EditProjectField(const std::string& document,
   return result;
 }
 
+auto PreserveProjectBytes(const std::string& before, const std::string& after)
+    -> std::string {
+  if (DocumentsEqual(before, after)) return before;
+  if (!before.starts_with('{') &&
+      before.find_first_not_of(" \n\r\t") == std::string::npos)
+    return after;
+  const auto old_tree = Spans(before).Value();
+  const auto new_tree = Spans(after).Value();
+  if (old_tree.kind == '[' && new_tree.kind == '[' &&
+      old_tree.children.size() == new_tree.children.size()) {
+    auto result = before;
+    for (size_t i = old_tree.children.size(); i > 0; --i) {
+      const auto& old_item = old_tree.children[i - 1];
+      const auto& new_item = new_tree.children[i - 1];
+      result.replace(
+          old_item.start, old_item.end - old_item.start,
+          PreserveProjectBytes(
+              before.substr(old_item.start, old_item.end - old_item.start),
+              after.substr(new_item.start, new_item.end - new_item.start)));
+    }
+    return result;
+  }
+  if (old_tree.kind != '{' || new_tree.kind != '{') return after;
+  auto result = before;
+  const auto old_fields = json::Object(before),
+             new_fields = json::Object(after);
+  std::set<std::string> keys;
+  for (const auto& [key, value] : old_fields) {
+    (void)value;
+    keys.insert(key);
+  }
+  for (const auto& [key, value] : new_fields) {
+    (void)value;
+    keys.insert(key);
+  }
+  for (const auto& key : keys) {
+    H::ProjectFieldEditT edit;
+    auto selector = std::make_unique<H::ProjectSelectorT>();
+    selector->field = key;
+    edit.selector.push_back(std::move(selector));
+    edit.old_value = std::make_unique<H::ProjectValueT>();
+    edit.new_value = std::make_unique<H::ProjectValueT>();
+    edit.old_value->present = old_fields.contains(key);
+    edit.new_value->present = new_fields.contains(key);
+    if (edit.old_value->present) edit.old_value->json = old_fields.at(key);
+    if (edit.new_value->present) {
+      edit.new_value->json = new_fields.at(key);
+      if (edit.old_value->present)
+        edit.new_value->json =
+            PreserveProjectBytes(edit.old_value->json, edit.new_value->json);
+    }
+    if (edit.old_value->present && edit.new_value->present &&
+        edit.old_value->json == edit.new_value->json)
+      continue;
+    result = EditProjectField(result, edit);
+  }
+  return result;
+}
+
 auto PrepareProjectEdits(
     const H::ProjectEditsT& edits, const SaveBase& base,
     const EditFileRead& read,
@@ -258,10 +311,6 @@ auto PrepareProjectEdits(
     } else if (const auto* replace = entry->value.AsProjectTextEdit()) {
       auto& text = file(replace->file_path);
       if (!text) throw Failure("target_missing", replace->file_path);
-      // Structural documents require selectors or a hash guard.
-      if (base.files.contains(replace->file_path))
-        throw Failure("invalid_request",
-                      "use structured edits for project documents");
       if (replace->old_string.empty() || replace->expected_matches == 0)
         throw Failure("invalid_request",
                       "old_string and expected_matches must be nonempty");
@@ -335,7 +384,8 @@ auto PrepareProjectEdits(
   }
   for (const auto& [id, ignored] : definitions) {
     (void)ignored;
-    json::Members value{{"id", json::Quote(id)}};
+    json::Members value{{"id", json::Quote(id)},
+                        {"card_json", json::Quote("")}};
     for (const auto& [name, key] : {std::pair{"_card.json", "card_json"},
                                     {"_meta.json", "meta_json"},
                                     {"_link.json", "link_json"}}) {

@@ -24,6 +24,14 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(reply.View(), "/text"),
             JsonString(retry.View(), "/text"));
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), expected);
+  const auto formatted = Tool(
+      conversation, "project_edit",
+      R"({"edits":[{"file_path":"tsugumi.json","old_string":"\"name\":","new_string":"\"name\" : "}]})",
+      "format-name");
+  ASSERT_TRUE(formatted.Code().empty()) << formatted.View();
+  ASSERT_FALSE(JsonBool(formatted.View(), "/isError")) << formatted.View();
+  expected.replace(expected.find("\"name\":"), 7, "\"name\" : ");
+  EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), expected);
   const auto stale =
       Tool(conversation, "project_edit", args, "stale-old-value");
   ASSERT_TRUE(stale.Code().empty()) << stale.View();
@@ -51,7 +59,175 @@ TEST_F(AgentProjectFixture,
   ASSERT_FALSE(JsonBool(edited.View(), "/isError")) << edited.View();
   EXPECT_EQ(Read(directory.path / "project/definitions/data/moved.txt"),
             "new text");
-  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/data/file.txt"));
+  EXPECT_FALSE(std::filesystem::exists(directory.path /
+                                       "project/definitions/data/file.txt"));
+  const auto removed = Tool(
+      conversation, "project_edit",
+      R"({"edits":[{"file_path":"definitions/data/moved.txt","remove":true,"expected_hash":"cb0208b0b1fa06bc59f85c8b2be1e45ff2ef6ddbf0cef02e9f276b8208ea48ab"}]})",
+      "remove");
+  ASSERT_FALSE(JsonBool(removed.View(), "/isError")) << removed.View();
+  EXPECT_FALSE(std::filesystem::exists(directory.path /
+                                       "project/definitions/data/moved.txt"));
+}
+}  // namespace
+}  // namespace tsugumi::test
+
+namespace tsugumi::test {
+namespace {
+TEST_F(AgentProjectFixture, OperationIdReplaysOnceAndRejectsAnotherPayload) {
+  StartProject();
+  // A field guard deliberately stops matching after the first application.
+  H::ProjectFieldEditT field;
+  field.file_path = "tsugumi.json";
+  auto selector = std::make_unique<H::ProjectSelectorT>();
+  selector->field = "name";
+  field.selector.push_back(std::move(selector));
+  field.old_value = std::make_unique<H::ProjectValueT>();
+  field.old_value->present = true;
+  field.old_value->json = "\"PRIVATE_PROJECT_SENTINEL\"";
+  field.new_value = std::make_unique<H::ProjectValueT>();
+  field.new_value->present = true;
+  field.new_value->json = "\"Changed\"";
+  H::ProjectEditsT edits;
+  auto edit = std::make_unique<H::ProjectEditT>();
+  edit->value.Set(field);
+  edits.edits.push_back(std::move(edit));
+  H::ProjectOperateRequestT request;
+  request.project_id = project_id;
+  request.op_id = "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
+  request.body.Set(std::move(edits));
+  auto send = [&] {
+    return Call(*host, H::RequestPayload::ProjectOperateRequest,
+                [&](Builder& b) {
+                  return H::ProjectOperateRequest::Pack(b, &request).Union();
+                });
+  };
+  const auto first = send();
+  ASSERT_TRUE(first.Code().empty()) << first.View();
+  const auto* saved = first.HostValue()
+                          ->value_as_ProjectOperationResult()
+                          ->reply()
+                          ->value_as_SaveResult();
+  ASSERT_NE(saved, nullptr) << first.View();
+  const auto bytes = Read(directory.path / "project/tsugumi.json");
+  const auto second = send();
+  ASSERT_TRUE(second.Code().empty()) << second.View();
+  const auto* replay = second.HostValue()
+                           ->value_as_ProjectOperationResult()
+                           ->reply()
+                           ->value_as_SaveResult();
+  ASSERT_NE(replay, nullptr) << second.View();
+  EXPECT_TRUE(replay->replayed().value_or(false));
+  EXPECT_EQ(saved->rev(), replay->rev());
+  EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), bytes);
+  request.body.AsProjectEdits()
+      ->edits[0]
+      ->value.AsProjectFieldEdit()
+      ->new_value->json = "\"Other\"";
+  EXPECT_EQ(send().Code(), "operation_conflict");
+  EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), bytes);
+}
+TEST_F(AgentProjectFixture,
+       ConnectLayoutAndSubgraphSaveTheirCompleteFootprints) {
+  Write(directory.path / "project/definitions/a/_card.json",
+        R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/b/_card.json",
+        R"({"template":"draft"})");
+  const std::string meta =
+      "{\n  \"description\": \"Keep my words\", \"comments\": "
+      "[{\"id\":\"c1\",\"text\":\"Question\",\"author\":\"user\"}]\n}\n";
+  Write(directory.path / "project/definitions/a/_meta.json", meta);
+  Write(directory.path / "project/definitions/a/data.bin",
+        std::string("\0\xff", 2));
+  StartProject(
+      false,
+      R"({"name":"Graph","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
+  const auto conversation = Conversation("transform");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  auto connected =
+      Tool(conversation, "project_connect",
+           R"({"from_card":"a","from_port":"","to_card":"b","to_port":""})",
+           "connect");
+  ASSERT_TRUE(connected.Code().empty()) << connected.View();
+  ASSERT_FALSE(JsonBool(connected.View(), "/isError")) << connected.View();
+  EXPECT_NE(Read(directory.path / "project/tsugumi.json").find("\"from\""),
+            std::string::npos);
+  const auto laid_out =
+      Tool(conversation, "project_layout", R"({"action":"arrange"})", "layout");
+  ASSERT_TRUE(laid_out.Code().empty()) << laid_out.View();
+  ASSERT_FALSE(JsonBool(laid_out.View(), "/isError")) << laid_out.View();
+  EXPECT_NE(Read(directory.path / "project/layout.json").find("\"a\""),
+            std::string::npos);
+  const auto untangled = Tool(conversation, "project_layout",
+                              R"({"action":"untangle"})", "untangle");
+  ASSERT_FALSE(JsonBool(untangled.View(), "/isError")) << untangled.View();
+  const auto nested = Tool(conversation, "project_make_subgraph",
+                           R"({"cards":["a","b"],"id":"group"})", "subgraph");
+  ASSERT_TRUE(nested.Code().empty()) << nested.View();
+  ASSERT_FALSE(JsonBool(nested.View(), "/isError")) << nested.View();
+  EXPECT_EQ(
+      Read(directory.path / "project/externals/group/definitions/a/data.bin"),
+      std::string("\0\xff", 2));
+  EXPECT_EQ(
+      Read(directory.path / "project/externals/group/definitions/a/_meta.json"),
+      meta);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/definitions/a"));
+  EXPECT_NE(Read(directory.path / "project/layout.json").find("\"group\""),
+            std::string::npos);
+  EXPECT_NE(Read(directory.path / "project/externals/group/layout.json")
+                .find("\"a\""),
+            std::string::npos);
+}
+TEST_F(AgentProjectFixture,
+       SubgraphKeepsAnExternalStillUsedByAnUnselectedAlias) {
+  for (const auto* id : {"mine", "alias"})
+    Write(directory.path / "project/definitions" / id / "_link.json",
+          R"({"external":"shared"})");
+  const auto child = directory.path / "project/externals/shared";
+  Write(
+      child / "tsugumi.json",
+      R"({"name":"Shared","canvas":{"cards":[{"id":"child"}],"connections":[]}})");
+  Write(child / "definitions/child/_card.json", R"({"template":"draft"})");
+  Write(child / "definitions/child/data.bin", std::string("\0\xff", 2));
+  StartProject(
+      false,
+      R"({"name":"Aliases","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"mine"},{"id":"alias"}],"connections":[]}})");
+  const auto conversation = Conversation("alias-subgraph");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto result = Tool(conversation, "project_make_subgraph",
+                           R"({"cards":["mine"],"id":"group"})", "move");
+  ASSERT_TRUE(result.Code().empty()) << result.View();
+  ASSERT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+  EXPECT_EQ(Read(child / "definitions/child/data.bin"),
+            std::string("\0\xff", 2));
+  EXPECT_EQ(Read(directory.path / "project/externals/group/externals/shared/"
+                                  "definitions/child/data.bin"),
+            std::string("\0\xff", 2));
+}
+TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
+  Write(directory.path / "project/definitions/a/_card.json",
+        R"({"template":"draft"})");
+  StartProject(
+      false,
+      R"({"name":"Permissions","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+  const auto conversation = Conversation("permissions-edit");
+  Grant(conversation);
+  const auto before = Read(directory.path / "project/definitions/a/_card.json");
+  const std::string args =
+      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"network"}],"old_value":{"present":false},"new_value":{"present":true,"value":true}}]})";
+  EXPECT_EQ(Tool(conversation, "project_edit", args, "without-write").Code(),
+            "grant_required");
+  EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto pending = Tool(conversation, "project_edit", args, "permission");
+  EXPECT_EQ(pending.Code(), "grant_required") << pending.View();
+  EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);
 }
 }  // namespace
 }  // namespace tsugumi::test

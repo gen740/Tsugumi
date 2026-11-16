@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 51 requests.
+There are 46 requests.
 
 ## Connection
 
@@ -48,18 +48,12 @@ There are 51 requests.
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
 | [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
 | [`OperationGet`](#operationget) | OperationResult |  |
-| [`WriterOpen`](#writeropen) |  |  |
-| [`WriterAcknowledge`](#writeracknowledge) |  |  |
-| [`WriterStatus`](#writerstatus) |  |  |
-| [`OperationRefuse`](#operationrefuse) |  |  |
-| [`WriterBegin`](#writerbegin) | Ack | Durably bind the semantic payload before host preparation/approval. |
 
 ### ProjectOpen
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `view_id` | `string` |  |  |
-| `operation_stream` | `bool` |  |  |
 
 ### ProjectClose
 
@@ -93,7 +87,7 @@ No fields.
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
 | `transfers` | `[SourceTransfer]` |  | Local file references; source bytes never travel through the RPC frame. |
-| `operation` | `OperationSubmission` |  |  |
+| `save_intent` | `string` |  | Opaque host intent for the existing op_id digest, before concrete expansion. A revision-conflicted attempt with an intent is retryable under the same id. |
 
 ### ProjectReload
 
@@ -104,7 +98,6 @@ No fields.
 | `origin` | `string` | yes |  |
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Reject widenings absent from approved_permissions when true. |
-| `operation` | `OperationSubmission` |  |  |
 
 ### ProjectValidate
 
@@ -154,38 +147,7 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
-
-### WriterOpen
-
-No fields.
-
-### WriterAcknowledge
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `identity` | `OperationIdentity` | yes |  |
-| `incorporated_cursor` | `uint64` |  |  |
-| `retire` | `bool` |  |  |
-
-### WriterStatus
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `operation` | `OperationSubmission` | yes |  |
-
-### OperationRefuse
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `operation` | `OperationSubmission` | yes |  |
-| `op_id` | `string` | yes |  |
-| `failure` | `Failure` | yes |  |
-
-### WriterBegin
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `operation` | `OperationSubmission` | yes |  |
+| `save_intent` | `string` |  |  |
 
 ## Files
 
@@ -528,7 +490,6 @@ Sent from `tsugumid` to connected clients.
 - `RunEvent`
 - `DisplayUpdated`
 - `LogAvailable`
-- `ProjectOperationEvent`
 
 ### Run events
 
@@ -625,19 +586,17 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
 | `DocumentSubgraphRequest` | `project_json: string` (required), `cards: [string]`, `id: string` (required) |
 | `DocumentMergeRequest` | `base_json: string` (required), `ours_json: string` (required), `theirs_json: string` (required) |
-| `UISaveRequest` | `project: string` (required), `base_json: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
 | `DocumentCopyRequest` | `state_json: string` (required), `paths: [string]`, `from: string` (required), `to: string` (required), `name: string` |
 | `DocumentConnectRequest` | `state_json: string` (required), `from_card: string` (required), `from_port: string` (required), `to_card: string` (required), `to_port: string` (required), `fork_id: string` |
 | `DocumentTemplateRequest` | `name: string` (required), `id: string` (required) |
 | `PermissionKindsRequest` | `language: string` |
-| `ProjectOperateRequest` | `project_id: string` (required), `operation: Tsugumi.RPC.OperationSubmission` (required), `body: ProjectOperationBody` |
-| `ProjectWriterOpenRequest` | `project_id: string` (required) |
-| `ProjectOperationStatusRequest` | `project_id: string` (required), `operation: Tsugumi.RPC.OperationSubmission` (required) |
-| `ProjectOperationAcknowledgeRequest` | `project_id: string` (required), `identity: Tsugumi.RPC.OperationIdentity` (required), `incorporated_cursor: uint64`, `retire: bool` |
+| `ProjectOperateRequest` | `project_id: string` (required), `op_id: string` (required), `body: ProjectOperationBody` |
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 | `DisplayGeometryRequest` | None |
+| `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
+| `LayoutPrepareSaveRequest` | `project: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `UISaveResult`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`.

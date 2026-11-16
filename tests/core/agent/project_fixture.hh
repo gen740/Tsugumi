@@ -28,10 +28,12 @@ class AgentProjectFixture : public AgentFixture {
     project.Stop();
   }
 
-  auto StartProject(bool shell = false) -> void {
-    Write(
-        directory.path / "project/tsugumi.json",
-        R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  auto StartProject(
+      bool shell = false,
+      const std::string &document =
+          R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})")
+      -> void {
+    Write(directory.path / "project/tsugumi.json", document);
     Write(directory.path / "project/layout.json", "{}");
     std::vector<std::string> args{"/usr/bin/env",
                                   "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),

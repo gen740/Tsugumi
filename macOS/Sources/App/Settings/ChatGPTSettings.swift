@@ -9,41 +9,15 @@ import TsugumiAgentClient
 struct ChatGPTSettings: View {
   @HostStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
   @HostStorage("agent.provider") private var provider = "anthropic"
-  @State private var accounts: [ChatGPTAccountInfo] = []
-  @State private var signingIn: Task<Void, Never>?
+  @State private var connection = ChatGPTSignInModel()
   @State private var message: String?
-  @State private var welcome: String?
   @State private var models: [(id: String, name: String)] = []
-
-  private var auth: ChatGPTAuth { ChatGPTAuth.shared() }
-  private var active: ChatGPTAccountInfo? { accounts.first(where: \.active) }
 
   var body: some View {
     Section {
       Text("ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      if let a = active {
-        LabeledContent("使用中のアカウント") {
-          Text(a.email ?? a.clientId).textSelection(.enabled)
-        }
-        if a.signedIn && !a.planEnabled {
-          Text("このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。")
-            .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-        }
-      }
-      ForEach(accounts) { a in row(a) }
-      HStack {
-        if signingIn != nil {
-          ProgressView().controlSize(.small)
-          Text("ブラウザでサインインを続けてください…").font(.caption).foregroundStyle(.secondary)
-          Button("中止") { signingIn?.cancel() }
-        } else {
-          Button(accounts.isEmpty ? "Continue with ChatGPT" : "Continue with ChatGPT（別のアカウント）") { signIn(clientId: nil) }
-            .buttonStyle(.borderedProminent)
-        }
-        Spacer()
-        Link("Manage usage", destination: ChatGPTAuth.usageURL)
-      }
+      ChatGPTConnection(model: connection) { GuideController.shared.connectionSaved() }
     } header: {
       HStack {
         Text("ChatGPT プラン（Sign in with ChatGPT）")
@@ -53,20 +27,7 @@ struct ChatGPTSettings: View {
       Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
         .font(.caption).foregroundStyle(.secondary)
     }
-    .onAppear { Task { await refresh(); models = (try? await CoreHostClient.shared.storedModels("chatgpt")) ?? [] } }
-    .alert(Text("ChatGPT プランを使っています"), isPresented: Binding(get: { welcome != nil }, set: { if !$0 { welcome = nil } })) {
-      Button("Got it") {
-        if let id = welcome { Task { try? await auth.markWelcomed(clientId: id) } }
-        welcome = nil
-      }
-      Button("Manage usage") {
-        NSWorkspace.shared.open(ChatGPTAuth.usageURL)
-        if let id = welcome { Task { try? await auth.markWelcomed(clientId: id) } }
-        welcome = nil
-      }
-    } message: {
-      Text("Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。")
-    }
+    .onAppear { Task { models = (try? await CoreHostClient.shared.storedModels("chatgpt")) ?? [] } }
     Section("モデル") {
       TextField("モデル", text: $model)
       HStack {
@@ -78,7 +39,7 @@ struct ChatGPTSettings: View {
             } catch { message = "\(error)" }
           }
         }
-        .disabled(!(active?.signedIn ?? false))
+        .disabled(!(connection.active?.signedIn ?? false))
       }
       if !models.isEmpty {
         Picker("一覧から選択", selection: $model) {
@@ -88,67 +49,173 @@ struct ChatGPTSettings: View {
     }
     if let message { Text(message).font(.caption).textSelection(.enabled) }
   }
+}
 
-  @ViewBuilder private func row(_ a: ChatGPTAccountInfo) -> some View {
-    HStack {
-      Image(systemName: a.active ? "checkmark.circle.fill" : "circle").foregroundStyle(a.active ? Color.accentColor : .secondary)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(a.email ?? a.clientId)
-        Text(!a.signedIn ? String(localized: "サインアウト済み") : a.planEnabled ? String(localized: "サインイン中") : String(localized: "サインイン中（プランの利用は未許可）"))
-          .font(.caption).foregroundStyle(.secondary)
+/// Shared presentation state for Settings and first start. OAuth and the
+/// once-only welcome record remain in the host service.
+@MainActor @Observable
+final class ChatGPTSignInModel {
+  // Includes dismissed sheets until the host acknowledges their cancellation.
+  private static var pending: [UUID: Task<Void, Never>] = [:]
+  static var hasPendingSignIns: Bool { !pending.isEmpty }
+  static func cancelPendingSignIns() async {
+    let tasks = Array(pending.values)
+    for task in tasks { task.cancel() }
+    for task in tasks { await task.value }
+  }
+
+  var accounts: [ChatGPTAccountInfo] = []
+  var signingIn: Task<Void, Never>?
+  var message: String?
+  var welcome: String?
+  var active: ChatGPTAccountInfo? { accounts.first(where: \.active) }
+  private var connected: (() async throws -> Void)?
+  private let authenticate: (String?, Bool) async throws -> ChatGPTAuth.SignInResult
+  private let load: () async -> ChatGPTAuth.Status
+  private let acknowledge: (String) async throws -> Void
+
+  init(
+    authenticate: @escaping (String?, Bool) async throws -> ChatGPTAuth.SignInResult = { client, consent in
+      try await ChatGPTAuth.shared().signIn(clientId: client, consent: consent) { url in
+        await MainActor.run { _ = NSWorkspace.shared.open(url) }
       }
-      Spacer()
-      if a.signedIn && !a.active {
-        Button("このアカウントを使う") { Task { try? await auth.select(clientId: a.clientId); await refresh() } }
-      }
-      if !a.signedIn {
-        Button("Continue with ChatGPT") { signIn(clientId: a.clientId) }.disabled(signingIn != nil)
-      } else if !a.planEnabled {
-        Button("プランの利用を許可") { signIn(clientId: a.clientId, consent: true) }.disabled(signingIn != nil)
-      }
-      if a.signedIn {
-        Button("サインアウト", role: .destructive) {
-          Task {
-            do {
-              let revoked = try await auth.signOut(clientId: a.clientId)
-              message = revoked
-                ? String(localized: "\(a.email ?? a.clientId) からサインアウトしました。")
-                : String(localized: "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。")
-            } catch { message = "\(error)" }
-            await refresh()
-          }
-        }
-      }
+    },
+    load: @escaping () async -> ChatGPTAuth.Status = { await ChatGPTAuth.shared().status() },
+    acknowledge: @escaping (String) async throws -> Void = { try await ChatGPTAuth.shared().markWelcomed(clientId: $0) }
+  ) {
+    self.authenticate = authenticate
+    self.load = load
+    self.acknowledge = acknowledge
+  }
+
+  func refresh(onConnected: (() async throws -> Void)? = nil) async {
+    if let onConnected { connected = onConnected }
+    let status = await load()
+    accounts = status.accounts
+    if let result = status.result, result.account.signedIn, result.account.planEnabled, result.welcome {
+      welcome = result.account.clientId
     }
   }
 
-  private func signIn(clientId: String?, consent: Bool = false) {
+  func signIn(clientId: String? = nil, consent: Bool = false, onConnected: @escaping () async throws -> Void) {
+    guard signingIn == nil else { return }
     message = nil
-    signingIn = Task {
-      var signedIn = false
+    connected = onConnected
+    let id = UUID()
+    let task = Task {
+      defer { Self.pending[id] = nil; signingIn = nil }
       do {
-        let r = try await auth.signIn(clientId: clientId, consent: consent) { url in
-          await MainActor.run { _ = NSWorkspace.shared.open(url) }
-        }
+        let r = try await authenticate(clientId, consent)
+        try Task.checkCancellation()
         message = r.account.planEnabled
           ? String(localized: "\(r.account.email ?? r.account.clientId) でサインインしました。")
           : String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。")
-        if r.welcome { welcome = r.account.clientId }
-        signedIn = true
+        await refresh()
+        try Task.checkCancellation()
+        if r.account.planEnabled {
+          if r.welcome {
+            connected = onConnected
+            welcome = r.account.clientId
+          } else { try await onConnected() }
+        }
       } catch is CancellationError {
         message = String(localized: "サインインを中止しました。")
-      } catch {
-        message = "\(error)"
+      } catch { message = "\(error)" }
+    }
+    signingIn = task
+    Self.pending[id] = task
+  }
+
+  func welcomed() async {
+    guard let id = welcome else { return }
+    do {
+      try await acknowledge(id)
+      welcome = nil
+      let done = connected
+      connected = nil
+      try await done?()
+    } catch { message = "\(error)" }
+  }
+}
+
+/// The same sign-in controls and welcome in both entry points. The approved
+/// text-only button avoids bundling a logo without redistribution permission.
+struct ChatGPTConnection: View {
+  @Bindable var model: ChatGPTSignInModel
+  var onboarding = false
+  var onConnected: () async throws -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      ForEach(model.accounts.filter { !onboarding || $0.active }) { a in
+        HStack {
+          VStack(alignment: .leading, spacing: 2) {
+            Text(a.email ?? a.clientId).textSelection(.enabled)
+            Text(!a.signedIn ? String(localized: "サインアウト済み") : a.planEnabled ? String(localized: "サインイン中") : String(localized: "サインイン中（プランの利用は未許可）"))
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Spacer()
+          if !onboarding && a.signedIn && !a.active {
+            Button("このアカウントを使う") {
+              Task { try? await ChatGPTAuth.shared().select(clientId: a.clientId); await model.refresh(); GuideController.shared.refreshAvailability() }
+            }
+          }
+          if !a.signedIn {
+            continueButton { signIn(clientId: a.clientId) }
+          } else if !a.planEnabled {
+            Button("プランの利用を許可") { signIn(clientId: a.clientId, consent: true) }.disabled(model.signingIn != nil)
+          }
+          if !onboarding && a.signedIn {
+            Button("サインアウト", role: .destructive) {
+              Task {
+                do {
+                  let revoked = try await ChatGPTAuth.shared().signOut(clientId: a.clientId)
+                  model.message = revoked
+                    ? String(localized: "\(a.email ?? a.clientId) からサインアウトしました。")
+                    : String(localized: "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。")
+                } catch { model.message = "\(error)" }
+                await model.refresh()
+                GuideController.shared.refreshAvailability()
+              }
+            }
+          }
+        }
       }
-      signingIn = nil
-      await refresh(signedIn: signedIn)
+      HStack {
+        if model.signingIn != nil {
+          ProgressView().controlSize(.small)
+          Text("ブラウザでサインインを続けてください…").font(.caption).foregroundStyle(.secondary)
+          Button("中止") { model.signingIn?.cancel() }
+        } else {
+          continueButton { signIn() }
+        }
+        Spacer()
+        Link("Manage usage", destination: ChatGPTAuth.usageURL)
+      }
+      if let message = model.message {
+        Text(message).font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .task { await model.refresh(onConnected: onConnected) }
+    .onDisappear { model.signingIn?.cancel() }
+    .alert(Text("ChatGPT プランを使っています"), isPresented: Binding(get: { model.welcome != nil }, set: { _ in })) {
+      Button("Got it") { Task { await model.welcomed() } }
+      Button("Manage usage") {
+        NSWorkspace.shared.open(ChatGPTAuth.usageURL)
+        Task { await model.welcomed() }
+      }
+    } message: {
+      Text("Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。")
     }
   }
 
-  private func refresh(signedIn: Bool = false) async {
-    await CorePreferences.shared.reload()
-    accounts = await auth.accounts()
-    // The guide is there while the active account may use the plan.
-    if signedIn { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
+  private func signIn(clientId: String? = nil, consent: Bool = false) {
+    model.signIn(clientId: clientId, consent: consent, onConnected: onConnected)
+  }
+
+  private func continueButton(action: @escaping () -> Void) -> some View {
+    Button("Continue with ChatGPT", action: action)
+      .buttonStyle(.borderedProminent).tint(.black).foregroundStyle(.white)
+      .disabled(model.signingIn != nil)
   }
 }

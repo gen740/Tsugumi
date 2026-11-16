@@ -11,12 +11,12 @@ namespace {
 // Match ChatResumeTests: the desktop configures a fixture without an API key
 // or a custom output limit, then selects it on a human-owned conversation.
 class DesktopChatFixture : public AgentProjectFixture {
-protected:
-  auto ConfigureDesktop(const ModelServer &model, uint32_t input_limit = 0)
+ protected:
+  auto ConfigureDesktop(const ModelServer& model, uint32_t input_limit = 0)
       -> void {
     StartProject();
     const auto reply =
-        Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder &b) {
+        Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
           H::ProviderInputT config;
           config.endpoint = model.URL();
           config.model = "fixture";
@@ -29,10 +29,10 @@ protected:
     ASSERT_TRUE(reply.Code().empty());
   }
 
-  auto DesktopConversation(const std::string &id) -> std::string {
+  auto DesktopConversation(const std::string& id) -> std::string {
     const auto conversation = Conversation(id, true);
     const auto reply =
-        Call(*human, A::RequestPayload::ConfigureRequest, [&](Builder &b) {
+        Call(*human, A::RequestPayload::ConfigureRequest, [&](Builder& b) {
           Tsugumi::Service::ProviderSelectionT selection;
           selection.profile = "desktop";
           selection.provider_id = "fixture";
@@ -48,10 +48,10 @@ protected:
     return conversation;
   }
 
-  auto DesktopSend(const std::string &id, const std::string &text,
-                   const std::string &turn) -> Reply {
+  auto DesktopSend(const std::string& id, const std::string& text,
+                   const std::string& turn) -> Reply {
     return Call(*human, A::RequestPayload::ConversationSendRequest,
-                [&](Builder &b) {
+                [&](Builder& b) {
                   return A::CreateConversationSendRequest(b, b.CreateString(id),
                                                           b.CreateString(turn),
                                                           b.CreateString(text))
@@ -77,7 +77,7 @@ TEST_F(DesktopChatFixture, DefaultFixtureBudgetAllowsSendingAndCompacting) {
   }
   model.Queue(AnthropicText("Earlier desktop messages were answered."));
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationActionRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return A::CreateConversationActionRequest(
                                 b, b.CreateString(conversation),
                                 A::Action::Compact)
@@ -91,14 +91,13 @@ TEST_F(DesktopChatFixture, DefaultFixtureBudgetAllowsSendingAndCompacting) {
   EXPECT_EQ(JsonString(state, "/conversation/archive/0/content/0/text"),
             "hello 1");
   const auto snapshot = Get(conversation, true);
-  const auto *history =
+  const auto* history =
       snapshot.Value()->value_as_ConversationResult()->conversation();
   size_t visible = 0;
-  for (const auto *messages : {history->archive(), history->messages()})
+  for (const auto* messages : {history->archive(), history->messages()})
     if (messages)
-      for (const auto *message : *messages)
-        if (!message->context_summary())
-          ++visible;
+      for (const auto* message : *messages)
+        if (!message->context_summary()) ++visible;
   EXPECT_EQ(visible, 8u);
   const auto events = Events(conversation, true).View();
   EXPECT_NE(events.find("compacted"), std::string::npos);
@@ -116,10 +115,10 @@ TEST_F(DesktopChatFixture,
                   .empty());
   const auto state = WaitUntilIdle(conversation);
   const auto trace = Events(conversation, true);
-  const auto *events = trace.Value()->value_as_EventsPage()->events();
+  const auto* events = trace.Value()->value_as_EventsPage()->events();
   ASSERT_NE(events, nullptr);
   size_t errors = 0;
-  for (const auto *item : *events)
+  for (const auto* item : *events)
     if (item->event()->kind()->str() == "error") {
       ++errors;
       ASSERT_NE(item->event()->message(), nullptr);
@@ -152,7 +151,8 @@ TEST_F(DesktopChatFixture, TooSmallExplicitBudgetRejectsEvenAShortMessage) {
   EXPECT_TRUE(model.Requests().empty());
 }
 
-TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsAndRestart) {
+TEST_F(AgentFixture,
+       ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsAndRestart) {
   ModelServer model;
   model.Queue(AnthropicText("done"));
   Configure(model);
@@ -161,23 +161,39 @@ TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsA
   WaitUntilIdle(conversation);
   const auto check = [&] {
     const auto reply = Get(conversation, true);
-    const auto* binding = reply.Value()->value_as_ConversationResult()->model_binding();
+    const auto* binding =
+        reply.Value()->value_as_ConversationResult()->model_binding();
     ASSERT_NE(binding, nullptr);
     EXPECT_EQ(binding->provider_id()->str(), "fixture");
     EXPECT_EQ(binding->model()->str(), "fixture-model");
   };
   check();
   // A host setting edit changes future selections, never the recorded model.
-  const auto selected = Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
-    return H::CreateSettingsGetRequest(b, b.CreateString("desktop")).Union();
-  });
-  ASSERT_TRUE(Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
-    const auto item = H::CreateSetting(b, b.CreateString("agent.model.chatgpt"), b.CreateString(Quote("gpt-6.1-terra")));
-    return H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"),
-        selected.HostValue()->value_as_Settings()->revision(), b.CreateVector(std::vector{item})).Union();
-  }).Code().empty());
+  const auto selected =
+      Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
+        return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))
+            .Union();
+      });
+  ASSERT_TRUE(
+      Call(*host, H::RequestPayload::SettingsUpdateRequest,
+           [&](Builder& b) {
+             const auto item =
+                 H::CreateSetting(b, b.CreateString("agent.model.chatgpt"),
+                                  b.CreateString(Quote("gpt-6.1-terra")));
+             return H::CreateSettingsUpdateRequest(
+                        b, b.CreateString("desktop"),
+                        selected.HostValue()->value_as_Settings()->revision(),
+                        b.CreateVector(std::vector{item}))
+                 .Union();
+           })
+          .Code()
+          .empty());
   check();
-  human.reset(); external.reset(); host.reset(); service.Stop(); StartHost();
+  human.reset();
+  external.reset();
+  host.reset();
+  service.Stop();
+  StartHost();
   check();
 }
 TEST_F(AgentFixture,
@@ -221,11 +237,11 @@ namespace R = Tsugumi::RPC;
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   auto websocket = Connect(false, true);
   const auto unix_catalog =
-      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder &b) {
+      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
         return A::CreateToolCatalogRequest(b).Union();
       }).View();
   const auto websocket_catalog =
-      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder &b) {
+      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
         return A::CreateToolCatalogRequest(b).Union();
       }).View();
   EXPECT_EQ(unix_catalog, websocket_catalog);
@@ -241,9 +257,9 @@ TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
 // Inspect the actual provider requests as well as the external RPC catalog.
 TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   namespace J = agent::json;
-  auto names = [](const auto &tools) {
+  auto names = [](const auto& tools) {
     std::set<std::string> result;
-    for (const auto &tool : J::Array(tools))
+    for (const auto& tool : J::Array(tools))
       result.insert(J::Text(J::Object(tool), "name"));
     return result;
   };
@@ -261,7 +277,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
           .Code()
           .empty());
   const auto created = Call(
-      *external, A::RequestPayload::ConversationCreateRequest, [](Builder &b) {
+      *external, A::RequestPayload::ConversationCreateRequest, [](Builder& b) {
         return A::CreateConversationCreateRequest(
                    b, b.CreateString("catalog-guide"), 0,
                    b.CreateString("guide"))
@@ -282,15 +298,22 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   const auto guide_tools = names(J::Encode(guide_specs));
   const auto external_catalog =
       Call(*external, A::RequestPayload::ToolCatalogRequest,
-           [](Builder &b) { return A::CreateToolCatalogRequest(b).Union(); });
+           [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
   EXPECT_EQ(names(external_catalog.View()), main_tools);
   auto editing_order = [&](const std::string& raw) {
     std::vector<std::string> ordered;
     for (const auto& tool : J::Array(raw)) {
       const auto name = J::Text(J::Object(tool), "name");
-      if (name == "project_edit" || name == "project_copy" || name == "project_save") ordered.push_back(name);
+      if (name == "project_edit" || name == "project_connect" ||
+          name == "project_make_subgraph" || name == "project_layout" ||
+          name == "project_copy" || name == "project_save")
+        ordered.push_back(name);
     }
-    EXPECT_EQ(ordered, (std::vector<std::string>{"project_edit", "project_copy", "project_save"}));
+    EXPECT_EQ(J::Text(J::Object(J::Array(raw).back()), "name"), "project_save");
+    EXPECT_EQ(ordered,
+              (std::vector<std::string>{
+                  "project_edit", "project_connect", "project_make_subgraph",
+                  "project_layout", "project_copy", "project_save"}));
   };
   editing_order(J::Get(J::Object(requests[0]), "tools"));
   editing_order(J::Get(J::Object(requests[1]), "tools"));
@@ -299,24 +322,24 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   helper_tools.insert("delegate");
   EXPECT_EQ(helper_tools, main_tools);
   const auto helper_catalog = helper_tools;
-  for (const auto *catalog : {&main_tools, &helper_catalog, &guide_tools}) {
-    for (const auto *name : {"demo_list", "demo_read", "project_inspect"})
+  for (const auto* catalog : {&main_tools, &helper_catalog, &guide_tools}) {
+    for (const auto* name : {"demo_list", "demo_read", "project_inspect"})
       EXPECT_TRUE(catalog->contains(name));
     std::set<std::string> guidance;
-    for (const auto &name : *catalog)
-      if (name.starts_with("guide_"))
-        guidance.insert(name);
+    for (const auto& name : *catalog)
+      if (name.starts_with("guide_")) guidance.insert(name);
     EXPECT_EQ(guidance, catalog == &guide_tools
                             ? std::set<std::string>{"guide_show"}
                             : std::set<std::string>{});
   }
   EXPECT_TRUE(main_tools.contains("project_save"));
-  for (const auto *name : {"delegate", "project_edit", "project_save", "run", "run_cancel"})
+  for (const auto* name :
+       {"delegate", "project_edit", "project_connect", "project_make_subgraph",
+        "project_layout", "project_copy", "project_save", "run", "run_cancel"})
     EXPECT_FALSE(guide_tools.contains(name));
-  for (const auto &raw : guide_specs) {
+  for (const auto& raw : guide_specs) {
     const auto spec = J::Object(raw);
-    if (J::Text(spec, "name") != "guide_show")
-      continue;
+    if (J::Text(spec, "name") != "guide_show") continue;
     const auto schema = J::Object(J::Get(spec, "input_schema"));
     const auto properties = J::Object(J::Get(schema, "properties"));
     EXPECT_TRUE(properties.contains("endTour"));
@@ -333,7 +356,8 @@ TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
   const auto bundled = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos";
   // Nix-installed fixtures have read-only directories. Write an owned copy
   // without inheriting their permissions.
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(bundled))
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(bundled))
     if (entry.is_regular_file())
       Write(directory.path / "demos" / entry.path().lexically_relative(bundled),
             Read(entry.path()));
@@ -346,11 +370,11 @@ TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
   EXPECT_LT(text.size(), 20u * 1024u);
   const auto demos = J::Array(text);
   size_t expected_count = 0;
-  for (const auto *language : {"ja", "en"}) {
+  for (const auto* language : {"ja", "en"}) {
     const auto index = J::Object(Read(bundled / language / "index.json"));
     const auto entries = J::Array(J::Get(index, "demos"));
     const auto ui =
-        Call(*host, H::RequestPayload::HostDemoListRequest, [&](Builder &b) {
+        Call(*host, H::RequestPayload::HostDemoListRequest, [&](Builder& b) {
           return H::CreateHostDemoListRequest(b, b.CreateString(language))
               .Union();
         });
@@ -379,7 +403,7 @@ TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
   }
   EXPECT_GT(expected_count, 0u);
   EXPECT_EQ(demos.size(), expected_count);
-  for (const auto *path : {"en/index.json", "en/report/tsugumi.json",
+  for (const auto* path : {"en/index.json", "en/report/tsugumi.json",
                            "en/report/definitions/generate/src/main.py"}) {
     const auto content = Tool(conversation, "demo_read",
                               J::Encode(J::Members{{"path", J::Quote(path)}}));
@@ -490,7 +514,7 @@ TEST_F(AgentFixture, ExternalAgentsCannotReadOrReplaceHumanConversations) {
             "permission_denied");
   const auto visible =
       Call(*external, A::RequestPayload::ConversationListRequest,
-           [](Builder &b) {
+           [](Builder& b) {
              return A::CreateConversationListRequest(b).Union();
            })
           .View();
@@ -541,14 +565,18 @@ TEST_F(AgentFixture, BundledDemosAreReadableButSymlinksAndTraversalAreNot) {
   const auto conversation = Conversation("demo-references");
   const auto listed = Tool(conversation, "demo_list", "{}");
   ASSERT_TRUE(listed.Code().empty());
-  EXPECT_EQ(listed.Value()->value_as_ToolResult()->text()->str(),
-            R"([{"description":"A bundled demo.","name":"Example","path":"ja/example"}])");
-  const auto tool = Tool(conversation, "demo_read", R"({"path":"ja/example.json"})");
+  EXPECT_EQ(
+      listed.Value()->value_as_ToolResult()->text()->str(),
+      R"([{"description":"A bundled demo.","name":"Example","path":"ja/example"}])");
+  const auto tool =
+      Tool(conversation, "demo_read", R"({"path":"ja/example.json"})");
   ASSERT_TRUE(tool.Code().empty());
-  EXPECT_NE(tool.Value()->value_as_ToolResult()->text()->str().find("BUNDLED_DEMO"), std::string::npos);
-  const auto paths = Call(*host, H::RequestPayload::DemoListRequest, [](Builder& b) {
-    return H::CreateDemoListRequest(b).Union();
-  });
+  EXPECT_NE(
+      tool.Value()->value_as_ToolResult()->text()->str().find("BUNDLED_DEMO"),
+      std::string::npos);
+  const auto paths =
+      Call(*host, H::RequestPayload::DemoListRequest,
+           [](Builder& b) { return H::CreateDemoListRequest(b).Union(); });
   ASSERT_NE(paths.HostValue()->value_as_DemoPaths(), nullptr);
   EXPECT_NE(paths.View().find("ja/example.json"), std::string::npos);
   const auto good =
@@ -612,7 +640,7 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
     EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
     EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "model");
     EXPECT_TRUE(Call(*observer, A::RequestPayload::EventsRequest,
-                     [&](Builder &b) {
+                     [&](Builder& b) {
                        return A::CreateEventsRequest(
                                   b, b.CreateString(conversation))
                            .Union();
@@ -622,7 +650,7 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
   }
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return A::CreateConversationActionRequest(
                                 b, b.CreateString(conversation),
                                 A::Action::Resume)
@@ -669,7 +697,7 @@ TEST_F(AgentProjectFixture,
   // A new message needs a new idempotency key; the fixture defaults to turn-1.
   // Both UIs encode empty selection vectors, rather than omitting them.
   const auto sent = Call(
-      *external, A::RequestPayload::ConversationSendRequest, [&](Builder &b) {
+      *external, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
         const auto empty = b.CreateVector(
             std::vector<flatbuffers::Offset<flatbuffers::String>>{});
         return A::CreateConversationSendRequest(
@@ -684,8 +712,9 @@ TEST_F(AgentProjectFixture,
   ASSERT_EQ(model.Requests().size(), 2u);
   EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/type"),
             "tool_result");
-  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
-            "pending-read");
+  EXPECT_EQ(
+      JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
+      "pending-read");
   EXPECT_TRUE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"));
   EXPECT_EQ(JsonString(model.Requests()[1], "/messages/3/content/0/text"),
             "Do something else instead");
@@ -713,7 +742,7 @@ TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
   model.Queue(AnthropicText("Finished"), true);
   ASSERT_TRUE(
       Call(*external, A::RequestPayload::ConversationSendRequest,
-           [&](Builder &b) {
+           [&](Builder& b) {
              A::ConversationSendRequestT request;
              request.conversation_id = conversation;
              request.turn_id = "display-turn";
@@ -890,12 +919,14 @@ TEST_F(AgentFixture, LargeSerializedConversationUsesReportedTokensAcrossTurns) {
   std::string answer;
   for (int i = 0; i < 8000; ++i) answer += "\"\\\n";
   for (int i = 0; i < 3; ++i) model.Queue(AnthropicText(answer, 1000));
-  model.Queue(AnthropicText("The conversation continued without compaction.", 2000));
+  model.Queue(
+      AnthropicText("The conversation continued without compaction.", 2000));
   Configure(model);
   const auto conversation = Conversation("token-context");
   for (int turn = 1; turn <= 3; ++turn) {
     ASSERT_TRUE(Send(conversation, "Continue.", "turn-" + std::to_string(turn))
-                    .Code().empty());
+                    .Code()
+                    .empty());
     WaitUntilIdle(conversation);
   }
   ASSERT_GT(Get(conversation).View().size(), 180000u);
@@ -959,7 +990,8 @@ TEST_F(AgentFixture,
   }
   EXPECT_EQ(retained_answers, 1);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[3].find("Create a short handoff for the next model continuation"),
+  EXPECT_NE(requests[3].find(
+                "Create a short handoff for the next model continuation"),
             std::string::npos);
   EXPECT_EQ(requests[4].find(earlier), std::string::npos);
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
@@ -990,8 +1022,7 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   const auto full_context_tool = [](const std::string& id) {
     auto stream = AnthropicTool(id, "demo_list", "{}");
     const std::string usage = "\"input_tokens\":12";
-    stream.replace(stream.find(usage), usage.size(),
-                   "\"input_tokens\":130000");
+    stream.replace(stream.find(usage), usage.size(), "\"input_tokens\":130000");
     return stream;
   };
   model.Queue(AnthropicTool("inspect-0", "demo_list", "{}"));
@@ -1007,7 +1038,8 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   ASSERT_TRUE(model.WaitForRequests(8, 20s));
   const auto state = WaitUntilIdle(conversation);
   ASSERT_EQ(model.Requests().size(), 8u) << state;
-  ASSERT_NE(model.Requests()[5].find("Create a short handoff for the next model continuation"),
+  ASSERT_NE(model.Requests()[5].find(
+                "Create a short handoff for the next model continuation"),
             std::string::npos);
   // The model went on without the first call ...
   EXPECT_EQ(model.Requests()[6].find("inspect-0"), std::string::npos);
@@ -1036,12 +1068,14 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   const std::vector<std::string> expected{"inspect-0", "inspect-1",
                                           "inspect-2"};
   EXPECT_EQ(calls(state), expected) << state;
-  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
-                .find("Inspect the demos three times."),
-            0u);
-  EXPECT_EQ(JsonString(state,
-                       "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
-            "inspect-0");
+  EXPECT_EQ(
+      JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+          .find("Inspect the demos three times."),
+      0u);
+  EXPECT_EQ(
+      JsonString(state,
+                 "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
+      "inspect-0");
   // A restart reads the same messages from what was saved.
   external.reset();
   human.reset();
@@ -1216,8 +1250,7 @@ TEST_F(AgentFixture, RevokingUnscopedPermissionAlsoBlocksScopedChildren) {
         "unscoped-parent");
   });
   const bool started = model.WaitForRequests(1);
-  if (!started)
-    model.Release();
+  if (!started) model.Release();
   ASSERT_TRUE(started);
   const auto revoked = SettingsPatch(*host, "desktop",
                                      {{"agent.allowUnscopedHelpers", "false"}});

@@ -8,8 +8,8 @@
 #include <set>
 
 #include "agent/json.hh"
-#include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/tsugumi_generated.h"
 #include "util/crypto.hh"
 #include "util/text.hh"
 
@@ -31,9 +31,12 @@ struct SchemaScope {
   explicit SchemaScope(bool host) { host_schema = host; }
   ~SchemaScope() { host_schema = previous; }
 };
-auto Namespace() -> std::string { return host_schema ? "Tsugumi.Host." : "Tsugumi.RPC."; }
+auto Namespace() -> std::string {
+  return host_schema ? "Tsugumi.Host." : "Tsugumi.RPC.";
+}
 auto Schema() -> const reflection::Schema & {
-  return *reflection::GetSchema(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs);
+  return *reflection::GetSchema(host_schema ? tsugumi_host_bfbs
+                                            : tsugumi_rpc_bfbs);
 }
 
 auto Name(std::string name) -> std::string {
@@ -58,12 +61,23 @@ auto Docs(
   return out;
 }
 
-const std::set<std::string> kOwnedFields{"origin", "op_id", "operation",
-                                         "approved_permissions", "run_ids",
-                                         "restrict_to_run_ids", "check_permissions",
-                                         "read_only", "hide_credentials", "no_project_socket",
-                                         "transfers", "working_directory", "writable_paths", "mounts",
-                                         "output_prefix", "workspace_only", "protected_paths"};
+const std::set<std::string> kOwnedFields{"origin",
+                                         "op_id",
+                                         "save_intent",
+                                         "approved_permissions",
+                                         "run_ids",
+                                         "restrict_to_run_ids",
+                                         "check_permissions",
+                                         "read_only",
+                                         "hide_credentials",
+                                         "no_project_socket",
+                                         "transfers",
+                                         "working_directory",
+                                         "writable_paths",
+                                         "mounts",
+                                         "output_prefix",
+                                         "workspace_only",
+                                         "protected_paths"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
@@ -148,12 +162,15 @@ auto ObjectSchema(const reflection::Object &object, int depth, bool top)
   }
   // Agent save conveniences belong to hostd, not the project protocol.
   if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
-    properties["fill_description"] = R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
-    properties["fill_context"] = R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
+    properties["fill_description"] =
+        R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
+    properties["fill_context"] =
+        R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
   }
   if (object.name()->str() == "Tsugumi.RPC.CardIdRequest") {
     properties.erase("stem");
-    properties["name"] = R"({"type":"string","description":"Human name; the host derives the identifier stem."})";
+    properties["name"] =
+        R"({"type":"string","description":"Human name; the host derives the identifier stem."})";
     required = {json::Quote("name")};
   }
   json::Members schema{{"type", json::Quote("object")},
@@ -264,7 +281,9 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
   parser->opts.strict_json = true;
   parser->opts.output_default_scalars_in_json = true;
   parser->opts.indent_step = -1;
-  if (!parser->Deserialize(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs, host_schema ? tsugumi_host_bfbs_size : tsugumi_rpc_bfbs_size))
+  if (!parser->Deserialize(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs,
+                           host_schema ? tsugumi_host_bfbs_size
+                                       : tsugumi_rpc_bfbs_size))
     throw std::runtime_error("cannot load project RPC schema");
   return parser;
 }
@@ -278,15 +297,23 @@ auto Catalog::shared() const -> json::Members {
 }
 
 Catalog::Catalog() {
-  tools_.push_back({{"project_file_format", "Format editor text without changing files. The host supplies fixed formatters.",
-    R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"}, "FileFormatRequest", false, false, false});
+  tools_.push_back(
+      {{"project_file_format",
+        "Format editor text without changing files. The host supplies fixed "
+        "formatters.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
+       "FileFormatRequest",
+       false,
+       false,
+       false});
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));
   std::set<std::string> seen;
   for (const auto *list : {"requests", "approvalRequests", "hostRequests"}) {
     SchemaScope scope(std::string_view(list) == "hostRequests");
-    const auto* requests = Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
+    const auto *requests =
+        Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
     for (const auto &entry : json::Array(json::Get(settings, list, "[]"))) {
       const auto name = json::String(entry);
       const auto found = std::find_if(
@@ -304,14 +331,24 @@ Catalog::Catalog() {
                        false};
       tool.host = host_schema;
       if (tool.spec.name == "card_id")
-        tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
-      if (tool.spec.name == "run_value_read" || tool.spec.name == "artifact_read" ||
-          tool.spec.name == "log_range" || tool.spec.name == "module_read")
-        tool.spec.description += " Agent default limit_bytes is 2048; continue with offset. Saved clipped results can be read with tool_result_read by call_id.";
-      if (tool.spec.name == "run_history" || tool.spec.name == "run_invocations" ||
-          tool.spec.name == "artifact_list" || tool.spec.name == "run_environments" ||
+        tool.spec.description =
+            "Reserve a permanent Card id from its human name. The host derives "
+            "a readable stem; core reserves a unique id. Use the id in paths "
+            "and wires and keep the name in _meta.json.name. project_path "
+            "selects a nested project.";
+      if (tool.spec.name == "run_value_read" ||
+          tool.spec.name == "artifact_read" || tool.spec.name == "log_range" ||
+          tool.spec.name == "module_read")
+        tool.spec.description +=
+            " Agent default limit_bytes is 2048; continue with offset. Saved "
+            "clipped results can be read with tool_result_read by call_id.";
+      if (tool.spec.name == "run_history" ||
+          tool.spec.name == "run_invocations" ||
+          tool.spec.name == "artifact_list" ||
+          tool.spec.name == "run_environments" ||
           tool.spec.name == "run_environment_paths")
-        tool.spec.description += " Agent default limit is 8; continue with the returned cursor or next_offset.";
+        tool.spec.description += " Agent default limit is 8; continue with the "
+                                 "returned cursor or next_offset.";
       if (tool.spec.name == "project_save")
         tool.spec.description += " " + json::Text(settings, "saveNote");
       if (tool.spec.name == "run" || tool.spec.name == "run_status") {
@@ -333,21 +370,34 @@ Catalog::Catalog() {
       tools_.push_back(std::move(tool));
     }
   }
-  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]"))) {
+  for (const auto &raw : json::Array(json::Get(settings, "hostTools", "[]"))) {
     const auto tool = json::Object(raw);
     const auto name = json::Text(tool, "name");
-    if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
+    if (Find(name))
+      throw std::runtime_error("duplicate host tool: " + name);
     tools_.push_back({{name, json::Text(tool, "description"),
-                       json::Get(tool, "inputSchema")}, name, false, json::Bool(json::Get(tool, "mutating", "false")), false});
+                       json::Get(tool, "inputSchema")},
+                      name,
+                      false,
+                      json::Bool(json::Get(tool, "mutating", "false")),
+                      false});
   }
-  const std::vector<std::string> editing{"project_edit", "project_connect", "project_make_subgraph", "project_layout", "project_copy", "project_save"};
-  auto rank = [&](const CatalogTool& tool) { return std::find(editing.begin(), editing.end(), tool.spec.name) - editing.begin(); };
-  std::stable_sort(tools_.begin(), tools_.end(), [&](const auto& a, const auto& b) {
-    const auto ar = rank(a), br = rank(b);
-    if (ar == static_cast<decltype(ar)>(editing.size())) return br != static_cast<decltype(br)>(editing.size());
-    if (br == static_cast<decltype(br)>(editing.size())) return false;
-    return ar < br;
-  });
+  const std::vector<std::string> editing{
+      "project_edit",   "project_connect", "project_make_subgraph",
+      "project_layout", "project_copy",    "project_save"};
+  auto rank = [&](const CatalogTool &tool) {
+    return std::find(editing.begin(), editing.end(), tool.spec.name) -
+           editing.begin();
+  };
+  std::stable_sort(tools_.begin(), tools_.end(),
+                   [&](const auto &a, const auto &b) {
+                     const auto ar = rank(a), br = rank(b);
+                     if (ar == static_cast<decltype(ar)>(editing.size()))
+                       return br != static_cast<decltype(br)>(editing.size());
+                     if (br == static_cast<decltype(br)>(editing.size()))
+                       return false;
+                     return ar < br;
+                   });
 }
 
 auto Catalog::Find(std::string_view name) const -> const CatalogTool * {
@@ -373,7 +423,8 @@ auto Catalog::Request(std::string_view name, std::string_view arguments,
   const auto *tool = Find(name);
   if (!tool)
     throw std::runtime_error("unknown project operation");
-  return tool->host ? HostRequest(name, arguments, id) : EncodeProjectRequest(name, arguments, id);
+  return tool->host ? HostRequest(name, arguments, id)
+                    : EncodeProjectRequest(name, arguments, id);
 }
 
 auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
@@ -388,14 +439,14 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
   if (found == requests->values()->end())
     throw std::runtime_error("unknown project operation");
   const auto request_name = (*found)->name()->str();
-  const auto *object = Schema().objects()->LookupByKey(
-      (Namespace() + request_name).c_str());
+  const auto *object =
+      Schema().objects()->LookupByKey((Namespace() + request_name).c_str());
   auto body = json::Encode(json::Members{
       {"request_id", std::to_string(id)},
       {"payload_type", json::Quote("Request")},
-      {"payload", json::Encode(json::Members{
-                      {"value_type", json::Quote(request_name)},
-                      {"value", Normalize(*object, arguments)}})}});
+      {"payload",
+       json::Encode(json::Members{{"value_type", json::Quote(request_name)},
+                                  {"value", Normalize(*object, arguments)}})}});
   auto parser = Parser();
   if (!parser->ParseJson(body.c_str()))
     throw std::runtime_error(parser->error_);
@@ -403,7 +454,8 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
           parser->builder_.GetSize()};
 }
 
-auto Catalog::HostRequest(std::string_view name, std::string_view arguments, uint64_t id) const -> std::string {
+auto Catalog::HostRequest(std::string_view name, std::string_view arguments,
+                          uint64_t id) const -> std::string {
   SchemaScope scope(true);
   return EncodeProjectRequest(name, arguments, id);
 }
@@ -414,7 +466,8 @@ auto Catalog::HostReply(std::string_view bytes) const -> std::string {
 auto Catalog::Reply(std::string_view bytes) const -> std::string {
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
-  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier) : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
+  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier)
+                    : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
     throw std::runtime_error("invalid project reply");
   auto parser = Parser();
   std::string raw;

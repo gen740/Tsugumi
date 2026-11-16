@@ -249,6 +249,24 @@ public actor CoreHostClient {
     return result
   }
 
+  public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {
+    let request = Tsugumi_Host_LayoutCompleteRequestT()
+    request.projectJson = project; request.layoutJson = layout
+    request.definitionsJson = String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
+    let result: Tsugumi_Host_LayoutValidatedT = try await layoutCall(.layoutcompleterequest, request)
+    return result.json
+  }
+
+  public func prepareLayoutSave(project: String, baseRev: UInt64, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] {
+    let request = Tsugumi_Host_LayoutPrepareSaveRequestT()
+    request.project = project
+    let save = Tsugumi_RPC_ProjectSaveRequestT()
+    save.baseRev = baseRev; save.opId = UUID().uuidString; save.origin = "ui"; save.changes = changes
+    request.save = save
+    let result: Tsugumi_Host_LayoutPreparedSaveT = try await layoutCall(.layoutpreparesaverequest, request)
+    return result.save.changes.compactMap { $0 }
+  }
+
   public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
     let request = Tsugumi_Host_LayoutValidateRequestT()
     request.json = json; request.removedCards = removedCards.map(Optional.some)
@@ -327,19 +345,6 @@ public actor CoreHostClient {
       throw CoreHostFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
     }
     return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
-  }
-
-  public func saveProject(project: String, base: String, save: Tsugumi_RPC_ProjectSaveRequestT) async throws -> Tsugumi_Host_UISaveResultT {
-    let request = Tsugumi_Host_UISaveRequestT()
-    request.project = project; request.baseJson = base; request.save = save
-    let result: Tsugumi_Host_UISaveResultT
-    do { result = try await layoutCall(.uisaverequest, request) }
-    catch let failure as CoreHostFailure where failure.code == "revision_conflict" {
-      throw RPCFailure(kind: .revisionConflict, diagnostic: failure.message)
-    } catch let failure as CoreHostFailure { throw failure }
-    catch { result = try await layoutCall(.uisaverequest, request) }
-    if let failure = result.reply.value?.value as? Tsugumi_Data_FailureT { throw RPCFailure(failure) }
-    return result
   }
 
   public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {

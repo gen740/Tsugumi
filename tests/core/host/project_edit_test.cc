@@ -38,6 +38,15 @@ TEST(ProjectEdit,
   expected.replace(expected.find("before"), 6, "after");
   EXPECT_EQ(EditProjectField(before, edit), expected);
 }
+TEST(ProjectEdit, PolicyNormalizationKeepsUntouchedArrayElementsAndFields) {
+  const std::string before =
+      R"({ "comments": [ { "id": "a", "text": "keep" }, { "id": "b", "resolved": false } ], "hash": "sha256-exact=" })";
+  const std::string normalized =
+      R"({"comments":[{"id":"a","text":"keep"},{"id":"b","resolved":true}],"hash":"sha256-exact="})";
+  auto expected = before;
+  expected.replace(expected.find("false"), 5, "true");
+  EXPECT_EQ(PreserveProjectBytes(before, normalized), expected);
+}
 TEST(ProjectEdit, KeyedSelectorsIgnoreArrayPositionsAndRefuseAmbiguity) {
   auto edit = Field({"cards"}, "1", "2");
   auto key = std::make_unique<H::ProjectSelectorT>();

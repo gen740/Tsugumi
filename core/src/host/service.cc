@@ -26,15 +26,12 @@
 #include "host/failure.hh"
 #include "host/format.hh"
 #include "host/guide.hh"
-#include "host/layout_observer.hh"
 #include "host/layout_service.hh"
 #include "host/models.hh"
 #include "host/permission_kinds.hh"
 #include "host/projects.hh"
 #include "host/registry.hh"
 #include "host/settings.hh"
-#include "host/save.hh"
-#include "agent/catalog.hh"
 #include "host/skills_service.hh"
 #include "host/state_gate.hh"
 #include "host/store.hh"
@@ -197,11 +194,6 @@ struct Service::State {
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
         });
-    layout_observer = std::make_unique<host::LayoutObserver>(
-        [this](const auto& project, const auto& method, const auto& args) {
-          return tools->RawProjectCall(project, method, args,
-                                       shutdown.get_token());
-        });
     skills_service = std::make_unique<host::SkillsService>(db);
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
@@ -293,11 +285,6 @@ struct Service::State {
         }
       }
     }
-    auto registered = db.prepare("SELECT id FROM projects");
-    while (registered.step()) {
-      const auto id = registered.text(0);
-      layout_observer->Watch(id, registry.Lookup(id));
-    }
   }
 
   HostOptions options;
@@ -321,7 +308,6 @@ struct Service::State {
   std::unique_ptr<host::SkillsService> skills_service;
   std::unique_ptr<host::Models> models;
   std::unique_ptr<host::Versions> versions;
-  std::unique_ptr<host::LayoutObserver> layout_observer;
   std::unique_ptr<host::HostEvents> events;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
@@ -332,15 +318,14 @@ struct Service::State {
   Lane tool_requests;
   Lane wait_requests;
   std::map<ConnId, std::stop_source> connection_stops;
-  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>> tool_stops;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>>
+      tool_stops;
   Lane terminal_requests;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
     if (state.phase == H::EnvironmentPhase::Ready) {
       registry.RegisterReady(state);
-      layout_observer->Watch(state.project_id,
-                             registry.Lookup(state.project_id));
     } else if (state.phase == H::EnvironmentPhase::Stopped ||
                state.phase == H::EnvironmentPhase::Failed) {
       registry.UnregisterEnvironment(state.key);
@@ -635,6 +620,34 @@ struct Service::State {
         return wire::HostReply(request.request_id,
                                host::PermissionKinds(Text(p->language())));
       }
+      case H::RequestPayload::LayoutPrepareSaveRequest: {
+        const auto* p = r->value_as_LayoutPrepareSaveRequest();
+        Tsugumi::RPC::RequestT save;
+        auto input = std::unique_ptr<Tsugumi::RPC::ProjectSaveRequestT>(
+            p->save()->UnPack());
+        save.value.Set(std::move(*input));
+        Tsugumi::RPC::MessageT message;
+        message.payload.Set(std::move(save));
+        flatbuffers::FlatBufferBuilder builder;
+        Tsugumi::RPC::FinishMessageBuffer(
+            builder, Tsugumi::RPC::Message::Pack(builder, &message));
+        const auto envelope = json::Object(agent::Catalog().Reply(
+            {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+             builder.GetSize()}));
+        const auto project = p->project()->str();
+        const auto arguments = json::Get(envelope, "value");
+        lock.unlock();
+        const auto prepared =
+            tools->PrepareLayoutSave(project, arguments, shutdown.get_token());
+        const auto bytes =
+            agent::EncodeProjectRequest("project_save", prepared, 0);
+        H::LayoutPreparedSaveT result;
+        result.save.reset(Tsugumi::RPC::GetMessage(bytes.data())
+                              ->payload_as_Request()
+                              ->value_as_ProjectSaveRequest()
+                              ->UnPack());
+        return wire::HostReply(request.request_id, std::move(result));
+      }
       case H::RequestPayload::DocumentTemplateRequest: {
         const auto* p = r->value_as_DocumentTemplateRequest();
         return wire::HostReply(
@@ -662,139 +675,18 @@ struct Service::State {
       }
       case H::RequestPayload::ProjectOperateRequest: {
         Human(human);
-        const auto* input = r->value_as_ProjectOperateRequest();
-        const auto project = input->project_id()->str();
-        if (!input->body_as_ProjectEdits()) throw Failure("invalid_request", "missing operation body");
-        const auto operation = std::unique_ptr<Tsugumi::RPC::OperationSubmissionT>(input->operation()->UnPack());
-        const auto edits = std::unique_ptr<H::ProjectEditsT>(input->body_as_ProjectEdits()->UnPack());
+        const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
+            r->value_as_ProjectOperateRequest()->UnPack());
+        const auto project = operation->project_id;
         lock.unlock();
-        const auto reply = tools->OperateProject(project, *operation, *edits, {"ui", {}, {}}, shutdown.get_token());
-        if (reply.wire.empty()) throw Failure("unavailable", "operation returned no typed outcome");
+        const auto reply = tools->OperateProject(
+            project, *operation, {"ui", {}, {}, {}}, shutdown.get_token());
+        if (reply.wire.empty())
+          throw Failure("unavailable", "operation returned no typed outcome");
         H::ProjectOperationResultT result;
-        result.reply.reset(Tsugumi::RPC::GetMessage(reply.wire.data())->payload_as_Reply()->UnPack());
-        return wire::HostReply(request.request_id, std::move(result));
-      }
-      case H::RequestPayload::ProjectWriterOpenRequest:
-      case H::RequestPayload::ProjectOperationStatusRequest:
-      case H::RequestPayload::ProjectOperationAcknowledgeRequest: {
-        Human(human);
-        std::string project, method;
-        json::Members args;
-        if (const auto* input = r->value_as_ProjectWriterOpenRequest()) {
-          project = input->project_id()->str(); method = "writer_open";
-        } else if (const auto* input = r->value_as_ProjectOperationStatusRequest()) {
-          project = input->project_id()->str(); method = "writer_status";
-          args["operation"] = json::Encode(json::Members{
-              {"identity", json::Encode(json::Members{{"lane", json::Quote(input->operation()->identity()->lane()->str())},
-                  {"sequence", json::Quote(std::to_string(input->operation()->identity()->sequence()))}})},
-              {"semantic_digest", json::Quote(input->operation()->semantic_digest()->str())}});
-        } else {
-          const auto* acknowledgement = r->value_as_ProjectOperationAcknowledgeRequest();
-          project = acknowledgement->project_id()->str(); method = "writer_acknowledge";
-          args = {{"identity", json::Encode(json::Members{{"lane", json::Quote(acknowledgement->identity()->lane()->str())},
-                  {"sequence", json::Quote(std::to_string(acknowledgement->identity()->sequence()))}})},
-              {"incorporated_cursor", json::Quote(std::to_string(acknowledgement->incorporated_cursor()))},
-              {"retire", acknowledgement->retire() ? "true" : "false"}};
-        }
-        lock.unlock();
-        std::string raw;
-        (void)tools->RawProjectCall(project, method, json::Encode(args), shutdown.get_token(), &raw);
-        if (raw.empty()) throw Failure("unavailable", "operation returned no typed outcome");
-        H::ProjectOperationResultT result;
-        result.reply.reset(Tsugumi::RPC::GetMessage(raw.data())->payload_as_Reply()->UnPack());
-        return wire::HostReply(request.request_id, std::move(result));
-      }
-      case H::RequestPayload::UISaveRequest: {
-        Human(human);
-        const auto *input = r->value_as_UISaveRequest();
-        const auto project = input->project()->str();
-        const auto base_json = input->base_json()->str();
-        Tsugumi::RPC::MessageT message;
-        Tsugumi::RPC::RequestT save;
-        save.value.Set(*std::unique_ptr<Tsugumi::RPC::ProjectSaveRequestT>(
-            input->save()->UnPack()));
-        message.payload.Set(std::move(save));
-        flatbuffers::FlatBufferBuilder builder;
-        Tsugumi::RPC::FinishMessageBuffer(
-            builder, Tsugumi::RPC::Message::Pack(builder, &message));
-        const std::string bytes(
-            reinterpret_cast<const char *>(builder.GetBufferPointer()),
-            builder.GetSize());
-        // Catalog's reflection decoder also decodes the typed request value.
-        const auto original = json::Object(
-            json::Get(json::Object(agent::Catalog().Reply(bytes)), "value"));
-        const auto operation = json::Text(original, "op_id");
-        if (!crypto::is_uuid(operation))
-          throw Failure("invalid_request", "Save operation id must be a UUID");
-        const auto encoded_base = json::Object(base_json);
-        const SaveBase base{json::Object(json::Get(encoded_base, "snapshot")),
-                            json::Object(json::Get(encoded_base, "files"))};
-        if (json::Text(base.snapshot, "rev") != json::Text(original, "base_rev"))
-          throw Failure("invalid_request", "Save base revision differs");
-        lock.unlock();
-        std::lock_guard saving(tools->save_mutex);
-        auto call = [&](const std::string &method, const json::Members &args,
-                        std::string *raw = nullptr) {
-          return json::Object(tools->RawProjectCall(
-              project, method, json::Encode(args), shutdown.get_token(), raw));
-        };
-        std::string response;
-        auto send = [&](const json::Members &args) {
-          response.clear();
-          const auto result = call("project_save", args, &response);
-          // Host validation can reject a request before any core RPC is sent.
-          // That JSON failure has no raw response to unpack.
-          if (response.empty()) {
-            const auto value = json::Object(json::Get(result, "value", "{}"));
-            throw Failure(json::Text(value, "kind", "unavailable"),
-                          json::Text(value, "diagnostic"));
-          }
-          return result;
-        };
-        try {
-          (void)SaveWithMerge(
-              original, base,
-              [&](const auto &method, const auto &args) {
-                const auto result = call(method, args);
-                const auto value =
-                    json::Object(json::Get(result, "value", "{}"));
-                if (json::Text(result, "reply") == "Failure")
-                  throw Failure(json::Text(value, "kind"),
-                                json::Text(value, "diagnostic"));
-                return value;
-              },
-              send);
-        } catch (const Failure &error) {
-          Tsugumi::Data::FailureT failure;
-          bool known = false;
-          for (auto kind : Tsugumi::Data::EnumValuesFailureKind()) {
-            if (error.code == Tsugumi::Data::EnumNameFailureKind(kind)) {
-              failure.kind = kind;
-              known = true;
-              break;
-            }
-          }
-          if (!known) throw;
-          failure.diagnostic = error.what();
-          H::UISaveResultT result;
-          result.reply = std::make_unique<Tsugumi::RPC::ReplyT>();
-          result.reply->value.Set(std::move(failure));
-          return wire::HostReply(request.request_id, std::move(result));
-        }
-        H::UISaveResultT result;
-        result.reply.reset(Tsugumi::RPC::GetMessage(response.data())
+        result.reply.reset(Tsugumi::RPC::GetMessage(reply.wire.data())
                                ->payload_as_Reply()
                                ->UnPack());
-        if (result.reply->value.type == Tsugumi::RPC::ReplyPayload::SaveResult) {
-          std::string snapshot;
-          (void)call("project_inspect", {}, &snapshot);
-          if (!snapshot.empty()) {
-            if (const auto *value = Tsugumi::RPC::GetMessage(snapshot.data())
-                                        ->payload_as_Reply()
-                                        ->value_as_ProjectSnapshot())
-              result.snapshot.reset(value->UnPack());
-          }
-        }
         return wire::HostReply(request.request_id, std::move(result));
       }
       case H::RequestPayload::DocumentMergeRequest: {
@@ -818,9 +710,6 @@ struct Service::State {
       case H::RequestPayload::RegisterProjectRequest: {
         Human(human);
         registry.RegisterProject(*r->value_as_RegisterProjectRequest());
-        const auto project =
-            r->value_as_RegisterProjectRequest()->project_id()->str();
-        layout_observer->Watch(project, registry.Lookup(project));
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
       case H::RequestPayload::RegisterFolderRequest: {
@@ -860,7 +749,6 @@ auto Service::Shutdown() -> void {
     }
   }
   state_->access->changed.notify_all();
-  state_->layout_observer->Stop();
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
@@ -920,7 +808,7 @@ auto Service::dispatch(RequestIn request) -> void {
     human = state_->events->principals.at(request.conn);
     request.connection_stop =
         state_->connection_stops.at(request.conn).get_token();
-    const auto *payload =
+    const auto* payload =
         A::GetMessage(request.frame->data())->payload_as_Request();
     if (payload->value_type() == A::RequestPayload::ToolCallCancelRequest) {
       const auto key = std::make_pair(
@@ -944,34 +832,30 @@ auto Service::dispatch(RequestIn request) -> void {
       waiting = name == "run" || name == "run_status";
     }
   }
-  auto *server = host ? state_->events->host_server : state_->server;
+  auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
   auto task = [this, request, human, host, server, fail,
                tool_stop](bool expired) {
     std::stop_callback disconnected(request.connection_stop, [tool_stop] {
-      if (tool_stop)
-        tool_stop->request_stop();
+      if (tool_stop) tool_stop->request_stop();
     });
     auto invocation = request;
-    if (tool_stop)
-      invocation.connection_stop = tool_stop->get_token();
+    if (tool_stop) invocation.connection_stop = tool_stop->get_token();
     std::string bytes;
     try {
-      if (tool_stop && tool_stop->stop_requested())
-        throw Cancelled();
-      if (expired)
-        throw Failure("timeout", "Service request queue timed out");
+      if (tool_stop && tool_stop->stop_requested()) throw Cancelled();
+      if (expired) throw Failure("timeout", "Service request queue timed out");
       bytes = host ? state_->HandleHost(invocation)
                    : state_->Handle(invocation, human);
-    } catch (const Cancelled &) {
+    } catch (const Cancelled&) {
       bytes = fail(request.request_id, "cancelled",
                    "The operation was cancelled", {});
-    } catch (const host::ProjectFailure &e) {
+    } catch (const host::ProjectFailure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()), {});
-    } catch (const Failure &e) {
+    } catch (const Failure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});
     }
@@ -985,7 +869,7 @@ auto Service::dispatch(RequestIn request) -> void {
       host && H::GetMessage(request.frame->data())
                       ->payload_as_Request()
                       ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto &lane = terminal  ? state_->terminal_requests
+  auto& lane = terminal  ? state_->terminal_requests
                : waiting ? state_->wait_requests
                : tool    ? state_->tool_requests
                          : state_->requests;

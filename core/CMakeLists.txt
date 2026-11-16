@@ -40,7 +40,6 @@ add_library(tsugumi_core STATIC
   src/module_source.cc
   src/wire.cc
   src/store.cc
-  src/store_operations.cc
   src/history.cc
   src/lanes.cc
   src/server.cc
@@ -206,7 +205,6 @@ add_library(tsugumi_host_core STATIC
   src/host/layout_place.cc
   src/host/layout_wires.cc
   src/host/layout_service.cc
-  src/host/layout_observer.cc
   src/host/layout_saving.cc
   src/host/projects.cc
   src/host/execution_broker.cc

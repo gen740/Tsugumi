@@ -1,15 +1,13 @@
-#include <ctime>
+#include <algorithm>
 
 #include "agent/tools.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
-#include "util/crypto.hh"
 
 namespace tsugumi::agent {
 namespace {
 namespace H = Tsugumi::Host;
-namespace R = Tsugumi::RPC;
 using host::Failure;
 auto Edits(const json::Members& arguments) -> H::ProjectEditsT {
   H::ProjectEditsT result;
@@ -91,13 +89,6 @@ auto Outcome(const std::string& response) -> json::Members {
     throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
   return value;
 }
-auto Submission(const std::string& lane, const std::string& digest)
-    -> std::string {
-  return json::Encode(json::Members{
-      {"identity", json::Encode(json::Members{{"lane", json::Quote(lane)},
-                                              {"sequence", "\"1\""}})},
-      {"semantic_digest", json::Quote(digest)}});
-}
 }  // namespace
 
 auto Tools::EditProjectTool(const std::string& conversation,
@@ -106,65 +97,49 @@ auto Tools::EditProjectTool(const std::string& conversation,
                             const std::string& operation, HelperScope* boundary,
                             bool recovering, std::stop_token stop)
     -> std::string {
-  const auto edits = Edits(args);
-  const auto digest = host::ProjectOperations::Digest(edits, "agent");
-  const auto queue = operations.Queue(project);
-  std::lock_guard executing(*queue);
-  std::string lane;
-  {
-    std::lock_guard lock(mutex);
-    auto existing = db.prepare(
-        "SELECT lane,digest FROM operation_writers WHERE operation=?");
-    existing.bind(1, operation);
-    if (existing.step()) {
-      lane = existing.text(0);
-      if (existing.text(1) != digest)
-        throw Failure(
-            "operation_conflict",
-            "tool operation was reused with a different semantic payload");
-    }
-    if (lane.empty() && recovering)
+  if (recovering) {
+    const auto status = Outcome(RawProjectCall(
+        project, "operation_get",
+        json::Encode(json::Members{{"op_id", json::Quote(operation)}}), stop));
+    if (json::Text(status, "state") != "completed")
       throw Failure("outcome_unknown",
-                    "interrupted edit has no durable writer identity; inspect "
-                    "before making a new edit");
+                    "The earlier operation has no terminal receipt");
+    const auto receipt = json::Object(json::Get(status, "receipt"));
+    return json::Encode(
+        json::Members{{"reply", json::Get(receipt, "result_type")},
+                      {"value", json::Get(receipt, "result", "{}")}});
   }
-  if (lane.empty()) {
-    {
-      std::lock_guard lock(mutex);
-      // Only abandoned identity mappings expire. Core still rejects their
-      // unknown/expired lanes; this never causes automatic replay.
-      auto expire = db.prepare("DELETE FROM operation_writers WHERE created<?");
-      expire
-          .bind(1, static_cast<int64_t>(std::time(nullptr) - 7 * 24 * 60 * 60))
-          .run();
-      auto count =
-          db.prepare("SELECT COUNT(*) FROM operation_writers WHERE project=?");
-      count.bind(1, project);
-      count.step();
-      if (count.u64(0) >= 64)
-        throw Failure("resource_limit",
-                      "64 outstanding operation identities; resolve them "
-                      "before submitting more");
-    }
-    lane = json::Text(
-        Outcome(RawProjectCall(project, "writer_open", "{}", stop)), "lane");
-    std::lock_guard lock(mutex);
-    auto record =
-        db.prepare("INSERT INTO operation_writers VALUES(?,?,?,?,?,?,?)");
-    record.bind(1, operation)
-        .bind(2, project)
-        .bind(3, conversation)
-        .bind(4, call.id)
-        .bind(5, lane)
-        .bind(6, digest)
-        .bind(7, static_cast<int64_t>(std::time(nullptr)))
-        .run();
+  H::ProjectOperateRequestT request;
+  request.project_id = project;
+  request.op_id = operation;
+  if (call.name == "project_edit")
+    request.body.Set(Edits(args));
+  else if (call.name == "project_connect") {
+    H::ProjectConnectT value;
+    value.project_path = json::Text(args, "project_path");
+    value.from_card = json::Text(args, "from_card");
+    value.from_port = json::Text(args, "from_port");
+    value.to_card = json::Text(args, "to_card");
+    value.to_port = json::Text(args, "to_port");
+    value.fork_id = json::Text(args, "fork_id");
+    request.body.Set(std::move(value));
+  } else if (call.name == "project_make_subgraph") {
+    H::ProjectMakeSubgraphT value;
+    value.project_path = json::Text(args, "project_path");
+    value.id = json::Text(args, "id");
+    for (const auto& raw : json::Array(json::Get(args, "cards", "[]")))
+      value.cards.push_back(json::String(raw));
+    request.body.Set(std::move(value));
+  } else {
+    H::ProjectLayoutT value;
+    value.project_path = json::Text(args, "project_path");
+    const auto action = json::Text(args, "action");
+    if (action != "arrange" && action != "untangle")
+      throw Failure("invalid_request", "unknown layout action");
+    value.action = action == "arrange" ? H::ProjectLayoutAction::Arrange
+                                       : H::ProjectLayoutAction::Untangle;
+    request.body.Set(std::move(value));
   }
-  R::OperationSubmissionT identity;
-  identity.identity = std::make_unique<R::OperationIdentityT>();
-  identity.identity->lane = lane;
-  identity.identity->sequence = 1;
-  identity.semantic_digest = digest;
   const auto authorization =
       boundary ? boundary->authorization() : std::string{};
   host::OperationContext context;
@@ -180,6 +155,19 @@ auto Tools::EditProjectTool(const std::string& conversation,
     const auto read = HelperReader(
         conversation, stop, json::Get(base.snapshot, "rev"), authorization);
     boundary->Check("project_file_read", {{"path", json::Quote(path)}}, read);
+  };
+  context.layout_scope = [&](const host::SaveBase& base) -> host::LayoutWrite {
+    if (!boundary || !boundary->scoped()) return {};
+    const auto read = HelperReader(
+        conversation, stop, json::Get(base.snapshot, "rev"), authorization);
+    const auto roots = boundary->LayoutWriteCards(read);
+    return [roots](const auto& path, const auto& id) {
+      const auto prefix = path.substr(0, path.size() - 11);
+      if (!id.empty()) return roots.contains(prefix + "definitions/" + id);
+      return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
+        return root.substr(0, root.rfind("definitions/")) == prefix;
+      });
+    };
   };
   context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
     {
@@ -200,38 +188,27 @@ auto Tools::EditProjectTool(const std::string& conversation,
     if (args.contains("approved_permissions"))
       plan["approved_permissions"] = args.at("approved_permissions");
   };
-  return OperateProject(project, identity, edits, context, stop).json;
+  auto refused = [](const std::string& kind, const std::string& message) {
+    return json::Encode(json::Members{
+        {"reply", json::Quote("Failure")},
+        {"value",
+         json::Encode(json::Members{{"kind", json::Quote(kind)},
+                                    {"message", json::Quote(message)},
+                                    {"diagnostic", json::Quote(message)},
+                                    {"args", "[]"}})}});
+  };
+  try {
+    return OperateProject(project, request, context, stop).json;
+  } catch (const Cancelled&) {
+    throw;
+  } catch (const Failure& error) {
+    if (!error.request_id.empty() || error.code == "outcome_unknown" ||
+        error.code == "unavailable" || error.code == "busy")
+      throw;
+    return refused(error.code, error.what());
+  } catch (const std::exception& error) {
+    return refused("validation_failed", error.what());
+  }
 }
 
-auto Tools::AcknowledgeEdit(const std::string& project,
-                            const std::string& operation, std::stop_token stop)
-    -> void {
-  std::string lane, digest;
-  {
-    std::lock_guard lock(mutex);
-    auto row = db.prepare(
-        "SELECT lane,digest FROM operation_writers WHERE operation=?");
-    row.bind(1, operation);
-    if (!row.step()) return;
-    lane = row.text(0);
-    digest = row.text(1);
-  }
-  const auto status = Outcome(RawProjectCall(
-      project, "writer_status",
-      json::Encode(json::Members{{"operation", Submission(lane, digest)}}),
-      stop));
-  if (json::Text(status, "state") != "completed") return;
-  const auto receipt = json::Object(json::Get(status, "receipt"));
-  (void)Outcome(RawProjectCall(
-      project, "writer_acknowledge",
-      json::Encode(json::Members{
-          {"identity", json::Encode(json::Members{{"lane", json::Quote(lane)},
-                                                  {"sequence", "\"1\""}})},
-          {"incorporated_cursor", json::Get(receipt, "cursor")},
-          {"retire", "true"}}),
-      stop));
-  std::lock_guard lock(mutex);
-  auto remove = db.prepare("DELETE FROM operation_writers WHERE operation=?");
-  remove.bind(1, operation).run();
-}
 }  // namespace tsugumi::agent

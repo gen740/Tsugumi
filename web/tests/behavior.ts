@@ -1,5 +1,9 @@
 import { layoutHost } from '../src/shared/hostLayout'
 layoutHost.validate = async (json) => json
+// UI-only tests replace the read-only host boundary, as they replace the core.
+// Real placement and transaction behavior run against hostd in test_card_placement.py.
+layoutHost.prepareSave = async (_project, _rev, changes) => changes
+layoutHost.complete = async (_project, layout) => layout
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,6 +18,7 @@ await import("./agentRequests")
 await import('./chatModelRefresh')
 await import('./scopedSkills')
 await import("./guideRpc")
+await import("./chatGPTSetup")
 await import("./environmentHost")
 await import("./hostReadiness")
 await import("./chatStopped")
@@ -34,9 +39,6 @@ await import("./draftWires")
 await import("./freedName")
 await import("./summary")
 await import("./staleApply")
-await import("./placementSave")
-await import("./mergedUndo")
-await import("./saveAcknowledgement")
 await import("./uiReview")
 await import("./executionSettings")
 await import("./executionLists")

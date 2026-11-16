@@ -839,53 +839,9 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
 INSTANTIATE_TEST_SUITE_P(NestedDepths, NestedHelperFiles,
                          ::testing::Values(1, 2));
 
-TEST_F(AgentFixture, ClientsAndAgentUseTheSameHostDocumentOperations) {
+TEST_F(AgentFixture, ClientsAndAgentUseTheSameHostTemplate) {
   namespace json = tsugumi::agent::json;
   const auto conversation = Conversation("document-edits");
-  const std::string copy_state =
-      R"({"definitions":{"a":{"card":{"template":"draft"}}}})";
-  const auto copy =
-      Call(*host, H::RequestPayload::DocumentCopyRequest, [&](Builder &b) {
-        return H::CreateDocumentCopyRequest(b, b.CreateString(copy_state), 0,
-                                            b.CreateString("definitions/a/"),
-                                            b.CreateString("definitions/b/"))
-            .Union();
-      });
-  ASSERT_TRUE(copy.Code().empty()) << copy.Code();
-  const auto agent_copy =
-      Tool(conversation, "document_copy",
-           json::Encode(json::Members{{"state_json", Quote(copy_state)},
-                                      {"from", Quote("definitions/a/")},
-                                      {"to", Quote("definitions/b/")}}));
-  ASSERT_TRUE(agent_copy.Code().empty()) << agent_copy.Code();
-  const auto copy_reply = json::Object(JsonString(agent_copy.View(), "/text"));
-  EXPECT_EQ(json::Text(copy_reply, "edits_json"),
-            copy.HostValue()->value_as_DocumentCopy()->edits_json()->str());
-  EXPECT_TRUE(json::Array(copy_reply.at("files")).empty());
-
-  const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}}}})";
-  const auto connection =
-      Call(*host, H::RequestPayload::DocumentConnectRequest, [&](Builder &b) {
-        return H::CreateDocumentConnectRequest(
-                   b, b.CreateString(state), b.CreateString("a"),
-                   b.CreateString("+"), b.CreateString("b"),
-                   b.CreateString("+"))
-            .Union();
-      });
-  ASSERT_TRUE(connection.Code().empty()) << connection.Code();
-  const auto agent_connection =
-      Tool(conversation, "document_connect",
-           json::Encode(json::Members{{"state_json", Quote(state)},
-                                      {"from_card", Quote("a")},
-                                      {"from_port", Quote("+")},
-                                      {"to_card", Quote("b")},
-                                      {"to_port", Quote("+")}}));
-  ASSERT_TRUE(agent_connection.Code().empty()) << agent_connection.Code();
-  EXPECT_EQ(
-      JsonString(JsonString(agent_connection.View(), "/text"), "/state_json"),
-      connection.HostValue()->value_as_DocumentConnect()->state_json()->str());
-
   const auto created =
       Call(*host, H::RequestPayload::DocumentTemplateRequest, [&](Builder &b) {
         return H::CreateDocumentTemplateRequest(b, b.CreateString("python"),

@@ -14,7 +14,7 @@ OUT = ROOT / "docs" / "Protocol.md"
 GROUPS = [
     ("Connection", ["SessionHello"]),
     ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
-                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet", "WriterOpen", "WriterAcknowledge", "WriterStatus", "OperationRefuse", "WriterBegin"]),
+                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),

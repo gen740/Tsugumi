@@ -80,9 +80,18 @@ auto Path(const std::string &parent, const std::string &key) -> std::string {
     escaped += c == '~' ? "~0" : c == '/' ? "~1" : std::string(1, c);
   return parent + "/" + escaped;
 }
-// Every conflicting field, including layout, requires a person's choice.
+// Layout conflicts keep local placement. Project and definition conflicts
+// use the existing explicit choice, including conflicts in metadata.
 auto Conflict(const std::string &path, std::vector<std::string> &conflicts)
     -> void {
+  if (path == "/layout" || path.starts_with("/layout/"))
+    return;
+  if (path.starts_with("/externals/")) {
+    const auto end = path.find('/', std::string("/externals/").size());
+    if (end != std::string::npos && (path.substr(end) == "/layout" ||
+                                     path.substr(end).starts_with("/layout/")))
+      return;
+  }
   conflicts.push_back(path.empty() ? "/" : path);
 }
 auto Records(const std::vector<std::string> &values,

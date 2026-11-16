@@ -28,3 +28,6 @@ def test_small_edits_use_guarded_narrow_tools_and_keep_whole_save_for_large_chan
     assert "Use project_edit for small changes" in prompt
     assert "for creating a project and for a large restructuring" in prompt
     assert "Do not retype untouched project fields or pins" in prompt
+    assert "one Card per project_edit" in prompt
+    assert "In the same project_edit that implements a Draft" in prompt
+    assert "one Card per project_save" not in prompt

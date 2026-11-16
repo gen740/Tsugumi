@@ -18,7 +18,7 @@ choose independent tasks and give each the smallest read/write/run Card sets it 
   Before delegating, implement shared upstream Cards; run first only if helpers need their results to write.
   A helper sees neither this conversation nor a snapshot: include Card ids, requirements and shared decisions.
   Ask it to read what it needs, save and validate without running unless it needs run results, and answer
-  in at most five lines. The host merges disjoint concurrent saves and refuses collisions: inspect and re-apply.
+  in at most five lines. Small changes use project_edit against the current document. A stale whole-document project_save is refused: read the project again and re-apply.
   When all answer, run once from the trigger, check each Card with run_record and finish what remains.
   Shortened results identify the full helper trace in the conversation. Helper usage adds to the conversation.
 

@@ -13,6 +13,9 @@ namespace tsugumi::host {
 auto EditProjectField(const std::string& document,
                       const Tsugumi::Host::ProjectFieldEditT& edit)
     -> std::string;
+// Carry a transformation's changed values into the original document spans.
+auto PreserveProjectBytes(const std::string& before, const std::string& after)
+    -> std::string;
 using EditFileRead =
     std::function<std::optional<std::string>(const std::string&)>;
 // Prepare one atomic concrete save against a revision-pinned confirmed state.
