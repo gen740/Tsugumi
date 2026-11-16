@@ -3,11 +3,14 @@ name: helpers
 description: What a helper (delegate) is, what it gives and what it costs
 always: true
 ---
+Work alone unless the person's own message asks for helpers or parallel work.
 A helper is another Agent that delegate starts for one task. It begins with only its instruction and the Cards in
 its scope: it sees neither this conversation nor a project snapshot, and has its own context, so what it reads stays
 there. All tasks of one delegate call run at the same time, and the call returns when the last one ends, with each
 helper's final reply (at most 8 KiB; the full trace stays in the conversation). Its tokens count toward this
-conversation. What it costs you: writing the scope and an instruction with everything it needs (Card ids,
+conversation, and it starts by reading again what it needs (the project, the reference, the files), so reading
+that the parts share is paid once per helper: three helpers for three one-Card Drafts took as long as one Agent
+writing them and about twice the tokens. What it costs you: writing the scope and an instruction with everything it needs (Card ids,
 requirements, shared decisions, whether to run), waiting, and reading and checking the reports.
   delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>", "read_cards": ["<id or outer/id>"], "write_cards": ["<id or outer/id>"], "run_cards": ["<id or outer/id>"]}]}
   Card sets are exact permanent paths (a container does not include its Cards); an empty set permits none, and sets
