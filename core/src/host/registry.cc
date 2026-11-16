@@ -4,11 +4,22 @@
 
 #include "host/failure.hh"
 #include "host/projects.hh"
+#include "util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
 auto Text(const flatbuffers::String* value) -> std::string {
   return value ? value->str() : "";
+}
+auto ValidateIdentity(const std::string& project,
+                      const std::filesystem::path& path) -> void {
+  const auto identity = fs::read_file(path / ".tsugumi/project-id");
+  if (!identity || *identity != project)
+    throw Failure(
+        "stale_project",
+        "This folder's project identity changed or was removed. Close and "
+        "reopen this project to register its current identity. Conversation "
+        "records have not been deleted.");
 }
 }  // namespace
 ProjectRegistry::ProjectRegistry(StateGate& g, sql::Db& database,
@@ -30,9 +41,11 @@ auto ProjectRegistry::ValidateLocation(const std::string& project,
       std::filesystem::canonical(old.text(0)) != path)
     throw Failure("conflict",
                   "This project identity is registered in another folder");
+  ValidateIdentity(project, path);
 }
 auto ProjectRegistry::Lookup(const std::string& id)
     -> ProjectRegistry::Project {
+  Location(id);
   auto q = db.prepare("SELECT endpoint,token FROM projects WHERE id=?");
   q.bind(1, id);
   if (!q.step())
@@ -45,7 +58,11 @@ auto ProjectRegistry::Location(const std::string& project)
   auto q = db.prepare("SELECT path FROM project_paths WHERE id=?");
   q.bind(1, project);
   if (!q.step()) return std::nullopt;
-  return std::filesystem::path(q.text(0));
+  const std::filesystem::path path(q.text(0));
+  // Offline folders remain registered; a readable folder with a different
+  // identity is stale and must never route RPC or conversation writes.
+  if (std::filesystem::is_directory(path)) ValidateIdentity(project, path);
+  return path;
 }
 auto ProjectRegistry::Locations() -> std::vector<std::string> {
   std::vector<std::string> result;
@@ -64,6 +81,35 @@ auto ProjectRegistry::Root(const std::string& project)
   return path.text(0);
 }
 
+// The current registration owns this canonical folder. Superseding registry
+// metadata never deletes project files or conversation records.
+auto ProjectRegistry::ReplacePath(const std::string& project,
+                                  const std::filesystem::path& folder) -> void {
+  const auto path = std::filesystem::canonical(folder);
+  std::vector<std::string> replaced;
+  auto old = db.prepare("SELECT id,path FROM project_paths WHERE id<>?");
+  old.bind(1, project);
+  while (old.step()) {
+    std::error_code error;
+    const auto previous = std::filesystem::weakly_canonical(old.text(1), error);
+    if (!error && previous == path) replaced.push_back(old.text(0));
+  }
+  for (const auto& id : replaced) {
+    for (const auto* table : {"projects", "project_paths"}) {
+      auto remove =
+          db.prepare(std::string("DELETE FROM ") + table + " WHERE id=?");
+      remove.bind(1, id).run();
+    }
+    for (const auto* table :
+         {"environment_projects", "project_attached_roots"}) {
+      auto remove =
+          db.prepare(std::string("DELETE FROM ") + table + " WHERE project=?");
+      remove.bind(1, id).run();
+    }
+  }
+  auto insert = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
+  insert.bind(1, project).bind(2, path.string()).run();
+}
 auto ProjectRegistry::RegisterProject(
     const Tsugumi::Host::RegisterProjectRequest& request) -> void {
   const auto endpoint = request.endpoint()->str();
@@ -84,12 +130,7 @@ auto ProjectRegistry::RegisterProject(
       .bind(4, Text(request.title()))
       .run();
   if (request.path() && !request.path()->str().empty()) {
-    auto path = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
-    path.bind(1, request.project_id()->str())
-        .bind(2, std::filesystem::path(request.path()->str())
-                     .lexically_normal()
-                     .string())
-        .run();
+    ReplacePath(request.project_id()->str(), request.path()->str());
   }
   transaction.commit();
 }
@@ -143,8 +184,7 @@ auto ProjectRegistry::RegisterReady(
       .bind(3, state.token)
       .bind(4, host::ProjectDisplayName(state.project))
       .run();
-  auto path = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
-  path.bind(1, state.project_id).bind(2, state.project).run();
+  ReplacePath(state.project_id, state.project);
   auto clear = db.prepare("DELETE FROM project_attached_roots WHERE project=?");
   clear.bind(1, state.project_id).run();
   for (const auto& root : state.attached_roots) {

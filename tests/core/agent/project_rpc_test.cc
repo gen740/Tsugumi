@@ -921,7 +921,7 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   ASSERT_EQ(pending.Code(), "grant_required");
   // Another registered project, with an identical title, is still distinct.
   const auto copy = directory.path / "copy-b";
-  std::filesystem::create_directories(copy);
+  Write(copy / ".tsugumi/project-id", "copy-b");
   const auto registered =
       Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder &b) {
         return H::CreateRegisterProjectRequest(

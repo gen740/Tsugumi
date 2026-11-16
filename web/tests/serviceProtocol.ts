@@ -25,6 +25,8 @@ import { SequencedEventT } from '../src/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../src/gen/tsugumi/agent/event'
 import { FailureT } from '../src/gen/tsugumi/service/failure'
 import { Message as HostMessage } from '../src/gen/tsugumi/host/message'
+import { hostProjectErrorText } from '../server/hostProjects'
+import { setLanguage } from '../server/i18n'
 
 const high = (1n << 64n) - 2n
 const sent = Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ConversationSendRequest', {
@@ -332,3 +334,13 @@ const { ExecutionServicesT } = await import('../src/gen/tsugumi/host/execution-s
   assert.equal(state.services[0].heartbeatIntervalSeconds, 2)
   assert.equal(state.services[0].missedHeartbeats, 3)
 }
+
+// A project's conversation failure keeps a recovery action in both languages.
+for (const language of ['ja', 'en'] as const) {
+  setLanguage(language)
+  const text = hostProjectErrorText('conversation_identity_mismatch')
+  assert.ok(text.includes('agent.sqlite') && text.includes('.tsugumi'))
+  assert.notEqual(text, hostProjectErrorText('unknown'))
+  assert.notEqual(hostProjectErrorText('stale_project'), hostProjectErrorText('unknown'))
+}
+setLanguage('ja')

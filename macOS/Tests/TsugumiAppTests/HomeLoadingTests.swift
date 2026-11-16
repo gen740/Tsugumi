@@ -70,3 +70,13 @@ import Testing
   #expect(model.demosError == message)
   #expect(model.error == message)
 }
+
+@Test func conversationIdentityFailureExplainsHowToPreserveHistory() {
+  let failure = CoreHostFailure(code: "conversation_identity_mismatch", message: "internal diagnostic", requestID: nil)
+  #expect(failure.description.contains(".tsugumi"))
+  #expect(failure.description.contains("agent.sqlite"))
+  #expect(failure.errorDescription == failure.description)
+  #expect(!failure.description.contains("internal diagnostic"))
+  let stale = CoreHostFailure(code: "stale_project", message: "internal diagnostic", requestID: nil)
+  #expect(!stale.description.contains("internal diagnostic"))
+}

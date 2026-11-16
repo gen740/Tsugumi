@@ -109,6 +109,7 @@ auto main(int argc, char** argv) -> int {
   Daemon daemon;
   daemon.project =
       tsugumi::crypto::sha256_hex(std::filesystem::canonical(project).string());
+  fs::write_atomic(project / ".tsugumi/project-id", daemon.project, 0600);
   tsugumi::ServerOptions options;
   options.unix_path = unix_socket;
   options.tcp_host = "127.0.0.1";
