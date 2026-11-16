@@ -119,7 +119,7 @@ public final class ConsoleLog: @unchecked Sendable {
 public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   /// Steps of starting the VM; the guest reports the later ones on the console.
   public enum Stage: String, Sendable, CaseIterable {
-    case image, disk, boot, store, nix, network, system, supervisor, ready
+    case image, disk, boot, store, nix, network, checkingStore, checkingStoreUpgrade, system, supervisor, ready
   }
 
   public enum State: Sendable, Equatable {
@@ -136,6 +136,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   public let console = ConsoleLog()
   private let queue = DispatchQueue(label: "app.tsugumi.vm")
   private let lock = NSLock()
+  private let shutdownController = VMShutdown()
+  private var stopping = false
+  private var ending = false
+  private var bootGeneration: UInt64 = 0
   private var vm: VZVirtualMachine?
   public static let slotCount = 16
   private var fileSystems: [VZVirtioFileSystemDevice] = []
@@ -213,9 +217,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   /// disk) and returns once tsugumi-vmd is ready. Concurrent callers wait
   /// for the same start.
   public func start(image: VMImage, resources: VMResources) async throws {
-    let begin: Bool = {
+    let begin: Bool = try {
       lock.lock()
       defer { lock.unlock() }
+      guard !stopping, !ending else { throw LauncherError.notReady("the VM is shutting down") }
       switch _state {
       case .running, .starting: return false
       default:
@@ -229,8 +234,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       return
     }
     // A VM of a failed start may still be going down: never two on the same disks.
-    if queue.sync(execute: { self.vm != nil }) { await forceStop() }
-    lock.withLock { _state = .starting(.image) }
+    if queue.sync(execute: { self.vm != nil }) { await shutdown() }
+    lock.withLock { stopping = false }
+    let generation = lock.withLock { bootGeneration += 1; _state = .starting(.image); return bootGeneration }
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       // One VM per support folder: a second app instance does not get it (and
@@ -250,10 +256,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       lock.withLock { _bootCount += 1 }
       console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version)), x86_64-linux: \(X86Emulation.chosen.rawValue)")
       let config = try configuration(files: files, resources: resources)
-      try await boot(config)
+      try await boot(config, generation: generation)
     } catch {
       console.note("start failed: \(error)")
-      await forceStop()
+      await shutdown()
       setState(.failed("\(error)"))
       throw error
     }
@@ -272,7 +278,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     } catch {
       // A failed start leaves no VM behind (a retry starts one afresh).
       let state = self.state
-      await forceStop()
+      await shutdown()
       if case .failed = state { setState(state) }
       throw error
     }
@@ -478,14 +484,21 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     }
   }
 
-  private func boot(_ config: VZVirtualMachineConfiguration) async throws {
+  private func boot(_ config: VZVirtualMachineConfiguration, generation: UInt64) async throws {
     let handed = OnVMQueue(config)
     try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
       queue.async {
+        self.lock.lock()
+        guard !self.stopping, !self.ending, self.bootGeneration == generation else {
+          self.lock.unlock()
+          c.resume(throwing: LauncherError.notReady("the VM is shutting down"))
+          return
+        }
         let vm = VZVirtualMachine(configuration: handed.value, queue: self.queue)
         vm.delegate = self
         self.vm = vm
-        self.lock.withLock { self.current = ObjectIdentifier(vm) }
+        self.current = ObjectIdentifier(vm)
+        self.lock.unlock()
         self.fileSystems = vm.directorySharingDevices.compactMap { $0 as? VZVirtioFileSystemDevice }
         self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
         if let socket = self.socket { self.executionBroker.install(on: socket) }
@@ -503,19 +516,25 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   /// Stops every project (tsugumid records interrupted runs) and powers the
   /// VM off; forced after `timeout`.
-  public func shutdown(timeout: TimeInterval = 40) async {
-    guard case .running = state else {
+  public func shutdown(timeout: TimeInterval = 40, signal: Bool = false, exiting: Bool = false) async {
+    lock.withLock { stopping = true; ending = ending || exiting; bootGeneration += 1 }
+    await shutdownController.stop(signal: signal, timeout: .seconds(timeout), graceful: { [self] in
+      guard queue.sync(execute: { self.vm != nil }) else { return }
+      console.note("shutting down; waiting for guest sync and poweroff")
+      // During boot vmd may not be listening yet. Keep trying within the same
+      // deadline instead of cutting power to an initializing store.
+      var requested = false
+      while !Task.isCancelled {
+        if case .stopped = state { return }
+        if !requested { requested = (try? await request("shutdown", timeout: 1)) != nil }
+        do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+      }
+    }, force: { [self] in
+      console.note("forcing the VM off; the next boot will check the store")
       await forceStop()
-      return
-    }
-    console.note("shutting down")
-    _ = try? await request("shutdown", timeout: 5)
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-      if case .stopped = state { return }
-      try? await Task.sleep(for: .milliseconds(100))
-    }
-    await forceStop()
+    })
+    // A stopped instance may be started again by a later explicit request.
+    lock.withLock { stopping = false }
   }
 
   private func forceStop() async {

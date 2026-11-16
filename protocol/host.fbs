@@ -75,7 +75,7 @@ table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
 table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }

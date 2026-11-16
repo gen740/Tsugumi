@@ -154,11 +154,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @MainActor private(set) var signInTerminationTask: Task<Void, Never>?
   @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
   @MainActor private var waitingForSignIn = false
+  @MainActor private var updateRuntimeStopped = false
+  @MainActor private var stoppingUpdateRuntime = false
 
   /// Settle unsaved edits; the resident host owns ongoing project execution.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if !editsSettled, let reply = MainActor.assumeIsolated({ settleEdits(sender) }) { return reply }
     return MainActor.assumeIsolated {
+      if Updater.shared.hasStagedUpdate && !updateRuntimeStopped && !ChatGPTSignInModel.hasPendingSignIns {
+        if !stoppingUpdateRuntime {
+          stoppingUpdateRuntime = true
+          Task { @MainActor in
+            await AppModel.shared.environments.shutdownForUpdate()
+            updateRuntimeStopped = true
+            stoppingUpdateRuntime = false
+            NSApp.terminate(nil)
+          }
+        }
+        return .terminateCancel
+      }
       if waitingForSignIn { return .terminateLater }
       guard ChatGPTSignInModel.hasPendingSignIns else { return .terminateNow }
       waitingForSignIn = true
@@ -180,7 +194,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @MainActor private func finishSignInTermination() {
     guard waitingForSignIn else { return }
     waitingForSignIn = false
-    terminationReply(true)
+    if Updater.shared.hasStagedUpdate && !updateRuntimeStopped {
+      Task { @MainActor in
+        await AppModel.shared.environments.shutdownForUpdate()
+        updateRuntimeStopped = true
+        terminationReply(true)
+      }
+    } else {
+      terminationReply(true)
+    }
   }
 
   /// Asks about unsaved edits; nil when there are none (the quit goes on).
@@ -236,7 +258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  /// The VM is off by now: a downloaded update takes the app's place.
+  /// The UI exits; the resident host finishes work and shuts down when idle.
+  /// A downloaded update takes the app's place after orderly runtime shutdown.
   func applicationWillTerminate(_ notification: Notification) {
     MainActor.assumeIsolated { Updater.shared.installIfReady() }
   }

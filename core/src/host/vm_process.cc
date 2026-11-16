@@ -132,6 +132,18 @@ class VMProcess final : public EnvironmentProcess {
   ~VMProcess() override { Shutdown(); }
   auto Shutdown() -> void override {
     if (stopping_.exchange(true)) return;
+    // Do not launch a helper merely to stop it. Its own deadline bounds the
+    // guest shutdown, even when earlier requests have become stuck.
+    if (Socket socket{TryConnect()}; socket.fd >= 0) {
+      timeval timeout{42, 0};
+      ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+      try {
+        H::HostRuntimeRequestT stop;
+        stop.action = H::RuntimeAction::Shutdown;
+        Send(socket.fd, stop);
+        Read(socket.fd);
+      } catch (...) {}
+    }
     watcher_.request_stop();
     {
       std::lock_guard lock(watch_mutex_);
@@ -221,7 +233,8 @@ class VMProcess final : public EnvironmentProcess {
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
     if (request.action == H::RuntimeAction::CleanupStore ||
-        request.action == H::RuntimeAction::Histories) {
+        request.action == H::RuntimeAction::Histories ||
+        request.action == H::RuntimeAction::VerifyStore) {
       V::BootT boot;
       boot.broker_endpoint = options_.broker_endpoint;
       Call(std::move(boot));

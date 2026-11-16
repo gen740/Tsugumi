@@ -12,7 +12,7 @@ FBS = ROOT / "protocol" / "tsugumi.fbs"
 OUT = ROOT / "docs" / "Protocol.md"
 
 GROUPS = [
-    ("Connection", ["SessionHello"]),
+    ("Connection", ["SessionHello", "IdleShutdown"]),
     ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),

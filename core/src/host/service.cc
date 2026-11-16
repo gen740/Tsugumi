@@ -793,6 +793,22 @@ auto Service::Attach(Server* server, Server* host_server) -> void {
   state_->server = server;
   state_->events->host_server = host_server;
 }
+auto Service::CanDrain() -> bool {
+  {
+    std::lock_guard lock(state_->mutex);
+    if (!state_->events->principals.empty() || !state_->events->host_connections.empty() ||
+        !state_->turns->running.empty()) return false;
+  }
+  return state_->requests.idle() && state_->tool_requests.idle() &&
+         state_->wait_requests.idle() && state_->terminal_requests.idle();
+}
+auto Service::Idle() -> bool {
+  return CanDrain() && (!state_->environments || state_->environments->Idle());
+}
+auto Service::DrainIdle() -> void {
+  if (CanDrain() && state_->environments) state_->environments->DrainIdle();
+}
+
 auto Service::Shutdown() -> void {
   if (!state_) return;
   std::vector<std::shared_ptr<std::jthread>> jobs;

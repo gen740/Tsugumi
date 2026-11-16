@@ -237,6 +237,8 @@ final class Updater {
     terminate()
   }
 
+  var hasStagedUpdate: Bool { staged != nil }
+
   func cancelRelaunch() { relaunch = false }
 
   /// From applicationWillTerminate: the downloaded version takes the app's

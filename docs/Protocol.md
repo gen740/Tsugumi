@@ -13,13 +13,14 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 47 requests.
+There are 48 requests.
 
 ## Connection
 
 | Request | Response | Description |
 | --- | --- | --- |
 | [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. `protocol` is the newest version the client speaks and `min_protocol` the oldest (default: protocol); the server answers with the newest version both speak (HelloResult.protocol), or protocol_mismatch. |
+| [`IdleShutdown`](#idleshutdown) | IdleShutdownResult | Atomically stop accepting connections if the caller is the only connection and no run or request is in progress. Flush the reply before exiting. A host chooses when to request this; busy leaves core running. |
 
 ### SessionHello
 
@@ -30,6 +31,10 @@ There are 47 requests.
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
+
+### IdleShutdown
+
+No fields.
 
 ## Projects and saving
 

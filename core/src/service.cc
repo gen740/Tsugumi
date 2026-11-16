@@ -509,7 +509,7 @@ void Service::export_now() {
 
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
-      "SessionHello", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "SessionHello", "IdleShutdown", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "InputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
@@ -613,6 +613,15 @@ void Service::dispatch(RequestIn req) {
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
   switch (req.request()->value_type()) {
+    case P::IdleShutdownRequest: {
+      auto result = [&](bool stopping) {
+        flatbuffers::FlatBufferBuilder b;
+        auto value = R::CreateIdleShutdownResult(b, stopping);
+        return wire::reply(b, req.request_id, R::ReplyPayload::IdleShutdownResult, value.Union());
+      };
+      server_->stop_if_idle(req.conn, result(true), result(false));
+      return;
+    }
     case P::ProjectHostRequirementsRequest: return on_lane(r, std::move(req), &Service::project_host_requirements);
     case P::ProjectOpenRequest: return on_lane(m, std::move(req), &Service::open_project);
     case P::CardIdRequest: return on_lane(m, std::move(req), &Service::card_id);
@@ -813,6 +822,11 @@ std::optional<Service::ViewRecord> Service::load_view(const std::string& view_id
   for (const auto& [id, entry] : file.views->entries())
     if (id == view_id) return ViewRecord{*entry.rev, *entry.view};
   return std::nullopt;
+}
+
+auto Service::idle() -> bool {
+  return mutation_lane_->idle() && read_pool_->idle() && shell_lane_->idle() &&
+         !scheduler_->active_status().has_value();
 }
 
 RunStatusData Service::current_run_status() {

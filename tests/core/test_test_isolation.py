@@ -181,3 +181,23 @@ def test_web_environment_ownership_requires_the_exact_marker(tmp_path, monkeypat
         stdout=f'node server.js TSUGUMI_TEST_RUN_ROOT={tmp_path} OTHER=private'))
     assert runner.marked_service_process(42, tmp_path)
     assert not runner.marked_service_process(42, tmp_path / 'other')
+
+
+def test_vm_cleanup_sends_term_once_and_waits_for_guest_deadline(tmp_path, monkeypatch):
+    now = [0.0]
+    sent = []
+    grouped = []
+    monkeypatch.setattr(runner, 'processes', lambda: {1234: f'tsugumi-vmhost --support {tmp_path}/support'})
+    monkeypatch.setattr(runner.os, 'kill', lambda pid, sig: sent.append((pid, sig, now[0])))
+    monkeypatch.setattr(runner.os, 'killpg', lambda pid, sig: grouped.append((pid, sig)))
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: now[0])
+    def advance(seconds):
+        now[0] += seconds
+        # Simulate the VM finishing its guest sync after 40 seconds.
+        if now[0] >= 40:
+            monkeypatch.setattr(runner, 'processes', dict)
+    monkeypatch.setattr(runner.time, 'sleep', advance)
+    runner.stop_services(tmp_path, 1234)
+    assert sent == [(1234, signal.SIGTERM, 0.0)]
+    assert grouped == []
+    assert now[0] >= 40

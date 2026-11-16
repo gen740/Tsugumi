@@ -1454,5 +1454,12 @@
  "ワーカーの条件式": "Worker condition",
  "x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。": "x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.",
  "条件から自動選択": "Select by condition",
- "ファイル転送: {0} ({1}/{2} bytes)": "Transferring: {0} ({1}/{2} bytes)"
+ "ファイル転送: {0} ({1}/{2} bytes)": "Transferring: {0} ({1}/{2} bytes)",
+ "前回の VM が正常に停止しなかったため、Nix store を検査・修復しています": "Checking and repairing the Nix store after an unclean VM stop",
+ "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）": "Checking and repairing Nix store contents (first boot and after a VM image update)",
+ "共有 store を検査・修復…": "Check and repair shared store…",
+ "共有 Nix store を検査・修復しますか？": "Check and repair the shared Nix store?",
+ "検査・修復": "Check and repair",
+ "すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。": "Stops all project environments, checks store contents and repairs them from caches. Results and affected paths stay in the VM log.",
+ "Nix store の検査・修復が完了しました。": "Nix store checking and repair completed."
 }

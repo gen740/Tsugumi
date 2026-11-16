@@ -11,6 +11,8 @@ const STAGES: Record<string, string> = {
   'creating the Nix store disk': L('Nix store の保存領域を作っています'),
   'booting the VM': L('VM を起動しています'),
   'mounting the Nix store disk': L('Nix store の保存領域を開いています（初回は初期化）'),
+  'checking the Nix store after an unclean stop': L('前回の VM が正常に停止しなかったため、Nix store を検査・修復しています'),
+  'checking the Nix store contents': L('Nix store の内容を検査・修復しています（初回と VM イメージの更新後）'),
   'starting the Nix daemon': L('Nix を準備しています'),
   'configuring the network': L('ネットワークを設定しています'),
   'building Tsugumi in the VM': L('VM の中で Tsugumi を組み立てています（初回と更新後のみ。数分かかることがあります）'),
