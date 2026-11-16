@@ -53,7 +53,6 @@ struct Environments::Impl {
     std::vector<std::string> origins;
     int64_t pid = 0;
     bool child = false;
-    bool idle_stopping = false;
     std::vector<std::string> secrets;
   };
   EnvironmentOptions options;
@@ -276,8 +275,8 @@ struct Environments::Impl {
     const auto status = options.process->Poll(entry.pid, entry.child);
     if (!status) return false;
     if (entry.state.phase == H::EnvironmentPhase::Ready &&
-        (entry.idle_stopping || (*status >= 0 && ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
-         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM))))) {
+        (*status >= 0 && ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
+         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM)))) {
       Revoke(entry);
       ClearEndpoint(entry);
       entry.state.phase = H::EnvironmentPhase::Stopped;
@@ -289,7 +288,6 @@ struct Environments::Impl {
     }
     entry.pid = 0;
     entry.child = false;
-    entry.idle_stopping = false;
     return true;
   }
   auto ReadReady(Entry& entry) -> bool {
@@ -433,7 +431,6 @@ struct Environments::Impl {
       options.prepare_project_identity(entry.state.project);
     options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
-    entry.idle_stopping = false;
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
@@ -578,7 +575,6 @@ struct Environments::Impl {
     }
     entry.pid = 0;
     entry.child = false;
-    entry.idle_stopping = false;
     std::filesystem::remove(entry.state.ready_file);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Stopped;
@@ -598,7 +594,7 @@ Environments::Environments(EnvironmentOptions options,
                                    std::move(changed), std::move(progress))) {}
 Environments::~Environments() = default;
 auto Environments::Shutdown() -> void { impl_->Shutdown(); }
-auto Environments::DrainIdle() -> void {
+auto Environments::Busy() -> bool {
   std::vector<std::shared_ptr<Impl::Entry>> snapshot;
   {
     std::lock_guard lock(impl_->mutex);
@@ -606,17 +602,11 @@ auto Environments::DrainIdle() -> void {
   }
   for (const auto& entry : snapshot) {
     std::unique_lock lock(entry->mutex, std::try_to_lock);
-    if (!lock || entry->starting || !entry->pid || entry->idle_stopping) continue;
-    try { entry->idle_stopping = impl_->options.process->StopIfIdle(entry->state); } catch (const std::exception&) {}
+    if (!lock || entry->starting) return true;
+    if (entry->pid && !impl_->CheckDeath(*entry) &&
+        impl_->options.process->Busy(entry->state)) return true;
   }
-}
-auto Environments::Idle() -> bool {
-  std::lock_guard lock(impl_->mutex);
-  for (const auto& [_, entry] : impl_->entries) {
-    std::unique_lock entry_lock(entry->mutex, std::try_to_lock);
-    if (!entry_lock || entry->starting || entry->pid) return false;
-  }
-  return true;
+  return false;
 }
 auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
@@ -677,7 +667,6 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
       std::lock_guard entry_lock(entry->mutex);
       entry->pid = 0;
       entry->child = false;
-      entry->idle_stopping = false;
       impl_->ClearEndpoint(*entry);
       entry->state.phase = H::EnvironmentPhase::Stopped;
       impl_->Notify(*entry);

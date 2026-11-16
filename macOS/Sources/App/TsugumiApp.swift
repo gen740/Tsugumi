@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TsugumiLauncher
 
 @main
 struct TsugumiApp: App {
@@ -146,69 +147,61 @@ struct OpenConsoleButton: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  /// Unsaved edits were saved (or the user chose to drop them) for this quit.
-  private var editsSettled = false
-
+  @MainActor private let termination = AppTermination()
+  @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
   @MainActor var signInTerminationTimeout: Duration = .seconds(3)
   @MainActor var signInTerminationWait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
   @MainActor private(set) var signInTerminationTask: Task<Void, Never>?
-  @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
-  @MainActor private var waitingForSignIn = false
-  @MainActor private var updateRuntimeStopped = false
-  @MainActor private var stoppingUpdateRuntime = false
+  @MainActor var activityBeforeQuit: () async throws -> Bool = { try await AppModel.shared.environments.activityBeforeQuit() }
+  @MainActor var localActivityBeforeQuit: () -> Bool = {
+    AppModel.shared.sessions.values.contains { $0.runActive || $0.saving || $0.draftFinishTask != nil }
+      || AppModel.shared.openChats.contains { $0.busy }
+  }
+  @MainActor var stopRuntime: () async -> Void = {
+    if Updater.shared.hasStagedUpdate {
+      await AppModel.shared.environments.shutdownForUpdate()
+    } else {
+      await AppModel.shared.environments.shutdownForQuit()
+    }
+  }
 
-  /// Settle unsaved edits; the resident host owns ongoing project execution.
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    MainActor.assumeIsolated { AppPreferences.shared.quitAfterLastWindowClosed }
+  }
+
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    if !editsSettled, let reply = MainActor.assumeIsolated({ settleEdits(sender) }) { return reply }
-    return MainActor.assumeIsolated {
-      if Updater.shared.hasStagedUpdate && !updateRuntimeStopped && !ChatGPTSignInModel.hasPendingSignIns {
-        if !stoppingUpdateRuntime {
-          stoppingUpdateRuntime = true
-          Task { @MainActor in
-            await AppModel.shared.environments.shutdownForUpdate()
-            updateRuntimeStopped = true
-            stoppingUpdateRuntime = false
-            NSApp.terminate(nil)
+    MainActor.assumeIsolated {
+      termination.begin(
+        activity: activityBeforeQuit,
+        localActivity: localActivityBeforeQuit,
+        confirm: {
+          let alert = NSAlert()
+          alert.messageText = String(localized: "進行中の処理を停止して Tsugumi を終了しますか？")
+          alert.informativeText = String(localized: "ほかのクライアントの処理も含め、実行・Agent・保存中の処理を停止し、実行環境を終了します。保存されていない変更は失われることがあります。")
+          alert.addButton(withTitle: String(localized: "終了して停止"))
+          alert.addButton(withTitle: String(localized: "キャンセル"))
+          return alert.runModal() == .alertFirstButtonReturn
+        },
+        settleEdits: { await self.settleEdits() },
+        stop: {
+          self.signInTerminationTask = Task { await ChatGPTSignInModel.cancelPendingSignIns() }
+          _ = await AppTermination.briefly(timeout: self.signInTerminationTimeout, wait: self.signInTerminationWait) {
+            await self.signInTerminationTask?.value
           }
-        }
-        return .terminateCancel
-      }
-      if waitingForSignIn { return .terminateLater }
-      guard ChatGPTSignInModel.hasPendingSignIns else { return .terminateNow }
-      waitingForSignIn = true
-      // Unstructured tasks let the deadline bound quit even if the service is
-      // unresponsive; a task group would wait for the blocked RPC on scope exit.
-      let deadline = Task {
-        try? await signInTerminationWait(signInTerminationTimeout)
-        if !Task.isCancelled { finishSignInTermination() }
-      }
-      signInTerminationTask = Task {
-        await ChatGPTSignInModel.cancelPendingSignIns()
-        deadline.cancel()
-        finishSignInTermination()
-      }
+          await self.stopRuntime()
+        },
+        reply: { allowed in
+          if !allowed { Updater.shared.cancelRelaunch() }
+          self.terminationReply(allowed)
+        })
       return .terminateLater
     }
   }
 
-  @MainActor private func finishSignInTermination() {
-    guard waitingForSignIn else { return }
-    waitingForSignIn = false
-    if Updater.shared.hasStagedUpdate && !updateRuntimeStopped {
-      Task { @MainActor in
-        await AppModel.shared.environments.shutdownForUpdate()
-        updateRuntimeStopped = true
-        terminationReply(true)
-      }
-    } else {
-      terminationReply(true)
-    }
-  }
-
-  /// Asks about unsaved edits; nil when there are none (the quit goes on).
-  @MainActor private func settleEdits(_ sender: NSApplication) -> NSApplication.TerminateReply? {
+  /// Keep the ordinary unsaved-editor choice when no operation is in flight.
+  @MainActor private func settleEdits() async -> Bool {
     let dirty = AppModel.shared.sessions.values.filter(\.hasUnsavedEdits)
-    if dirty.isEmpty { return nil }
+    if dirty.isEmpty { return true }
     let alert = NSAlert()
     alert.messageText = String(localized: "保存されていない変更があります")
     alert.informativeText = dirty.map { $0.scopeName([]) }.sorted().joined(separator: "、")
@@ -217,26 +210,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     alert.addButton(withTitle: String(localized: "保存せずに終了"))
     switch alert.runModal() {
     case .alertFirstButtonReturn:
-      Task { @MainActor in
-        for s in dirty { _ = await s.finishDraftEdit(); await s.save() }
-        if let failed = dirty.first(where: \.hasUnsavedEdits) {
-          let a = NSAlert()
-          a.messageText = String(localized: "保存できなかったため終了しませんでした")
-          a.informativeText = "\(failed.scopeName([])): \(failed.saveError ?? "")"
-          a.runModal()
-          Updater.shared.cancelRelaunch()
-          return
-        }
-        self.editsSettled = true
-        NSApp.terminate(nil)
+      for s in dirty { _ = await s.finishDraftEdit(); await s.save() }
+      if let failed = dirty.first(where: \.hasUnsavedEdits) {
+        let a = NSAlert()
+        a.messageText = String(localized: "保存できなかったため終了しませんでした")
+        a.informativeText = "\(failed.scopeName([])): \(failed.saveError ?? "")"
+        a.runModal()
+        return false
       }
-      return .terminateCancel
-    case .alertThirdButtonReturn:
-      editsSettled = true
-      return nil
-    default:
-      Updater.shared.cancelRelaunch()
-      return .terminateCancel
+      return true
+    case .alertThirdButtonReturn: return true
+    default: return false
     }
   }
 
@@ -258,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  /// The UI exits; the resident host finishes work and shuts down when idle.
+  /// The host has been asked to stop before AppKit completes termination.
   /// A downloaded update takes the app's place after orderly runtime shutdown.
   func applicationWillTerminate(_ notification: Notification) {
     MainActor.assumeIsolated { Updater.shared.installIfReady() }

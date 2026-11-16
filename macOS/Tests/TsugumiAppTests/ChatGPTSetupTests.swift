@@ -141,6 +141,9 @@ import Testing
     // onDisappear may already have cancelled the task when Quit is handled.
     pending.cancel()
     let delegate = AppDelegate()
+    delegate.activityBeforeQuit = { false }
+    delegate.localActivityBeforeQuit = { false }
+    delegate.stopRuntime = {}
     let replies = Counter()
     delegate.terminationReply = { allowed in #expect(allowed); replies.value += 1 }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
@@ -168,6 +171,9 @@ import Testing
     let pending = try #require(model.signingIn)
     try await until { host.browserOpens == 1 }
     let delegate = AppDelegate()
+    delegate.activityBeforeQuit = { false }
+    delegate.localActivityBeforeQuit = { false }
+    delegate.stopRuntime = {}
     let deadline = AsyncStream<Void>.makeStream()
     delegate.signInTerminationWait = { _ in
       for await _ in deadline.stream { return }

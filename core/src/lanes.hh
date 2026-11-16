@@ -25,6 +25,7 @@ class Lane {
   void stop();
   size_t queued() const;
   auto idle() const -> bool;
+  auto pending() const -> size_t;
 
  private:
   struct Item {

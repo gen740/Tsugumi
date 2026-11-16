@@ -12,11 +12,28 @@ INT and HUP; loss of hostd's Watch connection also shuts down vmhost. They are
 resident services, independent of the spawning UI's parent PID. An app update
 ends hostd before replacing the app. Existing read observers do reconnect across
 host restarts, so an exiting client process also blocks further host connections
-and launches during that update. Ordinary UI quit leaves ongoing work until
-it finishes. After 30 seconds without Host clients or Agent work, hostd requests
-an atomic `IdleShutdown` from each project core. The core accepts only with no
-other connections, active run or pending/running request. Once no environment
-is running and no client connects for 30 seconds, hostd and vmhost exit.
+and launches during that update.
+
+On the Mac, Quit requests the same orderly host shutdown even when other clients
+are connected. The app waits at most two seconds for host exit; hostd and vmhost
+finish their bounded shutdown independently. Before quitting, the app observes
+host Agent turns and queued/running requests, and asks each running project core
+about runs and requests (including saves from other connections). Ongoing work
+gets one Quit and Stop / Cancel alert; idle connections alone do not. A failed
+activity query also asks, because it cannot establish that other clients are idle.
+The observation is a snapshot: it does not reserve or transfer run ownership.
+General Settings can make closing the last window quit the app; the default is
+off, so closing all windows keeps the app and VM alive.
+
+If a Web UI is open when the Mac app quits, its existing reconnect starts the host again.
+That is treated as the Web UI using the host; reconnect behaviour is unchanged.
+
+There is no idle self-exit. Without the Mac app, the CLI/Web server starts or
+reuses the resident host on demand. Ending that client only disconnects; the
+host stays until explicitly stopped (TERM/INT/HUP, or the existing update path).
+A pending CLI/plug-in call loses its service connection when the Mac app quits;
+its run is stopped, not handed over. A later client request may start a host
+again. No new command-only lifetime manager is supplied.
 
 Vmhost gives the guest 40 seconds, then forces a stop; its second signal forces
 immediately. A 42-second process deadline also bounds a stuck framework callback.
@@ -63,7 +80,7 @@ Tsugumi source. `SharedVM.installImage` replaces the copied boot image when its
 `vm-version` changes, retaining `store.img` and `history.img`. The guest rebuilds
 vm-system from the bundled source hash. For a development session that still
 runs the **old** helper, use the existing runtime Shutdown (or vmctl `quit`)
-first; do not kill that old helper directly. Then end its idle host service and
+first; do not kill that old helper directly. Then end its host service and
 launch the rebuilt app in the background. The new image's missing health version
 forces the one-time check of the currently corrupt development store. No real
 VM was started or repaired as part of this implementation.
@@ -72,7 +89,9 @@ VM was started or repaired as part of this implementation.
 
 Without a VM: `tests/swift/vm_shutdown_test.swift` covers graceful coalescing,
 repeated signals, deadline forcing and restart; `tsugumi_vm_lifetime_tests`
-covers atomic idle stopping, another client, and queued versus running work;
+covers activity observation with another client and queued versus running work;
+`tests/swift/app_termination_test.swift` covers quit/cancel, idle quit, duplicate
+termination requests and bounded cancellation waits;
 `tests/python/test_vm_store_health.py` covers boot decisions, the actual
 poweroff path with a busy backing filesystem, failed remount/sync and repair failure;
 the focused cleanup test checks that teardown sends TERM only once and permits
@@ -80,9 +99,10 @@ the guest's deadline.
 
 On a disposable real VM, verify TERM/INT/HUP during startup and normal operation,
 Watch EOF after killing hostd, second-signal forcing, and the deadline with an
-unresponsive guest. Confirm normal UI quit preserves a running Card until it
-finishes, another client keeps the environment alive, and idle termination is
-followed by a successful reconnect. Exercise an app update. Check the history/overlay
+unresponsive guest. Confirm Quit asks about a running Card, an Agent turn and a save (also from
+another client); Cancel keeps them alive and Quit and Stop ends hostd and the VM.
+Confirm idle Quit asks nothing, both last-window settings work, and a later
+explicit client request can start a host again. Exercise an app update. Check the history/overlay
 read-only remounts and backing store sync, and that a normal reboot skips checking.
 Force an unclean stop and confirm checking precedes project readiness. Corrupt
 a disposable cached path, observe successful repair and an unavailable repair,

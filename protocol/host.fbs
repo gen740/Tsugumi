@@ -76,6 +76,11 @@ table EnvironmentStopped { state:EnvironmentState (required); }
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
 enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
+// Snapshot for the app's quit confirmation, including work from other clients.
+// Connections alone are not work. This neither stops nor transfers any work.
+/// -> HostActivity. Agent turns, host requests and project-core activity.
+table HostActivityRequest {}
+table HostActivity { busy:bool; }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
 table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
@@ -502,7 +507,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -514,7 +519,7 @@ union ReplyPayload {
   LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
-  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes
+  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

@@ -29,10 +29,6 @@ class Service final : public RequestSink {
   ~Service() override;
   auto Attach(Server* server, Server* host_server) -> void;
   auto Shutdown() -> void;
-  auto Idle() -> bool;
-  auto DrainIdle() -> void;
-  auto CanDrain() -> bool;
-  auto idle() -> bool override { return Idle(); }
   auto hello(const RequestIn& request) -> std::pair<std::string, bool> override;
   auto dispatch(RequestIn request) -> void override;
   auto disconnected(ConnId connection) -> void override;

@@ -20,7 +20,7 @@ There are 48 requests.
 | Request | Response | Description |
 | --- | --- | --- |
 | [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. `protocol` is the newest version the client speaks and `min_protocol` the oldest (default: protocol); the server answers with the newest version both speak (HelloResult.protocol), or protocol_mismatch. |
-| [`IdleShutdown`](#idleshutdown) | IdleShutdownResult | Atomically stop accepting connections if the caller is the only connection and no run or request is in progress. Flush the reply before exiting. A host chooses when to request this; busy leaves core running. |
+| [`ProjectActivity`](#projectactivity) | ProjectActivity | Observe active runs and queued/running requests, across all connections. Does not stop work or restrict connections. |
 
 ### SessionHello
 
@@ -32,7 +32,7 @@ There are 48 requests.
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
 
-### IdleShutdown
+### ProjectActivity
 
 No fields.
 
@@ -609,5 +609,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
+| `HostActivityRequest` | None |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.

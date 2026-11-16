@@ -62,8 +62,23 @@ private final class HostProcessLifetime: @unchecked Sendable {
   static let shared = HostProcessLifetime()
   private let lock = NSLock()
   private var ending = false
+  private var starting: Set<Int32> = []
+  private var signalled: Set<Int32> = []
   var isEnding: Bool { lock.withLock { ending } }
-  func end() { lock.withLock { ending = true } }
+  func launched(_ pid: Int32) {
+    let stopping = lock.withLock { starting.insert(pid); return ending }
+    if stopping { requestStop(pid) }
+  }
+  func becameReady(_ pid: Int32) { _ = lock.withLock { starting.remove(pid) } }
+  func end() {
+    let pending = lock.withLock { ending = true; return starting }
+    for pid in pending { requestStop(pid) }
+  }
+  func requestStop(_ pid: Int32) {
+    // A second TERM forces hostd out. A launch completing during Quit must
+    // share the same single signal as stopResident, preserving guest shutdown.
+    if lock.withLock({ signalled.insert(pid).inserted }) { _ = kill(pid, SIGTERM) }
+  }
 }
 
 /// Binary Agent and Host connections share the project's C ABI byte transport.
@@ -118,20 +133,28 @@ public actor CoreHostClient {
     return built
   }
 
-  public func stopResident() async {
+  /// Observe the resident service without starting one just to quit it.
+  public func activityBeforeQuit() async throws -> Bool {
+    guard FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("host.ready").path) else { return false }
+    let activity: Tsugumi_Host_HostActivityT = try await layoutCall(
+      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), timeout: .seconds(3), existingOnly: true)
+    return activity.busy
+  }
+
+  public func stopResident(timeout: Duration = .seconds(47)) async {
     HostProcessLifetime.shared.end()
     let file = stateDirectory.appendingPathComponent("host.ready")
     guard let data = try? Data(contentsOf: file),
           let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let pid = value["pid"] as? Int32, pid > 1 else { return }
-    guard kill(pid, SIGTERM) == 0 else { return }
-    let deadline = ContinuousClock.now + .seconds(47)
+    HostProcessLifetime.shared.requestStop(pid)
+    let deadline = ContinuousClock.now + timeout
     while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
       try? await Task.sleep(for: .milliseconds(100))
     }
   }
 
-  private func ready() async throws -> [String: Any] {
+  private func ready(existingOnly: Bool = false) async throws -> [String: Any] {
     let state = stateDirectory
     let file = state.appendingPathComponent("host.ready")
     func read() -> [String: Any]? {
@@ -142,6 +165,7 @@ public actor CoreHostClient {
       return object
     }
     if let existing = read() { return existing }
+    if existingOnly { throw RPCError.disconnected }
     let socketRoot = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/private/tmp"
     let directory = URL(fileURLWithPath: socketRoot, isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -164,6 +188,8 @@ public actor CoreHostClient {
     daemon.standardError = handle
     daemon.standardInput = FileHandle.nullDevice
     try daemon.run()
+    HostProcessLifetime.shared.launched(daemon.processIdentifier)
+    defer { HostProcessLifetime.shared.becameReady(daemon.processIdentifier) }
     try handle.close()
     let value = try await HostReadiness.wait(read: read, exitStatus: {
       daemon.isRunning ? nil : daemon.terminationStatus
@@ -176,18 +202,23 @@ public actor CoreHostClient {
     return value
   }
 
-  private func connect() async throws {
+  private func connect(existingOnly: Bool = false) async throws {
     guard !HostProcessLifetime.shared.isEnding else { throw CancellationError() }
     if let opening { return try await opening.value }
     if !transports.isEmpty { return }
-    let task = Task { try await self.start() }
+    let task = Task { try await self.start(existingOnly: existingOnly) }
     opening = task
     do { try await task.value; opening = nil }
     catch { opening = nil; close(); throw error }
   }
 
-  private func start() async throws {
-    let ready = try await ready()
+  private func start(existingOnly: Bool = false) async throws {
+    let ready = try await ready(existingOnly: existingOnly)
+    // Quit may have started while the launched process was publishing readiness.
+    if HostProcessLifetime.shared.isEnding {
+      if let pid = ready["pid"] as? Int32, pid > 1 { HostProcessLifetime.shared.requestStop(pid) }
+      throw CancellationError()
+    }
     guard let agentSocket = ready["unix_socket"] as? String, let hostSocket = ready["host_socket"] as? String,
           let token = ready["user_token"] as? String else {
       throw CoreHostFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
@@ -254,8 +285,9 @@ public actor CoreHostClient {
   }
 
   /// Stateless presentation operations use the host contract, independently of a project socket.
-  public func layoutCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject) async throws -> T {
-    try await connect()
+  public func layoutCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject,
+                                          timeout: Duration = .seconds(120), existingOnly: Bool = false) async throws -> T {
+    try await connect(existingOnly: existingOnly)
     guard let transport = transports[true], nextID < UInt64.max else { throw RPCError.disconnected }
     nextID += 1
     let request = Tsugumi_Host_RequestT()
@@ -268,7 +300,7 @@ public actor CoreHostClient {
     let offset = Tsugumi_Host_Message.pack(&builder, obj: &object)
     Tsugumi_Host_Message.finish(&builder, end: offset)
     let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(builder.data, timeout: .seconds(120), continuation: continuation)
+      transport.call(builder.data, timeout: timeout, continuation: continuation)
     }
     var buffer = ByteBuffer(data: data)
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")

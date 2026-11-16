@@ -519,6 +519,15 @@ struct Service::State {
     const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
+    if (r->value_as_HostActivityRequest()) {
+      H::HostActivityT activity;
+      activity.busy = !turns->running.empty() || requests.pending() > 1 ||
+                      !tool_requests.idle() || !wait_requests.idle() ||
+                      !terminal_requests.idle();
+      lock.unlock();
+      if (!activity.busy && environments) activity.busy = environments->Busy();
+      return wire::HostReply(request.request_id, activity);
+    }
     if (const auto* format = r->value_as_FileFormatRequest()) {
       auto input = std::unique_ptr<H::FileFormatRequestT>(format->UnPack());
       lock.unlock();
@@ -729,22 +738,6 @@ auto Service::Attach(Server* server, Server* host_server) -> void {
   state_->server = server;
   state_->events->host_server = host_server;
 }
-auto Service::CanDrain() -> bool {
-  {
-    std::lock_guard lock(state_->mutex);
-    if (!state_->events->principals.empty() || !state_->events->host_connections.empty() ||
-        !state_->turns->running.empty()) return false;
-  }
-  return state_->requests.idle() && state_->tool_requests.idle() &&
-         state_->wait_requests.idle() && state_->terminal_requests.idle();
-}
-auto Service::Idle() -> bool {
-  return CanDrain() && (!state_->environments || state_->environments->Idle());
-}
-auto Service::DrainIdle() -> void {
-  if (CanDrain() && state_->environments) state_->environments->DrainIdle();
-}
-
 auto Service::Shutdown() -> void {
   if (!state_) return;
   std::vector<std::shared_ptr<std::jthread>> jobs;

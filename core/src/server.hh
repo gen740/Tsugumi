@@ -66,7 +66,6 @@ struct RequestIn {
 class RequestSink {
  public:
   virtual ~RequestSink() = default;
-  virtual auto idle() -> bool { return false; }
   // Called on the loop thread for SessionHello; must be quick. Returns reply bytes
   // and whether the connection is now authenticated.
   virtual std::pair<std::string, bool> hello(const RequestIn& req) = 0;
@@ -76,7 +75,6 @@ class RequestSink {
 };
 
 struct ServerOptions {
-  std::chrono::milliseconds idle_timeout{0};
   enum class Protocol { Project, Agent, Host };
   Protocol protocol = Protocol::Project;
   std::string unix_path;           // empty: no Unix socket
@@ -100,7 +98,6 @@ class Server {
   void start();  // binds listeners, spawns the loop thread
   void stop();
   int bound_tcp_port() const { return bound_port_; }
-  auto idle_expired() const -> bool { return idle_expired_; }
 
   // Thread safe commands. All are applied in posting order.
   void reply(ConnId conn, std::string bytes);
@@ -110,7 +107,6 @@ class Server {
                    std::string ack, std::vector<Note> initial);
   void broadcast(Note note);
   void close(ConnId conn);
-  auto stop_if_idle(ConnId conn, std::string accepted, std::string busy) -> void;
 
  private:
   struct Conn;
@@ -141,8 +137,6 @@ class Server {
   int bound_port_ = -1;
   std::thread thread_;
   std::atomic<bool> stopping_{false};
-  std::atomic<bool> idle_expired_{false};
-  bool idle_draining_ = false;
   std::mutex inbox_mu_;
   std::vector<Command> inbox_;
   std::map<ConnId, std::unique_ptr<Conn>> conns_;

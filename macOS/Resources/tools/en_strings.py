@@ -31,6 +31,11 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"最後のウインドウを閉じたら Tsugumi を終了する": "Quit Tsugumi when the last window closes",
+"進行中の処理を停止して Tsugumi を終了しますか？": "Quit Tsugumi and stop ongoing work?",
+"ほかのクライアントの処理も含め、実行・Agent・保存中の処理を停止し、実行環境を終了します。保存されていない変更は失われることがあります。": "Stop runs, Agent turns and saves, including work from other clients, and shut down the execution environment. Unsaved changes may be lost.",
+"終了して停止": "Quit and Stop",
+
 "Agent から除外するパス": "Paths excluded from the Agent",
 "Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。": "Enter one path per line, relative to the project or absolute. Each path excludes the file and everything below it from the Agent. People can still see it.",
     'このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。': "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.",
@@ -44,7 +49,7 @@ EN = {
 "失敗": "Failed",
 
     '表示言語を変えるには再起動が必要です': 'Restart required to change the display language',
-    '表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。': 'The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.',
+    '表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。再起動すると実行中の処理は停止します。': 'The display language will change after a restart. New records written into the project already use the new language. Restarting stops ongoing work.',
     '今すぐ再起動': 'Restart now',
     "実行の詳細": "Run details",
     "呼び出しが記録されると表示します。": "Details will appear when an invocation is recorded.",
