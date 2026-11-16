@@ -92,6 +92,15 @@ inline auto copy_sparse_file(int source, int destination,
       offset += count;
     }
   }
+  // SEEK_DATA returning ENXIO also covers a file truncated during the copy.
+  // Do not silently replace the missing tail with zeros and publish it.
+  struct stat final_status{};
+  if (::fstat(source, &final_status) != 0) failed("fstat", source_path);
+  if (final_status.st_size != size) {
+    const auto message = "source size changed during copy (expected " + std::to_string(size) +
+                         " bytes, found " + std::to_string(final_status.st_size) + ")";
+    failed(message.c_str(), source_path, EIO);
+  }
   if (::ftruncate(destination, size) != 0) failed("ftruncate", destination_path);
   return static_cast<uint64_t>(size);
 }

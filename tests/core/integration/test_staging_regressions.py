@@ -1,11 +1,40 @@
 """Worker review regressions at real input/output and scratch boundaries."""
 
+import hashlib
 from pathlib import Path
 
 from harness.real_cards import bash, log
 from projects import FILE_FBS, card, conn, run_and_wait, write
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
+
+
+def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path):
+    """A File with MNIST's byte count crosses worker output and next-worker input staging."""
+    size = 47040016
+    digest = hashlib.sha256(b"x" * size).hexdigest()
+    make = bash(
+        f'head -c {size} /dev/zero | tr "\\000" x > "$TSUGUMI_OUTPUT_DIR/dense"; '
+        f'test "$(wc -c < "$TSUGUMI_OUTPUT_DIR/dense")" -eq {size} || exit 21; '
+        'printf \'{"doc":{"value":"%s/dense"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+        outputs=FILE_FBS, recordIO=True)
+    read = bash(
+        f'test "$(wc -c < "$FILE_DOC")" -eq {size} || exit 22; '
+        f'test "$(sha256sum "$FILE_DOC" | cut -d " " -f 1)" = {digest} || exit 23; '
+        'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
+        inputs=["doc"], outputs=FILE_FBS, recordIO=True)
+    root = tmp_path / "p"
+    write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
+          [conn("make", "doc", "read", "doc")])
+    c = core_factory(project_root=root).connect()
+    run_id, st = run_and_wait(c, "make")
+    assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
+    for name in ("make", "read"):
+        output, = c.call("RunRecordRequest", runId=run_id, card=path(name)).record.outputs
+        saved = Path(text(output.filePath))
+        assert saved.stat().st_size == size
+        with saved.open("rb") as file:
+            assert hashlib.file_digest(file, "sha256").hexdigest() == digest
 
 
 def test_mode_zero_scratch_does_not_fail_a_successful_call(core_factory, tmp_path):
