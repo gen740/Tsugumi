@@ -18,6 +18,16 @@ using types::PortKind;
 using types::PortType;
 using types::TypeRef;
 
+auto Resolution::endpoint(const CardPath& card, const std::string& port, bool output) const
+    -> std::optional<std::pair<size_t, std::string>> {
+  const auto found = index.find(path_key(card));
+  if (found == index.end()) return std::nullopt;
+  if (!nodes[found->second].is_virtual) return std::pair{found->second, port};
+  const auto alias = endpoints.find({path_key(card), port, output});
+  if (alias == endpoints.end()) return std::nullopt;
+  return alias->second;
+}
+
 const char* template_name(Template t) {
   switch (t) {
     case Template::Code: return "none";
@@ -572,7 +582,7 @@ class Builder {
                                                      std::string port,
                                                      bool output,
                                                      const CardPath& report_on,
-                                                     const std::string& wire) {
+                                                     const std::string& wire, bool diagnose = true) {
     for (int guard = 0; guard < 32; ++guard) {
       auto it = res_->index.find(path_key(path));
       if (it == res_->index.end()) return std::nullopt;
@@ -585,7 +595,7 @@ class Builder {
         for (const auto& [name, e] : side->entries())
           if (name == port) ep = &e;
       if (!ep) {
-        n.diags.push_back(diag(n.path, "unknown_port",
+        if (diagnose) n.diags.push_back(diag(n.path, "unknown_port",
                                wire + ": subgraph has no boundary " +
                                    (output ? "output " : "input ") + port));
         return std::nullopt;
@@ -593,14 +603,14 @@ class Builder {
       path.push_back(ep->card->value());
       port = ep->port->value();
       if (!res_->index.count(path_key(path))) {
-        n.diags.push_back(diag(n.path, "unknown_card",
+        if (diagnose) n.diags.push_back(diag(n.path, "unknown_card",
                                wire + ": boundary " + port +
                                    " points to unknown card " +
                                    path_key(path)));
         return std::nullopt;
       }
     }
-    res_->diags.push_back(diag(report_on, "invalid_graph", "subgraph boundary nesting too deep"));
+    if (diagnose) res_->diags.push_back(diag(report_on, "invalid_graph", "subgraph boundary nesting too deep"));
     return std::nullopt;
   }
 
@@ -614,6 +624,13 @@ class Builder {
         if (const auto* outs = schema::get(b->outputs))
           for (const auto& [name, _] : outs->entries()) n.outputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
       }
+    }
+    for (const auto& node : res_->nodes) {
+      if (!node.is_virtual) continue;
+      for (const bool output : {false, true})
+        for (const auto& port : output ? node.outputs : node.inputs)
+          if (auto end = leaf(node.path, port.name, output, node.path, "boundary", false))
+            res_->endpoints[{path_key(node.path), port.name, output}] = *end;
     }
     for (const auto& e : raw_) {
       CardPath from = e.scope;

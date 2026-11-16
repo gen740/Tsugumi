@@ -157,7 +157,7 @@ A code Card's _card.json, e.g. {"language": "python", "inputs": [{"name": "confi
 names each input port (the "to" port of each incoming wire); a param type is bool, int64, uint64, double or string,
 or one of them with [] for a list; code reads a param by its name (inputs.params.rMin), so lowerCamelCase names
 read as written. A code Card also has _outputs.fbs (one table per output port; the root table Outputs), default.nix
-and its sources in src/.
+and its sources in src/. You can use input_types to read the resolved input definitions; pass the intended language for a Draft.
 
 * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
   _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,

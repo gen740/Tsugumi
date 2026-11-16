@@ -637,6 +637,10 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
   if (tool == "project_inspect" || tool == "output_types" ||
       tool == "project_file_format")
     return;
+  if (tool == "input_types") {
+    Require(Card(json::Get(args, "card", "{}")), false);
+    return;
+  }
   if (tool == "card_id") {
     const auto project_path = json::Text(args, "project_path");
     if (project_path.empty())

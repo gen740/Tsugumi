@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "document.hh"
@@ -131,6 +132,10 @@ struct Resolution {
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;               // between executable nodes only
   std::vector<Diag> diags;
+  // Boundary aliases produced by the same leaf resolution as executable wires.
+  std::map<std::tuple<std::string, std::string, bool>, std::pair<size_t, std::string>> endpoints;
+  auto endpoint(const CardPath& card, const std::string& port, bool output) const
+      -> std::optional<std::pair<size_t, std::string>>;
   // Per node: the nodes that have always run before it fires, whichever path
   // its inputs arrived on (sorted). The basis for Nix upstream references.
   std::vector<std::vector<size_t>> guaranteed;

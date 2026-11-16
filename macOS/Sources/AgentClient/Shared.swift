@@ -158,6 +158,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "ArtifactReadRequest",
     "LogRangeRequest",
     "OutputTypesRequest",
+    "InputTypesRequest",
     "VersionGraphRequest",
     "VersionCanvasRequest",
     "NixSourceResolveRequest",

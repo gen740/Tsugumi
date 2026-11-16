@@ -464,6 +464,30 @@ table VersionComment {
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 table VersionComments { comments:[VersionComment]; }
 
+/// -> InputTypes. Read each incoming wire's source, kind and complete input
+/// definition as Card code sees it. May help when writing a Card; routing types
+/// are resolved automatically. language defaults to the Card implementation;
+/// pass it for a Draft, or "schema" for plain tables. output_port selects
+/// one upstream output instead. No result size limit.
+table InputTypesRequest {
+  project:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  output_port:string;
+  language:string;
+  at_rev:ulong = null;
+}
+table InputType {
+  port:string (required);
+  source_card:Tsugumi.Data.CardPath;
+  source_port:string;
+  /// value, file or directory; empty when unresolved.
+  kind:string;
+  /// no_source, unresolved or resolved.
+  state:string (required);
+  definition:string;
+}
+table InputTypes { rev:ulong = null; language:string; inputs:[InputType]; }
+
 // Pure editing support: paths select a language and label diagnostics, never files.
 table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
@@ -495,7 +519,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest, IdentifierReserveRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest, IdentifierReserveRequest, InputTypesRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -508,7 +532,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
   ModelSelection, LayoutPreparedSave,
-  DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier
+  DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <future>
 
+#include "host/input_types.hh"
 #include "agent/context.hh"
 #include "agent/providers.hh"
 #include "agent/save_policy.hh"
@@ -296,10 +297,29 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
   }
 }
 
+auto Tools::InputTypesQuery(const std::string& project, json::Members args,
+                            std::stop_token stop) -> H::InputTypesT {
+  std::optional<std::string> language;
+  if (args.contains("language")) {
+    language = json::Text(args, "language");
+    args.erase("language");
+  }
+  std::string bytes;
+  const auto envelope = RawProjectCall(project, "input_types", json::Encode(args), stop, &bytes);
+  const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+  if (!reply->value_as_InputTypesResult()) {
+    const auto value = json::Object(json::Get(json::Object(envelope), "value", "{}"));
+    throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+  }
+  return host::InputTypes(*reply->value_as_InputTypesResult(), language);
+}
+
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
                         const std::string& arguments, std::stop_token stop)
     -> std::string {
   auto args = json::Object(arguments);
+  if (name == "input_types")
+    return catalog.HostReply(wire::HostReply(1, InputTypesQuery(project, std::move(args), stop)));
   if (name == "project_save")
     return SaveProject(project, std::move(args), stop);
   if (name == "project_file_format") {

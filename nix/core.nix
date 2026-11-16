@@ -83,6 +83,7 @@ clangStdenv.mkDerivation {
     "-DTSUGUMI_FORMAT_RUFF=${ruff}/bin/ruff"
     "-DTSUGUMI_FORMAT_NIX=${nixfmt}/bin/nixfmt"
     "-DTSUGUMI_FORMAT_SH=${shfmt}/bin/shfmt"
+    "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
     "-DTSUGUMI_BUILD_TESTS=OFF"
     "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
@@ -97,6 +98,7 @@ clangStdenv.mkDerivation {
     TSUGUMI_FORMAT_RUFF = "${ruff}/bin/ruff";
     TSUGUMI_FORMAT_NIX = "${nixfmt}/bin/nixfmt";
     TSUGUMI_FORMAT_SH = "${shfmt}/bin/shfmt";
+    TSUGUMI_FLATBUFFERS_SOURCE = "${flatbuffers.src}";
     HOSQ_INCLUDE_DIR = "${hosq}/include";
     TSUGUMI_CARD_NIXPKGS_REV = cardNixpkgs.rev;
     TSUGUMI_CARD_NIXPKGS_NARHASH = cardNixpkgs.narHash;
