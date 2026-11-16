@@ -1853,14 +1853,16 @@ export class ProjectSession extends Observable {
     const base = baseRev === this.rev ? this.makeBase() : this.editBases.get(baseRev)
     if (!base) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: 'Editor base is unavailable; reload while keeping your edit' })
     if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.busy, diagnostic: L('変更を保存できませんでした。') })
-    const before = this.docState(), beforeSnap = this.snapshot(), current = this.makeBase(), currentSources = this.sources
-    let prepared: ReturnType<ProjectSession['prepareSave']>, after: DocState
+    const current = this.makeBase(), currentSources = this.sources
+    let prepared: ReturnType<ProjectSession['prepareSave']>, step: UndoEntry
     this.installEditorBase(base)
+    const before = this.docState(), beforeSnap = this.snapshot()
     try {
       change(this)
       this.normalizeExternalEdits()
       prepared = this.prepareSave(false, base)
-      after = this.docState()
+      // Both sides, including source presence, belong to the editor's base.
+      step = this.record(before, beforeSnap, this.docState(), prepared.sent)
     } finally {
       this.dropDraft()
       this.installEditorBase(current)
@@ -1870,7 +1872,6 @@ export class ProjectSession extends Observable {
       if (baseRev !== this.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: "The edit target is absent from the editor's base; changes are retained" })
       return baseRev
     }
-    const step = this.record(before, beforeSnap, after, prepared.sent)
     await this.fillUndoSources()
     // Reading undo sources may yield to another client. Keep baseRev fixed.
     const result = await this.commitChanges(base, uuid(), prepared.changes, true)

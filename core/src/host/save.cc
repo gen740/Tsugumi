@@ -243,7 +243,13 @@ auto RebaseSave(json::Members args, const SaveBase& base,
       if (json::Get(value, "base_hash", "null") != get(hashes, path))
         conflict(path + " (base_hash)");
       if (!DocumentPath(path)) {
-        if (get(hashes, path) != get(current_hashes, path)) conflict(path);
+        const bool applied =
+            kind == "PutSource"
+                ? json::Text(current_hashes, path) ==
+                      crypto::sha256_hex(Content(json::Get(value, "bytes")))
+                : kind == "RemoveSource" && !current_hashes.contains(path);
+        if (!applied && get(hashes, path) != get(current_hashes, path))
+          conflict(path);
         continue;
       }
       if (kind == "RemoveSource")
@@ -382,6 +388,13 @@ auto RebaseSave(json::Members args, const SaveBase& base,
     const auto kind = json::Text(c, "value_type");
     auto value = json::Object(json::Get(c, "value", "{}"));
     const auto path = json::Text(value, "path"), id = json::Text(value, "id");
+    if (kind == "RemoveDefinition" &&
+        !latest.files.contains("definitions/" + id + "/_card.json") &&
+        !latest.files.contains("definitions/" + id + "/_link.json"))
+      continue;
+    if (kind == "RemoveSource" && !current_hashes.contains(path)) continue;
+    if (kind == "PutSource" && !DocumentPath(path))
+      value["base_hash"] = get(current_hashes, path);
     if (kind == "SetProject" || kind == "SetLayout")
       value["json"] = json::Quote(
           merged.at(kind == "SetProject" ? "tsugumi.json" : "layout.json"));
@@ -409,6 +422,14 @@ auto RebaseSave(json::Members args, const SaveBase& base,
     c["value"] = json::Encode(value);
     rebased.push_back(json::Encode(c));
   }
+  // A removal-only retry can have nothing left to remove. Submit an ordinary
+  // no-op document save so the core still checks the inspected revision and
+  // returns its typed SaveResult without moving the revision.
+  if (rebased.empty() && !changes.empty())
+    rebased.push_back(json::Encode(json::Members{
+        {"value_type", json::Quote("SetProject")},
+        {"value", json::Encode(json::Members{
+                      {"json", json::Quote(latest.files.at("tsugumi.json"))}})}}));
   args["changes"] = json::Encode(rebased);
   args["base_rev"] = json::Get(latest.snapshot, "rev");
   return args;

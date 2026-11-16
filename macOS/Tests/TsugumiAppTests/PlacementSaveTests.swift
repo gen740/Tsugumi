@@ -54,12 +54,12 @@ extension SyncTests {
         // Exercise the real host merge and core CAS, whether its notice has
         // reached the UI or is still waiting in the subscription stream.
         let saved = try await CoreHostClient.shared.saveProject(project: project, base: base, save: request)
-        // Replaying a lost response keeps the exact core attempt/receipt,
-        // rather than inventing another save after the merge.
+        // Retrying rereads and merges the original edit. An applied edit
+        // is a no-op at the same revision, without a host resend record.
         let replay = try await CoreHostClient.shared.saveProject(project: project, base: base, save: request)
         let first = try #require(saved.reply.value?.value as? Tsugumi_RPC_SaveResultT)
         let repeated = try #require(replay.reply.value?.value as? Tsugumi_RPC_SaveResultT)
-        #expect(first.rev == repeated.rev && first.delta?.opId == repeated.delta?.opId)
+        #expect(first.rev == repeated.rev && repeated.delta == nil)
         return replay
       }
       let editor = CardEditorModel(session: s, cardKey: "a")
@@ -133,6 +133,47 @@ extension SyncTests {
     #expect(edit.revision.error?.contains("groups") == true)
     #expect(edit.revision.conflictRev == s.rev)
     #expect(s.groups(in: []).isEmpty && !s.dirty)
+    await other.close()
+    await s.close()
+  }
+}
+
+extension SyncTests {
+  @Test func undoMergedRenameDoesNotResurrectAnotherWritersDeletedGroup() async throws {
+    let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop() }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await Self.connected(s)
+    let other = RPCClient(endpoint: daemon.endpoint.url)
+    _ = try await other.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    // r0: the person opens the name editor before the other writer adds a group.
+    let edit = RevisionEdit(); edit.reload(s.rev)
+    let originalName = s.project["name"]
+    var layout = s.layout
+    layout["groups"] = .array([.object([("id", .string("row")), ("scope", .string("")), ("name", .string("other")), ("color", .string("blue")), ("cards", .array([.string("a")]))])])
+    let added = try await other.save(baseRev: s.rev, opId: UUID(), origin: "other", changes: [Change.setLayout(layout.serialized())])
+    try await Self.received(added.rev ?? 0, by: s)
+    #expect(await edit.apply(s) { $0.project["name"] = .string("mine") })
+    #expect(s.groups(in: []).count == 1)
+    // After the merged rename, the same other writer deletes their group.
+    layout = s.layout; layout["groups"] = .array([])
+    let removed = try await other.save(baseRev: s.rev, opId: UUID(), origin: "other", changes: [Change.setLayout(layout.serialized())])
+    try await Self.received(removed.rev ?? 0, by: s)
+    await s.undo()
+    #expect(s.project["name"] == originalName)
+    #expect(s.groups(in: []).isEmpty)
+    await s.save()
+    #expect(s.saveError == nil)
+    let saved = try await other.inspect()
+    #expect(try JSONValue.parse(saved.layoutJson)["groups"]?.array?.isEmpty == true)
+    await s.redo()
+    #expect(s.project["name"]?.string == "mine")
+    #expect(s.groups(in: []).isEmpty)
+    await s.save()
     await other.close()
     await s.close()
   }

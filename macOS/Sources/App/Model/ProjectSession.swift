@@ -1742,12 +1742,15 @@ final class ProjectSession {
     guard connected, client != nil else { throw RPCError.disconnected }
     guard let base = baseRev == rev ? makeBase() : editBases[baseRev] else { throw RPCFailure(kind: .revisionConflict, diagnostic: "Editor base is unavailable; reload while keeping your edit") }
     guard !dirty else { throw RPCFailure(kind: .busy, diagnostic: String(localized: "変更を保存できませんでした。")) }
-    let before = docState(), beforeSnap = snapshot(), current = makeBase(), currentSources = sources
+    let current = makeBase(), currentSources = sources
     installEditorBase(base)
+    let before = docState(), beforeSnap = snapshot()
     change(self)
     normalizeExternalEdits()
     let prepared = prepareSave(layoutOnly: false, base: base)
     let after = docState()
+    // Both sides, including source presence, belong to the editor's base.
+    let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
     dropDraft()
     installEditorBase(current)
     sources = currentSources
@@ -1755,7 +1758,6 @@ final class ProjectSession {
       guard baseRev == rev else { throw RPCFailure(kind: .revisionConflict, diagnostic: "The edit target is absent from the editor's base; changes are retained") }
       return baseRev
     }
-    let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
     await fillUndoSources()
     // Reading undo sources can yield to another client. Keep baseRev fixed.
     let result = try await commitChanges(base: base, op: UUID(), changes: prepared.changes, editor: true)

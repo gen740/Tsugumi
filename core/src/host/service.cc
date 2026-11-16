@@ -670,7 +670,6 @@ struct Service::State {
         const auto operation = json::Text(original, "op_id");
         if (!crypto::is_uuid(operation))
           throw Failure("invalid_request", "Save operation id must be a UUID");
-        const auto digest = crypto::sha256_hex(project + base_json + bytes);
         const auto encoded_base = json::Object(base_json);
         const SaveBase base{json::Object(json::Get(encoded_base, "snapshot")),
                             json::Object(json::Get(encoded_base, "files"))};
@@ -683,71 +682,43 @@ struct Service::State {
           return json::Object(tools->RawProjectCall(
               project, method, json::Encode(args), shutdown.get_token(), raw));
         };
-        std::string previous, response;
-        {
-          std::lock_guard state(state_gate.mutex);
-          auto q = db.prepare("SELECT digest,arguments,response FROM ui_saves "
-                              "WHERE project=? AND operation=?");
-          q.bind(1, project).bind(2, operation);
-          if (q.step()) {
-            if (q.text(0) != digest)
-              throw Failure("invalid_request", "Save operation id reused");
-            previous = q.text(1);
-            response = q.blob(2);
-          }
-        }
+        std::string response;
         auto send = [&](const json::Members &args) {
-          {
-            std::lock_guard state(state_gate.mutex);
-            auto q = db.prepare("INSERT OR REPLACE INTO ui_saves "
-                                "VALUES(?,?,?,?,?)");
-            q.bind(1, project)
-                .bind(2, operation)
-                .bind(3, digest)
-                .bind(4, json::Encode(args))
-                .bind(5, "")
-                .run();
-          }
+          response.clear();
           const auto result = call("project_save", args, &response);
-          {
-            std::lock_guard state(state_gate.mutex);
-            auto q = db.prepare("UPDATE ui_saves SET response=? "
-                                "WHERE project=? AND operation=?");
-            q.bind_blob(1, response).bind(2, project).bind(3, operation).run();
+          // Host validation can reject a request before any core RPC is sent.
+          // That JSON failure has no raw response to unpack.
+          if (response.empty()) {
+            const auto value = json::Object(json::Get(result, "value", "{}"));
+            throw Failure(json::Text(value, "kind", "unavailable"),
+                          json::Text(value, "diagnostic"));
           }
           return result;
         };
-        auto retry = [](const json::Members &result) {
-          return json::Text(result, "reply") == "Failure" &&
-                 json::Text(json::Object(json::Get(result, "value")), "kind") ==
-                     "revision_conflict";
-        };
-        bool needs_save = response.empty();
-        if (!previous.empty()) {
-          const auto result =
-              response.empty() ? send(json::Object(previous))
-                               : json::Object(agent::Catalog().Reply(response));
-          needs_save = retry(result);
-        }
         try {
-          if (needs_save)
-            (void)SaveWithMerge(
-                original, base,
-                [&](const auto &method, const auto &args) {
-                  const auto result = call(method, args);
-                  const auto value =
-                      json::Object(json::Get(result, "value", "{}"));
-                  if (json::Text(result, "reply") == "Failure")
-                    throw Failure(json::Text(value, "kind"),
-                                  json::Text(value, "diagnostic"));
-                  return value;
-                },
-                send);
+          (void)SaveWithMerge(
+              original, base,
+              [&](const auto &method, const auto &args) {
+                const auto result = call(method, args);
+                const auto value =
+                    json::Object(json::Get(result, "value", "{}"));
+                if (json::Text(result, "reply") == "Failure")
+                  throw Failure(json::Text(value, "kind"),
+                                json::Text(value, "diagnostic"));
+                return value;
+              },
+              send);
         } catch (const Failure &error) {
-          if (error.code != "revision_conflict")
-            throw;
           Tsugumi::Data::FailureT failure;
-          failure.kind = Tsugumi::Data::FailureKind::revision_conflict;
+          bool known = false;
+          for (auto kind : Tsugumi::Data::EnumValuesFailureKind()) {
+            if (error.code == Tsugumi::Data::EnumNameFailureKind(kind)) {
+              failure.kind = kind;
+              known = true;
+              break;
+            }
+          }
+          if (!known) throw;
           failure.diagnostic = error.what();
           H::UISaveResultT result;
           result.reply = std::make_unique<Tsugumi::RPC::ReplyT>();
@@ -761,10 +732,12 @@ struct Service::State {
         if (result.reply->value.type == Tsugumi::RPC::ReplyPayload::SaveResult) {
           std::string snapshot;
           (void)call("project_inspect", {}, &snapshot);
-          if (const auto *value = Tsugumi::RPC::GetMessage(snapshot.data())
-                                      ->payload_as_Reply()
-                                      ->value_as_ProjectSnapshot())
-            result.snapshot.reset(value->UnPack());
+          if (!snapshot.empty()) {
+            if (const auto *value = Tsugumi::RPC::GetMessage(snapshot.data())
+                                        ->payload_as_Reply()
+                                        ->value_as_ProjectSnapshot())
+              result.snapshot.reset(value->UnPack());
+          }
         }
         return wire::HostReply(request.request_id, std::move(result));
       }
