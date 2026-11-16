@@ -7,6 +7,7 @@ namespace tsugumi::host {
 struct DemoReferences {
   explicit DemoReferences(std::filesystem::path directory);
   auto List() -> std::string;
+  auto ListFiles() -> std::string;
   auto Read(const std::string& path) -> std::string;
 
   std::filesystem::path directory;

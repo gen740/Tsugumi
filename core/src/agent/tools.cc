@@ -127,15 +127,18 @@ auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
        "This tool writes nothing.",
        R"({"type":"object","properties":{"project_json":{"type":"string"},"cards":{"type":"array","items":{"type":"string"}},"id":{"type":"string"}},"required":["project_json","cards","id"],"additionalProperties":false})"});
   specs.push_back(
-      {"demo_list", "List bundled read-only demo references",
+      {"demo_list", "List bundled demos: repository path, name and one-line description. Read content with demo_read.",
        R"({"type":"object","properties":{},"additionalProperties":false})"});
   specs.push_back(
-      {"demo_read", "Read a bundled demo reference",
+      {"demo_read", "Read a bundled file by repository path, relative to demos/ (e.g. en/report/tsugumi.json or en/index.json).",
        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
-  specs.push_back(
-      {"guide_show", "Show guidance in connected user interfaces",
-       R"({"type":"object","properties":{"say":{"type":"string"},"highlight":{"type":"string"},"open":{"type":"string"},"actions":{"type":"array"},"choices":{"type":"array","items":{"type":"string"}}}})"});
-  if (!guide) {
+  if (guide) {
+    const auto definition = json::Object(
+        json::Get(json::Object(json::Get(catalog.shared(), "guide")), "showTool"));
+    specs.push_back({json::Text(definition, "name"),
+                     json::Text(definition, "description"),
+                     json::Get(definition, "inputSchema")});
+  } else {
     const auto definition =
         json::Object(json::Get(catalog.shared(), "delegateTool", "{}"));
     specs.push_back({"delegate", json::Text(definition, "description"),
@@ -983,6 +986,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (call.name == "demo_read")
     return {demo_references.Read(json::Text(args, "path")), false, {}, {}};
   if (call.name == "guide_show") {
+    if (c.role != "guide" || helper)
+      throw Failure("permission_denied", "Only the guide can show guidance");
     dependencies.event(
         conversation,
         json::Encode(json::Members{{"kind", json::Quote("toolStarted")},

@@ -235,7 +235,6 @@
     "shown": "Shown. Nothing has happened yet: the user decides whether to press a button.",
     "controls": [{ "id": "run", "label": "実行" }, { "id": "stop", "label": "停止" }, { "id": "apply", "label": "適用" }, { "id": "generate", "label": "Card を生成" }, { "id": "from_comments", "label": "コメントから生成" }, { "id": "versions", "label": "版の履歴" }, { "id": "demos", "label": "デモを見る" }, { "id": "new_project", "label": "新しいプロジェクト" }, { "id": "show_demos", "label": "ほかのデモ" }, { "id": "open_demo", "label": "このデモを開く" }],
     "controlsNote": "The app is in the user's chosen language, and its controls are labelled as they see them: {controls}. Call a control by that label.",
-    "chatNote": "You are Tsugumi, the bird of this chat. guide_show moves the bird about the screen. While the demo skill ([Skill demo]) is active in this conversation (until its farewell), it leads the user with it. Otherwise answer in the chat as usual; only when the user asks how to use a feature of the app and seeing it on the screen really helps, call guide_show once to point at its control (opening its panel if it is closed). Never call it while you work on the project.",
     "readOnly": "{tool} is not one of the guide's tools: the guide only reads. Offer the user a button with guide_show or tell them how to do it.",
     "noProject": "No project is open on the user's screen, so there is no project to read.",
     "tourStart": "[Tour] The user chose to see the demo \"{demo}\" ({title}). An editable copy is open (the bundled original is untouched). Begin the tour at step 1.",

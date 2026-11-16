@@ -360,7 +360,8 @@ def test_tools_and_instructions(plugin):
     assert names[0] == "tsugumi_open"
     assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
     # The plugin sees the same core tool catalog and Agent operations.
-    assert {"attached_folder_read", "delegate", "guide_show"} <= set(names)
+    assert {"attached_folder_read", "delegate", "demo_list"} <= set(names)
+    assert not any(name.startswith(("guide_", "agent_guide_")) for name in names)
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
     def tool_name(request):
         return re.sub(r"(?<!^)([A-Z])", r"_\1", request.removesuffix("Request")).lower()
@@ -373,6 +374,27 @@ def test_tools_and_instructions(plugin):
     assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello", "agent_tool_call_cancel"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
+
+
+def test_demo_list_is_compact_and_demo_read_uses_repository_paths(plugin):
+    mcp, root, _ = plugin
+    write_project(root / "proj")
+    text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj"), "browser": False})
+    assert not error, text
+    text, error = mcp.call("demo_list", {})
+    assert not error, text
+    assert len(text.encode("utf-8")) < 20 * 1024
+    demos = json.loads(text)
+    expected = []
+    for language in ("ja", "en"):
+        index = json.loads((ROOT / "demos" / language / "index.json").read_text())
+        expected.extend({"path": f"{language}/{demo['path']}", "name": demo["title"],
+                         "description": demo["description"]} for demo in index["demos"])
+    assert demos == expected
+    for path in ("en/index.json", "en/report/definitions/generate/src/main.py"):
+        text, error = mcp.call("demo_read", {"path": path})
+        assert not error, text
+        assert text == (ROOT / "demos" / path).read_text()
 
 
 def test_concurrent_plugin_and_command_starts_share_one_host(plugin):

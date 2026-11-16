@@ -160,6 +160,8 @@ inline auto Call(client::Connection &connection, H::RequestPayload type,
 class AgentFixture : public ::testing::Test {
  protected:
   auto SetUp() -> void override {
+    Write(directory.path / "demos/ja/index.json",
+          R"({"demos":[{"path":"example","title":"Example","description":"A bundled demo."}]})");
     Write(directory.path / "demos/ja/example.json",
           R"({"example":"BUNDLED_DEMO"})");
     Write(directory.path / "private.json",

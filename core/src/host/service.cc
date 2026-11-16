@@ -618,7 +618,7 @@ struct Service::State {
     switch (r->value_type()) {
       case H::RequestPayload::DemoListRequest: {
         H::DemoPathsT result;
-        for (const auto& path : json::Array(demo_references.List()))
+        for (const auto& path : json::Array(demo_references.ListFiles()))
           result.paths.push_back(json::String(path));
         return wire::HostReply(request.request_id, std::move(result));
       }

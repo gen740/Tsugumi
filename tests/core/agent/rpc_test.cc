@@ -1,4 +1,7 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
+#include <set>
+
+#include "agent/json.hh"
 #include "oauth_fixture.hh"
 #include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -228,11 +231,160 @@ TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   EXPECT_EQ(unix_catalog, websocket_catalog);
   EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
   EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
-  EXPECT_NE(unix_catalog.find("guide_show"), std::string::npos);
+  EXPECT_EQ(unix_catalog.find("guide_"), std::string::npos);
   // Invocation records remain project tools; version diffs are Host requests.
   EXPECT_NE(unix_catalog.find("run_latest_invocations"), std::string::npos);
   EXPECT_EQ(unix_catalog.find("version_diff"), std::string::npos);
   EXPECT_EQ(unix_catalog.find("from_commit"), std::string::npos);
+}
+
+// Inspect the actual provider requests as well as the external RPC catalog.
+TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
+  namespace J = agent::json;
+  auto names = [](const auto &tools) {
+    std::set<std::string> result;
+    for (const auto &tool : J::Array(tools))
+      result.insert(J::Text(J::Object(tool), "name"));
+    return result;
+  };
+  ModelServer model;
+  Configure(model);
+  const auto main = Conversation("catalog-main");
+  model.Queue(AnthropicText("Main answer"));
+  ASSERT_TRUE(Send(main, "Answer briefly.").Code().empty());
+  WaitUntilIdle(main);
+  model.Queue(AnthropicText("Helper answer"));
+  ASSERT_TRUE(
+      Tool(
+          main, "delegate",
+          R"({"tasks":[{"name":"reader","instruction":"Answer briefly.","read_cards":[],"write_cards":[],"run_cards":[]}]})")
+          .Code()
+          .empty());
+  const auto created = Call(
+      *external, A::RequestPayload::ConversationCreateRequest, [](Builder &b) {
+        return A::CreateConversationCreateRequest(
+                   b, b.CreateString("catalog-guide"), 0,
+                   b.CreateString("guide"))
+            .Union();
+      });
+  ASSERT_TRUE(created.Code().empty());
+  const auto guide = JsonString(created.View(), "/conversation/id");
+  model.Queue(AnthropicTool("show", "guide_show",
+                            R"({"say":"Choose a demo.","highlight":"demos"})"));
+  model.Queue(AnthropicText("Guide answer"));
+  ASSERT_TRUE(Send(guide, "Show the demos.").Code().empty());
+  EXPECT_NE(WaitUntilIdle(guide).find("Guide answer"), std::string::npos);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  const auto main_tools = names(J::Get(J::Object(requests[0]), "tools"));
+  auto helper_tools = names(J::Get(J::Object(requests[1]), "tools"));
+  const auto guide_specs = J::Array(J::Get(J::Object(requests[2]), "tools"));
+  const auto guide_tools = names(J::Encode(guide_specs));
+  const auto external_catalog =
+      Call(*external, A::RequestPayload::ToolCatalogRequest,
+           [](Builder &b) { return A::CreateToolCatalogRequest(b).Union(); });
+  EXPECT_EQ(names(external_catalog.View()), main_tools);
+  EXPECT_FALSE(helper_tools.contains("delegate"));
+  helper_tools.insert("delegate");
+  EXPECT_EQ(helper_tools, main_tools);
+  const auto helper_catalog = helper_tools;
+  for (const auto *catalog : {&main_tools, &helper_catalog, &guide_tools}) {
+    for (const auto *name : {"demo_list", "demo_read", "project_inspect"})
+      EXPECT_TRUE(catalog->contains(name));
+    std::set<std::string> guidance;
+    for (const auto &name : *catalog)
+      if (name.starts_with("guide_"))
+        guidance.insert(name);
+    EXPECT_EQ(guidance, catalog == &guide_tools
+                            ? std::set<std::string>{"guide_show"}
+                            : std::set<std::string>{});
+  }
+  EXPECT_TRUE(main_tools.contains("project_save"));
+  for (const auto *name : {"delegate", "project_save", "run", "run_cancel"})
+    EXPECT_FALSE(guide_tools.contains(name));
+  for (const auto &raw : guide_specs) {
+    const auto spec = J::Object(raw);
+    if (J::Text(spec, "name") != "guide_show")
+      continue;
+    const auto schema = J::Object(J::Get(spec, "input_schema"));
+    const auto properties = J::Object(J::Get(schema, "properties"));
+    EXPECT_TRUE(properties.contains("endTour"));
+    EXPECT_TRUE(properties.contains("choices"));
+  }
+  EXPECT_EQ(JsonString(requests[0], "/system/0/text").find("Use guide_show"),
+            std::string::npos);
+  EXPECT_EQ(Tool(main, "guide_show", R"({"say":"Do not show this."})").Code(),
+            "permission_denied");
+}
+
+TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
+  namespace J = agent::json;
+  const auto bundled = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos";
+  // Nix-installed fixtures have read-only directories. Write an owned copy
+  // without inheriting their permissions.
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(bundled))
+    if (entry.is_regular_file())
+      Write(directory.path / "demos" / entry.path().lexically_relative(bundled),
+            Read(entry.path()));
+  const auto conversation = Conversation("compact-demos");
+  const auto reply = Tool(conversation, "demo_list", "{}");
+  ASSERT_TRUE(reply.Code().empty());
+  const auto text = reply.Value()->value_as_ToolResult()->text()->str();
+  // The full bundled file-path list was about 60 KB. Keep room for new demos
+  // while catching a return to file enumeration or embedded content.
+  EXPECT_LT(text.size(), 20u * 1024u);
+  const auto demos = J::Array(text);
+  size_t expected_count = 0;
+  for (const auto *language : {"ja", "en"}) {
+    const auto index = J::Object(Read(bundled / language / "index.json"));
+    const auto entries = J::Array(J::Get(index, "demos"));
+    const auto ui =
+        Call(*host, H::RequestPayload::HostDemoListRequest, [&](Builder &b) {
+          return H::CreateHostDemoListRequest(b, b.CreateString(language))
+              .Union();
+        });
+    ASSERT_TRUE(ui.Code().empty());
+    const auto ui_entries = J::Array(ui.View());
+    ASSERT_EQ(ui_entries.size(), entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) {
+      const auto source = J::Object(entries[i]);
+      const auto demo = J::Object(demos.at(expected_count++));
+      EXPECT_EQ(demo.size(), 3u);
+      EXPECT_EQ(J::Text(demo, "path"),
+                std::string(language) + "/" + J::Text(source, "path"));
+      EXPECT_EQ(J::Text(demo, "name"), J::Text(source, "title"));
+      EXPECT_EQ(J::Text(demo, "description"), J::Text(source, "description"));
+      EXPECT_EQ(J::Text(demo, "description").find_first_of("\r\n"),
+                std::string::npos);
+      const auto ui_demo = J::Object(ui_entries[i]);
+      for (const auto* key : {"id", "title", "description", "field"})
+        EXPECT_EQ(J::Text(ui_demo, key), J::Text(source, key));
+      const auto ui_tags = J::Array(J::Get(ui_demo, "tags"));
+      const auto source_tags = J::Array(J::Get(source, "tags"));
+      ASSERT_EQ(ui_tags.size(), source_tags.size());
+      for (size_t tag = 0; tag < source_tags.size(); ++tag)
+        EXPECT_EQ(J::String(ui_tags[tag]), J::String(source_tags[tag]));
+    }
+  }
+  EXPECT_GT(expected_count, 0u);
+  EXPECT_EQ(demos.size(), expected_count);
+  for (const auto *path : {"en/index.json", "en/report/tsugumi.json",
+                           "en/report/definitions/generate/src/main.py"}) {
+    const auto content = Tool(conversation, "demo_read",
+                              J::Encode(J::Members{{"path", J::Quote(path)}}));
+    ASSERT_TRUE(content.Code().empty());
+    EXPECT_EQ(content.Value()->value_as_ToolResult()->text()->str(),
+              Read(bundled / path));
+  }
+  ModelServer model;
+  Configure(model);
+  model.Queue(AnthropicTool("list-demos", "demo_list", "{}"));
+  model.Queue(AnthropicText("Listed demos."));
+  ASSERT_TRUE(Send(conversation, "List the bundled demos.").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_EQ(JsonString(requests[1], "/messages/2/content/0/content"), text);
 }
 
 TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
@@ -378,7 +530,8 @@ TEST_F(AgentFixture, BundledDemosAreReadableButSymlinksAndTraversalAreNot) {
   const auto conversation = Conversation("demo-references");
   const auto listed = Tool(conversation, "demo_list", "{}");
   ASSERT_TRUE(listed.Code().empty());
-  EXPECT_NE(listed.Value()->value_as_ToolResult()->text()->str().find("ja/example.json"), std::string::npos);
+  EXPECT_EQ(listed.Value()->value_as_ToolResult()->text()->str(),
+            R"([{"description":"A bundled demo.","name":"Example","path":"ja/example"}])");
   const auto tool = Tool(conversation, "demo_read", R"({"path":"ja/example.json"})");
   ASSERT_TRUE(tool.Code().empty());
   EXPECT_NE(tool.Value()->value_as_ToolResult()->text()->str().find("BUNDLED_DEMO"), std::string::npos);

@@ -34,7 +34,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - These rules hold what Python, C++ and bash Cards need, so write them without reading further. To read what the
   rules do not cover, demo_read a bundled example file: paths below name repository files, and demo_read takes them
   without demos/ and with the language directory (en/report/definitions/generate/src/main.py). demo_list lists
-  every bundled file: call it only when no path named here fits. The report
+  each demo's repository path, name and one-line description: call it only when no path named here fits. The report
   demo has file outputs, an input Card, Python and bash Cards; collatz has C++ and Python Cards in Card.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
