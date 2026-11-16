@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { act, create } from 'react-test-renderer'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { api } from '../src/api'
 import { ChatGPTSignInModel, ChatGPTState, chatGPTSignInIsLocal } from '../src/model/chatgpt'
@@ -154,6 +155,75 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   await tick()
   assert.equal(model.message, 'cancelled')
   assert.equal(model.state.signingIn, false)
+}
+// Run the shared sheet content through a real React mount/unmount. Cleanup
+// must reach the host, including when begin has not returned an attempt yet.
+for (const beginPending of [false, true]) {
+  const f = fixture()
+  f.setOutcome('pending')
+  let finishBegin!: () => void
+  const request = (async (path: string, body?: unknown) => {
+    const result = await f.request(path, body)
+    if (path.endsWith('/signin') && beginPending) {
+      await new Promise<void>(resolve => { finishBegin = resolve })
+    }
+    return result
+  }) as typeof api
+  const tab = { opener: {}, location: { href: '' }, closed: false, close() { this.closed = true } }
+  const model = new ChatGPTSignInModel(true, request, (() => tab) as never)
+  let mounted!: ReturnType<typeof create>
+  act(() => {
+    mounted = create(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail('unmounted setup completed')} />)
+  })
+  await tick()
+  act(() => {
+    mounted.root.findByProps({ 'data-oai-siwc-button': '' }).props.onClick()
+  })
+  await tick()
+  assert.equal(model.state.signingIn, true)
+  act(() => { mounted.unmount() })
+  if (beginPending) {
+    assert.equal(f.calls.filter(c => c.path.endsWith('/cancel')).length, 0)
+    finishBegin()
+  }
+  await tick()
+  assert.equal(f.calls.filter(c => c.path.endsWith('/cancel')).length, 1)
+  assert.equal(model.state.signingIn, false)
+  if (beginPending) {
+    assert.equal(tab.closed, true)
+    assert.equal(tab.location.href, '', 'a dismissed begin must not navigate the browser')
+  }
+}
+// A reload at the welcome creates a model with no transient completion flag.
+// Its restored successful result must still run the real setup completion.
+{
+  const f = fixture(), first = f.model()
+  first.signIn()
+  await tick()
+  assert.equal(first.state.outcome?.welcome, account.clientId)
+  const reloaded = f.model()
+  await reloaded.reload()
+  const original = globalThis.fetch
+  const calls: { path: string; body: any }[] = []
+  globalThis.fetch = (async (path: string, init: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}'))
+    calls.push({ path, body })
+    const value = path === '/api/settings' ? { revision: { desktop: 1 } }
+      : path === '/api/guide/advance' ? { setupDone: true }
+      : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
+      : assert.fail(`Unexpected API ${path}`)
+    return { ok: true, json: async () => value }
+  }) as typeof fetch
+  try {
+    const guide = new GuideController()
+    reloaded.onConnected = () => guide.finishChatGPTSetup()
+    await reloaded.welcomed(false)
+    await reloaded.welcomed(false)
+    assert.equal(calls.filter(c => c.path === '/api/settings' && c.body.provider === 'chatgpt').length, 1)
+    assert.equal(guide.setupDone, true)
+    assert.equal(guide.connected, true)
+    assert.equal(f.calls.filter(c => c.path.endsWith('/welcomed')).length, 1)
+  } finally { globalThis.fetch = original }
 }
 // Begin failure must leave a retryable button rather than a permanent spinner.
 {

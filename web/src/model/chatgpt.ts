@@ -24,6 +24,7 @@ export class ChatGPTSignInModel extends Observable {
   url?: string
   onConnected: () => void | Promise<void> = () => {}
   private completing = false
+  private disposed = false
   private polling = false
   private beginning = false
   private cancelRequested = false
@@ -33,6 +34,15 @@ export class ChatGPTSignInModel extends Observable {
     private readonly open: typeof window.open = (...args) => window.open(...args),
   ) { super() }
 
+  mount() { this.disposed = false }
+  dispose() {
+    this.disposed = true
+    if (this.beginning || this.state.signingIn) void this.cancel()
+  }
+  private canComplete(st: ChatGPTState) {
+    const active = st.accounts.find(a => a.active)
+    return st.outcome?.ok && active?.signedIn && active.planEnabled
+  }
   setState = (value: ChatGPTState) => { this.state = value; this.changed() }
   async reload() {
     const state = await this.request<ChatGPTState>('/api/chatgpt')
@@ -47,7 +57,7 @@ export class ChatGPTSignInModel extends Observable {
     this.changed()
   }
   signIn(clientId?: string, consent = false) {
-    if (!this.local || this.beginning || this.state?.signingIn) return
+    if (this.disposed || !this.local || this.beginning || this.state?.signingIn) return
     const tab = this.open('about:blank', '_blank')
     // Also disables the button while begin is pending.
     if (this.state) this.setState({ ...this.state, signingIn: true, outcome: null })
@@ -60,8 +70,10 @@ export class ChatGPTSignInModel extends Observable {
         const r = await this.request<{ url: string }>('/api/chatgpt/signin', { clientId, consent })
         this.beginning = false
         this.url = r.url
-        if (tab) { tab.opener = null; tab.location.href = r.url }
-        if (this.cancelRequested) await this.request('/api/chatgpt/cancel', {})
+        if (this.cancelRequested) {
+          tab?.close()
+          await this.request('/api/chatgpt/cancel', {})
+        } else if (tab) { tab.opener = null; tab.location.href = r.url }
         await this.poll()
       } catch (e) {
         this.beginning = false
@@ -80,11 +92,10 @@ export class ChatGPTSignInModel extends Observable {
       if (v.signingIn) return
       this.url = undefined
       if (v.outcome) this.message = v.outcome.message
-      const active = v.accounts.find(a => a.active)
-      if (v.outcome?.ok && active?.signedIn && active.planEnabled && !this.completing) {
+      if (!this.disposed && this.canComplete(v) && !this.completing) {
         this.completing = true
         // Keep the setup sheet mounted until the once-only welcome is answered.
-        if (!v.outcome.welcome) await this.onConnected()
+        if (!v.outcome?.welcome) await this.onConnected()
       }
       this.changed()
     } catch (e) { this.message = errorText(e); this.changed() }
@@ -105,7 +116,7 @@ export class ChatGPTSignInModel extends Observable {
     if (go) this.open(st.usageURL, '_blank', 'noopener,noreferrer')
     await this.run(async () => {
       this.setState(await this.request<ChatGPTState>('/api/chatgpt/welcomed', { clientId: st.outcome!.welcome }))
-      if (this.completing) await this.onConnected()
+      if (!this.disposed && this.canComplete(st)) await this.onConnected()
       return this.message
     })
   }

@@ -17,9 +17,10 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
   useObserve(connection)
   connection.onConnected = onConnected
   useEffect(() => {
+    connection.mount()
     void connection.run(async () => { await connection.reload(); return connection.message })
     const timer = setInterval(() => { if (connection.state?.signingIn) void connection.poll() }, 1000)
-    return () => { clearInterval(timer) }
+    return () => { clearInterval(timer); connection.dispose() }
   }, [connection])
   const st = connection.state
   if (!st) return null

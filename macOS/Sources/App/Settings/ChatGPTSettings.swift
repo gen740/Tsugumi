@@ -55,6 +55,15 @@ struct ChatGPTSettings: View {
 /// once-only welcome record remain in the host service.
 @MainActor @Observable
 final class ChatGPTSignInModel {
+  // Includes dismissed sheets until the host acknowledges their cancellation.
+  private static var pending: [UUID: Task<Void, Never>] = [:]
+  static var hasPendingSignIns: Bool { !pending.isEmpty }
+  static func cancelPendingSignIns() async {
+    let tasks = Array(pending.values)
+    for task in tasks { task.cancel() }
+    for task in tasks { await task.value }
+  }
+
   var accounts: [ChatGPTAccountInfo] = []
   var signingIn: Task<Void, Never>?
   var message: String?
@@ -62,7 +71,7 @@ final class ChatGPTSignInModel {
   var active: ChatGPTAccountInfo? { accounts.first(where: \.active) }
   private var connected: (() async throws -> Void)?
   private let authenticate: (String?, Bool) async throws -> ChatGPTAuth.SignInResult
-  private let load: () async -> [ChatGPTAccountInfo]
+  private let load: () async -> ChatGPTAuth.Status
   private let acknowledge: (String) async throws -> Void
 
   init(
@@ -71,7 +80,7 @@ final class ChatGPTSignInModel {
         await MainActor.run { _ = NSWorkspace.shared.open(url) }
       }
     },
-    load: @escaping () async -> [ChatGPTAccountInfo] = { await ChatGPTAuth.shared().accounts() },
+    load: @escaping () async -> ChatGPTAuth.Status = { await ChatGPTAuth.shared().status() },
     acknowledge: @escaping (String) async throws -> Void = { try await ChatGPTAuth.shared().markWelcomed(clientId: $0) }
   ) {
     self.authenticate = authenticate
@@ -79,19 +88,30 @@ final class ChatGPTSignInModel {
     self.acknowledge = acknowledge
   }
 
-  func refresh() async { accounts = await load() }
+  func refresh(onConnected: (() async throws -> Void)? = nil) async {
+    if let onConnected { connected = onConnected }
+    let status = await load()
+    accounts = status.accounts
+    if let result = status.result, result.account.signedIn, result.account.planEnabled, result.welcome {
+      welcome = result.account.clientId
+    }
+  }
 
   func signIn(clientId: String? = nil, consent: Bool = false, onConnected: @escaping () async throws -> Void) {
     guard signingIn == nil else { return }
     message = nil
-    signingIn = Task {
+    connected = onConnected
+    let id = UUID()
+    let task = Task {
+      defer { Self.pending[id] = nil; signingIn = nil }
       do {
         let r = try await authenticate(clientId, consent)
+        try Task.checkCancellation()
         message = r.account.planEnabled
           ? String(localized: "\(r.account.email ?? r.account.clientId) でサインインしました。")
           : String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。")
         await refresh()
-        signingIn = nil
+        try Task.checkCancellation()
         if r.account.planEnabled {
           if r.welcome {
             connected = onConnected
@@ -101,8 +121,9 @@ final class ChatGPTSignInModel {
       } catch is CancellationError {
         message = String(localized: "サインインを中止しました。")
       } catch { message = "\(error)" }
-      signingIn = nil
     }
+    signingIn = task
+    Self.pending[id] = task
   }
 
   func welcomed() async {
@@ -175,7 +196,7 @@ struct ChatGPTConnection: View {
         Text(message).font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
       }
     }
-    .task { await model.refresh() }
+    .task { await model.refresh(onConnected: onConnected) }
     .onDisappear { model.signingIn?.cancel() }
     .alert(Text("ChatGPT プランを使っています"), isPresented: Binding(get: { model.welcome != nil }, set: { _ in })) {
       Button("Got it") { Task { await model.welcomed() } }
