@@ -157,6 +157,11 @@ import TsugumiTestSupport
     changed.cardJson = #"{"template":"input","params":[{"name":"value","type":"int","data":2}]}"#
     changed.metaJson = #"{"content":"agent","description":"unrelated"}"#
     other.definitionsUpsert = [changed]; session.applyDelta(other)
+    // The replies keep the documents: the Card under edit stays on the canvas.
+    func unchanged(_ id: String) -> Tsugumi_RPC_DocumentDeltaT {
+      let d = self.delta(session.rev, id, "saved"); d.projectJson = nil
+      return d
+    }
     var oldValues: [JSONValue?] = []
     session.operateProject = { request in
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
@@ -168,7 +173,7 @@ import TsugumiTestSupport
         oldValues.append(before["params"]?.array?.first?["data"])
       }
       if oldValues.last! != .number("2") { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
-      return self.result(self.delta(session.rev, request.opId, "saved"))
+      return self.result(unchanged(request.opId))
     }
     #expect(await edit.commit(session, text: "3", { $0.updateParam("a", "value", .number("3"), initial: edit.paramBase) }) == false)
     #expect(edit.revision.conflictRev == 1 && edit.revision.error == nil)
@@ -183,7 +188,7 @@ import TsugumiTestSupport
       if before["content"]?.string != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
       let after = try JSONValue.parse(try #require(edit.newValue.json))
       #expect(after["description"]?.string == "unrelated")
-      return self.result(self.delta(session.rev, request.opId, "saved"))
+      return self.result(unchanged(request.opId))
     }
     _ = await session.finishDraftEdit()
     #expect(session.inlineDraft?.revision.conflictRev != nil && session.inlineDraft?.content == "mine")
@@ -220,11 +225,14 @@ import TsugumiTestSupport
     let first = try #require(await iterator.next())
     let undo2 = Task { await session.undo() }
     let firstBody = try #require(first.request.body?.value as? Tsugumi_Host_ProjectEditsT)
-    #expect((firstBody.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)?.newValue.json == #""second""#)
+    func restored(_ body: Tsugumi_Host_ProjectEditsT) -> JSONValue? {
+      (body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)?.newValue.json.flatMap { try? JSONValue.parse($0) }
+    }
+    #expect(restored(firstBody) == .string("second"))
     first.reply.resume(returning: result(delta(session.rev, first.request.opId, "first")))
     let second = try #require(await iterator.next())
     let secondBody = try #require(second.request.body?.value as? Tsugumi_Host_ProjectEditsT)
-    #expect((secondBody.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)?.newValue.json == #""first""#)
+    #expect(restored(secondBody) == .string("first"))
     second.reply.resume(returning: result(delta(session.rev, second.request.opId, "old")))
     await undo1.value; await undo2.value
     #expect(session.undoStack.isEmpty && session.redoStack.count == 2)
@@ -272,7 +280,7 @@ import TsugumiTestSupport
         calls += 1
         let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
         let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
-        #expect(field.oldValue.json == String(calls))
+        #expect(try field.oldValue.json.map(JSONValue.parse) == .number(String(calls)))
         let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = sources(UInt64(calls))
         if echoFirst { session.applyDelta(d) }
         return self.result(d)

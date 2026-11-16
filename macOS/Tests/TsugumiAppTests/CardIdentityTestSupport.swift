@@ -1,6 +1,7 @@
 import Foundation
 import TsugumiRPC
 import TsugumiAgentClient
+import TsugumiLauncher
 @testable import TsugumiApp
 
 /// Deterministic RPC boundary for presentation fixtures; core identity tests
@@ -36,5 +37,24 @@ import TsugumiAgentClient
     references[key] = used
     return id
   }
+  return session
+}
+
+/// A session showing a document no host serves, for tests of what is drawn.
+/// Editing needs a host: tests of actions use a Daemon or their own replies.
+@MainActor func offlineSession(_ dir: URL, cards: [(id: String, card: String)], layout: String = "{}") throws -> ProjectSession {
+  try Data("{}".utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  session.prepareLayout = { _, layout, _ in layout }
+  let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+  let ids = cards.map { #"{"id":"\#($0.id)"}"# }.joined(separator: ",")
+  snapshot.rev = 0; snapshot.projectJson = #"{"name":"t","canvas":{"cards":[\#(ids)],"connections":[]}}"#
+  snapshot.layoutJson = layout
+  snapshot.definitions = cards.map { card in
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = card.id; definition.cardJson = card.card
+    return definition
+  }
+  snapshot.run = Tsugumi_RPC_RunStatusT()
+  session.receiveProjectSnapshot(snapshot, projectId: "p")
   return session
 }

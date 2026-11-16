@@ -90,11 +90,8 @@ import TsugumiRPC
   let dir = testTemporaryDirectory.appendingPathComponent("guide-zoom-\(UUID().uuidString.prefix(8))")
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
-  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-  s.project = try JSONValue.parse(document)
-  let card = try await s.addCard(template: .trigger, in: [], at: CGPoint(x: 100, y: 100), name: "start")
+  let card = "start"
+  let s = try offlineSession(dir, cards: [(card, #"{"template":"trigger"}"#)], layout: #"{"cards":{"start":{"x":100,"y":100}}}"#)
   s.cameras[key([])] = (x: 0, y: 0, zoom: 0.39)
 
   let guide = GuideController.shared

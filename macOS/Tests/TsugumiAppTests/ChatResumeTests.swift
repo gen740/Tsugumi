@@ -506,6 +506,9 @@ import TsugumiRPC
       let second = ProjectSession(identity: identity, environments: t.session.environments)
       let projectID = UUID().uuidString.lowercased()
       second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
+      // A folder is registered under the identity it holds.
+      try FileManager.default.createDirectory(at: copied.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
+      try Data(projectID.utf8).write(to: copied.appendingPathComponent(".tsugumi/project-id"))
       _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": projectID,
         "endpoint": project.url.absoluteString, "token": project.token, "title": "copy-b", "path": copied.path])
       let chat = ChatController(session: second, connection: { .fixture })

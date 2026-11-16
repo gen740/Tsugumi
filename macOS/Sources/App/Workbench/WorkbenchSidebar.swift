@@ -111,7 +111,7 @@ struct WorkbenchSidebar: View {
               help: String(localized: "ダブルクリックまたは Canvas へドラッグして配置")) { place(id) }
             .contextMenu {
               Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
-              Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) } }.disabled(!session.isEditable)
+              Button("削除", role: .destructive) { session.removeDefinition(id) }.disabled(!session.isEditable)
             }
         }
       } label: {

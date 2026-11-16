@@ -330,9 +330,11 @@ import TsugumiTestSupport
         $0["width"] = .real(300)
         $0["height"] = .real(200)
       }
-      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }  // beside its Card
-      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // beside its Card, to be closed
+      // Opened where they are drawn beside their Cards: a saved frame has its place.
+      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }
+      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // to be closed
       s.closeDisplayFrame(outside)
+      await s.save()
 
       let items = s.marqueeItems(CGRect(x: -500, y: -500, width: 1500, height: 1500), in: scope)
       #expect(items.cards.contains(near) && !items.cards.contains(framed) && !items.cards.contains(outside), "\(scope)")
@@ -342,12 +344,11 @@ import TsugumiTestSupport
       #expect(s.marqueeItems(CGRect(x: 5900, y: -500, width: 1000, height: 1000), in: scope).frames.isEmpty, "a closed frame is not caught")
 
       let before = (card: s.position(near), note: s.noteRect(s.note(note)!), beside: s.displayRect(near), undos: s.undoStack.count)
-      s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil)
+      await s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil).value
       #expect(s.position(near) == CGPoint(x: before.card.x + 30, y: before.card.y + 40))
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: before.note.minX + 30, y: before.note.minY + 40))
       #expect(s.displayRect(framed) == CGRect(x: 430, y: 440, width: 300, height: 200), "its Card stays, its size too")
       #expect(s.position(framed) == CGPoint(x: 3000, y: 0))
-      #expect(s.displayFrame(near)?["x"]?.double == nil, "beside its Card: it goes with the Card and keeps no place")
       #expect(s.displayRect(near).origin == CGPoint(x: before.beside.minX + 30, y: before.beside.minY + 40), "not moved twice")
       #expect(s.undoStack.count == before.undos + 1, "one edit")
       await s.undo()
@@ -359,13 +360,13 @@ import TsugumiTestSupport
       let grid = 20.0
       let offGrid = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 3010, y: 950), name: "offgrid")
       let noteBefore = s.noteRect(s.note(note)!).origin
-      s.moveSelection(cards: [offGrid], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      await s.moveSelection(cards: [offGrid], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid).value
       #expect(s.position(offGrid) == CGPoint(x: snapToGrid(3010, grid) + 40, y: snapToGrid(950, grid) + 40))
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 40, y: noteBefore.y + 40))
       #expect(s.displayRect(framed).origin == CGPoint(x: 440, y: 440))
       await s.undo()
       // Without a Card there is nothing to keep to the grid: they land where dropped.
-      s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      await s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid).value
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 33, y: noteBefore.y + 47))
       #expect(s.displayRect(framed).origin == CGPoint(x: 433, y: 447))
       await s.undo()
@@ -373,14 +374,15 @@ import TsugumiTestSupport
       // A frame alone is closed and its Card stays; notes go; one undo.
       let undos = s.undoStack.count
       s.deleteSelection(cards: [], notes: [note], frames: [framed], in: scope)
+      await s.save()
       #expect(s.displayFrame(framed)?["hidden"]?.bool == true && s.instance(framed) != nil)
       #expect(s.note(note) == nil && s.undoStack.count == undos + 1)
       await s.undo()
       #expect(s.note(note) != nil && s.displayFrame(framed)?["hidden"]?.bool != true)
 
-      // A Card takes its frame with it. A frame beside its Card is closed with
-      // its place and size, which the core wants: the document still saves.
+      // A Card takes its frame with it; a frame alone is closed and its Card stays.
       s.deleteSelection(cards: [near], notes: [], frames: [near, beside], in: scope)
+      await s.save()
       #expect(s.instance(near) == nil && s.displayFrame(near) == nil)
       #expect(s.instance(beside) != nil && s.displayFrame(beside)?["hidden"]?.bool == true)
       await s.save()
@@ -528,10 +530,13 @@ import TsugumiTestSupport
     s.start()
     try await Self.connected(s)
     let here = CGPoint(x: 4000, y: 4000)
+    var placed: [CGPoint] = []
     for template in [DefinitionTemplate.draft, .draft, .python] {
       let k = try await s.addCard(template: template, in: [], at: here, automaticPlacement: true)
-      #expect(s.layout["cards"]?[k] == nil, "Automatic additions carry no coordinates")
+      #expect(s.layout["cards"]?[k] != nil, "The host saves the place it chose")
+      placed.append(s.position(k))
     }
+    #expect(!placed.contains(here) && Set(placed.map { "\($0)" }).count == placed.count, "\(placed)")
     let dropped = try await s.addCard(template: .draft, in: [], at: here)
     #expect(s.position(dropped) == here)
     await s.save()
@@ -558,6 +563,7 @@ import TsugumiTestSupport
     let first = s.comments(k)[0].id
     s.edit { $0.setCommentText(k, id: first, text: "両軸を対数に") }
     s.edit { $0.setCommentText(k, id: first, text: "  ") }
+    await s.save()
     #expect(s.comments(k).map(\.text) == ["両軸を対数に", "軸に名前を"])
     #expect(s.nodeData(k).openComments == 2 && s.cardsWithOpenComments(in: []) == [k])
     #expect(s.cardDetails(k).contains { $0.contains("両軸を対数に") })
@@ -571,8 +577,10 @@ import TsugumiTestSupport
         m["comments"] = .array(list)
       }
     }
+    await s.save()
     #expect(s.comments(k)[0].resolution == "両軸を対数にした" && s.openComments(k).map(\.text) == ["軸に名前を"])
     s.setCommentResolved(k, id: first, false)
+    await s.save()
     #expect(s.comments(k)[0].resolved == false && s.comments(k)[0].resolution == nil)
 
     #expect(s.comments(k)[0].stateBy == "user" && s.comments(k)[0].editedBy == "user" && s.comments(k)[1].author == "user")
@@ -586,7 +594,8 @@ import TsugumiTestSupport
     #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
-    #expect(s.cardMeta(k) == .object([("name", .string("plot"))]), "Removing all comments keeps the Card's name only")
+    await s.save()
+    #expect(s.comments(k).isEmpty && s.displayName(k) == "plot", "Removing all comments keeps the Card's name")
     await s.undo()
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
@@ -680,9 +689,10 @@ import TsugumiTestSupport
     let d = try Daemon(project: dir)
     defer { d.stop() }
     let model = AppModel.shared
+    // The model starts its session: the connection it is making reads the
+    // endpoint set here, and a second start would replace it under an action.
     let s = try model.session(for: dir)
     s.endpointOverride = d.endpoint
-    s.start()
     try await Self.connected(s)
     let a = try await s.addCard(template: .draft, in: [], at: .zero)
     let b = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0))
@@ -890,7 +900,8 @@ extension SyncTests {
     _ = await allocationEvents.next()
     s.deleteCards(["b"], in: [])
     allocation?.resume(returning: "fork-delayed")
-    try await connecting.value
+    // The host refuses the wire: its end is gone by the time the action's turn comes.
+    await #expect(throws: (any Error).self) { try await connecting.value }
     #expect(s.instance("fork-delayed") == nil)
     #expect(!s.connections(in: []).contains { $0["to"]?["card"]?.string == "b" })
     await s.close()

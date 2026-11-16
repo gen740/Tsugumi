@@ -145,13 +145,8 @@ import TsugumiTestSupport
   let dir = testTemporaryDirectory.appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
-  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-  s.project = try JSONValue.parse(document)
-  let start = try await s.addCard(template: .trigger, in: [], at: .zero, name: "start")
-  let log = try await s.addCard(template: .python, in: [], at: CGPoint(x: 600, y: 0), name: "log")
-  let draft = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
+  let (start, log, draft) = ("start", "log", "plan")
+  let s = try offlineSession(dir, cards: [(start, #"{"template":"trigger"}"#), (log, #"{"language":"python"}"#), (draft, #"{"template":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -161,7 +156,11 @@ import TsugumiTestSupport
   #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
 
   // Once the Card is implemented, endpoint styling becomes solid.
-  s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
+  let implemented = Tsugumi_RPC_DocumentDeltaT()
+  implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"language":"python"}"#
+  implemented.definitionsUpsert = [definition]
+  s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
   #expect(!s.isDraftWire(from: draft, to: log))
   #expect(!s.isDraftWire(from: start, to: draft))

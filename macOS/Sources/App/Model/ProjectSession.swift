@@ -1045,10 +1045,15 @@ final class ProjectSession {
     }
   }
 
-  /// Applies an edit and saves it at once. One call is one step of undo.
-  func edit(_ change: (ProjectSession) -> Void) {
-    let body = mutation(change)
-    _ = enqueueOperation(.projectedits, body: body)
+  /// Applies an edit and saves it at once. One call is one step of undo. The
+  /// change is computed when its turn comes, from the document the earlier
+  /// actions left: a quick second edit of the same value is not a conflict.
+  func edit(_ change: @escaping (ProjectSession) -> Void) {
+    let task = submitOperation(.projectedits, body: { self.mutation(change) })
+    Task { @MainActor in
+      do { _ = try await task.value }
+      catch { notice = error.localizedDescription }
+    }
   }
 
   @ObservationIgnored private var commandEdits: [Tsugumi_Host_ProjectEditT]?
@@ -1511,7 +1516,7 @@ final class ProjectSession {
   }
 
   /// Immediate comment actions have no open working copy.
-  private func editComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
+  private func editComments(_ k: CardKey, _ fn: @escaping ([JSONValue]) -> [JSONValue]) {
     edit { $0.changeComments(k, fn) }
   }
 
