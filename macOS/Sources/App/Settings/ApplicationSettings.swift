@@ -205,6 +205,7 @@ private struct GeneralSettings: View {
         }
         .fixedSize(horizontal: false, vertical: true)
       }
+      Toggle("最後のウインドウを閉じたら Tsugumi を終了する", isOn: $prefs.quitAfterLastWindowClosed)
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
         .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {

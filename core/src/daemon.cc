@@ -284,15 +284,8 @@ int run_daemon(int argc, char** argv) {
   }
   log::info("ready project_id=" + service.project_id() + (endpoint.empty() ? "" : " endpoint=" + endpoint) +
             (opt.unix_socket.empty() ? "" : " unix=" + opt.unix_socket));
-  std::jthread idle_monitor([&](std::stop_token stop) {
-    while (!stop.stop_requested()) {
-      if (server.idle_expired()) { ::kill(::getpid(), SIGTERM); return; }
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-  });
   int sig = 0;
   sigwait(&set, &sig);
-  idle_monitor.request_stop();
   log::info(std::string("stopping on ") + (sig == SIGTERM ? "SIGTERM" : "SIGINT"));
   if (!opt.control_dir.empty()) ::unlink((opt.control_dir / "server.ready").c_str());
   service.shutdown();

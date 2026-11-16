@@ -519,7 +519,7 @@ void Service::export_now() {
 
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
-      "SessionHello", "IdleShutdown", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "SessionHello", "ProjectActivity", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "InputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
@@ -623,13 +623,11 @@ void Service::dispatch(RequestIn req) {
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
   switch (req.request()->value_type()) {
-    case P::IdleShutdownRequest: {
-      auto result = [&](bool stopping) {
-        flatbuffers::FlatBufferBuilder b;
-        auto value = R::CreateIdleShutdownResult(b, stopping);
-        return wire::reply(b, req.request_id, R::ReplyPayload::IdleShutdownResult, value.Union());
-      };
-      server_->stop_if_idle(req.conn, result(true), result(false));
+    case P::ProjectActivityRequest: {
+      // Observe outside the lanes so this query cannot count itself as work.
+      flatbuffers::FlatBufferBuilder b;
+      auto value = R::CreateProjectActivity(b, busy());
+      reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectActivity, value.Union()));
       return;
     }
     case P::ProjectHostRequirementsRequest: return on_lane(r, std::move(req), &Service::project_host_requirements);
@@ -834,9 +832,9 @@ std::optional<Service::ViewRecord> Service::load_view(const std::string& view_id
   return std::nullopt;
 }
 
-auto Service::idle() -> bool {
-  return mutation_lane_->idle() && read_pool_->idle() && shell_lane_->idle() &&
-         !scheduler_->active_status().has_value();
+auto Service::busy() -> bool {
+  return !mutation_lane_->idle() || !read_pool_->idle() || !shell_lane_->idle() ||
+         scheduler_->active_status().has_value();
 }
 
 RunStatusData Service::current_run_status() {

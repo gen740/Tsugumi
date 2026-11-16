@@ -61,7 +61,7 @@ class EnvironmentProcess {
     return Verify(ready) ? std::optional<int64_t>(ready.pid) : std::nullopt;
   }
   virtual auto GuardStart(const std::string&) -> void {}
-  auto StopIfIdle(const Tsugumi::Host::EnvironmentStateT& ready) -> bool;
+  virtual auto Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool;
   virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
       -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
@@ -115,8 +115,7 @@ class Environments {
       -> Tsugumi::Host::HostRuntimeT;
   auto Terminal(const Tsugumi::Host::HostTerminalRequestT& request)
       -> Tsugumi::Host::HostTerminalT;
-  auto Idle() -> bool;
-  auto DrainIdle() -> void;
+  auto Busy() -> bool;
   // Stops observation and pending starts, then shuts down owned runtimes.
   auto Shutdown() -> void;
 

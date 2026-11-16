@@ -27,6 +27,11 @@ size_t Lane::queued() const {
   return q_.size();
 }
 
+auto Lane::pending() const -> size_t {
+  std::lock_guard lock(mu_);
+  return q_.size() + running_;
+}
+
 auto Lane::idle() const -> bool {
   std::lock_guard lock(mu_);
   return q_.empty() && running_ == 0;

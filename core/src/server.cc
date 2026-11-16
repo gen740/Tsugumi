@@ -70,7 +70,7 @@ std::string trim(std::string s) {
 }  // namespace
 
 struct Server::Command {
-  enum class Kind { Reply, Subscribe, Unsubscribe, SetVisible, Broadcast, Close, IdleStop };
+  enum class Kind { Reply, Subscribe, Unsubscribe, SetVisible, Broadcast, Close };
   explicit Command(Kind k) : kind(k) {}
   Kind kind;
   ConnId conn = 0;
@@ -201,14 +201,6 @@ void Server::reply(ConnId conn, std::string bytes) {
   post(std::move(c));
 }
 
-auto Server::stop_if_idle(ConnId conn, std::string accepted, std::string busy) -> void {
-  Command c{Command::Kind::IdleStop};
-  c.conn = conn;
-  c.bytes = std::move(accepted);
-  c.sub_id = std::move(busy);
-  post(std::move(c));
-}
-
 void Server::subscribe(ConnId conn, std::string sub_id, std::string open_reply) {
   Command c{Command::Kind::Subscribe};
   c.conn = conn;
@@ -257,19 +249,6 @@ void Server::apply(Command& cmd) {
       if (n.kind == Note::Kind::Display && (!c->visible_enabled || !c->visible.count(n.card_key)))
         continue;
       enqueue_note(*c, n);
-    }
-    return;
-  }
-  if (cmd.kind == Command::Kind::IdleStop) {
-    auto it = conns_.find(cmd.conn);
-    if (it == conns_.end()) return;
-    auto& c = *it->second;
-    if (conns_.size() == 1 && c.inflight.size() == 1 && sink_->idle()) {
-      idle_draining_ = true;
-      enqueue_raw(c, std::move(cmd.bytes), true);
-      c.close_after_flush = true;
-    } else {
-      enqueue_raw(c, std::move(cmd.sub_id), true);
     }
     return;
   }
@@ -822,8 +801,7 @@ void Server::handle_frame(Conn& c, std::string frame) {
 }
 
 void Server::loop() {
-  std::optional<int64_t> idle_since;
-  while (!stopping_ && !idle_expired_) {
+  while (!stopping_) {
     {
       std::vector<Command> cmds;
       {
@@ -858,16 +836,6 @@ void Server::loop() {
       ids.push_back(c.id);
       ++it;
     }
-    if (idle_draining_ && conns_.empty()) { idle_expired_ = true; break; }
-    if (opts_.idle_timeout.count() > 0 && conns_.empty() && sink_->idle()) {
-      if (!idle_since) idle_since = now;
-      if (now - *idle_since >= opts_.idle_timeout.count()) {
-        idle_expired_ = true;
-        break;
-      }
-    } else {
-      idle_since.reset();
-    }
     int rc = ::poll(fds.data(), fds.size(), 500);
     if (rc < 0 && errno != EINTR) break;
     size_t i = 0;
@@ -877,15 +845,15 @@ void Server::loop() {
     }
     ++i;
     if (unix_fd_ >= 0) {
-      if (!idle_draining_ && (fds[i].revents & POLLIN)) accept_on(unix_fd_, false);
+      if (fds[i].revents & POLLIN) accept_on(unix_fd_, false);
       ++i;
     }
     if (ws_unix_fd_ >= 0) {
-      if (!idle_draining_ && (fds[i].revents & POLLIN)) accept_on(ws_unix_fd_, true);
+      if (fds[i].revents & POLLIN) accept_on(ws_unix_fd_, true);
       ++i;
     }
     if (tcp_fd_ >= 0) {
-      if (!idle_draining_ && (fds[i].revents & POLLIN)) accept_on(tcp_fd_, true);
+      if (fds[i].revents & POLLIN) accept_on(tcp_fd_, true);
       ++i;
     }
     for (; i < fds.size(); ++i) {
@@ -896,7 +864,7 @@ void Server::loop() {
         drop(c, "socket error");
         continue;
       }
-      if (!idle_draining_ && (fds[i].revents & (POLLIN | POLLHUP))) on_readable(c);
+      if (fds[i].revents & (POLLIN | POLLHUP)) on_readable(c);
       if (!c.closing || c.wpos < c.wbuf.size()) on_writable(c);
     }
   }

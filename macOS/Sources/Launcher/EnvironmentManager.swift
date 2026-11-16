@@ -176,6 +176,8 @@ public actor EnvironmentManager {
   }
   public func deleteVMData(id: String) async throws { _ = try await runtime(.deletehistory, key: id) }
   public func deleteData(_ project: ProjectIdentity) async throws { _ = try await runtime(.deleteenvironment, project: project.url.path) }
+  public func activityBeforeQuit() async throws -> Bool { try await client.activityBeforeQuit() }
+  public func shutdownForQuit() async { await client.stopResident(timeout: .seconds(2)) }
   public func shutdownForUpdate() async { await client.stopResident() }
   public func shutdown() async { _ = try? await runtime(.shutdown) }
   public func resetConfirmation(english: Bool) async throws -> String {

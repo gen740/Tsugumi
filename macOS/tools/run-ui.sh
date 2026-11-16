@@ -62,7 +62,7 @@ for _ in $(seq 1 $(( ${TSUGUMI_UI_SECONDS:-600} * 5 ))); do
   sleep 0.2
 done
 sleep 1
-# Closing the UI drops its clients; hostd drains work and exits when idle.
+# This script ends the UI process directly; it does not exercise AppKit Quit.
 kill $pid 2>/dev/null
 grep -v '^step' "$log" || exit $?
 ! grep -q '^trust-error ' "$log"

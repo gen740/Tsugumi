@@ -248,21 +248,21 @@ auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
   return out;
 }
 }  // namespace
-auto EnvironmentProcess::StopIfIdle(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
   auto result = connection->Call([](uint64_t id) {
     flatbuffers::FlatBufferBuilder b;
-    auto value = R::CreateIdleShutdownRequest(b);
-    auto request = R::CreateRequest(b, R::RequestPayload::IdleShutdownRequest, value.Union());
+    auto value = R::CreateProjectActivityRequest(b);
+    auto request = R::CreateRequest(b, R::RequestPayload::ProjectActivityRequest, value.Union());
     R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
     return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
   }, 500ms).get();
-  // Poll observes exit. A lost reply never authorizes a forced stop.
-  if (result.error) return false;
+  if (result.error) throw std::runtime_error("Cannot read project activity");
   const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();
-  const auto* idle = reply ? reply->value_as_IdleShutdownResult() : nullptr;
-  return idle && idle->stopping();
+  const auto* activity = reply ? reply->value_as_ProjectActivity() : nullptr;
+  if (!activity) throw std::runtime_error("Missing project activity");
+  return activity->busy();
 }
 auto EnvironmentProcess::Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {

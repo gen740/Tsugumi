@@ -387,6 +387,7 @@
 "どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。" = "Which Draft should the AI implement? Its Cards are only outlined; the AI writes what they do.";
 "どんな分野に興味がありますか？" = "Which field interests you?";
 "なし" = "None";
+"ほかのクライアントの処理も含め、実行・Agent・保存中の処理を停止し、実行環境を終了します。保存されていない変更は失われることがあります。" = "Stop runs, Agent turns and saves, including work from other clients, and shut down the execution environment. Unsaved changes may be lost.";
 "ほかのデモ" = "Other demos";
 "まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。" = "Shall we look at a working demo together first? It opens as an editable copy, and I'll show you Cards, wires and how to read the results while it actually runs.";
 "まだ出力はありません" = "No output yet";
@@ -1189,6 +1190,7 @@
 "書き込み" = "Write";
 "最大同時ジョブ数" = "Maximum concurrent jobs";
 "最大発火回数" = "Maximum activations";
+"最後のウインドウを閉じたら Tsugumi を終了する" = "Quit Tsugumi when the last window closes";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
 "最新を読み込む" = "Load Latest";
@@ -1302,6 +1304,7 @@
 "終える" = "End";
 "終わりました" = "Finished";
 "終了" = "Ended";
+"終了して停止" = "Quit and Stop";
 "終了しました" = "Ended";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
@@ -1336,7 +1339,7 @@
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";
-"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。" = "The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.";
+"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。再起動すると実行中の処理は停止します。" = "The display language will change after a restart. New records written into the project already use the new language. Restarting stops ongoing work.";
 "表示言語を変えるには再起動が必要です" = "Restart required to change the display language";
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
@@ -1395,6 +1398,7 @@
 "送信（⌘Return）" = "Send (⌘Return)";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
+"進行中の処理を停止して Tsugumi を終了しますか？" = "Quit Tsugumi and stop ongoing work?";
 "進行中の実行を表示" = "Show Active Run";
 "進行中の実行を表示しています" = "Showing the active run";
 "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。" = "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.";

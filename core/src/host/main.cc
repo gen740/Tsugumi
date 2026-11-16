@@ -153,7 +153,6 @@ auto RunHost(int argc, char** argv) -> int {
     }
     options.broker_socket = (broker_dir / "s").string();
     Service host(options);
-    listener.idle_timeout = std::chrono::seconds(30);
     Server server(listener, &host);
     auto host_listener = listener;
     host_listener.protocol = ServerOptions::Protocol::Host;
@@ -189,21 +188,8 @@ auto RunHost(int argc, char** argv) -> int {
             {"pid", std::to_string(::getpid())},
             {"protocol", "1"}}),
         0600);
-    std::jthread idle_monitor([&](std::stop_token stop) {
-      auto since = std::chrono::steady_clock::now();
-      while (!stop.stop_requested()) {
-        if (!host.CanDrain()) since = std::chrono::steady_clock::now();
-        if (std::chrono::steady_clock::now() - since >= std::chrono::seconds(30)) host.DrainIdle();
-        if (server.idle_expired()) {
-          ::kill(::getpid(), SIGTERM);
-          return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-      }
-    });
     int signal = 0;
     sigwait(&signals, &signal);
-    idle_monitor.request_stop();
     // Keep the guest stop bounded even if draining a host request hangs.
     // A second termination signal also ends hostd; vmhost observes Watch EOF
     // and independently completes its bounded guest shutdown.
