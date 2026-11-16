@@ -35,19 +35,6 @@ TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
   EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
   EXPECT_TRUE(!formatted->diagnostics() || formatted->diagnostics()->size() == 0);
 }
-TEST_F(AgentFixture, EditorsCanStillRequestAPureDocumentMerge) {
-  const std::string base = R"({"settings":{"n":1}})", ours = R"({"settings":{"n":2}})", theirs = R"({"settings":{"n":3}})";
-  const auto reply = Call(*host, H::RequestPayload::DocumentMergeRequest, [&](Builder& b) {
-    return H::CreateDocumentMergeRequest(b, b.CreateString(base), b.CreateString(ours), b.CreateString(theirs)).Union();
-  });
-  const auto* edit = reply.HostValue()->value_as_DocumentMerge();
-  ASSERT_NE(edit, nullptr);
-  ASSERT_NE(edit->conflicts(), nullptr);
-  ASSERT_EQ(edit->conflicts()->size(), 1U);
-  EXPECT_EQ(edit->conflicts()->Get(0)->str(), "/settings/n");
-  EXPECT_EQ(edit->merged_json()->str(), ours);
-
-}
 
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
   for (const bool websocket : {false, true})

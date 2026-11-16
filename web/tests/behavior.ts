@@ -2,7 +2,6 @@ import { layoutHost } from '../src/shared/hostLayout'
 layoutHost.validate = async (json) => json
 // UI-only tests replace the read-only host boundary, as they replace the core.
 // Real placement and transaction behavior run against hostd in test_card_placement.py.
-layoutHost.prepareSave = async (_project, _rev, changes) => changes
 layoutHost.complete = async (_project, layout) => layout
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -25,8 +24,6 @@ await import("./hostReadiness")
 await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
-await import('./mergeHost')
-await import('./unsavedMerge')
 await import("./switchCard")
 await import("./csharp")
 await import("./reports")
@@ -39,8 +36,6 @@ await import("./comments")
 await import("./draftWires")
 await import("./freedName")
 await import("./summary")
-await import("./staleApply")
-await import("./uiReview")
 await import("./executionSettings")
 await import("./executionLists")
 await import("./versions")
@@ -71,13 +66,10 @@ await import("./portGrid")
 
 await import("./marquee")
 
-await import("./hostLayoutScenarios")
 
 await import("./freeSpot")
 
-await import("./deleteCard")
 
-await import("./saveFailure")
 
 await import("./draftDisplays")
 
@@ -113,10 +105,9 @@ await import('./agentAppearance')
 
 await import("./invalidDisplays")
 
-await import('./binarySources')
 
-await import('./projectImport')
 
-await import("./cardFileEdits")
 
 await import('./marimo')
+
+await import('./projectOperations')

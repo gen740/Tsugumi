@@ -90,7 +90,7 @@ struct CardDatabaseView: View {
           }
           .disabled(session.unplacedDefinitions.contains(id))
           .help("Card の設定画面で開きます")
-          Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) }; selected = nil }
+          Button("削除", role: .destructive) { session.removeDefinition(id); selected = nil }
             .disabled(!session.unplacedDefinitions.contains(id) || !session.isEditable)
             .help(session.unplacedDefinitions.contains(id) ? "定義とソースを削除" : "Card を削除すると定義も削除されます")
           Spacer()
@@ -116,8 +116,8 @@ struct CardDatabaseView: View {
   }
 
   private func place(_ id: String) {
-    let k = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
-    message = String(localized: "\(k) を Workflow に配置しました（未保存）。")
+    _ = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
+    message = nil
   }
 
   private func apply(_ id: String, overwrite: Bool = false) async {
@@ -126,12 +126,9 @@ struct CardDatabaseView: View {
       let card = try JSONValue.parse(sentCard)
       let meta = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(sentMeta)
       parseError = nil
-      guard await revisionEdit.apply(session, overwrite: overwrite, { s in
-        var d = s.cardDefinitionDraft(key([id])) ?? DefinitionDraft(card: card, meta: meta)
-        if d.link == nil { d.card = card }
-        d.meta = meta
-        s.setCardDefinition(key([id]), d)
-      }) else { return }
+      guard await revisionEdit.replaceDocuments(session, [
+        ("definitions/\(id)/_card.json", card), ("definitions/\(id)/_meta.json", meta),
+      ]) else { return }
       guard selected == id else { return }
       baseCard = sentCard
       baseMeta = sentMeta
@@ -192,7 +189,7 @@ private struct NixSourceSettings: View {
 
   private func save(_ list: [JSONValue], overwrite: Bool = false) async {
     pending = list
-    if await revisionEdit.apply(session, overwrite: overwrite, { $0.project["nixSources"] = .array(list) }) {
+    if await revisionEdit.apply(session, overwrite: overwrite, { $0.setProjectField("nixSources", .array(list)) }) {
       pending = nil
     }
   }
@@ -275,6 +272,7 @@ private struct NixSourceSettings: View {
 
 private struct GeneralProjectSettings: View {
   let session: ProjectSession
+  @State private var selectedProject: JSONValue = .object([])
   @State private var name = ""
   @State private var pkgs = ""
   @State private var versionPaths = ""
@@ -282,8 +280,8 @@ private struct GeneralProjectSettings: View {
   @State private var revisionEdit = RevisionEdit()
 
   var body: some View {
-    let savedPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-    let changed = name != (session.project["name"]?.string ?? "") || pkgs != (session.project["pkgsPath"]?.string ?? "") || versionPaths != savedPaths
+    let savedPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    let changed = name != (selectedProject["name"]?.string ?? "") || pkgs != (selectedProject["pkgsPath"]?.string ?? "") || versionPaths != savedPaths
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
@@ -333,6 +331,7 @@ private struct GeneralProjectSettings: View {
   }
 
   private func load() {
+    selectedProject = session.project
     name = session.project["name"]?.string ?? ""
     pkgs = session.project["pkgsPath"]?.string ?? ""
     versionPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
@@ -342,12 +341,16 @@ private struct GeneralProjectSettings: View {
   private func save(overwrite: Bool = false) async {
     let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths
     let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
+    var after = selectedProject
+    if sentName != (selectedProject["name"]?.string ?? "") { after["name"] = .string(sentName) }
+    if sentPkgs != (selectedProject["pkgsPath"]?.string ?? "") { after["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs) }
+    let originalPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    if sentPaths != originalPaths { after["versionPaths"] = .array(paths.map { .string($0) }) }
     if await revisionEdit.apply(session, overwrite: overwrite, { s in
-      s.project["name"] = .string(sentName)
-      s.project["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs)
-      s.project["versionPaths"] = .array(paths.map { .string($0) })
+      s.appendEdits([s.jsonEdit("tsugumi.json", old: selectedProject, new: after)])
     }) {
-      if pkgs == sentPkgs { pkgs = sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs }
+      selectedProject = after
+      if pkgs == sentPkgs { pkgs = after["pkgsPath"]?.string ?? "" }
       if versionPaths == sentPaths { versionPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }
@@ -395,7 +398,7 @@ private struct RunHistorySettings: View {
   }
 
   private func saveHistorySetting(overwrite: Bool = false) async {
-    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.project["saveRunHistory"] = .bool(pendingSaving) }
+    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.setProjectField("saveRunHistory", .bool(pendingSaving)) }
   }
 
   var body: some View {

@@ -25,7 +25,4 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
 
 auto DocumentsEqual(const std::string& a, const std::string& b) -> bool;
 
-auto MergeDocuments(const std::string &base, const std::string &ours,
-                    const std::string &theirs) -> Tsugumi::Host::DocumentMergeT;
-
 } // namespace tsugumi::host

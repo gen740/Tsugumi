@@ -209,6 +209,8 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
+  /// Opaque metadata supplied by the host for this accepted save.
+  operation_data:[ubyte] (id: 4);
 }
 
 table ProjectCacheClearResult {
@@ -322,6 +324,9 @@ table ProjectSaveRequest {
   /// Opaque host intent for the existing op_id digest, before concrete expansion.
   /// A revision-conflicted attempt with an intent is retryable under the same id.
   save_intent:string (id: 7);
+  /// Carried unchanged in SaveResult, including a replay of this operation id.
+  /// The project core does not interpret host editing metadata.
+  operation_data:[ubyte] (id: 8);
 }
 
 /// -> SaveResult. Import external edits into the accepted document at base_rev.

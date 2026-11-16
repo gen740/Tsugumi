@@ -143,24 +143,23 @@ extension ProjectSession {
   /// Places a definition folder no Card uses as its Card (the same name).
   @discardableResult
   func placeDefinition(_ id: String, at point: CGPoint) -> CardKey {
-    let k = key([id])
-    guard unplacedDefinitions.contains(id) else { return k }
-    edit { s in
-      s.updateGraph([]) { g in
-        var cards = g["cards"]?.array ?? []
-        cards.append(.object([("id", .string(id))]))
-        g["cards"] = .array(cards)
-      }
-      s.setPosition(k, point)
-    }
-    return k
+    selectionOperation(.place, cards: [key([id])], in: [], at: point)
+    return key([id])
+  }
+
+  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], frames: Set<CardKey> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectSelectionT()
+    body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")); body.action = action
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y; body.scene = layoutScene(scope)
+    _ = enqueueOperation(.projectselection, body: body)
   }
 
   var isEditable: Bool { connected && !runActive }
 
   /// Source bytes as the draft sees them.
   func sourceText(_ p: String) async throws -> String {
-    if let d = sourceEdits[p] { return String(decoding: d, as: UTF8.self) }
     guard let rpc else { throw RPCError.disconnected }
     return String(decoding: try await rpc.readFile(path: p, atRev: rev), as: UTF8.self)
   }
@@ -189,110 +188,21 @@ extension ProjectSession {
     return id
   }
 
-  /// Adds a Card instance to a scope's canvas.
-  func appendCard(_ id: String, in scope: [String]) {
-    startClean(key(scope + [id]))
-    updateGraph(scope) { g in
-      var cards = g["cards"]?.array ?? []
-      cards.append(.object([("id", .string(id))]))
-      g["cards"] = .array(cards)
-    }
-  }
-
-  /// A new Card's name can be one a Card had: nothing of that Card stays with it.
-  /// The saving client removes layout entries on deletion; a Card
-  /// in Card's layout or a file written by hand can still hold a frame.
-  private func startClean(_ k: CardKey) {
-    forgetResult(k)
-    updateLayout(of: Array(path(k).dropLast())) { dropLayoutEntries(of: k, from: &$0) }
-  }
-
-  /// The Card's place and frame (and the places of anything inside it).
-  private func dropLayoutEntries(of k: CardKey, from l: inout JSONValue) {
-    let lk = layoutKey(k)
-    for field in ["cards", "displays", "boundaries"] {
-      if let entries = l[field]?.object {
-        l[field] = .object(entries.filter { $0.0 != lk && !$0.0.hasPrefix(lk + "/") })
-      }
-    }
-
-  }
-
-  /// A new Card from a template, with its own definition folder.
+  /// The host assembles the template, sources and placement in one operation.
   @discardableResult
-  /// `automaticPlacement`: omit coordinates so the host supplies a free place.
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
                automaticPlacement: Bool = false) async throws -> CardKey {
     let id = try await newCardId(name ?? t.baseName, in: scope)
-    let k = key(scope + [id]), template = try await prepareTemplate(t.rawValue, id)
-    let definition = DefinitionDraft(mergeJSON: try JSONValue.parse(template.definition))
-    let dir = (projectPrefix(scope) ?? "") + "definitions/\(id)/"
-    edit { s in
-      s.appendCard(id, in: scope)
-      s.setCardDefinition(k, definition)
-      for file in template.files { s.putSource(dir + file.path, file.text) }
-      s.updateMeta(k) { $0["name"] = .string(name ?? t.baseName) }
-      if !automaticPlacement { s.setPosition(k, point) }
-    }
-    return k
-  }
-
-  /// Copies a Card's definition folder (settings and every file) into a
-  /// scope as a new Card. A Card in Card brings its own copy of the external.
-  func copyDefinition(from k: CardKey, to scope: [String], name: String? = nil) async throws -> (id: String, apply: (ProjectSession) -> Void)? {
-    guard let id = path(k).last, let prefix = projectPrefix(Array(path(k).dropLast())) else { return nil }
-    return try await copyDefinition(prefix: prefix, id: id, to: scope, name: name)
-  }
-
-  /// Copies the definition `id` of the project at `prefix` ("" for this one).
-  func copyDefinition(prefix: String, id: String, to scope: [String], name: String? = nil) async throws
-    -> (id: String, apply: (ProjectSession) -> Void)? {
-    guard let d = prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id] else { return nil }
-    let newId = try await newCardId(name ?? d.meta?["name"]?.string ?? id, in: scope)
-    let to = (projectPrefix(scope) ?? "") + "definitions/\(newId)/"
-    let copy = try await copyDocuments(from: prefix + "definitions/\(id)/", to: to, name: name)
-    guard let draft = copy.definitions[to] else {
-      throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing copied definition")
-    }
-    return (newId, { s in
-      s.setCardDefinition(key(scope + [newId]), draft)
-      copy.apply(s)
-    })
-  }
-
-  /// Returned documents and exact bytes, retained by the caller's undo edit.
-  struct ExternalCopy {
-    var definitions: [String: DefinitionDraft] = [:]
-    var docs: [String: ExternalProject] = [:]
-    var files: [String: Data] = [:]
-
-    @MainActor func apply(_ s: ProjectSession) {
-      for (p, d) in files {
-        s.sourceRemovals.remove(p)
-        s.sourceEdits[p] = d
-      }
-      for (p, e) in docs.sorted(by: { $0.key < $1.key }) { s.createExternal(p, e) }
-    }
-  }
-
-  /// Transport and byte retention only; the host chooses every copied path.
-  private func copyDocuments(from: String, to: String, name: String? = nil) async throws -> ExternalCopy {
-    let reply = try await prepareCopy(docState().mergeJSON.serialized(), sourcePaths.sorted(), from, to, name)
-    let patch = try JSONValue.parse(reply.edits)
-    var copy = ExternalCopy()
-    for (p, d) in patch["definitions"]?.object ?? [] { copy.definitions[p] = DefinitionDraft(mergeJSON: d) }
-    for (p, e) in patch["externals"]?.object ?? [] { copy.docs[p] = ExternalProject(mergeJSON: e) }
-    for file in reply.files { copy.files[file.to] = try await copyBytes(file.from) }
-    return copy
-  }
-
-  func copyExternal(from: String, to: String) async throws -> ExternalCopy {
-    try await copyDocuments(from: from, to: to)
+    let body = Tsugumi_Host_ProjectCreateCardT()
+    body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.id = id; body.template = t.rawValue; body.name = name ?? t.baseName
+    body.x = point.x; body.y = point.y; body.automaticPlacement = automaticPlacement
+    try await operate(.projectcreatecard, body: body)
+    return key(scope + [id])
   }
 
   /// A file's bytes as the draft sees them.
   func rpcBytes(_ p: String) async throws -> Data {
-    if let d = sourceEdits[p] { return d }
     guard let rpc else { throw RPCError.disconnected }
     guard let hash = sources[p]?.hash else { throw RPCFailure(kind: .notFound, diagnostic: "unknown source: \(p)") }
     // Autosave can advance the core's revision before its delta reaches us.
@@ -300,159 +210,59 @@ extension ProjectSession {
     return try await rpc.readFile(path: p, atRev: nil, ifHash: hash)
   }
 
-  /// Every byte is read before an edit removes or replaces any definition.
-  private func copyBytes(_ p: String) async throws -> Data {
-    do { return try await rpcBytes(p) }
-    catch {
-      throw NSError(domain: "CardFileRead", code: 1, userInfo: [NSLocalizedDescriptionKey:
-        String(format: String(localized: "ファイル「%@」を読み込めませんでした: %@"), p, error.localizedDescription)])
-    }
-  }
-
-  /// Places a copy of an external (`from`) in a scope as a new Card in Card.
   @discardableResult
   func placeExternalCopy(from: String, in scope: [String], at point: CGPoint) async -> CardKey? {
-    guard external(from) != nil else { return nil }
     let base = from.split(separator: "/").last.map(String.init) ?? "sub"
-    guard let name = try? await newCardId(base, in: scope) else { return nil }
-    let toPrefix = projectPrefix(scope) ?? ""
-    let copy: ExternalCopy
-    do { copy = try await copyExternal(from: from, to: toPrefix + "externals/\(name)/") }
-    catch { notice = error.localizedDescription; return nil }
-    let k = key(scope + [name])
-    edit { s in
-      copy.apply(s)
-      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: .object([("name", .string(base))]), link: .object([("external", .string(name))])))
-      s.appendCard(name, in: scope)
-      s.setPosition(k, point)
-    }
-    return k
+    do {
+      let id = try await newCardId(base, in: scope)
+      let item = Tsugumi_Host_ProjectCopyItemT()
+      item.from = from; item.id = id; item.name = base; item.x = point.x; item.y = point.y
+      try await copyCards([item], in: scope)
+      return key(scope + [id])
+    } catch { notice = error.localizedDescription; return nil }
   }
 
-  /// Places a copy of a definition of an external (or of this project) as a new Card.
   @discardableResult
   func placeDefinitionCopy(prefix: String, id: String, in scope: [String], at point: CGPoint) async -> CardKey? {
-    let c: (id: String, apply: (ProjectSession) -> Void)
     do {
-      guard let prepared = try await copyDefinition(prefix: prefix, id: id, to: scope) else { return nil }
-      c = prepared
+      let newId = try await newCardId(id, in: scope)
+      let item = Tsugumi_Host_ProjectCopyItemT()
+      item.from = prefix + "definitions/\(id)/"; item.id = newId; item.x = point.x; item.y = point.y
+      try await copyCards([item], in: scope)
+      return key(scope + [newId])
     } catch { notice = error.localizedDescription; return nil }
-    let k = key(scope + [c.id])
-    edit { s in
-      c.apply(s)
-      s.appendCard(c.id, in: scope)
-      s.setPosition(k, point)
-    }
-    return k
   }
 
-  /// Takes in another Tsugumi project as a Card in Card: its folder is
-  /// copied to externals/<name>/ using the Host's project-copy rule
-  /// (excluding .tsugumi, .git and symbolic links), then placed in the scope.
   @discardableResult
   func importProject(from folder: URL, in scope: [String], at point: CGPoint) async throws -> CardKey {
-    var files: [String: Data] = [:]
-    var fileIndex: UInt32 = 0, offset: UInt64 = 0
-    while true {
-      let result: [String: Any]
-      do {
-        result = try await CoreHostClient.shared.call("HostProjectReadRequest",
-          ["path": folder.path, "file_index": fileIndex, "offset": offset])
-      } catch let failure as CoreHostFailure {
-        if failure.code == "state_format" { throw failure }
-        throw HostProjectError(code: failure.code)
-      }
-      guard let entries = result["files"] as? [[String: Any]] else {
-        throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing project files in Host reply")
-      }
-      for entry in entries {
-        guard let path = entry["path"] as? String, let bytes = entry["bytes"] as? [UInt8] else {
-          throw RPCFailure(kind: .invalidRequest, diagnostic: "Invalid project file in Host reply")
-        }
-        files[path, default: Data()].append(contentsOf: bytes)
-      }
-      if result["complete"] as? Bool == true { break }
-      guard let nextFile = result["nextFile"] as? UInt32, let nextOffset = result["nextOffset"] as? UInt64 else {
-        throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing project import cursor in Host reply")
-      }
-      fileIndex = nextFile
-      offset = nextOffset
-    }
-    func json(_ rel: String) -> JSONValue? { files[rel].flatMap { try? JSONValue.parse(String(decoding: $0, as: UTF8.self)) } }
-    // The project and the externals in it, each with its documents.
-    let projects = files.keys.filter { rel in
-      guard rel.hasSuffix("tsugumi.json") else { return false }
-      let parts = rel.split(separator: "/").dropLast()
-      return parts.count % 2 == 0 && stride(from: 0, to: parts.count, by: 2).allSatisfy { parts[parts.startIndex + $0] == "externals" }
-    }.map { String($0.dropLast("tsugumi.json".count)) }
-    let name = try await newCardId(folder.lastPathComponent, in: scope)
-    let to = (projectPrefix(scope) ?? "") + "externals/\(name)/"
-    var docs: [String: ExternalProject] = [:]
-    for p in projects {
-      guard let proj = json(p + "tsugumi.json") else { continue }
-      var ext = ExternalProject(project: proj, layout: json(p + "layout.json") ?? .object([]), definitions: [:])
-      for rel in files.keys where rel.hasPrefix(p + "definitions/") {
-        let rest = rel.dropFirst((p + "definitions/").count).split(separator: "/")
-        guard rest.count == 2 else { continue }
-        let id = String(rest[0]), dir = p + "definitions/\(id)/"
-        if rest[1] == "_link.json", let l = json(rel) { ext.definitions[id] = DefinitionDraft(card: .object([]), meta: json(dir + "_meta.json"), link: l) }
-        if rest[1] == "_card.json", let c = json(rel) { ext.definitions[id] = DefinitionDraft(card: c, meta: json(dir + "_meta.json")) }
-      }
-      docs[to + p] = ext
-    }
-    let k = key(scope + [name])
-    edit { s in
-      for (rel, d) in files where !projects.contains(where: { rel.hasPrefix($0) && ExternalProject.isDocument(String(rel.dropFirst($0.count))) }) {
-        s.sourceRemovals.remove(to + rel)
-        s.sourceEdits[to + rel] = d
-      }
-      for (p, e) in docs.sorted(by: { $0.key < $1.key }) { s.createExternal(p, e) }
-      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: .object([("name", .string(folder.lastPathComponent))]), link: .object([("external", .string(name))])))
-      s.appendCard(name, in: scope)
-      s.setPosition(k, point)
-    }
-    return k
+    let id = try await newCardId(folder.lastPathComponent, in: scope)
+    let body = Tsugumi_Host_ProjectImportT()
+    body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.path = folder.path; body.id = id; body.x = point.x; body.y = point.y
+    try await operate(.projectimport, body: body)
+    return key(scope + [id])
   }
 
-  /// Copies Cards with their definition folders (settings, sources) under new
-  /// names; connections between the copied Cards are copied too.
+  private func copyCards(_ items: [Tsugumi_Host_ProjectCopyItemT], in scope: [String], connections: Bool = false) async throws {
+    let body = Tsugumi_Host_ProjectCopyT()
+    body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.items = items.map(Optional.some); body.copyConnections = connections
+    try await operate(.projectcopy, body: body)
+  }
+
   func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
-    var map: [String: String] = [:]
-    var applies: [(ProjectSession) -> Void] = []
+    guard !keys.isEmpty, keys.allSatisfy({ Array(path($0).dropLast()) == scope }), let prefix = projectPrefix(scope) else { return [] }
     do {
+      var items: [Tsugumi_Host_ProjectCopyItemT] = []
       for k in keys.sorted() {
-        guard let id = path(k).last else { continue }
-        guard let c = try await copyDefinition(from: k, to: scope) else { return [] }
-        map[id] = c.id
-        applies.append(c.apply)
+        guard let old = path(k).last else { continue }
+        let item = Tsugumi_Host_ProjectCopyItemT()
+        item.from = prefix + "definitions/\(old)/"; item.id = try await newCardId(displayName(k), in: scope)
+        items.append(item)
       }
+      try await copyCards(items, in: scope, connections: true)
+      return Set(items.map { key(scope + [$0.id]) })
     } catch { notice = error.localizedDescription; return [] }
-    var made: Set<CardKey> = []
-    edit { s in
-      for a in applies { a(s) }
-      for new in map.values { s.startClean(key(scope + [new])) }
-      s.updateGraph(scope) { g in
-        var cards = g["cards"]?.array ?? []
-        var conns = g["connections"]?.array ?? []
-        for (_, new) in map.sorted(by: { $0.key < $1.key }) { cards.append(.object([("id", .string(new))])) }
-        for c in conns {
-          if let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string, let nf = map[f], let nt = map[t] {
-            var copy = c
-            copy["from"]?["card"] = .string(nf)
-            copy["to"]?["card"] = .string(nt)
-            conns.append(copy)
-          }
-        }
-        g["cards"] = .array(cards)
-        g["connections"] = .array(conns)
-      }
-      for (old, new) in map {
-        let p = s.position(key(scope + [old]))
-        s.setPosition(key(scope + [new]), CGPoint(x: p.x + 30, y: p.y + 30))
-        made.insert(key(scope + [new]))
-      }
-    }
-    return made
   }
 
   /// Names are independent of identifiers and may be shared by several Cards.
@@ -534,140 +344,80 @@ extension ProjectSession {
     let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if let problem = cardNameProblem(k, name) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
     guard name != displayName(k) else { return }
-    edit { s in s.updateMeta(k) { $0["name"] = .string(name) } }
-    await save()
-    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
+    guard let prefix = projectPrefix(Array(path(k).dropLast())), let id = path(k).last else { return }
+    let file = prefix + "definitions/\(id)/_meta.json"
+    let edit: Tsugumi_Host_ProjectEditT
+    if let meta = cardMeta(k) {
+      edit = fieldEdit(file, [.string("name")], old: meta["name"], new: .string(name))
+    } else {
+      let put = Tsugumi_Host_ProjectFilePutT()
+      put.filePath = file; put.expectMissing = true
+      put.bytes = Array(JSONValue.object([("name", .string(name))]).serialized().utf8)
+      edit = Tsugumi_Host_ProjectEditT()
+      edit.value = Tsugumi_Host_ProjectEditValueUnion(put, type: .projectfileput)
+    }
+    try await operateFields([edit])
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
-    edit { $0.removeCards(keys, in: scope) }
-  }
-
-  private func removeCards(_ keys: Set<CardKey>, in scope: [String]) {
-    let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty else { return }
-    let prefix = projectPrefix(scope) ?? ""
-    let s = self
-    // Each Card's definition folder goes with it, and a Card in Card's own external copy.
-    for k in keys {
-      if let ext = s.cardExternal(k) { s.removeExternal(ext) }
-      s.removeCardDefinition(k)
-    }
-    let cut = s.connections(in: scope).filter {
-      ids.contains($0["from"]?["card"]?.string ?? "") || ids.contains($0["to"]?["card"]?.string ?? "")
-    }
-    s.updateGraph(scope) { g in
-      g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
-      g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
-    }
-    if !prefix.isEmpty {
-      // Boundary ports of removed Cards go too.
-      s.updateExternal(prefix) { e in
-        for side in ["inputs", "outputs"] {
-          if let o = e.project["boundary"]?[side]?.object {
-            e.project["boundary"]?[side] = .object(o.filter { !ids.contains($0.1["card"]?.string ?? "") })
-          }
-        }
-      }
-    }
-    s.updateLayout(of: scope) { l in
-      for k in keys { s.dropLayoutEntries(of: k, from: &l) }
-    }
-    s.updateGroups(in: scope) { groups in
-      for i in groups.indices {
-        groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
-        if let outputs = groups[i]["outputs"]?.array {
-          groups[i]["outputs"] = .array(outputs.filter { !ids.contains($0["card"]?.string ?? "") })
-        }
-      }
-    }
-  }
-
-  private func connectionState(_ scope: [String]) -> JSONValue {
-    let state = docState(), prefix = projectPrefix(scope)
-    let affected = prefix.flatMap { state.externals[$0] }
-    var value: JSONValue = .object([
-      ("project", affected?.project ?? state.project), ("layout", affected?.layout ?? state.layout),
-      ("definitions", .object((affected?.definitions ?? state.definitions).sorted { $0.key < $1.key }.map { ($0.key, $0.value.mergeJSON) }))])
-    value["ports"] = .object(cards(in: scope).compactMap { card in
-      guard let id = card["id"]?.string else { return nil }
-      let ports = portData(key(scope + [id]))
-      return (id, .object([("inputs", .array(ports.inputs.map { .string($0.name) })),
-                           ("outputs", .array(ports.outputs.map { .string($0.name) }))]))
-    })
-    return value
+    selectionOperation(.delete, cards: keys, in: scope)
   }
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
-    guard let fromId = path(from.0).last, let toId = path(to.0).last, isEditable,
-          [from, to].allSatisfy({ instance($0.0) != nil && Array(path($0.0).dropLast()) == scope }) else { return }
-    let before = connectionState(scope), prefix = projectPrefix(scope)
-    func current() -> Bool { isEditable && projectPrefix(scope) == prefix && connectionState(scope) == before }
-    var reply = try await prepareConnect(before.serialized(), (fromId, from.1), (toId, to.1), nil)
-    if reply.needsFork {
-      let id = try await newCardId("fork", in: scope)
-      guard current() else { return }
-      reply = try await prepareConnect(before.serialized(), (fromId, from.1), (toId, to.1), id)
-    }
-    guard current() else { return }
-    let after = DocState(mergeJSON: try JSONValue.parse(reply.state))
-    edit { s in
-      if !reply.insertedId.isEmpty { s.forgetResult(key(scope + [reply.insertedId])) }
-      if prefix == "" {
-        s.project = after.project; s.layout = after.layout
-        for (id, d) in after.definitions { s.setEffectiveDefinition(id, d) }
-      } else if let prefix { s.updateExternal(prefix) { e in
-        e.project = after.project; e.layout = after.layout; e.definitions = after.definitions
-      } }
-    }
+    guard let fromId = path(from.0).last, let toId = path(to.0).last, let prefix = projectPrefix(scope), isEditable else { return }
+    let body = Tsugumi_Host_ProjectConnectT()
+    body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.fromCard = fromId; body.fromPort = from.1; body.toCard = toId; body.toPort = to.1
+    body.forkId = try await newCardId("fork", in: scope)
+    try await operate(.projectconnect, body: body)
   }
 
   func removeConnection(at index: Int, in scope: [String]) {
-    edit { s in
-      var conns = s.connections(in: scope)
-      guard index < conns.count else { return }
-      conns.remove(at: index)
-      s.updateGraph(scope) { g in g["connections"] = .array(conns) }
-    }
+    let wires = connections(in: scope)
+    guard wires.indices.contains(index) else { return }
+    removeConnections([wires[index]], in: scope)
   }
 
-  /// Removes connections (as they are in the scope's canvas).
   func removeConnections(_ list: [JSONValue], in scope: [String]) {
-    guard !list.isEmpty else { return }
-    edit { s in
-      s.updateGraph(scope) { g in
-        g["connections"] = .array((g["connections"]?.array ?? []).filter { !list.contains($0) })
-      }
-    }
+    if !list.isEmpty { selectionOperation(.removeconnections, cards: [], in: scope, connections: list) }
   }
 
   func disconnect(_ k: CardKey, inputs: Bool, in scope: [String]) {
-    guard let id = path(k).last else { return }
-    edit { s in
-      let removed = s.connections(in: scope).filter { ($0[inputs ? "to" : "from"]?["card"]?.string ?? "") == id }
-      s.updateGraph(scope) { g in
-        g["connections"] = .array((g["connections"]?.array ?? []).filter { !removed.contains($0) })
-      }
-    }
+    selectionOperation(inputs ? .disconnectinputs : .disconnectoutputs, cards: [k], in: scope)
   }
 
   func setCollapsed(_ keys: Set<CardKey>, _ value: Bool) {
-    edit { s in
-      for k in keys {
-        let lk = s.layoutKey(k)
-        s.updateLayout(of: Array(path(k).dropLast())) { l in
-          var cards = l["cards"] ?? .object([])
-          var entry = cards[lk] ?? .object([("x", .real(0)), ("y", .real(0))])
-          entry["collapsed"] = value ? .bool(true) : nil
-          cards[lk] = entry
-          l["cards"] = cards
+    guard !keys.isEmpty else { return }
+    queueFields { [self] in
+      keys.compactMap { k in
+        let scope = Array(path(k).dropLast())
+        guard let prefix = projectPrefix(scope) else { return nil }
+        let entry = layout(of: scope)["cards"]?[layoutKey(k)]
+        if entry == nil {
+          let at = position(k)
+          var placed: JSONValue = .object([("x", .real(at.x)), ("y", .real(at.y))])
+          if value { placed["collapsed"] = .bool(true) }
+          return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k))], old: nil, new: placed)
         }
+        return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string("collapsed")],
+                         old: entry?["collapsed"], new: value ? .bool(true) : nil)
       }
     }
   }
 
   func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    edit { $0.updateParam(k, name, value) }
+    guard let dir = definitionDir(k) else { return }
+    queueFields { [self] in
+      let definition = cardDefinition(k), match = JSONValue.object([("name", .string(name))])
+      if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
+        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"], new: value)]
+      }
+      guard definition?["template"]?.string == "switch", name == "value", let value, value.bool != nil else {
+        throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
+      }
+      return [fieldEdit(dir + "_card.json", [.string("params"), match], old: nil,
+                        new: .object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))]
+    }
   }
 
   /// Mutates the value inside the caller's transaction, without an autosave.
@@ -686,85 +436,18 @@ extension ProjectSession {
   /// Moves the selected Cards into a new Card in Card: a new external project
   /// (externals/<name>/) with their definitions and the wires between them.
   /// Wires crossing the selection become its boundary ports, so the graph
-  /// computes the same.
+  /// The host moves the complete selected definition/external closure.
   @discardableResult
   func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
-    let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty, keys.allSatisfy({ Array(path($0).dropLast()) == scope }), let scopePrefix = projectPrefix(scope) else { return nil }
-    guard let newId = try? await newCardId(name, in: scope) else { return nil }
-    let newKey = key(scope + [newId])
-    let before = docState(), beforeSources = sourceEdits, beforeRemovals = sourceRemovals, beforeHashes = sources.mapValues(\.hash)
-    let ext = scopePrefix + "externals/\(newId)/"
-    // Files of the Cards' definition folders, and of their own externals.
-    var files: [String: Data] = [:]
-    var moved: [String: ExternalProject] = [:]
+    guard !keys.isEmpty, keys.allSatisfy({ Array(path($0).dropLast()) == scope }), let prefix = projectPrefix(scope) else { return nil }
     do {
-      for k in keys.sorted() {
-        guard let dir = definitionDir(k), let id = path(k).last else { continue }
-        for p in sourcePaths where p.hasPrefix(dir) && !ExternalProject.isDocument(String(p.dropFirst(scopePrefix.count))) {
-          files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = try await copyBytes(p)
-        }
-        if let inner = cardExternal(k), let name = cardDefinitionDraft(k)?.link?["external"]?.string {
-          let to = ext + "externals/\(name)/"
-          let copy = try await copyExternal(from: inner, to: to)
-          files.merge(copy.files) { _, new in new }
-          moved.merge(copy.docs) { _, new in new }
-        }
-      }
+      let id = try await newCardId(name, in: scope)
+      let body = Tsugumi_Host_ProjectMakeSubgraphT()
+      body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id; body.name = name
+      try await operate(.projectmakesubgraph, body: body)
+      return key(scope + [id])
     } catch { notice = error.localizedDescription; return nil }
-    let root = scopePrefix.isEmpty ? project : (external(scopePrefix)?.project ?? .object([]))
-    let transformed: (project: JSONValue, external: JSONValue, link: JSONValue)
-    do {
-      let reply = try await prepareSubgraph(root.serialized(), ids.sorted(), newId)
-      transformed = (try JSONValue.parse(reply.project), try JSONValue.parse(reply.external), try JSONValue.parse(reply.link))
-    } catch { notice = error.localizedDescription; return nil }
-    guard before == docState(), beforeSources == sourceEdits, beforeRemovals == sourceRemovals, beforeHashes == sources.mapValues(\.hash), isEditable else { return nil }
-    edit { s in
-      var center = CGPoint.zero
-      for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
-      center.x /= CGFloat(keys.count)
-      center.y /= CGFloat(keys.count)
-      if scopePrefix.isEmpty { s.project = transformed.project }
-      else { s.updateExternal(scopePrefix) { $0.project = transformed.project } }
-      var e = ExternalProject(project: transformed.external, layout: .object([]), definitions: [:])
-      var extCards: [(String, JSONValue)] = []
-      for k in keys.sorted() {
-        guard let id = path(k).last else { continue }
-        let p = s.position(k)
-        extCards.append((id, .object([("x", .real(p.x - center.x)), ("y", .real(p.y - center.y))])))
-        e.definitions[id] = s.cardDefinitionDraft(k)
-      }
-      e.layout = .object([("cards", .object(extCards))])
-      for k in keys {
-        if let inner = s.cardExternal(k) {
-          for p in s.effectiveExternals.keys.filter({ $0.hasPrefix(inner) }) { s.removeExternal(p) }
-        }
-        s.removeCardDefinition(k)
-      }
-      for (p, d) in files {
-        s.sourceRemovals.remove(p)
-        s.sourceEdits[p] = d
-      }
-      for (to, inner) in moved { s.createExternal(to, inner) }
-      s.createExternal(ext, e)
-      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: transformed.link))
-      s.updateLayout(of: scope) { l in
-        if var cards = l["cards"]?.object {
-          cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
-          l["cards"] = .object(cards)
-        }
-      }
-      s.setPosition(newKey, center)
-      s.updateGroups(in: scope) { groups in
-        for i in groups.indices {
-          groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
-        if let outputs = groups[i]["outputs"]?.array {
-          groups[i]["outputs"] = .array(outputs.filter { !ids.contains($0["card"]?.string ?? "") })
-        }
-        }
-      }
-    }
-    return newKey
   }
 
   // MARK: - Layout: notes, groups, output frames
@@ -794,16 +477,10 @@ extension ProjectSession {
 
   func addNote(in scope: [String], at p: CGPoint) async throws -> String {
     let id = try await reserveReference("note")
-    edit { s in
-      s.updateLayout(of: scope) { l in
-        var notes = l["notes"]?.array ?? []
-        notes.append(.object([
-          ("id", .string(id)), ("scope", .string("")), ("text", .string(String(localized: "メモ"))), ("color", .string("yellow")),
-          ("x", .real(p.x)), ("y", .real(p.y)), ("width", .real(240)), ("height", .real(120)),
-        ]))
-        l["notes"] = .array(notes)
-      }
-    }
+    try await operateLayoutEntity(scope, "notes", id, old: nil, new: .object([
+      ("id", .string(id)), ("scope", .string("")), ("text", .string(String(localized: "メモ"))), ("color", .string("yellow")),
+      ("x", .real(p.x)), ("y", .real(p.y)), ("width", .real(240)), ("height", .real(120)),
+    ]))
     return id
   }
 
@@ -825,8 +502,19 @@ extension ProjectSession {
     return (layout(of: sc)["notes"]?.array ?? []).first { $0["id"]?.string == id }
   }
 
-  func updateNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
-    edit { $0.changeNote(id, fn) }
+  private func operateLayoutEntity(_ scope: [String], _ field: String, _ id: String, old: JSONValue?, new: JSONValue?) async throws {
+    guard let prefix = projectPrefix(scope) else { return }
+    try await operateFields([fieldEdit(prefix + "layout.json", [.string(field), .object([("id", .string(id))])], old: old, new: new)])
+  }
+
+  func updateNote(_ id: String, _ fn: @escaping (inout JSONValue) -> Void) {
+    queueFields { [self] in
+      guard let scope = scopeHolding("notes", id), let prefix = projectPrefix(scope), let before = note(id) else {
+        throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
+      }
+      var after = before; fn(&after)
+      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: after)]
+    }
   }
 
   func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
@@ -839,12 +527,12 @@ extension ProjectSession {
   }
 
   func removeNote(_ id: String) {
-    edit { $0.dropNote(id) }
-  }
-
-  private func dropNote(_ id: String) {
-    guard let sc = scopeHolding("notes", id) else { return }
-    updateLayout(of: sc) { $0["notes"] = .array(($0["notes"]?.array ?? []).filter { $0["id"]?.string != id }) }
+    queueFields { [self] in
+      guard let scope = scopeHolding("notes", id), let prefix = projectPrefix(scope), let before = note(id) else {
+        throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
+      }
+      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: nil)]
+    }
   }
 
   func noteRect(_ n: JSONValue) -> CGRect {
@@ -865,64 +553,54 @@ extension ProjectSession {
 
   func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "グループ")) async throws -> String {
     let id = try await reserveReference("group")
-    edit { s in
-      s.updateGroups(in: scope) { g in
-        g.append(.object([
-          ("id", .string(id)), ("scope", .string("")), ("name", .string(name)), ("color", .string("blue")),
-          ("cards", .array(keys.compactMap { path($0).last }.sorted().map { .string($0) })),
-        ]))
-      }
-    }
+    try await operateLayoutEntity(scope, "groups", id, old: nil, new: .object([
+      ("id", .string(id)), ("scope", .string("")), ("name", .string(name)), ("color", .string("blue")),
+      ("cards", .array(keys.compactMap { path($0).last }.sorted().map { .string($0) })),
+    ]))
     return id
   }
 
-  func updateGroup(_ id: String, _ fn: (inout JSONValue) -> Void) {
-    guard let sc = scopeHolding("groups", id) else { return }
-    edit { s in
-      s.updateGroups(in: sc) { g in
-        guard let i = g.firstIndex(where: { $0["id"]?.string == id }) else { return }
-        fn(&g[i])
+  func updateGroup(_ id: String, _ fn: @escaping (inout JSONValue) -> Void) {
+    queueFields { [self] in
+      guard let scope = scopeHolding("groups", id), let prefix = projectPrefix(scope),
+            let before = groups(in: scope).first(where: { $0["id"]?.string == id }) else {
+        throw RPCFailure(kind: .notFound, diagnostic: "Unknown group: \(id)")
       }
+      var after = before; fn(&after)
+      return [fieldEdit(prefix + "layout.json", [.string("groups"), .object([("id", .string(id))])], old: before, new: after)]
     }
   }
 
   /// Removes the group frame only; its Cards stay where they are.
   func ungroup(_ id: String) {
-    guard let sc = scopeHolding("groups", id) else { return }
-    edit { s in s.updateGroups(in: sc) { $0.removeAll { $0["id"]?.string == id } } }
+    queueFields { [self] in
+      guard let scope = scopeHolding("groups", id), let prefix = projectPrefix(scope),
+            let before = groups(in: scope).first(where: { $0["id"]?.string == id }) else {
+        throw RPCFailure(kind: .notFound, diagnostic: "Unknown group: \(id)")
+      }
+      return [fieldEdit(prefix + "layout.json", [.string("groups"), .object([("id", .string(id))])], old: before, new: nil)]
+    }
   }
 
   func displayFrame(_ k: CardKey) -> JSONValue? { layout(of: Array(path(k).dropLast()))["displays"]?[layoutKey(k)] }
 
-  func updateDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    edit { $0.changeDisplayFrame(k, fn) }
-  }
-
-  private func changeDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    let lk = layoutKey(k)
-    updateLayout(of: Array(path(k).dropLast())) { l in
-      var displays = l["displays"] ?? .object([])
-      var d = displays[lk] ?? .object([])
-      fn(&d)
-      displays[lk] = d
-      l["displays"] = displays
+  func updateDisplayFrame(_ k: CardKey, _ fn: @escaping (inout JSONValue) -> Void) {
+    queueFields { [self] in
+      let scope = Array(path(k).dropLast())
+      guard let prefix = projectPrefix(scope) else { throw RPCError.disconnected }
+      let before = displayFrame(k), r = displayRect(k, origin: placedPosition(k))
+      var after = before ?? .object([("x", .real(r.minX)), ("y", .real(r.minY)), ("width", .real(r.width)), ("height", .real(r.height))]); fn(&after)
+      return [fieldEdit(prefix + "layout.json", [.string("displays"), .string(layoutKey(k))], old: before, new: after)]
     }
   }
 
   /// Closes a frame; its Card stays. The layout keeps a frame only with its
   /// place and size, so one still drawn beside its Card gets them now.
   func closeDisplayFrame(_ k: CardKey) {
-    edit { $0.hideDisplayFrame(k) }
-  }
-
-  private func hideDisplayFrame(_ k: CardKey) {
     let r = displayRect(k, origin: placedPosition(k))
-    changeDisplayFrame(k) { f in
-      f["x"] = .real(r.minX.rounded())
-      f["y"] = .real(r.minY.rounded())
-      f["width"] = .real(r.width)
-      f["height"] = .real(r.height)
-      f["hidden"] = .bool(true)
+    updateDisplayFrame(k) { f in
+      f["x"] = .real(r.minX.rounded()); f["y"] = .real(r.minY.rounded())
+      f["width"] = .real(r.width); f["height"] = .real(r.height); f["hidden"] = .bool(true)
     }
   }
 
@@ -956,45 +634,18 @@ extension ProjectSession {
   /// land on whole numbers, as when dragged alone.
   @discardableResult
   func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
-    let d = snap.flatMap { g in cards.isEmpty ? nil : CGSize(width: snapToGrid(moved.width, g), height: snapToGrid(moved.height, g)) } ?? moved
-    let step = edit { s in
-      // Frames first: where one stands is worked out from its Card.
-      for k in frames where s.instance(k) != nil && !s.frameFollowsCard(k, moving: cards) {
-        let r = s.displayRect(k, origin: s.placedPosition(k))
-        s.changeDisplayFrame(k) { f in
-          f["x"] = .real((r.minX + d.width).rounded())
-          f["y"] = .real((r.minY + d.height).rounded())
-          f["width"] = .real(r.width)
-          f["height"] = .real(r.height)
-        }
-      }
-      for k in cards {
-        let p = s.position(k)
-        let from = snap.map { CGPoint(x: snapToGrid(p.x, $0), y: snapToGrid(p.y, $0)) } ?? p
-        s.setPosition(k, CGPoint(x: from.x + d.width, y: from.y + d.height))
-      }
-      for id in notes {
-        s.changeNote(id) { n in
-          n["x"] = .real(((n["x"]?.double ?? 0) + d.width).rounded())
-          n["y"] = .real(((n["y"]?.double ?? 0) + d.height).rounded())
-        }
-      }
-    }
-    return Task { @MainActor in
-      if let step, let scope = cards.first.map({ Array(path($0).dropLast()) }) {
-        await untangleAround(scope, moved: cards, step: step)
-      }
-    }
+    let scope = cards.first.map { Array(path($0).dropLast()) } ?? frames.first.map { Array(path($0).dropLast()) } ?? scopeHolding("notes", notes.first ?? "") ?? []
+    let body = Tsugumi_Host_ProjectMoveT()
+    body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.dx = moved.width; body.dy = moved.height; body.snap = snap ?? 0; body.scene = layoutScene(scope)
+    return enqueueOperation(.projectmove, body: body)
   }
 
   /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
   /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
   func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
-    edit { s in
-      s.removeCards(cards, in: scope)
-      for k in frames where !cards.contains(k) && s.instance(k) != nil { s.hideDisplayFrame(k) }
-      for id in notes { s.dropNote(id) }
-    }
+    selectionOperation(.delete, cards: cards, notes: notes, frames: frames, in: scope)
   }
 
   /// Where a scope's boundary ports are drawn (inside a Card in Card).
@@ -1004,20 +655,20 @@ extension ProjectSession {
   }
 
   func setBoundaryPosition(_ scope: [String], _ side: String, _ p: CGPoint) {
-    edit { s in
-      s.updateLayout(of: scope) { l in
-        var b = l["boundary"] ?? .object([])
-        b[side] = .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10))])
-        l["boundary"] = b
-      }
-    }
+    guard let prefix = projectPrefix(scope) else { return }
+    queueFields { [self] in [fieldEdit(prefix + "layout.json", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
+                         new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10)) ]))] }
   }
 
-  /// The host proposes the layout; it is saved as one ordinary edit with undo.
+  /// The host applies the measured layout in one operation with undo.
   func arrange(_ scope: [String]) async {
-    let scene = layoutScene(scope)
-    guard let placed = await proposed(scope, scene: scene, arrange: true) else { return }
-    edit { $0.applyArranged(scope, scene: scene, placed: placed) }
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectLayoutT()
+    body.projectPath = prefix.isEmpty ? "" : String(prefix.dropLast())
+    body.action = .arrange
+    body.scene = layoutScene(scope)
+    do { try await operate(.projectlayout, body: body) }
+    catch { notice = String(describing: error) }
   }
 
   /// Measurements only. Geometry and saved port order belong to presentation;
@@ -1080,87 +731,15 @@ extension ProjectSession {
     return scene
   }
 
-  private func sceneBytes(_ scene: Tsugumi_Host_LayoutSceneT) -> Data {
-    var builder = FlatBufferBuilder(initialSize: 1024)
-    var scene = scene
-    let offset = Tsugumi_Host_LayoutScene.pack(&builder, obj: &scene)
-    builder.finish(offset: offset)
-    return builder.data
-  }
-
-  private func proposed(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, arrange: Bool,
-                        around: [String] = []) async -> Tsugumi_Host_LayoutProposalT? {
-    guard let client = rpc else { return nil }
-    let before = docState(), bytes = sceneBytes(scene), step = undoStack.last
-    do {
-      let result: Tsugumi_Host_LayoutProposalT
-      if arrange {
-        let request = Tsugumi_Host_LayoutArrangeRequestT(); request.scene = scene
-        result = try await CoreHostClient.shared.layoutCall(.layoutarrangerequest, request)
-      } else {
-        let request = Tsugumi_Host_LayoutUntangleRequestT(); request.scene = scene; request.around = around.map(Optional.some)
-        result = try await CoreHostClient.shared.layoutCall(.layoutuntanglerequest, request)
-      }
-      // Undo, another edit, reconnect or changed measurements invalidate the proposal.
-      guard rpc === client, docState() == before, undoStack.last === step,
-            sceneBytes(layoutScene(scope)) == bytes else { return nil }
-      return result
-    } catch {
-      notice = String(describing: error)
-      return nil
-    }
-  }
-
-  private func applyArranged(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, placed: Tsugumi_Host_LayoutProposalT) {
-    for c in placed.cards.compactMap({ $0 }) { setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
-    applyPortOrders(scope, placed.portOrders.compactMap { $0 })
-    updateLayout(of: scope) { l in
-      if !placed.frames.isEmpty {
-        var displays = l["displays"] ?? .object([])
-        for f in placed.frames.compactMap({ $0 }) {
-          let lk = layoutKey(key(scope + [f.id]))
-          var d = displays[lk] ?? .object([])
-          d["x"] = .real(f.x)
-          d["y"] = .real(f.y)
-          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-          if let size = scene.frames.compactMap({ $0 }).first(where: { $0.id == f.id }) {
-            d["width"] = .real(size.width)
-            d["height"] = .real(size.height)
-          }
-          displays[lk] = d
-        }
-        l["displays"] = displays
-      }
-      if !placed.notes.isEmpty, let list = l["notes"]?.array {
-        l["notes"] = .array(list.map { n in
-          guard let at = placed.notes.compactMap({ $0 }).first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
-          var copy = n
-          copy["x"] = .real(at.x)
-          copy["y"] = .real(at.y)
-          return copy
-        })
-      }
-      // The bars of a Card in Card go back to following the Cards.
-      l["boundary"] = nil
-    }
-  }
-
   /// Reduces crossings while keeping all positions, as one undo step.
   func untangle(_ scope: [String]) async {
-    let scene = layoutScene(scope)
-    guard let proposal = await proposed(scope, scene: scene, arrange: false), !proposal.portOrders.isEmpty else { return }
-    edit { $0.applyPortOrders(scope, proposal.portOrders.compactMap { $0 }) }
-  }
-
-  private func untangleAround(_ scope: [String], moved: Set<CardKey>, step: UndoEntry) async {
-    let ids = moved.compactMap { k -> String? in
-      let p = path(k)
-      return p.count == scope.count + 1 && Array(p.dropLast()) == scope ? p.last : nil
-    }.sorted()
-    guard !ids.isEmpty else { return }
-    let scene = layoutScene(scope)
-    guard let proposal = await proposed(scope, scene: scene, arrange: false, around: ids) else { return }
-    editInto(step) { $0.applyPortOrders(scope, proposal.portOrders.compactMap { $0 }) }
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectLayoutT()
+    body.projectPath = prefix.isEmpty ? "" : String(prefix.dropLast())
+    body.action = .untangle
+    body.scene = layoutScene(scope)
+    do { try await operate(.projectlayout, body: body) }
+    catch { notice = String(describing: error) }
   }
 
   /// Whether the canvas shows this Card's ports in an order of its own.
@@ -1170,64 +749,36 @@ extension ProjectSession {
   }
 
   /// Back to the declared order of the ports, in one undo step.
-  func resetPortOrder(_ keys: Set<CardKey>) {
+  @discardableResult
+  func resetPortOrder(_ keys: Set<CardKey>) -> Task<Void, Never> {
     let targets = keys.filter { hasPortOrder($0) }
-    if targets.isEmpty { return }
-    edit { s in
-      for k in targets {
-        s.updateLayout(of: Array(path(k).dropLast())) { l in
-          guard var cards = l["cards"], var entry = cards[s.layoutKey(k)] else { return }
-          entry["inputOrder"] = nil
-          entry["outputOrder"] = nil
-          cards[s.layoutKey(k)] = entry
-          l["cards"] = cards
+    if targets.isEmpty { return Task {} }
+    var edits: [Tsugumi_Host_ProjectEditT] = []
+    for k in targets.sorted() {
+      let scope = Array(path(k).dropLast())
+      guard let prefix = projectPrefix(scope) else { continue }
+      let entry = layout(of: scope)["cards"]?[layoutKey(k)]
+      for field in ["inputOrder", "outputOrder"] {
+        if let value = entry?[field] {
+          edits.append(fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
         }
       }
     }
-  }
-
-  private func applyPortOrders(_ scope: [String], _ orders: [Tsugumi_Host_LayoutPortOrderT]) {
-    for order in orders {
-      let k = key(scope + [order.id])
-      let at = position(k)
-      updateLayout(of: scope) { l in
-        var cards = l["cards"] ?? .object([])
-        var entry = cards[layoutKey(k)] ?? .object([("x", .real(at.x)), ("y", .real(at.y))])
-        entry["inputOrder"] = .array(order.inputs.compactMap { $0 }.map(JSONValue.string))
-        entry["outputOrder"] = .array(order.outputs.compactMap { $0 }.map(JSONValue.string))
-        cards[layoutKey(k)] = entry
-        l["cards"] = cards
-      }
+    return Task { @MainActor in
+      do { try await operateFields(edits) }
+      catch { notice = String(describing: error) }
     }
   }
+
+
 
   // MARK: - Definitions
 
-  func removeDefinition(_ id: String) { removeCardDefinition(key([id])) }
-
-  /// Removes a Card's definition folder (its documents and every file in it).
-  func removeCardDefinition(_ k: CardKey) {
-    guard let dir = definitionDir(k) else { return }
-    setCardDefinition(k, nil)
-    let prefix = projectPrefix(Array(path(k).dropLast())) ?? ""
-    for p in sourcePaths where p.hasPrefix(dir) && !(prefix.isEmpty ? false : ExternalProject.isDocument(String(p.dropFirst(prefix.count)))) {
-      removeSource(p)
-    }
+  func removeDefinition(_ id: String) {
+    selectionOperation(.deletedefinitions, cards: [key([id])], in: [])
   }
 
-  func hasSource(_ p: String) -> Bool {
-    !sourceRemovals.contains(p) && (sources[p] != nil || sourceEdits[p] != nil)
-  }
-
-  func putSource(_ p: String, _ text: String) {
-    sourceRemovals.remove(p)
-    sourceEdits[p] = Data(text.utf8)
-  }
-
-  func removeSource(_ p: String) {
-    sourceEdits[p] = nil
-    if sources[p] != nil { sourceRemovals.insert(p) }
-  }
+  func hasSource(_ p: String) -> Bool { sources[p] != nil }
 
   func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }

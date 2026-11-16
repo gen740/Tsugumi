@@ -296,9 +296,6 @@ export class RPCClient {
     return this.call<R.ProjectValidateResultT>(RequestPayload.ProjectValidateRequest,
       Object.assign(new R.ProjectValidateRequestT(), { mode: D.ValidateMode.executable, changes: changes ?? [] }))
   }
-  reload(baseRev: bigint, opId: string, origin: string, approvedPermissions: string[] = []) {
-    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin, approvedPermissions, checkPermissions: true }))
-  }
   operation(opId: string) {
     return this.call<R.OperationResultT>(RequestPayload.OperationGetRequest, Object.assign(new R.OperationGetRequestT(), { opId }))
   }

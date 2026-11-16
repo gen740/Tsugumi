@@ -9,6 +9,7 @@
 #include "document.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/layout_saving.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
@@ -52,7 +53,8 @@ class Spans {
         child.member_start = start;
         node.children.push_back(std::move(child));
         Space();
-        if (text_.at(pos_) == end) break;
+        if (text_.at(pos_) == end)
+          break;
         ++pos_;
         Space();
       }
@@ -78,7 +80,8 @@ class Spans {
   auto String() -> void {
     ++pos_;
     while (text_.at(pos_) != '"') {
-      if (text_[pos_] == '\\') ++pos_;
+      if (text_[pos_] == '\\')
+        ++pos_;
       ++pos_;
     }
     ++pos_;
@@ -93,7 +96,8 @@ auto ValidJson(const std::string& value) -> void {
 }
 auto Matches(const std::string& document, const Span& child,
              const json::Members& keys) -> bool {
-  if (child.kind != '{') return false;
+  if (child.kind != '{')
+    return false;
   for (const auto& [key, value] : keys) {
     auto found =
         std::find_if(child.children.begin(), child.children.end(),
@@ -152,6 +156,26 @@ auto EncodedBytes(const std::string& bytes) -> std::string {
   return json::Encode(
       json::Members{{"base64", json::Quote(crypto::base64(bytes))}});
 }
+auto Paths(const SaveBase &base) -> std::set<std::string> {
+  std::set<std::string> paths;
+  for (const auto &[path, ignored] : base.files) {
+    (void)ignored;
+    paths.insert(path);
+  }
+  for (const auto &raw : json::Array(json::Get(base.snapshot, "sources", "[]")))
+    paths.insert(json::Text(json::Object(raw), "path"));
+  return paths;
+}
+auto TreePrefix(const std::string &prefix) -> bool {
+  if (!prefix.ends_with('/') || !fs::valid_relative_path(prefix + "file"))
+    return false;
+  const auto at = prefix.rfind("definitions/");
+  return IsExternalDocument(prefix + "tsugumi.json", "tsugumi.json") ||
+         (at != std::string::npos &&
+          (at == 0 || IsExternalDocument(prefix.substr(0, at) + "tsugumi.json",
+                                         "tsugumi.json")) &&
+          prefix.find('/', at + 12) == prefix.size() - 1);
+}
 auto Change(const std::string& kind, json::Members value) -> std::string {
   return json::Encode(json::Members{{"value_type", json::Quote(kind)},
                                     {"value", json::Encode(value)}});
@@ -161,11 +185,20 @@ auto Change(const std::string& kind, json::Members value) -> std::string {
 auto EditProjectField(const std::string& document,
                       const H::ProjectFieldEditT& edit) -> std::string {
   ValidJson(document);
+  std::string target_name = edit.file_path;
+  for (const auto &step : edit.selector) {
+    if (!step)
+      continue;
+    target_name += step->match_json.empty() ? "." + step->field
+                                            : "[" + step->match_json + "]";
+  }
   if (!edit.old_value || !edit.new_value)
     throw Failure("invalid_request",
                   "old_value and new_value require explicit presence");
-  if (edit.old_value->present) ValidJson(edit.old_value->json);
-  if (edit.new_value->present) ValidJson(edit.new_value->json);
+  if (edit.old_value->present)
+    ValidJson(edit.old_value->json);
+  if (edit.new_value->present)
+    ValidJson(edit.new_value->json);
   auto tree = Spans(document).Value();
   const Span* target = &tree;
   const Span* parent = nullptr;
@@ -174,18 +207,18 @@ auto EditProjectField(const std::string& document,
     const auto& step = edit.selector[step_index];
     if (!step || (step->field.empty() == step->match_json.empty()))
       throw Failure("invalid_request",
-                    edit.file_path +
+                    target_name +
                         ": selector requires exactly one field or keyed match");
     json::Members keys;
     if (!step->match_json.empty()) {
       keys = json::Object(step->match_json);
       if (keys.empty() || target->kind != '[')
         throw Failure("invalid_request",
-                      edit.file_path +
+                      target_name +
                           ": keyed match requires an array and nonempty keys");
     } else if (target->kind != '{') {
       throw Failure("invalid_request",
-                    edit.file_path + ": field selector requires an object");
+                    target_name + ": field selector requires an object");
     }
     parent = target;
     target = nullptr;
@@ -194,28 +227,57 @@ auto EditProjectField(const std::string& document,
       if (keys.empty() ? child.key == step->field
                        : Matches(document, child, keys)) {
         if (target)
-          throw Failure(
-              "value_conflict",
-              edit.file_path + ": selector matched more than one entity");
+          throw Failure("value_conflict",
+                        target_name +
+                            ": selector matched more than one entity");
         target = &child;
         index = n;
       }
     }
     if (!target) {
-      if (step_index + 1 != edit.selector.size())
+      if (step_index + 1 != edit.selector.size()) {
+        if (edit.old_value->present)
         throw Failure("target_missing",
-                      edit.file_path + ": selector parent is missing");
+                      target_name + ": selector parent is missing");
+        if (!edit.new_value->present)
+          return document;
+        // An absent leaf may create its absent containers. On reinspection
+        // existing containers are traversed, so another entity is preserved.
+        auto inserted = edit;
+        auto value = edit.new_value->json;
+        for (size_t i = edit.selector.size(); i > step_index + 1; --i) {
+          const auto &child = edit.selector[i - 1];
+          if (!child || (child->field.empty() == child->match_json.empty()))
+            throw Failure("invalid_request",
+                          target_name + ": invalid selector");
+          if (child->match_json.empty())
+            value = json::Encode(json::Members{{child->field, value}});
+          else {
+            if (!Matches(value, Spans(value).Value(),
+                         json::Object(child->match_json)))
+              throw Failure(
+                  "invalid_request",
+                  target_name +
+                      ": inserted entity does not match its selector");
+            value = json::Encode(std::vector<std::string>{value});
+          }
+        }
+        inserted.selector.resize(step_index + 1);
+        inserted.new_value->json = value;
+        return EditProjectField(document, inserted);
+      }
       if (edit.old_value->present)
         throw Failure("value_conflict",
-                      edit.file_path +
+                      target_name +
                           ": selected value is missing; write old_value as "
                           "{\"present\":false} to insert it");
-      if (!edit.new_value->present) return document;
+      if (!edit.new_value->present)
+        return document;
       if (!keys.empty() && !Matches(edit.new_value->json,
                                     Spans(edit.new_value->json).Value(), keys))
         throw Failure(
             "invalid_request",
-            edit.file_path +
+            target_name +
                 ": inserted entity does not match its keyed selector");
       auto inserted = (parent->children.empty() ? "" : ",") +
                       (keys.empty() ? json::Quote(step->field) + ':' : "") +
@@ -230,7 +292,7 @@ auto EditProjectField(const std::string& document,
   if (!edit.old_value->present ||
       !DocumentsEqual(current, edit.old_value->json))
     throw Failure("value_conflict",
-                  edit.file_path +
+                  target_name +
                       ": selected value differs from old_value; reread the "
                       "selected field and write old_value as {\"present\":true,"
                       "\"value\":<current value>} before reapplying new_value");
@@ -242,7 +304,7 @@ auto EditProjectField(const std::string& document,
                  json::Object(edit.selector.back()->match_json)))
       throw Failure(
           "invalid_request",
-          edit.file_path +
+          target_name +
               ": replacement changes its permanent selector identity");
     result.replace(target->start, target->end - target->start,
                    edit.new_value->json);
@@ -264,7 +326,8 @@ auto EditProjectField(const std::string& document,
 
 auto PreserveProjectBytes(const std::string& before, const std::string& after)
     -> std::string {
-  if (DocumentsEqual(before, after)) return before;
+  if (DocumentsEqual(before, after))
+    return before;
   if (!before.starts_with('{') &&
       before.find_first_not_of(" \n\r\t") == std::string::npos)
     return after;
@@ -284,7 +347,8 @@ auto PreserveProjectBytes(const std::string& before, const std::string& after)
     }
     return result;
   }
-  if (old_tree.kind != '{' || new_tree.kind != '{') return after;
+  if (old_tree.kind != '{' || new_tree.kind != '{')
+    return after;
   auto result = before;
   const auto old_fields = json::Object(before),
              new_fields = json::Object(after);
@@ -306,7 +370,8 @@ auto PreserveProjectBytes(const std::string& before, const std::string& after)
     edit.new_value = std::make_unique<H::ProjectValueT>();
     edit.old_value->present = old_fields.contains(key);
     edit.new_value->present = new_fields.contains(key);
-    if (edit.old_value->present) edit.old_value->json = old_fields.at(key);
+    if (edit.old_value->present)
+      edit.old_value->json = old_fields.at(key);
     if (edit.new_value->present) {
       edit.new_value->json = new_fields.at(key);
       if (edit.old_value->present)
@@ -321,18 +386,360 @@ auto PreserveProjectBytes(const std::string& before, const std::string& after)
   return result;
 }
 
+namespace {
+// JSON scalars remain text, including worker values above 2^53.
+auto ReverseFields(const std::string &path,
+                   const std::optional<std::string> &now,
+                   const std::optional<std::string> &previous,
+                   const std::vector<H::ProjectSelectorT> &selector,
+                   H::ProjectEditsT &result) -> void {
+  if (now && previous && DocumentsEqual(*now, *previous))
+    return;
+  auto kind = [](const std::string &text) {
+    const auto at = text.find_first_not_of(" \n\r\t");
+    return at == std::string::npos ? char{} : text[at];
+  };
+  if ((now.has_value() != previous.has_value()) &&
+      kind(now ? *now : *previous) == '[') {
+    const auto items = json::Array(now ? *now : *previous);
+    auto keyed = [&](const std::string &key) {
+      std::set<std::string> ids;
+      for (const auto &raw : items) {
+        if (kind(raw) != '{')
+          return false;
+        const auto fields = json::Object(raw);
+        if (!fields.contains(key) || !ids.insert(fields.at(key)).second)
+          return false;
+      }
+      return !items.empty();
+    };
+    if (keyed("id") || keyed("name")) {
+      ReverseFields(path, now.value_or("[]"), previous.value_or("[]"), selector,
+                    result);
+      return;
+    }
+  }
+  if (now && previous && kind(*now) == '{' && kind(*previous) == '{') {
+    const auto a = json::Object(*now), b = json::Object(*previous);
+    std::set<std::string> keys;
+    for (const auto &[key, ignored] : a) {
+      (void)ignored;
+      keys.insert(key);
+    }
+    for (const auto &[key, ignored] : b) {
+      (void)ignored;
+      keys.insert(key);
+    }
+    for (const auto &key : keys) {
+      auto steps = selector;
+      H::ProjectSelectorT step;
+      step.field = key;
+      steps.push_back(std::move(step));
+      ReverseFields(path,
+                    a.contains(key) ? std::optional(a.at(key)) : std::nullopt,
+                    b.contains(key) ? std::optional(b.at(key)) : std::nullopt,
+                    steps, result);
+    }
+    return;
+  }
+  if (now && previous && kind(*now) == '[' && kind(*previous) == '[') {
+    const auto a = json::Array(*now), b = json::Array(*previous);
+    std::map<std::string, std::string> aa, bb;
+    std::string identity = "id";
+    auto has_key = [&](const std::string &key) {
+      for (const auto *list : {&a, &b})
+        for (const auto &item : *list)
+          if (kind(item) != '{' || !json::Object(item).contains(key))
+            return false;
+      return true;
+    };
+    if (!has_key(identity) && has_key("name"))
+      identity = "name";
+    auto keyed = [&](const auto &list, auto &indexed) {
+      for (const auto &item : list) {
+        if (kind(item) != '{')
+          return false;
+        const auto fields = json::Object(item);
+        if (!fields.contains(identity) ||
+            !indexed.emplace(fields.at(identity), item).second)
+          return false;
+      }
+      return true;
+    };
+    // Reordering is a change too. Use keyed fields only when the shared
+    // entities retain their relative order; otherwise guard the entire array.
+    auto shared_order = [&](const auto &list, const auto &other) {
+      std::vector<std::string> ids;
+      for (const auto &item : list) {
+        const auto id = json::Get(json::Object(item), identity);
+        if (other.contains(id))
+          ids.push_back(id);
+      }
+      return ids;
+    };
+    if (keyed(a, aa) && keyed(b, bb) &&
+        shared_order(a, bb) == shared_order(b, aa)) {
+      // Insertions at a specific array offset cannot be expressed by a keyed
+      // selector. A restore of deleted entities must retain document order.
+      bool appends_only = true, missing_seen = false;
+      for (const auto &item : b) {
+        const auto id = json::Get(json::Object(item), identity);
+        if (!aa.contains(id))
+          missing_seen = true;
+        else if (missing_seen)
+          appends_only = false;
+      }
+      if (appends_only) {
+        std::vector<std::string> ids;
+        for (const auto &item : a)
+          ids.push_back(json::Get(json::Object(item), identity));
+        for (const auto &item : b) {
+          const auto id = json::Get(json::Object(item), identity);
+          if (!aa.contains(id))
+            ids.push_back(id);
+        }
+        for (const auto &id : ids) {
+          auto steps = selector;
+          H::ProjectSelectorT step;
+          step.match_json = json::Encode(json::Members{{identity, id}});
+          steps.push_back(std::move(step));
+          ReverseFields(
+              path, aa.contains(id) ? std::optional(aa.at(id)) : std::nullopt,
+              bb.contains(id) ? std::optional(bb.at(id)) : std::nullopt, steps,
+              result);
+        }
+        return;
+      }
+    }
+  }
+  H::ProjectFieldEditT edit;
+  edit.file_path = path;
+  for (const auto &step : selector)
+    edit.selector.push_back(std::make_unique<H::ProjectSelectorT>(step));
+  edit.old_value = std::make_unique<H::ProjectValueT>();
+  edit.new_value = std::make_unique<H::ProjectValueT>();
+  edit.old_value->present = now.has_value();
+  edit.new_value->present = previous.has_value();
+  if (now)
+    edit.old_value->json = *now;
+  if (previous)
+    edit.new_value->json = *previous;
+  auto entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(std::move(edit));
+  result.edits.push_back(std::move(entry));
+}
+} // namespace
+
+auto ReverseProjectChanges(const json::Members &plan, const SaveBase &base,
+                           const EditFileRead &read) -> H::ProjectEditsT {
+  std::map<std::string, std::optional<std::string>> after;
+  auto original = [&](const std::string &path) -> std::optional<std::string> {
+    if (base.files.contains(path))
+      return base.files.at(path);
+    return read(path);
+  };
+  for (const auto &raw : json::Array(json::Get(plan, "changes", "[]"))) {
+    const auto change = json::Object(raw);
+    const auto type = json::Text(change, "value_type");
+    const auto value = json::Object(json::Get(change, "value", "{}"));
+    if (type == "SetProject" || type == "SetLayout")
+      after[type == "SetProject" ? "tsugumi.json" : "layout.json"] =
+          json::Text(value, "json");
+    else if (type == "PutDefinition") {
+      const auto dir = "definitions/" + json::Text(value, "id") + '/';
+      for (const auto &[key, file] : {std::pair{"card_json", "_card.json"},
+                                      {"meta_json", "_meta.json"},
+                                      {"link_json", "_link.json"}})
+        if (value.contains(key)) {
+          const auto bytes = json::Text(value, key);
+          after[dir + file] =
+              bytes.empty() ? std::nullopt : std::optional(bytes);
+        }
+    } else if (type == "RemoveDefinition") {
+      const auto dir = "definitions/" + json::Text(value, "id") + '/';
+      for (const auto &[path, ignored] : base.files) {
+        (void)ignored;
+        if (path.starts_with(dir))
+          after[path] = std::nullopt;
+      }
+      for (const auto &raw_source :
+           json::Array(json::Get(base.snapshot, "sources", "[]"))) {
+        const auto path = json::Text(json::Object(raw_source), "path");
+        if (path.starts_with(dir))
+          after[path] = std::nullopt;
+      }
+    } else if (type == "PutSource") {
+      const auto bytes = json::Get(value, "bytes");
+      std::string decoded;
+      if (bytes.starts_with('"'))
+        decoded = json::String(bytes);
+      else if (!crypto::base64_decode(json::Text(json::Object(bytes), "base64"),
+                                      decoded))
+        throw Failure("invalid_request",
+                      "invalid file bytes in operation plan");
+      after[json::Text(value, "path")] = std::move(decoded);
+    } else if (type == "RemoveSource")
+      after[json::Text(value, "path")] = std::nullopt;
+    else
+      throw Failure("invalid_request", "unsupported operation change: " + type);
+  }
+  H::ProjectEditsT result;
+  // Creation/removal of a structural root reverses its whole folder, including
+  // files added by a later writer. Guard the closure as well as every byte.
+  std::set<std::string> trees;
+  for (const auto &[path, now] : after) {
+    if (now.has_value() == original(path).has_value())
+      continue;
+    std::string prefix;
+    if (IsExternalDocument(path, "tsugumi.json"))
+      prefix = path.substr(0, path.size() - 12);
+    else if (path.ends_with("/_card.json") || path.ends_with("/_link.json"))
+      prefix = path.substr(0, path.size() - 10);
+    if (!prefix.empty())
+      trees.insert(prefix);
+  }
+  auto paths = Paths(base);
+  for (const auto &[path, ignored] : after) {
+    (void)ignored;
+    paths.insert(path);
+  }
+  std::set<std::string> covered;
+  for (const auto &prefix : trees) {
+    if (std::any_of(covered.begin(), covered.end(), [&](const auto &parent) {
+          return prefix.starts_with(parent);
+        }))
+      continue;
+    H::ProjectTreeEditT tree;
+    tree.prefix = prefix;
+    for (const auto &path : paths) {
+      if (!path.starts_with(prefix))
+        continue;
+      const auto previous = original(path);
+      const auto now = after.contains(path) ? after.at(path) : previous;
+      if (now) {
+        auto hash = std::make_unique<H::ProjectFileHashT>();
+        hash->path = path;
+        hash->hash = crypto::sha256_hex(*now);
+        tree.expected.push_back(std::move(hash));
+      }
+      if (previous) {
+        auto file = std::make_unique<H::ProjectFileT>();
+        file->path = path;
+        file->bytes.assign(previous->begin(), previous->end());
+        tree.files.push_back(std::move(file));
+      }
+    }
+    auto entry = std::make_unique<H::ProjectEditT>();
+    entry->value.Set(std::move(tree));
+    result.edits.push_back(std::move(entry));
+    covered.insert(prefix);
+  }
+  for (const auto &[path, now] : after) {
+    if (std::any_of(covered.begin(), covered.end(), [&](const auto &prefix) {
+          return path.starts_with(prefix);
+        }))
+      continue;
+    const auto previous = original(path);
+    if (now == previous)
+      continue;
+    const bool document = path == "tsugumi.json" || path == "layout.json" ||
+                          IsExternalDocument(path, "tsugumi.json") ||
+                          IsExternalDocument(path, "layout.json") ||
+                          path.ends_with("/_card.json") ||
+                          path.ends_with("/_meta.json") ||
+                          path.ends_with("/_link.json");
+    if (document && now && previous) {
+      ReverseFields(path, now, previous, {}, result);
+    } else {
+      auto entry = std::make_unique<H::ProjectEditT>();
+      if (previous) {
+        H::ProjectFilePutT edit;
+        edit.file_path = path;
+        edit.expect_missing = !now;
+        if (now)
+          edit.expected_hash = crypto::sha256_hex(*now);
+        edit.bytes.assign(previous->begin(), previous->end());
+        entry->value.Set(std::move(edit));
+      } else {
+        H::ProjectFileRemoveT edit;
+        edit.file_path = path;
+        edit.expected_hash = crypto::sha256_hex(*now);
+        entry->value.Set(std::move(edit));
+      }
+      result.edits.push_back(std::move(entry));
+    }
+  }
+  return result;
+}
+
 auto PrepareProjectEdits(
     const H::ProjectEditsT& edits, const SaveBase& base,
     const EditFileRead& read,
-    const std::function<void(const std::string&)>& authorize) -> json::Members {
+    const std::function<void(const std::string &)> &authorize)
+    -> json::Members {
+  // Expand form edits here so Mac and Web share field/entity selection.
+  H::ProjectEditsT expanded;
+  bool has_json = false;
+  for (const auto &entry : edits.edits) {
+    if (entry && entry->value.AsProjectJSONEdit()) {
+      has_json = true;
+      const auto &edit = *entry->value.AsProjectJSONEdit();
+      if (!fs::valid_relative_path(edit.file_path))
+        throw Failure("invalid_path", edit.file_path);
+      if (authorize)
+        authorize(edit.file_path);
+      if (!edit.old_value || !edit.new_value)
+        throw Failure("invalid_request", "missing JSON edit values");
+      const auto before = edit.old_value->present
+                              ? std::optional(edit.old_value->json)
+                              : std::nullopt;
+      const auto after = edit.new_value->present
+                             ? std::optional(edit.new_value->json)
+                             : std::nullopt;
+      const auto current = base.files.contains(edit.file_path)
+                               ? std::optional(base.files.at(edit.file_path))
+                               : read(edit.file_path);
+      if (!current && after) {
+        if (before)
+          throw Failure("target_missing", edit.file_path);
+        H::ProjectFilePutT put;
+        put.file_path = edit.file_path;
+        put.expect_missing = true;
+        put.bytes.assign(after->begin(), after->end());
+        auto value = std::make_unique<H::ProjectEditT>();
+        value->value.Set(std::move(put));
+        expanded.edits.push_back(std::move(value));
+      } else {
+        const auto selected =
+            !before && current && after &&
+                    after->find_first_not_of(" \n\r\t") != std::string::npos &&
+                    (*after)[after->find_first_not_of(" \n\r\t")] == '{'
+                ? std::optional<std::string>("{}")
+                : before;
+        ReverseFields(edit.file_path, selected, after, {}, expanded);
+      }
+    } else if (entry) {
+      expanded.edits.push_back(std::make_unique<H::ProjectEditT>(*entry));
+    } else {
+      throw Failure("invalid_request", "empty project edit");
+    }
+  }
+  if (has_json) {
+    if (expanded.edits.empty())
+      return {{"base_rev", json::Get(base.snapshot, "rev")}, {"changes", "[]"}};
+    return PrepareProjectEdits(expanded, base, read, authorize);
+  }
   if (edits.edits.empty())
     throw Failure("invalid_request", "project_edit requires at least one edit");
   std::map<std::string, std::optional<std::string>> originals, files;
   std::map<std::string, std::set<std::string>> mentioned_inputs;
-  std::set<std::string> replaced_projects;
+  std::set<std::string> replaced_projects, removed_definitions;
+  const auto known = Paths(base);
   auto file = [&](const std::string& path) -> std::optional<std::string>& {
-    if (authorize) authorize(path);
-    if (!fs::valid_relative_path(path)) throw Failure("invalid_path", path);
+    if (authorize)
+      authorize(path);
+    if (!fs::valid_relative_path(path))
+      throw Failure("invalid_path", path);
     if (!files.contains(path)) {
       const auto found = base.files.find(path);
       originals[path] =
@@ -351,7 +758,8 @@ auto PrepareProjectEdits(
                     path + ": expected file hash/presence differs");
   };
   for (const auto& entry : edits.edits) {
-    if (!entry) throw Failure("invalid_request", "empty project edit");
+    if (!entry)
+      throw Failure("invalid_request", "empty project edit");
     if (!entry->value.AsProjectFieldEdit()) {
       const auto path = entry->value.AsProjectTextEdit()
                             ? entry->value.AsProjectTextEdit()->file_path
@@ -361,21 +769,70 @@ auto PrepareProjectEdits(
       if (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))
         replaced_projects.insert(path);
     }
-    if (const auto* field = entry->value.AsProjectFieldEdit()) {
+    if (const auto *tree = entry->value.AsProjectTreeEdit()) {
+      if (!TreePrefix(tree->prefix))
+        throw Failure("invalid_path", tree->prefix);
+      std::map<std::string, std::string> expected, replacement;
+      for (const auto &hash : tree->expected) {
+        if (!hash || !hash->path.starts_with(tree->prefix) ||
+            !expected.emplace(hash->path, hash->hash).second)
+          throw Failure("invalid_request",
+                        tree->prefix + ": invalid file closure");
+      }
+      std::set<std::string> actual;
+      for (const auto &path : known)
+        if (path.starts_with(tree->prefix))
+          actual.insert(path);
+      for (const auto &[path, ignored] : expected) {
+        (void)ignored;
+        actual.erase(path);
+      }
+      if (!actual.empty())
+        throw Failure("source_changed",
+                      *actual.begin() + ": folder has a later file");
+      for (const auto &[path, hash] : expected)
+        guard(path, file(path), hash, false);
+      for (const auto &item : tree->files) {
+        if (!item || !item->path.starts_with(tree->prefix) ||
+            !replacement.emplace(item->path, SourceBytes(item->bytes)).second)
+          throw Failure("invalid_request",
+                        tree->prefix + ": invalid replacement file");
+        file(item->path);
+      }
+      for (const auto &[path, ignored] : expected) {
+        (void)ignored;
+        files[path].reset();
+      }
+      for (const auto &[path, bytes] : replacement)
+        files[path] = bytes;
+      if (tree->prefix.starts_with("definitions/") &&
+          std::count(tree->prefix.begin(), tree->prefix.end(), '/') == 2 &&
+          !replacement.contains(tree->prefix + "_card.json") &&
+          !replacement.contains(tree->prefix + "_link.json")) {
+        if (!replacement.empty())
+          throw Failure("invalid_request",
+                        tree->prefix + ": definition root is required");
+        removed_definitions.insert(
+            tree->prefix.substr(12, tree->prefix.size() - 13));
+      }
+    } else if (const auto *field = entry->value.AsProjectFieldEdit()) {
       auto& text = file(field->file_path);
-      if (!text) throw Failure("target_missing", field->file_path);
+      if (!text)
+        throw Failure("target_missing", field->file_path);
       auto edited = EditProjectField(*text, *field);
       if (field->file_path == "tsugumi.json" ||
           field->file_path.ends_with("/tsugumi.json")) {
         for (const auto* version : {&*text, &edited}) {
           const auto mentioned = MentionedInputs(*version, *field);
-          mentioned_inputs[field->file_path].insert(mentioned.begin(), mentioned.end());
+          mentioned_inputs[field->file_path].insert(mentioned.begin(),
+                                                    mentioned.end());
         }
       }
       text = std::move(edited);
     } else if (const auto* replace = entry->value.AsProjectTextEdit()) {
       auto& text = file(replace->file_path);
-      if (!text) throw Failure("target_missing", replace->file_path);
+      if (!text)
+        throw Failure("target_missing", replace->file_path);
       if (replace->old_string.empty() || replace->expected_matches == 0)
         throw Failure("invalid_request",
                       "old_string and expected_matches must be nonempty");
@@ -422,7 +879,8 @@ auto PrepareProjectEdits(
   std::vector<std::string> implemented;
   for (const auto &[path, content] : files)
     if (path.ends_with("/_card.json") &&
-        Document::is_card_meta_file(path.substr(0, path.size() - 10) + "_meta.json") &&
+        Document::is_card_meta_file(path.substr(0, path.size() - 10) +
+                                    "_meta.json") &&
         content && originals.at(path) &&
         json::Text(json::Object(*originals.at(path)), "template") == "draft")
       implemented.push_back(path);
@@ -478,7 +936,13 @@ auto PrepareProjectEdits(
   std::vector<std::string> changes;
   json::Members definitions;
   for (const auto& [path, content] : files) {
-    if (content == originals.at(path)) continue;
+    if (content == originals.at(path))
+      continue;
+    if (path.starts_with("definitions/")) {
+      const auto slash = path.find('/', 12);
+      if (removed_definitions.contains(path.substr(12, slash - 12)))
+        continue;
+    }
     if (path == "tsugumi.json" || path == "layout.json") {
       if (!content)
         throw Failure("invalid_request", "root document cannot be removed");
@@ -490,7 +954,7 @@ auto PrepareProjectEdits(
                (path.ends_with("/_card.json") ||
                 path.ends_with("/_meta.json") ||
                 path.ends_with("/_link.json"))) {
-      if (!content)
+      if (!content && !path.ends_with("/_meta.json"))
         throw Failure("invalid_request",
                       "definition documents cannot be removed independently");
       const auto slash = path.find('/', 12);
@@ -501,11 +965,14 @@ auto PrepareProjectEdits(
       if (originals.at(path))
         value["base_hash"] =
             json::Quote(crypto::sha256_hex(*originals.at(path)));
-      if (content) value["bytes"] = EncodedBytes(*content);
+      if (content)
+        value["bytes"] = EncodedBytes(*content);
       changes.push_back(
           Change(content ? "PutSource" : "RemoveSource", std::move(value)));
     }
   }
+  for (const auto &id : removed_definitions)
+    changes.push_back(Change("RemoveDefinition", {{"id", json::Quote(id)}}));
   for (const auto& [id, ignored] : definitions) {
     (void)ignored;
     json::Members value{{"id", json::Quote(id)},
@@ -515,7 +982,8 @@ auto PrepareProjectEdits(
                                     {"_link.json", "link_json"}}) {
       const auto path = "definitions/" + id + '/' + name;
       if (files.contains(path)) {
-        if (files.at(path)) value[key] = json::Quote(*files.at(path));
+        if (files.at(path))
+          value[key] = json::Quote(*files.at(path));
       } else if (base.files.contains(path))
         value[key] = json::Quote(base.files.at(path));
     }

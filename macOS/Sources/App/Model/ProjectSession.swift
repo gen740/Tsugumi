@@ -156,7 +156,6 @@ struct TimelineEntry: Identifiable, Hashable {
 struct DefinitionDraft: Equatable {
   var card: JSONValue
   var meta: JSONValue?
-  var removed = false
   var link: JSONValue? = nil
 }
 
@@ -169,28 +168,11 @@ struct ExternalProject: Equatable {
   /// Card id -> its definition files (_card.json or _link.json, _meta.json).
   var definitions: [String: DefinitionDraft]
   /// Removed (the folder goes with it).
-  var removed = false
 
   /// Card id -> external name (its own Cards in Card).
   var links: [String: String] { definitions.compactMapValues { $0.link?["external"]?.string } }
 
-  /// The documents as files, relative to the external's folder.
-  var files: [String: String] {
-    var out = ["tsugumi.json": project.serialized() + "\n", "layout.json": layout.serialized() + "\n"]
-    for (id, d) in definitions {
-      let dir = "definitions/\(id)/"
-      if let l = d.link { out[dir + "_link.json"] = l.serialized() + "\n" } else { out[dir + "_card.json"] = d.card.serialized() + "\n" }
-      if let m = d.meta { out[dir + "_meta.json"] = m.serialized() + "\n" }
-    }
-    return out
-  }
 
-  /// Whether a path (relative to the external) is one of its documents.
-  static func isDocument(_ rel: String) -> Bool {
-    if rel == "tsugumi.json" || rel == "layout.json" { return true }
-    let parts = rel.split(separator: "/")
-    return parts.count == 3 && parts[0] == "definitions" && ["_card.json", "_link.json", "_meta.json"].contains(parts[2])
-  }
 }
 
 /// Save/sync state, shown separately from the run state.
@@ -199,8 +181,6 @@ enum SyncState: Equatable {
   case saving
   case failed(String)
   case offline
-  /// Card changes wait until the run ends.
-  case waitingForRun
 }
 
 enum DisplayValue {
@@ -289,25 +269,7 @@ final class ProjectSession {
     } catch { connectionMessage = String(describing: error) }
   }
 
-  /// Replaceable RPC boundary for embedded sessions and tests.
-  var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
-    try await CoreHostClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
-  }
-  var prepareTemplate: (String, String) async throws -> (definition: String, files: [(path: String, text: String)]) = {
-    try await CoreHostClient.shared.writeTemplate(name: $0, id: $1)
-  }
-  var prepareConnect: (String, (String, String), (String, String), String?) async throws -> (state: String, insertedId: String, needsFork: Bool) = {
-    try await CoreHostClient.shared.connectDocuments(state: $0, from: $1, to: $2, forkId: $3)
-  }
-  var prepareCopy: (String, [String], String, String, String?) async throws -> (edits: String, files: [(from: String, to: String)]) = {
-    try await CoreHostClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4)
-  }
-  var prepareLayoutSave: (String, UInt64, [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] = {
-    try await CoreHostClient.shared.prepareLayoutSave(project: $0, baseRev: $1, changes: $2)
-  }
-  var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
-    try await CoreHostClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
-  }
+  /// Derived layout remains a read-only host query.
   var prepareLayout: (String, String, [String: String]) async throws -> String = {
     try await CoreHostClient.shared.completeLayout(project: $0, layout: $1, definitions: $2)
   }
@@ -364,23 +326,10 @@ final class ProjectSession {
   // saved (a run in progress, a lost connection).
   var project: JSONValue = .object([])
   var layout: JSONValue = .object([])
-  var sourceEdits: [String: Data] = [:]  // path -> new bytes
-  var sourceRemovals: Set<String> = []
-  var definitionEdits: [String: DefinitionDraft] = [:]
-  /// Edited externals (by folder), written back as their files.
-  var externalEdits: [String: ExternalProject] = [:]
-  /// Base hashes chosen by an editor that read the file before this draft
-  /// started: the save is checked against what the editor actually saw.
-  var sourceBases: [String: String] = [:]
   private(set) var undoStack: [UndoEntry] = []
   private(set) var redoStack: [UndoEntry] = []
-  private(set) var saveFailure: Error?
-  private(set) var saveError: String? {
-    didSet { if saveError == nil { saveFailure = nil } }
-  }
-  private(set) var saving = false
-  /// Edits wait for the run to end (the core keeps Card changes back while it runs).
-  private(set) var savingAfterRun = false
+  private(set) var saveError: String?
+  var saving: Bool { dirty }
   /// Last user-facing problem of an action (run refused, import failed, ...).
   var cacheUsage: Tsugumi_RPC_ProjectCacheUsageResultT?
   @ObservationIgnored private var cacheUsageTask: Task<Void, Never>?
@@ -403,107 +352,25 @@ final class ProjectSession {
     let revision: RevisionEdit
   }
 
-  struct Snapshot: Equatable {
-    var project: JSONValue
-    var layout: JSONValue
-    var sources: [String: Data]
-    var removals: Set<String>
-    var definitions: [String: DefinitionDraft]
-    var externals: [String: ExternalProject]
-  }
+  struct UndoEntry { let operation: Tsugumi_Host_ProjectEditsT }
 
-  /// The documents as they look with the draft applied (what an undo entry records).
-  struct DocState: Equatable {
-    var project: JSONValue
-    var layout: JSONValue
-    var definitions: [String: DefinitionDraft]
-    var externals: [String: ExternalProject]
+  @ObservationIgnored private let documentRevisions = DocumentRevisions()
+  @ObservationIgnored private var operationTask: Task<Tsugumi_RPC_SaveResultT, Error>?
+  var operateProject: (Tsugumi_Host_ProjectOperateRequestT) async throws -> Tsugumi_RPC_SaveResultT = {
+    try await CoreHostClient.shared.operateProject($0)
   }
-
-  /// A source file's content before or after an edit.
-  enum SourceValue: Equatable {
-    case absent
-    case bytes(Data)
-    /// The confirmed file (read before the edit is saved, for undo).
-    case confirmed
-  }
-
-  /// One saved operation: undo applies `before` over what is there now, so
-  /// changes made since by the Agent or another window stay.
-  final class UndoEntry {
-    var before: DocState
-    var after: DocState
-    var sourcesBefore: [String: SourceValue]
-    let sourcesAfter: [String: SourceValue]
-    init(before: DocState, after: DocState, sourcesBefore: [String: SourceValue], sourcesAfter: [String: SourceValue]) {
-      self.before = before
-      self.after = after
-      self.sourcesBefore = sourcesBefore
-      self.sourcesAfter = sourcesAfter
-    }
-  }
-
-  /// The confirmed state the current draft was started from: a save merges
-  /// the draft's changes from it onto the latest confirmed state.
-  private struct DraftBase {
-    let rev: UInt64
-    let hashes: [String: String]
-    let project: JSONValue
-    let layout: JSONValue
-    let definitions: [String: DefinitionDraft]
-  }
-  @ObservationIgnored private var draftBase: DraftBase?
-  /// Confirmed externals when each external's edit started.
-  @ObservationIgnored private var externalBases: [String: ExternalProject?] = [:]
-  /// Hashes of the externals' documents as they were read into `externals`.
-  @ObservationIgnored private var externalHashes: [String: String] = [:]
-  @ObservationIgnored private var saveTask: Task<Void, Never>?
-  @ObservationIgnored private var canvasSaveOp: String?
-  @ObservationIgnored private var saveAgain = false
-  /// Revision the draft is based on (equals `rev` while clean).
-  var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
-
-  var dirty: Bool {
-    project != confirmedProject || layout != confirmedLayout || !sourceEdits.isEmpty || !sourceRemovals.isEmpty ||
-      !definitionEdits.isEmpty || !externalEdits.isEmpty
-  }
-  var computationDirty: Bool {
-    project != confirmedProject || !sourceEdits.isEmpty || !sourceRemovals.isEmpty || !definitionEdits.isEmpty ||
-      !externalEdits.isEmpty
-  }
-
+  private var submittedOperations = 0
+  var dirty: Bool { submittedOperations > 0 }
+  var computationDirty: Bool { dirty }
   var syncState: SyncState {
-    if !connected { return dirty ? .failed(connectionMessage ?? "Not connected") : .offline }
-    if saving { return .saving }
+    if !connected { return .offline }
     if let e = saveError { return .failed(e) }
-    if savingAfterRun && dirty { return .waitingForRun }
     return dirty ? .saving : .saved
   }
-
-  /// Effective definitions: confirmed ones with the draft applied.
-  var definitions: [String: JSONValue] {
-    var d = confirmedDefinitions
-    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.card }
-    return d
-  }
-
-  /// Card in Card links of this project's Cards (_link.json), with the draft applied.
-  var links: [String: JSONValue] {
-    var d = confirmedLinks
-    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.link }
-    return d
-  }
-
-  var definitionMeta: [String: JSONValue] {
-    var d = confirmedDefinitionMeta
-    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e.meta }
-    return d
-  }
-
-  /// Source paths of the draft (confirmed, plus new files, minus removed ones).
-  var sourcePaths: [String] {
-    Set(sources.keys).union(sourceEdits.keys).subtracting(sourceRemovals).sorted()
-  }
+  var definitions: [String: JSONValue] { confirmedDefinitions }
+  var links: [String: JSONValue] { confirmedLinks }
+  var definitionMeta: [String: JSONValue] { confirmedDefinitionMeta }
+  var sourcePaths: [String] { sources.keys.sorted() }
 
   // View state saved with ViewSave: the active tab's scope and selection.
   private(set) var initialScope: [String] = []
@@ -610,6 +477,7 @@ final class ProjectSession {
   }
 
   private func setConnected(_ value: Bool) {
+    if !value { documentRevisions.disconnect(RPCError.disconnected) }
     connected = value
     terminals.environment(connected: value)
   }
@@ -669,11 +537,9 @@ final class ProjectSession {
       if Task.isCancelled || closed { await c.close(); return }
       client = c
       ModuleSources.register(c)
-      projectId = ep.projectId
-      apply(snapshot: opened.snapshot, resetDraft: !dirty)
+      receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
-      setConnected(true)
       cacheUsageTask?.cancel()
       cacheUsageTask = Task { [weak self] in
         while !Task.isCancelled {
@@ -687,7 +553,6 @@ final class ProjectSession {
         makeRepositoryOnConnect = false
         _ = try? await c.versionInit(opId: UUID(), origin: "ui")
       }
-      if dirty { scheduleSave() }
       await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
@@ -886,8 +751,16 @@ final class ProjectSession {
 
   // MARK: - Applying core state
 
+  /// Adopt an opened host project before accepting operations from a client.
+  func receiveProjectSnapshot(_ snapshot: Tsugumi_RPC_ProjectSnapshotT, projectId: String) {
+    self.projectId = projectId
+    apply(snapshot: snapshot, resetDraft: true)
+    setConnected(true)
+  }
+
   private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT, resetDraft: Bool) {
     rev = s.rev ?? 0
+    documentRevisions.reset(rev)
     executionRev = s.executionRev ?? 0
     executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
@@ -912,19 +785,9 @@ final class ProjectSession {
       for cam in v.cameras where cam.valid { cameras[key(cam.scope)] = (cam.x, cam.y, cam.zoom) }
       initialSelection = Set(v.selected_cards.map { key($0) })
     }
-    if resetDraft {
-      project = confirmedProject
-      layout = confirmedLayout
-      sourceEdits = [:]
-      sourceRemovals = []
-      definitionEdits = [:]
-      externalEdits = [:]
-      draftBase = nil
-      externalBases = [:]
-    } else if draftBase?.rev != rev {
-      // Edits kept over a reconnect: merged onto what is there now, then saved.
-      scheduleSave()
-    }
+    project = confirmedProject
+    layout = confirmedLayout
+    documentRevisions.drain { delta, saved in applyOrderedDelta(delta, fromSave: saved) }
   }
 
   private func applyResolution(_ res: [Tsugumi_RPC_ResolvedCardT], _ diags: [Tsugumi_Data_DiagnosticT]) {
@@ -1026,25 +889,23 @@ final class ProjectSession {
     for batch in page.batches.compactMap({ $0 }) { noteBatch(batch) }
   }
 
-  private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
+  func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
+    documentRevisions.receive(d, fromSave: fromSave) { delta, saved in
+      applyOrderedDelta(delta, fromSave: saved)
+    }
+  }
+
+  private func applyOrderedDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
     guard d.baseRev == rev else {
       if let r = d.rev, r <= rev { return }  // already applied (our own save reply)
       reconnect()
       return
     }
-    let wasClean = !dirty
     // The Cards that send displays, before this change (definitions and
     // resolution are replaced below).
     let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
-    // A canvas autosave can still be in flight when typing starts. Other
-    // editors, including those in this session, keep the original conflict base.
-    if let edit = inlineDraft?.revision, edit.baseRev == d.baseRev,
-       edit.conflictRev == nil, let op = canvasSaveOp, d.opId == op,
-       d.origin == "ui:\(viewId.uuidString.lowercased())" {
-      edit.baseRev = d.rev ?? rev
-    }
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -1072,16 +933,8 @@ final class ProjectSession {
     if let presenceBefore { notePresence(d, before: presenceBefore) }
     // A Draft implemented (or any Card that became code) sends its displays too.
     if displayedCards != shown { Task { await refreshVisibleDisplays() } }
-    if wasClean {
-      // Nothing local to keep: follow the confirmed document.
-      project = confirmedProject
-      layout = confirmedLayout
-      draftBase = nil
-    } else if !fromSave {
-      // Changed elsewhere (the Agent, another window) while edits are on
-      // their way: shown at once, the edits merged on top.
-      scheduleSave()
-    }
+    project = confirmedProject
+    layout = confirmedLayout
   }
 
   func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
@@ -1126,7 +979,6 @@ final class ProjectSession {
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
-      if dirty { scheduleSave() }
     default:
       break
     }
@@ -1167,11 +1019,6 @@ final class ProjectSession {
 
   // MARK: - Editing (draft, undo/redo)
 
-  private func snapshot() -> Snapshot {
-    Snapshot(project: project, layout: layout, sources: sourceEdits, removals: sourceRemovals, definitions: definitionEdits,
-             externals: externalEdits)
-  }
-
   /// Confirmed definitions as definition files (card, meta, link).
   var confirmedDefinitionDrafts: [String: DefinitionDraft] {
     var d: [String: DefinitionDraft] = [:]
@@ -1180,643 +1027,205 @@ final class ProjectSession {
     return d
   }
 
-  /// Definitions with the draft applied, as definition files.
-  var definitionDrafts: [String: DefinitionDraft] {
-    var d = confirmedDefinitionDrafts
-    for (id, e) in definitionEdits { d[id] = e.removed ? nil : e }
-    return d
-  }
-
-  /// Externals with the draft applied.
-  var effectiveExternals: [String: ExternalProject] {
-    var d = externals
-    for (p, e) in externalEdits { d[p] = e.removed ? nil : e }
-    return d
-  }
-
-  func docState() -> DocState {
-    DocState(project: project, layout: layout, definitions: definitionDrafts, externals: effectiveExternals)
-  }
-
-  private func makeBase() -> DraftBase {
-    DraftBase(rev: rev, hashes: sources.mapValues(\.hash), project: confirmedProject, layout: confirmedLayout,
-              definitions: confirmedDefinitionDrafts)
-  }
-
-  /// Fixes the draft's base when it leaves the clean state, and forgets it
-  /// when the draft becomes clean again.
-  private func settleDraftBase() {
-    if !dirty {
-      draftBase = nil
-      externalBases = [:]
-    } else if draftBase == nil {
-      draftBase = makeBase()
-    }
-  }
-
-  /// Sets a definition as it should look with the draft applied.
-  func setEffectiveDefinition(_ id: String, _ d: DefinitionDraft?) {
-    let confirmed = confirmedDefinitionDrafts[id]
-    if d == confirmed { definitionEdits[id] = nil } else { definitionEdits[id] = d ?? DefinitionDraft(card: .object([]), meta: nil, removed: true) }
-  }
+  var definitionDrafts: [String: DefinitionDraft] { confirmedDefinitionDrafts }
+  var effectiveExternals: [String: ExternalProject] { externals }
 
   /// Changes an external's documents in the draft.
   func updateExternal(_ prefix: String, _ fn: (inout ExternalProject) -> Void) {
-    guard !prefix.isEmpty, var e = externalEdits[prefix] ?? externals[prefix] else { return }
-    if externalEdits[prefix] == nil, externalBases[prefix] == nil { externalBases[prefix] = externals[prefix] }
-    fn(&e)
-    externalEdits[prefix] = e
-  }
-
-  /// Adds a new external (its documents; other files go to the sources).
-  func createExternal(_ prefix: String, _ e: ExternalProject) {
-    if externalBases[prefix] == nil { externalBases[prefix] = .some(externals[prefix]) }
-    externalEdits[prefix] = e
-  }
-
-  /// Removes an external with every file in its folder.
-  func removeExternal(_ prefix: String) {
-    guard var e = externalEdits[prefix] ?? externals[prefix] else { return }
-    if externalBases[prefix] == nil { externalBases[prefix] = .some(externals[prefix]) }
-    e.removed = true
-    externalEdits[prefix] = e
-    for p in sourcePaths where p.hasPrefix(prefix) { removeSource(p) }
-  }
-
-  /// Drops edits of externals that equal what is confirmed.
-  private func normalizeExternalEdits() {
-    for (p, e) in externalEdits where (e.removed && externals[p] == nil) || (!e.removed && e == externals[p]) {
-      externalEdits[p] = nil
-      externalBases[p] = nil
+    guard !prefix.isEmpty, let before = externals[prefix] else { return }
+    var after = before; fn(&after)
+    editJSON(prefix + "tsugumi.json", old: before.project, new: after.project)
+    editJSON(prefix + "layout.json", old: before.layout, new: after.layout)
+    for (id, d) in after.definitions {
+      let old = before.definitions[id], dir = prefix + "definitions/" + id + "/"
+      editJSON(dir + "_card.json", old: old?.link == nil ? old?.card : nil, new: d.link == nil ? d.card : nil)
+      editJSON(dir + "_meta.json", old: old?.meta, new: d.meta)
+      editJSON(dir + "_link.json", old: old?.link, new: d.link)
     }
-  }
-
-  private func sourceValue(_ snap: Snapshot, _ p: String) -> SourceValue {
-    if snap.removals.contains(p) { return .absent }
-    if let d = snap.sources[p] { return .bytes(d) }
-    return sources[p] != nil ? .confirmed : .absent
-  }
-
-  @ObservationIgnored private var unfilled: [UndoEntry] = []
-
-  private func record(before: DocState, beforeSnap: Snapshot, after: DocState, afterSnap: Snapshot) -> UndoEntry {
-    let paths = Set(beforeSnap.sources.keys).union(afterSnap.sources.keys).union(beforeSnap.removals).union(afterSnap.removals)
-    var sb: [String: SourceValue] = [:], sa: [String: SourceValue] = [:]
-    for p in paths where sourceValue(beforeSnap, p) != sourceValue(afterSnap, p) {
-      sb[p] = sourceValue(beforeSnap, p)
-      sa[p] = sourceValue(afterSnap, p)
-    }
-    let e = UndoEntry(before: before, after: after, sourcesBefore: sb, sourcesAfter: sa)
-    if sb.values.contains(.confirmed) { unfilled.append(e) }
-    return e
   }
 
   /// Applies an edit and saves it at once. One call is one step of undo.
-  @discardableResult
-  func edit(_ change: (ProjectSession) -> Void) -> UndoEntry? {
-    let before = docState(), beforeSnap = snapshot()
-    if !dirty { draftBase = makeBase() }
-    change(self)
-    normalizeExternalEdits()
-    let afterSnap = snapshot()
-    guard beforeSnap != afterSnap else {
-      settleDraftBase()
-      return nil
-    }
-    let step = record(before: before, beforeSnap: beforeSnap, after: docState(), afterSnap: afterSnap)
-    undoStack.append(step)
-    if undoStack.count > 500 { undoStack.removeFirst() }
-    redoStack.removeAll()
-    settleDraftBase()
-    scheduleSave()
-    return step
+  func edit(_ change: (ProjectSession) -> Void) {
+    let body = mutation(change)
+    _ = enqueueOperation(.projectedits, body: body)
   }
 
-  /// Joins an asynchronous layout proposal to the drag that requested it.
-  func editInto(_ step: UndoEntry, _ change: (ProjectSession) -> Void) {
-    guard undoStack.last === step else { return }
-    let before = snapshot()
-    if !dirty { draftBase = makeBase() }
+  @ObservationIgnored private var commandEdits: [Tsugumi_Host_ProjectEditT]?
+
+  func jsonEdit(_ file: String, old: JSONValue?, new: JSONValue?) -> Tsugumi_Host_ProjectEditT {
+    let value = Tsugumi_Host_ProjectJSONEditT()
+    value.filePath = file
+    value.oldValue = Tsugumi_Host_ProjectValueT(); value.oldValue.present = old != nil; value.oldValue.json = old?.serialized()
+    value.newValue = Tsugumi_Host_ProjectValueT(); value.newValue.present = new != nil; value.newValue.json = new?.serialized()
+    let edit = Tsugumi_Host_ProjectEditT()
+    edit.value = Tsugumi_Host_ProjectEditValueUnion(value, type: .projectjsonedit)
+    return edit
+  }
+
+  private func editJSON(_ file: String, old: JSONValue?, new: JSONValue?) {
+    guard old != new else { return }
+    let edit = jsonEdit(file, old: old, new: new)
+    if commandEdits != nil { commandEdits!.append(edit) }
+    else { queueFields { [edit] } }
+  }
+
+  func appendEdits(_ edits: [Tsugumi_Host_ProjectEditT]) {
+    precondition(commandEdits != nil)
+    commandEdits!.append(contentsOf: edits)
+  }
+
+  private func mutation(_ change: (ProjectSession) -> Void) -> Tsugumi_Host_ProjectEditsT {
+    precondition(commandEdits == nil)
+    commandEdits = []
+    defer { commandEdits = nil }
     change(self)
-    normalizeExternalEdits()
-    if before != snapshot() {
-      step.after = docState()
-      scheduleSave()
+    let body = Tsugumi_Host_ProjectEditsT()
+    body.edits = commandEdits!.map(Optional.some)
+    return body
+  }
+
+  func applyMutation(_ change: (ProjectSession) -> Void) async throws -> UInt64 {
+    let body = mutation(change)
+    return try await operate(.projectedits, body: body).rev ?? rev
+  }
+
+  func setProjectField(_ name: String, _ value: JSONValue) {
+    var after = project; after[name] = value
+    editJSON("tsugumi.json", old: project, new: after)
+  }
+
+  func replaceDocuments(_ revision: UInt64, _ documents: [(String, JSONValue?)]) async throws -> UInt64 {
+    let body = Tsugumi_Host_ProjectReplaceDocumentsT()
+    body.expectedRev = revision
+    body.documents = documents.map { path, value in
+      let document = Tsugumi_Host_ProjectDocumentT()
+      document.path = path; document.present = value != nil; document.json = value?.serialized()
+      return document
     }
-    settleDraftBase()
+    return try await operate(.projectreplacedocuments, body: body).rev ?? rev
   }
 
   func undo() async {
+    _ = try? await operationTask?.value
     guard let e = undoStack.last else { return }
     if let result = await revert(e, undo: true) { undoStack.removeLast(); if let inverse = result.inverse { redoStack.append(inverse) } }
   }
 
   func redo() async {
+    _ = try? await operationTask?.value
     guard let e = redoStack.last else { return }
     if let result = await revert(e, undo: false) { redoStack.removeLast(); if let inverse = result.inverse { undoStack.append(inverse) } }
   }
 
-  /// Puts back what an entry changed (its `before`), over the current state.
-  /// Returns the entry that does it again.
   private struct RevertResult { let inverse: UndoEntry? }
-
   private func revert(_ e: UndoEntry, undo: Bool) async -> RevertResult? {
-    let cur = docState(), curSnap = snapshot()
-    let revision = rev
-    let reply: (value: JSONValue, conflicts: [String])
-    var kept: [String: SourceValue] = [:]
     do {
-      for p in e.sourcesBefore.keys {
-        var value = sourceValue(curSnap, p)
-        if value == .confirmed {
-          if case .bytes(let bytes) = e.sourcesAfter[p], sha256Hex(bytes) == sources[p]?.hash {
-            value = .bytes(bytes)
-          } else { value = .bytes(try await rpcBytes(p)) }
-        }
-        kept[p] = value
-      }
-      reply = try await mergeValues(base: e.after.mergeJSON, ours: e.before.mergeJSON, theirs: cur.mergeJSON)
-    }
-    catch { saveError = String(describing: error); return nil }
-    guard revision == rev, curSnap == snapshot() else { return nil }
-    let merged = DocState(mergeJSON: reply.value)
-    guard reply.conflicts.isEmpty else {
-      mergeConflict = MergeConflict(rev: revision, snapshot: curSnap, state: cur, apply: { [weak self] in
-        guard let self, (undo ? undoStack.last : redoStack.last) === e else { return }
-        let inverse = applyRevert(e, current: cur, snapshot: curSnap, merged: merged, kept: kept)
-        if undo { undoStack.removeLast(); if let inverse { redoStack.append(inverse) } }
-        else { redoStack.removeLast(); if let inverse { undoStack.append(inverse) } }
-      })
-      mergeEdit.conflict(revision)
-      saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
-      return nil
-    }
-    return RevertResult(inverse: applyRevert(e, current: cur, snapshot: curSnap, merged: merged, kept: kept))
+      let result = try await operate(.projectedits, body: e.operation, record: false)
+      let inverse = try operationInverse(result)
+      return RevertResult(inverse: inverse.edits.isEmpty ? nil : UndoEntry(operation: inverse))
+    } catch { saveError = String(describing: error); return nil }
   }
 
-  private func applyRevert(_ e: UndoEntry, current cur: DocState, snapshot curSnap: Snapshot, merged: DocState, kept: [String: SourceValue]) -> UndoEntry? {
-    if !dirty { draftBase = makeBase() }
-    project = merged.project
-    layout = merged.layout
-    for id in Set(cur.definitions.keys).union(merged.definitions.keys) { setEffectiveDefinition(id, merged.definitions[id]) }
-    for p in Set(cur.externals.keys).union(merged.externals.keys) {
-      if let ext = merged.externals[p] { createExternal(p, ext) } else { removeExternal(p) }
-    }
-    for (p, v) in e.sourcesBefore {
-      switch v {
-      case .absent: removeSource(p)
-      case .bytes(let d):
-        sourceRemovals.remove(p)
-        sourceEdits[p] = d
-      case .confirmed: break  // could not be read: left as it is
-      }
-    }
-    normalizeExternalEdits()
-    settleDraftBase()
-    let now = snapshot()
-    guard now != curSnap else { return nil }
-    let inverse = UndoEntry(before: cur, after: docState(), sourcesBefore: kept, sourcesAfter: e.sourcesBefore)
-    scheduleSave()
-    return inverse
-  }
+  func discardDraft() { inlineDraft = nil }
 
-  /// Reads the files undo entries need before a save replaces them.
-  private func fillUndoSources() async {
-    guard let client, !unfilled.isEmpty else { return }
-    let list = unfilled
-    unfilled = []
-    for e in list {
-      for (p, v) in e.sourcesBefore where v == .confirmed {
-        if let d = try? await client.readFile(path: p, atRev: rev) { e.sourcesBefore[p] = .bytes(d) }
-      }
-    }
-  }
-
-  /// Moves the draft onto the confirmed state that just arrived: what the
-  /// draft changed stays, everything else follows the new state.
-  let mergeEdit = RevisionEdit()
-  private struct MergeConflict {
-    let rev: UInt64
-    let snapshot: Snapshot
-    let state: DocState
-    let apply: () -> Void
-  }
-  @ObservationIgnored private var mergeConflict: MergeConflict?
-
-  func mergeValues(base: JSONValue, ours: JSONValue, theirs: JSONValue) async throws -> (value: JSONValue, conflicts: [String]) {
-    let reply = try await prepareMerge(base.serialized(), ours.serialized(), theirs.serialized())
-    return (try JSONValue.parse(reply.merged), reply.conflicts)
-  }
-
-  var unsavedText: String {
-    var fields: [(String, JSONValue)] = [("documents", docState().mergeJSON)]
-    fields.append(("sources", .object(sourceEdits.sorted { $0.key < $1.key }.map {
-      ($0.key, .string($0.value.base64EncodedString()))
-    })))
-    fields.append(("removed", .array(sourceRemovals.sorted().map(JSONValue.string))))
-    return JSONValue.object(fields).serialized()
-  }
-
-  func resolveMergeConflict() {
-    let pending = mergeConflict
-    mergeConflict = nil
-    mergeEdit.reload(rev)
-    if let pending, pending.rev == rev, pending.snapshot == snapshot(), pending.state == docState() { pending.apply() }
-    scheduleSave()
-  }
-
-  private func rebase() async throws -> Bool {
-    guard let b = draftBase else { return true }
-    let revision = rev, sent = snapshot(), ours = docState()
-    var baseExternals = externals
-    for (p, ext) in externalBases { baseExternals[p] = ext }
-    let theirs = DocState(project: confirmedProject, layout: confirmedLayout, definitions: confirmedDefinitionDrafts, externals: externals)
-    let base = DocState(project: b.project, layout: b.layout, definitions: b.definitions, externals: baseExternals)
-    let reply = try await mergeValues(base: base.mergeJSON, ours: ours.mergeJSON, theirs: theirs.mergeJSON)
-    guard revision == rev, sent == snapshot(), draftBase?.rev == b.rev,
-          theirs == DocState(project: confirmedProject, layout: confirmedLayout, definitions: confirmedDefinitionDrafts, externals: externals) else { saveAgain = true; return false }
-    let merged = DocState(mergeJSON: reply.value)
-    let apply = { [weak self] in
-      guard let self else { return }
-      project = merged.project
-      layout = merged.layout
-      for id in Set(ours.definitions.keys).union(merged.definitions.keys) { setEffectiveDefinition(id, merged.definitions[id]) }
-      for (p, edit) in sent.externals {
-        if let ext = merged.externals[p] { externalEdits[p] = ext }
-        else { var gone = edit; gone.removed = true; externalEdits[p] = gone }
-        externalBases[p] = .some(theirs.externals[p])
-      }
-      var hashes = sources.mapValues(\.hash)
-      for p in Set(sourceEdits.keys).union(sourceRemovals) { hashes[p] = b.hashes[p] }
-      draftBase = DraftBase(rev: revision, hashes: hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions)
-      normalizeExternalEdits()
-      settleDraftBase()
-    }
-    if !reply.conflicts.isEmpty {
-      mergeConflict = MergeConflict(rev: revision, snapshot: sent, state: ours, apply: apply)
-      mergeEdit.conflict(revision)
-      saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
-      return false
-    }
-    mergeConflict = nil
-    mergeEdit.reload(revision)
-    apply()
-    return true
-  }
-
-  /// Drops every unsaved edit and follows the latest confirmed document
-  /// (only for edits that cannot be saved).
-  func discardDraft() {
-    inlineDraft = nil
-    dropDraft()
-    // A save on its way answers about the draft that went: nothing of it stays.
-    if let saving = saveTask {
-      Task { [weak self] in
-        await saving.value
-        self?.dropDraft()
-      }
-    }
-  }
-
-  private func dropDraft() {
-    project = confirmedProject
-    layout = confirmedLayout
-    sourceEdits = [:]
-    sourceRemovals = []
-    definitionEdits = [:]
-    externalEdits = [:]
-    sourceBases = [:]
-    draftBase = nil
-    externalBases = [:]
-    saveAgain = false
-    conflictRetries = 0
-    saveError = nil
-    mergeConflict = nil
-    mergeEdit.reload(rev)
-    savingAfterRun = false
-  }
-
-  /// Starts saving what the draft holds (edits made meanwhile are saved next).
-  func scheduleSave() {
-    guard connected, client != nil else { return }
-    if saveTask != nil {
-      saveAgain = true
-      return
-    }
-    saveTask = Task { [weak self] in
-      guard let self else { return }
-      var attempts = 0
-      repeat {
-        self.saveAgain = false
-        attempts += 1
-        await self.saveOnce()
-      } while self.saveAgain && attempts < 50
-      self.saveTask = nil
-    }
-  }
-
-  /// Waits until what was edited so far is saved (or cannot be saved now).
-  func save() async {
-    if saveTask == nil { scheduleSave() } else { saveAgain = true }
-    while let t = saveTask { await t.value }
-  }
-
-  @ObservationIgnored private var conflictRetries = 0
-
-  /// Sends the draft as one ProjectSave transaction. Changes that arrived
-  /// meanwhile are merged in first; a conflict means newer changes are on
-  /// their way, so the save is tried again once they arrived.
-  private func saveOnce() async {
-    guard client != nil else { return }
-    // Nothing left to save (undone, or met by what arrived): no failure is left either.
-    guard dirty else {
-      saveError = nil
-      return
-    }
-    await fillUndoSources()
-    guard mergeConflict == nil else { return }
-    do { guard try await rebase() else { return } }
-    catch { saveFailure = error; saveError = String(describing: error); return }
-    guard dirty else {
-      saveError = nil
-      return
-    }
-    saving = true
-    defer { saving = false }
-    let base = draftBase ?? makeBase()
-    let layoutOnly = runActive && computationDirty
-    savingAfterRun = layoutOnly
-    let sentState = docState()
-    let (changes, sent, merged) = prepareSave(layoutOnly: layoutOnly, base: base)
-    guard !changes.isEmpty else {
-      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
-      return
-    }
-    let op = UUID()
-    do {
-      let (_, layouts) = try await commitChanges(baseRev: base.rev, op: op, changes: changes)
-      var merged = merged
-      for (prefix, value) in layouts { merged[prefix]?.layout = value }
-      saveError = nil
-      conflictRetries = 0
-      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-      adoptSavedPlaces(sentState, layouts: layouts)
-    } catch let f as RPCFailure {
-      saveFailure = f
-      switch f.kind {
-      case .revisionConflict, .hashConflict:
-        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
-          // A file this window edited was changed elsewhere too: kept, not merged.
-          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
-          return
-        }
-        guard conflictRetries < 8 else {
-          conflictRetries = 0
-          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
-          return
-        }
-        // Newer changes are on their way (DocPatched): merge them in and try again.
-        conflictRetries += 1
-        let want = f.currentRev ?? rev + 1
-        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
-        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
-        saveAgain = true
-      case .busy:
-        savingAfterRun = true
-      case .externalChange:
-        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
-      default:
-        saveError = f.description
-      }
-    } catch {
-      saveFailure = error
-      saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
-    }
-  }
-
-  /// Builds every document edit through the same transaction encoder.
-  private func prepareSave(layoutOnly: Bool, base: DraftBase) -> (changes: [Tsugumi_RPC_DocumentChangeT], sent: Snapshot, merged: [String: ExternalProject]) {
-    // While a run is active the core takes layout changes only.
-    var changes: [Tsugumi_RPC_DocumentChangeT] = []
-    let sent = snapshot()
-    if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
-    var merged: [String: ExternalProject] = [:]
-    if !layoutOnly {
-      if project != confirmedProject { changes.append(Change.setProject(project.serialized())) }
-      // A removed definition takes its folder with it: the core refuses a change to a file in it.
-      var removedFolders: [String] = []
-      for (id, d) in definitionEdits.sorted(by: { $0.key < $1.key }) {
-        if d.removed {
-          if confirmedDefinitions[id] != nil || confirmedLinks[id] != nil {
-            changes.append(Change.removeDefinition(id: id))
-            removedFolders.append("definitions/\(id)/")
-          }
-        } else {
-          changes.append(Change.putDefinition(id: id, cardJSON: d.card.serialized(), metaJSON: d.meta?.serialized(),
-                                              linkJSON: d.link?.serialized()))
-        }
-      }
-      var written = Set<String>()
-      for (prefix, ours) in externalEdits.sorted(by: { $0.key < $1.key }) where !ours.removed {
-        let theirs = externals[prefix]
-        let m = ours
-        merged[prefix] = m
-        let now = m.files, was = theirs?.files ?? [:]
-        for (rel, text) in now.sorted(by: { $0.key < $1.key }) where was[rel] != text {
-          let p = prefix + rel
-          written.insert(p)
-          changes.append(Change.putSource(path: p, bytes: Data(text.utf8), baseHash: theirs == nil ? sources[p]?.hash : externalHashes[p]))
-        }
-        for rel in was.keys.sorted() where now[rel] == nil {
-          let p = prefix + rel
-          if let h = externalHashes[p] ?? sources[p]?.hash, !sourceRemovals.contains(p) {
-            written.insert(p)
-            changes.append(Change.removeSource(path: p, baseHash: h))
-          }
-        }
-      }
-      func goesWithItsDefinition(_ p: String) -> Bool { removedFolders.contains { p.hasPrefix($0) } }
-      for (p, bytes) in sourceEdits.sorted(by: { $0.key < $1.key })
-      where !sourceRemovals.contains(p) && !written.contains(p) && !goesWithItsDefinition(p) {
-        changes.append(Change.putSource(path: p, bytes: bytes, baseHash: sourceBases[p] ?? base.hashes[p]))
-      }
-      for p in sourceRemovals.sorted() where !written.contains(p) && !goesWithItsDefinition(p) {
-        if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
-      }
-    }
-    return (changes, sent, merged)
-  }
-
-  /// The shared settings/canvas entry to ProjectSave. The caller supplies the revision
-  /// it actually edited; this function never advances it or retries.
+  /// One human action completes when its reply has entered the ordered document.
   @discardableResult
-  private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
-                             editor: Bool = false) async throws -> (Tsugumi_RPC_SaveResultT, [String: JSONValue]) {
-    guard let client else { throw RPCError.disconnected }
-    if !editor { canvasSaveOp = op.uuidString.lowercased() }
-    defer { if !editor { canvasSaveOp = nil } }
-    guard let projectId else { throw RPCError.disconnected }
-    let changes = try await prepareLayoutSave(projectId, baseRev, changes)
-    let result: Tsugumi_RPC_SaveResultT
-    do {
-      result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
-    } catch {
-      if error is RPCFailure { throw error }
-      // A lost reply still supplies the exact saved edit through its receipt.
-      guard let operation = try? await client.operation(op), operation.state == .completed,
-            let saved = operation.receipt?.result?.value as? Tsugumi_RPC_SaveResultT else { throw error }
-      result = saved
-    }
-    if let d = result.delta {
-      if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
-    }
-    var layouts: [String: JSONValue] = [:]
-    if let text = result.delta?.layoutJson { layouts[""] = try JSONValue.parse(text) }
-    for change in changes {
-      if let value = change.value?.value as? Tsugumi_RPC_PutSourceT,
-         value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
-        let prefix = String(value.path.dropLast("layout.json".count))
-        let layout = try JSONValue.parse(String(decoding: value.bytes, as: UTF8.self))
-        layouts[prefix] = layout
-        if rev == result.rev { externals[prefix]?.layout = layout }
-      }
-    }
-    return (result, layouts)
+  func operate(_ type: Tsugumi_Host_ProjectOperationBody, body: NativeObject, record: Bool = true) async throws -> Tsugumi_RPC_SaveResultT {
+    try await submitOperation(type, body: { body }, record: record).value
   }
 
-  /// Applies an editor's working copy without putting a rejected edit into
-  /// the autosaved session draft. Both settings editors and the canvas use
-  /// prepareSave/commitChanges; only the canvas rebases and retries its draft.
-  func applyEdit(baseRev: UInt64, _ change: (ProjectSession) -> Void) async throws -> UInt64 {
-    if dirty || saveTask != nil { await save() }
-    guard connected, client != nil else { throw RPCError.disconnected }
-    guard baseRev == rev else { throw RPCFailure(kind: .revisionConflict, diagnostic: "Editor revision changed") }
-    guard !dirty else { throw RPCFailure(kind: .busy, diagnostic: String(localized: "変更を保存できませんでした。")) }
-    let before = docState(), beforeSnap = snapshot(), base = makeBase()
-    change(self)
-    normalizeExternalEdits()
-    let prepared = prepareSave(layoutOnly: false, base: base)
-    let after = docState()
-    dropDraft()
-    guard !prepared.changes.isEmpty else { return baseRev }
-    let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
-    await fillUndoSources()
-    // Reading undo sources can yield to another client. Keep baseRev fixed.
-    let (result, layouts) = try await commitChanges(baseRev: baseRev, op: UUID(), changes: prepared.changes, editor: true)
-    if rev == result.rev {
-      for (prefix, value) in prepared.merged {
-        var ext = value
-        if let layout = layouts[prefix] { ext.layout = layout }
-        externals[prefix] = ext
-        for rel in ext.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
-      }
-    }
-    adoptSavedPlaces(after, layouts: layouts, extra: [step])
-    undoStack.append(step)
-    if undoStack.count > 500 { undoStack.removeFirst() }
-    redoStack.removeAll()
-    return result.rev ?? baseRev
-  }
-
-  /// Whether a path is one of an external's documents (merged, not compared by hash).
-  private func isExternalDocument(_ p: String) -> Bool {
-    effectiveExternals.keys.contains { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }
-  }
-
-  /// Completion belongs to the saved edit. Backfill only absent places, in
-  /// states where that Card exists: undo keeps a pre-existing Card's saved
-  /// place, while undoing an add removes its place with the Card. Older undo
-  /// entries and edits made during the RPC follow the same rule.
-  private func adoptSavedPlaces(_ sent: DocState, layouts: [String: JSONValue], extra: [UndoEntry] = []) {
-    for (prefix, completed) in layouts {
-      let original = prefix.isEmpty ? sent.layout : sent.externals[prefix]?.layout
-      let added = (completed["cards"]?.object ?? []).filter { original?["cards"]?[$0.0] == nil }
-      guard !added.isEmpty else { continue }
-      func fill(_ project: JSONValue, _ layout: JSONValue) -> JSONValue {
-        let ids = Set((project["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string })
-        var result = layout, cards = layout["cards"] ?? .object([])
-        for (id, position) in added where ids.contains(id) && cards[id] == nil { cards[id] = position }
-        if cards != (layout["cards"] ?? .object([])) { result["cards"] = cards }
+  /// Synchronous setters enter the same queue before returning to the canvas.
+  private func submitOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: @escaping () throws -> NativeObject, record: Bool = true) -> Task<Tsugumi_RPC_SaveResultT, Error> {
+    let previous = operationTask
+    submittedOperations += 1
+    let task = Task { @MainActor in
+      defer { submittedOperations -= 1 }
+      _ = try? await previous?.value
+      guard connected, let projectId else { throw RPCError.disconnected }
+      let connection = client
+      let request = Tsugumi_Host_ProjectOperateRequestT()
+      request.projectId = projectId
+      request.opId = UUID().uuidString.lowercased()
+      let payload = try body()
+      if let edits = payload as? Tsugumi_Host_ProjectEditsT, edits.edits.isEmpty {
+        let result = Tsugumi_RPC_SaveResultT(); result.rev = rev
         return result
       }
-      func external(_ value: ExternalProject) -> ExternalProject {
-        var result = value
-        result.layout = fill(value.project, value.layout)
-        return result
+      request.body = Tsugumi_Host_ProjectOperationBodyUnion(payload, type: type)
+      let result = try await operateProject(request)
+      guard connected, self.client === connection else { throw RPCError.disconnected }
+      if let delta = result.delta { applyDelta(delta) }
+      try await documentRevisions.applied(result.rev ?? rev)
+      let inverse = record ? try operationInverse(result) : Tsugumi_Host_ProjectEditsT()
+      if record && !inverse.edits.isEmpty {
+        let entry = UndoEntry(operation: inverse)
+        undoStack.append(entry)
+        if undoStack.count > 500 { undoStack.removeFirst() }
+        redoStack = []
       }
-      func state(_ value: DocState) -> DocState {
-        var result = value
-        if prefix.isEmpty { result.layout = fill(value.project, value.layout) }
-        else if let ext = value.externals[prefix] { result.externals[prefix] = external(ext) }
-        return result
-      }
-      for entry in undoStack + redoStack + extra { entry.before = state(entry.before); entry.after = state(entry.after) }
-      if prefix.isEmpty {
-        layout = fill(project, layout)
-        if let base = draftBase {
-          draftBase = DraftBase(rev: base.rev, hashes: base.hashes, project: base.project,
-                                layout: fill(base.project, base.layout), definitions: base.definitions)
-        }
-      } else {
-        if let ext = externals[prefix] { externals[prefix] = external(ext) }
-        if let ext = externalEdits[prefix] { externalEdits[prefix] = external(ext) }
-        if let base = externalBases[prefix], let ext = base { externalBases[prefix] = .some(external(ext)) }
-      }
+      saveError = nil
+      return result
     }
-    settleDraftBase()
+    operationTask = task
+    // A later action may already own operationTask when this one finishes.
+    // Keeping the completed tail is harmless and preserves submission order.
+    return task
   }
 
-  /// After a save: the parts sent are confirmed now; edits made while it was
-  /// on its way stay in the draft.
-  private func forgetSaved(_ sent: Snapshot, layoutOnly: Bool, merged: [String: ExternalProject]) {
-    if layout == sent.layout { layout = confirmedLayout }
-    if !layoutOnly {
-      if project == sent.project { project = confirmedProject }
-      for (id, d) in sent.definitions where definitionEdits[id] == d { definitionEdits[id] = nil }
-      for (p, d) in sent.sources where sourceEdits[p] == d {
-        sourceEdits[p] = nil
-        sourceBases[p] = nil
-      }
-      for p in sent.removals where sourceRemovals.contains(p) && sent.sources[p] == nil {
-        sourceRemovals.remove(p)
-        sourceBases[p] = nil
-      }
-      for (prefix, m) in merged {
-        // What was written is now the external's confirmed content.
-        externals[prefix] = m
-        for rel in m.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
-        if externalEdits[prefix] == sent.externals[prefix] {
-          externalEdits[prefix] = nil
-          externalBases[prefix] = nil
-        } else {
-          externalBases[prefix] = .some(m)
-        }
-      }
-      for (prefix, e) in sent.externals where e.removed && externalEdits[prefix] == e {
-        externalEdits[prefix] = nil
-        externalBases[prefix] = nil
-        externals[prefix] = nil
-      }
-      savingAfterRun = false
-    }
-    // Whatever is left was edited on top of what was just saved.
-    let current = makeBase(), previous = draftBase ?? makeBase()
-    var definitions = confirmedDefinitionDrafts
-    for (id, d) in sent.definitions { definitions[id] = d.removed ? nil : d }
-    draftBase = DraftBase(rev: current.rev, hashes: layoutOnly ? previous.hashes : current.hashes,
-                          project: layoutOnly ? previous.project : sent.project, layout: sent.layout,
-                          definitions: layoutOnly ? previous.definitions : definitions)
-    settleDraftBase()
+  private func operationInverse(_ result: Tsugumi_RPC_SaveResultT) throws -> Tsugumi_Host_ProjectEditsT {
+    guard !result.operationData.isEmpty else { throw RPCError.protocolViolation("Missing operation changes") }
+    var buffer = ByteBuffer(bytes: result.operationData)
+    let root: Tsugumi_Host_ProjectEdits = try getCheckedRoot(byteBuffer: &buffer)
+    return root.unpack()
   }
 
-  private func applyDeltaFromSave(_ d: Tsugumi_RPC_DocumentDeltaT) {
-    if d.baseRev == rev {
-      let keep = snapshot()
-      applyDelta(d, fromSave: true)
-      project = keep.project
-      layout = keep.layout
+  func fieldEdit(_ file: String, _ selector: [JSONValue], old: JSONValue?, new: JSONValue?) -> Tsugumi_Host_ProjectEditT {
+    let field = Tsugumi_Host_ProjectFieldEditT()
+    field.filePath = file
+    field.selector = selector.map { step in
+      let value = Tsugumi_Host_ProjectSelectorT()
+      if let name = step.string { value.field = name }
+      else { value.matchJson = step.serialized() }
+      return value
+    }
+    field.oldValue = Tsugumi_Host_ProjectValueT()
+    field.oldValue.present = old != nil; field.oldValue.json = old?.serialized()
+    field.newValue = Tsugumi_Host_ProjectValueT()
+    field.newValue.present = new != nil; field.newValue.json = new?.serialized()
+    let edit = Tsugumi_Host_ProjectEditT()
+    edit.value = Tsugumi_Host_ProjectEditValueUnion(field, type: .projectfieldedit)
+    return edit
+  }
+
+  func operateFields(_ edits: [Tsugumi_Host_ProjectEditT]) async throws {
+    if edits.isEmpty { return }
+    let body = Tsugumi_Host_ProjectEditsT()
+    body.edits = edits.map(Optional.some)
+    try await operate(.projectedits, body: body)
+  }
+
+  func enqueueOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: NativeObject) -> Task<Void, Never> {
+    let task = submitOperation(type, body: { body })
+    return Task { @MainActor in
+      do { _ = try await task.value }
+      catch { notice = error.localizedDescription }
     }
   }
+
+  func queueFields(_ edits: @escaping () throws -> [Tsugumi_Host_ProjectEditT]) {
+    let task = submitOperation(.projectedits, body: {
+      let body = Tsugumi_Host_ProjectEditsT()
+      body.edits = try edits().map(Optional.some)
+      return body
+    })
+    Task { @MainActor in
+      do { _ = try await task.value }
+      catch { notice = error.localizedDescription }
+    }
+  }
+
+  /// Wait for submitted actions. Rejected editor text remains with its editor.
+  func save() async { _ = try? await operationTask?.value }
 
   struct ReloadApproval: Identifiable {
     let id = UUID()
@@ -1833,12 +1242,14 @@ final class ProjectSession {
   }
 
   func reloadExternal(approved: [String] = [], baseRev: UInt64? = nil) async {
-    guard let client, !reloadingExternal else { return }
+    guard client != nil, !reloadingExternal else { return }
     let base = baseRev ?? rev
     reloadingExternal = true
     defer { reloadingExternal = false }
     do {
-      _ = try await client.reload(baseRev: base, opId: UUID(), origin: "ui", approvedPermissions: approved)
+      let body = Tsugumi_Host_ProjectReloadT()
+      body.expectedRev = base; body.approvedPermissions = approved
+      try await operate(.projectreload, body: body, record: false)
       saveError = nil
     } catch let failure as RPCFailure where failure.kind == .approvalRequired && !failure.permissions.isEmpty {
       reloadApproval = ReloadApproval(baseRev: base, permissions: Array(Set(approved + failure.permissions)).sorted())
@@ -1957,7 +1368,6 @@ final class ProjectSession {
 
   /// An external's documents with the draft applied.
   func external(_ prefix: String) -> ExternalProject? {
-    if let e = externalEdits[prefix] { return e.removed ? nil : e }
     return externals[prefix]
   }
 
@@ -1973,18 +1383,10 @@ final class ProjectSession {
 
   /// Mutates a scope's canvas in the draft (inside a Card in Card: its external's).
   func updateGraph(_ scope: [String], _ fn: (inout JSONValue) -> Void) {
-    guard let prefix = projectPrefix(scope) else { return }
-    if prefix.isEmpty {
-      var canvas = project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
-      fn(&canvas)
-      project["canvas"] = canvas
-    } else {
-      updateExternal(prefix) { e in
-        var canvas = e.project["canvas"] ?? .object([("cards", .array([])), ("connections", .array([]))])
-        fn(&canvas)
-        e.project["canvas"] = canvas
-      }
-    }
+    guard let prefix = projectPrefix(scope), let before = prefix.isEmpty ? project : externals[prefix]?.project else { return }
+    var after = before, canvas = before["canvas"] ?? .object([])
+    fn(&canvas); after["canvas"] = canvas
+    editJSON(prefix + "tsugumi.json", old: before, new: after)
   }
 
   /// The layout a scope's Cards, notes and groups are kept in, and the key of
@@ -1996,7 +1398,8 @@ final class ProjectSession {
 
   func updateLayout(of scope: [String], _ fn: (inout JSONValue) -> Void) {
     guard let prefix = projectPrefix(scope) else { return }
-    if prefix.isEmpty { fn(&layout) } else { updateExternal(prefix) { fn(&$0.layout) } }
+    let before = layout(of: scope); var after = before
+    fn(&after); editJSON(prefix + "layout.json", old: before, new: after)
   }
 
   /// A Card's key in the layout of its scope.
@@ -2033,9 +1436,11 @@ final class ProjectSession {
 
   /// Sets a Card's definition files in the draft (nil removes them).
   func setCardDefinition(_ k: CardKey, _ d: DefinitionDraft?) {
-    let p = path(k)
-    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return }
-    if prefix.isEmpty { setEffectiveDefinition(id, d) } else { updateExternal(prefix) { $0.definitions[id] = d } }
+    guard let dir = definitionDir(k), let d else { return }
+    let before = cardDefinitionDraft(k)
+    if d.link == nil { editJSON(dir + "_card.json", old: before?.card, new: d.card) }
+    editJSON(dir + "_meta.json", old: before?.meta, new: d.meta)
+    editJSON(dir + "_link.json", old: before?.link, new: d.link)
   }
 
   /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
@@ -2068,7 +1473,7 @@ final class ProjectSession {
 
   /// Changes a Card's _meta.json in the draft.
   func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), d.link == nil else { return }
+    guard var d = cardDefinitionDraft(k) else { return }
     var meta = d.meta ?? .object([])
     fn(&meta)
     d.meta = meta
@@ -2109,7 +1514,7 @@ final class ProjectSession {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !t.isEmpty else { return }
     let id = try await reserveReference("comment", scope: k)
-    editComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] }
+    _ = try await applyMutation { s in s.changeComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] } }
   }
 
   func setCommentText(_ k: CardKey, id: String, text: String) {
@@ -2223,9 +1628,6 @@ final class ProjectSession {
       guard self.externalsKey == key else { return }
       self.externals = found
       for prefix in found.keys { self.refreshDerivedLayout(prefix: prefix) }
-      self.externalHashes = read
-      self.normalizeExternalEdits()
-      self.settleDraftBase()
       // Cards inside Cards in Card are known now: their displays are wanted too.
       await self.refreshVisibleDisplays()
     }

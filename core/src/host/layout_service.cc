@@ -113,6 +113,13 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
 }
 }  // namespace
 
+auto MeasuredScene(const R::LayoutSceneT &scene) -> layout::Scene {
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(R::LayoutScene::Pack(builder, &scene));
+  return scene_of(
+      *flatbuffers::GetRoot<R::LayoutScene>(builder.GetBufferPointer()));
+}
+
 auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
   auto l = decode_layout(text);
   if (const auto* cards = schema::get(l.cards))
@@ -318,8 +325,6 @@ auto DefaultDisplayGeometry(bool top_to_bottom) -> R::DisplayGeometryT {
 
 auto LayoutHandles(R::RequestPayload type) -> bool {
   return type == R::RequestPayload::DisplayGeometryRequest ||
-         type == R::RequestPayload::LayoutArrangeRequest ||
-         type == R::RequestPayload::LayoutUntangleRequest ||
          type == R::RequestPayload::LayoutValidateRequest ||
          type == R::RequestPayload::LayoutCompleteRequest ||
          type == R::RequestPayload::VersionCanvasRequest;
@@ -356,34 +361,6 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
   }
   if (const auto* v = req.value_as_VersionCanvasRequest())
     return agent::wire::HostReply(id, VersionCanvas(*v));
-  const auto* a = req.value_as_LayoutArrangeRequest();
-  const auto* u = req.value_as_LayoutUntangleRequest();
-  const auto scene = scene_of(*(a ? a->scene() : u->scene()));
-  std::vector<std::string> around;
-  if (u && u->around())
-    for (const auto* card : *u->around()) around.push_back(card->str());
-  const auto proposal =
-      a ? layout::arrange(scene) : layout::untangle(scene, around);
-  R::LayoutProposalT result;
-  auto places = [](const auto& source, auto& destination) {
-    for (const auto& p : source) {
-      auto v = std::make_unique<R::LayoutPlaceT>();
-      v->id = p.id;
-      v->x = p.x;
-      v->y = p.y;
-      destination.push_back(std::move(v));
-    }
-  };
-  places(proposal.cards, result.cards);
-  places(proposal.frames, result.frames);
-  places(proposal.notes, result.notes);
-  for (const auto& order : proposal.port_orders) {
-    auto v = std::make_unique<R::LayoutPortOrderT>();
-    v->id = order.id;
-    v->inputs = order.inputs;
-    v->outputs = order.outputs;
-    result.port_orders.push_back(std::move(v));
-  }
-  return agent::wire::HostReply(id, std::move(result));
+  throw LayoutFailure("Unknown layout query");
 }
 }  // namespace tsugumi::host

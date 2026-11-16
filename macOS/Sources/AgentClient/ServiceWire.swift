@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -42,40 +42,9 @@ enum ServiceWire {
         let v = Tsugumi_Host_PermissionKindsRequestT()
         v.language = fields["language"] as? String
         return (Tsugumi_Host_RequestPayload.permissionkindsrequest.rawValue, v)
-      case "DocumentTemplateRequest":
-        let v = Tsugumi_Host_DocumentTemplateRequestT()
-        v.name = fields["name"] as? String ?? ""
-        v.id = fields["id"] as? String ?? ""
-        return (Tsugumi_Host_RequestPayload.documenttemplaterequest.rawValue, v)
-      case "DocumentConnectRequest":
-        let v = Tsugumi_Host_DocumentConnectRequestT()
-        v.stateJson = fields["state_json"] as? String ?? ""
-        v.fromCard = fields["from_card"] as? String ?? ""
-        v.fromPort = fields["from_port"] as? String ?? ""
-        v.toCard = fields["to_card"] as? String ?? ""
-        v.toPort = fields["to_port"] as? String ?? ""
-        v.forkId = fields["fork_id"] as? String
-        return (Tsugumi_Host_RequestPayload.documentconnectrequest.rawValue, v)
-      case "DocumentCopyRequest":
-        let v = Tsugumi_Host_DocumentCopyRequestT()
-        v.stateJson = fields["state_json"] as? String ?? ""
-        v.paths = (fields["paths"] as? [String] ?? []).map(Optional.some)
-        v.from = fields["from"] as? String ?? ""
-        v.to = fields["to"] as? String ?? ""
-        v.name = fields["name"] as? String
-        return (Tsugumi_Host_RequestPayload.documentcopyrequest.rawValue, v)
-      case "DocumentMergeRequest":
-        let v = Tsugumi_Host_DocumentMergeRequestT()
-        v.baseJson = fields["base_json"] as? String ?? ""
-        v.oursJson = fields["ours_json"] as? String ?? ""
-        v.theirsJson = fields["theirs_json"] as? String ?? ""
-        return (Tsugumi_Host_RequestPayload.documentmergerequest.rawValue, v)
-      case "DocumentSubgraphRequest":
-        let v = Tsugumi_Host_DocumentSubgraphRequestT()
-        v.projectJson = fields["project_json"] as? String ?? ""
-        v.cards = (fields["cards"] as? [String] ?? []).map(Optional.some)
-        v.id = fields["id"] as? String ?? ""
-        return (Tsugumi_Host_RequestPayload.documentsubgraphrequest.rawValue, v)
+
+
+
       case "DemoListRequest": return (Tsugumi_Host_RequestPayload.demolistrequest.rawValue, Tsugumi_Host_DemoListRequestT())
       case "DemoReadRequest":
         let v = Tsugumi_Host_DemoReadRequestT()
@@ -273,12 +242,7 @@ enum ServiceWire {
         v.profile = fields["profile"] as? String
         v.accountProfile = fields["account_profile"] as? String
         return (Tsugumi_Host_RequestPayload.modelslistrequest.rawValue, v)
-      case "HostProjectReadRequest":
-        let v = Tsugumi_Host_HostProjectReadRequestT()
-        v.path = fields["path"] as? String ?? ""
-        v.fileIndex = (fields["file_index"] as? NSNumber)?.uint32Value ?? 0
-        v.offset = (fields["offset"] as? NSNumber)?.uint64Value ?? 0
-        return (Tsugumi_Host_RequestPayload.hostprojectreadrequest.rawValue, v)
+
       case "HostProjectInfoRequest":
         let v = Tsugumi_Host_HostProjectInfoRequestT()
         v.path = fields["path"] as? String ?? ""
@@ -542,11 +506,6 @@ enum ServiceWire {
     case let v as Tsugumi_RPC_VersionGraphT: return ["result": v]
     case let v as Tsugumi_Host_VersionDiffT: return ["result": v]
     case let v as Tsugumi_Host_PermissionKindsT: return ["kinds": v.kinds.compactMap { $0 }]
-    case let v as Tsugumi_Host_DocumentTemplateT: return ["definitionJson": v.definitionJson, "files": v.files.compactMap { $0 }]
-    case let v as Tsugumi_Host_DocumentConnectT: return ["stateJson": v.stateJson, "insertedId": v.insertedId ?? "", "needsFork": v.needsFork]
-    case let v as Tsugumi_Host_DocumentCopyT: return ["editsJson": v.editsJson, "files": v.files.compactMap { $0 }]
-    case let v as Tsugumi_Host_DocumentMergeT: return ["mergedJson": v.mergedJson, "conflicts": v.conflicts.compactMap { $0 }]
-    case let v as Tsugumi_Host_DocumentSubgraphT: return ["projectJson": v.projectJson, "externalJson": v.externalJson, "linkJson": v.linkJson]
     case let v as Tsugumi_Host_VersionCommentsT: return ["comments": v.comments.compactMap { $0 }]
     case let v as Tsugumi_Host_GuideStateT:
       var out: [String: Any] = ["sessionId": v.sessionId, "revision": v.revision, "answerRevision": v.answerRevision,
@@ -737,9 +696,6 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["nixpkgsPin"] = v.nixpkgsPin
       return out
-    case let v as Tsugumi_Host_ProjectFilesT:
-      return ["name": v.name, "files": try v.files.compactMap { item in try item.map { try view($0) } },
-              "nextFile": v.nextFile, "nextOffset": v.nextOffset, "complete": v.complete]
     case let v as Tsugumi_Host_ProjectFileT:
       return ["path": v.path, "bytes": v.bytes]
     case let v as Tsugumi_Host_ProjectInfoT:

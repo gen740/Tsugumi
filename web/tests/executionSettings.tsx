@@ -15,7 +15,6 @@ const { CardSettingsEditor } = await import('../src/ui/cardSettings')
 const session = cardIds(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
-session.scheduleSave = () => {}
 session.connected = true
 const card = await session.addCard('python', [], { x: 0, y: 0 })
 const show = (nativeSystem: string, systems: string[]) => {

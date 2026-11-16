@@ -17,7 +17,6 @@ import { L, language } from './i18n'
 import { CoreHostError } from './coreHost'
 import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
-import { importProject } from './projectImport'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -252,21 +251,14 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
   'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
-  'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),
-  'POST /api/document/template': (b) => hostRequest('DocumentTemplateRequest', b),
-  'POST /api/document/connect': (b) => hostRequest('DocumentConnectRequest', b),
-  'POST /api/document/copy': (b) => hostRequest('DocumentCopyRequest', b),
-  'POST /api/document/subgraph': (b) => hostRequest('DocumentSubgraphRequest', b),
   'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
   'POST /api/layout/display-geometry': () => hostRequest('DisplayGeometryRequest', {}),
-  'POST /api/layout/arrange': (b) => hostRequest('LayoutArrangeRequest', b),
-  'POST /api/layout/untangle': (b) => hostRequest('LayoutUntangleRequest', b),
   'POST /api/layout/complete': (b) => hostRequest('LayoutCompleteRequest', b),
-  'POST /api/layout/prepare-save': (b) => hostRequest('LayoutPrepareSaveRequest', b),
   'POST /api/layout/validate': (b) => hostRequest('LayoutValidateRequest', b),
   'POST /api/layout/version-canvas': (b) => hostRequest('VersionCanvasRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
@@ -344,10 +336,7 @@ const routes: Record<string, Handler> = {
     fs.mkdirSync(dir)
     return listDir(dir)
   },
-  'POST /api/import/project': (b) => {
-    if (typeof b.folder !== 'string') throw new HttpError(400, L('tsugumi.json のあるフォルダを選んでください。'))
-    return importProject(b.folder, hostRequest)
-  },
+
   'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path), b.cols, b.rows),
   'POST /api/terminal/input': (b) => {
     terminal(b.id).proc.write(String(b.data ?? ''))

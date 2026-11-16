@@ -19,7 +19,8 @@ const session = () => {
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
   let saves = 0
-  s.scheduleSave = () => { saves++ }
+  const operate = s.operateProject
+  s.operateProject = async request => { saves++; return operate(request) }
   return { s, saves: () => saves }
 }
 
@@ -31,6 +32,7 @@ const session = () => {
 
   const before = saves()
   await s.addComment(k, '  y 軸を対数に  ')
+  await s.save()
   assert.equal(saves(), before + 1, 'a comment is saved at once')
   await s.addComment(k, '   ')
   assert.equal(s.comments(k).length, 1, 'an empty comment is not written')
@@ -43,8 +45,10 @@ const session = () => {
 
   await s.addComment(k, '軸に名前を')
   s.edit((x) => x.setCommentText(k, first.id, '両軸を対数に'))
+  await s.save()
   assert.deepEqual(s.comments(k).map((c) => c.text), ['両軸を対数に', '軸に名前を'])
   s.edit((x) => x.setCommentText(k, first.id, '  '))
+  await s.save()
   assert.equal(s.comments(k)[0].text, '両軸を対数に', 'a comment keeps its text rather than going blank')
 
   // The Agent's line goes away when the comment is opened again.
@@ -53,16 +57,19 @@ const session = () => {
     list[0].set('resolved', true)
     list[0].set('resolution', '両軸を対数にした')
   })
+  await s.save()
   assert.equal(s.comments(k)[0].resolution, '両軸を対数にした')
   assert.equal(s.nodeData(k).openComments, 1)
   s.setCommentResolved(k, first.id, false)
+  await s.save()
   assert.equal(s.comments(k)[0].resolved, false)
   assert.equal(s.comments(k)[0].resolution, undefined)
   s.setCommentResolved(k, first.id, true)
+  await s.save()
   assert.deepEqual(s.openComments(k).map((c) => c.text), ['軸に名前を'], 'resolved ones stay, not open')
 
-  for (const c of s.comments(k)) s.removeComment(k, c.id)
-  assert.equal(get(s.cardMeta(k), 'comments'), undefined, 'no comments left, no field left')
+  for (const c of s.comments(k)) { s.removeComment(k, c.id); await s.save() }
+  assert.deepEqual(s.comments(k), [], 'no comments remain')
   assert.equal(get(s.cardMeta(k), 'name'), 'card', 'the name stays after the last comment is removed')
   assert.deepEqual(s.cardsWithOpenComments([]), [])
 }
@@ -72,6 +79,7 @@ const session = () => {
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
+  await s.save()
   await s.addComment(k, 'one')
   assert.equal(str(get(s.cardMeta(k), 'description')), 'Plots')
   await s.undo()
@@ -106,15 +114,19 @@ const session = () => {
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
   s.edit((x) => x.setCommentText(k, c.id, 'mine, reworded'))
+  await s.save()
   assert.equal(s.comments(k)[0].editedBy, 'user')
   s.setCommentResolved(k, c.id, true)
+  await s.save()
   assert.equal(s.comments(k)[0].stateBy, 'user')
   const agent = cardComments(parse('{"comments":[{"id":"a","text":"note","author":"agent","resolved":true,"stateBy":"agent","resolution":"did","cards":["p","q"]}]}'))
   assert.deepEqual(agent[0].cards, ['p', 'q'])
   assert.equal(commentChange('resolved', 'agent'), '解決（Agent）')
   assert.equal(commentChange('removed'), '削除')
   s.edit((x) => x.updateMeta(k, (m) => m.set('comments', parse('[{"id":"z","text":"t","resolved":true,"stateBy":"agent","resolution":"did","cards":["p"]}]') as never)))
+  await s.save()
   s.setCommentResolved(k, 'z', false)
+  await s.save()
   assert.deepEqual(s.comments(k)[0].cards, [], 'opening it again takes back what the resolving save did')
   assert.equal(s.comments(k)[0].stateBy, 'user')
 }

@@ -3,12 +3,7 @@ import * as R from '../src/gen/tsugumi/rpc'
 import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
 import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
 import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
-import { DocumentTemplateRequestT } from '../src/gen/tsugumi/host/document-template-request'
-import { DocumentConnectRequestT } from '../src/gen/tsugumi/host/document-connect-request'
-import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-request'
-import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
 import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
-import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import * as H from '../src/gen/tsugumi/host'
 import { sceneRequest } from '../src/shared/hostLayout'
 import { ModelSelectionRequestT } from '../src/gen/tsugumi/host/model-selection-request'
@@ -92,7 +87,6 @@ import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
 import { RegisterFolderRequestT as HRegisterFolderRequest } from '../src/gen/tsugumi/host/register-folder-request'
 import { ModelsListRequestT as HModelsListRequest } from '../src/gen/tsugumi/host/models-list-request'
-import { HostProjectReadRequestT } from '../src/gen/tsugumi/host/host-project-read-request'
 import { HostProjectInfoRequestT as HHostProjectInfoRequest } from '../src/gen/tsugumi/host/host-project-info-request'
 import { HostProjectCreateRequestT as HHostProjectCreateRequest } from '../src/gen/tsugumi/host/host-project-create-request'
 import { HostProjectDuplicateRequestT as HHostProjectDuplicateRequest } from '../src/gen/tsugumi/host/host-project-duplicate-request'
@@ -128,6 +122,7 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'ProjectOperateRequest': return H.ProjectOperateRequest.getRootAsProjectOperateRequest(new fb.ByteBuffer(new Uint8Array(v.bytes))).unpack()
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
     case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
@@ -135,16 +130,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
     case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
-    case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
-    case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
-    case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
-    case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
-    case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
-    case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
-    case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
     case 'LayoutCompleteRequest': return new H.LayoutCompleteRequestT(v.project_json, v.layout_json, v.definitions_json)
-    case 'LayoutPrepareSaveRequest': return new H.LayoutPrepareSaveRequestT(v.project, R.ProjectSaveRequest.getRootAsProjectSaveRequest(new fb.ByteBuffer(new Uint8Array(v.saveBytes))).unpack())
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
     case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
       v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
@@ -183,7 +170,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
-    case 'HostProjectReadRequest': return new HostProjectReadRequestT(v.path, v.file_index ?? 0, BigInt(v.offset ?? 0))
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
     case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)
@@ -234,11 +220,6 @@ export function encodeRequest(method: string, value: unknown, id: bigint, host: 
 // Adapt generated native objects to the existing HTTP/SSE presentation DTOs.
 // This walks typed fields; it does not parse or generate a JSON envelope.
 function view(value: any): any {
-  if (value instanceof H.LayoutPreparedSaveT) {
-    const builder = new fb.Builder()
-    builder.finish(value.save!.pack(builder))
-    return { saveBytes: Array.from(builder.asUint8Array()) }
-  }
   if (value === null || value === undefined) return undefined
   if (Array.isArray(value)) return value.map(view)
   if (typeof value === 'bigint') {
@@ -280,6 +261,11 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.
+  if (host && reply.valueType === H.ReplyPayload.ProjectOperationResult) {
+    const builder = new fb.Builder()
+    builder.finish(reply.value.pack(builder))
+    return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
+  }
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,

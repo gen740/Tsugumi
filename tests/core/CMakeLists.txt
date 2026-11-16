@@ -169,10 +169,9 @@ target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_sources(tsugumi_host_settings_tests PRIVATE short_identifiers_test.cc host/save_inspection_test.cc host/project_edit_test.cc host/project_operations_test.cc host/file_miss_test.cc)
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
   TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
-  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json"
-  TSUGUMI_MERGE_FIXTURES="${_test_guide_root}/tests/fixtures/merge-contract.json")
+  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")
 if(TSUGUMI_INSTALLED_CORE)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/merge-contract.json
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
     DESTINATION share/tsugumi/guide-tests/tests/fixtures)
 endif()
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="tests/fixtures")

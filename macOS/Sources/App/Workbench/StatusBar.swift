@@ -37,7 +37,6 @@ struct StatusBar: View {
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
                            answer: { allow, _, selected in Task { await session.answerReloadApproval(allow, selected: selected) } }, reload: true)
     }
-    .onChange(of: session.mergeEdit.conflictRev) { if session.mergeEdit.conflictRev != nil { showSync = true } }
     .font(.callout)
     .padding(.horizontal, 12).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
@@ -115,9 +114,6 @@ struct StatusBar: View {
         case .saved:
           Image(systemName: "checkmark.icloud").foregroundStyle(.green)
           if !icons { Text("保存済み") }
-        case .waitingForRun:
-          Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
-          if !icons { Text(short ? String(localized: "実行後に保存") : String(localized: "実行が終わったら保存します")) }
         case .saving:
           ProgressView().controlSize(.mini)
           if !icons { Text("保存中…") }
@@ -141,7 +137,6 @@ struct StatusBar: View {
   private var syncLabel: String {
     switch session.syncState {
     case .saved: return String(localized: "保存済み")
-    case .waitingForRun: return String(localized: "実行が終わったら保存します")
     case .saving: return String(localized: "保存中…")
     case .failed: return String(localized: "同期できません")
     case .offline: return String(localized: "未接続")
@@ -173,15 +168,9 @@ struct StatusBar: View {
       if case .failed(let m) = session.syncState {
         Text(m).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
       }
-      RevisionEditNotice(edit: session.mergeEdit, text: { session.unsavedText },
-                         overwrite: { session.resolveMergeConflict() }, reload: { session.discardDraft() })
       Text("変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
-        if session.saveError != nil {
-          Button("もう一度保存") { Task { await session.save() } }.disabled(!session.connected)
-          Button("変更を破棄…", role: .destructive) { confirmDiscard = true }
-        }
         Button("外部の変更を再読込") { Task { await session.reloadExternal() } }
           .disabled(!session.connected || session.reloadingExternal || session.reloadApproval != nil)
           .help("Tsugumi の外で編集されたファイルを取り込みます")

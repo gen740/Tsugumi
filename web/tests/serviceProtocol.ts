@@ -198,60 +198,6 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
 }
 console.log('Host formatting and version presentation adapters: passed')
 
-// Pure document edits and the permission catalog use typed Host requests.
-{
-  const { DocumentSubgraphRequestT } = await import('../src/gen/tsugumi/host/document-subgraph-request')
-  const { PermissionKindsRequestT } = await import('../src/gen/tsugumi/host/permission-kinds-request')
-  const bytes = encodeRequest('DocumentSubgraphRequest', { project_json: '{"canvas":{}}', cards: ['a'], id: 'sub' }, high, true)
-  const message = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
-  const value = (message.payload as any).value as InstanceType<typeof DocumentSubgraphRequestT>
-  assert.ok(value instanceof DocumentSubgraphRequestT)
-  assert.equal(value.projectJson, '{"canvas":{}}')
-  assert.deepEqual(value.cards, ['a'])
-  assert.equal(value.id, 'sub')
-  const catalog = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('PermissionKindsRequest', { language: 'en' }, 9n, true))).unpack()
-  assert.ok((catalog.payload as any).value instanceof PermissionKindsRequestT)
-  assert.equal((catalog.payload as any).value.language, 'en')
-}
-
-{
-  const { DocumentMergeRequestT } = await import('../src/gen/tsugumi/host/document-merge-request')
-  const { DocumentMerge } = await import('../src/gen/tsugumi/host/document-merge')
-  const frame = encodeRequest('DocumentMergeRequest', { base_json: '{}', ours_json: '{"n":2}', theirs_json: '{}' }, 1n, true)
-  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack().payload as any
-  assert.ok(request.value instanceof DocumentMergeRequestT)
-  assert.equal(request.value.oursJson, '{"n":2}')
-  const b = new fb.Builder()
-  const json = b.createString('{}')
-  const result = DocumentMerge.createDocumentMerge(b, json, 0)
-  const reply = HostReply.createReply(b, HostReplyPayload.DocumentMerge, result)
-  const message = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
-  b.finish(message, 'TSH1')
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.conflicts, [])
-}
-
-// Every new operation uses the Host envelope, including omitted file vectors.
-{
-  const { DocumentCopyRequestT } = await import('../src/gen/tsugumi/host/document-copy-request')
-  const { DocumentCopy } = await import('../src/gen/tsugumi/host/document-copy')
-  const copy = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentCopyRequest', { state_json: '{}', from: 'externals/a/', to: 'externals/b/' }, high, true))).unpack().payload as any
-  assert.ok(copy.value instanceof DocumentCopyRequestT)
-  assert.deepEqual(copy.value.paths, [])
-  assert.equal(copy.value.to, 'externals/b/')
-  const b = new fb.Builder(), json = b.createString('{}')
-  const value = DocumentCopy.createDocumentCopy(b, json, 0)
-  const reply = HostReply.createReply(b, HostReplyPayload.DocumentCopy, value)
-  const root = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
-  b.finish(root, 'TSH1')
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.files, [])
-  const connect = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentConnectRequest', { state_json: '{}', from_card: 'a', from_port: '+', to_card: 'b', to_port: 'in' }, 2n, true))).unpack().payload as any
-  assert.equal(connect.value.fromPort, '+')
-  assert.equal(connect.value.forkId, null)
-  const template = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentTemplateRequest', { name: 'python', id: 'new-card' }, 3n, true))).unpack().payload as any
-  assert.equal(template.value.name, 'python')
-  assert.equal(template.value.id, 'new-card')
-}
-
 // Flatc goldens are shared with Swift and C++ so union renumbering cannot
 // silently send a moved Host method to the external Agent listener.
 const fs = await import('node:fs')

@@ -17,9 +17,6 @@ const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
-  s.scheduleSave = () => {} // no tsugumid here
-  s.save = async () => {}
-  s.applyEdit = async (_rev, change) => { change(s); return s.rev }
   s.connected = true
   return s
 }
@@ -28,6 +25,7 @@ const session = () => {
   const s = session()
   const code = await s.addCard('python', [], { x: 0, y: 0 })
   s.updateCard(code, (c) => c.set('description', 'in the settings'))
+  await s.save()
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')
   assert.equal(s.cardDescription(code), undefined)
 
@@ -47,6 +45,7 @@ const session = () => {
   for (const kind of ['trigger', 'fork', 'merge', 'branch'] as const) {
     const k = await s.addCard(kind, [], { x: 0, y: 0 })
     s.updateMeta(k, (m) => m.set('description', 'what it does'))
+    await s.save()
     assert.ok(!new CardGeometry(s.nodeData(k), 'topToBottom').summary, kind)
     assert.deepEqual(s.cardDetails(k), ['what it does'], kind)
   }
@@ -55,7 +54,7 @@ const session = () => {
 {
   // A Card in Card has no _card.json; Card settings saves its summary all the same.
   const s = session()
-  s.setEffectiveDefinition('nested', { card: parse('{}'), meta: undefined, link: parse('{"external":"nested"}') })
+  s.confirmedLinks.set('nested', parse('{"external":"nested"}'))
   s.project = parse('{"name":"t","canvas":{"cards":[{"id":"nested"}],"connections":[]}}')
   const editor = new CardEditorModel(s, 'nested')
   editor.meta = parse('{"description":"the imported graph"}')

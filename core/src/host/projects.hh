@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -10,6 +11,11 @@
 #include "util/sqlite.hh"
 
 namespace tsugumi::host {
+
+// Exact bytes, with the same exclusions and bounds as project
+// duplication/import.
+auto ReadProjectFiles(const std::string &path)
+    -> std::map<std::string, std::string>;
 
 // Presentation metadata only; a missing/unreadable manifest falls back to the
 // folder name.
@@ -27,8 +33,7 @@ class Projects {
  public:
   Projects(std::filesystem::path state, std::filesystem::path demos,
            sql::Db* db = nullptr)
-      : db_(db),
-        registry_(std::move(state) / "recent-projects.json"),
+      : db_(db), registry_(std::move(state) / "recent-projects.json"),
         demos_(std::move(demos)) {}
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
   auto Handle(const Tsugumi::Host::Request &request, uint64_t id)

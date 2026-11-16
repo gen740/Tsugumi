@@ -626,9 +626,14 @@ func sdkLanguagesAreOfferedByTheCanvas(language: String) async throws {
   defer { try? FileManager.default.removeItem(at: dir) }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
-  session.project = document
-  session.definitionEdits["plan"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
-  session.definitionEdits["next"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+  snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
+  snapshot.definitions = ["plan", "next"].map { id in
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"template":"draft"}"#
+    return definition
+  }
+  session.prepareLayout = { _, layout, _ in layout }
+  session.receiveProjectSnapshot(snapshot, projectId: "fixture")
   let editor = CardEditorModel(session: session, cardKey: "plan")
   #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
   #expect(editor.draftEnds.isEmpty)

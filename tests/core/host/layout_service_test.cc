@@ -35,110 +35,125 @@ TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
   }
 }
 
-TEST(HostLayout, EveryGoldenRequestReturnsACorrelatedProposal) {
-  const agent::Catalog catalog;
-  for (const auto& raw : agent::json::Array(fs::read_file_or_throw(
+auto SceneFixture(const agent::json::Members &value) -> H::LayoutSceneT {
+  namespace json = agent::json;
+  H::LayoutSceneT scene;
+  scene.flow = json::Text(value, "flow");
+  scene.grid = std::stod(json::Get(value, "grid", "0"));
+  scene.snap = json::Bool(json::Get(value, "snap", "false"));
+  auto coordinate = [&](const auto &fields, const auto &key) {
+    return std::stod(json::Get(fields, key, "0"));
+  };
+  auto ports = [&](const std::string &raw, auto &result) {
+    for (const auto &item : json::Array(raw)) {
+      const auto fields = json::Object(item);
+      auto port = std::make_unique<H::LayoutPortT>();
+      port->name = json::Text(fields, "name");
+      port->x = coordinate(fields, "x");
+      port->y = coordinate(fields, "y");
+      result.push_back(std::move(port));
+    }
+  };
+  for (const auto &raw : json::Array(json::Get(value, "cards", "[]"))) {
+    const auto fields = json::Object(raw);
+    auto card = std::make_unique<H::LayoutCardT>();
+    card->id = json::Text(fields, "id");
+    card->x = coordinate(fields, "x");
+    card->y = coordinate(fields, "y");
+    card->width = coordinate(fields, "width");
+    card->height = coordinate(fields, "height");
+    card->reorderable = json::Bool(json::Get(fields, "reorderable", "false"));
+    ports(json::Get(fields, "inputs", "[]"), card->inputs);
+    ports(json::Get(fields, "outputs", "[]"), card->outputs);
+    scene.cards.push_back(std::move(card));
+  }
+  for (const auto &raw : json::Array(json::Get(value, "wires", "[]"))) {
+    const auto fields = json::Object(raw);
+    auto wire = std::make_unique<H::LayoutWireT>();
+    wire->from = json::Text(fields, "from");
+    wire->from_port = json::Text(fields, "fromPort");
+    wire->to = json::Text(fields, "to");
+    wire->to_port = json::Text(fields, "toPort");
+    scene.wires.push_back(std::move(wire));
+  }
+  auto boxes = [&](const auto &field, auto &result) {
+    for (const auto &raw : json::Array(json::Get(value, field, "[]"))) {
+      const auto fields = json::Object(raw);
+      auto box = std::make_unique<H::LayoutBoxT>();
+      box->id = json::Text(fields, "id");
+      box->x = coordinate(fields, "x");
+      box->y = coordinate(fields, "y");
+      box->width = coordinate(fields, "width");
+      box->height = coordinate(fields, "height");
+      result.push_back(std::move(box));
+    }
+  };
+  boxes("frames", scene.frames);
+  boxes("notes", scene.notes);
+  auto bar = [&](const auto &side, auto &result) {
+    if (!value.contains(side))
+      return;
+    result = std::make_unique<H::LayoutBarT>();
+    const auto fields = json::Object(value.at(side));
+    if (fields.contains("at")) {
+      const auto at = json::Object(fields.at("at"));
+      result->x = coordinate(at, "x");
+      result->y = coordinate(at, "y");
+    }
+    for (const auto &raw : json::Array(json::Get(fields, "ends", "[]"))) {
+      const auto end = json::Object(raw);
+      auto item = std::make_unique<H::LayoutBarEndT>();
+      item->name = json::Text(end, "name");
+      item->card = json::Text(end, "card");
+      item->port = json::Text(end, "port");
+      result->ends.push_back(std::move(item));
+    }
+  };
+  bar("inputs", scene.inputs);
+  bar("outputs", scene.outputs);
+  return scene;
+}
+TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
+  namespace json = agent::json;
+  for (const auto &raw : json::Array(fs::read_file_or_throw(
            std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-golden.json"))) {
-    const auto value = agent::json::Object(raw);
-    SCOPED_TRACE(agent::json::Text(value, "name"));
-    auto scene = agent::json::Object(value.at("scene"));
-    std::vector<std::string> wires;
-    for (const auto& wire : agent::json::Array(scene.at("wires"))) {
-      auto fields = agent::json::Object(wire);
-      fields["from_port"] = fields.at("fromPort");
-      fields["to_port"] = fields.at("toPort");
-      fields.erase("fromPort");
-      fields.erase("toPort");
-      wires.push_back(agent::json::Encode(fields));
-    }
-    scene["wires"] = agent::json::Encode(wires);
-    for (const auto* side : {"inputs", "outputs"}) {
-      if (!scene.contains(side)) continue;
-      auto bar = agent::json::Object(scene.at(side));
-      if (bar.contains("at")) {
-        for (const auto& [key, coordinate] : agent::json::Object(bar.at("at")))
-          bar[key] = coordinate;
-        bar.erase("at");
-      }
-      scene[side] = agent::json::Encode(bar);
-    }
-    agent::json::Members args{{"scene", agent::json::Encode(scene)}};
-    if (value.contains("around")) args["around"] = value.at("around");
-    const auto request = catalog.HostRequest(
-        agent::json::Text(value, "request") == "arrange" ? "layout_arrange"
-                                                         : "layout_untangle",
-        agent::json::Encode(args), 7);
-    const auto reply =
-        LayoutHandle(*H::GetMessage(request.data())->payload_as_Request(), 7);
-    flatbuffers::Verifier verifier(
-        reinterpret_cast<const uint8_t*>(reply.data()), reply.size());
-    ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
-    const auto* message = H::GetMessage(reply.data());
-    EXPECT_EQ(message->request_id(), 7u);
-    const auto* proposal =
-        message->payload_as_Reply()->value_as_LayoutProposal();
-    ASSERT_NE(proposal, nullptr);
-    const auto expected = agent::json::Object(value.at("expect"));
-    auto places = [&](const auto* got, const char* key) {
-      const auto positions = agent::json::Array(expected.at(key));
-      ASSERT_EQ(got ? got->size() : 0u, positions.size());
-      for (size_t i = 0; i < positions.size(); ++i) {
-        const auto position = agent::json::Object(positions[i]);
-        EXPECT_EQ(got->Get(i)->id()->str(), agent::json::Text(position, "id"));
-        EXPECT_EQ(got->Get(i)->x(), std::stod(position.at("x")));
-        EXPECT_EQ(got->Get(i)->y(), std::stod(position.at("y")));
+    const auto value = json::Object(raw);
+    SCOPED_TRACE(json::Text(value, "name"));
+    const auto scene =
+        MeasuredScene(SceneFixture(json::Object(value.at("scene"))));
+    std::vector<std::string> around;
+    for (const auto &id : json::Array(json::Get(value, "around", "[]")))
+      around.push_back(json::String(id));
+    const auto proposal = json::Text(value, "request") == "arrange"
+                              ? layout::arrange(scene)
+                              : layout::untangle(scene, around);
+    const auto expected = json::Object(value.at("expect"));
+    auto places = [&](const auto &got, const auto &field) {
+      const auto wanted = json::Array(expected.at(field));
+      ASSERT_EQ(got.size(), wanted.size());
+      for (size_t i = 0; i < got.size(); ++i) {
+        const auto item = json::Object(wanted[i]);
+        EXPECT_EQ(got[i].id, json::Text(item, "id"));
+        EXPECT_DOUBLE_EQ(got[i].x, std::stod(item.at("x")));
+        EXPECT_DOUBLE_EQ(got[i].y, std::stod(item.at("y")));
       }
     };
-    places(proposal->cards(), "cards");
-    places(proposal->frames(), "frames");
-    places(proposal->notes(), "notes");
-    const auto orders = agent::json::Array(expected.at("portOrders"));
-    ASSERT_EQ(proposal->port_orders() ? proposal->port_orders()->size() : 0u,
-              orders.size());
+    places(proposal.cards, "cards");
+    places(proposal.frames, "frames");
+    places(proposal.notes, "notes");
+    const auto orders = json::Array(expected.at("portOrders"));
+    ASSERT_EQ(proposal.port_orders.size(), orders.size());
     for (size_t i = 0; i < orders.size(); ++i) {
-      const auto order = agent::json::Object(orders[i]);
-      const auto* got = proposal->port_orders()->Get(i);
-      EXPECT_EQ(got->id()->str(), agent::json::Text(order, "id"));
-      for (const auto* side : {"inputs", "outputs"}) {
-        const auto ports = agent::json::Array(order.at(side));
-        const auto* names =
-            std::string(side) == "inputs" ? got->inputs() : got->outputs();
-        ASSERT_EQ(names ? names->size() : 0u, ports.size());
-        for (size_t p = 0; p < ports.size(); ++p)
-          EXPECT_EQ(names->Get(p)->str(), agent::json::String(ports[p]));
-      }
-    }
-  }
-}
-
-TEST(HostLayout, OmittedSceneAndPortVectorsAreEmpty) {
-  const agent::Catalog catalog;
-  for (const auto* method : {"layout_arrange", "layout_untangle"}) {
-    for (const bool has_card : {false, true}) {
-      const auto* scene =
-          has_card
-              ? R"({"flow":"topToBottom","cards":[{"id":"a"}],"inputs":{},"outputs":{}})"
-              : R"({"flow":"topToBottom"})";
-      SCOPED_TRACE(method);
-      SCOPED_TRACE(scene);
-      const auto request = catalog.HostRequest(
-          method, std::string("{\"scene\":") + scene + "}", 7);
-      const auto reply =
-          LayoutHandle(*H::GetMessage(request.data())->payload_as_Request(), 7);
-      flatbuffers::Verifier verifier(
-          reinterpret_cast<const uint8_t*>(reply.data()), reply.size());
-      ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
-      const auto* proposal = H::GetMessage(reply.data())
-                                 ->payload_as_Reply()
-                                 ->value_as_LayoutProposal();
-      ASSERT_NE(proposal, nullptr);
-      const auto result =
-          std::unique_ptr<H::LayoutProposalT>(proposal->UnPack());
-      EXPECT_EQ(result->cards.size(),
-                std::string(method) == "layout_arrange" && has_card ? 1u : 0u);
-      EXPECT_TRUE(result->frames.empty());
-      EXPECT_TRUE(result->notes.empty());
-      EXPECT_TRUE(result->port_orders.empty());
+      const auto order = json::Object(orders[i]);
+      EXPECT_EQ(proposal.port_orders[i].id, json::Text(order, "id"));
+      auto names = [&](const auto &side) {
+        std::vector<std::string> result;
+        for (const auto &port : json::Array(order.at(side)))
+          result.push_back(json::String(port));
+        return result;
+      };
+      EXPECT_EQ(proposal.port_orders[i].inputs, names("inputs"));
+      EXPECT_EQ(proposal.port_orders[i].outputs, names("outputs"));
     }
   }
 }
@@ -226,22 +241,6 @@ TEST(HostLayout, AgentLayoutAppliesAnOperationAndEditorsKeepPureProposals) {
   EXPECT_FALSE(properties.contains("scene"));
   EXPECT_THROW(agent::EncodeProjectRequest("project_layout", "{}", 1),
                std::runtime_error);
-  H::LayoutArrangeRequestT input;
-  input.scene = std::make_unique<H::LayoutSceneT>();
-  input.scene->flow = "topToBottom";
-  H::RequestT request;
-  request.value.Set(std::move(input));
-  H::MessageT envelope;
-  envelope.request_id = 7;
-  envelope.payload.Set(std::move(request));
-  flatbuffers::FlatBufferBuilder builder;
-  H::FinishMessageBuffer(builder, H::Message::Pack(builder, &envelope));
-  const auto* message = H::GetMessage(builder.GetBufferPointer());
-  EXPECT_EQ(message->request_id(), 7u);
-  const auto response =
-      catalog.HostReply(LayoutHandle(*message->payload_as_Request(), 7));
-  EXPECT_EQ(agent::json::Text(agent::json::Object(response), "reply"),
-            "LayoutProposal");
 }
 }  // namespace
 }  // namespace tsugumi::host
@@ -666,21 +665,9 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
         scene->inputs->x = scene->inputs->y = 0;
         scene->outputs->x = scene->outputs->y = 0;
         mutate(*scene, value);
-        H::RequestT request;
-        if (arrange) {
-          H::LayoutArrangeRequestT input;
-          input.scene = std::move(scene);
-          request.value.Set(std::move(input));
-        } else {
-          H::LayoutUntangleRequestT input;
-          input.scene = std::move(scene);
-          request.value.Set(std::move(input));
-        }
-        flatbuffers::FlatBufferBuilder b;
-        b.Finish(H::Request::Pack(b, &request));
         try {
-          LayoutHandle(*flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()),
-                       7);
+          (void)arrange;
+          MeasuredScene(*scene);
           FAIL() << "Accepted non-finite " << field;
         } catch (const LayoutFailure& error) {
           EXPECT_NE(std::string(error.what()).find(field + ":"),
@@ -693,7 +680,6 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
 }
 
 TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
-  const agent::Catalog catalog;
   for (const auto* flow : {"topToBottom", "leftToRight"}) {
     for (const auto* cards :
          {"[]", R"([{"id":"a"}])",
@@ -709,30 +695,15 @@ TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
                          {"cards", agent::json::Encode(instances)}})}});
       const auto completed = CompleteLayout(document, "{}", {});
       EXPECT_NO_THROW(ValidateLayout(completed));
-      for (const auto* method : {"layout_arrange", "layout_untangle"}) {
-        const auto scene = agent::json::Encode(agent::json::Members{
-            {"flow", agent::json::Quote(flow)},
-            {"cards", cards},
-            {"inputs",
-             R"({"ends":[{"name":"data","card":"a","port":"data"}]})"},
-            {"outputs", "{}"}});
-        const auto request = catalog.HostRequest(
-            method, agent::json::Encode(agent::json::Members{{"scene", scene}}),
-            7);
-        const auto reply = LayoutHandle(
-            *H::GetMessage(request.data())->payload_as_Request(), 7);
-        const auto* proposal = H::GetMessage(reply.data())
-                                   ->payload_as_Reply()
-                                   ->value_as_LayoutProposal();
-        ASSERT_NE(proposal, nullptr);
-        if (proposal->cards())
-          for (const auto* card : *proposal->cards()) {
-            EXPECT_TRUE(std::isfinite(card->x()));
-            EXPECT_TRUE(std::isfinite(card->y()));
-            schema::Number coordinate;
-            coordinate.value() = card->x();
-            EXPECT_NO_THROW(schema::encode(coordinate));
-          }
+      const auto input =
+          SceneFixture({{"flow", agent::json::Quote(flow)}, {"cards", cards}});
+      for (const auto &proposal :
+           {layout::arrange(MeasuredScene(input)),
+            layout::untangle(MeasuredScene(input), {})}) {
+        for (const auto &card : proposal.cards) {
+          EXPECT_TRUE(std::isfinite(card.x));
+          EXPECT_TRUE(std::isfinite(card.y));
+        }
       }
     }
   }

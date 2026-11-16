@@ -75,41 +75,5 @@ extension ChatResumeTests {
 }
 
 extension ChatResumeTests {
-  @Test func importedUnplacedProjectIsOneSavedUndoEdit() async throws {
-    try await withFixture { t in
-      let s = withTestCardIds(t.session), other = try SyncTests.project()
-      defer { try? FileManager.default.removeItem(at: other) }
-      try Data("{}".utf8).write(to: other.appendingPathComponent("layout.json"))
-      s.start()
-      try await SyncTests.connected(s)
-      let key = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
-      await s.save()
-      #expect(s.saveError == nil)
-      let prefix = "externals/\(path(key).last!)/"
-      let layoutFile = s.identity.url.appendingPathComponent(prefix + "layout.json")
-      let saved = s.docState()
-      #expect(try JSONValue.parse(String(decoding: Data(contentsOf: layoutFile), as: UTF8.self))["cards"]?["a"] != nil)
-      await s.undo()
-      #expect(s.mergeEdit.conflictRev == nil && s.saveError == nil)
-      await s.save()
-      #expect(s.saveError == nil)
-      #expect(!FileManager.default.fileExists(atPath: layoutFile.path))
-      #expect(s.instance(key) == nil)
-      await s.redo()
-      #expect(s.docState() == saved)
-      await s.save()
-      #expect(s.saveError == nil)
-      #expect(FileManager.default.fileExists(atPath: layoutFile.path))
-      // The editor entry point must record its completed reply as well.
-      let before = s.docState()
-      _ = try await s.applyEdit(baseRev: s.rev) { session in
-        session.updateMeta("a") { $0["description"] = .string("Editor change") }
-      }
-      let after = s.docState()
-      await s.undo()
-      #expect(s.docState() == before)
-      await s.redo()
-      #expect(s.docState() == after)
-    }
-  }
+
 }

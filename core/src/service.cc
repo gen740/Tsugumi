@@ -944,14 +944,18 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base,
+                                             const flatbuffers::Vector<uint8_t>* operation_data = nullptr) {
   flatbuffers::Offset<R::DocumentDelta> delta;
   if (d) delta = delta_offset(b, *d);
+  const auto metadata = operation_data ? b.CreateVector(operation_data->data(), operation_data->size())
+                                       : flatbuffers::Offset<flatbuffers::Vector<uint8_t>>{};
   R::SaveResultBuilder sb(b);
   if (d) sb.add_delta(delta);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
+  if (operation_data) sb.add_operation_data(metadata);
   return sb.Finish();
 }
 
@@ -1162,7 +1166,7 @@ void Service::save(RequestIn& req) {
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
+      auto sr = save_result(b, d, *base, r->operation_data());
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     }, check_cancelled);

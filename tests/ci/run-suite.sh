@@ -12,7 +12,7 @@ full=false
 if [[ "$system" == x86_64-linux || "${TSUGUMI_FULL_RULES:-0}" == 1 ]]; then full=true; fi
 # Socket-free rules: keep native transport, processes, filesystem and privacy on
 # every target. No wildcard for all Host* or Agent* suites.
-pure='Layout.*:HostLayout.*:HostLayoutSaving.*:HostCardPlacement.*:DocumentMerge.*:DocumentConnect.*:DocumentTemplate.*:DocumentCopy.*:DocumentSubgraph.*:HostPermissionKinds.*:AgentPresentation.*:ThoughtScheduleTest.*:AgentCatalog.*:AgentPolicy.*:AgentApprovalDescription.*:AgentSavePolicy.*:AgentContext.*:ContextBudget.*:HostContextWindow.*:HostPolicyTest.*:HostSaveInspection.*:HostSettingsStore.*:AgentContextMeasure.*:ProjectEdit.*:ProjectEditDiagnostics.*:ProjectOperations.*:FileMiss.*:VersionNote.*:VersionText.*:SchemaEncode.*:HelperScope.*:HelperGraphScope.*:HelperCapability.*:VMResetPolicy.*:WorkerCondition.*:Table/WorkerCondition*.*'
+pure='Layout.*:HostLayout.*:HostLayoutSaving.*:HostCardPlacement.*:DocumentConnect.*:DocumentTemplate.*:DocumentCopy.*:DocumentSubgraph.*:HostPermissionKinds.*:AgentPresentation.*:ThoughtScheduleTest.*:AgentCatalog.*:AgentPolicy.*:AgentApprovalDescription.*:AgentSavePolicy.*:AgentContext.*:ContextBudget.*:HostContextWindow.*:HostPolicyTest.*:HostSaveInspection.*:HostSettingsStore.*:AgentContextMeasure.*:ProjectEdit.*:ProjectEditDiagnostics.*:ProjectOperation*.*:FileMiss.*:VersionNote.*:VersionText.*:SchemaEncode.*:HelperScope.*:HelperGraphScope.*:HelperCapability.*:VMResetPolicy.*:WorkerCondition.*:Table/WorkerCondition*.*'
 host_filter='*'
 marker='not environment'
 sdk_marker='not static'

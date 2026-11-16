@@ -22,7 +22,9 @@ extension ProjectSession {
     return AppPreferences.shared.flowDirection
   }
 
-  func setFlow(_ f: FlowDirection) { edit { $0.layout["flow"] = .string(f.rawValue) } }
+  func setFlow(_ f: FlowDirection) {
+    queueFields { [self] in [fieldEdit("layout.json", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
+  }
 
   /// Ports for drawing: resolved ports when available, else declared inputs.
   func ports(_ k: CardKey) -> (inputs: [String], outputs: [String]) {
