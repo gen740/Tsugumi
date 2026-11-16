@@ -41,7 +41,7 @@
     {
       "id": "plan",
       "scope": "",
-      "text": "Dynamical systems gallery\nEach of the six computations takes only settings and depends on no other. The Agent can split them up and write them at the same time (delegate)",
+      "text": "Dynamical systems gallery\nEach of the six computations takes only settings and depends on no other.",
       "x": 560,
       "y": -230
     }

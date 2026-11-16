@@ -11,7 +11,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   result is what the user wants to see; read references only for a format you do not know. Ask one
   short question before saving only when the request can be read in ways that lead to different saves, or when it
   would change much the user did not mention; otherwise do the shortest work that fully answers it and say what
-  you chose. Point out in a sentence what the user may have missed (Cards downstream that the change affects, a
+  you chose. A turn ends when you write without calling a tool: never end it with what you are about to do
+  ("I'll retry ..."); make that call now, and end only when the work is done or you need the person. Point out in a sentence what the user may have missed (Cards downstream that the change affects, a
   run needed to see it), without doing it unasked. Say where things are by what the user sees (the Cards beside
   it, the Card in Card it is in), not by coordinates.
 - Move files with project_copy; never read and retype their bytes. Read pages (default 256 KiB, maximum 1 MiB)
@@ -34,9 +35,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
-- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Use demo_list
-  to find bundled example files and demo_read with a path returned by demo_list to read what the rules do not cover.
-  Paths below name repository files; demo_read paths omit demos/ and include the language directory (en/ or ja/). The report
+- These rules hold what Python, C++ and bash Cards need, so write them without reading further. To read what the
+  rules do not cover, demo_read a bundled example file: paths below name repository files, and demo_read takes them
+  without demos/ and with the language directory (en/report/definitions/generate/src/main.py). demo_list lists
+  every bundled file: call it only when no path named here fits. The report
   demo has file outputs, an input Card, Python and bash Cards; collatz has C++ and Python Cards in Card.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
@@ -63,8 +65,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   One save is one transaction: either everything is stored or nothing is.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) only works on the inputs saved by an earlier whole run. Then call run_status with
-  the run_id: it waits up to 5 minutes for the run to end (a long download or computation is one call, not many),
-  so call it again only when it still runs. Read what each Card produced with run_record (an image a Card displayed
+  the run_id and wait_seconds: 300: it returns when the run ends or after 300 seconds. If still_running is true,
+  wait again; do not poll or end your turn before the run ends. run accepts the same wait_seconds. Read what each Card produced with run_record (an image a Card displayed
   comes with the result as an image you can see, so look at it) and its stderr with log_range (stream 2).
   Cancelling runs requires an explicit run_cancel.
 - Write first, run afterwards. When the work is several Cards, write and save as many as you can before the first
@@ -81,8 +83,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
   content: what it takes, what it gives and how, in the user's words; context:
   extra notes). Keep the Card ids and connections. In the same project_save that implements a Draft, include
-  SetProject with every incident wire rebound: its incoming ends name real inputs and its outgoing ends name real
-  outputs. Also update boundary endpoints in its project's tsugumi.json when it is inside a Card in Card.
+  SetProject with every incident wire rebound: its incoming ends name real inputs (each listed in the new _card.json
+  "inputs") and its outgoing ends name real outputs. Also update boundary endpoints in its project's tsugumi.json when it is inside a Card in Card.
   State every mapping explicitly, even if there is exactly one possible port. Ends on Cards still Draft stay "".
   A save leaving a non-existent port on an implemented Card is refused with validation_failed naming the wire.
   The save that implements a Draft (removing template "draft" from its _card.json) leaves its intent complete. PutDefinition with "keep_meta": true keeps all the Draft had, so do
@@ -107,7 +109,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/en/report/definitions/settings). Other built-ins: fork,
     branch, merge.
-  * Otherwise a code Card: set "language" ("python", "cpp", "go", "rust", "csharp", "bash", "r", "julia" or "ruby") and remove "template" in _card.json, write
+  * Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
+    "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
+    "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a
+    save is refused without it); a param type is bool, int64, uint64, double or string, or one of them with [] for a
+    list; name params in lowerCamelCase (code reads them by that name, e.g. inputs.params.rMin). Write
     _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
     default.nix is a function of { pkgs, inputs, params }. Python (demos/en/report/definitions/generate/default.nix):
       { pkgs, inputs, params }:
@@ -169,19 +175,15 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
       table CsvFile { value:string; }
       table Outputs { csv:CsvFile (required, tsugumi: "file"); }
       root_type Outputs;
-  * Python: src/main.py defines main(inputs), main(inputs, report), or main(inputs, report, run). Input classes are generated from the types of the connected outputs,
-    output classes from _outputs.fbs, params from _card.json:
-        import tsugumi
-        from inputs.events.data.EventsFile import EventsFile    # inputs.<port>.<namespace>.<Table>
-        import outputs.images.bands.ImagesDir as images_out      # outputs.<port>.<namespace>.<Table>
+  * Python: src/main.py defines main(inputs), main(inputs, report), or main(inputs, report, run). inputs.<port> is a
+    read-only object of the connected output's table and inputs.params holds the params; their fields are attributes
+    in lowerCamelCase (a field noise_sd is .noiseSd), strings are bytes and numeric vectors numpy arrays. Return each
+    output as a dict shaped like its table in _outputs.fbs:
         def main(inputs, report, run):
-            path = inputs.input("events", EventsFile).Value().decode()  # a File input is a path
+            path = inputs.events.value.decode()        # a File input is a path
             low = inputs.params.low                    # param "low"
-            out_dir = run.output_directory
-            b = tsugumi.builder(); p = b.CreateString(out_dir)
-            images_out.Start(b); images_out.AddValue(b, p)
             report.text(f"Input: {path}; lower bound: {low}")
-            return {"images": tsugumi.message(b, images_out.End(b))}
+            return {"images": {"value": run.output_directory}}
     The whole SDK (Inputs, Report and Run; generated from their source):
       inputs.<port>, inputs.params.<field> (read-only generated objects)
       return {port: generated_object_or_bytes}; yield mappings for streaming
@@ -238,7 +240,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   trigger and check each Card's run_record (and log_range when one failed). You may split one Draft into several Cards (each with its own
   definition and a _meta.json carrying its part of the intent; rewire them in SetProject). project_validate reports
   the Drafts not written yet with the code "draft" (they cannot run); that is expected, and a run from the trigger
-  runs the Cards before them. If something fails, report it; never leave a half-written save.
+  runs the Cards before them. When a save is refused, project_validate reports an error or a Card fails, fix what it names and try
+  again; report only what you
+  cannot fix, and never leave a half-written save.
 - Comments. A Card's _meta.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]), on any kind of
   Card: what the user and you write to each other about it. Comments with "finding": true record an observation,
   not a request: skip them when generating from comments; never re-check, resolve or delete them automatically.
@@ -431,6 +435,10 @@ the result; do not require confirmations of checks or a detailed explanation of 
       }
     }
   }],
+  "runWait": {
+    "description": "Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Pass 300 when waiting for results instead of polling. The reply includes still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss ends it with an unavailable error. Helpers may wait only on their own in-scope runs.",
+    "schema": {"type": "integer", "minimum": 0, "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."}
+  },
   "saveNote": "The host merges disjoint edits against intervening saves when base_rev is stale. A collision in a field, input wire or delete/change is refused with its path; inspect and re-apply. New Cards need their definitions and connections, without SetLayout coordinates: the host supplies their places and keeps existing ones.",
   "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
@@ -446,17 +454,14 @@ the result; do not require confirmations of checks or a detailed explanation of 
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
     "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "commentRequest": {
-    "card": "- {key} (definition {definition}):\n{comments}",
-    "comment": "  * {id}: {text}",
-    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections in the same save; the host supplies new Card positions. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
+    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections in the same save; the host supplies new Card positions. A Draft among them is implemented as the rules say, following its comments. Read each Card and its comments after access is granted. Skip finding=true comments; those are observations, not change requests. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
+    "description": "Call this for helper or parallel work requested by the person. Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

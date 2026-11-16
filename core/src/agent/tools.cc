@@ -1,6 +1,7 @@
 #include "agent/tools.hh"
 
 #include <algorithm>
+#include <condition_variable>
 #include <future>
 
 #include "agent/context.hh"
@@ -470,9 +471,23 @@ auto Tools::AnnotateSave(const std::string& operation,
   return json::Encode(envelope);
 }
 
-auto Tools::RawProjectCall(const std::string& project, const std::string& name,
-                           const std::string& arguments, std::stop_token stop,
-                           std::string* raw) -> std::string {
+auto Tools::RawProjectCall(const std::string &project, const std::string &name,
+                           const std::string &arguments, std::stop_token stop,
+                           std::string *raw) -> std::string {
+  auto prepared = arguments;
+  uint64_t wait_seconds = 0;
+  if (name == "run" || name == "run_status") {
+    auto fields = json::Object(prepared);
+    if (fields.contains("wait_seconds")) {
+      wait_seconds = json::UInt(fields.at("wait_seconds"), UINT64_MAX);
+      if (wait_seconds == UINT64_MAX)
+        throw Failure("invalid_request",
+                      "wait_seconds must be a nonnegative integer");
+      wait_seconds = std::min<uint64_t>(wait_seconds, 300);
+      fields.erase("wait_seconds");
+      prepared = json::Encode(fields);
+    }
+  }
   Project endpoint;
   {
     std::lock_guard lock(mutex);
@@ -480,13 +495,48 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   }
   client::Options transport_options;
   transport_options.endpoint = endpoint.endpoint;
+  // This state belongs to this connection, never to the host's request lock.
+  // Subscribe before querying/starting so a fast completion cannot be missed.
+  struct RunWait {
+    std::mutex mutex;
+    std::condition_variable_any changed;
+    std::map<std::string, std::unique_ptr<R::RunStatusT>> ended;
+    bool closed = false;
+  };
+  std::shared_ptr<RunWait> waiting;
   client::Connection connection(transport_options);
+  if (wait_seconds) {
+    waiting = std::make_shared<RunWait>();
+    connection.OnClosed([waiting](client::Error) {
+      std::lock_guard lock(waiting->mutex);
+      waiting->closed = true;
+      waiting->changed.notify_all();
+    });
+    connection.OnEvent([waiting](client::Bytes bytes) {
+      const auto *note = R::GetMessage(bytes.data())->payload_as_Notification();
+      const auto *event = note ? note->value_as_RunEvent() : nullptr;
+      if (!event)
+        return;
+      const R::RunStatus *status = nullptr;
+      if (const auto *changed = event->value_as_RunStatusChanged())
+        status = changed->status();
+      else if (const auto *finished = event->value_as_RunFinished())
+        status = finished->summary()->status();
+      if (!status || !status->ended_at())
+        return;
+      std::lock_guard lock(waiting->mutex);
+      waiting->ended[event->run_id()->str()].reset(status->UnPack());
+      waiting->changed.notify_all();
+    });
+  }
   std::stop_callback cancelled(stop, [&connection] { connection.Close(); });
-  if (stop.stop_requested()) throw Cancelled();
+  if (stop.stop_requested())
+    throw Cancelled();
   // Cancelling closes the connection, also while it is still being set up:
   // that is a cancelled call, not an unreachable project.
   if (auto error = connection.Start().get()) {
-    if (stop.stop_requested()) throw Cancelled();
+    if (stop.stop_requested())
+      throw Cancelled();
     throw Failure("unavailable", error.message);
   }
   auto hello =
@@ -504,17 +554,40 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                                  b.GetBufferPointer() + b.GetSize());
           })
           .get();
-  if (stop.stop_requested()) throw Cancelled();
-  if (hello.error) throw Failure("unavailable", hello.error.message);
-  const auto* reply = R::GetMessage(hello.bytes.data())->payload_as_Reply();
+  if (stop.stop_requested())
+    throw Cancelled();
+  if (hello.error)
+    throw Failure("unavailable", hello.error.message);
+  const auto *reply = R::GetMessage(hello.bytes.data())->payload_as_Reply();
   if (!reply || reply->value_type() != R::ReplyPayload::HelloResult)
     throw Failure("unauthenticated", "Project rejected the Agent host");
-  auto prepared = arguments;
+  auto query = [&](const std::string &tool, const std::string &args) {
+    auto response = connection
+                        .Call([&](uint64_t id) {
+                          auto bytes = EncodeProjectRequest(tool, args, id);
+                          return client::Bytes(bytes.begin(), bytes.end());
+                        })
+                        .get();
+    if (stop.stop_requested())
+      throw Cancelled();
+    if (response.error)
+      throw Failure("unavailable", "Project connection lost while waiting: " +
+                                       response.error.message);
+    return response;
+  };
+  if (wait_seconds) {
+    const auto opened = query("project_open", "{}");
+    const auto *response =
+        R::GetMessage(opened.bytes.data())->payload_as_Reply();
+    if (!response || !response->value_as_OpenResult())
+      throw Failure("unavailable",
+                    "Could not subscribe to project run changes");
+  }
   if (name == "project_save" || (name == "project_validate" &&
                                  json::Object(arguments).contains("changes"))) {
     try {
       prepared = PrepareLayoutSave(project, arguments, stop);
-    } catch (const host::LayoutFailure& error) {
+    } catch (const host::LayoutFailure &error) {
       // A host schema rejection is a completed tool result, so retrying the
       // same call does not look for a core mutation that was never sent.
       return LayoutToolFailure("invalid_document", error.what());
@@ -526,13 +599,82 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                       return client::Bytes(bytes.begin(), bytes.end());
                     })
                     .get();
-  if (stop.stop_requested()) throw Cancelled();
-  if (result.error) throw Failure("outcome_unknown", result.error.message);
+  if (stop.stop_requested())
+    throw Cancelled();
+  if (result.error)
+    throw Failure("outcome_unknown", result.error.message);
   if (raw)
-    raw->assign(reinterpret_cast<const char*>(result.bytes.data()),
+    raw->assign(reinterpret_cast<const char *>(result.bytes.data()),
                 result.bytes.size());
-  return catalog.Reply({reinterpret_cast<const char*>(result.bytes.data()),
-                        result.bytes.size()});
+  auto output =
+      catalog.Reply({reinterpret_cast<const char *>(result.bytes.data()),
+                     result.bytes.size()});
+  if (!wait_seconds)
+    return output;
+  auto envelope = json::Object(output);
+  if (json::Text(envelope, "reply") == "Failure")
+    return output;
+  auto value = json::Object(json::Get(envelope, "value", "{}"));
+  auto status =
+      name == "run" ? json::Object(json::Get(value, "run", "{}")) : value;
+  const auto run_id = json::Text(status, "run_id");
+  auto active = [&] {
+    const auto state = json::Text(status, "state");
+    return state == "queued" || state == "preparing" || state == "running" ||
+           state == "cancelling";
+  };
+  std::string reason = run_id.empty() ? "idle" : "ended";
+  if (active()) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(wait_seconds);
+    std::unique_lock lock(waiting->mutex);
+    waiting->changed.wait_until(lock, stop, deadline, [&] {
+      return waiting->closed || waiting->ended.contains(run_id);
+    });
+    if (stop.stop_requested())
+      throw Cancelled();
+    const auto found = waiting->ended.find(run_id);
+    if (found != waiting->ended.end()) {
+      flatbuffers::FlatBufferBuilder b;
+      auto reply =
+          R::CreateReply(b, R::ReplyPayload::RunStatus,
+                         R::RunStatus::Pack(b, found->second.get()).Union());
+      R::FinishMessageBuffer(
+          b, R::CreateMessage(b, 1, R::Payload::Reply, reply.Union()));
+      status = json::Object(
+          json::Get(json::Object(catalog.Reply(
+                        {reinterpret_cast<const char *>(b.GetBufferPointer()),
+                         b.GetSize()})),
+                    "value"));
+    } else {
+      if (waiting->closed)
+        throw Failure("unavailable",
+                      "Project connection lost while waiting for the run; the "
+                      "core may have stopped or restarted");
+      lock.unlock();
+      // One read at the deadline supplies the current intermediate state.
+      const auto current =
+          query("run_status",
+                json::Encode(json::Members{{"run_id", json::Quote(run_id)}}));
+      const auto current_output =
+          catalog.Reply({reinterpret_cast<const char *>(current.bytes.data()),
+                         current.bytes.size()});
+      const auto current_envelope = json::Object(current_output);
+      if (json::Text(current_envelope, "reply") == "Failure")
+        return current_output;
+      status = json::Object(json::Get(current_envelope, "value"));
+      reason = active() ? "timeout" : "ended";
+    }
+  }
+  if (name == "run") {
+    value["run"] = json::Encode(status);
+    envelope["value"] = json::Encode(value);
+  } else {
+    envelope["value"] = json::Encode(status);
+  }
+  envelope["still_running"] = active() ? "true" : "false";
+  envelope["wait_reason"] = json::Quote(reason);
+  return json::Encode(envelope);
 }
 
 auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
@@ -1146,6 +1288,25 @@ auto Tools::ExecuteTool(const std::string& conversation,
     result = json::Encode(
         json::Members{{"reply", json::Get(receipt, "result_type")},
                       {"value", json::Get(receipt, "result", "{}")}});
+    if (call.name == "run" && args.contains("wait_seconds") &&
+        json::Get(args, "wait_seconds") != "0") {
+      auto accepted = json::Object(result);
+      auto value = json::Object(json::Get(accepted, "value", "{}"));
+      const auto status = json::Object(json::Get(value, "run", "{}"));
+      const auto waited = json::Object(ProjectCall(
+          project, "run_status", json::Encode(json::Members{
+              {"run_id", json::Get(status, "run_id")},
+              {"wait_seconds", json::Get(args, "wait_seconds")}}), stop));
+      if (json::Text(waited, "reply") == "Failure") {
+        result = json::Encode(waited);
+      } else {
+        value["run"] = json::Get(waited, "value");
+        accepted["value"] = json::Encode(value);
+        for (const auto* field : {"still_running", "wait_reason"})
+          accepted[field] = json::Get(waited, field);
+        result = json::Encode(accepted);
+      }
+    }
   } else {
     if (stop.stop_requested()) throw Cancelled();
     if (call.name == "version_graph")
@@ -1480,9 +1641,10 @@ auto Tools::Handle(const RequestIn& request, bool human,
                           p->arguments_json()->str()};
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
-      if (call.name == "project_shell" || call.name == "project_copy") {
+      if (call.name == "project_shell" || call.name == "project_copy" ||
+          call.name == "run_status" || call.name == "run") {
         if (file_calls.contains(shell_key))
-          throw Failure("busy", "This file tool call is already running");
+          throw Failure("busy", "This tool call is already running");
         shell_stop = std::make_shared<std::stop_source>();
         file_calls.emplace(
             shell_key,
@@ -1493,7 +1655,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       }
       lock.unlock();
       // External plugins use the same conversation cancellation and visible
-      // tool history as model-issued file calls.
+      // tool history as model-issued calls.
       auto execute = [&]() -> ToolResult {
         if (!shell_stop)
           return ExecuteTool(id, project, call, false, shutdown.get_token());

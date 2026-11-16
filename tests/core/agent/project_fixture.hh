@@ -33,7 +33,9 @@ class AgentProjectFixture : public AgentFixture {
         directory.path / "project/tsugumi.json",
         R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
     Write(directory.path / "project/layout.json", "{}");
-    std::vector<std::string> args{TSUGUMI_PROJECT_BINARY,
+    std::vector<std::string> args{"/usr/bin/env",
+                                  "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),
+                                  TSUGUMI_PROJECT_BINARY,
                                   "--scratch-dir", (directory.path / "scratch").string(),
                                   "--run-scratch-dir", (directory.path / "run-scratch").string(),
                                   "--project",

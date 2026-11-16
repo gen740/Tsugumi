@@ -112,3 +112,45 @@ def test_file_tools_move_bytes_without_reading_and_explain_bounded_views():
     assert "head and tail" in prompt and "scratch/" in prompt
     assert "exact write set" in prompt and "failure/cancellation saves nothing" in prompt
     assert "16 MiB" not in tools["attached_folder_read"]["description"]
+
+
+def test_measured_card_and_recovery_instructions_are_ported():
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    for text in ('"inputs": [{"name": "config"}]',
+                 'bool, int64, uint64, double or string', 'lowerCamelCase',
+                 'inputs.events.value.decode()',
+                 'return {"images": {"value": run.output_directory}}',
+                 'When a save is refused, project_validate reports an error',
+                 'make that call now', 'call it only when no path named here fits'):
+        assert text in prompt
+    assert 'inputs.input("events", EventsFile)' not in prompt
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    assert shared['delegateTool']['description'].startswith('Call this for helper or parallel work requested by the person.')
+    for name in ('draftRequest', 'commentRequest'):
+        request = shared[name]['text']
+        assert 'delegate' not in request and 'helper' not in request
+        for action in ('save', 'project_validate', 'run_record'):
+            assert action in request
+        assert f'AgentRequests.make("{name}"' in (ROOT / 'macOS/Sources/App/Chat/ChatController.swift').read_text()
+        assert f"cardRequest('{name}'" in (ROOT / 'web/src/model/chat.ts').read_text()
+    for lang in ('ja', 'en'):
+        layout = (ROOT / f'demos/{lang}/dynamics-draft/layout.json').read_text()
+        assert 'delegate' not in layout
+
+
+def test_run_wait_instructions_are_shared_with_external_mcp():
+    shared = json.loads((ROOT / 'agent/Shared/agent.json').read_text())
+    wait = shared['runWait']
+    assert wait['schema']['type'] == 'integer' and wait['schema']['minimum'] == 0
+    assert 'capped at 300' in wait['description']
+    fixtures = json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())
+    for tool in fixtures:
+        if tool['name'] in ('run', 'run_status'):
+            assert tool['inputSchema']['properties']['wait_seconds'] == wait['schema']
+            assert tool['description'].endswith(wait['description'])
+    prompt = (ROOT / 'agent/Shared/system-prompt.md').read_text()
+    assert 'wait_seconds: 300' in prompt and 'still_running' in prompt
+    assert 'do not poll' in prompt
+    mcp = (ROOT / 'web/server/mcpInstructions.ts').read_text()
+    assert 'wait_seconds: 300' in mcp and 'still_running' in mcp
+    assert 'it answers at once' not in mcp

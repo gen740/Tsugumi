@@ -95,7 +95,8 @@ class Connection {
       const timer = setTimeout(() => {
         this.waiting.delete(requestId)
         reject(new Error('Service request timed out'))
-      }, method === 'EnvironmentRequest' || method === 'AttachFoldersRequest' || method === 'HostRuntimeRequest' ? 3_600_000 : 120_000)
+      }, method === 'EnvironmentRequest' || method === 'AttachFoldersRequest' || method === 'HostRuntimeRequest' ? 3_600_000
+        : method === 'ToolCallRequest' && ['run', 'run_status'].includes(String((value as Record<string, unknown>).name)) ? 360_000 : 120_000)
       timer.unref()
       this.waiting.set(requestId, { resolve, reject, timer })
       this.socket!.write(frame)

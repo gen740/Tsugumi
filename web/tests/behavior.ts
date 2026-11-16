@@ -10,6 +10,7 @@ const root = process.argv[2]
 await import("./clientViewState")
 await import("./hostRules")
 await import("./serviceProtocol")
+await import("./agentRequests")
 await import('./chatModelRefresh')
 await import('./scopedSkills')
 await import("./guideRpc")

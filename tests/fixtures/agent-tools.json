@@ -360,7 +360,7 @@
  {
   "name": "run",
   "payloadType": 18,
-  "description": "Run: -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),  nix_jobs = 1, nix_cores = 1.",
+  "description": "Run: -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),  nix_jobs = 1, nix_cores = 1. Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Pass 300 when waiting for results instead of polling. The reply includes still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss ends it with an unavailable error. Helpers may wait only on their own in-scope runs.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -395,6 +395,11 @@
     },
     "nix_cores": {
      "type": "integer"
+    },
+    "wait_seconds": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."
     }
    },
    "additionalProperties": false,
@@ -425,12 +430,17 @@
  {
   "name": "run_status",
   "payloadType": 20,
-  "description": "RunStatus: -> RunStatus. Omitted run_id: the active run, else the last one, else idle.",
+  "description": "RunStatus: -> RunStatus. Omitted run_id: the active run, else the last one, else idle. Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Pass 300 when waiting for results instead of polling. The reply includes still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss ends it with an unavailable error. Helpers may wait only on their own in-scope runs.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "run_id": {
      "type": "string"
+    },
+    "wait_seconds": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."
     }
    },
    "additionalProperties": false

@@ -51,13 +51,13 @@ class DelegateContractTests(unittest.TestCase):
         self.assertIn("name: helpers", metadata)
         self.assertIn("always: true", metadata)
         self.assertNotIn("scope:", metadata)
-        policy = "Do not split work among sub-agents unless the person asks for it."
+        policy = "Do not split work among sub-agents unless the person's own message asks for helpers or parallel work"
         self.assertEqual(helpers.count(policy), 1)
         for contract in ("both defaulting to 0", "Depth 0 cannot",
                          "at most count children over its lifetime",
                          "depth at most its own depth minus 1",
                          "Card sets within its own", "no depth or count limit",
-                         "what changed, what remains", "whether evidence was read or run"):
+                         "at most five lines", "what changed, what remains", "whether evidence was read or run"):
             self.assertIn(contract, helpers)
         for removed in ("delegate {", policy, "Before delegating", "Each helper receives",
                         "Do the\n  work yourself when it is small"):

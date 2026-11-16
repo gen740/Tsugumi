@@ -500,12 +500,12 @@ final class ChatController {
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
     sendRequest(display: String(localized: "Draft \(cards.count) 枚から Card を生成します"),
-      prompt: "Implement the selected Draft Cards in scope \(scope): \(cards). Read their definitions after access is granted.")
+      prompt: AgentRequests.make("draftRequest", scope: scope, cards: cards))
   }
 
   func generateFromComments(scope: [String], cards: [CardKey]) {
     sendRequest(display: String(localized: "選択した Card のコメントに従って生成します"),
-      prompt: "Resolve the open comments on these Cards in scope \(scope): \(cards). Read their comments after access is granted. Skip every comment with finding=true; those are observations, not change requests.")
+      prompt: AgentRequests.make("commentRequest", scope: scope, cards: cards))
   }
 
   // MARK: - Card permissions

@@ -265,3 +265,17 @@ TEST(AgentApprovalDescription,
 
 } // namespace
 } // namespace tsugumi::agent
+
+namespace tsugumi::agent {
+TEST(AgentCatalog, RunToolsOfferTheSameHostWait) {
+  const Catalog catalog;
+  for (const auto* name : {"run", "run_status"}) {
+    const auto* tool = catalog.Find(name);
+    ASSERT_NE(tool, nullptr);
+    const auto properties = json::Object(
+        json::Get(json::Object(tool->spec.input_schema), "properties"));
+    EXPECT_TRUE(properties.contains("wait_seconds"));
+    EXPECT_NE(tool->spec.description.find("capped at 300"), std::string::npos);
+  }
+}
+}  // namespace tsugumi::agent

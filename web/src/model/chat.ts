@@ -12,6 +12,7 @@ import { Observable } from './observable'
 import { Thoughts, type ThoughtReply } from './thoughts'
 import { CardKey, ProjectSession, path } from './session'
 import { L } from '../i18n'
+import { cardRequest } from '../shared/agentShared'
 
 export interface ChatItem {
   id: string
@@ -417,13 +418,13 @@ export class ChatController extends Observable {
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
   generateDrafts(scope: string[], cards: CardKey[]) {
     this.sendRequest(L('Draft {0} 枚から Card を生成します', cards.length),
-      `Implement the selected Draft Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read their definitions after access is granted.`)
+      cardRequest('draftRequest', scope, cards))
   }
 
   /** The identifiers are explicit user selections; core reads their comments after authorization. */
   generateFromComments(scope: string[], cards: CardKey[]) {
     this.sendRequest(L('選択した Card のコメントに従って生成します'),
-      `Resolve the open comments on these Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read the comments after access is granted. Skip every comment with finding=true; those are observations, not change requests.`)
+      cardRequest('commentRequest', scope, cards))
   }
 
   cancel() {

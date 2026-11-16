@@ -112,7 +112,7 @@ auto Sleep(std::chrono::milliseconds duration, std::stop_token stop) -> void {
 }
 
 auto AddUsage(Usage& total, const Usage& next) -> void {
-  total.input_tokens = next.input_tokens;
+  total.input_tokens += next.input_tokens;
   total.output_tokens += next.output_tokens;
   total.cache_read_tokens += next.cache_read_tokens;
   total.cache_write_tokens += next.cache_write_tokens;

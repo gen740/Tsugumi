@@ -314,6 +314,15 @@ Catalog::Catalog() {
         tool.spec.description += " Agent default limit is 8; continue with the returned cursor or next_offset.";
       if (tool.spec.name == "project_save")
         tool.spec.description += " " + json::Text(settings, "saveNote");
+      if (tool.spec.name == "run" || tool.spec.name == "run_status") {
+        const auto wait = json::Object(json::Get(settings, "runWait"));
+        auto schema = json::Object(tool.spec.input_schema);
+        auto properties = json::Object(json::Get(schema, "properties"));
+        properties["wait_seconds"] = json::Get(wait, "schema");
+        schema["properties"] = json::Encode(properties);
+        tool.spec.input_schema = json::Encode(schema);
+        tool.spec.description += " " + json::Text(wait, "description");
+      }
       tool.approval_required = std::string_view(list) == "approvalRequests";
       if (tool.approval_required)
         tool.spec.description +=

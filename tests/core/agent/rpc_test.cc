@@ -1293,9 +1293,9 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
       JsonString(state,
                  "/conversation/helpers/0/result/messages/1/content/0/text"),
       long_text);
-  // Runtime reports its last input size: parent 12 + helper (12 + 7 + 3).
+  // Inputs accumulate: parent (12 + 12) + helper (12 + 7 + 3).
   // Outputs accumulate across every reply: delegate 8 + helper 4 + parent 4.
-  EXPECT_EQ(JsonUInt(state, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/inputTokens"), 46u);
   EXPECT_EQ(JsonUInt(state, "/conversation/usage/outputTokens"), 16u);
   EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheReadTokens"), 7u);
   EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheWriteTokens"), 3u);
@@ -1310,14 +1310,14 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
           .empty());
   EXPECT_EQ(model.Requests().size(), 3u);
   const auto replayed = Get(conversation).View();
-  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/inputTokens"), 46u);
   EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/outputTokens"), 16u);
   EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheReadTokens"), 7u);
   EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheWriteTokens"), 3u);
   model.Queue(AnthropicText("A separate turn."));
   ASSERT_TRUE(Send(conversation, "Continue.", "turn-2").Code().empty());
   const auto next = WaitUntilIdle(conversation);
-  EXPECT_EQ(JsonUInt(next, "/conversation/usage/inputTokens"), 46u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/inputTokens"), 58u);
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/outputTokens"), 20u);
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheReadTokens"), 7u);
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheWriteTokens"), 3u);
