@@ -961,7 +961,7 @@ struct CardNodeView: View {
   var zoom: Double = 1
   var selected = false
   /// Committing an edited param of an input Card (nil: read-only).
-  var onParamBegin: (() -> UInt64)?
+  var onParamBegin: ((InlineParamEdit, String) -> UInt64)?
   var onParamCommit: ((String, String, InlineParamEdit?, Bool) async -> Bool)?
   var paramsEditable = true
   @State private var switchEdit = InlineParamEdit()
@@ -1084,7 +1084,7 @@ struct CardNodeView: View {
         }
         if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
         ForEach(data.params, id: \.name) { p in
-          ParamFieldView(param: p, editable: onParamCommit != nil && paramsEditable, zoom: zoom, revision: onParamBegin) { text, edit, overwrite in
+          ParamFieldView(param: p, editable: onParamCommit != nil && paramsEditable, zoom: zoom, revision: { onParamBegin?($0, p.name) ?? 0 }) { text, edit, overwrite in
             await onParamCommit?(p.name, text, edit, overwrite) ?? false
           }
             .frame(height: s(CardGeometry.paramRow))
@@ -1248,7 +1248,7 @@ struct CardNodeView: View {
     Toggle(isOn: Binding(
       get: { data.params.first { $0.name == "value" }?.value == "true" },
       set: { value in
-        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?() ?? 0)
+        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?(switchEdit, "value") ?? 0)
         switchText = value ? "true" : "false"
         Task { _ = await onParamCommit?("value", switchText, switchEdit, false) }
       }
@@ -1261,7 +1261,7 @@ struct CardNodeView: View {
       RevisionEditNotice(edit: switchEdit.revision, text: { switchText }, overwrite: {
         Task { _ = await onParamCommit?("value", switchText, switchEdit, true) }
       }, reload: {
-        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?() ?? 0)
+        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?(switchEdit, "value") ?? 0)
         switchText = ""
       }).padding().frame(width: 320)
     }
@@ -1561,7 +1561,7 @@ struct ParamFieldView: View {
   let param: ParamData
   let editable: Bool
   var zoom: Double = 1
-  var revision: (() -> UInt64)?
+  var revision: ((InlineParamEdit) -> UInt64)?
   let commit: (String, InlineParamEdit, Bool) async -> Bool
   @State private var edit = InlineParamEdit()
   @State private var text = ""
@@ -1574,7 +1574,7 @@ struct ParamFieldView: View {
       Text(param.name).font(.system(size: max(6, 10 * z))).foregroundStyle(.secondary).lineLimit(1)
       if param.type == "bool" {
         Toggle("", isOn: Binding(get: { param.value == "true" }, set: { value in
-          edit.begin(param.value, rev: revision?() ?? 0)
+          edit.begin(param.value, rev: revision?(edit) ?? 0)
           text = value ? "true" : "false"
           editing = true
           finish()
@@ -1600,7 +1600,7 @@ struct ParamFieldView: View {
               .lineLimit(1)
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
-              .onTapGesture { if editable { edit.begin(param.value, rev: revision?() ?? 0); text = param.value; editing = true } }
+              .onTapGesture { if editable { edit.begin(param.value, rev: revision?(edit) ?? 0); text = param.value; editing = true } }
           }
         }
         .padding(.horizontal, 4 * z)
@@ -1612,7 +1612,7 @@ struct ParamFieldView: View {
     }
     .popover(isPresented: Binding(get: { edit.revision.conflictRev != nil || edit.revision.error != nil }, set: { _ in })) {
       RevisionEditNotice(edit: edit.revision, text: { text }, overwrite: { finish(overwrite: true) }, reload: {
-        edit.begin(param.value, rev: revision?() ?? 0); text = param.value; editing = false
+        edit.begin(param.value, rev: revision?(edit) ?? 0); text = param.value; editing = false
       }).padding().frame(width: 320)
     }
     .onAppear { text = param.value }

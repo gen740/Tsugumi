@@ -551,12 +551,11 @@ auto ReverseProjectChanges(const json::Members &plan, const SaveBase &base,
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
       for (const auto &[key, file] : {std::pair{"card_json", "_card.json"},
                                       {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
-        if (value.contains(key)) {
-          const auto bytes = json::Text(value, key);
-          after[dir + file] =
-              bytes.empty() ? std::nullopt : std::optional(bytes);
-        }
+                                      {"link_json", "_link.json"}}) {
+        // PutDefinition replaces all three documents; omission means removal.
+        const auto bytes = json::Text(value, key);
+        after[dir + file] = bytes.empty() ? std::nullopt : std::optional(bytes);
+      }
     } else if (type == "RemoveDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
       for (const auto &[path, ignored] : base.files) {
@@ -710,6 +709,15 @@ auto PrepareProjectEdits(
         put.bytes.assign(after->begin(), after->end());
         auto value = std::make_unique<H::ProjectEditT>();
         value->value.Set(std::move(put));
+        expanded.edits.push_back(std::move(value));
+      } else if (before && !after) {
+        if (!current || !DocumentsEqual(*current, *before))
+          throw Failure("value_conflict", edit.file_path + ": document changed");
+        H::ProjectFileRemoveT remove;
+        remove.file_path = edit.file_path;
+        remove.expected_hash = crypto::sha256_hex(*current);
+        auto value = std::make_unique<H::ProjectEditT>();
+        value->value.Set(std::move(remove));
         expanded.edits.push_back(std::move(value));
       } else {
         const auto selected =

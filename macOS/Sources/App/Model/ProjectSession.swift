@@ -349,6 +349,7 @@ final class ProjectSession {
     var content: String
     var initialName: String
     var initialContent: String
+    var initialMeta: JSONValue?
     let revision: RevisionEdit
   }
 
@@ -1105,25 +1106,22 @@ final class ProjectSession {
     return try await operate(.projectreplacedocuments, body: body).rev ?? rev
   }
 
-  func undo() async {
-    _ = try? await operationTask?.value
-    guard let e = undoStack.last else { return }
-    if let result = await revert(e, undo: true) { undoStack.removeLast(); if let inverse = result.inverse { redoStack.append(inverse) } }
-  }
+  func undo() async { await revert(undo: true) }
+  func redo() async { await revert(undo: false) }
 
-  func redo() async {
-    _ = try? await operationTask?.value
-    guard let e = redoStack.last else { return }
-    if let result = await revert(e, undo: false) { redoStack.removeLast(); if let inverse = result.inverse { undoStack.append(inverse) } }
-  }
-
-  private struct RevertResult { let inverse: UndoEntry? }
-  private func revert(_ e: UndoEntry, undo: Bool) async -> RevertResult? {
-    do {
-      let result = try await operate(.projectedits, body: e.operation, record: false)
-      let inverse = try operationInverse(result)
-      return RevertResult(inverse: inverse.edits.isEmpty ? nil : UndoEntry(operation: inverse))
-    } catch { saveError = String(describing: error); return nil }
+  private func revert(undo: Bool) async {
+    let task = submitOperation(.projectedits, body: {
+      (undo ? self.undoStack : self.redoStack).last?.operation ?? Tsugumi_Host_ProjectEditsT()
+    }, record: false, applied: { result in
+      let inverse = try self.operationInverse(result)
+      if undo { self.undoStack.removeLast() } else { self.redoStack.removeLast() }
+      if !inverse.edits.isEmpty {
+        let entry = UndoEntry(operation: inverse)
+        if undo { self.redoStack.append(entry) } else { self.undoStack.append(entry) }
+      }
+    })
+    do { _ = try await task.value }
+    catch { saveError = String(describing: error) }
   }
 
   func discardDraft() { inlineDraft = nil }
@@ -1135,7 +1133,7 @@ final class ProjectSession {
   }
 
   /// Synchronous setters enter the same queue before returning to the canvas.
-  private func submitOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: @escaping () throws -> NativeObject, record: Bool = true) -> Task<Tsugumi_RPC_SaveResultT, Error> {
+  private func submitOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: @escaping () throws -> NativeObject, record: Bool = true, applied: ((Tsugumi_RPC_SaveResultT) throws -> Void)? = nil) -> Task<Tsugumi_RPC_SaveResultT, Error> {
     let previous = operationTask
     submittedOperations += 1
     let task = Task { @MainActor in
@@ -1156,6 +1154,12 @@ final class ProjectSession {
       guard connected, self.client === connection else { throw RPCError.disconnected }
       if let delta = result.delta { applyDelta(delta) }
       try await documentRevisions.applied(result.rev ?? rev)
+      // Source hashes arrive before the documents of Cards in Card.
+      var externalGeneration: UInt64
+      repeat {
+        externalGeneration = externalsGeneration
+        await externalsTask?.value
+      } while externalGeneration != externalsGeneration
       let inverse = record ? try operationInverse(result) : Tsugumi_Host_ProjectEditsT()
       if record && !inverse.edits.isEmpty {
         let entry = UndoEntry(operation: inverse)
@@ -1163,6 +1167,7 @@ final class ProjectSession {
         if undoStack.count > 500 { undoStack.removeFirst() }
         redoStack = []
       }
+      try applied?(result)
       saveError = nil
       return result
     }
@@ -1585,15 +1590,26 @@ final class ProjectSession {
   }
 
   /// Reads the externals' documents when their sources changed.
-  func refreshExternals() {
+  @ObservationIgnored var readExternalFile: ((String, UInt64) async throws -> Data)?
+  @ObservationIgnored private var externalsTask: Task<Void, Never>?
+  @ObservationIgnored private var externalsGeneration: UInt64 = 0
+
+  @discardableResult
+  func refreshExternals() -> Task<Void, Never>? {
     let paths = sources.keys.filter { $0.hasPrefix("externals/") }.sorted()
     let key = paths.map { "\($0)=\(sources[$0]?.hash ?? "")" }.joined(separator: ";")
-    guard key != externalsKey else { return }
+    guard key != externalsKey else { return externalsTask }
+    guard client != nil || readExternalFile != nil else { return nil }
     externalsKey = key
-    guard let client else { return }
+    let client = client
+    let readFile = readExternalFile ?? { path, revision in
+      guard let client else { throw RPCError.disconnected }
+      return try await client.readFile(path: path, atRev: revision)
+    }
     let atRev = rev
     let hashes = sources.mapValues(\.hash)
-    Task { @MainActor in
+    externalsGeneration += 1
+    externalsTask = Task { @MainActor in
       var found: [String: ExternalProject] = [:]
       var read: [String: String] = [:]
       for p in paths where p.hasSuffix("/tsugumi.json") {
@@ -1602,7 +1618,7 @@ final class ProjectSession {
         let parts = prefix.split(separator: "/")
         guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
         func doc(_ rel: String) async -> JSONValue? {
-          guard let h = hashes[rel], let d = try? await client.readFile(path: rel, atRev: atRev) else { return nil }
+          guard let h = hashes[rel], let d = try? await readFile(rel, atRev) else { return nil }
           read[rel] = h
           return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
         }
@@ -1629,8 +1645,9 @@ final class ProjectSession {
       self.externals = found
       for prefix in found.keys { self.refreshDerivedLayout(prefix: prefix) }
       // Cards inside Cards in Card are known now: their displays are wanted too.
-      await self.refreshVisibleDisplays()
+      Task { await self.refreshVisibleDisplays() }
     }
+    return externalsTask
   }
 
   func setPosition(_ k: CardKey, _ pt: CGPoint) {

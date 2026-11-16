@@ -37,7 +37,7 @@ export class RevisionEdit extends Observable {
       this.reload(this.savedRev ?? session.rev)
       return true
     } catch (e) {
-      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict)) {
+      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) {
         this.conflictRev = session.rev
         this.error = undefined
       } else this.error = errorText(e)
@@ -78,6 +78,7 @@ export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: Re
 /** The value and revision actually visible when an inline edit starts. */
 export class InlineParamEdit extends RevisionEdit {
   initial = ''
+  paramBase?: { parameter?: import('../shared/json').J }
   begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
   async commit(session: ProjectSession, text: string, overwrite: boolean, change: (s: ProjectSession) => void) {
     if (text === this.initial) return true

@@ -1036,6 +1036,30 @@ auto ProjectOperations::Execute(const std::string& project,
     } catch (const agent::SaveRevisionConflict&) {
       continue;
     } catch (const Failure& failure) {
+      if (context.origin == "ui" &&
+          (failure.code == "value_conflict" || failure.code == "source_changed")) {
+        // Host guards fail before a core save. UIs receive the same typed
+        // operation outcome as a conflict returned by core.
+        Tsugumi::Data::FailureT value;
+        value.kind = failure.code == "value_conflict"
+                         ? Tsugumi::Data::FailureKind::value_conflict
+                         : Tsugumi::Data::FailureKind::source_changed;
+        value.diagnostic = failure.what();
+        Tsugumi::RPC::ReplyT reply;
+        reply.value.Set(std::move(value));
+        Tsugumi::RPC::MessageT message;
+        message.payload.Set(std::move(reply));
+        flatbuffers::FlatBufferBuilder builder;
+        Tsugumi::RPC::FinishMessageBuffer(
+            builder, Tsugumi::RPC::Message::Pack(builder, &message));
+        return {json::Encode(json::Members{
+                    {"reply", json::Quote("Failure")},
+                    {"value", json::Encode(json::Members{
+                                  {"kind", json::Quote(failure.code)},
+                                  {"diagnostic", json::Quote(failure.what())}})}}),
+                std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                            builder.GetSize())};
+      }
       if (operation.body.AsProjectReplaceDocuments() ||
           failure.code != "revision_conflict")
         throw;

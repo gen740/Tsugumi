@@ -291,7 +291,7 @@ extension ProjectSession {
     let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
     let revision = existing ?? RevisionEdit()
     revision.reload(rev)
-    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, revision: revision)
+    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, initialMeta: cardMeta(k), revision: revision)
   }
 
   /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
@@ -329,15 +329,18 @@ extension ProjectSession {
     let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
     let name = trimmed.isEmpty ? "draft" : trimmed
     if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
+    let before = overwrite ? cardMeta(e.card) : e.initialMeta
+    var after = before ?? .object([])
+    if contentChanged { after["content"] = e.content.isEmpty ? nil : .string(e.content) }
+    if nameChanged { after["name"] = .string(name) }
     let ok = await e.revision.apply(self, overwrite: overwrite) { s in
-      s.updateMeta(e.card) { m in
-        if contentChanged { m["content"] = e.content.isEmpty ? nil : .string(e.content) }
-        if nameChanged { m["name"] = .string(name) }
+      if let dir = s.definitionDir(e.card) {
+        s.appendEdits([s.jsonEdit(dir + "_meta.json", old: before, new: after)])
       }
     }
     if ok, inlineDraft?.revision === e.revision {
       if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
-      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content }
+      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content; inlineDraft?.initialMeta = after }
     }
     return ok && nameChanged ? e.card : nil
   }
@@ -424,7 +427,19 @@ extension ProjectSession {
   }
 
   /// Mutates the value inside the caller's transaction, without an autosave.
-  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
+  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?, initial: InlineParamEdit.ParamBase? = nil) {
+    if let initial {
+      if let dir = definitionDir(k) {
+        let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
+        if let parameter = initial.parameter {
+          appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: parameter["data"], new: value)])
+        } else {
+          appendEdits([fieldEdit(dir + "_card.json", selector, old: nil,
+            new: .object([("name", .string(name)), ("type", .string("bool")), ("data", value ?? .null)]))])
+        }
+      }
+      return
+    }
     updateCard(k) { c in
       var params = c["params"]?.array ?? []
       if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
