@@ -11,9 +11,10 @@ class CardPromptContractTests(unittest.TestCase):
         for text in ('"inputs": [{"name": "config"}]', 'lowerCamelCase',
                      'inputs.events.value.decode()',
                      'return {"images": {"value": run.output_directory}}',
-                     'When a save is refused, project_validate reports an error',
-                     'make that call now', 'call it only when no path named here fits',
-                     'wait_seconds: 300', 'do not poll'):
+                     'A refused save, a validation error and a failed Card each name what to fix',
+                     'Your turn ends at the first reply without a tool call',
+                     "demo_list lists each demo's path, name and one line",
+                     'wait_seconds (up to 300)', 'still_running'):
             with self.subTest(text=text):
                 self.assertIn(text, prompt)
         self.assertNotIn('inputs.input("events", EventsFile)', prompt)

@@ -107,7 +107,7 @@ def test_file_tools_move_bytes_without_reading_and_explain_bounded_views():
     assert "bytes" not in copy["inputSchema"]["properties"]
     assert "base_rev" in copy["inputSchema"]["required"]
     prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
-    assert "never read and retype" in prompt
+    assert "without their bytes passing through your context" in prompt
     assert "no copy-specific byte cap" in prompt and "256 KiB" in prompt and "1 MiB" in prompt
     assert "head and tail" in prompt and "scratch/" in prompt
     assert "exact write set" in prompt and "failure/cancellation saves nothing" in prompt
@@ -120,14 +120,14 @@ def test_measured_card_and_recovery_instructions_are_ported():
                  'bool, int64, uint64, double or string', 'lowerCamelCase',
                  'inputs.events.value.decode()',
                  'return {"images": {"value": run.output_directory}}',
-                 'When a save is refused, project_validate reports an error',
-                 'make that call now', 'call it only when no path named here fits'):
+                 'A refused save, a validation error and a failed Card each name what to fix',
+                 'Your turn ends at the first reply without a tool call'):
         assert text in prompt
     assert 'inputs.input("events", EventsFile)' not in prompt
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
     policy = "Do not split work among sub-agents unless the person's own message asks for helpers or parallel work"
     helpers = (ROOT / 'agent/Shared/helpers-skill.md').read_text()
-    assert helpers.count(policy) == 1
+    assert policy not in helpers and 'has its own context' in helpers
     tool_text = json.dumps([shared['delegateTool'], *shared['hostTools'],
                             json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())])
     for text in (prompt, tool_text):
@@ -157,8 +157,7 @@ def test_run_wait_instructions_are_shared_with_external_mcp():
             assert tool['inputSchema']['properties']['wait_seconds'] == wait['schema']
             assert tool['description'].endswith(wait['description'])
     prompt = (ROOT / 'agent/Shared/system-prompt.md').read_text()
-    assert 'wait_seconds: 300' in prompt and 'still_running' in prompt
-    assert 'do not poll' in prompt
+    assert 'wait_seconds (up to 300)' in prompt and 'still_running' in prompt
     mcp = (ROOT / 'web/server/mcpInstructions.ts').read_text()
-    assert 'wait_seconds: 300' in mcp and 'still_running' in mcp
+    assert 'wait_seconds (up to 300)' in mcp and 'still_running' in mcp
     assert 'it answers at once' not in mcp
