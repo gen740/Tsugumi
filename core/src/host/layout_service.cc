@@ -28,13 +28,15 @@ auto decode_layout(const std::string& text) -> layout_schema::Layout {
 // Reject non-finite/unbounded geometry before sorting or converting to integer
 // grid constraints. The transport already validates all required
 // vectors/tables.
-auto measured(double v) -> double {
+auto measured(double v, const std::string& field) -> double {
   if (!std::isfinite(v) || std::abs(v) > 1e7)
-    throw LayoutFailure("layout geometry is out of range");
+    throw LayoutFailure(field +
+                        ": must be finite and within [-10000000, 10000000]");
   return v;
 }
-auto size(double v) -> double {
-  if (measured(v) < 0) throw LayoutFailure("layout size must be nonnegative");
+auto size(double v, const std::string& field) -> double {
+  if (measured(v, field) < 0)
+    throw LayoutFailure(field + ": must be nonnegative");
   return v;
 }
 auto scene_of(const R::LayoutScene& in) -> layout::Scene {
@@ -43,54 +45,70 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   if (flow != "topToBottom" && flow != "leftToRight")
     throw LayoutFailure("unknown layout flow");
   s.top_to_bottom = flow == "topToBottom";
-  s.grid = in.grid() == 0 ? 20 : measured(in.grid());
+  s.grid = in.grid() == 0 ? 20 : measured(in.grid(), "scene.grid");
   if (s.grid < 1) throw LayoutFailure("layout grid must be at least 1");
   s.snap = in.snap();
-  auto ports = [](const auto* ps) {
+  auto ports = [](const auto* ps, const std::string& field) {
     std::vector<layout::Port> out;
     std::set<std::string> names;
-    if (ps) for (const auto* p : *ps) {
-      if (!names.insert(p->name()->str()).second)
-        throw LayoutFailure("duplicate layout port");
-      out.push_back({p->name()->str(), measured(p->x()), measured(p->y())});
-    }
+    if (ps)
+      for (const auto* p : *ps) {
+        if (!names.insert(p->name()->str()).second)
+          throw LayoutFailure("duplicate layout port");
+        const auto at = field + "[" + std::to_string(out.size()) + "]";
+        out.push_back({p->name()->str(), measured(p->x(), at + ".x"),
+                       measured(p->y(), at + ".y")});
+      }
     return out;
   };
   std::set<std::string> ids;
-  if (in.cards()) for (const auto* c : *in.cards()) {
-    const auto id = c->id()->str();
-    if (id.empty() || id.find('\0') != std::string::npos ||
-        !ids.insert(id).second)
-      throw LayoutFailure("invalid or duplicate layout Card id");
-    s.cards.push_back({id, measured(c->x()), measured(c->y()), size(c->width()),
-                       size(c->height()), ports(c->inputs()),
-                       ports(c->outputs()), c->reorderable()});
-  }
-  if (in.wires()) for (const auto* w : *in.wires())
-    s.wires.push_back({w->from()->str(), w->from_port()->str(), w->to()->str(),
-                       w->to_port()->str()});
-  auto boxes = [](const auto* bs) {
+  if (in.cards())
+    for (const auto* c : *in.cards()) {
+      const auto id = c->id()->str();
+      if (id.empty() || id.find('\0') != std::string::npos ||
+          !ids.insert(id).second)
+        throw LayoutFailure("invalid or duplicate layout Card id");
+      const auto at = "scene.cards[" + std::to_string(s.cards.size()) + "]";
+      s.cards.push_back(
+          {id, measured(c->x(), at + ".x"), measured(c->y(), at + ".y"),
+           size(c->width(), at + ".width"), size(c->height(), at + ".height"),
+           ports(c->inputs(), at + ".inputs"),
+           ports(c->outputs(), at + ".outputs"), c->reorderable()});
+    }
+  if (in.wires())
+    for (const auto* w : *in.wires())
+      s.wires.push_back({w->from()->str(), w->from_port()->str(),
+                         w->to()->str(), w->to_port()->str()});
+  auto boxes = [](const auto* bs, const std::string& field) {
     std::vector<layout::Box> out;
-    if (bs) for (const auto* b : *bs)
-      out.push_back({b->id()->str(), measured(b->x()), measured(b->y()),
-                     size(b->width()), size(b->height())});
+    if (bs)
+      for (const auto* b : *bs) {
+        const auto at = field + "[" + std::to_string(out.size()) + "]";
+        out.push_back({b->id()->str(), measured(b->x(), at + ".x"),
+                       measured(b->y(), at + ".y"),
+                       size(b->width(), at + ".width"),
+                       size(b->height(), at + ".height")});
+      }
     return out;
   };
-  s.frames = boxes(in.frames());
-  s.notes = boxes(in.notes());
-  auto bar = [](const R::LayoutBar* b) {
+  s.frames = boxes(in.frames(), "scene.frames");
+  s.notes = boxes(in.notes(), "scene.notes");
+  auto bar = [](const R::LayoutBar* b, const std::string& field) {
     layout::Bar out;
     if (!b) return out;
-    if (b->ends()) for (const auto* e : *b->ends())
-      out.ends.push_back(
-          {e->name()->str(), e->card()->str(), e->port()->str()});
+    if (b->ends())
+      for (const auto* e : *b->ends())
+        out.ends.push_back(
+            {e->name()->str(), e->card()->str(), e->port()->str()});
     if (b->x().has_value() != b->y().has_value())
       throw LayoutFailure("layout bar needs both coordinates");
-    if (b->x()) out.at = layout::Point{measured(*b->x()), measured(*b->y())};
+    if (b->x())
+      out.at = layout::Point{measured(*b->x(), field + ".x"),
+                             measured(*b->y(), field + ".y")};
     return out;
   };
-  s.inputs = bar(in.inputs());
-  s.outputs = bar(in.outputs());
+  s.inputs = bar(in.inputs(), "scene.inputs");
+  s.outputs = bar(in.outputs(), "scene.outputs");
   return s;
 }
 }  // namespace

@@ -400,6 +400,15 @@ struct DecodeError {
 namespace detail {
 std::optional<DecodeError> validate(std::string_view text, hosq::json::GenericDom<>& dom);
 std::string describe(const hosq::Error& e);
+auto encoding_failure(std::string_view type, std::string_view partial,
+                      const hosq::Error& error) -> std::string;
+
+template <class S>
+constexpr auto type_name() -> std::string_view {
+  constexpr std::string_view signature = __PRETTY_FUNCTION__;
+  constexpr auto begin = signature.find("S = ") + 4;
+  return signature.substr(begin, signature.find_first_of(";]", begin) - begin);
+}
 }  // namespace detail
 
 // Strict decode of a complete JSON document into schema S.
@@ -424,7 +433,9 @@ template <class S>
 std::string encode(const S& value) {
   std::string out;
   hosq::json::CompactWriter<> w{out};
-  if (!hosq::encode_into(value, w)) throw std::runtime_error("JSON encoding failed");
+  if (!hosq::encode_into(value, w))
+    throw std::runtime_error(detail::encoding_failure(
+        detail::type_name<S>(), out, w.error()));
   return out;
 }
 
