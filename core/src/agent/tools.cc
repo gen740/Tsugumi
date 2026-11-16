@@ -16,6 +16,7 @@
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/file_miss.hh"
 #include "host/format.hh"
 #include "host/identifiers.hh"
 #include "host/layout_saving.hh"
@@ -352,6 +353,45 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
                       {"value", json::Encode(inspection.snapshot)}});
   }
   auto result = RawProjectCall(project, name, json::Encode(args), stop);
+  if (name == "project_file_read" || name == "project_file_list" ||
+      name == "project_file_stat") {
+    auto envelope = json::Object(result);
+    auto failure = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(envelope, "reply") == "Failure" &&
+        json::Text(failure, "kind") == "not_found") {
+      // This is advice from the host, not execution semantics in the core.
+      // A failed inspection must not replace the original typed file failure.
+      try {
+        const auto read = [&](const std::string& method,
+                              const json::Members& query) {
+          const auto reply = json::Object(
+              RawProjectCall(project, method, json::Encode(query), stop));
+          const auto value = json::Object(json::Get(reply, "value", "{}"));
+          if (json::Text(reply, "reply") == "Failure")
+            throw Failure(json::Text(value, "kind"),
+                          json::Text(value, "diagnostic"));
+          return value;
+        };
+        const auto snapshot = read("project_inspect", {});
+        const auto number = [](const std::string& raw) {
+          return json::UInt(json::String(raw, raw));
+        };
+        if (!args.contains("at_rev") ||
+            number(args.at("at_rev")) == number(json::Get(snapshot, "rev"))) {
+          const auto supplement =
+              host::DescribeFileMiss(json::Text(args, "path"), snapshot, read);
+          if (!supplement.empty()) {
+            failure["diagnostic"] = json::Quote(
+                json::Text(failure, "diagnostic") + "; " + supplement);
+            envelope["value"] = json::Encode(failure);
+            result = json::Encode(envelope);
+          }
+        }
+      } catch (const std::exception&) {
+        if (stop.stop_requested()) throw Cancelled();
+      }
+    }
+  }
   if (name == "version_graph") {
     auto envelope = json::Object(result);
     if (json::Text(envelope, "reply") == "VersionGraph") {

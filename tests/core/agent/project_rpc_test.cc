@@ -22,6 +22,40 @@ namespace {
 
 class CancelledCopy : public AgentProjectFixture,
                       public ::testing::WithParamInterface<bool> {};
+TEST_F(AgentProjectFixture,
+       MissingForkSchemaKeepsTypedFailureAndAddsCardContext) {
+  Write(directory.path / "project/definitions/share/_card.json",
+        R"({"template":"fork"})");
+  Write(directory.path / "project/definitions/share/_meta.json", "{}");
+  StartProject();
+  const auto conversation = Conversation("missing-schema");
+  Grant(conversation);
+  for (const auto* tool : {"project_file_read", "project_file_list"}) {
+    for (const auto* file : {"_outputs.fbs", "_inputs.fbs"}) {
+      const auto path = "definitions/share/" + std::string(file);
+      const auto reply =
+          Tool(conversation, tool, "{\"path\":" + Quote(path) + "}",
+               std::string(tool) + file);
+      ASSERT_TRUE(reply.Code().empty()) << reply.View();
+      const auto raw = JsonString(reply.View(), "/text");
+      EXPECT_EQ(JsonString(raw, "/reply"), "Failure");
+      EXPECT_EQ(JsonString(raw, "/value/kind"), "not_found");
+      EXPECT_EQ(JsonString(raw, "/value/args/0/key"), "path");
+      EXPECT_EQ(JsonString(raw, "/value/args/0/value"), path);
+      const auto diagnostic = JsonString(raw, "/value/diagnostic");
+      for (const auto* part : {"share", "fork", "_card.json", "_meta.json",
+                               "project_inspect", "root_type", "schema_bfbs"})
+        EXPECT_NE(diagnostic.find(part), std::string::npos) << diagnostic;
+    }
+  }
+  // Stat reports exists=false rather than a failure; preserve that contract.
+  const auto stat = Tool(conversation, "project_file_stat",
+                         R"({"path":"definitions/share/_outputs.fbs"})");
+  const auto raw = JsonString(stat.View(), "/text");
+  EXPECT_EQ(JsonString(raw, "/reply"), "SourceInfo");
+  EXPECT_FALSE(JsonBool(raw, "/value/exists"));
+}
+
 TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
   namespace json = tsugumi::agent::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");

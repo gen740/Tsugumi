@@ -72,6 +72,86 @@ auto CardReference(std::string_view raw) -> std::string {
   }
   return path;
 }
+auto OneLine(std::string text) -> std::string {
+  for (auto& c : text)
+    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+  return text;
+}
+auto FailureSummary(A::ChatRowT& row) -> void {
+  if (row.kind != "tool" || row.state != "failed") return;
+  const auto envelope = ObjectOrEmpty(row.result);
+  const auto failure = json::Text(envelope, "reply") == "Failure"
+                           ? ObjectOrEmpty(json::Get(envelope, "value"))
+                           : envelope;
+  auto kind = json::Text(failure, "kind", json::Text(failure, "code"));
+  std::ranges::replace(kind, '_', ' ');
+  auto diagnostic =
+      json::Text(failure, "diagnostic",
+                 json::Text(failure, "message", json::Text(failure, "error")));
+  if (diagnostic.empty() && envelope.empty()) diagnostic = row.result;
+  auto args = ObjectOrEmpty(row.arguments);
+  // Typed failure arguments can identify a target absent from the call.
+  try {
+    for (const auto& raw : json::Array(json::Get(failure, "args", "[]"))) {
+      const auto arg = ObjectOrEmpty(raw);
+      args.try_emplace(json::Text(arg, "key"), json::Get(arg, "value"));
+    }
+  } catch (const std::exception&) {
+  }
+  std::string target;
+  for (const auto* key : {"path", "card", "cards", "run_id", "run", "query",
+                          "command", "folder", "url"}) {
+    const auto value = json::Get(args, key);
+    target = CardReference(value);
+    if (!target.empty()) break;
+    if (value.starts_with('[')) {
+      try {
+        std::vector<std::string> names;
+        for (const auto& item : json::Array(value)) {
+          if (names.size() == 3) break;
+          if (const auto name = CardReference(item); !name.empty())
+            names.push_back(name);
+        }
+        target = Join(names);
+      } catch (const std::exception&) {
+      }
+      if (!target.empty()) break;
+    }
+  }
+  if (target.empty()) {
+    for (const auto* key : {"changes", "files", "edits", "tasks"}) {
+      std::vector<std::string> names;
+      try {
+        for (const auto& raw : json::Array(json::Get(args, key, "[]"))) {
+          auto item = ObjectOrEmpty(raw);
+          if (item.contains("value"))
+            item = ObjectOrEmpty(json::Get(item, "value"));
+          for (const auto* field :
+               {"path", "file_path", "card", "id", "to", "name"}) {
+            if (auto name = CardReference(json::Get(item, field));
+                !name.empty()) {
+              names.push_back(name);
+              break;
+            }
+          }
+          if (names.size() == 3) break;
+        }
+      } catch (const std::exception&) {
+      }
+      if (!names.empty()) {
+        target = Join(names);
+        break;
+      }
+    }
+  }
+  const auto subject =
+      row.name + (target.empty() ? "" : " · " + OneLine(target));
+  const auto detail = diagnostic.empty() ? "" : ": " + OneLine(diagnostic);
+  row.summary_ja =
+      subject + " · 失敗" + (kind.empty() ? "" : "（" + kind + "）") + detail;
+  row.summary_en =
+      subject + " · failed" + (kind.empty() ? "" : " (" + kind + ")") + detail;
+}
 auto Number(std::string_view raw) -> uint64_t {
   return json::UInt(raw, json::UInt(json::String(raw)));
 }
@@ -507,6 +587,10 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
       }
       rows.push_back(std::move(step));
     }
+  }
+  for (auto& row : rows) {
+    FailureSummary(*row);
+    for (auto& child : row->children) FailureSummary(*child);
   }
   Recover(rows);
   Summarize(rows);

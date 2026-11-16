@@ -187,6 +187,7 @@ add_library(tsugumi_host_core STATIC
   src/util/process.cc
   src/host/comments.cc
   src/host/save.cc
+  src/host/file_miss.cc
   src/host/project_edit.cc
   src/host/project_operations.cc
   src/host/document_edits.cc
