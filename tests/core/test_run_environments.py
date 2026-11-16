@@ -178,8 +178,8 @@ def test_unknown_environment_is_not_found(client):
         assert error.value.kind == "not_found"
 
 
-def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory, project, tmp_path):
-    """Cards sharing a build share one inventory entry; a changed build gets a new ID."""
+def test_cards_share_one_environment_and_changed_builds_get_separate_entries(core_factory, project, tmp_path):
+    """Cards sharing a build share one run-local inventory entry."""
     package = tmp_path / "package"
     package.mkdir()
     (package / "scenario.json").write_text(json.dumps({"actions": []}))
@@ -195,6 +195,7 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     assert wait_run(client, first).state == RunState.succeeded
     page = client.call("RunEnvironmentsRequest", runId=first)
     assert len(page.environments) == 1
+    original_environment = (text(page.environments[0].derivation), text(page.environments[0].manifest))
     original_id = text(page.environments[0].id)
     users = client.call("RunEnvironmentUsesRequest", runId=first, environmentId=original_id, limit=1)
     assert [(text(u.card), u.invocation) for u in users.uses] == [("a", 1)]
@@ -220,7 +221,10 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     assert {text(first_page.environments[0].id), text(second_page.environments[0].id)} == {text(e.id) for e in page.environments}
     rows = client.call("RunLatestInvocationsRequest", runId=second).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in rows}
-    assert ids["a"] == original_id and ids["b"] != original_id
+    assert ids["a"] != ids["b"]
+    environments = {text(e.id): (text(e.derivation), text(e.manifest)) for e in page.environments}
+    assert environments[ids["a"]] == original_environment
+    assert environments[ids["b"]] != original_environment
     assert len(client.call("RunEnvironmentsRequest", runId=first).environments) == 1
     changed_id = ids["b"]
     def closure(run_id, environment_id):
@@ -230,7 +234,7 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     for run_id, environment_id, other_run, other_id, expected in [
         (first, original_id, second, changed_id, sorted(set(old_paths) - set(new_paths))),
         (second, changed_id, first, original_id, sorted(set(new_paths) - set(old_paths))),
-        (first, original_id, second, original_id, []),
+        (first, original_id, second, ids["a"], []),
     ]:
         for query in ["", "NIX", "%", "no-such-dependency"]:
             matching = [p for p in expected if query.lower() in p.lower()]

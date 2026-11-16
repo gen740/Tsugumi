@@ -356,29 +356,31 @@ def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waitin
 
 
 def test_tools_and_instructions(plugin):
-    mcp, _, _ = plugin
+    mcp, root, _ = plugin
     init = mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})["result"]
     assert init["capabilities"] == {"tools": {}}
     # Claude Code keeps the first 4096 characters of a server's instructions.
     assert len(init["instructions"]) <= 4096
     tools = mcp.request("tools/list")["result"]["tools"]
     names = [t["name"] for t in tools]
-    by_name = {t["name"]: t for t in tools}
     assert names[0] == "tsugumi_open"
     assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
     # The plugin sees the same core tool catalog and Agent operations.
-    assert {"attached_folder_read", "delegate", "demo_list"} <= set(names)
+    assert {"tools", "delegate", "demo_list", "project_edit"} <= set(names)
+    assert "attached_folder_read" not in names
     assert not any(name.startswith(("guide_", "agent_guide_")) for name in names)
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
-    def tool_name(request):
-        return re.sub(r"(?<!^)([A-Z])", r"_\1", request.removesuffix("Request")).lower()
-    project_names = {tool_name(request) for request in shared["requests"]}
+    project_names = set(shared["modelTools"]["core"])
     assert project_names <= set(names)
-    approval_names = {tool_name(request) for request in shared["approvalRequests"]}
-    assert approval_names <= set(names)
     assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello", "agent_tool_call_cancel"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
+    write_project(root / "proj")
+    text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj"), "browser": False})
+    assert not error, text
+    text, error = mcp.call("tools", {"family": "files"})
+    assert not error, text
+    assert {tool["action"] for tool in json.loads(text)} == set(shared["modelTools"]["families"]["files"])
 
 
 def test_demo_list_is_compact_and_demo_read_uses_repository_paths(plugin):
@@ -399,7 +401,11 @@ def test_demo_list_is_compact_and_demo_read_uses_repository_paths(plugin):
     for path in ("en/index.json", "en/report/definitions/generate/src/main.py"):
         text, error = mcp.call("demo_read", {"path": path})
         assert not error, text
-        assert text == (ROOT / "demos" / path).read_text()
+        expected = (ROOT / "demos" / path).read_text()
+        if path.endswith(".json"):
+            assert json.loads(text) == json.loads(expected)
+        else:
+            assert text == expected
 
 
 def test_concurrent_plugin_and_command_starts_share_one_host(plugin):

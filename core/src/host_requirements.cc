@@ -9,7 +9,8 @@ auto host_requirements(const Resolution& resolution, uint64_t rev)
   Tsugumi::RPC::ProjectHostRequirementsT result;
   result.rev = rev;
   for (const auto& node : resolution.nodes) {
-    if (node.kind != Template::Code || node.settings.execution_service != kLocalExecutionService) continue;
+    if (node.kind != Template::Code ||
+        (node.settings.execution_service != kLocalExecutionService && node.settings.execution_service != "auto")) continue;
     for (const auto& folder : node.settings.host_folders) {
       auto value = std::make_unique<Tsugumi::RPC::HostFolderRequirementT>();
       value->card = std::make_unique<Tsugumi::Data::CardPathT>();
