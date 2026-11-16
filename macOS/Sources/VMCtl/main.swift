@@ -43,6 +43,14 @@ if echoConsole {
   _ = manager.vm.console.observe { line in FileHandle.standardError.write(Data((line + "\n").utf8)) }
 }
 
+let stopSources = [SIGTERM, SIGINT, SIGHUP].map { number in
+  signal(number, SIG_IGN)
+  let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+  source.setEventHandler { Task { await manager.shutdownForUpdate(); exit(0) } }
+  source.resume()
+  return source
+}
+
 func say(_ s: String) { print(s) }
 
 Task {

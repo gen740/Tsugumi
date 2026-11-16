@@ -83,13 +83,17 @@ def stop_services(root, group=None):
                         'test-binary-cache.py', 'tsugumi_document_edit_driver')) and marked_service_process(pid, root)))}
     pending = set()
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        if group is not None:
+        # A service must receive the first TERM once: a repeated signal is
+        # the VM helper's explicit force-stop path. Signal owned services
+        # individually; reserve group escalation for the final KILL.
+        if group is not None and sig == signal.SIGKILL:
             try:
                 os.killpg(group, sig)
             except ProcessLookupError:
                 pass
         signalled = set()
-        deadline = time.monotonic() + 5
+        # vmhost allows 40 s for guest sync/poweroff; hostd allows 45 s.
+        deadline = time.monotonic() + (47 if sig == signal.SIGTERM else 5)
         while True:
             pending = owned()
             if not pending:

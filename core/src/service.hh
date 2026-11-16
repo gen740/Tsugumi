@@ -81,6 +81,7 @@ class Service : public RequestSink {
   void open();  // recovers state; must succeed before the server starts
   void attach(Server* server) { server_ = server; }
   auto start_remote_cleanup() -> void;
+  auto idle() -> bool override;
   void shutdown();  // interrupts runs and stops lanes
   std::string project_id() const { return store_->project_id(); }
 

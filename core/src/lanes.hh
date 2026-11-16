@@ -24,6 +24,7 @@ class Lane {
   bool submit(Task t);
   void stop();
   size_t queued() const;
+  auto idle() const -> bool;
 
  private:
   struct Item {
@@ -37,6 +38,7 @@ class Lane {
   std::condition_variable cv_;
   std::deque<Item> q_;
   bool stopping_ = false;
+  size_t running_ = 0;
   std::vector<std::thread> threads_;
 };
 

@@ -56,6 +56,16 @@ public final class ModelCatalogSnapshot: @unchecked Sendable {
   }
 }
 
+// Read observers normally reconnect across host restarts. Once this process
+// starts an update/exit, none of its client actors may spawn the old host again.
+private final class HostProcessLifetime: @unchecked Sendable {
+  static let shared = HostProcessLifetime()
+  private let lock = NSLock()
+  private var ending = false
+  var isEnding: Bool { lock.withLock { ending } }
+  func end() { lock.withLock { ending = true } }
+}
+
 /// Binary Agent and Host connections share the project's C ABI byte transport.
 /// Framing, verification, deadlines and pending requests belong to client/.
 public actor CoreHostClient {
@@ -108,6 +118,19 @@ public actor CoreHostClient {
     return built
   }
 
+  public func stopResident() async {
+    HostProcessLifetime.shared.end()
+    let file = stateDirectory.appendingPathComponent("host.ready")
+    guard let data = try? Data(contentsOf: file),
+          let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let pid = value["pid"] as? Int32, pid > 1 else { return }
+    guard kill(pid, SIGTERM) == 0 else { return }
+    let deadline = ContinuousClock.now + .seconds(47)
+    while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+  }
+
   private func ready() async throws -> [String: Any] {
     let state = stateDirectory
     let file = state.appendingPathComponent("host.ready")
@@ -154,6 +177,7 @@ public actor CoreHostClient {
   }
 
   private func connect() async throws {
+    guard !HostProcessLifetime.shared.isEnding else { throw CancellationError() }
     if let opening { return try await opening.value }
     if !transports.isEmpty { return }
     let task = Task { try await self.start() }
@@ -212,7 +236,8 @@ public actor CoreHostClient {
     let data: Data
     do {
       data = try await withCheckedThrowingContinuation { continuation in
-        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+        let stoppingRuntime = method == "HostRuntimeRequest" && (fields["action"] as? Tsugumi_Host_RuntimeAction) == .shutdown
+        transport.call(frame, timeout: .seconds(stoppingRuntime ? 45 : ["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
       }
     } catch RPCError.disconnected {
       // The pending reply can fail before the close observer reaches this

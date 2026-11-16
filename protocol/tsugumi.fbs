@@ -792,6 +792,12 @@ table ModuleReadRequest {
   limit_bytes:uint32 = null (id: 2);
 }
 
+/// -> IdleShutdownResult. Atomically stop accepting connections if the caller
+/// is the only connection and no run or request is in progress. Flush the reply
+/// before exiting. A host chooses when to request this; busy leaves core running.
+table IdleShutdownRequest {}
+table IdleShutdownResult { stopping:bool; }
+
 union RequestPayload {
   SessionHelloRequest = 1,
   ProjectOpenRequest = 2,
@@ -840,6 +846,7 @@ union RequestPayload {
   RunEnvironmentUsesRequest = 52,
   ProjectHostRequirementsRequest = 53,
   InputTypesRequest = 54,
+  IdleShutdownRequest = 55,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1181,6 +1188,7 @@ union ReplyPayload {
   EnvironmentUsePage = 40,
   ProjectHostRequirements = 41,
   InputTypesResult = 42,
+  IdleShutdownResult = 43,
 }
 
 // ---- Notifications -----------------------------------------------------------

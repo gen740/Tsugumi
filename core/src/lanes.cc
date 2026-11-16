@@ -27,6 +27,11 @@ size_t Lane::queued() const {
   return q_.size();
 }
 
+auto Lane::idle() const -> bool {
+  std::lock_guard lock(mu_);
+  return q_.empty() && running_ == 0;
+}
+
 bool Lane::submit(Task t) {
   {
     std::lock_guard<std::mutex> l(mu_);
@@ -46,12 +51,17 @@ void Lane::run() {
       if (stopping_ && q_.empty()) return;
       item = std::move(q_.front());
       q_.pop_front();
+      ++running_;
     }
     bool expired = std::chrono::steady_clock::now() - item.enqueued > wait_limit_;
     try {
       item.task(expired);
     } catch (const std::exception& e) {
       log::error(std::string("lane task escaped: ") + e.what());
+    }
+    {
+      std::lock_guard lock(mu_);
+      --running_;
     }
   }
 }
