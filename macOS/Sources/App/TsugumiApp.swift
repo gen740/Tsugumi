@@ -202,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         settleEdits: { self.signalled ? true : await self.settleEdits() },
         stop: {
+          for session in AppModel.shared.sessions.values { session.endForQuit() }
           self.signInTerminationTask = Task { await ChatGPTSignInModel.cancelPendingSignIns() }
           _ = await AppTermination.briefly(timeout: self.signInTerminationTimeout, wait: self.signInTerminationWait) {
             await self.signInTerminationTask?.value

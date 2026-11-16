@@ -457,7 +457,10 @@ final class ProjectSession {
       guard let self else { return }
       if observerToken == nil, endpointOverride == nil {
         observerToken = await environments.observe(identity) { [weak self] s in
-          Task { @MainActor in self?.environment = s }
+          Task { @MainActor in
+            guard let self, !self.closed else { return }
+            self.environment = s
+          }
         }
       }
       await connect()
@@ -671,6 +674,17 @@ final class ProjectSession {
     }
   }
 
+  /// Quit is stopping the host: from here on this view neither reconnects,
+  /// restarts its environment nor takes in its state, so the stop is not
+  /// queued behind that work. Nothing here waits.
+  func endForQuit() {
+    closed = true
+    cacheUsageTask?.cancel()
+    listenTask?.cancel()
+    reconnectTask?.cancel()
+    reconnectTask = nil
+  }
+
   /// Starts the environment again (folders shared with it are set when it
   /// starts); unsaved edits stay in the draft.
   func restartEnvironment() async {
@@ -686,8 +700,14 @@ final class ProjectSession {
   }
 
   func stopEnvironment() {
+    // A stopped environment stays stopped: its connection's end is not a
+    // loss to reconnect from (that would start it again).
+    listenTask?.cancel()
+    reconnectTask?.cancel()
+    reconnectTask = nil
     Task {
       await client?.close()
+      client = nil
       setConnected(false)
       try? await environments.stop(identity)
     }
