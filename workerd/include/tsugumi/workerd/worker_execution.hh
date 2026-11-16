@@ -87,8 +87,10 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
                     const std::filesystem::path& destination, OutputDelivery delivery,
                     const std::atomic<bool>& cancel) -> void;
 
-auto run_invocation(WorkerPool& pool, WorkerPool::Lease& lease,
-                     const std::string& card, const std::string& key, bool reuse,
+using ReleaseWorker = std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;
+
+auto run_invocation(const ReleaseWorker& release_worker, WorkerPool::Lease& lease,
+                     bool reuse,
                      const Invocation& invocation) -> InvocationResult;
 
 }  // namespace tsugumi::workerd

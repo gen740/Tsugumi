@@ -674,7 +674,7 @@ auto run(Config config) -> int {
 }  // namespace
 }  // namespace tsugumi::workerd
 
-auto main(int argc, char** argv) -> int {
+auto remote_workerd_main(int argc, char** argv) -> int {
   using namespace tsugumi::workerd;
   ::umask(0077);
   try {

@@ -135,7 +135,7 @@ class Worker:
         if entered:
             marker = Path(entered)
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"call": self.call_id, "pid": os.getpid()}))
+            marker.write_text(json.dumps({"call": self.call_id, "pid": os.getpid(), "parent_pid": os.getppid()}))
         release = action.get("release")
         if not forever and not release:
             raise ValueError("gate needs a release path")

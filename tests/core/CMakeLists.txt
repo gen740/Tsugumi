@@ -6,6 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(TsugumiCoreTests LANGUAGES CXX)
   include(cmake/installed-core.cmake)
 else()
+  set(_local_service_source ${PROJECT_SOURCE_DIR}/workerd/src/local_service.cc)
   set(_workerd_headers ${PROJECT_SOURCE_DIR}/workerd/src)
   set(_core_main ${PROJECT_SOURCE_DIR}/core/src/main.cc)
   set(_core_headers ${PROJECT_SOURCE_DIR}/core/src)
@@ -26,7 +27,7 @@ add_executable(tsugumid-mock
   doubles/nix_eval.cc)
 target_include_directories(tsugumid-mock PRIVATE ${_core_headers})
 target_link_libraries(tsugumid-mock PRIVATE tsugumi_core)
-add_dependencies(tsugumid-mock tsugumid tsugumi-worker)
+add_dependencies(tsugumid-mock tsugumid tsugumi-worker tsugumi-workerd)
 
 if(NOT TSUGUMI_INSTALLED_CORE)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -35,7 +36,7 @@ if(NOT TSUGUMI_INSTALLED_CORE)
   set_tests_properties(core_rpc PROPERTIES
     TIMEOUT 300
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>")
+    ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>;TSUGUMI_WORKERD=$<TARGET_FILE:tsugumi-workerd>")
 endif()
 
 find_package(GTest CONFIG REQUIRED)
@@ -183,14 +184,14 @@ target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_proto
   flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
 gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
 
-add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc doubles/nix_eval.cc)
+add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc local_worker_test.cc ${_local_service_source} doubles/nix_eval.cc)
 target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
 target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_definitions(tsugumi_execution_service_tests PRIVATE
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
   TSUGUMI_TEST_SDK="${_test_sdk}")
-add_dependencies(tsugumi_execution_service_tests tsugumi-worker)
+add_dependencies(tsugumi_execution_service_tests tsugumi-worker tsugumi-workerd)
 gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_execution." DISCOVERY_MODE PRE_TEST)
 
 if(TSUGUMI_INSTALLED_CORE)

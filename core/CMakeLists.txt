@@ -91,6 +91,7 @@ target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_BASH="${TSUGUMI_BASH}")
 
 add_executable(tsugumid src/main.cc)
+add_dependencies(tsugumid tsugumi-workerd)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Executables choose the evaluator implementation. Tests link their double
 # instead, without relying on a linker's archive extraction or symbol precedence.
@@ -253,7 +254,7 @@ if(TSUGUMI_TEST_SUPPORT_DIR)
   install(FILES ${PROJECT_SOURCE_DIR}/workerd/src/journal.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-workerd)
   install(DIRECTORY src/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-core
     FILES_MATCHING PATTERN "*.hh")
-  install(FILES src/main.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)
+  install(FILES src/main.cc ${PROJECT_SOURCE_DIR}/workerd/src/local_service.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)
   install(DIRECTORY ${TSUGUMI_GEN_DIR}/cpp/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${TSUGUMI_GEN_DIR}/python/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/python)
 endif()

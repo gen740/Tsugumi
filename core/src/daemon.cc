@@ -36,6 +36,7 @@ struct Options {
   bool allow_missing_origin = false;
   stdfs::path sdk_dir;
   stdfs::path worker;
+  stdfs::path workerd;
   uint32_t cpus = 2;
   stdfs::path gcroots_dir;
   stdfs::path history_dir;
@@ -55,7 +56,7 @@ void usage() {
   std::fprintf(stderr,
                "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
-               "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
+               "                [--worker PATH] [--workerd PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
                "                [--archive-incompatible-history]\n"
                "                [--scratch-dir DIR] [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
                "                [--usage-file FILE]\n"
@@ -84,6 +85,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--allow-missing-origin") o.allow_missing_origin = true;
     else if (a == "--sdk-dir") o.sdk_dir = next();
     else if (a == "--worker") o.worker = next();
+    else if (a == "--workerd") o.workerd = next();
     else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--history-dir") o.history_dir = next();
@@ -140,6 +142,10 @@ int run_daemon(int argc, char** argv) {
   }
   auto bin = exe_dir(argv[0]);
   if (opt.worker.empty()) opt.worker = bin / "tsugumi-worker";
+  if (opt.workerd.empty()) {
+    if (const auto* path = std::getenv("TSUGUMI_WORKERD")) opt.workerd = path;
+    else opt.workerd = opt.worker.parent_path() / "tsugumi-workerd";
+  }
   if (opt.sdk_dir.empty()) opt.sdk_dir = bin.parent_path() / "share" / "tsugumi" / "sdk";
 
   // Ownership: a fixed lock file, exclusive and non-blocking, held for life.
@@ -176,6 +182,7 @@ int run_daemon(int argc, char** argv) {
   so.control_dir = opt.control_dir;
   so.sdk_dir = opt.sdk_dir;
   so.worker_binary = opt.worker;
+  so.workerd_binary = opt.workerd;
   so.fault = opt.fault;
   so.env_cpus = opt.cpus;
   so.gcroots_dir = opt.gcroots_dir;

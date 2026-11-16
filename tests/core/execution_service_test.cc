@@ -32,7 +32,7 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   options.run_scratch_dir = root / "runs";
   Service service(options);
   service.open();
-  NativeExecutionService execution(service, root / "workers");
+  LocalExecutionService execution(service, root / "workers");
   Node node;
   node.path = {"card"};
   node.settings.sandbox = false;
