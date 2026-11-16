@@ -681,6 +681,13 @@ EN = {
 "このプロジェクト全体のコピーを Card in Card として置きます": "Places a copy of this whole project as a Card in Card",
 "定義をこのプロジェクトの definitions にコピーして Card を置きます": "Copies the definition into this project's definitions and places the Card",
 "VM イメージを展開しています": "Unpacking the VM image",
+"前回の VM が正常に停止しなかったため、Nix store を検査・修復しています": "Checking and repairing the Nix store after an unclean VM stop",
+"Nix store の内容を検査・修復しています（初回と VM イメージの更新後）": "Checking and repairing Nix store contents (first boot and after a VM image update)",
+"共有 store を検査・修復…": "Check and repair shared store…",
+"共有 Nix store を検査・修復しますか？": "Check and repair the shared Nix store?",
+"検査・修復": "Check and repair",
+"すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。": "Stops all project environments, checks store contents and repairs them from caches. Results and affected paths stay in the VM log.",
+"Nix store の検査・修復が完了しました。": "Nix store checking and repair completed.",
 "Nix store の保存領域を作っています": "Making the Nix store's space",
 "VM を起動しています": "Booting the VM",
 "Nix store の保存領域を開いています（初回は初期化）": "Opening the Nix store's space (formatted the first time)",
@@ -1495,6 +1502,12 @@ EN = {
 
     '信頼するフォルダ': 'Trusted folders',
     'このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。': 'Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.',
+    'ワーカーの grade': 'Worker grade',
+    '64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。': 'An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.',
+    'ワーカーの条件式': 'Worker condition',
+    'x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。': 'x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.',
+    '条件から自動選択': 'Select by condition',
+    'ファイル転送: %@ (%llu/%llu bytes)': 'Transferring: %@ (%llu/%llu bytes)',
 }
 
 

@@ -66,6 +66,7 @@ struct ExecutionRequest {
   // required outputs, their types and their paths. Throws Failed on rejection.
   std::function<void(const ExecutionResult&)> validate = {};
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
+  std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)> transfer = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.

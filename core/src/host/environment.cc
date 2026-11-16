@@ -53,6 +53,7 @@ struct Environments::Impl {
     std::vector<std::string> origins;
     int64_t pid = 0;
     bool child = false;
+    bool idle_stopping = false;
     std::vector<std::string> secrets;
   };
   EnvironmentOptions options;
@@ -99,8 +100,21 @@ struct Environments::Impl {
   auto Shutdown() -> void {
     shutdown.request_stop();
     observer.request_stop();
-    if (observer.joinable()) observer.join();
+    // Close adapter calls before joining the observer: a guest status request
+    // may be stuck while shutdown/maintenance owns the guest control path.
     options.process->Shutdown();
+    if (observer.joinable()) observer.join();
+    if (!options.process->Guest()) {
+      std::vector<std::shared_ptr<Entry>> snapshot;
+      {
+        std::lock_guard lock(mutex);
+        for (const auto& [_, entry] : entries) snapshot.push_back(entry);
+      }
+      for (const auto& entry : snapshot) {
+        std::lock_guard entry_lock(entry->mutex);
+        try { Stop(*entry); } catch (const std::exception&) {}
+      }
+    }
   }
   auto EntryFor(const std::string& project) -> std::shared_ptr<Entry> {
     const auto path = std::filesystem::canonical(project);
@@ -261,9 +275,9 @@ struct Environments::Impl {
     if (!entry.pid) return false;
     const auto status = options.process->Poll(entry.pid, entry.child);
     if (!status) return false;
-    if (entry.state.phase == H::EnvironmentPhase::Ready && *status >= 0 &&
-        ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
-         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM))) {
+    if (entry.state.phase == H::EnvironmentPhase::Ready &&
+        (entry.idle_stopping || (*status >= 0 && ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
+         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM))))) {
       Revoke(entry);
       ClearEndpoint(entry);
       entry.state.phase = H::EnvironmentPhase::Stopped;
@@ -275,6 +289,7 @@ struct Environments::Impl {
     }
     entry.pid = 0;
     entry.child = false;
+    entry.idle_stopping = false;
     return true;
   }
   auto ReadReady(Entry& entry) -> bool {
@@ -418,6 +433,7 @@ struct Environments::Impl {
       options.prepare_project_identity(entry.state.project);
     options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
+    entry.idle_stopping = false;
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
@@ -562,6 +578,7 @@ struct Environments::Impl {
     }
     entry.pid = 0;
     entry.child = false;
+    entry.idle_stopping = false;
     std::filesystem::remove(entry.state.ready_file);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Stopped;
@@ -581,6 +598,26 @@ Environments::Environments(EnvironmentOptions options,
                                    std::move(changed), std::move(progress))) {}
 Environments::~Environments() = default;
 auto Environments::Shutdown() -> void { impl_->Shutdown(); }
+auto Environments::DrainIdle() -> void {
+  std::vector<std::shared_ptr<Impl::Entry>> snapshot;
+  {
+    std::lock_guard lock(impl_->mutex);
+    for (const auto& [_, entry] : impl_->entries) snapshot.push_back(entry);
+  }
+  for (const auto& entry : snapshot) {
+    std::unique_lock lock(entry->mutex, std::try_to_lock);
+    if (!lock || entry->starting || !entry->pid || entry->idle_stopping) continue;
+    try { entry->idle_stopping = impl_->options.process->StopIfIdle(entry->state); } catch (const std::exception&) {}
+  }
+}
+auto Environments::Idle() -> bool {
+  std::lock_guard lock(impl_->mutex);
+  for (const auto& [_, entry] : impl_->entries) {
+    std::unique_lock entry_lock(entry->mutex, std::try_to_lock);
+    if (!entry_lock || entry->starting || entry->pid) return false;
+  }
+  return true;
+}
 auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
   if (request.action != H::RuntimeAction::State)
@@ -611,7 +648,8 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     return result;
   }
   if (input.action == H::RuntimeAction::Shutdown ||
-      input.action == H::RuntimeAction::Reset) {
+      input.action == H::RuntimeAction::Reset ||
+      input.action == H::RuntimeAction::VerifyStore) {
     std::vector<std::shared_ptr<Impl::Entry>> entries;
     {
       std::lock_guard lock(impl_->mutex);
@@ -619,10 +657,32 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     }
     for (const auto& entry : entries) {
       std::lock_guard lock(entry->mutex);
-      impl_->Stop(*entry);
+      if (impl_->options.process->Guest() && input.action != H::RuntimeAction::VerifyStore)
+        impl_->Revoke(*entry);
+      else
+        impl_->Stop(*entry);
     }
   }
   auto result = impl_->options.process->Runtime(input);
+  if (impl_->options.process->Guest() &&
+      (input.action == H::RuntimeAction::Shutdown || input.action == H::RuntimeAction::Reset)) {
+    // vmd stops all projects concurrently under the VM's one deadline. Do not
+    // spend a separate stop deadline per project before asking it to power off.
+    std::vector<std::shared_ptr<Impl::Entry>> snapshot;
+    {
+      std::lock_guard lock(impl_->mutex);
+      for (const auto& [_, entry] : impl_->entries) snapshot.push_back(entry);
+    }
+    for (const auto& entry : snapshot) {
+      std::lock_guard entry_lock(entry->mutex);
+      entry->pid = 0;
+      entry->child = false;
+      entry->idle_stopping = false;
+      impl_->ClearEndpoint(*entry);
+      entry->state.phase = H::EnvironmentPhase::Stopped;
+      impl_->Notify(*entry);
+    }
+  }
   DescribeVMReset(result);
   if (input.action == H::RuntimeAction::Reset) {
     for (const auto& entry :

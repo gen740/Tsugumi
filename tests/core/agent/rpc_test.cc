@@ -249,8 +249,10 @@ TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
   EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
   EXPECT_EQ(unix_catalog.find("guide_"), std::string::npos);
-  // Invocation records remain project tools; version diffs are Host requests.
-  EXPECT_NE(unix_catalog.find("run_latest_invocations"), std::string::npos);
+  // Secondary operations are indexed on demand; version diffs stay Host
+  // requests.
+  EXPECT_EQ(unix_catalog.find("run_latest_invocations"), std::string::npos);
+  EXPECT_NE(unix_catalog.find("\"name\":\"tools\""), std::string::npos);
   EXPECT_EQ(unix_catalog.find("version_diff"), std::string::npos);
   EXPECT_EQ(unix_catalog.find("from_commit"), std::string::npos);
 }
@@ -313,8 +315,8 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
     EXPECT_EQ(J::Text(J::Object(J::Array(raw).back()), "name"), "project_save");
     EXPECT_EQ(ordered,
               (std::vector<std::string>{
-                  "project_edit", "project_connect", "project_make_subgraph",
-                  "project_layout", "project_copy", "project_save"}));
+                  "project_edit", "project_copy", "project_connect",
+                  "project_make_subgraph", "project_layout", "project_save"}));
   };
   editing_order(J::Get(J::Object(requests[0]), "tools"));
   editing_order(J::Get(J::Object(requests[1]), "tools"));
@@ -348,6 +350,54 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   }
   EXPECT_EQ(Tool(main, "guide_show", R"({"say":"Do not show this."})").Code(),
             "permission_denied");
+  EXPECT_EQ(
+      Tool(guide, "tools", R"({"family":"maintenance","action":"clear_cache"})")
+          .Code(),
+      "permission_denied");
+}
+
+TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
+  namespace J = agent::json;
+  StartProject();
+  ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("indexed-tools");
+  Grant(conversation);
+  const auto listed = Tool(conversation, "tools", R"({"family":"runs"})");
+  ASSERT_TRUE(listed.Code().empty());
+  std::set<std::string> actions;
+  for (const auto& raw :
+       J::Array(listed.Value()->value_as_ToolResult()->text()->str())) {
+    const auto spec = J::Object(raw);
+    actions.insert(J::Text(spec, "action"));
+    EXPECT_EQ(J::Text(J::Object(J::Get(spec, "input_schema")), "type"),
+              "object");
+  }
+  EXPECT_TRUE(actions.contains("status"));
+  EXPECT_TRUE(actions.contains("cancel"));
+  const auto direct = Tool(conversation, "run_status", "{}");
+  const auto indexed =
+      Tool(conversation, "tools",
+           R"({"family":"runs","action":"status","arguments":{}})");
+  ASSERT_TRUE(direct.Code().empty());
+  ASSERT_TRUE(indexed.Code().empty());
+  EXPECT_EQ(direct.Value()->value_as_ToolResult()->text()->str(),
+            indexed.Value()->value_as_ToolResult()->text()->str());
+  EXPECT_EQ(
+      Tool(conversation, "tools",
+           R"({"family":"runs","action":"status","arguments":{"typo":1}})")
+          .Code(),
+      "invalid_request");
+  model.Queue(
+      AnthropicTool("status", "tools",
+                    R"({"family":"runs","action":"status","arguments":{}})"));
+  model.Queue(AnthropicText("Run status read."));
+  ASSERT_TRUE(Send(conversation, "Read the run status.").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("Run status read."),
+            std::string::npos);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_NE(requests[1].find("RunStatus"), std::string::npos);
 }
 
 TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {

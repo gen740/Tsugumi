@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "worker_derivation.hh"
 
 namespace tsugumi {
@@ -9,7 +11,8 @@ class RemoteWorkerStore {
   static auto realise(const DerivationClosureTransport& transport,
                       const std::filesystem::path& store_root,
                       const WorkerDerivation& derivation,
-                      const std::function<void(const std::string&)>& log)
+                      const std::function<void(const std::string&)>& log,
+                      uint64_t timeout_ms = 0)
       -> NixResult;
 };
 

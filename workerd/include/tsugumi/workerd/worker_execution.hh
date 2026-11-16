@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "tsugumi/workerd/worker_pool.hh"
+#include "tsugumi/workerd/staging.hh"
 
 namespace tsugumi::workerd {
 
@@ -65,6 +66,7 @@ struct Invocation {
   std::function<void()> finish_logs;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(const InvocationResult&)> validate;
+  fs::TransferProgress transfer = {};
 };
 
 // Exactly one decision for resident retention, including exceptional exits.
@@ -85,7 +87,7 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
                     int output_root, const std::string& output_alias,
                     int input_root, const std::filesystem::path& input_directory,
                     const std::filesystem::path& destination, OutputDelivery delivery,
-                    const std::atomic<bool>& cancel) -> void;
+                    const std::atomic<bool>& cancel, const fs::TransferProgress& progress = {}) -> void;
 
 using ReleaseWorker = std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;
 

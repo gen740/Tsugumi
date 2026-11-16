@@ -164,7 +164,7 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/file_result_test.cc agent/store_test.cc agent/context_measure_test.cc agent/context_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc host/schema_encode_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/tool_arguments_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
+add_executable(tsugumi_host_settings_tests agent/file_result_test.cc agent/store_test.cc agent/context_measure_test.cc agent/context_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/model_catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc host/schema_encode_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/tool_arguments_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_sources(tsugumi_host_settings_tests PRIVATE short_identifiers_test.cc host/save_inspection_test.cc host/project_edit_test.cc host/project_operations_test.cc host/file_miss_test.cc)
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
@@ -222,4 +222,13 @@ target_compile_options(tsugumi_definition_evaluation_tests PRIVATE -Wall -Wextra
 gtest_discover_tests(tsugumi_definition_evaluation_tests TEST_PREFIX "definition_evaluation." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_definition_evaluation_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Only transport/host lifetime seams; no VM or Nix evaluator is started.
+add_executable(tsugumi_vm_lifetime_tests vm_lifetime_test.cc)
+target_include_directories(tsugumi_vm_lifetime_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_vm_lifetime_tests PRIVATE tsugumi_host_core tsugumi_client GTest::gtest_main)
+gtest_discover_tests(tsugumi_vm_lifetime_tests TEST_PREFIX "vm_lifetime." DISCOVERY_MODE PRE_TEST)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_vm_lifetime_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

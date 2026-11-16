@@ -29,6 +29,8 @@ namespace tsugumi {
 class Scheduler;
 class NixRunner;
 class ExecutionService;
+class PreparedExecution;
+struct BuildRequest;
 class LocalExecutionService;
 class RemoteExecutionService;
 class CacheUsage;
@@ -81,6 +83,7 @@ class Service : public RequestSink {
   void open();  // recovers state; must succeed before the server starts
   void attach(Server* server) { server_ = server; }
   auto start_remote_cleanup() -> void;
+  auto idle() -> bool override;
   void shutdown();  // interrupts runs and stops lanes
   std::string project_id() const { return store_->project_id(); }
 
@@ -103,9 +106,12 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& { return run_scratch_; }
   auto file_roots() const -> std::vector<std::filesystem::path>;
   auto keep_file_value(const Value& value, const std::filesystem::path& directory,
-                       const std::atomic<bool>& stop) -> Value;
+                       const std::atomic<bool>& stop,
+                       const std::function<void(std::string_view, uint64_t, uint64_t)>& progress = {}) -> Value;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
+  auto prepare_execution(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+      -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
@@ -209,6 +215,10 @@ class Service : public RequestSink {
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
+  std::mutex worker_selection_mutex_;
+  std::condition_variable worker_selection_cv_;
+  std::map<std::string, uint32_t> worker_slots_;
+  std::map<std::string, std::string> resident_targets_;
   std::unique_ptr<LocalExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
   std::unique_ptr<RemoteExecutionService> remote_execution_;

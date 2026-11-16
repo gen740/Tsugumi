@@ -13,6 +13,7 @@
 #include "document.hh"
 #include "model.hh"
 #include "types.hh"
+#include "worker_condition.hh"
 
 namespace tsugumi {
 
@@ -58,7 +59,8 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = false;
   bool network = false;
-  std::string execution_service = kLocalExecutionService;
+  std::string execution_service = "auto";
+  std::shared_ptr<const worker_condition::Condition> worker_condition;
   std::optional<ExecutionResources> execution_resources;
   std::string system;     // "" = the execution service's native system
   std::vector<HostFolder> host_folders;

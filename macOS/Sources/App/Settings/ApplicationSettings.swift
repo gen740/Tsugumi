@@ -773,6 +773,7 @@ private struct EnvironmentStorageSettings: View {
   @State private var confirmReset = false
   @State private var resetConfirmation = ""
   @State private var confirmCleanup = false
+  @State private var confirmVerify = false
 
   var body: some View {
     GroupBox("実行環境のデータ") {
@@ -786,6 +787,8 @@ private struct EnvironmentStorageSettings: View {
         Text("共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
+          Button("共有 store を検査・修復…") { confirmVerify = true }
+            .disabled(working)
           Button("共有 store を掃除…") { confirmCleanup = true }
             .disabled(working)
           Button("すべての実行環境を初期化…", role: .destructive) {
@@ -808,6 +811,12 @@ private struct EnvironmentStorageSettings: View {
       }
       .padding(6)
     }
+    .confirmationDialog("共有 Nix store を検査・修復しますか？", isPresented: $confirmVerify) {
+      Button("検査・修復") { verify() }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。")
+    }
     .confirmationDialog("共有 Nix store を掃除しますか？", isPresented: $confirmCleanup) {
       Button("掃除") { cleanup() }
       Button("キャンセル", role: .cancel) {}
@@ -819,6 +828,19 @@ private struct EnvironmentStorageSettings: View {
       Button("キャンセル", role: .cancel) {}
     } message: {
       Text(verbatim: resetConfirmation)
+    }
+  }
+
+  private func verify() {
+    working = true
+    message = nil
+    Task {
+      do {
+        let details = try await model.environments.verifyStore()
+        failed = false
+        message = String(localized: "Nix store の検査・修復が完了しました。") + "\n" + details
+      } catch { failed = true; message = String(describing: error) }
+      working = false
     }
   }
 

@@ -297,3 +297,35 @@ and its sources in src/. You can use input_types to read the resolved input defi
   state across invocations and runs. To reset that state at the start of each run, use `auto onRunStart(const Card::Inputs& inputs) -> void`
   (Python: on_run_start(inputs, report, run)). Input types come from the connected outputs (there is no _inputs.fbs).
   Optional preRun / postRun are bash without the Card inputs.
+
+## Additional tools
+
+`tools {"family":"files"}` returns file utilities and their argument schemas;
+`tools {"family":"sdk"}` returns SDK preparation and flake resolution schemas.
+Supply an action and its arguments to call it, for example:
+
+```json
+{"family":"runs","action":"status","arguments":{"run_id":"1","wait_seconds":300}}
+```
+
+The files `template` action returns a new Card's `definition_json` and sources.
+Save them under `definitions/<id>/` together with its canvas instance in one
+`project_edit`. Templates use their catalog ids (`python`, `cpp`, `marimo`, etc.).
+
+The files `shell` action runs in the project's environment after a separate Shell
+grant. Card paths are project-relative. Attached folders are read-only at
+`attached/<first 16 hex digits of SHA-256 of the folder path>/`; `scratch/` persists
+for the conversation. Successful source edits save one validated revision. Replies
+include bounded stdout/stderr and paths to the full output.
+
+`project_copy` copies attached, Card or conversation scratch files into Card source
+paths and returns their sizes and hashes. Data can also stay attached: a Card's
+`hostFolders` permission makes it available at `/host/<name>` during execution.
+
+The SDK `resolve_source` action resolves a flake for `nixSources`. To customize its
+packages, `nixSources[].overrides` accepts JSON maps such as
+`{"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}`.
+A value `{"fetchurl":{"url":"https://...","sha256":"..."}}` fetches pinned source
+or patches. Cards consume `inputs.sources.<name>.packages.<packageName>` with the
+system already selected. Saving broader permissions or changed overrides requests
+the person's approval.

@@ -76,7 +76,7 @@ auto Write(int fd, R::MessageT message) -> void {
 }
 auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd, 60); }
 auto ValidId(const std::string& id) -> bool {
-  return id != "local" &&
+  return id != "local" && id != "auto" &&
          std::regex_match(id, std::regex("[a-z][a-z0-9-]{0,31}"));
 }
 struct Address {
@@ -193,6 +193,7 @@ struct Entry {
   R::CapabilitiesT capabilities;
   uint32_t heartbeat_interval_seconds = 15;
   uint32_t missed_heartbeats = 0;
+  uint64_t grade = 0;
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
   std::string generation;
@@ -205,6 +206,7 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   value->worker_public_key = entry.worker_public_key;
   value->heartbeat_interval_seconds = entry.heartbeat_interval_seconds;
   value->missed_heartbeats = entry.missed_heartbeats;
+  value->grade = entry.grade;
   auto& c = value->capabilities = std::make_unique<H::ExecutionCapabilitiesT>();
   c->isolation = "pid_namespace";
   c->server_id = entry.capabilities.server_id;
@@ -254,7 +256,7 @@ struct ExecutionBroker::State {
         "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
         "BLOB NOT "
         "NULL,heartbeat_interval_seconds INTEGER NOT NULL,missed_heartbeats "
-        "INTEGER NOT NULL,generation TEXT NOT NULL);"
+        "INTEGER NOT NULL,grade TEXT NOT NULL,generation TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
         "NOT NULL,"
         "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
@@ -308,8 +310,8 @@ struct ExecutionBroker::State {
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
-        "heartbeat_interval_seconds,missed_heartbeats,generation FROM services "
-        "ORDER BY id");
+        "heartbeat_interval_seconds,missed_heartbeats,grade,generation FROM services "
+        "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
       auto message = W::decode(q.blob(4));
@@ -319,7 +321,16 @@ struct ExecutionBroker::State {
       entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
                          *reply->body.AsCapabilities(),
                          static_cast<uint32_t>(q.u64(5)),
-                         static_cast<uint32_t>(q.u64(6)), q.text(7)});
+                         static_cast<uint32_t>(q.u64(6)), std::stoull(q.text(7)), q.text(8)});
+    }
+    if (std::ranges::find(entries, "local", &Entry::id) == entries.end()) {
+      Entry local;
+      local.id = "local";
+      local.name = "local";
+      local.capabilities.server_id = "";
+      local.capabilities.native_system = "local";
+      local.capabilities.systems = {"local"};
+      entries.insert(entries.begin(), std::move(local));
     }
     return entries;
   }
@@ -403,11 +414,12 @@ struct ExecutionBroker::State {
             target->id = e.id;
             target->heartbeat_interval_seconds = e.heartbeat_interval_seconds;
             target->missed_heartbeats = e.missed_heartbeats;
+            target->grade = e.grade;
             auto grant = db.prepare("SELECT generation FROM project_services "
                                     "WHERE project=? AND service=?");
             grant.bind(1, q.text(1)).bind(2, e.id);
-            target->available = grant.step() && grant.text(0) == e.generation &&
-                                !e.capabilities.server_id.empty();
+            target->available = e.id == "local" || (grant.step() && grant.text(0) == e.generation &&
+                                !e.capabilities.server_id.empty());
             target->capabilities =
                 std::make_unique<R::CapabilitiesT>(e.capabilities);
             catalog.services.push_back(std::move(target));
@@ -416,7 +428,7 @@ struct ExecutionBroker::State {
         } else {
           const auto found =
               std::ranges::find(entries, request->service, &Entry::id);
-          if (found == entries.end() || found->capabilities.server_id.empty() ||
+          if (found == entries.end() || found->id == "local" || found->capabilities.server_id.empty() ||
               found->capabilities.server_id != request->server_id)
             throw W::Error(
                 R::ErrorCode::RegistrationChanged,
@@ -552,10 +564,10 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   p->worker_public_key()->str(),
                   {},
                   p->heartbeat_interval_seconds(),
-                  p->missed_heartbeats(), crypto::random_token(32)};
+                  p->missed_heartbeats(), p->grade(), crypto::random_token(32)};
       Require(entry.heartbeat_interval_seconds >= 1,
               "Heartbeat interval must be at least 1 second");
-      Require(ValidId(entry.id),
+      Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
           text::valid_utf8(entry.name) &&
@@ -567,7 +579,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   entry.name,
                   [](unsigned char c) { return c < 32 || c == 127; }),
           "Enter a service name of up to 80 characters");
-      ParseEndpoint(entry.endpoint, false);
+      Require(entry.id != "local" || (entry.endpoint.empty() && entry.worker_public_key.empty()),
+              "The local worker has no endpoint or public key");
+      if (entry.id != "local") ParseEndpoint(entry.endpoint, false);
       std::string previous;
       {
         std::lock_guard lock(state_->mutex);
@@ -575,15 +589,15 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
           if (e.id == entry.id) {
             previous = e.generation + e.endpoint + e.worker_public_key + e.name + "\n" +
                        std::to_string(e.heartbeat_interval_seconds) + ":" +
-                       std::to_string(e.missed_heartbeats);
+                       std::to_string(e.missed_heartbeats) + ":" + std::to_string(e.grade);
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
             entry.generation = e.generation;
           }
       }
-      peer_tls::ValidateKey(entry.worker_public_key);
-      if (p->verify()) {
+      if (entry.id != "local") peer_tls::ValidateKey(entry.worker_public_key);
+      if (entry.id != "local" && p->verify()) {
         R::RequestT probe;
         probe.body.Set(R::ProbeRequestT{});
         auto response = state_->Remote(entry, std::move(probe));
@@ -601,7 +615,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         if (e.id == entry.id) {
           current = e.generation + e.endpoint + e.worker_public_key + e.name +
                     "\n" + std::to_string(e.heartbeat_interval_seconds) + ":" +
-                    std::to_string(e.missed_heartbeats);
+                    std::to_string(e.missed_heartbeats) + ":" + std::to_string(e.grade);
           if (e.endpoint != entry.endpoint || e.worker_public_key != entry.worker_public_key ||
               e.capabilities.server_id != entry.capabilities.server_id)
             entry.generation = crypto::random_token(32);
@@ -613,7 +627,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
               "Registration changed while verifying; reopen settings");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare(
-          "INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?,?,?)");
+          "INSERT INTO services VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,endpoint=excluded.endpoint,worker_public_key=excluded.worker_public_key,capabilities=excluded.capabilities,heartbeat_interval_seconds=excluded.heartbeat_interval_seconds,missed_heartbeats=excluded.missed_heartbeats,grade=excluded.grade,generation=excluded.generation");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
@@ -621,7 +635,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
           .bind_blob(5, caps)
           .bind(6, static_cast<int64_t>(entry.heartbeat_interval_seconds))
           .bind(7, static_cast<int64_t>(entry.missed_heartbeats))
-          .bind(8, entry.generation)
+          .bind(8, std::to_string(entry.grade))
+          .bind(9, entry.generation)
           .run();
       transaction.commit();
       return agent::wire::HostReply(id, state_->List());

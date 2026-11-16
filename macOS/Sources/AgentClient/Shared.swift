@@ -37,22 +37,18 @@ the person's decision.
   tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
   the paths under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
-  Card alone (propagate false) uses the inputs saved by an earlier whole run. run and run_status take wait_seconds
+  Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. run_record
-  shows what each Card produced (an image a Card displayed comes back as an image you can see) and log_range its
+  shows what each Card produced (an image a Card displayed comes back as an image you can see) and tools family runs action logs its
   stderr (stream 2).
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.
-- Cleanups of run history, build caches or run scratch, version checkouts, versioning initialization, named versions
-  and version summaries each wait for the person's approval of that call; a decline changes nothing.
-- project_copy moves files without their bytes passing through your context (it returns paths, sizes and hashes).
-  project_file_read reads pages (default 256 KiB, maximum 1 MiB). project_shell (after a separate Shell grant) runs in
-  the project VM: Card paths are project-relative, Read-granted folders are at attached/<first 16 hex digits of
-  SHA-256 of the folder path>/, scratch/ persists for this conversation, and replies keep up to 256 KiB per stream
-  (head and tail) with paths to the full output; successful commands that edit Card sources save one validated
-  revision. Folders the user attached are read with attached_folder_read {"folder": "<its path>", "path": "<relative
-  path>"}; project_reload imports external edits.
+- tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
+  SDK preparation, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
+  and version changes wait for the person's approval of each call.
+- project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
+  sizes and hashes. input_types returns the types a Card receives, rendered for its language.
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"template": "draft"}
   and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
   person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on
@@ -100,6 +96,8 @@ How you answer:
   is not attached to every user message. Never invent state or output: point to where the person can read results; a successful run alone does not
   establish any value or change. When a tool does not say it, say you cannot see it. Say plainly when a run failed,
   was cancelled or lost its connection; never say a run finished or succeeded unless its state says so.
+- tools fetches action schemas and calls actions in the runs and artifacts families for run status, history,
+  logs and output files.
 - You only read: your tools read the connected project (when one is open) and bundled demos with demo_list / demo_read. You
   never save, run or cancel anything, and answering never changes the user's project. To do something, the user
   presses a button you offer or uses the app's own controls.
@@ -172,7 +170,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   "hostTools": [
     {
       "name": "tool_result_read",
-      "description": "Read the exact saved text of one earlier tool result by call_id. No tool is re-executed. offset is a UTF-8 byte offset (default 0); limit_bytes defaults to 2048 (maximum 2048). Returns text, offset, next_offset, total_bytes and eof. Continue from next_offset. Helpers can read only their own filtered results.",
+      "description": "Read saved tool output by call_id. Returns text, next_offset, total_bytes and eof; offsets are UTF-8 bytes, pages default/max 2048 bytes.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -195,7 +193,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     },
     {
       "name": "attached_folder_read",
-      "description": "Read a user-registered attached folder after its Read grant. Returns a bounded page (default 256 KiB, maximum 1 MiB), total file size and continuation offset, or sorted directory entries (maximum 5000). Does not load the whole file. Symbolic links and paths outside the root are refused. project_copy moves files without reading them; project_shell examines large files.",
+      "description": "Read a registered folder: a file page with total size and next offset, or sorted directory entries. folder is its registered absolute path; path is relative. Pages default to 256 KiB, max 1 MiB.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -223,7 +221,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_copy",
       "mutating": true,
-      "description": "Copy an explicit list of files into Card sources without sending bytes through the model. source is attached (registered folder with its own Read grant), card (confirmed project-relative paths, read scope), or scratch (conversation scratch-relative paths). Each files item has from and to (project-relative Card source destination). Supply base_rev from project_inspect. Normal save validation, conflicts, permission widening approval and Agent origin apply. Helpers need source read and destination write scope. Refuses symlinks, traversal and structural documents. Core streams local files without an RPC byte payload or a copy-specific size/count cap; definition-store limits apply (10,000 source entries per project). Data may instead stay attached and be read by a Card with hostFolders (/host/<name>), with permission. Returns destination paths, sizes and SHA-256 hashes, never content.",
+      "description": "Copy files into Card sources without loading bytes into the model; returns paths, sizes and SHA-256 hashes. source selects attached (folder required), card (project-relative), or scratch (conversation-relative); files map from to project-relative destinations. base_rev is the inspected revision.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -274,7 +272,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_edit",
       "mutating": true,
-      "description": "Apply guarded edits to project documents and Card files in one atomic save against current state; unrelated fields keep their bytes. Structured selectors use field for an object member and match for an array entity by stable keys; old_value/new_value carry explicit present and a JSON value. Source text uses exact old_string/new_string replacement (one match by default, or expected_matches). File put/remove/move use the inspected hash or expect_missing/destination_missing. Missing, null and empty differ. A conflict changes nothing; inspect the target before a new guarded edit. The runtime supplies operation identities.",
+      "description": "Apply guarded changes atomically; returns the save result. Structured selectors use field for object members or match for array keys; old_value/new_value use present to distinguish absence from a JSON value. Text replacement expects one match unless expected_matches is given. File put/remove/move use inspected hashes or missing flags. Examples: demo_read reference/cards.md.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -445,7 +443,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_connect",
       "mutating": true,
-      "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire and inserts or extends a fork as needed; a new fork takes a reserved fork_id from card_id. project_path selects an external project (omitted: root). New Card placement is part of the save.",
+      "description": "Connect Card ports atomically, replacing the destination wire and adding a fork if needed (reserve fork_id with card_id). Returns the save result. project_path selects an external project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -480,7 +478,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_make_subgraph",
       "mutating": true,
-      "description": "Move selected Cards and their sources into a Card in Card in one atomic save. id is reserved with card_id. project_path selects an external project (omitted: root).",
+      "description": "Move Cards and their sources into a Card in Card atomically; returns the save result. Reserve id with card_id. project_path selects an external project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -508,7 +506,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     {
       "name": "project_layout",
       "mutating": true,
-      "description": "Arrange Card positions or untangle wire port order in one atomic save. project_path selects an external project (omitted: root). Specific guarded positions are editable with project_edit.",
+      "description": "Arrange Card positions or untangle port order atomically; returns the save result. project_path selects an external project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -531,14 +529,14 @@ the result; do not require confirmations of checks or a detailed explanation of 
     }
   ],
   "runWait": {
-    "description": "Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Returns still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss returns an unavailable error. Helpers can wait on their own in-scope runs.",
+    "description": "Returns still_running and wait_reason (ended, timeout or idle).",
     "schema": {
       "type": "integer",
       "minimum": 0,
-      "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."
+      "description": "Wait up to this many seconds for completion (max 300); default 0 returns immediately."
     }
   },
-  "saveNote": "Whole-document transaction for creating a project or a large restructuring; project_edit applies small guarded changes to current state. changes contains SetProject (the entire tsugumi.json), PutDefinition, PutSource, RemoveDefinition or SetLayout. PutDefinition with keep_meta preserves _meta.json; meta_json replaces it, and fill_description/fill_context fill empty metadata fields. PutSource takes path, bytes and base_hash when replacing. A stale base_rev is refused: read the project again and re-apply your input. The host places new Cards near their connections and keeps existing positions.",
+  "saveNote": "Whole-document changes for project creation or restructuring; small edits use project_edit. Stale base_rev is refused. PutDefinition keep_meta preserves metadata; fill_description/fill_context fill empty fields. PutSource base_hash guards replacement. Examples: demo_read reference/cards.md.",
   "hostRequests": [
     "LayoutValidateRequest"
   ],
@@ -575,7 +573,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Optionally hands tasks to helpers (sub-agents), each with an instruction and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent has no depth or count limit. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. The helpers Skill describes what a helper sees and returns.",
+    "description": "Run helper tasks; returns reports, errors and trace locations. Each helper receives its instruction and the shared system prompt. Card sets are exact paths with no implicit descendants; supply all three sets for scoped work. depth/count default to 0/0 and control child delegation. Details: helpers Skill.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -597,42 +595,44 @@ the result; do not require confirmations of checks or a detailed explanation of 
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "description": "a unique nonempty name for the helper",
+                "description": "Unique helper name.",
                 "maxLength": 128
               },
               "instruction": {
                 "type": "string",
                 "minLength": 1,
-                "description": "the helper's initial user message: the task, Card ids, user requirements and shared decisions; ask it to read the project context it needs. It receives the system rules, but no parent conversation, automatic project snapshot or warm-up. State whether it should run or leave that to the main Agent."
+                "description": "Task, Card ids, requirements and shared decisions; the helper receives no parent conversation."
               },
               "read_cards": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
+                "description": "Readable Card paths; empty means none."
               },
               "write_cards": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "Exact permanent Card paths this helper may change, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
+                "description": "Writable Card paths; empty means none."
               },
               "run_cards": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "Exact permanent Card paths this helper may execute, prepare or cancel. Every Card in a run plan must be assigned; write does not imply run. Supply all three sets; empty means none."
+                "description": "Executable Card paths, including every Card in the run plan; empty means none."
               },
               "depth": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "description": "Maximum descendant depth."
               },
               "count": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "description": "Maximum children over this helper's lifetime."
               }
             }
           }
@@ -654,22 +654,22 @@ the result; do not require confirmations of checks or a detailed explanation of 
     ],
     "showTool": {
       "name": "guide_show",
-      "description": "The bird flies to a part of the screen and speaks there: it points at it (highlight), says one line beside it (say), and offers choices the user can tap as their reply and buttons that act. Nothing happens until the user presses a button; the app then does it with its own controls.",
+      "description": "Point at the UI and show a speech bubble, reply choices and action buttons. Actions run when the user presses a button. Returns acknowledgment.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "highlight": {
             "type": "string",
-            "description": "where the bird flies and what it points at. Home: new_project, open_project (open an existing project), demos (the demo list button), demo:<demo id> (its card in the demo list, which opens). A project: run (the run / stop button), generate (shown while the workflow has Drafts), from_comments (shown while Cards have open comments), chat (the chat button), home (back to Home), view (zoom, fit all and arrange), save (the save state), logs, timeline, terminal (the panel buttons under the canvas), versions (the version history), project_settings (this project's settings), card:<Card id> (a Card of the workflow; card:<outer id>/<inner id> is a Card inside a Card in Card, which the app opens), param:<name> (a setting in the open Card settings window), apply (that window's Apply button, which saves it)"
+            "description": "Control id (run, generate, from_comments, chat, home, view, save, logs, timeline, terminal, versions, project_settings, new_project, open_project, demos, apply), demo:<id>, card:<path> or param:<name>."
           },
           "open": {
             "type": "string",
-            "description": "what the app opens for the user to look at (opening changes nothing): card:<Card id or outer/inner> opens that Card's settings window, where the bird flies to point at param:<name>; logs, timeline or terminal opens that panel under the canvas; versions opens the versions window"
+            "description": "Open card:<path>, logs, timeline, terminal or versions."
           },
           "say": {
             "type": "string",
-            "description": "what the bird says in its speech bubble: one to three short sentences, the point of this step (your reply text is the full explanation)"
+            "description": "Speech bubble text: one to three short sentences."
           },
           "choices": {
             "type": "array",
@@ -677,11 +677,11 @@ the result; do not require confirmations of checks or a detailed explanation of 
             "items": {
               "type": "string"
             },
-            "description": "short replies the user can tap in the bubble (in the user's language); the one tapped comes back to you as the user's message"
+            "description": "Short replies in the user's language; a tap sends that reply."
           },
           "endTour": {
             "type": "boolean",
-            "description": "true with the farewell at the end of a demo tour: the bird says it, then flies home, and the app stops telling you about runs"
+            "description": "End the tour after this bubble."
           },
           "actions": {
             "type": "array",
@@ -709,15 +709,15 @@ the result; do not require confirmations of checks or a detailed explanation of 
                 },
                 "label": {
                   "type": "string",
-                  "description": "the button's text: a few words in the user's language"
+                  "description": "Button text in the user's language."
                 },
                 "demo": {
                   "type": "string",
-                  "description": "open_demo: the demo's id (from demo_list and demo_read)"
+                  "description": "Demo id for open_demo."
                 },
                 "card": {
                   "type": "string",
-                  "description": "open_card: the Card's id (its settings window opens)"
+                  "description": "Card path for open_card."
                 }
               }
             }
@@ -966,7 +966,112 @@ the result; do not require confirmations of checks or a detailed explanation of 
     }
   },
   "invalidArguments": "The arguments of this call were not a complete JSON object, so it was not run and nothing was changed. Make the call again with valid JSON (mind the escapes in source files). What you wrote:\n{json}",
-  "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. The setting is the user's: tell them what the Card needs and why."
+  "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. The setting is the user's: tell them what the Card needs and why.",
+  "modelTools": {
+    "core": [
+      "project_edit",
+      "project_copy",
+      "project_connect",
+      "project_make_subgraph",
+      "project_layout",
+      "project_inspect",
+      "card_id",
+      "project_file_list",
+      "project_file_read",
+      "input_types",
+      "project_validate",
+      "run_plan",
+      "run",
+      "run_record",
+      "tool_result_read",
+      "demo_list",
+      "demo_read",
+      "delegate",
+      "project_save"
+    ],
+    "families": {
+      "files": {
+        "stat": "project_file_stat",
+        "format": "project_file_format",
+        "attached": "attached_folder_read",
+        "shell": "project_shell",
+        "reload": "project_reload",
+        "template": "document_template"
+      },
+      "sdk": {
+        "prepare": "card_s_d_k_prepare",
+        "status": "card_s_d_k_status",
+        "output_types": "output_types",
+        "resolve_source": "nix_source_resolve"
+      },
+      "runs": {
+        "status": "run_status",
+        "cancel": "run_cancel",
+        "history": "run_history",
+        "invocations": "run_invocations",
+        "latest": "run_latest_invocations",
+        "value": "run_value_read",
+        "logs": "log_range",
+        "environments": "run_environments",
+        "environment_paths": "run_environment_paths"
+      },
+      "artifacts": {
+        "list": "artifact_list",
+        "read": "artifact_read",
+        "module": "module_read"
+      },
+      "versions": {
+        "graph": "version_graph",
+        "canvas": "version_canvas",
+        "checkout": "version_checkout",
+        "init": "version_init",
+        "mark": "version_mark"
+      },
+      "maintenance": {
+        "usage": "project_cache_usage",
+        "clear_cache": "project_cache_clear",
+        "delete_scratch": "run_scratch_delete",
+        "delete_history": "run_history_delete",
+        "operation": "operation_get",
+        "validate_layout": "layout_validate"
+      }
+    },
+    "scoped": [
+      "project_edit",
+      "project_copy",
+      "project_connect",
+      "project_make_subgraph",
+      "project_layout",
+      "project_save",
+      "project_inspect",
+      "card_id",
+      "project_file_list",
+      "project_file_read",
+      "project_file_stat",
+      "project_file_format",
+      "input_types",
+      "output_types",
+      "project_validate",
+      "run_plan",
+      "run",
+      "run_status",
+      "run_cancel",
+      "run_history",
+      "run_invocations",
+      "run_record",
+      "run_value_read",
+      "artifact_list",
+      "log_range",
+      "card_s_d_k_prepare",
+      "attached_folder_read",
+      "project_shell",
+      "tool_result_read",
+      "demo_list",
+      "demo_read",
+      "document_template",
+      "delegate"
+    ]
+  }
 }
 """#
 

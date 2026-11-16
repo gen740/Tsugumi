@@ -23,6 +23,12 @@ struct InvocationJson {
   schema::t::Uint64<"implementation_index"> implementation_index;
 };
 
+struct TransferJson {
+  schema::t::String<"name"> name;
+  schema::t::Uint64<"done"> done;
+  schema::t::Uint64<"total"> total;
+};
+
 struct EnvironmentJson {
   schema::t::Array<"paths", schema::v::String> paths;
   schema::t::Array<"directories", schema::v::String> directories;

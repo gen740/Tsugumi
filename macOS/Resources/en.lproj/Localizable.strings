@@ -49,6 +49,7 @@
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
+"64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。" = "An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
@@ -153,6 +154,8 @@
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
+"Nix store の内容を検査・修復しています（初回と VM イメージの更新後）" = "Checking and repairing Nix store contents (first boot and after a VM image update)";
+"Nix store の検査・修復が完了しました。" = "Nix store checking and repair completed.";
 "Nix を準備しています" = "Preparing Nix";
 "Nix 参照一覧" = "Nix reference list";
 "Nix 参照（記述どおり）" = "Nix references (as written)";
@@ -251,6 +254,7 @@
 "tsugumid の応答を待っています" = "Waiting for tsugumid to answer";
 "wire の再接続" = "Rebind wires";
 "worker の状態を残す" = "Keep the worker's state";
+"x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。" = "x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
 "⌥⌘K で、実行環境のコンソールを開けるよ" = "⌥⌘K opens the environment's console.";
@@ -364,6 +368,7 @@
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
 "こんにちは、ツグミです。何をしてみますか？" = "Hello, I'm Tsugumi. What would you like to try?";
 "すべて" = "All";
+"すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。" = "Stops all project environments, checks store contents and repairs them from caches. Results and affected paths stay in the VM log.";
 "すべての入力が揃ったとき" = "When every input has arrived";
 "すべての実行" = "All runs";
 "すべての実行履歴を削除しますか？" = "Delete the whole run history?";
@@ -588,6 +593,7 @@
 "ファイルを読んでいます" = "Reading files";
 "ファイルを選んでください" = "Choose a file";
 "ファイルアクセスを制限" = "Restrict file access";
+"ファイル転送: %@ (%llu/%llu bytes)" = "Transferring: %@ (%llu/%llu bytes)";
 "フィールドを読めません: %@" = "Cannot read a field: %@";
 "フォルダ" = "Folders";
 "フォルダが見つからないプロジェクト" = "Projects whose folder is gone";
@@ -663,6 +669,8 @@
 "ログを読んでいます" = "Reading the log";
 "ローカル fixture には検索がないため、オンでも使えません。" = "The local fixture has no search, so this does nothing with it.";
 "ローカル fixture（テスト用・通信なし）" = "Local fixture (tests, no network)";
+"ワーカーの grade" = "Worker grade";
+"ワーカーの条件式" = "Worker condition";
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
@@ -800,7 +808,9 @@
 "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。" = "Public key registered. Add this host's public key to authorized_keys, then verify the connection.";
 "共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。" = "Cleaning the shared Nix store deletes what no project has registered as a build result (no GC root). Registered Card builds and the compilers used for them stay. A project's “Clear build cache” only unregisters; the store is cleaned only here.";
 "共有 Nix store を掃除しますか？" = "Clean the shared Nix store?";
+"共有 Nix store を検査・修復しますか？" = "Check and repair the shared Nix store?";
 "共有 store を掃除…" = "Clean shared store…";
+"共有 store を検査・修復…" = "Check and repair shared store…";
 "内容" = "Content";
 "内容が不明なため、編集・名前変更・保存はできません。\n%@" = "Its contents are unknown, so it cannot be edited, renamed or saved.\n%@";
 "内容の変更" = "Change content";
@@ -863,6 +873,7 @@
 "削除できませんでした: %@" = "Could not delete: %@";
 "削除対象の合計" = "Total selected for deletion";
 "前へ" = "Previous";
+"前回の VM が正常に停止しなかったため、Nix store を検査・修復しています" = "Checking and repairing the Nix store after an unclean VM stop";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
 "動かす" = "Animate";
@@ -1203,6 +1214,7 @@
 "未選択" = "Not selected";
 "未開始" = "Not started";
 "末尾を追う" = "Follow";
+"条件から自動選択" = "Select by condition";
 "条件に合うデモはありません" = "No demo matches";
 "条件に合う実行はありません" = "No matching runs";
 "枝: %@" = "Branch: %@";
@@ -1212,6 +1224,7 @@
 "桃" = "Pink";
 "案内を表示" = "Showed guidance";
 "案内を表示しています" = "Showing guidance";
+"検査・修復" = "Check and repair";
 "検索" = "Search";
 "検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";

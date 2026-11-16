@@ -294,16 +294,24 @@ class Builder {
       else
         s.execution_service = *v;
     }
-    const bool remote = s.execution_service != kLocalExecutionService;
+    if (const auto* condition = schema::get(d.worker_condition)) {
+      auto compiled = worker_condition::compile({*condition->language, *condition->expression});
+      if (const auto* diagnostic = std::get_if<worker_condition::Diagnostic>(&compiled))
+        n.diags.push_back(diag(n.path, "invalid_setting", "workerCondition: " + diagnostic->message +
+            " at byte " + std::to_string(diagnostic->position)));
+      else
+        s.worker_condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+    }
+    const bool remote = s.execution_service != kLocalExecutionService && s.execution_service != "auto";
     const auto* host_folders = schema::get(d.host_folders);
-    if (remote && (!s.sandbox || s.reuse_worker || s.timeout_seconds.value_or(3600) > 604800 ||
+    if (remote && (!s.sandbox || s.reuse_worker ||
                    (host_folders && !host_folders->empty())))
       n.diags.push_back(diag(n.path, "invalid_setting",
-          "external execution requires sandbox, no worker reuse or host folders, and a timeout of at most seven days"));
+          "external execution requires sandbox, no worker reuse or host folders"));
     if (const auto* resources = schema::get(d.execution_resources)) {
       const auto* cpu = schema::get(resources->cpu_millis);
       const auto* memory = schema::get(resources->memory_bytes);
-      if (!remote)
+      if (s.execution_service == kLocalExecutionService)
         n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires an external execution service"));
       else if (!cpu || *cpu == 0 || *cpu > 256'000 || !memory || *memory == 0 || *memory > (uint64_t{1} << 40))
         n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires 1–256000 cpuMillis and up to 1 TiB of memoryBytes"));

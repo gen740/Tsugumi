@@ -36,6 +36,38 @@ let listener = try VMHostIPC.listen(path: socketPath)
 let vm = SharedVM(directory: support.appendingPathComponent("vm"))
 let image = VMImage(directory: imageDir, source: sourceDir, sourceEntries: sourceEntries.isEmpty ? nil : sourceEntries)
 
+// The spawning UI may quit while work continues. The host's Watch connection
+// owns the resident VM; EOF (including a host crash) ends it orderly.
+final class ExitState: @unchecked Sendable {
+  private let lock = NSLock()
+  private var ending = false
+  var isEnding: Bool { lock.withLock { ending } }
+  func begin() {
+    let first = lock.withLock { let first = !ending; ending = true; return first }
+    if first {
+      // Also bound a stuck Virtualization.framework stop callback.
+      DispatchQueue.global().asyncAfter(deadline: .now() + 42) { exit(1) }
+    }
+  }
+}
+let exitState = ExitState()
+@Sendable func endVMHost(signal: Bool = false) async {
+  exitState.begin()
+  await vm.shutdown(signal: signal, exiting: true)
+  unlink(socketPath)
+  exit(0)
+}
+let signalQueue = DispatchQueue(label: "app.tsugumi.vmhost.signals")
+let stopSignals = [SIGTERM, SIGINT, SIGHUP].map { number in
+  signal(number, SIG_IGN)
+  let source = DispatchSource.makeSignalSource(signal: number, queue: signalQueue)
+  source.setEventHandler {
+    for _ in 0..<max(1, source.data) { Task { await endVMHost(signal: true) } }
+  }
+  source.resume()
+  return source
+}
+
 @Sendable func encode(_ value: NativeObject, reply: Tsugumi_VMHost_ReplyPayload? = nil, event: Tsugumi_VMHost_EventPayload? = nil, id: UInt64 = 0) -> Data {
   let message = Tsugumi_VMHost_MessageT()
   message.requestId = id
@@ -68,6 +100,7 @@ final class Watchers: @unchecked Sendable {
     guard peers.removeValue(forKey: peer.fd) != nil else { return false }
     return peers.isEmpty
   } }
+  var isEmpty: Bool { lock.withLock { peers.isEmpty } }
   func emit(_ data: Data) { for peer in lock.withLock({ Array(peers.values) }) { peer.emit(data) } }
 }
 let watchers = Watchers()
@@ -133,6 +166,7 @@ let terminals = Terminals()
 actor Driver {
   private var bridges: [String: LoopbackBridge] = [:]
   func boot(_ request: Tsugumi_VMHost_BootT) async throws {
+    guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     try vm.configureBroker(request.brokerEndpoint)
     guard let image else { throw LauncherError.imageMissing }
     let preparing = !FileManager.default.fileExists(atPath: vm.directory.appendingPathComponent("store.img").path)
@@ -172,9 +206,14 @@ actor Driver {
         value.endpoint = "ws://127.0.0.1:\(bridges[key]!.port)/rpc"
       }
     }
+    if !value.running {
+      bridges.removeValue(forKey: key)?.close()
+      await vm.detach(key)
+    }
     return value
   }
   func run(_ request: Tsugumi_VMHost_RunT) async throws -> Tsugumi_VMHost_ProcessT {
+    guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let command = request.archiveIncompatibleHistory ? "archive-history" : "start"
     var last: Error = LauncherError.notReady("mount is not ready")
@@ -197,7 +236,9 @@ actor Driver {
     let result = runtime()
     switch request.action {
     case .state: result.console = vm.console.snapshot.suffix(200).map { Optional($0) }
-    case .shutdown: await vm.shutdown(); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
+    case .shutdown: exitState.begin(); await vm.shutdown(exiting: true); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
+    case .verifystore:
+      result.message = try await vm.request("verify-store", timeout: 3600)
     case .cleanupstore:
       let fields = try await vm.request("gc", timeout: 3600).split(separator: " ")
       result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
@@ -221,7 +262,8 @@ actor Driver {
     return result
   }
   func reset(_ request: Tsugumi_VMHost_ResetT) async throws -> Tsugumi_Host_HostRuntimeT {
-    await vm.shutdown()
+    exitState.begin()
+    await vm.shutdown(exiting: true)
     for bridge in bridges.values { bridge.close() }
     bridges.removeAll()
     let report = try VMReset.apply(directory: vm.directory,
@@ -259,6 +301,9 @@ actor Driver {
     peer.emit(encode(result, reply: .hostterminal, id: id))
   }
 }
+DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+  if watchers.isEmpty { Task { await endVMHost() } }
+}
 let driver = Driver()
 @Sendable func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
   guard message.requestId > 0, let request = message.payload?.value as? Tsugumi_VMHost_RequestT, let value = request.value?.value else { throw LauncherError.notReady("invalid VM adapter request") }
@@ -276,6 +321,7 @@ let driver = Driver()
     peer.emit(encode(try await driver.process(request.key), reply: .process, id: id))
   case let request as Tsugumi_Host_HostRuntimeRequestT:
     peer.emit(encode(try await driver.operation(request), reply: .hostruntime, id: id))
+    if request.action == .shutdown { unlink(socketPath); exit(0) }
   case let request as Tsugumi_VMHost_ResetT:
     peer.emit(encode(try await driver.reset(request), reply: .hostruntime, id: id))
     unlink(socketPath); exit(0)
@@ -294,7 +340,10 @@ Thread.detachNewThread {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     let peer = Peer(fd)
     Thread.detachNewThread {
-      defer { if watchers.remove(peer) { terminals.closeAll() }; peer.close() }
+      defer {
+        if watchers.remove(peer) { terminals.closeAll(); Task { await endVMHost() } }
+        peer.close()
+      }
       do {
         while let bytes = try VMHostIPC.read(fd) {
           var buffer = ByteBuffer(data: bytes)

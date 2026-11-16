@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iosfwd>
 #include <map>
 #include <mutex>
@@ -26,6 +27,7 @@ struct RemoteTarget {
   uint32_t max_jobs = 0;
   uint32_t heartbeat_interval_seconds = 15;
   uint32_t missed_heartbeats = 0;
+  uint64_t grade = 0;
 };
 
 struct RemoteJobState {
@@ -33,6 +35,8 @@ struct RemoteJobState {
   std::string fingerprint;
   std::string result_sha256;
   std::string error;
+  std::string transfer_name = {};
+  uint64_t transfer_done = 0, transfer_total = 0;
 };
 
 struct RemoteProbe {
@@ -41,6 +45,7 @@ struct RemoteProbe {
   std::string server_id;
   std::vector<std::string> systems;
   bool resource_limits;
+  uint32_t max_jobs = 0, active_jobs = 0;
 };
 
 // An incomplete exchange is different from a response from the gateway.
@@ -57,6 +62,8 @@ struct BrokerRequestRejected : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+using TransferProgress = std::function<void(uint64_t, uint64_t)>;
+
 class RemoteJobClient {
  public:
   RemoteJobClient();
@@ -68,9 +75,9 @@ class RemoteJobClient {
   auto probe(std::string_view service, std::string_view registered_server,
              uint32_t heartbeat_interval_seconds) const -> RemoteProbe;
   auto put_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest, uint64_t size,
-                std::istream& contents, const std::atomic<bool>* cancel = nullptr) const -> void;
+                std::istream& contents, const std::atomic<bool>* cancel = nullptr, const TransferProgress& progress = {}) const -> void;
   auto get_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest,
-                std::ostream& destination, uint64_t limit, const std::atomic<bool>* stop = nullptr) const -> void;
+                std::ostream& destination, uint64_t limit, const std::atomic<bool>* stop = nullptr, const TransferProgress& progress = {}) const -> void;
   auto submit(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
               std::string_view spec) const -> RemoteJobState;
   auto status(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id) const -> RemoteJobState;

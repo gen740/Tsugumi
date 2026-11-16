@@ -75,54 +75,17 @@ Tools::Tools(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       dependencies(std::move(dependencies)) {}
 
 auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
-  std::vector<ToolSpec> specs;
-  for (const auto& tool : catalog.tools())
-    if (!guide || (!tool.mutating && tool.spec.name != "run_cancel" &&
-                   tool.spec.name != "view_save"))
-      specs.push_back(tool.spec);
-  specs.push_back(
-      {"document_template",
-       "Get the initial definition and all source files for a new Card "
-       "from the host's ui/templates catalog. name is the template id and id "
-       "is the new Card "
-       "identifier. Save definition_json and the returned files under "
-       "definitions/<id>/, "
-       "together with the canvas instance, in one project_edit. This tool "
-       "writes nothing.",
-       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
-  specs.push_back(
-      {"demo_list",
-       "List bundled demos: repository path, name and one-line description. "
-       "Read content with demo_read.",
-       R"({"type":"object","properties":{},"additionalProperties":false})"});
-  specs.push_back(
-      {"demo_read",
-       "Read a bundled file by repository path, relative to demos/ (e.g. "
-       "en/report/tsugumi.json or en/index.json).",
-       R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
-  if (guide) {
-    const auto definition = json::Object(json::Get(
-        json::Object(json::Get(catalog.shared(), "guide")), "showTool"));
-    specs.push_back({json::Text(definition, "name"),
-                     json::Text(definition, "description"),
-                     json::Get(definition, "inputSchema")});
-  } else {
-    const auto definition =
-        json::Object(json::Get(catalog.shared(), "delegateTool", "{}"));
-    specs.push_back({"delegate", json::Text(definition, "description"),
-                     json::Get(definition, "inputSchema", "{}")});
-  }
-  const std::vector<std::string> editing{
-      "project_edit",   "project_connect", "project_make_subgraph",
-      "project_layout", "project_copy",    "project_save"};
-  auto rank = [&](const ToolSpec& tool) {
-    const auto i = std::find(editing.begin(), editing.end(), tool.name);
-    return i == editing.end() ? 0 : 1 + static_cast<int>(i - editing.begin());
-  };
-  std::stable_sort(
-      specs.begin(), specs.end(),
-      [&](const auto& a, const auto& b) { return rank(a) < rank(b); });
-  return specs;
+  return catalog.ModelSpecs(guide ? ModelRole::Guide : ModelRole::Main);
+}
+
+auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
+  if (call.name != "tools") return call;
+  catalog.ValidateArguments(call.name, call.arguments);
+  const auto args = json::Object(call.arguments);
+  const auto action = json::Text(args, "action");
+  if (action.empty()) return call;
+  return {call.id, catalog.FamilyTool(json::Text(args, "family"), action, role),
+          json::Get(args, "arguments", "{}")};
 }
 
 // Read the exact revision being saved; never clean up a newer client's layout.
@@ -691,9 +654,12 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   };
 }
 
-auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
+auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
                          ToolResult result, const HelperScope::Reader& read)
     -> ToolResult {
+  const auto call =
+      ResolveCall(requested_call,
+                  scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
   if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
     if (catalog.Find(call.name))
@@ -744,8 +710,9 @@ auto Tools::RequireHelperPermission(const std::string& conversation,
 
 auto Tools::ExecuteTool(const std::string& conversation,
                         const std::string& requested_project,
-                        const ToolCall& call, bool wait, std::stop_token stop,
-                        bool helper, HelperScope* boundary) -> ToolResult {
+                        const ToolCall& requested_call, bool wait,
+                        std::stop_token stop, bool helper,
+                        HelperScope* boundary) -> ToolResult {
   Conversation c;
   {
     std::lock_guard lock(mutex);
@@ -753,8 +720,26 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   const auto project =
       requested_project.empty() ? c.project : requested_project;
+  const auto role = c.role == "guide"                ? ModelRole::Guide
+                    : boundary && boundary->scoped() ? ModelRole::ScopedHelper
+                    : helper                         ? ModelRole::Helper
+                                                     : ModelRole::Main;
+  const auto call = ResolveCall(requested_call, role);
+  if (c.role == "guide" && call.name != "tools" &&
+      !catalog.Allows(call.name, role))
+    throw Failure("permission_denied", "Tool unavailable for the guide role");
   catalog.ValidateArguments(call.name, call.arguments);
   auto args = json::Object(call.arguments);
+  if (call.name == "tools") {
+    const auto family = json::Text(args, "family");
+    std::vector<std::string> specs;
+    for (const auto& spec : catalog.FamilySpecs(family, role))
+      specs.push_back(json::Encode(
+          json::Members{{"action", json::Quote(spec.name)},
+                        {"description", json::Quote(spec.description)},
+                        {"input_schema", spec.input_schema}}));
+    return {json::Encode(specs), false, {}, {}};
+  }
   if (call.name == "tool_result_read") {
     std::lock_guard lock(mutex);
     const auto wanted = json::Text(args, "call_id");
@@ -1455,8 +1440,15 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                        {"index", std::to_string(e.index)}}));
   };
   hooks.reconcile_tool =
-      [this, id, boundary](const ToolCall& call) -> std::optional<ToolResult> {
+      [this, id, helper,
+       boundary](const ToolCall& requested_call) -> std::optional<ToolResult> {
     std::lock_guard lock(mutex);
+    const auto role = conversations->GetConversation(id).role == "guide"
+                          ? ModelRole::Guide
+                      : boundary && boundary->scoped() ? ModelRole::ScopedHelper
+                      : helper                         ? ModelRole::Helper
+                                                       : ModelRole::Main;
+    const auto call = ResolveCall(requested_call, role);
     if (call.name == "delegate") {
       conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
@@ -1512,10 +1504,14 @@ auto Tools::Hooks(const std::string& id, bool helper,
   if (boundary) {
     const auto reconcile = hooks.reconcile_tool;
     hooks.reconcile_tool =
-        [this, id, boundary,
-         reconcile](const ToolCall& call) -> std::optional<ToolResult> {
+        [this, id, boundary, reconcile](
+            const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
         RequireHelperPermission(id, *boundary);
+        const auto call = ResolveCall(
+            requested_call,
+            boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
+        if (call.name == "tools") return std::nullopt;
         if (call.name == "delegate") {
           // Delegate has no core receipt and is not a project tool. Match its
           // lifetime reservation before returning saved children; do not charge
@@ -1592,8 +1588,10 @@ auto Tools::Handle(const RequestIn& request, bool human,
       const auto id = p->conversation_id()->str(),
                  project = Text(p->project_id());
       conversations->OwnConversation(id, human);
-      const ToolCall call{p->op_id()->str(), p->name()->str(),
-                          p->arguments_json()->str()};
+      const auto call = ResolveCall(
+          {p->op_id()->str(), p->name()->str(), p->arguments_json()->str()},
+          conversations->GetConversation(id).role == "guide" ? ModelRole::Guide
+                                                             : ModelRole::Main);
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
       if (call.name == "project_shell" || call.name == "project_copy" ||

@@ -34,9 +34,9 @@ class StagingHandle {
 };
 
 auto copy_output(int source, const stdfs::path& relative, const stdfs::path& destination,
-                   PortKind kind, const std::atomic<bool>& cancel, OutputDelivery delivery) -> void {
+                   PortKind kind, const std::atomic<bool>& cancel, OutputDelivery delivery, const fs::TransferProgress& progress) -> void {
   try {
-    fs::copy_staging_output(source, relative, destination, kind == PortKind::Directory, cancel);
+    fs::copy_staging_output(source, relative, destination, kind == PortKind::Directory, cancel, progress);
   } catch (const std::exception& error) {
     if (delivery == OutputDelivery::local_paths && cancel.load())
       throw Failed(FailureKind::cancelled, "output transfer cancelled");
@@ -64,7 +64,7 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
                     int output_root, const std::string& output_alias,
                     int input_root, const stdfs::path& input_directory,
                     const stdfs::path& destination, OutputDelivery delivery,
-                    const std::atomic<bool>& cancel) -> void {
+                    const std::atomic<bool>& cancel, const fs::TransferProgress& progress) -> void {
   if (delivery == OutputDelivery::local_paths) {
     // Forwarded inputs retain their recorded path, not worker staging paths.
     for (auto& [name, bytes] : outcome.outputs) {
@@ -97,17 +97,17 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
       const auto relative = stdfs::path(*actual).lexically_relative(output_alias);
       if (relative.empty() || relative.is_absolute() ||
           std::ranges::any_of(relative, [](const auto& part) { return part == ".."; })) continue;
-      copy_output(output_root, relative, destination / relative, port->kind, cancel, delivery);
+      copy_output(output_root, relative, destination / relative, port->kind, cancel, delivery, progress);
       continue;
     }
     stdfs::path rel;
     if (*actual == output_alias) {
       rel = "out";
-      copy_output(output_root, ".", destination, port->kind, cancel, delivery);
+      copy_output(output_root, ".", destination, port->kind, cancel, delivery, progress);
     } else if (actual->starts_with(output_alias + "/")) {
       const auto relative = remote::relative_path(std::string_view(*actual).substr(output_alias.size() + 1));
       rel = "out" / relative;
-      copy_output(output_root, relative, destination / relative, port->kind, cancel, delivery);
+      copy_output(output_root, relative, destination / relative, port->kind, cancel, delivery, progress);
     } else if (std::ranges::any_of(inputs, [&](const Value& in) { return in.kind == port->kind && path_value(in) == actual; })) {
       if (forwarded.empty()) {
         forwarded = stdfs::path("out") / (".forwarded-" + crypto::uuid4());
@@ -116,7 +116,7 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
       }
       rel = forwarded / std::to_string(port - ports.begin()) / stdfs::path(*actual).filename();
       copy_output(input_root, stdfs::path(*actual).lexically_relative(input_directory),
-                  destination.parent_path() / rel, port->kind, cancel, delivery);
+                  destination.parent_path() / rel, port->kind, cancel, delivery, progress);
     } else {
       throw Failed(FailureKind::output_invalid, "remote output points outside its output directory");
     }
@@ -192,7 +192,7 @@ auto run_invocation(const ReleaseWorker& release_worker, WorkerPool::Lease& leas
     stage_outputs(result.outcome, invocation.outputs, inputs, invocation.inputs, output_directory.get(), worker.out_dir(),
         input_directory ? input_directory->get() : -1, invocation.input_directory,
         local && !needs_out ? stdfs::path{} : invocation.output_directory, invocation.delivery,
-        invocation.cancel ? *invocation.cancel : no_cancel);
+        invocation.cancel ? *invocation.cancel : no_cancel, invocation.transfer);
     if (!result.outcome.failure && invocation.validate) {
       try {
         invocation.validate(result);

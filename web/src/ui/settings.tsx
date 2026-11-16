@@ -177,10 +177,20 @@ function RuntimeResetSettings() {
     } catch (error) { setMessage(errorText(error)) }
     finally { setWorking(false) }
   }
+  const verify = async () => {
+    if (!window.confirm(L('すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。'))) return
+    setWorking(true); setMessage('')
+    try {
+      const result = await api<{ message: string }>('/api/runtime/verify-store', {})
+      setMessage(L('Nix store の検査・修復が完了しました。') + ' ' + result.message)
+    } catch (error) { setMessage(errorText(error)) }
+    finally { setWorking(false) }
+  }
   const [available, setAvailable] = useState(false)
   useEffect(() => { void api<{ vmState: string }>('/api/runtime').then((s) => setAvailable(s.vmState !== 'unavailable')).catch(() => {}) }, [])
   if (!available) return null
   return <Section title={L('実行環境のデータ')}>
+    <Row><Button disabled={working} onClick={() => void verify()}>{L('共有 store を検査・修復…')}</Button></Row>
     <Row><Button disabled={working} onClick={() => void reset()}>{L('すべての実行環境を初期化…')}</Button></Row>
     {message && <Row><span className="caption selectable">{message}</span></Row>}
   </Section>

@@ -125,6 +125,7 @@ export interface CardRunState {
   phase: D.Phase
   failure?: string
   executionState?: D.RemoteExecutionState | null
+  transfer?: string
   /** Stages of the latest invocation, in the order the core ran them. */
   stages: StageRecord[]
   cached: boolean
@@ -922,6 +923,8 @@ export class ProjectSession extends Observable {
       this.cardStates.set(k, {
         state: inv.state, invocation: n, batchActivation: inv.batchActivation ?? undefined, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
         executionState: inv.executionState,
+        transfer: (inv.state === D.CardState.running || inv.state === D.CardState.preparing) && inv.transferDirection && inv.transferDone < inv.transferTotal
+          ? L('ファイル転送: {0} ({1}/{2} bytes)', s(inv.transferName), String(inv.transferDone), String(inv.transferTotal)) : undefined,
         // Each notification carries the invocation's stages so far.
         stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
         sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
@@ -3561,7 +3564,7 @@ export class ProjectSession extends Observable {
     return {
       title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
-      result: pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
+      result: state?.transfer ?? pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,

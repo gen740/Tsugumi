@@ -189,7 +189,7 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   if (!name || !*name) throw BrokerDisconnected("unknown remote job state");
   std::string state(name);
   std::ranges::transform(state, state.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return {state, j->fingerprint, j->result_sha256, j->diagnostic};
+  return {state, j->fingerprint, j->result_sha256, j->diagnostic, j->transfer_name, j->transfer_done, j->transfer_total};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck()) throw BrokerDisconnected("expected remote worker acknowledgement");
@@ -280,7 +280,7 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
                       t->available, c.resource_limits, c.max_jobs,
-                      t->heartbeat_interval_seconds, t->missed_heartbeats});
+                      t->heartbeat_interval_seconds, t->missed_heartbeats, t->grade});
   }
   return targets;
 }
@@ -291,14 +291,15 @@ auto RemoteJobClient::probe(std::string_view service, std::string_view registere
   if (c.server_id != registered_server) throw Failed(FailureKind::unsupported, "The remote worker's server ID changed. Verify the registered endpoint.");
   if (!crypto::is_sha256_hex(c.instance_id)) throw BrokerDisconnected("remote worker did not identify its project journal");
   keep_alive(service, registered_server, heartbeat_interval_seconds);
-  return {c.native_system, c.instance_id, c.server_id, c.systems, c.resource_limits};
+  return {c.native_system, c.instance_id, c.server_id, c.systems, c.resource_limits, c.max_jobs, c.active_jobs};
 }
 auto RemoteJobClient::put_blob(std::string_view service, std::string_view server, std::string_view instance,
                                std::string_view job, std::string_view digest, uint64_t size, std::istream& contents,
-                               const std::atomic<bool>* cancel) const -> void {
+                               const std::atomic<bool>* cancel, const TransferProgress& progress) const -> void {
   if (size > workerd::kMaxBlob) throw std::runtime_error("upload exceeds 64 GiB");
   const auto deadline = Clock::now() + kTransferTimeout;
   uint64_t offset = 0;
+  if (progress) progress(0, size);
   do {
     BrokerIo{stopped_, cancel, true}.check(deadline);
     R::PutBlobRequestT chunk;
@@ -310,11 +311,12 @@ auto RemoteJobClient::put_blob(std::string_view service, std::string_view server
     }
     offset += chunk.bytes.size();
     require_ack(request(command(std::move(chunk), service, server, instance, job), cancel));
+    if (progress) progress(offset, size);
   } while (offset < size);
 }
 auto RemoteJobClient::get_blob(std::string_view service, std::string_view server, std::string_view instance,
                                std::string_view job, std::string_view digest, std::ostream& destination, uint64_t limit,
-                               const std::atomic<bool>* stop) const -> void {
+                               const std::atomic<bool>* stop, const TransferProgress& progress) const -> void {
   crypto::Sha256 hash;
   uint64_t offset = 0, total = 0;
   const auto deadline = Clock::now() + kTransferTimeout;
@@ -329,10 +331,12 @@ auto RemoteJobClient::get_blob(std::string_view service, std::string_view server
         body->bytes.size() > workerd::kChunkBytes || (body->bytes.empty() && offset < body->total))
       throw BrokerDisconnected("invalid remote blob chunk");
     total = body->total;
+    if (progress && !offset) progress(0, total);
     hash.update(body->bytes.data(), body->bytes.size());
     destination.write(reinterpret_cast<const char*>(body->bytes.data()), static_cast<std::streamsize>(body->bytes.size()));
     if (!destination) throw std::runtime_error("cannot store remote blob");
     offset += body->bytes.size();
+    if (progress) progress(offset, total);
   } while (offset < total);
   if (hash.finish_hex() != digest) throw std::runtime_error("remote blob failed SHA-256 verification");
 }

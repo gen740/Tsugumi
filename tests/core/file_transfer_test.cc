@@ -107,6 +107,26 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
   expect(rejected, "source truncation silently succeeded");
   expect(!fs::exists(root / "failed-copy"), "published an incomplete copy");
 }
+auto transfer_progress(const fs::path& root) -> void {
+  const std::string bytes(200000, 'x');
+  tsugumi::fs::write_atomic(root / "data", bytes);
+  const int directory = ::open(root.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(directory >= 0, "open progress input");
+  std::atomic<bool> cancel = false;
+  uint64_t previous = 0;
+  size_t calls = 0;
+  tsugumi::fs::copy_staging_output(directory, "data", root / "copy", false, cancel,
+      [&](const fs::path& name, uint64_t done, uint64_t total) {
+        expect(name == "data", "progress lost the current filename");
+        expect(total == bytes.size() && done >= previous && done <= total, "invalid byte progress");
+        if (!calls) expect(done == 0, "progress did not announce transfer start");
+        previous = done;
+        ++calls;
+      });
+  ::close(directory);
+  expect(calls > 2 && previous == bytes.size(), "progress missing during transfer or at completion");
+  expect(tsugumi::fs::read_file_or_throw(root / "copy") == bytes, "progress changed the copied file");
+}
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
@@ -114,7 +134,8 @@ auto main(int argc, char** argv) -> int {
     expect(argc == 2, "expected large, sparse, shrink-stream or shrink-sparse");
     Scratch scratch;
     const std::string test = argv[1];
-    if (test == "large" || test == "sparse") large_file(scratch.path, test == "sparse");
+    if (test == "progress") transfer_progress(scratch.path);
+    else if (test == "large" || test == "sparse") large_file(scratch.path, test == "sparse");
     else if (test == "shrink-stream" || test == "shrink-sparse") shrinking_source(scratch.path, test == "shrink-sparse");
     else throw std::runtime_error("unknown test");
     std::cout << test << " passed\n";

@@ -100,6 +100,9 @@ class NativeProcess final : public EnvironmentProcess {
     sigemptyset(&defaults);
     sigaddset(&defaults, SIGPIPE);
     sigaddset(&defaults, SIGCHLD);
+    sigaddset(&defaults, SIGTERM);
+    sigaddset(&defaults, SIGINT);
+    sigaddset(&defaults, SIGHUP);
     posix_spawnattr_setsigmask(&attributes, &empty);
     posix_spawnattr_setsigdefault(&attributes, &defaults);
     posix_spawnattr_setpgroup(&attributes, 0);
@@ -188,18 +191,18 @@ class NativeProcess final : public EnvironmentProcess {
 }  // namespace
 
 namespace {
-auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
-    -> Tsugumi::RPC::ProjectHostRequirementsT {
+auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> std::unique_ptr<client::Connection> {
   namespace R = Tsugumi::RPC;
   client::Options options;
   options.endpoint = ready.unix_socket.empty() ? ready.endpoint
                                                : "unix:" + ready.unix_socket;
   options.connect_timeout = 500ms;
-  client::Connection connection(options);
-  if (connection.Start().get()) throw std::runtime_error("Cannot connect to project core");
+  auto connection = std::make_unique<client::Connection>(options);
+  if (connection->Start().get()) throw std::runtime_error("Cannot connect to project core");
   auto response =
       connection
-          .Call(
+          ->Call(
               [&](uint64_t id) {
                 flatbuffers::FlatBufferBuilder b;
                 auto hello = R::CreateSessionHelloRequest(
@@ -223,7 +226,13 @@ auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
   if (!hello || hello->project_id()->str() != ready.project_id ||
       hello->server_instance_id()->str() != ready.server_instance_id)
     throw std::runtime_error("Project identity changed");
-  auto result = connection.Call([](uint64_t id) {
+  return connection;
+}
+auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> Tsugumi::RPC::ProjectHostRequirementsT {
+  namespace R = Tsugumi::RPC;
+  auto connection = ProjectConnection(ready);
+  auto result = connection->Call([](uint64_t id) {
     flatbuffers::FlatBufferBuilder b;
     auto value = R::CreateProjectHostRequirementsRequest(b);
     auto request = R::CreateRequest(b, R::RequestPayload::ProjectHostRequirementsRequest, value.Union());
@@ -239,6 +248,22 @@ auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
   return out;
 }
 }  // namespace
+auto EnvironmentProcess::StopIfIdle(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+  namespace R = Tsugumi::RPC;
+  auto connection = ProjectConnection(ready);
+  auto result = connection->Call([](uint64_t id) {
+    flatbuffers::FlatBufferBuilder b;
+    auto value = R::CreateIdleShutdownRequest(b);
+    auto request = R::CreateRequest(b, R::RequestPayload::IdleShutdownRequest, value.Union());
+    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
+  }, 500ms).get();
+  // Poll observes exit. A lost reply never authorizes a forced stop.
+  if (result.error) return false;
+  const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();
+  const auto* idle = reply ? reply->value_as_IdleShutdownResult() : nullptr;
+  return idle && idle->stopping();
+}
 auto EnvironmentProcess::Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   return ReadProjectRequirements(ready);

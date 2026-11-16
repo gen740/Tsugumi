@@ -88,7 +88,7 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
     exec > /out/log 2>&1
     {
       # Chroot store under /cache: persistent across builds, separate from the image store.
-      nixf() { nix --extra-experimental-features "nix-command flakes" --accept-flake-config --store /cache "$@"; }
+      nixf() { nix --option fsync-store-paths true --option fsync-metadata true --extra-experimental-features "nix-command flakes" --accept-flake-config --store /cache "$@"; }
       # build.log grows while it builds (watch it from the Mac).
       img=$(nixf build --no-link --print-out-paths -L "git+file:///src#packages.aarch64-linux.'"$attr"'" 2>&1 | grep -v "^copying path" | tee /out/build.log | tail -1)
       # A failed build prints no store path: stop here instead of copying nothing.
@@ -100,6 +100,8 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
         cp /cache$img/vm-version /out/
       fi
     }
+    # Persist the private builder store before its container exits.
+    sync -f /cache
     touch /out/done
   ' >/dev/null
 echo "building $attr in $builder (progress: $out/build.log)"

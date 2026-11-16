@@ -417,15 +417,44 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   expect(!stdfs::exists(restarted.job_path(running) / "blobs"),
          "ordinary release retained scratch");
 }
+auto timeout_budget_test(const stdfs::path& root) -> void {
+  Journal journal(root / "timeouts");
+  const std::string core(64, 'b');
+  const std::string job(64, 'e');
+  const auto input = chunk("input");
+  journal.put(job, input, core);
+  auto bytes = spec(input.digest, 0);
+  auto settings = parse_spec(bytes);
+  settings->build_timeout_ms = 1;
+  settings->timeout_seconds = 2;
+  validate_spec(*settings);
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(R::JobSpec::Pack(builder, settings.get()));
+  bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  const auto submitted = journal.submit(job, bytes, core);
+  expect(submitted.deadline == 0, "a Card deadline must not start while queued");
+  journal.expire(job);
+  expect(journal.claim(job, 1, 1, "boot"), "queue consumed a Card or build budget");
+  expect(journal.status(job).deadline == 0, "job has an aggregate wall deadline");
+  auto decoded = parse_spec(bytes);
+  expect(decoded->build_timeout_ms == 1 && decoded->timeout_seconds == 2,
+         "build and call budgets were not kept separately");
+  validate_spec(*parse_spec(spec(input.digest, 0)));
+}
 }  // namespace
 }  // namespace tsugumi::workerd
 
-auto main() -> int {
+auto main(int argc, char** argv) -> int {
   using namespace tsugumi::workerd;
   ::umask(0077);
   const auto root = stdfs::temp_directory_path() /
                     ("tsugumi-workerd-" + tsugumi::crypto::uuid4());
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--timeout-budgets") {
+      timeout_budget_test(root);
+      discard_tree(root);
+      return 0;
+    }
     log_test();
     protocol_test();
     journal_test(root);

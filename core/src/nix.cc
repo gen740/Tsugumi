@@ -556,7 +556,9 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
               "; card = /. + " + nix_quote(def.string()) + (req.target.kind == WorkerKind::native ? "; }" : "; remote = true; }");
   call.cancel = req.cancel;
-  if (req.timeout_seconds) call.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
+  const auto budget_start = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::duration transfer_time{};
+  if (req.timeout_seconds) call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
   call.on_phase = [&](bool building) {
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
@@ -595,7 +597,12 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
       res = evaluator().evaluate(call);
     }
     if (!req.transport) throw std::runtime_error("execution target has no derivation transport");
+    const auto transfer_start = std::chrono::steady_clock::now();
+    const auto build_deadline = call.deadline;
+    call.deadline.reset();
     evaluator().make_available(call, *req.transport, res.derivation);
+    transfer_time = std::chrono::steady_clock::now() - transfer_start;
+    if (build_deadline) call.deadline = *build_deadline + transfer_time;
     if (req.target.kind == WorkerKind::native) res = evaluator().realise_native(call, std::move(res));
     std::erase_if(evaluations_, [&](const auto& item) {
       return item.second.second.evaluation_epoch != res.evaluation_epoch;
@@ -617,6 +624,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   CardBuildPlan plan;
   plan.execution_list = res.execution_list;
   auto& build = plan.common;
+  build.preparation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - budget_start - transfer_time).count();
   build.derivation = std::move(res.derivation);
   build.environment.derivation = build.derivation.path;
   build.environment.manifest = build.derivation.output;

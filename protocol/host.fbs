@@ -75,7 +75,7 @@ table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
 table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
@@ -266,14 +266,14 @@ table GuideState {
 // Heartbeat intervals are >= 1 second; missed_heartbeats = 0 means never.
 // New registrations default to 15 seconds and never expire for silence.
 table ExecutionServicesRequest {}
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
 table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 

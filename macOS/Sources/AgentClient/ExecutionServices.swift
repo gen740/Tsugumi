@@ -17,6 +17,7 @@ public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Send
   public let workerPublicKey: String
   public let heartbeatIntervalSeconds: UInt32
   public let missedHeartbeats: UInt32
+  public let grade: String
   public let capabilities: ExecutionServiceCapabilities
 }
 
@@ -27,6 +28,7 @@ public struct ExecutionServiceRegistration: Sendable {
   public var workerPublicKey = ""
   public var heartbeatIntervalSeconds: UInt32 = 15
   public var missedHeartbeats: UInt32 = 0
+  public var grade = "1"
   public var verify = false
   public init() {}
 }
@@ -42,7 +44,7 @@ public enum ExecutionServices {
     try decode(await CoreHostClient.shared.call("ExecutionServicesRequest"))
   }
   public static func put(_ value: ExecutionServiceRegistration) async throws -> ExecutionServicesState {
-    let fields: [String: Any] = ["id": value.id, "name": value.name, "endpoint": value.endpoint, "workerPublicKey": value.workerPublicKey, "verify": value.verify, "heartbeatIntervalSeconds": value.heartbeatIntervalSeconds, "missedHeartbeats": value.missedHeartbeats]
+    let fields: [String: Any] = ["id": value.id, "name": value.name, "endpoint": value.endpoint, "workerPublicKey": value.workerPublicKey, "verify": value.verify, "heartbeatIntervalSeconds": value.heartbeatIntervalSeconds, "missedHeartbeats": value.missedHeartbeats, "grade": value.grade]
     return try decode(await CoreHostClient.shared.call("ExecutionServicePutRequest", fields))
   }
   public static func remove(_ id: String) async throws -> ExecutionServicesState {

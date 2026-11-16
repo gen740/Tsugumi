@@ -254,6 +254,7 @@ type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unk
 const routes: Record<string, Handler> = {
   'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
+  'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
   'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),

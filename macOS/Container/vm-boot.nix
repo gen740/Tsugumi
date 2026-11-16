@@ -39,6 +39,9 @@ let
   nixConf = writeTextDir "etc/nix/nix.conf" ''
     build-users-group = nixbld
     sandbox = true
+    # Registered paths must survive power loss, not just their database rows.
+    fsync-store-paths = true
+    fsync-metadata = true
     experimental-features = nix-command flakes
     substituters = https://cache.nixos.org
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
@@ -86,14 +89,17 @@ let
         ;;
     esac
   '';
+  storeHealth = writeShellScript "tsugumi-store-health" (
+    "export PATH=${lib.makeBinPath [ coreutils util-linux nix bashInteractive ]}\n"
+    + builtins.readFile ./store-health.sh
+  );
   init = writeShellScript "tsugumi-vm-init" ''
     export PATH=${lib.makeBinPath [ coreutils findutils util-linux e2fsprogs nix bashInteractive gawk ]}
     export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
     export SSL_CERT_FILE=$NIX_SSL_CERT_FILE HOME=/root TMPDIR=/tmp USER=root
     exec </dev/console >/dev/console 2>&1
     stage() { echo "TSUGUMI-STAGE $*"; }
-    # Written store paths reach the disk before the power goes (Nix does not
-    # sync them itself).
+    # Boot failures deliberately leave the dirty marker for the next boot.
     fail() { echo "TSUGUMI-FAILED $*"; sync; sleep 1; ${busybox}/bin/poweroff -f; }
     set -u
     stage boot
@@ -129,6 +135,10 @@ let
     fi
     e2fsck -p /dev/vdb >/dev/null 2>&1 || true
     mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
+    # Mark the disk before any store writes, including image registration.
+    boot=$(sha256sum < /store-paths | cut -c1-32)
+    check_reason=$(${storeHealth} begin /persist "$boot") || fail "cannot mark the store disk"
+    ln -s ${storeHealth} /run/tsugumi/store-health
     df -h /persist | tail -1
     if ! blkid -p /dev/vdc >/dev/null 2>&1; then
       echo "formatting the run history disk ($(($(blockdev --getsize64 /dev/vdc) >> 30)) GiB)"
@@ -187,17 +197,9 @@ let
     ip link set lo up
     ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
 
-    # Another boot disk (an app update): the database may still list paths of
-    # the previous one's store, which are gone with it. Those nothing refers
-    # to are dropped; the others (inputs of earlier Card builds) are fetched
-    # again from cache.nixos.org. Once per boot disk.
-    boot=$(sha256sum < /store-paths | cut -c1-32)
-    if [ "$(cat /persist/boot-closure 2>/dev/null)" != "$boot" ]; then
-      echo "checking the store against this boot disk"
-      NIX_REMOTE=daemon NO_COLOR=1 nix-store --verify --repair 2>&1 | tail -20
-      sync
-      echo "$boot" > /persist/boot-closure
-    fi
+    # No project starts, or uses a cached vm-system, before repair succeeds.
+    ${storeHealth} check /persist "$boot" "$check_reason" \
+      || fail "Nix store content check/repair failed; see the VM console and /persist/store-health/check.log"
 
     # Tsugumi itself, built by Nix from the source the app shares
     # (vm-system.nix): once per content of the source, then reused from the

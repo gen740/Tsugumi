@@ -130,6 +130,8 @@ struct InvocationSummaryData {
   std::string environment_id;
   std::string params_json;  // the invocation's parameters, not the current document
   std::string execution_service;
+  std::string transfer_name, transfer_direction;
+  uint64_t transfer_done = 0, transfer_total = 0;
   std::string execution_job_id;
   std::string execution_system;
   std::optional<ExecutionResources> execution_resources;
