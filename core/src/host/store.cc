@@ -38,6 +38,8 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY, json "
       "TEXT NOT NULL)");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS conversation_locations(conversation TEXT "
+      "PRIMARY KEY, project TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS environment_projects(key TEXT PRIMARY KEY, "
       "project TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS project_attached_roots(project TEXT NOT NULL, "

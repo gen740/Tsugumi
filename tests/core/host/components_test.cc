@@ -24,8 +24,8 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   for (const auto* table :
        {"projects", "folders", "access_requests", "grants", "providers",
         "access_prompt_items", "operation_approvals", "credentials",
-        "environment_projects", "project_paths", "skill_catalogs",
-        "model_lists"}) {
+        "environment_projects", "skill_catalogs", "conversation_locations",
+        "model_lists"}) { "project_paths",
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -134,8 +134,8 @@ TEST(HostComponents,
   TemporaryDirectory directory;
   const auto root = directory.path / "project";
   const auto other = directory.path / "other";
-  std::filesystem::create_directories(root);
-  std::filesystem::create_directories(other);
+  Write(root / ".tsugumi/project-id", "project");
+  Write(other / ".tsugumi/project-id", "other");
   host::HostStore store(directory.path);
   host::StateGate gate;
   host::ProjectRegistry registry(
@@ -183,14 +183,57 @@ TEST(HostComponents,
   ASSERT_TRUE(location.step());
   EXPECT_EQ(location.text(0), root.string());
 }
+TEST(HostComponents, RegistryReplacesCanonicalPathAndRejectsLateOldIdentity) {
+  namespace H = Tsugumi::Host;
+  TemporaryDirectory directory;
+  const auto root = directory.path / "project";
+  Write(root / ".tsugumi/project-id", "old");
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::ProjectRegistry registry(gate, store.db, [](const auto&) {
+    return std::optional<std::filesystem::path>{};
+  });
+  const auto register_project = [&](const std::string& id,
+                                    const std::filesystem::path& path) {
+    H::RegisterProjectRequestT request;
+    request.project_id = id;
+    request.endpoint = "unix:/project";
+    request.path = path.string();
+    flatbuffers::FlatBufferBuilder builder;
+    builder.Finish(H::RegisterProjectRequest::Pack(builder, &request));
+    registry.RegisterProject(*flatbuffers::GetRoot<H::RegisterProjectRequest>(
+        builder.GetBufferPointer()));
+  };
+  register_project("old", root);
+  Write(root / ".tsugumi/project-id", "new");
+  // Read-time validation marks persisted registrations stale before a new
+  // registration arrives, including after restarting the registry.
+  host::ProjectRegistry restored(gate, store.db, {});
+  try {
+    restored.Lookup("old");
+    FAIL() << "Stale registration was accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "stale_project");
+    EXPECT_NE(std::string(error.what()).find("Close and reopen"),
+              std::string::npos);
+  }
+  const auto alias = directory.path / "alias";
+  std::filesystem::create_directory_symlink(root, alias);
+  register_project("new", alias);
+  EXPECT_EQ(restored.Locations(), std::vector<std::string>{"new"});
+  EXPECT_EQ(restored.Root("new"), std::filesystem::canonical(root));
+  EXPECT_THROW(register_project("old", root), host::Failure);
+  EXPECT_EQ(restored.Locations(), std::vector<std::string>{"new"});
+}
+
 TEST(HostComponents,
      RegistryKeepsProjectAndFolderIdentitiesBoundToTheirLocations) {
   namespace H = Tsugumi::Host;
   TemporaryDirectory directory;
   const auto root = directory.path / "project";
   const auto other = directory.path / "other";
-  std::filesystem::create_directories(root);
-  std::filesystem::create_directories(other);
+  Write(root / ".tsugumi/project-id", "project");
+  Write(other / ".tsugumi/project-id", "other");
   host::HostStore store(directory.path);
   host::StateGate gate;
   std::optional<std::filesystem::path> opened;

@@ -43,7 +43,12 @@ struct ConversationStore {
   auto ProjectDatabase(const std::string& project, bool create = false)
       -> sql::Db*;
   auto Databases(const std::string& project = {}) -> std::vector<sql::Db*>;
-  auto FindConversationDatabase(const std::string& id) -> sql::Db*;
+  auto FindConversationDatabase(
+      const std::string& id,
+      const std::optional<std::string>& project = std::nullopt) -> sql::Db*;
+  auto ConversationProject(const std::string& id) -> std::optional<std::string>;
+  auto RememberConversation(const std::string& id, const std::string& project)
+      -> void;
   auto ConversationDatabase(const std::string& id) -> sql::Db&;
   auto GetConversation(const std::string& id) -> Conversation;
   auto OwnConversation(const std::string& id, bool human) -> void;

@@ -307,6 +307,7 @@
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このビルドには既定の Nixpkgs が設定されていません。" = "This build has no default Nixpkgs pin.";
 "このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。" = "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.";
+"このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。" = "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトに根拠の記録がありません" = "This evidence is not available in this project";
@@ -315,6 +316,7 @@
 "このプロジェクトの tsugumid が起動中に終了しました" = "tsugumid exited during startup";
 "このプロジェクトの tsugumid を起動しています" = "Starting this project's tsugumid";
 "このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。" = "External execution requires a filesystem that reports the project folder’s creation time.";
+"このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。" = "This project's conversation records belong to another project identity. Restore the matching .tsugumi folder from a backup. To start new conversations, close the project, move agent.sqlite out of .tsugumi to preserve it, then reopen the project. Conversation records have not been deleted.";
 "このプロジェクトの実行履歴とビルドの登録を削除します。" = "Deletes this project's run history and build registrations.";
 "このプロジェクトの実行環境（VM の中）" = "This project's environment (in the VM)";
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";

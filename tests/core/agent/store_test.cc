@@ -48,7 +48,7 @@ struct ConversationStoreTest : testing::Test {
   }
   auto Register(const std::string& project) -> std::filesystem::path {
     const auto root = directory.path / project;
-    std::filesystem::create_directories(root);
+    Write(root / ".tsugumi/project-id", project);
     Tsugumi::Host::EnvironmentStateT ready;
     ready.project_id = project;
     ready.project = root.string();
@@ -398,17 +398,26 @@ TEST_F(ConversationStoreTest,
   Open();
   ASSERT_NE(store->ProjectDatabase("known"), nullptr);
   EXPECT_EQ(store->GetConversation("conversation").project, "known");
-  EXPECT_THROW(store->Databases(), host::Failure);
+  EXPECT_EQ(store->Databases().size(), 2u);
+  EXPECT_EQ(Create("new", "known").project, "known");
+  EXPECT_EQ(Create("home-new").project, "");
 }
 TEST_F(ConversationStoreTest,
        ProjectStateLinksAndForeignConversationIdentitiesStayRejected) {
   std::lock_guard lock(gate.mutex);
   const auto root = Register("project");
   const auto outside = directory.path / "outside";
-  std::filesystem::create_directories(outside);
+  Write(outside / "project-id", "project");
+  std::filesystem::remove_all(root / ".tsugumi");
   std::filesystem::create_directory_symlink(outside, root / ".tsugumi");
-  EXPECT_THROW(store->ProjectDatabase("project", true), host::Failure);
+  try {
+    store->ProjectDatabase("project", true);
+    FAIL() << "A linked state folder was accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "invalid_request");
+  }
   std::filesystem::remove(root / ".tsugumi");
+  Write(root / ".tsugumi/project-id", "project");
   Create("conversation", "project");
   store.reset();
   home.db.exec("INSERT INTO project_paths VALUES('foreign','" + root.string() +
@@ -418,9 +427,85 @@ TEST_F(ConversationStoreTest,
     store->ProjectDatabase("foreign");
     FAIL() << "A foreign project's conversation database was accepted";
   } catch (const host::Failure& error) {
-    EXPECT_EQ(error.code, "conflict");
+    EXPECT_EQ(error.code, "stale_project");
   }
 }
+TEST_F(ConversationStoreTest,
+       ForeignRecordsAreReportedOnlyForTheirProjectAndNeverRecovered) {
+  Register("broken");
+  Register("healthy");
+  Create("foreign", "broken");
+  auto& broken = store->ConversationDatabase("foreign");
+  broken.exec(
+      "UPDATE conversations SET project='old-identity';"
+      "INSERT INTO turns VALUES('foreign','turn','digest','running',0,'{}')");
+  store.reset();
+  Open();
+  // A scoped creation must not even try to open the broken database.
+  EXPECT_EQ(Create("new", "healthy").project, "healthy");
+  EXPECT_FALSE(store->OpenedPath("broken"));
+  A::ConversationListRequestT list;
+  list.project_id = "healthy";
+  EXPECT_EQ(
+      WithRequest(
+          list, [&](const auto& request) { return store->List(request, true); })
+          .conversations.size(),
+      1u);
+  Open();
+  home.db.exec("DELETE FROM conversation_locations WHERE conversation='new'");
+  EXPECT_EQ(store->GetConversation("new").project, "healthy");
+  EXPECT_EQ(store->Databases().size(), 2u);
+  list.project_id = "broken";
+  try {
+    WithRequest(
+        list, [&](const auto& request) { return store->List(request, true); });
+    FAIL() << "Foreign records were accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "conversation_identity_mismatch");
+    EXPECT_NE(std::string(error.what()).find("Restore the matching .tsugumi"),
+              std::string::npos);
+    EXPECT_NE(std::string(error.what()).find("move agent.sqlite"),
+              std::string::npos);
+  }
+  sql::Db untouched((directory.path / "broken/.tsugumi/agent.sqlite").string());
+  auto state =
+      untouched.prepare("SELECT state FROM turns WHERE conversation='foreign'");
+  ASSERT_TRUE(state.step());
+  EXPECT_EQ(state.text(0), "running");
+}
+
+TEST_F(ConversationStoreTest,
+       RoutingSurvivesRestartWithoutOpeningOtherProjects) {
+  Register("first");
+  Register("second");
+  Create("fixed-id", "first");
+  Open();
+  EXPECT_THROW(Create("fixed-id", "second"), host::Failure);
+  EXPECT_FALSE(store->OpenedPath("first"));
+  EXPECT_FALSE(store->OpenedPath("second"));
+  EXPECT_EQ(store->GetConversation("fixed-id").project, "first");
+  EXPECT_FALSE(store->OpenedPath("second"));
+}
+
+TEST_F(ConversationStoreTest, RecreatedFolderReplacesEvenAnOpenedIdentity) {
+  const auto root = Register("old");
+  Create("old-record", "old");
+  // Reproduce replacing .tsugumi while the host still holds its old handle.
+  std::filesystem::rename(root / ".tsugumi", root / "saved-state");
+  Write(root / ".tsugumi/project-id", "new");
+  EXPECT_THROW(store->ProjectDatabase("old"), host::Failure);
+  Tsugumi::Host::EnvironmentStateT ready;
+  ready.project = root.string();
+  ready.project_id = "new";
+  ready.key = "new";
+  ready.endpoint = "unix:/new";
+  registry.RegisterReady(ready);
+  EXPECT_EQ(registry.Locations(), std::vector<std::string>{"new"});
+  EXPECT_THROW(registry.Lookup("old"), host::Failure);
+  EXPECT_EQ(Create("new-record", "new").project, "new");
+  EXPECT_TRUE(std::filesystem::exists(root / "saved-state/agent.sqlite"));
+}
+
 TEST_F(ConversationStoreTest,
        DeletionCommitsHostRevocationBeforeProjectDeletion) {
   std::lock_guard lock(gate.mutex);
