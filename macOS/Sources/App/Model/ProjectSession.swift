@@ -338,6 +338,7 @@ final class ProjectSession {
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
   @ObservationIgnored private var externalsKey = ""
+  @ObservationIgnored private var externalLoadTask: Task<Void, Never>?
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -1719,6 +1720,14 @@ final class ProjectSession {
     } else if let d = result.delta {
       if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
     }
+    // Acknowledgement includes external hashes before their bodies finish
+    // loading. Keep the submitted draft until both describe the same state;
+    // an unread cache entry must never appear as a concurrent deletion.
+    var loadedKey: String
+    repeat {
+      loadedKey = externalsKey
+      await externalLoadTask?.value
+    } while loadedKey != externalsKey
     return result
   }
 
@@ -2173,7 +2182,7 @@ final class ProjectSession {
     externalsKey = key
     guard let client else { return }
     let hashes = sources.mapValues(\.hash)
-    Task { @MainActor in
+    externalLoadTask = Task { @MainActor in
       var found: [String: ExternalProject] = [:]
       var read: [String: String] = [:]
       for p in paths where p.hasSuffix("/tsugumi.json") {

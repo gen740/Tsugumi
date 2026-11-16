@@ -453,6 +453,7 @@ export class ProjectSession extends Observable {
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
   private externalsKey = ''
+  private externalLoadTask?: Promise<void>
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
@@ -1828,6 +1829,14 @@ export class ProjectSession extends Observable {
         if (editor) this.applyDelta(result.delta)
         else this.applyDeltaFromSave(result.delta)
       }
+      // Hashes arrive before external bodies. Retain the submitted draft
+      // until guarded reads confirm them together, rather than merging an
+      // unread cache entry as a concurrent deletion.
+      let loadedKey: string
+      do {
+        loadedKey = this.externalsKey
+        await this.externalLoadTask
+      } while (loadedKey !== this.externalsKey)
       return result
     } finally {
       if (!editor) this.canvasSaveOp = undefined
@@ -2339,7 +2348,7 @@ export class ProjectSession extends Observable {
       return
     }
     const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    void (async () => {
+    this.externalLoadTask = (async () => {
       const found = new Map<string, ExternalProject>()
       const read = new Map<string, string>()
       const doc = async (rel: string): Promise<J | undefined> => {
@@ -3296,12 +3305,13 @@ export class ProjectSession extends Observable {
   private async proposed(scope: string[], scene: LayoutScene, ask: (c: typeof layoutHost) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
     const client = this.client
     if (!client) return undefined
-    const before = this.snapshot(), measured = JSON.stringify(scene), step = this.undoStack.at(-1)
+    const measured = JSON.stringify(scene), step = this.undoStack.at(-1)
     try {
       const host = this.layoutHost
       const proposal = await ask(host)
-      // Undo, another edit, reconnect or changed measurements invalidate it.
-      return this.client === client && this.layoutHost === host && snapEq(before, this.snapshot()) && this.undoStack.at(-1) === step &&
+      // Saving can normalize JSON or acknowledge drafts without changing the
+      // proposal's inputs. Guard its measured scene and the person's edit step.
+      return this.client === client && this.layoutHost === host && this.undoStack.at(-1) === step &&
         JSON.stringify(this.layoutScene(scope)) === measured ? proposal : undefined
     } catch (err) {
       this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
