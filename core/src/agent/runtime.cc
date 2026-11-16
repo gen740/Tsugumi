@@ -473,7 +473,12 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         if (++cut_replies > options_.max_cut_replies)
           throw std::runtime_error(
               "model replies repeatedly exceeded the output limit");
-        std::erase_if(reply.message.content, [](const auto& block) {
+        std::string argument_sizes;
+        for (const auto &block : reply.message.content)
+          if (block.type == "tool_use")
+            argument_sizes += block.name + "=" +
+                              std::to_string(block.input.size()) + " bytes; ";
+        std::erase_if(reply.message.content, [](const auto &block) {
           return block.type == "tool_use";
         });
         reply.message.provider_content.clear();
@@ -484,9 +489,12 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         messages.push_back(std::move(reply.message));
         messages.push_back(TextMessage(
             "user",
-            "Your last reply was cut at the output limit. Its tool calls were "
-            "not executed. "
-            "Continue in smaller steps and send complete tool arguments."));
+            "Your last reply was cut at the output limit (" +
+                std::to_string(config.max_tokens) +
+                " output tokens; tool argument bytes received: " +
+                (argument_sizes.empty() ? "unavailable" : argument_sizes) +
+                "). Its tool calls were not executed. "
+                "Send fewer edits per call and complete JSON tool arguments."));
         Save(hooks, messages);
         Emit(hooks,
              {"retrying",
@@ -530,8 +538,18 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         ToolResult output;
         if (!ValidToolArguments(call.arguments)) {
           output = {
-              "Tool arguments must be a complete JSON object. Nothing "
-              "was executed.",
+              call.name + ": received " +
+                  std::to_string(call.arguments.size()) +
+                  " bytes of arguments that are not a complete JSON object "
+                  "(provider stop reason: " +
+                  reply.stop_reason + "; configured output limit: " +
+                  std::to_string(config.max_tokens) +
+                  " tokens). The provider ended the tool call with malformed "
+                  "or incomplete JSON; "
+                  "no local argument byte limit was applied. Nothing was "
+                  "executed. "
+                  "Send fewer edits per call and resend a complete JSON "
+                  "object; check string escaping.",
               true,
               {},
               {}};

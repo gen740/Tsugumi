@@ -30,10 +30,13 @@ public:
   auto tools() const -> const std::vector<CatalogTool> & { return tools_; }
   auto Find(std::string_view name) const -> const CatalogTool *;
   auto Json() const -> std::string;
+  auto ValidateArguments(std::string_view name,
+                         std::string_view arguments) const -> void;
   auto Request(std::string_view name, std::string_view arguments,
                uint64_t id) const -> std::string;
   auto Reply(std::string_view bytes) const -> std::string;
-  auto HostRequest(std::string_view name, std::string_view arguments, uint64_t id) const -> std::string;
+  auto HostRequest(std::string_view name, std::string_view arguments,
+                   uint64_t id) const -> std::string;
   auto HostReply(std::string_view bytes) const -> std::string;
 
 private:
