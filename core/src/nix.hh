@@ -42,6 +42,7 @@ struct CardBuild {
   WorkerDerivation derivation;
   BuildEnvironmentData environment;
   std::string key;      // the manifest's store path
+  uint64_t preparation_ms = 0;  // evaluation/build time, excluding closure transport
   bool cached = false;  // the store already had the result: nothing was built
   uint32_t implementation_index = 1;
 };

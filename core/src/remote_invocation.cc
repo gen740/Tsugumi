@@ -28,10 +28,10 @@ constexpr uint64_t kMaxWorkerBytes = uint64_t{16} << 20;
 constexpr size_t kMaxInputBlobs = 1024;
 
 auto upload(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-            const std::string& instance, const std::string& job_id, const std::string& bytes, const std::atomic<bool>& cancel) -> std::string {
+            const std::string& instance, const std::string& job_id, const std::string& bytes, const std::atomic<bool>& cancel, const TransferProgress& progress = {}) -> std::string {
   const std::string digest = crypto::sha256_hex(bytes);
   std::istringstream stream(bytes);
-  client.put_blob(service, server_id, instance, job_id, digest, bytes.size(), stream, &cancel);
+  client.put_blob(service, server_id, instance, job_id, digest, bytes.size(), stream, &cancel, progress);
   return digest;
 }
 
@@ -67,7 +67,7 @@ auto log_result(const stdfs::path& path, const WorkerProc::LogSink& log) -> void
 
 auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& job_id, const stdfs::path& archive,
-                          const std::atomic<bool>& cancel) -> std::string {
+                          const std::atomic<bool>& cancel, const TransferProgress& progress) -> std::string {
   crypto::Sha256 archive_hash;
   const auto archive_size = fs::stream_beneath(archive.parent_path(), archive.filename(), kMaxBlobBytes,
       [&](std::string_view chunk) {
@@ -76,7 +76,7 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
       });
   const auto archive_digest = archive_hash.finish_hex();
   std::ifstream nar(archive, std::ios::binary);
-  client.put_blob(service, server_id, instance, job_id, archive_digest, archive_size, nar, &cancel);
+  client.put_blob(service, server_id, instance, job_id, archive_digest, archive_size, nar, &cancel, progress);
   return archive_digest;
 }
 
@@ -116,7 +116,9 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
     const auto digest = hash.finish_hex();
     if (blobs.insert(digest).second) {
       std::ifstream stream(temporary, std::ios::binary);
-      client.put_blob(service, server_id, instance, job_id, digest, size, stream, &request.cancel);
+      client.put_blob(service, server_id, instance, job_id, digest, size, stream, &request.cancel, [&](uint64_t done, uint64_t bytes) {
+        if (request.transfer) request.transfer("upload", path.generic_string(), done, bytes);
+      });
     }
     remote::FileJson file;
     *file.path = path.generic_string();
@@ -152,7 +154,8 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
       {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
   };
   auto call = worker_call_frame(1, request.summary.run_id, request.node.path, request.summary.invocation, inputs,
-      ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {});
+      ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, request.node.settings.timeout_seconds ?
+          std::optional<uint64_t>(*request.node.settings.timeout_seconds * 1000) : std::nullopt);
   *invocation.call_sha256 = upload(client, service, server_id, instance, job_id, call, request.cancel);
   blobs.insert(*invocation.call_sha256);
   *invocation.archive_sha256 = archive_digest;
@@ -168,7 +171,13 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   job.derivation = request.build.derivation.path;
   job.output = request.build.derivation.output;
   job.log_limit_bytes = request.log_limit_bytes;
-  job.timeout_seconds = request.node.settings.timeout_seconds.value_or(3600);
+  job.timeout_seconds = request.node.settings.timeout_seconds.value_or(0);
+  if (request.node.settings.build_timeout_seconds) {
+    const auto budget = *request.node.settings.build_timeout_seconds * 1000;
+    if (request.build.preparation_ms >= budget)
+      throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
+    job.build_timeout_ms = budget - request.build.preparation_ms;
+  }
   if (request.node.settings.execution_resources) {
     job.cpu_millis = request.node.settings.execution_resources->cpu_millis;
     job.memory_bytes = request.node.settings.execution_resources->memory_bytes;
@@ -183,7 +192,8 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
                           const std::string& instance, const std::string& job_id, const std::string& result_digest,
                           const std::string& spec, const stdfs::path& directory, const stdfs::path& module_cache,
                           const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
-                          const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop) -> RemoteInvocationResult {
+                          const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
+                          const std::function<void(std::string_view, uint64_t, uint64_t)>& progress) -> RemoteInvocationResult {
   const auto job = workerd::parse_spec(spec);
   const auto manifest_bytes = download(client, service, server_id, instance, job_id, result_digest, kMaxManifestBytes, stop);
   flatbuffers::Verifier manifest_verifier(reinterpret_cast<const uint8_t*>(manifest_bytes.data()), manifest_bytes.size());
@@ -242,7 +252,9 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, server_id, instance, job_id, *digest, destination, *size, &stop);
+    client.get_blob(service, server_id, instance, job_id, *digest, destination, *size, &stop, [&](uint64_t done, uint64_t bytes) {
+      if (progress) progress(*name, done, bytes);
+    });
     destination.close();
     if (!destination || stdfs::file_size(path) != *size) throw std::runtime_error("remote result size mismatch");
   }

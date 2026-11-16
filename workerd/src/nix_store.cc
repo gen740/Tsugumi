@@ -5,11 +5,17 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <signal.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <memory>
 #include <mutex>
+#include <chrono>
+#include <condition_variable>
+#include <thread>
+#include <nix/util/signals.hh>
 #include <nix/store/derivations.hh>
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
@@ -21,6 +27,7 @@
 #include <sstream>
 
 #include "nix_eval.hh"
+#include "model.hh"
 
 namespace tsugumi {
 namespace {
@@ -65,7 +72,7 @@ class WorkerLogger final : public nix::Logger {
 auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
-    const std::function<void(const std::string&)>& log) -> NixResult {
+    const std::function<void(const std::string&)>& log, uint64_t timeout_ms) -> NixResult {
   // Invocations run in separate processes but share this persistent store.
   // Serialize its entire connection lifetime, including database creation and
   // closure import. The lock ends before Card execution, so Cards can still run
@@ -95,6 +102,32 @@ auto RemoteWorkerStore::realise(
   store->addTempRoot(drv);
   store->addTempRoot(out);
   transport.receive(*store, derivation);
+  const auto began = std::chrono::steady_clock::now();
+  const auto thread = pthread_self();
+  struct sigaction action{};
+  action.sa_handler = +[](int) {};
+  sigemptyset(&action.sa_mask);
+  ::sigaction(SIGUSR1, &action, nullptr);
+  std::atomic<bool> timed_out{false};
+  nix::unix::interruptCheck = [&] { return timed_out.load(); };
+  struct ClearInterrupt { ~ClearInterrupt() { nix::unix::interruptCheck = {}; } } clear_interrupt;
+  std::mutex timer_mutex;
+  std::condition_variable timer_cv;
+  std::jthread timer([&](std::stop_token stop) {
+    std::unique_lock lock(timer_mutex);
+    while (!stop.stop_requested()) {
+      if (timeout_ms && std::chrono::steady_clock::now() - began >= std::chrono::milliseconds(timeout_ms)) {
+        timed_out.store(true);
+        ::pthread_kill(thread, SIGUSR1);
+      }
+      timer_cv.wait_for(lock, std::chrono::milliseconds(50));
+    }
+  });
+  struct StopTimer {
+    std::jthread& timer;
+    std::condition_variable& cv;
+    ~StopTimer() { timer.request_stop(); cv.notify_all(); timer.join(); }
+  } stop_timer{timer, timer_cv};
   if (store->readDerivation(drv).platform != derivation.system)
     throw std::runtime_error("remote derivation has a different system");
   const auto declared = store->queryDerivationOutputMap(drv);
@@ -104,9 +137,14 @@ auto RemoteWorkerStore::realise(
         "remote Nix derivation has a different output path");
   NixResult result;
   if (!store->isValidPath(out)) {
-    store->buildPaths(
-        {nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
-                                 .outputs = nix::OutputsSpec::All{}}});
+    try {
+      store->buildPaths(
+          {nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
+                                   .outputs = nix::OutputsSpec::All{}}});
+    } catch (...) {
+      if (timed_out.load()) throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
+      throw;
+    }
     result.built = true;
   }
   if (!store->isValidPath(out))

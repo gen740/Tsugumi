@@ -23,6 +23,7 @@ add_library(tsugumi_document STATIC
   src/types.cc
   src/document.cc
   src/graph.cc
+  src/worker_condition.cc
   src/input_types.cc
   src/nix_refs.cc
   src/collect_type.cc
@@ -47,7 +48,6 @@ add_library(tsugumi_core STATIC
   src/nix.cc
   src/run_scratch.cc
   src/cache_usage.cc
-  src/worker_condition.cc
   src/collect_value.cc
   src/execution_service.cc
   src/remote_job.cc

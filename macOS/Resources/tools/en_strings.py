@@ -1495,6 +1495,12 @@ EN = {
 
     '信頼するフォルダ': 'Trusted folders',
     'このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。': 'Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.',
+    'ワーカーの grade': 'Worker grade',
+    '64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。': 'An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.',
+    'ワーカーの条件式': 'Worker condition',
+    'x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。': 'x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.',
+    '条件から自動選択': 'Select by condition',
+    'ファイル転送: %@ (%llu/%llu bytes)': 'Transferring: %@ (%llu/%llu bytes)',
 }
 
 

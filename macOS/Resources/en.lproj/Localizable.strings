@@ -49,6 +49,7 @@
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
+"64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。" = "An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
@@ -251,6 +252,7 @@
 "tsugumid の応答を待っています" = "Waiting for tsugumid to answer";
 "wire の再接続" = "Rebind wires";
 "worker の状態を残す" = "Keep the worker's state";
+"x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。" = "x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
 "⌥⌘K で、実行環境のコンソールを開けるよ" = "⌥⌘K opens the environment's console.";
@@ -588,6 +590,7 @@
 "ファイルを読んでいます" = "Reading files";
 "ファイルを選んでください" = "Choose a file";
 "ファイルアクセスを制限" = "Restrict file access";
+"ファイル転送: %@ (%llu/%llu bytes)" = "Transferring: %@ (%llu/%llu bytes)";
 "フィールドを読めません: %@" = "Cannot read a field: %@";
 "フォルダ" = "Folders";
 "フォルダが見つからないプロジェクト" = "Projects whose folder is gone";
@@ -663,6 +666,8 @@
 "ログを読んでいます" = "Reading the log";
 "ローカル fixture には検索がないため、オンでも使えません。" = "The local fixture has no search, so this does nothing with it.";
 "ローカル fixture（テスト用・通信なし）" = "Local fixture (tests, no network)";
+"ワーカーの grade" = "Worker grade";
+"ワーカーの条件式" = "Worker condition";
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
@@ -1203,6 +1208,7 @@
 "未選択" = "Not selected";
 "未開始" = "Not started";
 "末尾を追う" = "Follow";
+"条件から自動選択" = "Select by condition";
 "条件に合うデモはありません" = "No demo matches";
 "条件に合う実行はありません" = "No matching runs";
 "枝: %@" = "Branch: %@";

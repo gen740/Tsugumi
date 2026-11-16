@@ -62,6 +62,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.probe_times = []
         self.heartbeat_interval = 15
         self.missed_heartbeats = 0
+        self.grade = 1
         self.blobs = set()
         self.blob_contents = {}
         self.specs = {}
@@ -108,14 +109,14 @@ class Gateway(socketserver.UnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=6)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=7)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
-                heartbeatIntervalSeconds=self.heartbeat_interval, missedHeartbeats=self.missed_heartbeats)]))
+                heartbeatIntervalSeconds=self.heartbeat_interval, missedHeartbeats=self.missed_heartbeats, grade=self.grade)]))
         assert R.string(q.serverId) == self.server_id
         if R.string(q.serverId) != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
@@ -543,3 +544,44 @@ def test_maximum_log_budget_including_truncation_notice_imports(running_job):
     assert wait_run(client, run_id, timeout=30).state == RunState.succeeded
     journal = text(client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal).text)
     assert f"truncated at the {limit}-byte limit" in journal
+
+
+def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
+    remote_gateway.grade = 0x8000000000000000
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   workerCondition={"language": "simple", "expression": "x & 0x8000000000000000 != 0"})
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    assert text(live.executionService) == "cluster"
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    rows = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+    assert text(rows[-1].executionService) == "cluster"
+
+
+def test_grade_condition_without_registered_match_fails_before_submission(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   workerCondition={"language": "simple", "expression": "x > 1"})
+    plan = client.call("RunPlanRequest", card=path("work"), propagate=False)
+    assert any(text(d.code) == "invalid_setting" for d in plan.diagnostics)
+    with pytest.raises(RpcFailure):
+        start_run(client, "work", propagate=False)
+    assert remote_gateway.submit_count == 0
+
+
+@pytest.mark.parametrize("run_budget,build_budget", [(None, None), (2, 3)])
+def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_factory, tmp_path, run_budget, build_budget):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   timeoutSeconds=run_budget, buildTimeoutSeconds=build_budget)
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    spec = remote_gateway.specs[text(live.executionJobId)]
+    assert spec.timeoutSeconds == (run_budget or 0)
+    assert (0 < spec.buildTimeoutMs <= build_budget * 1000) if build_budget else spec.buildTimeoutMs == 0
+    # Spending more than the call budget in transport/queue polling must not
+    # make the core fail a call which the worker has not yet completed.
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded

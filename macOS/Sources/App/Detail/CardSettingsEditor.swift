@@ -590,7 +590,7 @@ private struct GeneralCategory: View {
   @State private var renameError: String?
 
   private var remote: Bool {
-    (model.definition?["executionService"]?.string ?? "local") != "local"
+    { let id = model.definition?["executionService"]?.string ?? "auto"; return id != "local" && id != "auto" }()
   }
 
   var body: some View {
@@ -705,7 +705,7 @@ private struct GeneralCategory: View {
 
   @ViewBuilder private var executionSettings: some View {
     let services = model.session.executionServices
-    let serviceSetting = string("executionService", fallback: "local")
+    let serviceSetting = string("executionService", fallback: "auto")
     let serviceId = serviceSetting.wrappedValue
     let service = services.first { $0.id == serviceId }
     let resourceLimits = serviceId != "local" && service?.resourceLimits == true
@@ -714,12 +714,22 @@ private struct GeneralCategory: View {
     let system = string("system", fallback: "")
     let selected = system.wrappedValue
 
-    if services.count > 1 || (service == nil && !services.isEmpty) {
+    TextField("ワーカーの条件式", text: Binding(
+      get: { model.definition?["workerCondition"]?["expression"]?.string ?? "" },
+      set: { value in
+        var condition = JSONValue.object([])
+        condition["language"] = .string("simple")
+        condition["expression"] = .string(value)
+        model.definition?["workerCondition"] = value.trimmingCharacters(in: .whitespaces).isEmpty ? nil : condition
+      }))
+      .help("x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。")
+    if !services.isEmpty {
       Picker("実行サービス", selection: serviceSetting) {
+        Text("条件から自動選択").tag("auto")
         ForEach(services, id: \.id) { entry in
           Text(verbatim: serviceLabel(entry)).tag(entry.id).disabled(!entry.available)
         }
-        if service == nil { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
+        if service == nil && serviceId != "auto" { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
       }
     } else {
       LabeledContent("実行サービス", value: service.map(serviceLabel) ?? String(localized: "情報なし"))
@@ -728,7 +738,7 @@ private struct GeneralCategory: View {
       Label("このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)
     }
-    if serviceId != "local" && service?.available != true {
+    if serviceId != "local" && serviceId != "auto" && service?.available != true {
       Label("選択した実行サービスに接続できません。", systemImage: "exclamationmark.triangle").font(.caption)
     }
     Picker("CPU アーキテクチャ", selection: system) {

@@ -19,8 +19,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   useEffect(() => { void api<ExecutionServicesState>(route).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
   function choose(entry: ExecutionServiceRegistration, id?: string) {
-    const { name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats, id: serviceId } = entry
-    setEdit({ id: serviceId, name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats })
+    const { name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats, grade, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats, grade })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
@@ -43,7 +43,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   const saved = entries.find((entry) => entry.id === original)
   const sameEndpoint = !!saved && saved.endpoint === edit?.endpoint.trim()
   const caps = sameEndpoint && saved.capabilities.serverId ? saved.capabilities : undefined
-  const valid = !!edit && [edit.id, edit.name, edit.endpoint, edit.workerPublicKey].every((value) => value.trim())
+  const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
+    && /^(0x[0-9a-f]+|[0-9]+)$/i.test(edit.grade) && BigInt(edit.grade) <= 0xffffffffffffffffn
     && Number.isInteger(edit.heartbeatIntervalSeconds) && edit.heartbeatIntervalSeconds >= 1 && edit.heartbeatIntervalSeconds <= 0xffffffff
     && Number.isInteger(edit.missedHeartbeats) && edit.missedHeartbeats >= 0 && edit.missedHeartbeats <= 0xffffffff
 
@@ -58,16 +59,17 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button kind="borderless" disabled={busy} onClick={() => choose(entry, entry.id)}>{entry.name} ({entry.id})</Button>
         <span className="secondary">{entry.capabilities.nativeSystem}</span>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', heartbeatIntervalSeconds: 15, missedHeartbeats: 0 })}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', heartbeatIntervalSeconds: 15, missedHeartbeats: 0, grade: '1' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
+      <Row label={L('ワーカーの grade')} help={L('64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。')}><TextField value={edit.grade} mono disabled={busy} onChange={(value) => update('grade', value)} /></Row>
       <Row label={L('実行デーモンの接続先')} help={L('TLS 接続先を入力してください（例: tls://worker.example:8765）。')}>
-        <TextField value={edit.endpoint} placeholder="tls://worker.example:8765" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
+        <TextField value={edit.endpoint} placeholder="tls://worker.example:8765" mono disabled={busy || edit.id === 'local'} onChange={(value) => update('endpoint', value)} />
       </Row>
       <Row label={L('実行デーモンの公開鍵')} help={L('公開鍵は ed25519: で始まる SPKI 形式です。')}>
-        <TextField value={edit.workerPublicKey} mono disabled={busy} onChange={(value) => update('workerPublicKey', value)} />
+        <TextField value={edit.workerPublicKey} mono disabled={busy || edit.id === 'local'} onChange={(value) => update('workerPublicKey', value)} />
       </Row>
       <Row label={L('ハートビート間隔（秒）')} help={L('1〜4294967295 秒で指定してください。')}>
         <input className="field" type="number" min={1} max={0xffffffff} step={1} value={Number.isNaN(edit.heartbeatIntervalSeconds) ? '' : edit.heartbeatIntervalSeconds} disabled={busy}
@@ -93,7 +95,7 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
           setMessage(original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
         })}>{original ? L('接続を確認して更新') : L('登録')}</Button>
-        {original && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
+        {original && original !== 'local' && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
           adopt(await api<ExecutionServicesState>(route + '/remove', { id: original }))
           setEdit(undefined)
           setOriginal(undefined)

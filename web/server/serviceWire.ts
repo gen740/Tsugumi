@@ -39,6 +39,13 @@ import { CallIdRequestT } from '../src/gen/tsugumi/agent/call-id-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../src/gen/tsugumi/host/host-project-defaults-request'
+function workerGrade(value: unknown): bigint {
+  if (typeof value !== 'string' || !/^(0x[0-9a-f]+|[0-9]+)$/i.test(value)) throw Error('Invalid worker grade')
+  const grade = BigInt(value)
+  if (grade > 0xffffffffffffffffn) throw Error('Invalid worker grade')
+  return grade
+}
+
 function heartbeatSetting(value: unknown, fallback: number, minimum: number): number {
   if (value === undefined) return fallback
   if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > 0xffffffff)
@@ -162,7 +169,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0))
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0), workerGrade(v.grade ?? '1'))
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
@@ -253,6 +260,7 @@ function view(value: any): any {
       continue
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
+    if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
     if (key === 'scope' && typeof v === 'number') { out[name] = GrantScope[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)

@@ -16,6 +16,7 @@ export interface ExecutionServiceConnection {
   workerPublicKey: string
   heartbeatIntervalSeconds: number
   missedHeartbeats: number
+  grade: string
   capabilities: ExecutionServiceCapabilities
 }
 
@@ -26,6 +27,7 @@ export interface ExecutionServiceRegistration {
   workerPublicKey: string
   heartbeatIntervalSeconds: number
   missedHeartbeats: number
+  grade: string
 }
 
 export interface ExecutionServicesState { services: ExecutionServiceConnection[]; hostPublicKey: string }

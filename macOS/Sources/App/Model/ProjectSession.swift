@@ -93,6 +93,7 @@ struct CardRunState: Equatable {
   var phase: Tsugumi_Data_Phase
   var failure: String?
   var executionState: Tsugumi_Data_RemoteExecutionState?
+  var transfer: String?
   /// Stages of the latest invocation, in the order the core ran them.
   var stages: [StageRecord] = []
   var cached = false
@@ -958,6 +959,9 @@ final class ProjectSession {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
       next.batchActivation = inv.batchActivation
       next.executionState = inv.executionState
+      if (inv.state == .running || inv.state == .preparing) && inv.transferDirection?.isEmpty == false && inv.transferDone < inv.transferTotal {
+        next.transfer = String(localized: "ファイル転送: \(inv.transferName ?? "") (\(inv.transferDone)/\(inv.transferTotal) bytes)")
+      }
       // Each notification carries the invocation's stages so far.
       next.stages = inv.stages.compactMap { $0 }.compactMap { t in
         Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }

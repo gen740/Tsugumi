@@ -149,7 +149,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
         ready = {"endpoint": host.ready["execution_broker"],
                  "capability": authorize(project, "control"),
                  "copyCapability": authorize(copy, "copy-control"),
-                 "serverId": R.string(entries.services[0].capabilities.serverId)}
+                 "serverId": R.string(next(e for e in entries.services if R.string(e.id) == "remote-test").capabilities.serverId)}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", ready["capability"])
         yield ready
@@ -580,3 +580,14 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
     run_id, status = run_and_wait(client, "work", timeout=600)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     check_definition_tools(client, run_id)
+
+
+@pytest.mark.parametrize("execution_service", ["local", "remote-test"])
+def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker, execution_service):
+    from harness.real_cards import bash, log
+    definition = bash("sleep 10", executionService=execution_service, timeoutSeconds=1, buildTimeoutSeconds=600)
+    write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
+    client = core_factory().connect()
+    run_id, status = run_and_wait(client, "deadline", timeout=900)
+    assert status.state == RunState.failed, log(client, run_id, "deadline", 2)
+    assert status.failure.kind == FailureKind.timeout
