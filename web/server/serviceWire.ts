@@ -71,6 +71,7 @@ import { ConversationActionRequestT as AConversationActionRequest } from '../src
 import { ConversationCancelRequestT as AConversationCancelRequest } from '../src/gen/tsugumi/agent/conversation-cancel-request'
 import { EventsRequestT as AEventsRequest } from '../src/gen/tsugumi/agent/events-request'
 import { ToolCallRequestT as AToolCallRequest } from '../src/gen/tsugumi/agent/tool-call-request'
+import { ToolCallCancelRequestT as AToolCallCancelRequest } from '../src/gen/tsugumi/agent/tool-call-cancel-request'
 import { AccessRequestT as AAccessRequest } from '../src/gen/tsugumi/agent/access-request'
 import { AccessResolveRequestT as AAccessResolveRequest } from '../src/gen/tsugumi/agent/access-resolve-request'
 import { AccessRevokeRequestT as AAccessRevokeRequest } from '../src/gen/tsugumi/agent/access-revoke-request'
@@ -193,6 +194,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
+    case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), enumValue(GrantScope, v.scope), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, (v.also_allow ?? []).map((value: unknown) => enumValue(Access, value)))
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)

@@ -65,9 +65,10 @@ async function host(): Promise<ServerInfo> {
   return starting
 }
 
-async function api<T>(route: string, body: unknown, timeoutMs = 5000): Promise<T> {
+async function api<T>(route: string, body: unknown, timeoutMs = 5000, signal?: AbortSignal): Promise<T> {
   const s = await host()
-  const r = await request(s, route, body, timeoutMs)
+  signal?.throwIfAborted()
+  const r = await request(s, route, body, timeoutMs, signal)
   const v = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error((v as { error?: string }).error ?? `${route}: HTTP ${r.status}`)
   return v as T
@@ -104,10 +105,10 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
   return text(out)
 }
 
-async function call(name: string, args: unknown): Promise<Result> {
+async function call(name: string, args: unknown, signal: AbortSignal): Promise<Result> {
   if (name === OPEN_TOOL.name) return open((args ?? {}) as Record<string, unknown>)
   if (!current && !name.startsWith('agent_')) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
-  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} }, 360_000)
+  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} }, 360_000, signal)
   const result = text(r.text, r.isError)
   for (const i of r.images ?? []) result.content.push({ type: 'image', data: i.data, mimeType: i.media_type })
   return result
@@ -116,6 +117,7 @@ async function call(name: string, args: unknown): Promise<Result> {
 // ---- JSON-RPC over stdio ---------------------------------------------------------
 
 const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
+const pending = new Map<unknown, AbortController>()
 
 function reply(id: unknown, result?: unknown, error?: { code: number; message: string }) {
   process.stdout.write(JSON.stringify(error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result }) + '\n')
@@ -124,6 +126,9 @@ function reply(id: unknown, result?: unknown, error?: { code: number; message: s
 async function handle(m: { id?: unknown; method?: string; params?: any }) {
   const isRequest = m.id !== undefined && m.id !== null
   switch (m.method) {
+    case 'notifications/cancelled':
+      pending.get(m.params?.requestId)?.abort()
+      return
     case 'initialize':
       return reply(m.id, {
         protocolVersion: VERSIONS.includes(m.params?.protocolVersion) ? m.params.protocolVersion : VERSIONS[0],
@@ -139,14 +144,19 @@ async function handle(m: { id?: unknown; method?: string; params?: any }) {
       } catch (e) {
         return reply(m.id, undefined, { code: -32603, message: String((e as Error).message ?? e) })
       }
-    case 'tools/call':
+    case 'tools/call': {
+      const controller = new AbortController()
+      pending.set(m.id, controller)
       try {
-        return reply(m.id, await call(String(m.params?.name), m.params?.arguments))
+        return reply(m.id, await call(String(m.params?.name), m.params?.arguments, controller.signal))
       } catch (e) {
         return reply(m.id, text(String((e as Error).message ?? e), true))
+      } finally {
+        if (pending.get(m.id) === controller) pending.delete(m.id)
       }
+    }
     default:
-      // Notifications (initialized, cancelled) need no answer.
+      // Other notifications need no answer.
       if (isRequest) reply(m.id, undefined, { code: -32601, message: `method not found: ${m.method}` })
   }
 }
@@ -160,4 +170,6 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return reply(null, undefined, { code: -32700, message: 'parse error' })
   }
   void handle(m)
+}).on('close', () => {
+  for (const controller of pending.values()) controller.abort()
 })

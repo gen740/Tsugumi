@@ -530,6 +530,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessRevokeRequest` | `grant_id: string` (required) |
 | `AccessListRequest` | `conversation_id: string` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
+| `ToolCallCancelRequest` | `request_id: ulong` |
 
 Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`.
 

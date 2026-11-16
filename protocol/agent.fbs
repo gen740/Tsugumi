@@ -34,6 +34,9 @@ table ConversationCancelRequest { conversation_id:string (required); }
 table EventsRequest { conversation_id:string (required); after_seq:ulong; limit:uint = 200; }
 table ToolCatalogRequest {}
 table ToolCallRequest { conversation_id:string (required); project_id:string; name:string (required); arguments_json:string (required); op_id:string (required); }
+// Cancels only this connection's in-flight ToolCallRequest, including a queued
+// call. It interrupts the call's wait, not the project run it may have started.
+table ToolCallCancelRequest { request_id:ulong; }
 table AccessRequest { project_id:string (required); conversation_id:string; access:Tsugumi.Service.Access; scope:Tsugumi.Service.GrantScope; reason:string; }
 // Resolving/revoking grants requires the human principal, including over Unix.
 // allow answers the access needed now; also_allow explicitly opts into other listed accesses.
@@ -45,7 +48,7 @@ table ConversationSummarizeRequest { conversation_id:string (required); provider
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest
 }
 table Request { value:RequestPayload; }
 

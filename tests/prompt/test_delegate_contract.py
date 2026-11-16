@@ -53,6 +53,13 @@ class DelegateContractTests(unittest.TestCase):
         self.assertNotIn("scope:", metadata)
         policy = "Do not split work among sub-agents unless the person's own message asks for helpers or parallel work"
         self.assertEqual(helpers.count(policy), 1)
+        shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+        tool_text = json.dumps([shared["delegateTool"], *shared["hostTools"],
+                                json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())])
+        for text in (prompt, tool_text):
+            self.assertNotIn(policy, text)
+            self.assertNotIn("helper or parallel work requested by the person", text)
+            self.assertNotIn("person's own message asks for helpers or parallel work", text)
         for contract in ("both defaulting to 0", "Depth 0 cannot",
                          "at most count children over its lifetime",
                          "depth at most its own depth minus 1",

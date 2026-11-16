@@ -40,8 +40,7 @@ protected:
   auto RunId(const Reply &reply) -> std::string {
     if (!reply.Code().empty())
       throw std::runtime_error(reply.View());
-    return JsonString(JsonString(reply.View(), "/text"),
-                      "/value/run/run_id");
+    return JsonString(JsonString(reply.View(), "/text"), "/value/run/run_id");
   }
   auto WaitArguments(const std::string &run, int seconds) -> std::string {
     return "{\"run_id\":" + Quote(run) +
@@ -76,7 +75,175 @@ protected:
                       .Union();
                 });
   }
+  auto PendingStatus(const std::string &conversation, const std::string &run,
+                     const std::string &operation, uint64_t &request_id)
+      -> std::future<client::Result> {
+    return external->Call([&](uint64_t id) {
+      request_id = id;
+      Builder b;
+      const auto value = A::CreateToolCallRequest(
+          b, b.CreateString(conversation), b.CreateString(project_id),
+          b.CreateString("run_status"), b.CreateString(WaitArguments(run, 300)),
+          b.CreateString(operation));
+      const auto request = A::CreateRequest(
+          b, A::RequestPayload::ToolCallRequest, value.Union());
+      A::FinishMessageBuffer(
+          b, A::CreateMessage(b, id, A::Payload::Request, request.Union()));
+      return client::Bytes(b.GetBufferPointer(),
+                           b.GetBufferPointer() + b.GetSize());
+    });
+  }
+  auto CancelCall(client::Connection &connection, uint64_t request_id)
+      -> Reply {
+    return Call(connection, A::RequestPayload::ToolCallCancelRequest,
+                [&](Builder &b) {
+                  return A::CreateToolCallCancelRequest(b, request_id).Union();
+                });
+  }
 };
+
+TEST_F(AgentRunWaitFixture,
+       RequestCancellationStopsOnlyItsOwnConnectionAndCall) {
+  const auto conversation = Prepare();
+  const auto run = RunId(StartRun(conversation));
+  Entered();
+  uint64_t first_id = 0, second_id = 0;
+  auto first = PendingStatus(conversation, run, "first-wait", first_id);
+  auto second = PendingStatus(conversation, run, "second-wait", second_id);
+  ToolStarted(conversation);
+  ASSERT_TRUE(CancelCall(*human, first_id).Code().empty());
+  EXPECT_EQ(first.wait_for(100ms), std::future_status::timeout);
+  ASSERT_TRUE(CancelCall(*external, first_id).Code().empty());
+  const auto stopped = first.wait_for(2s);
+  if (stopped != std::future_status::ready)
+    Release();
+  ASSERT_EQ(stopped, std::future_status::ready);
+  auto reply = first.get();
+  ASSERT_FALSE(reply.error) << reply.error.message;
+  EXPECT_EQ((Reply{std::move(reply.bytes)}).Code(), "cancelled");
+  EXPECT_EQ(second.wait_for(100ms), std::future_status::timeout);
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
+  Release();
+  ASSERT_EQ(second.wait_for(3s), std::future_status::ready);
+  reply = second.get();
+  ASSERT_FALSE(reply.error) << reply.error.message;
+  EXPECT_TRUE((Reply{std::move(reply.bytes)}).Code().empty());
+}
+
+TEST_F(AgentRunWaitFixture, ConcurrentWaitsLeaveNormalToolsAvailable) {
+  const auto conversation = Prepare();
+  const auto run = RunId(StartRun(conversation));
+  Entered();
+  std::vector<std::future<client::Result>> waits;
+  for (int i = 0; i < 6; ++i) {
+    uint64_t id = 0;
+    waits.push_back(PendingStatus(conversation, run,
+                                  "parallel-wait-" + std::to_string(i), id));
+  }
+  // Wait until all four dedicated wait slots are occupied. The other two
+  // calls are queued, without consuming ordinary tool slots.
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (true) {
+    const auto events = Events(conversation).View();
+    size_t count = 0, offset = 0;
+    while ((offset = events.find("toolStarted", offset)) != std::string::npos) {
+      ++count;
+      ++offset;
+    }
+    // The fixture itself also issued saves, inspect and run; only run_status
+    // external calls have these registered tool events besides run.
+    if (count >= 5)
+      break;
+    if (std::chrono::steady_clock::now() >= deadline) {
+      Release();
+      FAIL() << "Concurrent waits did not start";
+    }
+    std::this_thread::sleep_for(10ms);
+  }
+  const auto other = Conversation("while-waiting");
+  Grant(other);
+  auto inspect = std::async(std::launch::async, [&] { return Inspect(other); });
+  const auto status = inspect.wait_for(2s);
+  if (status != std::future_status::ready)
+    Release();
+  ASSERT_EQ(status, std::future_status::ready);
+  EXPECT_TRUE(inspect.get().Code().empty());
+  EXPECT_TRUE(
+      Tool(conversation, "run_cancel", "{\"run_id\":" + Quote(run) + "}")
+          .Code()
+          .empty());
+  Release();
+  for (auto &wait : waits) {
+    ASSERT_EQ(wait.wait_for(3s), std::future_status::ready);
+    EXPECT_FALSE(wait.get().error);
+  }
+}
+
+TEST_F(AgentRunWaitFixture, DeletingAConversationStopsAndUnregistersItsWait) {
+  const auto conversation = Prepare();
+  const auto run = RunId(StartRun(conversation));
+  Entered();
+  auto pending = std::async(std::launch::async, [&] {
+    return Tool(conversation, "run_status", WaitArguments(run, 300),
+                "deleted-wait");
+  });
+  ToolStarted(conversation);
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationDeleteRequest,
+                   [&](Builder &b) {
+                     return A::CreateConversationDeleteRequest(
+                                b, b.CreateString(conversation))
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  const auto status = pending.wait_for(2s);
+  if (status != std::future_status::ready)
+    Release();
+  ASSERT_EQ(status, std::future_status::ready);
+  EXPECT_EQ(pending.get().Code(), "cancelled");
+  EXPECT_EQ(Conversation("run-wait"), conversation);
+  Grant(conversation);
+  // Reusing the deleted ID/call must not find a leaked registration or old
+  // toolFinished event, and stopping a wait must leave the run active.
+  EXPECT_EQ(Events(conversation).View().find("deleted-wait"),
+            std::string::npos);
+  const auto current =
+      Tool(conversation, "run_status", WaitArguments(run, 0), "deleted-wait");
+  ASSERT_TRUE(current.Code().empty());
+  EXPECT_EQ(JsonString(JsonString(current.View(), "/text"), "/value/state"),
+            "preparing");
+  Release();
+}
+
+TEST_F(AgentRunWaitFixture, DisconnectingStopsAndUnregistersTheExternalWait) {
+  const auto conversation = Prepare();
+  const auto run = RunId(StartRun(conversation));
+  Entered();
+  uint64_t id = 0;
+  auto pending = PendingStatus(conversation, run, "disconnect-wait", id);
+  ToolStarted(conversation);
+  external->Close();
+  ASSERT_EQ(pending.wait_for(2s), std::future_status::ready);
+  EXPECT_TRUE(pending.get().error);
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (Events(conversation, true).View().find("cancelled") == std::string::npos) {
+    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+    std::this_thread::sleep_for(10ms);
+  }
+  external = Connect(false);
+  const auto current = Tool(conversation, "run_status", WaitArguments(run, 0));
+  ASSERT_TRUE(current.Code().empty()) << current.Code();
+  EXPECT_EQ(JsonString(JsonString(current.View(), "/text"), "/value/state"),
+            "preparing");
+  Release();
+  // Receipts survive a transport disconnect: a retry must keep the same
+  // arguments, as well as the same call ID.
+  const auto retried = Tool(conversation, "run_status", WaitArguments(run, 300),
+                            "disconnect-wait");
+  ASSERT_TRUE(retried.Code().empty()) << retried.Code();
+  EXPECT_EQ(JsonString(JsonString(retried.View(), "/text"), "/wait_reason"),
+            "ended");
+}
 
 TEST_F(AgentRunWaitFixture, StatusReturnsEarlyWhenTheRunEnds) {
   const auto conversation = Prepare();

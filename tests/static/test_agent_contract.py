@@ -125,7 +125,15 @@ def test_measured_card_and_recovery_instructions_are_ported():
         assert text in prompt
     assert 'inputs.input("events", EventsFile)' not in prompt
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
-    assert shared['delegateTool']['description'].startswith('Call this for helper or parallel work requested by the person.')
+    policy = "Do not split work among sub-agents unless the person's own message asks for helpers or parallel work"
+    helpers = (ROOT / 'agent/Shared/helpers-skill.md').read_text()
+    assert helpers.count(policy) == 1
+    tool_text = json.dumps([shared['delegateTool'], *shared['hostTools'],
+                            json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())])
+    for text in (prompt, tool_text):
+        assert policy not in text
+        assert 'helper or parallel work requested by the person' not in text
+        assert "person's own message asks for helpers or parallel work" not in text
     for name in ('draftRequest', 'commentRequest'):
         request = shared[name]['text']
         assert 'delegate' not in request and 'helper' not in request

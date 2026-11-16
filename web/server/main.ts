@@ -250,7 +250,7 @@ async function updateExecutionServices(method: string, body: unknown) {
   return result
 }
 
-type Handler = (b: any, url: URL) => unknown | Promise<unknown>
+type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
@@ -473,12 +473,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.method !== 'GET' && req.headers['x-tsugumi'] !== '1') return send(res, 403, { error: 'missing X-Tsugumi header' })
     const h = routes[`${req.method} ${url.pathname}`]
     if (!h) return send(res, 404, { error: 'not found' })
+    const controller = new AbortController()
+    const disconnected = () => { if (!res.writableEnded) controller.abort() }
+    res.once('close', disconnected)
     try {
-      send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url))
+      send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url, controller.signal))
     } catch (e) {
       send(res, e instanceof HttpError ? e.status : e instanceof CoreHostError ? 400 : 500,
         e instanceof CoreHostError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
-    }
+    } finally { res.off('close', disconnected) }
     return
   }
   let file = path.normalize(path.join(publicDir, decodeURIComponent(url.pathname)))

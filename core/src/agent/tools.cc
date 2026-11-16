@@ -1659,11 +1659,31 @@ auto Tools::Handle(const RequestIn& request, bool human,
       auto execute = [&]() -> ToolResult {
         if (!shell_stop)
           return ExecuteTool(id, project, call, false, shutdown.get_token());
+        struct Registration {
+          Tools &tools;
+          std::pair<std::string, std::string> key;
+          std::shared_ptr<std::stop_source> stop;
+          ~Registration() {
+            std::lock_guard guard(tools.mutex);
+            const auto found = tools.file_calls.find(key);
+            if (found != tools.file_calls.end() && found->second.stop == stop)
+              tools.file_calls.erase(found);
+          }
+        } registration{*this, shell_key, shell_stop};
         std::stop_callback stop(shutdown.get_token(),
                                 [shell_stop] { shell_stop->request_stop(); });
-        std::stop_callback disconnected(request.connection_stop,
-                                        [shell_stop] { shell_stop->request_stop(); });
-        auto event = [&](const char* kind, const std::string& text, bool ok) {
+        std::stop_callback disconnected(request.connection_stop, [shell_stop] {
+          shell_stop->request_stop();
+        });
+        if (shell_stop->stop_requested())
+          throw Cancelled();
+        auto event = [&](const char *kind, const std::string &text, bool ok) {
+          std::lock_guard guard(mutex);
+          const auto found = file_calls.find(shell_key);
+          // Deletion stops and unregisters calls under this same lock. Never
+          // record their late events in a new conversation reusing the ID.
+          if (found == file_calls.end() || found->second.stop != shell_stop)
+            return;
           dependencies.event(id, json::Encode(json::Members{
                                      {"kind", json::Quote(kind)},
                                      {"id", json::Quote(call.id)},
@@ -1678,13 +1698,9 @@ auto Tools::Handle(const RequestIn& request, bool human,
           auto result =
               ExecuteTool(id, project, call, false, shell_stop->get_token());
           event("toolFinished", result.text, !result.is_error);
-          std::lock_guard guard(mutex);
-          file_calls.erase(shell_key);
           return result;
-        } catch (const std::exception& error) {
+        } catch (const std::exception &error) {
           event("toolFinished", error.what(), false);
-          std::lock_guard guard(mutex);
-          file_calls.erase(shell_key);
           throw;
         }
       };

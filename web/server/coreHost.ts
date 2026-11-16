@@ -84,7 +84,8 @@ class Connection {
       client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}`, protocol: 1 })
   }
 
-  private write(method: string, value: unknown): Promise<any> {
+  private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {
+    signal?.throwIfAborted()
     if (!this.socket) return Promise.reject(new Error('Service connection is closed'))
     const requestId = ++this.nextId
     const data = encodeRequest(method, value, requestId, this.hostContract)
@@ -92,25 +93,39 @@ class Connection {
     frame.writeUInt32LE(data.length)
     frame.set(data, 4)
     return new Promise((resolve, reject) => {
+      const cancel = () => {
+        if (!this.waiting.delete(requestId)) return
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', cancel)
+        // The shared socket remains usable by other calls/conversations.
+        if (method === 'ToolCallRequest') void this.write('ToolCallCancelRequest', { request_id: requestId }).catch(() => {})
+        reject(signal?.reason ?? new Error('Service request timed out'))
+      }
+      const finish = () => signal?.removeEventListener('abort', cancel)
       const timer = setTimeout(() => {
-        this.waiting.delete(requestId)
-        reject(new Error('Service request timed out'))
+        cancel()
       }, method === 'EnvironmentRequest' || method === 'AttachFoldersRequest' || method === 'HostRuntimeRequest' ? 3_600_000
         : method === 'ToolCallRequest' && ['run', 'run_status'].includes(String((value as Record<string, unknown>).name)) ? 360_000 : 120_000)
       timer.unref()
-      this.waiting.set(requestId, { resolve, reject, timer })
+      this.waiting.set(requestId, {
+        resolve: value => { finish(); resolve(value) },
+        reject: error => { finish(); reject(error) }, timer,
+      })
       this.socket!.write(frame)
+      signal?.addEventListener('abort', cancel, { once: true })
     })
   }
 
-  async call<T>(method: string, value: unknown = {}): Promise<T> {
+  async call<T>(method: string, value: unknown = {}, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted()
     await this.open()
-    if (!this.external || method !== 'ToolCallRequest') return this.write(method, value)
+    signal?.throwIfAborted()
+    if (!this.external || method !== 'ToolCallRequest') return this.write(method, value, signal)
     const call = { ...(value as Record<string, unknown>) }
     const key = JSON.stringify([call.conversation_id, call.project_id, call.name, call.arguments_json])
     call.op_id = this.approvals.get(key) ?? call.op_id
     try {
-      const result = await this.write(method, call)
+      const result = await this.write(method, call, signal)
       this.approvals.delete(key)
       return result
     } catch (error) {
@@ -255,7 +270,7 @@ export class CoreHost {
     if (!this.api) {
       const schema = new BFBS(new Uint8Array(fs.readFileSync(this.schema)))
       const requests = schema.enums.find((e) => e.name === 'Tsugumi.Agent.RequestPayload')?.values
-        .filter((v) => v.value !== 0 && v.unionType && v.name !== 'HelloRequest').map((v) => v.name) ?? []
+        .filter((v) => v.value !== 0 && v.unionType && !['HelloRequest', 'ToolCallCancelRequest'].includes(v.name)).map((v) => v.name) ?? []
       this.api = new ToolCatalog(schema, requests, 'Tsugumi.Agent')
     }
     return this.api
@@ -268,11 +283,11 @@ export class CoreHost {
     return [...project, ...agent]
   }
 
-  async externalAPI(name: string, args: unknown) {
+  async externalAPI(name: string, args: unknown, signal?: AbortSignal) {
     const tool = this.apiCatalog().tools.find((t) => `agent_${t.name}` === name)
     if (!tool) throw new Error(`Unknown Agent operation: ${name}`)
     const request = this.apiCatalog().schema.objects[tool.object].name.split('.').at(-1)!
-    const value = await this.external.call(request, args ?? {})
+    const value = await this.external.call(request, args ?? {}, signal)
     return { text: JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v), isError: false }
   }
 }

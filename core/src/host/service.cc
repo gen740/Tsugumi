@@ -98,6 +98,7 @@ struct Service::State {
         guide(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
         tool_requests(4, 128, std::chrono::seconds(30)),
+        wait_requests(4, 128, std::chrono::seconds(30)),
         terminal_requests(1, 128, std::chrono::seconds(30)) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
@@ -327,7 +328,9 @@ struct Service::State {
   bool stopping = false;
   Lane requests;
   Lane tool_requests;
+  Lane wait_requests;
   std::map<ConnId, std::stop_source> connection_stops;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>> tool_stops;
   Lane terminal_requests;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
@@ -453,6 +456,15 @@ struct Service::State {
         const auto id =
             r->value_as_ConversationDeleteRequest()->conversation_id()->str();
         conversations->Delete(id);
+        for (auto call = tools->file_calls.begin();
+             call != tools->file_calls.end();) {
+          if (call->first.first != id) {
+            ++call;
+            continue;
+          }
+          call->second.stop->request_stop();
+          call = tools->file_calls.erase(call);
+        }
         turns->thoughts.erase(id);
         return wire::AgentReply(request.request_id, S::AcknowledgementT{});
       }
@@ -714,6 +726,7 @@ auto Service::Shutdown() -> void {
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->tool_requests.stop();
+  state_->wait_requests.stop();
   state_->terminal_requests.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
@@ -761,47 +774,90 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
 auto Service::dispatch(RequestIn request) -> void {
   const bool host = H::MessageBufferHasIdentifier(request.frame->data());
   bool human = true;
+  std::shared_ptr<std::stop_source> tool_stop;
+  bool tool = false, waiting = false;
   if (!host) {
     std::lock_guard lock(state_->mutex);
     human = state_->events->principals.at(request.conn);
-    request.connection_stop = state_->connection_stops.at(request.conn).get_token();
+    request.connection_stop =
+        state_->connection_stops.at(request.conn).get_token();
+    const auto *payload =
+        A::GetMessage(request.frame->data())->payload_as_Request();
+    if (payload->value_type() == A::RequestPayload::ToolCallCancelRequest) {
+      const auto key = std::make_pair(
+          request.conn,
+          payload->value_as_ToolCallCancelRequest()->request_id());
+      if (auto found = state_->tool_stops.find(key);
+          found != state_->tool_stops.end())
+        found->second->request_stop();
+      state_->server->reply(
+          request.conn,
+          wire::AgentReply(request.request_id, S::AcknowledgementT{}));
+      return;
+    }
+    tool = payload->value_type() == A::RequestPayload::ToolCallRequest;
+    if (tool) {
+      tool_stop = std::make_shared<std::stop_source>();
+      state_->tool_stops.emplace(
+          std::make_pair(request.conn, request.request_id), tool_stop);
+      const auto name =
+          payload->value_as_ToolCallRequest()->name()->string_view();
+      waiting = name == "run" || name == "run_status";
+    }
   }
-  auto* server = host ? state_->events->host_server : state_->server;
+  auto *server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
-  auto task = [this, request, human, host, server, fail](bool expired) {
+  auto task = [this, request, human, host, server, fail,
+               tool_stop](bool expired) {
+    std::stop_callback disconnected(request.connection_stop, [tool_stop] {
+      if (tool_stop)
+        tool_stop->request_stop();
+    });
+    auto invocation = request;
+    if (tool_stop)
+      invocation.connection_stop = tool_stop->get_token();
     std::string bytes;
     try {
-      if (expired) throw Failure("timeout", "Service request queue timed out");
-      bytes =
-          host ? state_->HandleHost(request) : state_->Handle(request, human);
-    } catch (const Cancelled&) {
+      if (tool_stop && tool_stop->stop_requested())
+        throw Cancelled();
+      if (expired)
+        throw Failure("timeout", "Service request queue timed out");
+      bytes = host ? state_->HandleHost(invocation)
+                   : state_->Handle(invocation, human);
+    } catch (const Cancelled &) {
       bytes = fail(request.request_id, "cancelled",
                    "The operation was cancelled", {});
-    } catch (const host::ProjectFailure& e) {
+    } catch (const host::ProjectFailure &e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()), {});
-    } catch (const Failure& e) {
+    } catch (const Failure &e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});
     }
+    if (tool_stop) {
+      std::lock_guard lock(state_->mutex);
+      state_->tool_stops.erase({request.conn, request.request_id});
+    }
     server->reply(request.conn, std::move(bytes));
   };
-  const bool tool =
-      !host && A::GetMessage(request.frame->data())
-                       ->payload_as_Request()
-                       ->value_type() == A::RequestPayload::ToolCallRequest;
   const bool terminal =
       host && H::GetMessage(request.frame->data())
                       ->payload_as_Request()
                       ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto& lane = terminal ? state_->terminal_requests
-               : tool   ? state_->tool_requests
-                        : state_->requests;
-  if (!lane.submit(task))
+  auto &lane = terminal  ? state_->terminal_requests
+               : waiting ? state_->wait_requests
+               : tool    ? state_->tool_requests
+                         : state_->requests;
+  if (!lane.submit(task)) {
+    if (tool_stop) {
+      std::lock_guard lock(state_->mutex);
+      state_->tool_stops.erase({request.conn, request.request_id});
+    }
     server->reply(request.conn, fail(request.request_id, "busy",
                                      "Service request queue is full", {}));
+  }
 }
 auto Service::disconnected(ConnId connection) -> void {
   std::lock_guard lock(state_->mutex);

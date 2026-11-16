@@ -28,7 +28,7 @@ export interface ChatContext {
   openPage: (project?: string) => void
 }
 
-type Handler = (b: any, url: URL) => unknown | Promise<unknown>
+type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 
 let ctx: ChatContext
 let core: CoreHost
@@ -361,7 +361,7 @@ class ChatHost {
 
   async search(text: string) { return core.user.call('ConversationSearchRequest', { text, project_id: await core.project(this.project) }) }
 
-  async externalCall(name: string, args: unknown) {
+  async externalCall(name: string, args: unknown, signal?: AbortSignal) {
     const project = await core.project(this.project)
     const id = `external-${project}`
     // A moved transcript needs fresh grants. The tool request asks hostd for
@@ -372,7 +372,7 @@ class ChatHost {
     const op = randomUUID()
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
-        arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op })
+        arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op }, signal)
     } catch (error) {
       if (error instanceof CoreHostError && error.code === 'grant_required' && error.requestId) {
         await showExternalAccess(error.requestId, this.project)
@@ -406,9 +406,9 @@ async function showExternalAccess(requestId: string, fallback?: string) {
     event: { kind: 'permission', id: requestId, asked, groups: request.groups, from: 'Claude Code' } })
 }
 
-async function externalAPI(name: string, args: unknown, project?: string) {
+async function externalAPI(name: string, args: unknown, project?: string, signal?: AbortSignal) {
   try {
-    const result = await core.externalAPI(name, args)
+    const result = await core.externalAPI(name, args, signal)
     if (name === 'agent_access') {
       const value = JSON.parse(result.text)
       if (typeof value.id === 'string') await showExternalAccess(value.id, project)
@@ -637,9 +637,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (opened) ctx.openPage(project)
     return { project, shown, opened }
   },
-  'POST /api/agent/call': (b) => String(b.name).startsWith('agent_')
-    ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined)
-    : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments),
+  'POST /api/agent/call': (b, _url, signal) => String(b.name).startsWith('agent_')
+    ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined, signal)
+    : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments, signal),
   'POST /api/agent/access': () => core.user.call('AccessListRequest'),
   'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
@@ -692,8 +692,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
-  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL) => {
+  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL, signal?: AbortSignal) => {
     await loadSettings()
-    return handler(body, url)
+    signal?.throwIfAborted()
+    return handler(body, url, signal)
   }]))
 }

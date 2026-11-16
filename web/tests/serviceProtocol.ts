@@ -272,7 +272,7 @@ for (const c of serviceVectors.replies) {
 }
 const agentSchema = new BFBS(new Uint8Array(fs.readFileSync(path.join(process.argv[2], 'web/src/gen/agent.bfbs'))))
 const agentRequests = agentSchema.enums.find(e => e.name === 'Tsugumi.Agent.RequestPayload')!.values
-  .filter(v => v.value && v.unionType && v.name !== 'HelloRequest').map(v => v.name)
+  .filter(v => v.value && v.unionType && !['HelloRequest', 'ToolCallCancelRequest'].includes(v.name)).map(v => v.name)
 assert.deepEqual(agentRequests, serviceVectors.agentRequests)
 const externalCatalog = new ToolCatalog(agentSchema, agentRequests, 'Tsugumi.Agent')
 for (const method of ['demo_list', 'demo_read', 'version_note']) assert.equal(externalCatalog.tool(method), undefined)

@@ -136,7 +136,7 @@
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Call this for helper or parallel work requested by the person. Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
+    "description": "Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
