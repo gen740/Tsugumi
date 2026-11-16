@@ -58,17 +58,16 @@ case "$action" in
     mount -o remount,ro /history-disk || exit 1
     mount -o remount,ro /nix || exit 1
     # The overlay is now read-only: no registered store data can change.
+    # Do not remount its backing filesystem read-only: the mounted overlay
+    # holds /persist/nix/upper and work open for writing even when it is ro.
+    # Flush the backing filesystem instead, then durably clear the marker.
     bash "$0" clean "$persist"
-    if ! mount -o remount,ro "$persist"; then
-      touch "$health/running"
-      sync -f "$persist"
-      exit 1
-    fi
     ;;
   clean)
     # All writers must already be stopped. Flush data BEFORE clearing the
     # marker, then persist the unlink before poweroff.
     sync
+    sync -f "$persist"
     rm -f "$health/running"
     sync -f "$persist"
     ;;

@@ -21,9 +21,16 @@ is running and no client connects for 30 seconds, hostd and vmhost exit.
 Vmhost gives the guest 40 seconds, then forces a stop; its second signal forces
 immediately. A 42-second process deadline also bounds a stuck framework callback.
 Hostd has a 45-second deadline. Vmd stops project groups concurrently, syncs,
-and tries read-only remounts of the history disk, Nix overlay and store disk.
-Only the successful path clears and syncs `/persist/store-health/running`.
-A failed remount keeps the marker. SIGKILL, power loss and an expired shutdown
+and requires read-only remounts of the history disk and Nix overlay. It then
+flushes the backing store disk with `sync -f /persist`, clears
+`/persist/store-health/running`, and syncs that unlink. The store disk itself
+stays writable: the mounted overlay holds its upper/work directories open for
+writing, so remounting that backing filesystem read-only fails even after a
+normal stop. Requiring that remount restored the dirty marker on every stop.
+The read-only overlay prevents further store writes; the completed backing
+filesystem sync makes them durable before the marker is removed.
+A failed history/overlay remount or pre-unlink backing sync keeps the marker.
+SIGKILL, power loss and an expired shutdown
 deadline cannot be made orderly; they cause a content check on the next boot.
 
 `fsync-store-paths = true` and `fsync-metadata = true` address the separate window
@@ -66,7 +73,8 @@ VM was started or repaired as part of this implementation.
 Without a VM: `tests/swift/vm_shutdown_test.swift` covers graceful coalescing,
 repeated signals, deadline forcing and restart; `tsugumi_vm_lifetime_tests`
 covers atomic idle stopping, another client, and queued versus running work;
-`tests/python/test_vm_store_health.py` covers boot decisions and repair failure;
+`tests/python/test_vm_store_health.py` covers boot decisions, the actual
+poweroff path with a busy backing filesystem, failed remount/sync and repair failure;
 the focused cleanup test checks that teardown sends TERM only once and permits
 the guest's deadline.
 
@@ -74,8 +82,8 @@ On a disposable real VM, verify TERM/INT/HUP during startup and normal operation
 Watch EOF after killing hostd, second-signal forcing, and the deadline with an
 unresponsive guest. Confirm normal UI quit preserves a running Card until it
 finishes, another client keeps the environment alive, and idle termination is
-followed by a successful reconnect. Exercise an app update. Check read-only
-remount results on both persistent disks and that a normal reboot skips checking.
+followed by a successful reconnect. Exercise an app update. Check the history/overlay
+read-only remounts and backing store sync, and that a normal reboot skips checking.
 Force an unclean stop and confirm checking precedes project readiness. Corrupt
 a disposable cached path, observe successful repair and an unavailable repair,
 and confirm the explicit Settings action reports the paths. Finally run the new
