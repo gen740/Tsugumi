@@ -40,7 +40,7 @@ export class RevisionEdit extends Observable {
     } catch (e) {
       if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict)) {
         this.conflictRev = session.rev
-        this.error = undefined
+        this.error = errorText(e)
       } else this.error = errorText(e)
       return false
     } finally {

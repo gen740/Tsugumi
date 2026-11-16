@@ -329,6 +329,19 @@ public actor CoreHostClient {
     return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
   }
 
+  public func saveProject(project: String, base: String, save: Tsugumi_RPC_ProjectSaveRequestT) async throws -> Tsugumi_Host_UISaveResultT {
+    let request = Tsugumi_Host_UISaveRequestT()
+    request.project = project; request.baseJson = base; request.save = save
+    let result: Tsugumi_Host_UISaveResultT
+    do { result = try await layoutCall(.uisaverequest, request) }
+    catch let failure as CoreHostFailure where failure.code == "revision_conflict" {
+      throw RPCFailure(kind: .revisionConflict, diagnostic: failure.message)
+    } catch let failure as CoreHostFailure { throw failure }
+    catch { result = try await layoutCall(.uisaverequest, request) }
+    if let failure = result.reply.value?.value as? Tsugumi_Data_FailureT { throw RPCFailure(failure) }
+    return result
+  }
+
   public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
     let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
     guard let merged = result["mergedJson"] as? String else {
