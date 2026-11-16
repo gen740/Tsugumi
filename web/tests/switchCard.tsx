@@ -10,7 +10,8 @@ const session = cardIds(new ProjectSession('/switch-test', 'switch-test', 'switc
 session.project = parse('{"name":"switch-test","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 let saves = 0
-session.scheduleSave = () => { saves++ }
+const operate = session.operateProject
+session.operateProject = async request => { saves++; return operate(request) }
 const card = await session.addCard('switch', [], { x: 0, y: 0 }, 'calibrate')
 assert.ok(TEMPLATES.some(t => t.id === 'switch'))
 assert.equal(definitionKind(session.cardDefinition(card)), 'switch')
@@ -20,6 +21,7 @@ assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', val
 
 const before = saves
 session.setParam(card, 'value', true)
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 assert.ok(saves > before, 'Toggling schedules the normal project save')
 const saved = parse(serialize(session.cardDefinition(card)!))
@@ -51,8 +53,10 @@ for (const flow of ['leftToRight', 'topToBottom'] as const) {
 
 // Minimal definitions use the built-in default; the first click writes it.
 session.updateCard(card, c => c.set('params', undefined))
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'false')
 session.setParam(card, 'value', true)
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 await session.undo()
 assert.equal(get(session.cardDefinition(card), 'params'), undefined)

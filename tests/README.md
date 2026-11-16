@@ -69,7 +69,7 @@ Prose and `README.md` run the documentation build/tests; `docs/features.md` also
 
 The build generates C++/Python/Swift/TypeScript bindings and BFBS with `flatc`; these stay in build outputs and are not committed.
 
-Web gesture, source retention, template and undo tests call the same pure host document edit implementation through `tsugumi_document_edit_driver`. The Nix Web check compiles that small driver directly. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
+Web gesture, source editing, template and undo fixtures call the production host operation executor through `tsugumi_document_edit_driver`, with a controllable in-memory core transport. The Nix Web check builds only that driver against the installed production host archives. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
 
 CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web checks run on Linux; Swift and Seatbelt checks run on macOS. Real remote execution using `tsugumi-workerd` runs on x86_64 Linux through `tests/ci-remote-worker.sh`. The socket-free thought scheduler test is part of `tsugumi_host_settings_tests` in the Agent RPC job.
 

@@ -18,17 +18,16 @@ const { get } = await import('../src/shared/json')
 const s = cardIds(new ProjectSession('/p', 'k', 'p'))
 s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 s.layout = parse('{}')
-s.scheduleSave = () => {}
 s.connected = true
 const cv = new CanvasController(s, new WorkflowTab([]))
 const here = { x: 4000, y: 4000 }
 for (const t of ['draft', 'draft', 'python'] as const) {
   const k = (await cv.addBuiltin(t, here))!
-  assert.equal(get(s.layout, 'cards', k), undefined, 'the host supplies automatic coordinates')
+  assert.ok(Number.isFinite(s.position(k).x) && Number.isFinite(s.position(k).y), 'the host confirms automatic coordinates')
 }
 const undos = s.undoStack.length
 const pressedE = (await cv.addDraft())!
-assert.equal(get(s.layout, 'cards', pressedE), undefined)
+assert.ok(get(s.layout, 'cards', pressedE))
 assert.equal(s.undoStack.length, undos + 1)
 const dropped = await s.addCard('draft', [], here)
 assert.deepEqual(s.position(dropped), here, 'an aimed drop retains its exact position')

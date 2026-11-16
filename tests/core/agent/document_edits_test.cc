@@ -31,60 +31,6 @@ auto Normalized(const std::string &value) -> std::string {
   }
   return raw;
 }
-TEST(DocumentMerge, FormerClientMergeFixtures) {
-  const auto fixtures = fs::read_file(TSUGUMI_MERGE_FIXTURES);
-  ASSERT_TRUE(fixtures.has_value());
-  for (const auto &raw : json::Array(*fixtures)) {
-    const auto fixture = json::Object(raw);
-    SCOPED_TRACE(json::Text(fixture, "name"));
-    const auto edit = MergeDocuments(fixture.at("base"), fixture.at("ours"),
-                                     fixture.at("theirs"));
-    EXPECT_EQ(Normalized(edit.merged_json), Normalized(fixture.at("expect")));
-    std::vector<std::string> conflicts;
-    for (const auto &path : json::Array(json::Get(fixture, "conflicts", "[]")))
-      conflicts.push_back(json::String(path));
-    EXPECT_EQ(edit.conflicts, conflicts);
-  }
-}
-TEST(DocumentMerge, RunConditionsAndDeletionNeedAChoiceButLayoutDoesNot) {
-  for (const auto *field :
-       {"settings", "permissions", "hostFolders", "nixSources"}) {
-    const auto state = [&](int value) {
-      return json::Encode(json::Members{{field, std::to_string(value)}});
-    };
-    EXPECT_FALSE(MergeDocuments(state(1), state(2), state(3)).conflicts.empty())
-        << field;
-  }
-  EXPECT_TRUE(MergeDocuments(R"({"layout":{"x":1}})", R"({"layout":{"x":2}})",
-                             R"({"layout":{"x":3}})")
-                  .conflicts.empty());
-  EXPECT_FALSE(MergeDocuments(R"({"params":[{"name":"layout","data":1}]})",
-                              R"({"params":[{"name":"layout","data":2}]})",
-                              R"({"params":[{"name":"layout","data":3}]})")
-                   .conflicts.empty());
-  const auto deletion = MergeDocuments(
-      R"({"definitions":{"a":{"card":{"n":1}}}})", R"({"definitions":{}})",
-      R"({"definitions":{"a":{"card":{"n":2}}}})");
-  EXPECT_EQ(deletion.conflicts, std::vector<std::string>({"/definitions/a"}));
-  EXPECT_EQ(deletion.merged_json, R"({"definitions":{}})");
-}
-TEST(DocumentMerge,
-     CompetingWireReplacementsOfferLocalWireWithoutCombiningThem) {
-  const auto state = [](const std::string &from) {
-    return R"({"connections":[{"from":")" + from + R"(","to":"input"}]})";
-  };
-  const auto edit = MergeDocuments(state("a"), state("b"), state("c"));
-  EXPECT_EQ(edit.conflicts, std::vector<std::string>({"/connections"}));
-  EXPECT_EQ(Normalized(edit.merged_json), Normalized(state("b")));
-}
-TEST(DocumentMerge, ObjectSpellingAndLargeIntegersArePreserved) {
-  const auto edit = MergeDocuments(R"({"n":9007199254740993,"x":1})",
-                                   R"({"x":1, "n":9007199254740993})",
-                                   R"({"n":9007199254740993,"x":2})");
-  EXPECT_TRUE(edit.conflicts.empty());
-  EXPECT_EQ(edit.merged_json, R"({"n":9007199254740993,"x":2})");
-}
-
 auto ConnectionWires(const std::string &state) -> std::set<std::string> {
   const auto project = json::Object(json::Object(state).at("project"));
   std::set<std::string> result;

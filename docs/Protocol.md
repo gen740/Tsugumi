@@ -585,7 +585,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ProjectTrustRequest` | `path: string` (required), `decision: ProjectTrustDecision` |
 | `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string`, `key_profile: string` |
 | `HostProjectDefaultsRequest` | None |
-| `HostProjectReadRequest` | `path: string` (required), `file_index: uint`, `offset: ulong` |
 | `HostProjectInfoRequest` | `path: string` (required) |
 | `HostProjectCreateRequest` | `parent: string` (required), `name: string` (required), `flow: string` |
 | `HostProjectDuplicateRequest` | `path: string` (required), `parent: string` (required), `name: string` (required) |
@@ -594,18 +593,11 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRecentListRequest` | None |
 | `HostRecentRememberRequest` | `path: string` (required) |
 | `HostRecentForgetRequest` | `paths: [string]` |
-| `LayoutArrangeRequest` | `scene: LayoutScene` (required) |
-| `LayoutUntangleRequest` | `scene: LayoutScene` (required), `around: [string]` |
 | `LayoutValidateRequest` | `json: string` (required), `removed_cards: [string]` |
 | `VersionCanvasRequest` | `layout_json: string` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
 | `FileFormatRequest` | `path: string` (required), `text: string` (required), `language: FormatLanguage` |
 | `HostVersionGraphRequest` | `project: string` (required), `language: string`, `limit: uint` |
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
-| `DocumentSubgraphRequest` | `project_json: string` (required), `cards: [string]`, `id: string` (required) |
-| `DocumentMergeRequest` | `base_json: string` (required), `ours_json: string` (required), `theirs_json: string` (required) |
-| `DocumentCopyRequest` | `state_json: string` (required), `paths: [string]`, `from: string` (required), `to: string` (required), `name: string` |
-| `DocumentConnectRequest` | `state_json: string` (required), `from_card: string` (required), `from_port: string` (required), `to_card: string` (required), `to_port: string` (required), `fork_id: string` |
-| `DocumentTemplateRequest` | `name: string` (required), `id: string` (required) |
 | `PermissionKindsRequest` | `language: string` |
 | `ProjectOperateRequest` | `project_id: string` (required), `op_id: string` (required), `body: ProjectOperationBody` |
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
@@ -614,8 +606,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
-| `LayoutPrepareSaveRequest` | `project: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`.

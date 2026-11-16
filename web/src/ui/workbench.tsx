@@ -1,4 +1,3 @@
-import { RevisionEditNotice } from './revisionEdit'
 // Tabs of one project (the root workflow and opened child workflows) and the
 // workbench of the active tab: the sidebar, the canvas with the log/timeline/
 // terminal panel under it, and the chat beside it. While the environment
@@ -395,7 +394,6 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
   const [showSync, setShowSync] = useState(false)
   const [showIssues, setShowIssues] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  useEffect(() => { if (session.mergeEdit.conflictRev !== undefined) setShowSync(true) }, [session.mergeEdit.conflictRev])
   const syncRef = useRef<HTMLButtonElement>(null)
   const issueRef = useRef<HTMLButtonElement>(null)
   const st = session.runStatus?.state ?? D.RunState.idle
@@ -417,7 +415,6 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
         <span className="vdivider sb-not-min" />
         <StatusButton buttonRef={syncRef} help={L('保存・同期の詳細')} guide="save" onClick={() => setShowSync(!showSync)}>
           {sync.kind === 'saved' && <><Icon name="checkmark.icloud" style={{ color: 'var(--green)' }} /><span>{L('保存済み')}</span></>}
-          {sync.kind === 'waitingForRun' && <><Icon name="clock.arrow.circlepath" style={{ color: 'var(--orange)' }} /><span className="sb-long">{L('実行が終わったら保存します')}</span><span className="sb-short">{L('実行後に保存')}</span></>}
           {sync.kind === 'saving' && <><Spinner small /><span>{L('保存中…')}</span></>}
           {sync.kind === 'failed' && <><Icon name="exclamationmark.icloud.fill" style={{ color: 'var(--red)' }} /><span>{L('同期できません')}</span></>}
           {sync.kind === 'offline' && <><Icon name="icloud.slash" className="secondary" /><span>{L('未接続')}</span></>}
@@ -436,16 +433,8 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
             <Value label={L('確定 revision')} value={String(session.rev)} />
             <Value label={L('実行 revision')} value={String(session.executionRev)} />
             {sync.kind === 'failed' && <div className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{sync.message}</div>}
-            <RevisionEditNotice edit={session.mergeEdit} text={() => session.draftSummary()}
-              overwrite={() => session.resolveMergeConflict()} reload={() => session.discardDraft()} />
             <div className="callout secondary">{L('変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。')}</div>
             <div className="row gap8 wrap">
-              {session.saveError !== undefined && (
-                <>
-                  <Button disabled={!session.connected} onClick={() => void session.save()}>{L('もう一度保存')}</Button>
-                  <Button kind="destructive" onClick={() => setConfirmDiscard(true)}>{L('変更を破棄…')}</Button>
-                </>
-              )}
               <Button disabled={!session.connected || session.reloadingExternal || !!session.reloadApproval} help={L('Tsugumi の外で編集されたファイルを取り込みます')} onClick={() => void session.reloadExternal()}>{L('外部の変更を再読込')}</Button>
               <Button icon="point.3.connected.trianglepath.dotted" help={L('実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます')}
                 onClick={() => { setShowSync(false); app.openWindow(session, { kind: 'versions' }) }}>{L('版の履歴…')}</Button>

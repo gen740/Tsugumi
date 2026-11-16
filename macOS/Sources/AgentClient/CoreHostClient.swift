@@ -297,16 +297,6 @@ public actor CoreHostClient {
     return saved
   }
 
-  public func prepareLayoutSave(project: String, baseRev: UInt64, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> [Tsugumi_RPC_DocumentChangeT] {
-    let request = Tsugumi_Host_LayoutPrepareSaveRequestT()
-    request.project = project
-    let save = Tsugumi_RPC_ProjectSaveRequestT()
-    save.baseRev = baseRev; save.opId = UUID().uuidString; save.origin = "ui"; save.changes = changes
-    request.save = save
-    let result: Tsugumi_Host_LayoutPreparedSaveT = try await layoutCall(.layoutpreparesaverequest, request)
-    return result.save.changes.compactMap { $0 }
-  }
-
   public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
     let request = Tsugumi_Host_LayoutValidateRequestT()
     request.json = json; request.removedCards = removedCards.map(Optional.some)
@@ -357,50 +347,6 @@ public actor CoreHostClient {
   public func permissionKinds(language: String) async throws -> [Tsugumi_Service_PermissionKindT] {
     let result = try await call("PermissionKindsRequest", ["language": language])
     return result["kinds"] as? [Tsugumi_Service_PermissionKindT] ?? []
-  }
-
-  public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
-    let result = try await call("DocumentTemplateRequest", ["name": name, "id": id])
-    guard let definition = result["definitionJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
-    }
-    return (definition, (result["files"] as? [Tsugumi_Host_DocumentTemplateFileT] ?? []).map { ($0.path, $0.text) })
-  }
-
-  public func connectDocuments(state: String, from: (String, String), to: (String, String), forkId: String?) async throws -> (state: String, insertedId: String, needsFork: Bool) {
-    var fields: [String: Any] = ["state_json": state, "from_card": from.0, "from_port": from.1, "to_card": to.0, "to_port": to.1]
-    fields["fork_id"] = forkId
-    let result = try await call("DocumentConnectRequest", fields)
-    guard let state = result["stateJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
-    }
-    return (state, result["insertedId"] as? String ?? "", result["needsFork"] as? Bool ?? false)
-  }
-
-  public func copyDocuments(state: String, paths: [String], from: String, to: String, name: String?) async throws -> (edits: String, files: [(from: String, to: String)]) {
-    var fields: [String: Any] = ["state_json": state, "paths": paths, "from": from, "to": to]
-    fields["name"] = name
-    let result = try await call("DocumentCopyRequest", fields)
-    guard let edits = result["editsJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
-    }
-    return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
-  }
-
-  public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
-    let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
-    guard let merged = result["mergedJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
-    }
-    return (merged, result["conflicts"] as? [String] ?? [])
-  }
-
-  public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
-    let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
-    guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
-    }
-    return (project, external, link)
   }
 
   public func modelSelection(_ purpose: String) async throws -> Tsugumi_Service_ProviderSelectionT {

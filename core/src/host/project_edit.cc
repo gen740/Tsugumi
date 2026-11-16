@@ -399,8 +399,9 @@ auto ReverseFields(const std::string &path,
     const auto at = text.find_first_not_of(" \n\r\t");
     return at == std::string::npos ? char{} : text[at];
   };
-  if (now && !previous && kind(*now) == '[') {
-    const auto items = json::Array(*now);
+  if ((now.has_value() != previous.has_value()) &&
+      kind(now ? *now : *previous) == '[') {
+    const auto items = json::Array(now ? *now : *previous);
     auto keyed = [&](const std::string &key) {
       std::set<std::string> ids;
       for (const auto &raw : items) {
@@ -413,7 +414,8 @@ auto ReverseFields(const std::string &path,
       return !items.empty();
     };
     if (keyed("id") || keyed("name")) {
-      ReverseFields(path, now, std::string("[]"), selector, result);
+      ReverseFields(path, now.value_or("[]"), previous.value_or("[]"), selector,
+                    result);
       return;
     }
   }
@@ -675,6 +677,58 @@ auto PrepareProjectEdits(
     const EditFileRead& read,
     const std::function<void(const std::string &)> &authorize)
     -> json::Members {
+  // Expand form edits here so Mac and Web share field/entity selection.
+  H::ProjectEditsT expanded;
+  bool has_json = false;
+  for (const auto &entry : edits.edits) {
+    if (entry && entry->value.AsProjectJSONEdit()) {
+      has_json = true;
+      const auto &edit = *entry->value.AsProjectJSONEdit();
+      if (!fs::valid_relative_path(edit.file_path))
+        throw Failure("invalid_path", edit.file_path);
+      if (authorize)
+        authorize(edit.file_path);
+      if (!edit.old_value || !edit.new_value)
+        throw Failure("invalid_request", "missing JSON edit values");
+      const auto before = edit.old_value->present
+                              ? std::optional(edit.old_value->json)
+                              : std::nullopt;
+      const auto after = edit.new_value->present
+                             ? std::optional(edit.new_value->json)
+                             : std::nullopt;
+      const auto current = base.files.contains(edit.file_path)
+                               ? std::optional(base.files.at(edit.file_path))
+                               : read(edit.file_path);
+      if (!current && after) {
+        if (before)
+          throw Failure("target_missing", edit.file_path);
+        H::ProjectFilePutT put;
+        put.file_path = edit.file_path;
+        put.expect_missing = true;
+        put.bytes.assign(after->begin(), after->end());
+        auto value = std::make_unique<H::ProjectEditT>();
+        value->value.Set(std::move(put));
+        expanded.edits.push_back(std::move(value));
+      } else {
+        const auto selected =
+            !before && current && after &&
+                    after->find_first_not_of(" \n\r\t") != std::string::npos &&
+                    (*after)[after->find_first_not_of(" \n\r\t")] == '{'
+                ? std::optional<std::string>("{}")
+                : before;
+        ReverseFields(edit.file_path, selected, after, {}, expanded);
+      }
+    } else if (entry) {
+      expanded.edits.push_back(std::make_unique<H::ProjectEditT>(*entry));
+    } else {
+      throw Failure("invalid_request", "empty project edit");
+    }
+  }
+  if (has_json) {
+    if (expanded.edits.empty())
+      return {{"base_rev", json::Get(base.snapshot, "rev")}, {"changes", "[]"}};
+    return PrepareProjectEdits(expanded, base, read, authorize);
+  }
   if (edits.edits.empty())
     throw Failure("invalid_request", "project_edit requires at least one edit");
   std::map<std::string, std::optional<std::string>> originals, files;

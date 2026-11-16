@@ -876,35 +876,6 @@ TEST_P(NestedHelperFiles, CopyAndShellStayInsideEveryParentsExactSets) {
 INSTANTIATE_TEST_SUITE_P(NestedDepths, NestedHelperFiles,
                          ::testing::Values(1, 2));
 
-TEST_F(AgentFixture, ClientsAndAgentUseTheSameHostTemplate) {
-  namespace json = tsugumi::agent::json;
-  const auto conversation = Conversation("document-edits");
-  const auto created =
-      Call(*host, H::RequestPayload::DocumentTemplateRequest, [&](Builder &b) {
-        return H::CreateDocumentTemplateRequest(b, b.CreateString("python"),
-                                                b.CreateString("new-card"))
-            .Union();
-      });
-  ASSERT_TRUE(created.Code().empty()) << created.Code();
-  const auto agent_template = Tool(conversation, "document_template",
-                                   R"({"name":"python","id":"new-card"})");
-  ASSERT_TRUE(agent_template.Code().empty()) << agent_template.Code();
-  const auto template_reply =
-      json::Object(JsonString(agent_template.View(), "/text"));
-  const auto *expected = created.HostValue()->value_as_DocumentTemplate();
-  EXPECT_EQ(json::Text(template_reply, "definition_json"),
-            expected->definition_json()->str());
-  ASSERT_EQ(json::Array(template_reply.at("files")).size(),
-            expected->files()->size());
-  for (const auto &raw : json::Array(template_reply.at("files"))) {
-    const auto file = json::Object(raw);
-    bool found = false;
-    for (const auto *entry : *expected->files())
-      found |= entry->path()->str() == json::Text(file, "path") &&
-               entry->text()->str() == json::Text(file, "text");
-    EXPECT_TRUE(found);
-  }
-}
 
 TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   StartProject();

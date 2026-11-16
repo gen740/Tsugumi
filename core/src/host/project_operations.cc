@@ -65,6 +65,42 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     -> json::Members {
   if (const auto* edits = body.AsProjectEdits())
     return PrepareProjectEdits(*edits, base, read, authorize);
+  if (const auto *replacement = body.AsProjectReplaceDocuments()) {
+    if (replacement->expected_rev !=
+        json::UInt(json::Get(base.snapshot, "rev")))
+      throw Failure("revision_conflict",
+                    "Raw document revision changed; reload before applying");
+    H::ProjectEditsT edits;
+    for (const auto &document : replacement->documents) {
+      if (!document)
+        throw Failure("invalid_request", "empty replacement document");
+      if (authorize)
+        authorize(document->path);
+      const auto old = base.files.contains(document->path)
+                           ? std::optional(base.files.at(document->path))
+                           : read(document->path);
+      auto entry = std::make_unique<H::ProjectEditT>();
+      if (document->present) {
+        H::ProjectFilePutT put;
+        put.file_path = document->path;
+        put.expect_missing = !old;
+        if (old)
+          put.expected_hash = crypto::sha256_hex(*old);
+        put.bytes.assign(document->json.begin(), document->json.end());
+        entry->value.Set(std::move(put));
+      } else if (old) {
+        H::ProjectFileRemoveT remove;
+        remove.file_path = document->path;
+        remove.expected_hash = crypto::sha256_hex(*old);
+        entry->value.Set(std::move(remove));
+      } else
+        continue;
+      edits.edits.push_back(std::move(entry));
+    }
+    if (edits.edits.empty())
+      return {{"base_rev", json::Get(base.snapshot, "rev")}, {"changes", "[]"}};
+    return PrepareProjectEdits(edits, base, read, authorize);
+  }
   H::ProjectEditsT edits;
   std::map<std::string, std::optional<std::string>> staged;
   std::set<std::string> paths;
@@ -105,7 +141,9 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     return *bytes;
   };
   std::string prefix;
-  if (const auto* connect = body.AsProjectConnect())
+  if (const auto *selection = body.AsProjectSelection())
+    prefix = Prefix(selection->project_path);
+  else if (const auto *connect = body.AsProjectConnect())
     prefix = Prefix(connect->project_path);
   else if (const auto* subgraph = body.AsProjectMakeSubgraph())
     prefix = Prefix(subgraph->project_path);
@@ -136,6 +174,17 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     graph["cards"] = json::Encode(cards);
     root["canvas"] = json::Encode(graph);
     put(prefix + "tsugumi.json", json::Encode(root));
+    for (const auto &field : {"displays", "boundaries"}) {
+      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"));
+      if (!layout.contains(field))
+        continue;
+      auto entries = json::Object(layout.at(field));
+      std::erase_if(entries, [&](const auto &entry) {
+        return entry.first == id || entry.first.starts_with(id + '/');
+      });
+      layout[field] = json::Encode(entries);
+      put(prefix + "layout.json", json::Encode(layout));
+    }
     if (!automatic) {
       auto layout = json::Object(get(prefix + "layout.json").value_or("{}"));
       auto positions = json::Object(json::Get(layout, "cards", "{}"));
@@ -209,7 +258,165 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     state["externals"] = json::Encode(externals);
     return json::Encode(state);
   };
-  if (const auto* connect = body.AsProjectConnect()) {
+  if (const auto *selection = body.AsProjectSelection()) {
+    if (selection->action == H::ProjectSelectionAction::Place) {
+      for (const auto &id : selection->cards) {
+        if (!get(prefix + "definitions/" + id + "/_card.json") &&
+            !get(prefix + "definitions/" + id + "/_link.json"))
+          throw Failure("target_missing", "Definition: " + id);
+        place(id, selection->x, selection->y);
+      }
+    } else {
+      const std::set<std::string> ids(selection->cards.begin(),
+                                      selection->cards.end());
+      for (const auto &id : ids)
+        if (!valid_id(id))
+          throw Failure("invalid_request", "invalid Card id: " + id);
+      auto root = json::Object(project);
+      auto graph = json::Object(json::Get(root, "canvas", "{}"));
+      auto cards = json::Array(json::Get(graph, "cards", "[]"));
+      const bool deleting =
+          selection->action == H::ProjectSelectionAction::Delete;
+      const bool definitions =
+          selection->action == H::ProjectSelectionAction::DeleteDefinitions;
+      if (definitions) {
+        for (const auto &raw : cards)
+          if (ids.contains(json::Text(json::Object(raw), "id")))
+            throw Failure("value_conflict",
+                          "Cannot delete a placed definition");
+      }
+      if (deleting || definitions) {
+        for (const auto &id : ids) {
+          const auto dir = prefix + "definitions/" + id + '/';
+          std::vector<std::string> roots{dir};
+          const auto link_bytes = get(dir + "_link.json");
+          if (link_bytes) {
+            const auto external_id =
+                json::Text(json::Object(*link_bytes), "external");
+            if (!valid_id(external_id))
+              throw Failure("invalid_path", external_id);
+            roots.push_back(prefix + "externals/" + external_id + '/');
+          }
+          for (const auto &path : paths)
+            for (const auto &at : roots)
+              if (path.starts_with(at))
+                remove(path);
+        }
+      }
+      if (!definitions) {
+        if (deleting) {
+          std::erase_if(cards, [&](const auto &raw) {
+            return ids.contains(json::Text(json::Object(raw), "id"));
+          });
+          graph["cards"] = json::Encode(cards);
+        }
+        auto wires = json::Array(json::Get(graph, "connections", "[]"));
+        const auto selected_wires = json::Array(
+            selection->connections_json.empty() ? "[]"
+                                                : selection->connections_json);
+        std::erase_if(wires, [&](const auto &raw) {
+          const auto wire = json::Object(raw);
+          const auto from =
+              json::Text(json::Object(json::Get(wire, "from", "{}")), "card");
+          const auto to =
+              json::Text(json::Object(json::Get(wire, "to", "{}")), "card");
+          if (deleting)
+            return ids.contains(from) || ids.contains(to);
+          if (selection->action == H::ProjectSelectionAction::DisconnectInputs)
+            return ids.contains(to);
+          if (selection->action == H::ProjectSelectionAction::DisconnectOutputs)
+            return ids.contains(from);
+          return std::any_of(selected_wires.begin(), selected_wires.end(),
+                             [&](const auto &selected) {
+                               return DocumentsEqual(raw, selected);
+                             });
+        });
+        graph["connections"] = json::Encode(wires);
+        root["canvas"] = json::Encode(graph);
+        if (deleting) {
+          auto boundary = json::Object(json::Get(root, "boundary", "{}"));
+          for (const auto &side : {"inputs", "outputs"}) {
+            if (!boundary.contains(side))
+              continue;
+            auto ends = json::Object(boundary.at(side));
+            std::erase_if(ends, [&](const auto &item) {
+              return ids.contains(
+                  json::Text(json::Object(item.second), "card"));
+            });
+            boundary[side] = json::Encode(ends);
+          }
+          if (root.contains("boundary"))
+            root["boundary"] = json::Encode(boundary);
+          auto layout =
+              json::Object(get(prefix + "layout.json").value_or("{}"));
+          for (const auto &field : {"cards", "displays", "boundaries"}) {
+            if (!layout.contains(field))
+              continue;
+            auto values = json::Object(layout.at(field));
+            std::erase_if(values, [&](const auto &item) {
+              return std::any_of(ids.begin(), ids.end(), [&](const auto &id) {
+                return item.first == id || item.first.starts_with(id + '/');
+              });
+            });
+            layout[field] = json::Encode(values);
+          }
+          if (layout.contains("notes")) {
+            auto notes = json::Array(layout.at("notes"));
+            std::erase_if(notes, [&](const auto &raw) {
+              const auto id = json::Text(json::Object(raw), "id");
+              return std::find(selection->notes.begin(), selection->notes.end(),
+                               id) != selection->notes.end();
+            });
+            layout["notes"] = json::Encode(notes);
+          }
+          auto displays = json::Object(json::Get(layout, "displays", "{}"));
+          for (const auto &id : selection->frames) {
+            if (ids.contains(id))
+              continue;
+            auto frame = json::Object(json::Get(displays, id, "{}"));
+            if (selection->scene) {
+              for (const auto &box : selection->scene->frames) {
+                if (!box || box->id != id)
+                  continue;
+                for (const auto &[field, value] : {std::pair{"x", box->x},
+                                                   {"y", box->y},
+                                                   {"width", box->width},
+                                                   {"height", box->height}})
+                  if (!frame.contains(field))
+                    frame[field] = std::to_string(value);
+              }
+            }
+            frame["hidden"] = "true";
+            displays[id] = json::Encode(frame);
+          }
+          if (!selection->frames.empty())
+            layout["displays"] = json::Encode(displays);
+          if (layout.contains("groups")) {
+            auto groups = json::Array(layout.at("groups"));
+            for (auto &raw : groups) {
+              auto group = json::Object(raw);
+              for (const auto &field : {"cards", "outputs"}) {
+                if (!group.contains(field))
+                  continue;
+                auto members = json::Array(group.at(field));
+                std::erase_if(members, [&](const auto &member) {
+                  return ids.contains(
+                      std::string(field) == "cards"
+                          ? json::String(member)
+                          : json::Text(json::Object(member), "card"));
+                });
+                group[field] = json::Encode(members);
+              }
+              raw = json::Encode(group);
+            }
+            layout["groups"] = json::Encode(groups);
+          }
+          put(prefix + "layout.json", json::Encode(layout));
+        }
+        put(prefix + "tsugumi.json", json::Encode(root));
+      }
+    }
+  } else if (const auto *connect = body.AsProjectConnect()) {
     json::Members definitions;
     for (const auto& raw : json::Array(json::Get(
              json::Object(json::Get(json::Object(project), "canvas", "{}")),
@@ -338,7 +545,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       root["canvas"] = json::Encode(graph);
       put(prefix + "tsugumi.json", json::Encode(root));
     }
-  } else if (const auto* subgraph = body.AsProjectMakeSubgraph()) {
+  } else if (const auto *subgraph = body.AsProjectMakeSubgraph()) {
     const auto nested = MakeSubgraph(project, subgraph->cards, subgraph->id);
     const auto destination = prefix + "externals/" + subgraph->id + '/';
     if (get(destination + "tsugumi.json") ||
@@ -458,7 +665,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
                            : std::nullopt;
             },
             *move));
-  } else if (const auto* layout = body.AsProjectLayout()) {
+  } else if (const auto *layout = body.AsProjectLayout()) {
     if (layout->action != H::ProjectLayoutAction::Arrange &&
         layout->action != H::ProjectLayoutAction::Untangle)
       throw Failure("invalid_request", "unknown layout action");
@@ -623,6 +830,19 @@ auto ProjectOperations::Execute(const std::string& project,
     throw Failure("internal_error",
                   "Internal error: the host operation has a mismatched project "
                   "or invalid operation id; retrying will not help.");
+  if (const auto *reload = operation.body.AsProjectReload()) {
+    if (context.origin != "ui")
+      throw Failure("invalid_request", "External reload is a human action");
+    std::vector<std::string> approved;
+    for (const auto &permission : reload->approved_permissions)
+      approved.push_back(json::Quote(permission));
+    return call("project_reload",
+                {{"base_rev", std::to_string(reload->expected_rev)},
+                 {"op_id", json::Quote(operation.op_id)},
+                 {"origin", json::Quote(context.origin)},
+                 {"check_permissions", "true"},
+                 {"approved_permissions", json::Encode(approved)}});
+  }
   const auto intent = Intent(operation, context.origin);
   // Reuse the core's existing save receipt, before interpreting old values that
   // a successful first application has already changed.
@@ -724,6 +944,8 @@ auto ProjectOperations::Execute(const std::string& project,
       }
       const auto result = call("project_save", plan);
       const auto envelope = json::Object(result.json);
+      if (operation.body.AsProjectReplaceDocuments())
+        return result;
       if (json::Text(envelope, "reply") != "Failure" ||
           json::Text(json::Object(json::Get(envelope, "value", "{}")),
                      "kind") != "revision_conflict")
@@ -731,7 +953,8 @@ auto ProjectOperations::Execute(const std::string& project,
     } catch (const agent::SaveRevisionConflict&) {
       continue;
     } catch (const Failure& failure) {
-      if (failure.code != "revision_conflict")
+      if (operation.body.AsProjectReplaceDocuments() ||
+          failure.code != "revision_conflict")
         throw;
     } catch (const agent::Cancelled&) {
       throw;

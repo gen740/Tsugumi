@@ -24,26 +24,10 @@ session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.confirmedProject = clone(session.project)
 session.layout = parse('{}')
 session.confirmedLayout = parse('{}')
-session.scheduleSave = () => {}
-session.save = async () => { await (session as unknown as { saveOnce(): Promise<void> }).saveOnce() }
 let saves = 0
-session.client = {
-  cardId: allocator.cardId.bind(allocator),
-  async save(_rev: bigint, _op: string, _origin: string, changes: R.DocumentChangeT[]) {
-    saves++
-    // This boundary echoes confirmed documents; no identity moves exist.
-    for (const change of changes) {
-      if (change.valueType === R.DocumentChangeValue.PutDefinition) {
-        const definition = change.value as R.PutDefinitionT
-        session.confirmedDefinitions.set(text(definition.id), parse(text(definition.cardJson)))
-        session.confirmedDefinitionMeta.set(text(definition.id), parse(text(definition.metaJson)))
-      }
-    }
-    session.confirmedProject = clone(session.project)
-    session.confirmedLayout = clone(session.layout)
-    return {}
-  },
-} as never
+const operate = session.operateProject
+session.operateProject = async request => { saves++; return operate(request) }
+Object.assign((session as any).client, { cardId: allocator.cardId.bind(allocator) })
 session.connected = true
 const a = await session.addCard('draft', [], { x: 0, y: 0 }, 'Aggregate')
 const b = await session.addCard('draft', [], { x: 400, y: 0 }, 'Aggregate')
@@ -66,15 +50,16 @@ assert.equal(session.displays.get(a)?.runId, 'past')
 assert.equal(text(requests[0].name), 'aggregate')
 assert.ok(saves >= 2)
 
-// A Card inside an unsaved Card in Card asks the same core for its scope's id.
-session.edit(s => {
-  s.appendCard('outer', [])
-  s.setCardDefinition('outer', { card: parse('{}'), meta: parse('{"name":"Outer"}'), link: parse('{"external":"nested"}') })
-  s.createExternal('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
-})
+// Nested scopes use the same allocator through the operation transport.
+session.confirmedLinks.set('outer', parse('{"external":"nested"}'))
+session.confirmedDefinitionMeta.set('outer', parse('{"name":"Outer"}'))
+const projectValue = JSON.parse(serialize(session.project))
+projectValue.canvas.cards.push({ id: 'outer' })
+session.project = parse(JSON.stringify(projectValue))
+session.externals.set('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
 const inner = await session.addCard('draft', ['outer'], { x: 0, y: 0 }, 'Inside')
-assert.equal(inner, `outer/${ids[2]}`)
-assert.deepEqual(requests[2], { name: 'inside', prefix: 'externals/nested/' })
-assert.equal(session.displayPath(['outer', ids[2]]), 'Outer/Inside')
+assert.equal(inner, `outer/${ids[3]}`)
+assert.deepEqual(requests[3], { name: 'inside', prefix: 'externals/nested/' })
+assert.equal(session.displayPath(['outer', ids[3]]), 'Outer/Inside')
 assert.equal(get(session.cardMeta(inner), 'name'), 'Inside')
 console.log('Card identity: core ids, duplicate names, name-only edits, exact wires and nested scopes passed')

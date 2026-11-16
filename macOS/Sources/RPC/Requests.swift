@@ -50,15 +50,6 @@ public extension RPCClient {
     return try await call(.projectsaverequest, r)
   }
 
-  func reload(baseRev: UInt64, opId: UUID, origin: String, approvedPermissions: [String] = []) async throws -> Tsugumi_RPC_SaveResultT {
-    let r = Tsugumi_RPC_ProjectReloadRequestT()
-    r.baseRev = baseRev
-    r.opId = opId.uuidString.lowercased()
-    r.origin = origin
-    r.approvedPermissions = approvedPermissions
-    r.checkPermissions = true
-    return try await call(.projectreloadrequest, r)
-  }
 
   func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ProjectValidateResultT {
     let r = Tsugumi_RPC_ProjectValidateRequestT()

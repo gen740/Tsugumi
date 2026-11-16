@@ -143,24 +143,23 @@ extension ProjectSession {
   /// Places a definition folder no Card uses as its Card (the same name).
   @discardableResult
   func placeDefinition(_ id: String, at point: CGPoint) -> CardKey {
-    let k = key([id])
-    guard unplacedDefinitions.contains(id) else { return k }
-    edit { s in
-      s.updateGraph([]) { g in
-        var cards = g["cards"]?.array ?? []
-        cards.append(.object([("id", .string(id))]))
-        g["cards"] = .array(cards)
-      }
-      s.setPosition(k, point)
-    }
-    return k
+    selectionOperation(.place, cards: [key([id])], in: [], at: point)
+    return key([id])
+  }
+
+  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], frames: Set<CardKey> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
+    guard let prefix = projectPrefix(scope) else { return }
+    let body = Tsugumi_Host_ProjectSelectionT()
+    body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")); body.action = action
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y; body.scene = layoutScene(scope)
+    _ = enqueueOperation(.projectselection, body: body)
   }
 
   var isEditable: Bool { connected && !runActive }
 
   /// Source bytes as the draft sees them.
   func sourceText(_ p: String) async throws -> String {
-    if let d = sourceEdits[p] { return String(decoding: d, as: UTF8.self) }
     guard let rpc else { throw RPCError.disconnected }
     return String(decoding: try await rpc.readFile(path: p, atRev: rev), as: UTF8.self)
   }
@@ -189,35 +188,6 @@ extension ProjectSession {
     return id
   }
 
-  /// Adds a Card instance to a scope's canvas.
-  func appendCard(_ id: String, in scope: [String]) {
-    startClean(key(scope + [id]))
-    updateGraph(scope) { g in
-      var cards = g["cards"]?.array ?? []
-      cards.append(.object([("id", .string(id))]))
-      g["cards"] = .array(cards)
-    }
-  }
-
-  /// A new Card's name can be one a Card had: nothing of that Card stays with it.
-  /// The saving client removes layout entries on deletion; a Card
-  /// in Card's layout or a file written by hand can still hold a frame.
-  private func startClean(_ k: CardKey) {
-    forgetResult(k)
-    updateLayout(of: Array(path(k).dropLast())) { dropLayoutEntries(of: k, from: &$0) }
-  }
-
-  /// The Card's place and frame (and the places of anything inside it).
-  private func dropLayoutEntries(of k: CardKey, from l: inout JSONValue) {
-    let lk = layoutKey(k)
-    for field in ["cards", "displays", "boundaries"] {
-      if let entries = l[field]?.object {
-        l[field] = .object(entries.filter { $0.0 != lk && !$0.0.hasPrefix(lk + "/") })
-      }
-    }
-
-  }
-
   /// The host assembles the template, sources and placement in one operation.
   @discardableResult
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
@@ -233,7 +203,6 @@ extension ProjectSession {
 
   /// A file's bytes as the draft sees them.
   func rpcBytes(_ p: String) async throws -> Data {
-    if let d = sourceEdits[p] { return d }
     guard let rpc else { throw RPCError.disconnected }
     guard let hash = sources[p]?.hash else { throw RPCFailure(kind: .notFound, diagnostic: "unknown source: \(p)") }
     // Autosave can advance the core's revision before its delta reaches us.
@@ -391,47 +360,7 @@ extension ProjectSession {
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
-    edit { $0.removeCards(keys, in: scope) }
-  }
-
-  private func removeCards(_ keys: Set<CardKey>, in scope: [String]) {
-    let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty else { return }
-    let prefix = projectPrefix(scope) ?? ""
-    let s = self
-    // Each Card's definition folder goes with it, and a Card in Card's own external copy.
-    for k in keys {
-      if let ext = s.cardExternal(k) { s.removeExternal(ext) }
-      s.removeCardDefinition(k)
-    }
-    let cut = s.connections(in: scope).filter {
-      ids.contains($0["from"]?["card"]?.string ?? "") || ids.contains($0["to"]?["card"]?.string ?? "")
-    }
-    s.updateGraph(scope) { g in
-      g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
-      g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
-    }
-    if !prefix.isEmpty {
-      // Boundary ports of removed Cards go too.
-      s.updateExternal(prefix) { e in
-        for side in ["inputs", "outputs"] {
-          if let o = e.project["boundary"]?[side]?.object {
-            e.project["boundary"]?[side] = .object(o.filter { !ids.contains($0.1["card"]?.string ?? "") })
-          }
-        }
-      }
-    }
-    s.updateLayout(of: scope) { l in
-      for k in keys { s.dropLayoutEntries(of: k, from: &l) }
-    }
-    s.updateGroups(in: scope) { groups in
-      for i in groups.indices {
-        groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
-        if let outputs = groups[i]["outputs"]?.array {
-          groups[i]["outputs"] = .array(outputs.filter { !ids.contains($0["card"]?.string ?? "") })
-        }
-      }
-    }
+    selectionOperation(.delete, cards: keys, in: scope)
   }
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
@@ -444,32 +373,17 @@ extension ProjectSession {
   }
 
   func removeConnection(at index: Int, in scope: [String]) {
-    edit { s in
-      var conns = s.connections(in: scope)
-      guard index < conns.count else { return }
-      conns.remove(at: index)
-      s.updateGraph(scope) { g in g["connections"] = .array(conns) }
-    }
+    let wires = connections(in: scope)
+    guard wires.indices.contains(index) else { return }
+    removeConnections([wires[index]], in: scope)
   }
 
-  /// Removes connections (as they are in the scope's canvas).
   func removeConnections(_ list: [JSONValue], in scope: [String]) {
-    guard !list.isEmpty else { return }
-    edit { s in
-      s.updateGraph(scope) { g in
-        g["connections"] = .array((g["connections"]?.array ?? []).filter { !list.contains($0) })
-      }
-    }
+    if !list.isEmpty { selectionOperation(.removeconnections, cards: [], in: scope, connections: list) }
   }
 
   func disconnect(_ k: CardKey, inputs: Bool, in scope: [String]) {
-    guard let id = path(k).last else { return }
-    edit { s in
-      let removed = s.connections(in: scope).filter { ($0[inputs ? "to" : "from"]?["card"]?.string ?? "") == id }
-      s.updateGraph(scope) { g in
-        g["connections"] = .array((g["connections"]?.array ?? []).filter { !removed.contains($0) })
-      }
-    }
+    selectionOperation(inputs ? .disconnectinputs : .disconnectoutputs, cards: [k], in: scope)
   }
 
   func setCollapsed(_ keys: Set<CardKey>, _ value: Bool) {
@@ -621,11 +535,6 @@ extension ProjectSession {
     }
   }
 
-  private func dropNote(_ id: String) {
-    guard let sc = scopeHolding("notes", id) else { return }
-    updateLayout(of: sc) { $0["notes"] = .array(($0["notes"]?.array ?? []).filter { $0["id"]?.string != id }) }
-  }
-
   func noteRect(_ n: JSONValue) -> CGRect {
     CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)
   }
@@ -685,17 +594,6 @@ extension ProjectSession {
     }
   }
 
-  private func changeDisplayFrame(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    let lk = layoutKey(k)
-    updateLayout(of: Array(path(k).dropLast())) { l in
-      var displays = l["displays"] ?? .object([])
-      var d = displays[lk] ?? .object([])
-      fn(&d)
-      displays[lk] = d
-      l["displays"] = displays
-    }
-  }
-
   /// Closes a frame; its Card stays. The layout keeps a frame only with its
   /// place and size, so one still drawn beside its Card gets them now.
   func closeDisplayFrame(_ k: CardKey) {
@@ -703,17 +601,6 @@ extension ProjectSession {
     updateDisplayFrame(k) { f in
       f["x"] = .real(r.minX.rounded()); f["y"] = .real(r.minY.rounded())
       f["width"] = .real(r.width); f["height"] = .real(r.height); f["hidden"] = .bool(true)
-    }
-  }
-
-  private func hideDisplayFrame(_ k: CardKey) {
-    let r = displayRect(k, origin: placedPosition(k))
-    changeDisplayFrame(k) { f in
-      f["x"] = .real(r.minX.rounded())
-      f["y"] = .real(r.minY.rounded())
-      f["width"] = .real(r.width)
-      f["height"] = .real(r.height)
-      f["hidden"] = .bool(true)
     }
   }
 
@@ -758,11 +645,7 @@ extension ProjectSession {
   /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
   /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
   func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
-    edit { s in
-      s.removeCards(cards, in: scope)
-      for k in frames where !cards.contains(k) && s.instance(k) != nil { s.hideDisplayFrame(k) }
-      for id in notes { s.dropNote(id) }
-    }
+    selectionOperation(.delete, cards: cards, notes: notes, frames: frames, in: scope)
   }
 
   /// Where a scope's boundary ports are drawn (inside a Card in Card).
@@ -773,9 +656,8 @@ extension ProjectSession {
 
   func setBoundaryPosition(_ scope: [String], _ side: String, _ p: CGPoint) {
     guard let prefix = projectPrefix(scope) else { return }
-    let edit = fieldEdit(prefix + "layout.json", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
-                         new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10))]))
-    queueFields { [edit] in [edit] }
+    queueFields { [self] in [fieldEdit(prefix + "layout.json", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
+                         new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10)) ]))] }
   }
 
   /// The host applies the measured layout in one operation with undo.
@@ -892,31 +774,11 @@ extension ProjectSession {
 
   // MARK: - Definitions
 
-  func removeDefinition(_ id: String) { removeCardDefinition(key([id])) }
-
-  /// Removes a Card's definition folder (its documents and every file in it).
-  func removeCardDefinition(_ k: CardKey) {
-    guard let dir = definitionDir(k) else { return }
-    setCardDefinition(k, nil)
-    let prefix = projectPrefix(Array(path(k).dropLast())) ?? ""
-    for p in sourcePaths where p.hasPrefix(dir) && !(prefix.isEmpty ? false : ExternalProject.isDocument(String(p.dropFirst(prefix.count)))) {
-      removeSource(p)
-    }
+  func removeDefinition(_ id: String) {
+    selectionOperation(.deletedefinitions, cards: [key([id])], in: [])
   }
 
-  func hasSource(_ p: String) -> Bool {
-    !sourceRemovals.contains(p) && (sources[p] != nil || sourceEdits[p] != nil)
-  }
-
-  func putSource(_ p: String, _ text: String) {
-    sourceRemovals.remove(p)
-    sourceEdits[p] = Data(text.utf8)
-  }
-
-  func removeSource(_ p: String) {
-    sourceEdits[p] = nil
-    if sources[p] != nil { sourceRemovals.insert(p) }
-  }
+  func hasSource(_ p: String) -> Bool { sources[p] != nil }
 
   func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }

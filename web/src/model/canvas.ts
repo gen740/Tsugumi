@@ -568,16 +568,6 @@ export class CanvasController extends Observable implements CanvasOverlay {
 
   /** Closes a frame, a step of an edit; its Card stays. The layout keeps a frame
    *  only with its place and size, so one still drawn beside its Card gets them now. */
-  private hideFrame(x: ProjectSession, r: Rect, k: CardKey) {
-    x.changeDisplayFrame(k, (f) => {
-      f.set('x', real(Math.round(r.x)))
-      f.set('y', real(Math.round(r.y)))
-      f.set('width', real(r.width))
-      f.set('height', real(r.height))
-      f.set('hidden', true)
-    })
-  }
-
   closeFrame(k: CardKey) {
     const r = this.scene().frameRect(k)
     this.session.updateDisplayFrame(k, f => {
@@ -604,13 +594,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
     }
     // A frame alone is closed and its Card stays (the frame's own Remove Frame);
     // a deleted Card takes its frame with it.
-    const scene = this.scene()
-    const closing = scene.outputKeys.filter((k) => t.selectedFrames.has(k) && !t.selection.has(k)).map((k) => [k, scene.frameRect(k)] as const)
-    s.edit((x) => {
-      x.removeCards(t.selection, t.scope)
-      for (const [k, r] of closing) this.hideFrame(x, r, k)
-      for (const id of t.selectedNotes) x.dropNote(id)
-    })
+    s.deleteSelection(t.selection, t.selectedNotes, t.selectedFrames, t.scope)
     t.setSelection([])
   }
 

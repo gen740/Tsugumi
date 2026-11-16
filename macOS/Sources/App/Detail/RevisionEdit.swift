@@ -29,12 +29,10 @@ final class RevisionEdit {
 
   func apply(_ session: ProjectSession, overwrite: Bool = false, _ change: (ProjectSession) -> Void) async -> Bool {
     guard !applying else { return false }
-    guard conflictRev == nil || overwrite else { return false }
-    let revision = overwrite ? conflictRev ?? baseRev : baseRev
     applying = true
     defer { applying = false }
     do {
-      savedRev = try await session.applyEdit(baseRev: revision, change)
+      savedRev = try await session.applyMutation(change)
       reload(savedRev ?? session.rev)
       return true
     } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict {
@@ -45,6 +43,17 @@ final class RevisionEdit {
     }
     return false
   }
+  func replaceDocuments(_ session: ProjectSession, _ documents: [(String, JSONValue?)]) async -> Bool {
+    guard !applying else { return false }
+    applying = true
+    defer { applying = false }
+    do {
+      savedRev = try await session.replaceDocuments(baseRev, documents)
+      reload(savedRev ?? session.rev)
+      return true
+    } catch { self.error = String(describing: error); return false }
+  }
+
 }
 
 struct RevisionEditNotice: View {

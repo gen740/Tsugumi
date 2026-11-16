@@ -17,7 +17,6 @@ const session = (cards: string[]) => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse(JSON.stringify({ name: 't', canvas: { cards: cards.map((id) => ({ id })), connections: [] } }))
   s.layout = parse('{}')
-  s.scheduleSave = () => {} // no tsugumid here
   return s
 }
 const framed = (s: Session, k: string) => {

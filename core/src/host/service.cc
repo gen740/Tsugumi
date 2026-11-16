@@ -678,59 +678,7 @@ struct Service::State {
         return wire::HostReply(request.request_id,
                                host::PermissionKinds(Text(p->language())));
       }
-      case H::RequestPayload::LayoutPrepareSaveRequest: {
-        const auto* p = r->value_as_LayoutPrepareSaveRequest();
-        Tsugumi::RPC::RequestT save;
-        auto input = std::unique_ptr<Tsugumi::RPC::ProjectSaveRequestT>(
-            p->save()->UnPack());
-        save.value.Set(std::move(*input));
-        Tsugumi::RPC::MessageT message;
-        message.payload.Set(std::move(save));
-        flatbuffers::FlatBufferBuilder builder;
-        Tsugumi::RPC::FinishMessageBuffer(
-            builder, Tsugumi::RPC::Message::Pack(builder, &message));
-        const auto envelope = json::Object(agent::Catalog().Reply(
-            {reinterpret_cast<const char*>(builder.GetBufferPointer()),
-             builder.GetSize()}));
-        const auto project = p->project()->str();
-        const auto arguments = json::Get(envelope, "value");
-        lock.unlock();
-        const auto prepared =
-            tools->PrepareLayoutSave(project, arguments, shutdown.get_token());
-        const auto bytes =
-            agent::EncodeProjectRequest("project_save", prepared, 0);
-        H::LayoutPreparedSaveT result;
-        result.save.reset(Tsugumi::RPC::GetMessage(bytes.data())
-                              ->payload_as_Request()
-                              ->value_as_ProjectSaveRequest()
-                              ->UnPack());
-        return wire::HostReply(request.request_id, std::move(result));
-      }
-      case H::RequestPayload::DocumentTemplateRequest: {
-        const auto* p = r->value_as_DocumentTemplateRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::WriteTemplate(p->name()->str(), p->id()->str()));
-      }
-      case H::RequestPayload::DocumentConnectRequest: {
-        const auto* p = r->value_as_DocumentConnectRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::ConnectDocuments(p->state_json()->str(),
-                                   p->from_card()->str(), p->from_port()->str(),
-                                   p->to_card()->str(), p->to_port()->str(),
-                                   Text(p->fork_id())));
-      }
-      case H::RequestPayload::DocumentCopyRequest: {
-        const auto* p = r->value_as_DocumentCopyRequest();
-        std::vector<std::string> paths;
-        if (p->paths())
-          for (const auto* path : *p->paths()) paths.push_back(path->str());
-        return wire::HostReply(
-            request.request_id,
-            host::CopyDocuments(p->state_json()->str(), paths, p->from()->str(),
-                                p->to()->str(), Text(p->name())));
-      }
+
       case H::RequestPayload::ProjectOperateRequest: {
         Human(human);
         const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
@@ -747,22 +695,7 @@ struct Service::State {
                                ->UnPack());
         return wire::HostReply(request.request_id, std::move(result));
       }
-      case H::RequestPayload::DocumentMergeRequest: {
-        const auto* p = r->value_as_DocumentMergeRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::MergeDocuments(p->base_json()->str(), p->ours_json()->str(),
-                                 p->theirs_json()->str()));
-      }
-      case H::RequestPayload::DocumentSubgraphRequest: {
-        const auto* p = r->value_as_DocumentSubgraphRequest();
-        std::vector<std::string> cards;
-        if (p->cards())
-          for (const auto* card : *p->cards()) cards.push_back(card->str());
-        return wire::HostReply(request.request_id,
-                               host::MakeSubgraph(p->project_json()->str(),
-                                                  cards, p->id()->str()));
-      }
+
       case H::RequestPayload::VersionCommentsRequest:
         return versions->HandleHost(request, human, lock);
       case H::RequestPayload::RegisterProjectRequest: {

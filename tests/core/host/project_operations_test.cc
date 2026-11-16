@@ -643,5 +643,142 @@ TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
       json::Text(json::Object(json::Array(saved.at("groups")).front()), "id"),
       "another");
 }
+TEST(ProjectOperationCutover,
+     FormAndSourceEditAreAtomicAndUndoKeepsOtherFields) {
+  TransformationProject project;
+  project.files["definitions/a/_card.json"] =
+      R"({"template":"draft","symbol":"base","concurrent":true})";
+  H::ProjectEditsT body;
+  H::ProjectJSONEditT form;
+  form.file_path = "definitions/a/_card.json";
+  form.old_value = std::make_unique<H::ProjectValueT>();
+  form.old_value->present = true;
+  form.old_value->json = R"({"template":"draft","symbol":"base"})";
+  form.new_value = std::make_unique<H::ProjectValueT>(*form.old_value);
+  form.new_value->json = R"({"template":"draft","symbol":"mine"})";
+  auto entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(form);
+  body.edits.push_back(std::move(entry));
+  H::ProjectFilePutT put;
+  put.file_path = "definitions/a/new.bin";
+  put.expect_missing = true;
+  put.bytes = {0, 255, 128};
+  entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(put);
+  body.edits.push_back(std::move(entry));
+  const auto undo = project.Apply(body);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_EQ(
+      json::Text(json::Object(project.files.at(form.file_path)), "symbol"),
+      "mine");
+  EXPECT_EQ(
+      json::Get(json::Object(project.files.at(form.file_path)), "concurrent"),
+      "true");
+  project.files[form.file_path] =
+      R"({"template":"draft","symbol":"mine","concurrent":false})";
+  project.Apply(undo);
+  EXPECT_EQ(
+      json::Text(json::Object(project.files.at(form.file_path)), "symbol"),
+      "base");
+  EXPECT_EQ(
+      json::Get(json::Object(project.files.at(form.file_path)), "concurrent"),
+      "false");
+  EXPECT_FALSE(project.files.contains(put.file_path));
+  project.files[form.file_path] = R"({"template":"draft","symbol":"other"})";
+  EXPECT_THROW(project.Apply(body), Failure);
+  EXPECT_FALSE(project.files.contains(put.file_path));
+}
+TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
+  TransformationProject project;
+  H::ProjectReplaceDocumentsT body;
+  body.expected_rev = 0;
+  auto document = std::make_unique<H::ProjectDocumentT>();
+  document->path = "definitions/a/_meta.json";
+  document->json = R"({"name":"raw"})";
+  body.documents.push_back(std::move(document));
+  project.Apply(body);
+  EXPECT_EQ(project.saves, 1);
+  // Even an unrelated later document change does not permit a raw retry.
+  const auto before = project.files;
+  EXPECT_THROW(project.Apply(body), Failure);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_EQ(project.files, before);
+}
+TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
+  TransformationProject project;
+  project.files["layout.json"] =
+      R"({"notes":[{"id":"n","text":"note","x":0,"y":0}],"groups":[{"id":"g","cards":["a","sub"]}],"displays":{"a":{"x":5,"y":6,"width":100,"height":100}}})";
+  const auto before = project.files;
+  H::ProjectSelectionT body;
+  body.action = H::ProjectSelectionAction::Delete;
+  body.cards = {"sub"};
+  body.notes = {"n"};
+  body.frames = {"a"};
+  const auto undo = project.Apply(body);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_FALSE(project.files.contains(
+      "externals/inner/externals/deep/definitions/c/raw.bin"));
+  const auto layout = json::Object(project.files.at("layout.json"));
+  EXPECT_TRUE(json::Array(layout.at("notes")).empty());
+  EXPECT_EQ(json::Get(json::Object(json::Object(layout.at("displays")).at("a")),
+                      "hidden"),
+            "true");
+  EXPECT_EQ(
+      json::Array(
+          json::Object(json::Array(layout.at("groups")).front()).at("cards"))
+          .size(),
+      1);
+  project.Apply(undo);
+  EXPECT_EQ(
+      project.files.at("externals/inner/externals/deep/definitions/c/raw.bin"),
+      before.at("externals/inner/externals/deep/definitions/c/raw.bin"));
+  H::ProjectSelectionT unplaced;
+  unplaced.action = H::ProjectSelectionAction::DeleteDefinitions;
+  unplaced.cards = {"a"};
+  EXPECT_THROW(project.Apply(unplaced), Failure);
+  project.files["definitions/unplaced/_card.json"] = R"({"template":"draft"})";
+  H::ProjectSelectionT place;
+  place.action = H::ProjectSelectionAction::Place;
+  place.cards = {"unplaced"};
+  place.x = 12;
+  place.y = 34;
+  project.Apply(place);
+  EXPECT_DOUBLE_EQ(
+      std::stod(json::Get(
+          json::Object(
+              json::Object(
+                  json::Object(project.files.at("layout.json")).at("cards"))
+                  .at("unplaced")),
+          "x")),
+      12);
+}
+
+TEST(ProjectOperationCutover, ConcurrentFirstCommentsSelectTheirOwnEntities) {
+  TransformationProject project;
+  auto comment = [&](const std::string &id) {
+    H::ProjectJSONEditT edit;
+    edit.file_path = "definitions/a/_meta.json";
+    edit.old_value = std::make_unique<H::ProjectValueT>();
+    edit.old_value->present = true;
+    edit.old_value->json = R"({"name":"source"})";
+    edit.new_value = std::make_unique<H::ProjectValueT>(*edit.old_value);
+    edit.new_value->json =
+        "{\"name\":\"source\",\"comments\":[{\"id\":" + json::Quote(id) +
+        ",\"text\":\"note\"}]}";
+    H::ProjectEditsT body;
+    auto entry = std::make_unique<H::ProjectEditT>();
+    entry->value.Set(std::move(edit));
+    body.edits.push_back(std::move(entry));
+    return project.Apply(body);
+  };
+  const auto undo = comment("first");
+  comment("second");
+  project.Apply(undo);
+  const auto comments =
+      json::Array(json::Object(project.files.at("definitions/a/_meta.json"))
+                      .at("comments"));
+  ASSERT_EQ(comments.size(), 1);
+  EXPECT_EQ(json::Text(json::Object(comments.front()), "id"), "second");
+}
 } // namespace
 } // namespace tsugumi::host

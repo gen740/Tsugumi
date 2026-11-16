@@ -40,7 +40,6 @@ assert.equal(perchScale(undefined), 1)
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
-  s.scheduleSave = () => {} // no tsugumid here
   const k = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
   const tab = new WorkflowTab([])
   canvasFor(s, tab).setCamera({ x: 0, y: 0, zoom: 0.39 })

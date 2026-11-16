@@ -20,7 +20,6 @@ const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
-  s.scheduleSave = () => {} // no tsugumid here
   return s
 }
 /** Dotted or not, by wire, as a new Scene (one per update of the canvas) sees them. */

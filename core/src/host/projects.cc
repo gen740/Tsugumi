@@ -126,51 +126,6 @@ auto Copy(const f::path &source, const f::path &destination) -> void {
   f::permissions(destination, f::perms::owner_all, f::perm_options::add);
 }
 
-auto ReadProject(const A::HostProjectReadRequest &request) -> A::ProjectFilesT {
-  const auto root = f::canonical(Path(Text(request.path())));
-  Info(root);
-  A::ProjectFilesT result;
-  result.name = root.filename().string();
-  constexpr uint64_t kLimit = 64 << 20;
-  constexpr uint64_t kChunk = 1 << 20;
-  uint64_t total = 0;
-  std::vector<f::path> paths;
-  WalkProject(
-      root, {}, [](const auto &) {},
-      [&](const auto &path, const auto &rel) {
-        const auto size = f::file_size(path);
-        if (size > kLimit - total || paths.size() >= 65536)
-          throw ProjectFailure("project_too_large",
-                               "The project exceeds the import limit");
-        total += size;
-        paths.push_back(rel);
-      });
-  const auto index = request.file_index();
-  if (index >= paths.size())
-    throw ProjectFailure("invalid_request", "Invalid project import cursor");
-  const auto size = f::file_size(root / paths[index]);
-  if (request.offset() > size)
-    throw ProjectFailure("project_io_error",
-                         "A project file changed while reading");
-  auto file = std::make_unique<A::ProjectFileT>();
-  file->path = paths[index].generic_string();
-  file->bytes.resize(std::min(kChunk, size - request.offset()));
-  std::ifstream input(root / paths[index], std::ios::binary);
-  input.seekg(request.offset());
-  if (!input.read(reinterpret_cast<char *>(file->bytes.data()),
-                  file->bytes.size()))
-    throw ProjectFailure("project_io_error", "Cannot read a project file");
-  result.next_offset = request.offset() + file->bytes.size();
-  result.next_file = index;
-  if (result.next_offset == size) {
-    result.next_offset = 0;
-    ++result.next_file;
-  }
-  result.complete = result.next_file == paths.size();
-  result.files.push_back(std::move(file));
-  return result;
-}
-
 template <typename Write>
 auto Populate(const f::path &destination, Write write) -> std::string {
   const bool created = Prepare(destination);
@@ -274,8 +229,6 @@ auto Projects::Recents() const -> std::vector<std::string> {
 }
 
 auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
-  if (const auto* read = request.value_as_HostProjectReadRequest())
-    return agent::wire::HostReply(id, ReadProject(*read));
   const auto raw = Apply(request);
   if (db_ &&
       (request.value_type() == A::RequestPayload::HostProjectCreateRequest ||

@@ -1,5 +1,4 @@
-import { hostDocumentReply } from './hostDocument'
-import { subgraphReply } from './subgraphHost'
+import { operationFixture } from './operationFixture'
 // A deterministic RPC double for presentation tests. Identity behavior itself
 // is checked against the core; unrelated fixtures keep their readable keys.
 import { DisplayGeometriesT, DisplayGeometryT } from '../src/gen/tsugumi/host'
@@ -38,10 +37,4 @@ export function cardIds<T extends ProjectSession>(s: T): T {
   return s
 }
 
-export function hostEdits<T extends ProjectSession>(s: T): T {
-  s.prepareTemplate = async (template, id) => hostDocumentReply({ template, id })
-  s.prepareConnect = async (stateJson, from, to, forkId) => hostDocumentReply({ stateJson, fromCard: from[0], fromPort: from[1], toCard: to[0], toPort: to[1], forkId })
-  s.prepareCopy = async (stateJson, paths, from, to, name) => hostDocumentReply({ stateJson, paths, from, to, name })
-  s.prepareSubgraph = subgraphReply
-  return s
-}
+export const hostEdits = operationFixture
