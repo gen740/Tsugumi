@@ -19,13 +19,17 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   or use project_shell to inspect large data. project_shell needs a separate Shell grant and can edit Card
   sources in a staged view: successful commands save one validated Agent revision; failure/cancellation saves nothing.
   Helpers see only their read Cards and can edit only their exact write set. Structural documents and attached folders
-  are read-only; use project_save for structural edits. Do analysis in Cards so people can follow and rerun it.
+  are read-only; use project_edit for small structural edits. Do analysis in Cards so people can follow and rerun it.
   project_reload imports external edits and requires the user's approval for every permission widening, regardless
   of who edited the files. You may propose deleting run history, build caches or old run scratch: inspect usage,
   explain the targets and sizes and what would be removed. Each cleanup, version checkout, versioning initialization,
   named version and replacement of a version summary needs the person's approval for that call. A decline changes
   nothing; continue without retrying the declined act.
-- project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
+- Use project_edit for small changes: keyed selectors with old_value/new_value (explicit present and value)
+  for structured fields, exact old_string/new_string for sources, and hash-guarded file put/remove/move.
+  One call is one atomic edit against current state; a refusal changes nothing. Reinspect the affected target
+  before a new edit. Do not retype untouched project fields or pins.
+- project_save is for creating a project and for a large restructuring. It takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
   Start from the project_json you inspected and change only what is needed. The host merges a stale base_rev
   with intervening saves; disjoint edits survive together, and collisions name the affected field or wire.
   Do not send coordinates for new Cards: the host places every Card without a saved place near its connections,
@@ -436,12 +440,182 @@ the result; do not require confirmations of checks or a detailed explanation of 
         }
       }
     }
-  }],
+  }, {
+    "name": "project_edit",
+    "mutating": true,
+    "description": "Use for small project changes. One atomic edit against the current document; unrelated fields stay byte-identical. Structured edits use keyed selectors (field selects an object member; match selects one array entity by stable keys), and old_value/new_value with explicit present and a JSON value. Example: {\"file_path\":\"tsugumi.json\",\"selector\":[{\"field\":\"name\"}],\"old_value\":{\"present\":true,\"value\":\"Before\"},\"new_value\":{\"present\":true,\"value\":\"After\"}}. Sources use exact replacement, e.g. {\"file_path\":\"definitions/work/main.py\",\"old_string\":\"limit = 1\",\"new_string\":\"limit = 2\"}; exactly one match unless expected_matches is explicit. File put/remove/move require the hash read (or expect_missing/destination_missing). Missing, null and empty differ. A conflict changes nothing: inspect the target and submit a new guarded edit. Operation identities are supplied by the runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  },
+                  "selector": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "match": {
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "old_value": {
+                    "type": "object",
+                    "properties": {
+                      "present": {
+                        "type": "boolean"
+                      },
+                      "value": {}
+                    },
+                    "required": [
+                      "present"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "new_value": {
+                    "type": "object",
+                    "properties": {
+                      "present": {
+                        "type": "boolean"
+                      },
+                      "value": {}
+                    },
+                    "required": [
+                      "present"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "file_path",
+                  "selector",
+                  "old_value",
+                  "new_value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  },
+                  "old_string": {
+                    "type": "string"
+                  },
+                  "new_string": {
+                    "type": "string"
+                  },
+                  "expected_matches": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "file_path",
+                  "old_string",
+                  "new_string"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  },
+                  "put": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  },
+                  "expect_missing": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "file_path",
+                  "put"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  },
+                  "remove": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file_path",
+                  "remove",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  },
+                  "move_to": {
+                    "type": "string"
+                  },
+                  "expected_hash": {
+                    "type": "string"
+                  },
+                  "expected_destination_hash": {
+                    "type": "string"
+                  },
+                  "destination_missing": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "file_path",
+                  "move_to",
+                  "expected_hash"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "additionalProperties": false
+    }
+  } ],
   "runWait": {
     "description": "Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Pass 300 when waiting for results instead of polling. The reply includes still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss ends it with an unavailable error. Helpers may wait only on their own in-scope runs.",
     "schema": {"type": "integer", "minimum": 0, "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."}
   },
-  "saveNote": "The host merges disjoint edits against intervening saves when base_rev is stale. A collision in a field, input wire or delete/change is refused with its path; inspect and re-apply. New Cards need their definitions and connections, without SetLayout coordinates: the host supplies their places and keeps existing ones.",
+  "saveNote": "Use project_edit for small changes. project_save replaces whole documents: for creating a project and for a large restructuring. The host merges disjoint edits against intervening saves when base_rev is stale. A collision in a field, input wire or delete/change is refused with its path; inspect and re-apply. New Cards need their definitions and connections, without SetLayout coordinates: the host supplies their places and keeps existing ones.",
   "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
     "RunHistoryDeleteRequest",
@@ -451,7 +625,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "VersionInitRequest",
     "VersionMarkRequest"
   ],
-  "agentFields": ["op_id", "origin", "approved_permissions", "check_permissions", "read_only", "hide_credentials", "no_project_socket"],
+  "agentFields": ["operation", "op_id", "origin", "approved_permissions", "check_permissions", "read_only", "hide_credentials", "no_project_socket"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },
   "draftRequest": {
     "root": "the root workflow",

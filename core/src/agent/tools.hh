@@ -14,6 +14,7 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "host/save.hh"
+#include "host/project_operations.hh"
 #include "host/state_gate.hh"
 #include "server.hh"
 
@@ -60,6 +61,14 @@ struct Tools {
   auto SavedBase(const std::string& project, const std::string& rev)
       -> host::SaveBase;
   std::recursive_mutex save_mutex;
+  host::ProjectOperations operations;
+  auto EditProjectTool(const std::string& conversation, const std::string& project,
+                       const ToolCall& call, const json::Members& args, const std::string& operation,
+                       HelperScope* boundary, bool recovering, std::stop_token stop) -> std::string;
+  auto AcknowledgeEdit(const std::string& project, const std::string& operation, std::stop_token stop) -> void;
+  auto OperateProject(const std::string& project, const Tsugumi::RPC::OperationSubmissionT& operation,
+                      const Tsugumi::Host::ProjectEditsT& edits, const host::OperationContext& context,
+                      std::stop_token stop) -> host::OperationReply;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop) -> std::string;

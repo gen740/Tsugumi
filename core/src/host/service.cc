@@ -660,6 +660,50 @@ struct Service::State {
             host::CopyDocuments(p->state_json()->str(), paths, p->from()->str(),
                                 p->to()->str(), Text(p->name())));
       }
+      case H::RequestPayload::ProjectOperateRequest: {
+        Human(human);
+        const auto* input = r->value_as_ProjectOperateRequest();
+        const auto project = input->project_id()->str();
+        if (!input->body_as_ProjectEdits()) throw Failure("invalid_request", "missing operation body");
+        const auto operation = std::unique_ptr<Tsugumi::RPC::OperationSubmissionT>(input->operation()->UnPack());
+        const auto edits = std::unique_ptr<H::ProjectEditsT>(input->body_as_ProjectEdits()->UnPack());
+        lock.unlock();
+        const auto reply = tools->OperateProject(project, *operation, *edits, {"ui", {}, {}}, shutdown.get_token());
+        if (reply.wire.empty()) throw Failure("unavailable", "operation returned no typed outcome");
+        H::ProjectOperationResultT result;
+        result.reply.reset(Tsugumi::RPC::GetMessage(reply.wire.data())->payload_as_Reply()->UnPack());
+        return wire::HostReply(request.request_id, std::move(result));
+      }
+      case H::RequestPayload::ProjectWriterOpenRequest:
+      case H::RequestPayload::ProjectOperationStatusRequest:
+      case H::RequestPayload::ProjectOperationAcknowledgeRequest: {
+        Human(human);
+        std::string project, method;
+        json::Members args;
+        if (const auto* input = r->value_as_ProjectWriterOpenRequest()) {
+          project = input->project_id()->str(); method = "writer_open";
+        } else if (const auto* input = r->value_as_ProjectOperationStatusRequest()) {
+          project = input->project_id()->str(); method = "writer_status";
+          args["operation"] = json::Encode(json::Members{
+              {"identity", json::Encode(json::Members{{"lane", json::Quote(input->operation()->identity()->lane()->str())},
+                  {"sequence", json::Quote(std::to_string(input->operation()->identity()->sequence()))}})},
+              {"semantic_digest", json::Quote(input->operation()->semantic_digest()->str())}});
+        } else {
+          const auto* acknowledgement = r->value_as_ProjectOperationAcknowledgeRequest();
+          project = acknowledgement->project_id()->str(); method = "writer_acknowledge";
+          args = {{"identity", json::Encode(json::Members{{"lane", json::Quote(acknowledgement->identity()->lane()->str())},
+                  {"sequence", json::Quote(std::to_string(acknowledgement->identity()->sequence()))}})},
+              {"incorporated_cursor", json::Quote(std::to_string(acknowledgement->incorporated_cursor()))},
+              {"retire", acknowledgement->retire() ? "true" : "false"}};
+        }
+        lock.unlock();
+        std::string raw;
+        (void)tools->RawProjectCall(project, method, json::Encode(args), shutdown.get_token(), &raw);
+        if (raw.empty()) throw Failure("unavailable", "operation returned no typed outcome");
+        H::ProjectOperationResultT result;
+        result.reply.reset(Tsugumi::RPC::GetMessage(raw.data())->payload_as_Reply()->UnPack());
+        return wire::HostReply(request.request_id, std::move(result));
+      }
       case H::RequestPayload::UISaveRequest: {
         Human(human);
         const auto *input = r->value_as_UISaveRequest();

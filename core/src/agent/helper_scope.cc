@@ -468,6 +468,39 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
   return args;
 }
 
+auto HelperScope::CheckCurrentSave(const json::Members& args, const Reader& read) const -> void {
+  if (!scoped_) return;
+  auto projected = args;
+  std::vector<std::string> changes;
+  std::map<std::string, std::string> complete;
+  for (const auto& raw : json::Array(json::Get(args, "changes", "[]"))) {
+    auto change = json::Object(raw);
+    const auto type = json::Text(change, "value_type");
+    auto value = json::Object(json::Get(change, "value", "{}"));
+    const auto path = type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
+    if (type == "SetLayout" || (type == "PutSource" && path.ends_with("/layout.json"))) continue;
+    if (type == "SetProject" || (type == "PutSource" && path.ends_with("/tsugumi.json"))) {
+      const auto key = type == "SetProject" ? "json" : "bytes";
+      const auto text = json::Text(value, key);
+      complete[path] = text;
+      value[key] = json::Quote(Graph(text, ProjectPrefix(path, read)));
+      change["value"] = json::Encode(value);
+      changes.push_back(json::Encode(change));
+    } else changes.push_back(raw);
+  }
+  projected["changes"] = json::Encode(changes);
+  const auto expanded = ExpandSave(projected, read);
+  for (const auto& raw : json::Array(json::Get(expanded, "changes", "[]"))) {
+    const auto change = json::Object(raw);
+    const auto type = json::Text(change, "value_type");
+    const auto value = json::Object(json::Get(change, "value", "{}"));
+    const auto path = type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
+    if (complete.contains(path) && !host::DocumentsEqual(complete.at(path), json::Text(value, type == "SetProject" ? "json" : "bytes")))
+      Deny("full operation changes fields outside the assigned Cards");
+  }
+  Check("project_save", projected, read);
+}
+
 auto HelperScope::Check(const std::string &tool, const json::Members &args,
                         const Reader &read) const -> void {
   if (!scoped_)

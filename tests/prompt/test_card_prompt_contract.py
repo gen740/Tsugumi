@@ -21,3 +21,10 @@ class CardPromptContractTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_small_edits_use_guarded_narrow_tools_and_keep_whole_save_for_large_changes():
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    assert "Use project_edit for small changes" in prompt
+    assert "for creating a project and for a large restructuring" in prompt
+    assert "Do not retype untouched project fields or pins" in prompt

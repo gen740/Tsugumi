@@ -52,6 +52,7 @@ struct DefinitionDoc {
 struct Resolution;  // graph.hh
 
 struct Document {
+  uint64_t operation_cursor = 0;
   uint64_t rev = 0;
   uint64_t execution_rev = 0;
   std::string execution_fingerprint;

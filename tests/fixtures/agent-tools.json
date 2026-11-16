@@ -54,202 +54,6 @@
   "mutating": false
  },
  {
-  "name": "project_save",
-  "payloadType": 5,
-  "description": "ProjectSave: -> SaveResult. Apply all changes in one transaction at base_rev.",
-  "inputSchema": {
-   "type": "object",
-   "properties": {
-    "base_rev": {
-     "type": "string",
-     "pattern": "^-?[0-9]+$",
-     "description": "64 bit integer as a decimal string"
-    },
-    "changes": {
-     "type": "array",
-     "items": {
-      "type": "object",
-      "properties": {
-       "value_type": {
-        "type": "string",
-        "enum": [
-         "SetProject",
-         "SetLayout",
-         "PutDefinition",
-         "RemoveDefinition",
-         "PutSource",
-         "PatchSource",
-         "RemoveSource"
-        ],
-        "description": "variant of value"
-       },
-       "value": {
-        "anyOf": [
-         {
-          "type": "object",
-          "properties": {
-           "json": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "json"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "json": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "json"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "id": {
-            "type": "string"
-           },
-           "card_json": {
-            "type": "string"
-           },
-           "meta_json": {
-            "type": "string",
-            "description": " The new _meta.json; omitted removes it unless keep_meta. Empty keeps it."
-           },
-           "link_json": {
-            "type": "string",
-            "description": " A Card in Card: _link.json instead of _card.json. Empty: none."
-           },
-           "keep_meta": {
-            "type": "boolean",
-            "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."
-           },
-           "fill_description": {
-            "type": "string",
-            "description": "Fill an empty description, preserving existing text."
-           },
-           "fill_context": {
-            "type": "string",
-            "description": "Fill an empty context, preserving existing text."
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "id",
-           "card_json"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "id": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "id"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "path": {
-            "type": "string"
-           },
-           "bytes": {
-            "type": "string",
-            "description": "UTF-8 text (or {\"base64\": ...})"
-           },
-           "base_hash": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "path",
-           "bytes"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "path": {
-            "type": "string"
-           },
-           "base_hash": {
-            "type": "string"
-           },
-           "patches": {
-            "type": "array",
-            "items": {
-             "type": "object",
-             "properties": {
-              "offset": {
-               "type": "string",
-               "pattern": "^-?[0-9]+$",
-               "description": "64 bit integer as a decimal string"
-              },
-              "remove": {
-               "type": "string",
-               "pattern": "^-?[0-9]+$",
-               "description": "64 bit integer as a decimal string"
-              },
-              "text": {
-               "type": "string"
-              }
-             },
-             "additionalProperties": false,
-             "required": [
-              "text"
-             ]
-            }
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "path",
-           "base_hash",
-           "patches"
-          ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "path": {
-            "type": "string"
-           },
-           "base_hash": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "path",
-           "base_hash"
-          ]
-         }
-        ]
-       }
-      },
-      "additionalProperties": false
-     }
-    }
-   },
-   "additionalProperties": false,
-   "required": [
-    "changes"
-   ]
-  },
-  "mutating": true
- },
- {
   "name": "project_file_list",
   "payloadType": 11,
   "description": "ProjectFileList: -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.",
@@ -758,5 +562,423 @@
    ]
   },
   "mutating": false
+ },
+ {
+  "name": "project_edit",
+  "mutating": true,
+  "description": "Use for small project changes. One atomic edit against the current document; unrelated fields stay byte-identical. Structured edits use keyed selectors (field selects an object member; match selects one array entity by stable keys), and old_value/new_value with explicit present and a JSON value. Example: {\"file_path\":\"tsugumi.json\",\"selector\":[{\"field\":\"name\"}],\"old_value\":{\"present\":true,\"value\":\"Before\"},\"new_value\":{\"present\":true,\"value\":\"After\"}}. Sources use exact replacement, e.g. {\"file_path\":\"definitions/work/main.py\",\"old_string\":\"limit = 1\",\"new_string\":\"limit = 2\"}; exactly one match unless expected_matches is explicit. File put/remove/move require the hash read (or expect_missing/destination_missing). Missing, null and empty differ. A conflict changes nothing: inspect the target and submit a new guarded edit. Operation identities are supplied by the runtime.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "edits": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "oneOf": [
+       {
+        "type": "object",
+        "properties": {
+         "file_path": {
+          "type": "string"
+         },
+         "selector": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "field": {
+             "type": "string"
+            },
+            "match": {
+             "type": "object"
+            }
+           },
+           "additionalProperties": false
+          }
+         },
+         "old_value": {
+          "type": "object",
+          "properties": {
+           "present": {
+            "type": "boolean"
+           },
+           "value": {}
+          },
+          "required": [
+           "present"
+          ],
+          "additionalProperties": false
+         },
+         "new_value": {
+          "type": "object",
+          "properties": {
+           "present": {
+            "type": "boolean"
+           },
+           "value": {}
+          },
+          "required": [
+           "present"
+          ],
+          "additionalProperties": false
+         }
+        },
+        "required": [
+         "file_path",
+         "selector",
+         "old_value",
+         "new_value"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "file_path": {
+          "type": "string"
+         },
+         "old_string": {
+          "type": "string"
+         },
+         "new_string": {
+          "type": "string"
+         },
+         "expected_matches": {
+          "type": "integer",
+          "minimum": 1
+         }
+        },
+        "required": [
+         "file_path",
+         "old_string",
+         "new_string"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "file_path": {
+          "type": "string"
+         },
+         "put": {
+          "type": "string"
+         },
+         "expected_hash": {
+          "type": "string"
+         },
+         "expect_missing": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "file_path",
+         "put"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "file_path": {
+          "type": "string"
+         },
+         "remove": {
+          "type": "boolean",
+          "const": true
+         },
+         "expected_hash": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "file_path",
+         "remove",
+         "expected_hash"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "file_path": {
+          "type": "string"
+         },
+         "move_to": {
+          "type": "string"
+         },
+         "expected_hash": {
+          "type": "string"
+         },
+         "expected_destination_hash": {
+          "type": "string"
+         },
+         "destination_missing": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "file_path",
+         "move_to",
+         "expected_hash"
+        ],
+        "additionalProperties": false
+       }
+      ]
+     }
+    }
+   },
+   "required": [
+    "edits"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "project_copy",
+  "mutating": true,
+  "description": "Copy an explicit list of files into Card sources without sending bytes through the model. source is attached (registered folder with its own Read grant), card (confirmed project-relative paths, read scope), or scratch (conversation scratch-relative paths). Each files item has from and to (project-relative Card source destination). Supply base_rev from project_inspect. Normal save validation, conflicts, permission widening approval and Agent origin apply. Helpers need source read and destination write scope. Refuses symlinks, traversal and structural documents. Core streams local files without an RPC byte payload or a copy-specific size/count cap; definition-store limits apply (10,000 source entries per project). Data may instead stay attached and be read by a Card with hostFolders (/host/<name>), with permission. Returns destination paths, sizes and SHA-256 hashes, never content.",
+  "inputSchema": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "source",
+    "files",
+    "base_rev"
+   ],
+   "properties": {
+    "source": {
+     "type": "string",
+     "enum": [
+      "attached",
+      "card",
+      "scratch"
+     ]
+    },
+    "folder": {
+     "type": "string"
+    },
+    "base_rev": {
+     "type": "string",
+     "pattern": "^[0-9]+$"
+    },
+    "files": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "type": "object",
+      "required": [
+       "from",
+       "to"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "from": {
+        "type": "string"
+       },
+       "to": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "project_save",
+  "payloadType": 5,
+  "description": "Use project_edit for small changes. project_save is for creating a project and for a large restructuring. ProjectSave: -> SaveResult. Apply all changes in one transaction at base_rev.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "base_rev": {
+     "type": "string",
+     "pattern": "^-?[0-9]+$",
+     "description": "64 bit integer as a decimal string"
+    },
+    "changes": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "value_type": {
+        "type": "string",
+        "enum": [
+         "SetProject",
+         "SetLayout",
+         "PutDefinition",
+         "RemoveDefinition",
+         "PutSource",
+         "PatchSource",
+         "RemoveSource"
+        ],
+        "description": "variant of value"
+       },
+       "value": {
+        "anyOf": [
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "json": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "card_json": {
+            "type": "string"
+           },
+           "meta_json": {
+            "type": "string",
+            "description": " The new _meta.json; omitted removes it unless keep_meta. Empty keeps it."
+           },
+           "link_json": {
+            "type": "string",
+            "description": " A Card in Card: _link.json instead of _card.json. Empty: none."
+           },
+           "keep_meta": {
+            "type": "boolean",
+            "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."
+           },
+           "fill_description": {
+            "type": "string",
+            "description": "Fill an empty description, preserving existing text."
+           },
+           "fill_context": {
+            "type": "string",
+            "description": "Fill an empty context, preserving existing text."
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id",
+           "card_json"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "id": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "id"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "bytes": {
+            "type": "string",
+            "description": "UTF-8 text (or {\"base64\": ...})"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "bytes"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           },
+           "patches": {
+            "type": "array",
+            "items": {
+             "type": "object",
+             "properties": {
+              "offset": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "remove": {
+               "type": "string",
+               "pattern": "^-?[0-9]+$",
+               "description": "64 bit integer as a decimal string"
+              },
+              "text": {
+               "type": "string"
+              }
+             },
+             "additionalProperties": false,
+             "required": [
+              "text"
+             ]
+            }
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash",
+           "patches"
+          ]
+         },
+         {
+          "type": "object",
+          "properties": {
+           "path": {
+            "type": "string"
+           },
+           "base_hash": {
+            "type": "string"
+           }
+          },
+          "additionalProperties": false,
+          "required": [
+           "path",
+           "base_hash"
+          ]
+         }
+        ]
+       }
+      },
+      "additionalProperties": false
+     }
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "changes"
+   ]
+  },
+  "mutating": true
  }
 ]

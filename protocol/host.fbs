@@ -162,6 +162,59 @@ table DocumentMerge { merged_json:string (required); conflicts:[string]; }
 // contains {snapshot:{rev,sources},files:{path:document}} from the actual read.
 // The core request/reply stay typed; snapshot catches up a UI whose change
 // notifications have not arrived yet. No run data is retained by this operation.
+// Intent editing, shared by all clients. Object fields and keyed array entities
+// are selected by identity; numeric array offsets are never entity identities.
+table ProjectSelector {
+  field:string;
+  match_json:string; // nonempty object whose members identify an array entity
+}
+table ProjectValue { present:bool; json:string; }
+table ProjectFieldEdit {
+  file_path:string (required);
+  selector:[ProjectSelector];
+  old_value:ProjectValue (required);
+  new_value:ProjectValue (required);
+}
+table ProjectTextEdit {
+  file_path:string (required);
+  old_string:string (required);
+  new_string:string (required);
+  expected_matches:uint32 = 1;
+}
+table ProjectFilePut {
+  file_path:string (required);
+  expected_hash:string;
+  expect_missing:bool;
+  bytes:[ubyte];
+}
+table ProjectFileRemove { file_path:string (required); expected_hash:string (required); }
+table ProjectFileMove {
+  file_path:string (required);
+  expected_hash:string (required);
+  to:string (required);
+  expected_destination_hash:string;
+  destination_missing:bool;
+}
+union ProjectEditValue { ProjectFieldEdit, ProjectTextEdit, ProjectFilePut, ProjectFileRemove, ProjectFileMove }
+table ProjectEdit { value:ProjectEditValue; }
+table ProjectEdits { edits:[ProjectEdit]; }
+union ProjectOperationBody { ProjectEdits }
+table ProjectOperateRequest {
+  project_id:string (required);
+  operation:Tsugumi.RPC.OperationSubmission (required);
+  body:ProjectOperationBody;
+}
+table ProjectWriterOpenRequest { project_id:string (required); }
+table ProjectOperationStatusRequest { project_id:string (required); operation:Tsugumi.RPC.OperationSubmission (required); }
+table ProjectOperationAcknowledgeRequest {
+  project_id:string (required);
+  identity:Tsugumi.RPC.OperationIdentity (required);
+  incorporated_cursor:uint64;
+  retire:bool;
+}
+// The original outcome/cursor only; never a separately inspected document.
+table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
+
 table UISaveRequest { project:string (required); base_json:string (required); save:Tsugumi.RPC.ProjectSaveRequest (required); }
 table UISaveResult { reply:Tsugumi.RPC.Reply (required); snapshot:Tsugumi.RPC.ProjectSnapshot; }
 
@@ -431,11 +484,13 @@ union RequestPayload {
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, UISaveRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
+  ProjectOperateRequest, ProjectWriterOpenRequest, ProjectOperationStatusRequest, ProjectOperationAcknowledgeRequest,
   ModelSelectionRequest,
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
+  ProjectOperationResult,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,

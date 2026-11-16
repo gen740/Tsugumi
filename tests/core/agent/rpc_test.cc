@@ -284,6 +284,17 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
       Call(*external, A::RequestPayload::ToolCatalogRequest,
            [](Builder &b) { return A::CreateToolCatalogRequest(b).Union(); });
   EXPECT_EQ(names(external_catalog.View()), main_tools);
+  auto editing_order = [&](const std::string& raw) {
+    std::vector<std::string> ordered;
+    for (const auto& tool : J::Array(raw)) {
+      const auto name = J::Text(J::Object(tool), "name");
+      if (name == "project_edit" || name == "project_copy" || name == "project_save") ordered.push_back(name);
+    }
+    EXPECT_EQ(ordered, (std::vector<std::string>{"project_edit", "project_copy", "project_save"}));
+  };
+  editing_order(J::Get(J::Object(requests[0]), "tools"));
+  editing_order(J::Get(J::Object(requests[1]), "tools"));
+  editing_order(external_catalog.View());
   EXPECT_FALSE(helper_tools.contains("delegate"));
   helper_tools.insert("delegate");
   EXPECT_EQ(helper_tools, main_tools);
@@ -300,7 +311,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
                             : std::set<std::string>{});
   }
   EXPECT_TRUE(main_tools.contains("project_save"));
-  for (const auto *name : {"delegate", "project_save", "run", "run_cancel"})
+  for (const auto *name : {"delegate", "project_edit", "project_save", "run", "run_cancel"})
     EXPECT_FALSE(guide_tools.contains(name));
   for (const auto &raw : guide_specs) {
     const auto spec = J::Object(raw);

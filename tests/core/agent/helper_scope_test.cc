@@ -59,6 +59,21 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
                            kRead),
                std::runtime_error);
 }
+TEST(HelperScope, ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
+  const std::string before = R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
+  const auto reader = [&](const std::string& path) { return path == "tsugumi.json" ? before : ""; };
+  HelperScope scope(json::Object(R"({"read_cards":["writer"],"write_cards":["writer"],"run_cards":[]})"));
+  auto plan = json::Members{{"changes", json::Encode(std::vector<std::string>{json::Encode(json::Members{
+      {"value_type", json::Quote("SetProject")}, {"value", json::Encode(json::Members{{"json", json::Quote(before)}})}})})}};
+  const auto bytes = json::Encode(plan);
+  EXPECT_NO_THROW(scope.CheckCurrentSave(plan, reader));
+  EXPECT_EQ(json::Encode(plan), bytes);
+  auto changed = before; changed.replace(changed.find("workflow"), 8, "changed");
+  plan["changes"] = json::Encode(std::vector<std::string>{json::Encode(json::Members{
+      {"value_type", json::Quote("SetProject")}, {"value", json::Encode(json::Members{{"json", json::Quote(changed)}})}})});
+  EXPECT_THROW(scope.CheckCurrentSave(plan, reader), std::runtime_error);
+}
+
 TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
   const HelperScope::Reader read = [](const std::string &path) -> std::string {
     if (path == "tsugumi.json")

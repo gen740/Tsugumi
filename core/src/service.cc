@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <fstream>
 #include <set>
 
@@ -523,6 +524,11 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
+    case P::OperationRefuseRequest: return on_lane(m, std::move(req), &Service::operation_refuse);
+    case P::WriterBeginRequest: return on_lane(m, std::move(req), &Service::writer_begin);
+    case P::WriterOpenRequest: return on_lane(m, std::move(req), &Service::writer_open);
+    case P::WriterAcknowledgeRequest: return on_lane(m, std::move(req), &Service::writer_acknowledge);
+    case P::WriterStatusRequest: return on_lane(m, std::move(req), &Service::writer_status);
     case P::OperationGetRequest: return on_lane(r, std::move(req), &Service::operation_get);
     case P::ProjectFileListRequest: return on_lane(r, std::move(req), &Service::file_list);
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
@@ -643,6 +649,17 @@ void Service::finish_op(const std::string& op_id, const std::string& receipt_byt
 }
 
 namespace {
+auto bounded_operation_failure(FailureData failure) -> FailureData {
+  if (failure.diagnostic && failure.diagnostic->size() > 4096) {
+    size_t end = 4096;
+    while (end && (static_cast<unsigned char>((*failure.diagnostic)[end]) & 0xc0) == 0x80) --end;
+    failure.diagnostic = failure.diagnostic->substr(0, end) + " (details truncated)";
+  }
+  size_t bytes = 0;
+  std::erase_if(failure.args, [&](const auto& arg) { bytes += arg.first.size() + arg.second.size(); return bytes > 4096; });
+  return failure;
+}
+
 std::string failure_receipt(const std::string& op_id, const FailureData& f) {
   FBB b;
   auto fo = wire::failure(b, f);
@@ -653,17 +670,29 @@ std::string failure_receipt(const std::string& op_id, const FailureData& f) {
 }  // namespace
 
 void Service::store_failure_receipt(const std::string& op_id, const std::string& kind,
-                                    const std::string& digest, const FailureData& f) {
+                                    const std::string& digest, const FailureData& f,
+                                    const std::optional<OperationIdentity>& identity) {
   // busy/timeout/persistence failures (and a save waiting for the user's
   // approval) leave the operation retryable under the same id.
-  if (f.kind == FailureKind::busy || f.kind == FailureKind::timeout || f.kind == FailureKind::approval_required ||
+  if ((!identity && f.kind == FailureKind::busy) || f.kind == FailureKind::timeout || f.kind == FailureKind::approval_required ||
       f.kind == FailureKind::persistence_failed || f.kind == FailureKind::internal_error) {
     finish_op(op_id, failure_receipt(op_id, f));
     return;
   }
-  std::string bytes = failure_receipt(op_id, f);
+  FBB builder;
+  auto failure = wire::failure(builder, f);
+  const auto cursor = store_->cursor() + 1;
+  auto id = identity ? R::CreateOperationIdentity(builder, builder.CreateString(identity->lane), identity->sequence)
+                     : flatbuffers::Offset<R::OperationIdentity>();
+  auto receipt = R::CreateOperationReceipt(builder, builder.CreateString(op_id), R::ReceiptValue::Failure,
+                                            failure.Union(), cursor, id);
+  builder.Finish(receipt);
+  std::string bytes(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
   try {
-    if (kind == "save" || kind == "reload") store_->record_receipt({op_id, kind, digest, bytes});
+    if (kind == "save" || kind == "reload") {
+      store_->record_receipt({op_id, kind, digest, bytes, identity, cursor});
+      publish_operation(bytes);
+    }
     else history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, kind, digest, bytes); });
   } catch (const std::exception& e) {
     log::error(std::string("cannot persist failure receipt: ") + e.what());
@@ -748,6 +777,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
     }
   }
   R::ProjectSnapshotBuilder sb(b);
+  sb.add_operation_cursor(doc.operation_cursor);
   sb.add_project_id(pid);
   sb.add_rev(doc.rev);
   sb.add_execution_rev(doc.execution_rev);
@@ -805,6 +835,7 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   auto pj = d.project_changed ? b.CreateString(doc.project_json) : flatbuffers::Offset<flatbuffers::String>();
   auto lj = d.layout_changed ? b.CreateString(doc.layout_json) : flatbuffers::Offset<flatbuffers::String>();
   R::DocumentDeltaBuilder db(b);
+  db.add_cursor(d.cursor);
   db.add_base_rev(d.base_rev);
   db.add_rev(d.rev);
   db.add_execution_rev(d.execution_rev);
@@ -821,24 +852,45 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base, uint64_t cursor = 0, bool compact = false) {
   flatbuffers::Offset<R::DocumentDelta> delta;
-  if (d) delta = delta_offset(b, *d);
+  if (d && !compact) delta = delta_offset(b, *d);
   R::SaveResultBuilder sb(b);
-  if (d) sb.add_delta(delta);
+  if (d && !compact) sb.add_delta(delta);
+  sb.add_cursor(cursor);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
   return sb.Finish();
 }
 
-std::string finish_receipt(FBB& b, const std::string& op_id, R::ReceiptValue type, flatbuffers::Offset<void> v) {
-  auto r = R::CreateOperationReceipt(b, b.CreateString(op_id), type, v);
+std::string finish_receipt(FBB& b, const std::string& op_id, R::ReceiptValue type, flatbuffers::Offset<void> v,
+                           uint64_t cursor = 0, const std::optional<OperationIdentity>& identity = std::nullopt) {
+  auto id = identity ? R::CreateOperationIdentity(b, b.CreateString(identity->lane), identity->sequence)
+                     : flatbuffers::Offset<R::OperationIdentity>();
+  auto r = R::CreateOperationReceipt(b, b.CreateString(op_id), type, v, cursor, id);
   b.Finish(r);
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
 }
 
 }  // namespace
+
+auto Service::publish_operation(const std::string& receipt, const Delta* delta) -> void {
+  auto change = delta ? std::make_shared<Delta>(*delta) : nullptr;
+  Note note;
+  note.kind = Note::Kind::Operation;
+  note.approx_bytes = receipt.size() + 4096;
+  if (change) note.approx_bytes += change->doc->project_json.size() + change->doc->layout_json.size();
+  note.build = std::make_shared<const Note::Build>([receipt, change](FBB& builder) {
+    auto outcome = flatbuffers::Offset<R::OperationReceipt>(wire::copy_table(
+        builder, "Tsugumi.RPC.OperationReceipt",
+        reinterpret_cast<const flatbuffers::Table*>(flatbuffers::GetRoot<R::OperationReceipt>(receipt.data()))).o);
+    auto document = change ? delta_offset(builder, *change) : flatbuffers::Offset<R::DocumentDelta>();
+    return std::make_pair(R::NotificationPayload::ProjectOperationEvent,
+        R::CreateProjectOperationEvent(builder, outcome, document).Union());
+  });
+  server_->broadcast(std::move(note));
+}
 
 void Service::publish_delta(const Delta& delta) {
   // Keeping the run history switched on: the project's copy catches up.
@@ -883,7 +935,7 @@ void Service::open_project(RequestIn& req) {
     std::lock_guard<std::mutex> l(subs_mu_);
     subscriptions_[req.conn] = sub;
   }
-  server_->subscribe(req.conn, sub, std::move(bytes));
+  server_->subscribe(req.conn, sub, std::move(bytes), r->operation_stream());
 }
 
 namespace {
@@ -987,11 +1039,28 @@ auto Service::card_id(RequestIn& req) -> void {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardIdResult, result.Union()));
 }
 
+namespace {
+auto Identity(const R::OperationSubmission* operation) -> std::optional<OperationIdentity> {
+  if (!operation) return std::nullopt;
+  const auto digest = operation->semantic_digest()->string_view();
+  if (digest.size() != 64 || digest.find_first_not_of("0123456789abcdef") != std::string_view::npos)
+    throw Failed(FailureKind::invalid_request, "semantic_digest must be a SHA-256 hex digest");
+  return OperationIdentity{operation->identity()->lane()->str(), operation->identity()->sequence()};
+}
+}
+
 void Service::save(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectSaveRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
-  if (replay_or_join(req, op_id, "save", digest)) return;
+  const auto identity = Identity(r->operation());
+  std::string digest = identity ? r->operation()->semantic_digest()->str() : request_digest(req.request());
+  if (identity) {
+    if (const auto completed = store_->operation(*identity, digest, std::time(nullptr))) {
+      reply(req, receipt_reply(req.request_id, completed->bytes, true));
+      return;
+    }
+  }
+  if (!identity && replay_or_join(req, op_id, "save", digest)) return;
   try {
     auto check_cancelled = [&] {
       if (req.cancelled && req.cancelled->load())
@@ -1022,7 +1091,7 @@ void Service::save(RequestIn& req) {
       }
       changes.push_back(std::move(change));
     }
-    auto staged = store_->stage(changes, op_id, r->origin()->str());
+    auto staged = store_->stage(changes, op_id, r->origin()->str(), identity.has_value());
     if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");
     // Compare permissions only when the caller requests this mechanism.
     if (r->check_permissions() && staged.effective) {
@@ -1038,21 +1107,25 @@ void Service::save(RequestIn& req) {
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
+      auto sr = save_result(b, d, *base, store_->cursor() + 1, identity.has_value());
+      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union(), store_->cursor() + 1, identity);
       return receipt;
-    }, check_cancelled);
+    }, check_cancelled, identity);
     if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
+    if (opts_.fault == "after_operation_commit") ::_exit(97);
+    publish_operation(receipt, staged.delta.doc ? &staged.delta : nullptr);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
   } catch (const Failed& f) {
-    store_failure_receipt(op_id, "save", digest, f.failure);
-    throw;
+    const auto failure = identity ? bounded_operation_failure(f.failure) : f.failure;
+    if (!(identity && failure.kind == FailureKind::revision_conflict))
+      store_failure_receipt(op_id, "save", digest, failure, identity);
+    throw Failed(failure);
   } catch (const std::exception& e) {
     // Any other error ends the operation too (retryable under the same id).
     auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "save", digest, f);
+    store_failure_receipt(op_id, "save", digest, f, identity);
     throw Failed(f);
   }
 }
@@ -1060,8 +1133,15 @@ void Service::save(RequestIn& req) {
 void Service::reload(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectReloadRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
-  if (replay_or_join(req, op_id, "reload", digest)) return;
+  const auto identity = Identity(r->operation());
+  std::string digest = identity ? r->operation()->semantic_digest()->str() : request_digest(req.request());
+  if (identity) {
+    if (const auto completed = store_->operation(*identity, digest, std::time(nullptr))) {
+      reply(req, receipt_reply(req.request_id, completed->bytes, true));
+      return;
+    }
+  }
+  if (!identity && replay_or_join(req, op_id, "reload", digest)) return;
   try {
     require_mutation(r->base_rev(), r->op_id());
     auto base = store_->current();
@@ -1081,21 +1161,24 @@ void Service::reload(RequestIn& req) {
     std::string receipt;
     store_->commit(staged, "reload", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
+      auto sr = save_result(b, d, *base, store_->cursor() + 1, identity.has_value());
+      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union(), store_->cursor() + 1, identity);
       return receipt;
-    });
+    }, [] {}, identity);
     if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
+    publish_operation(receipt, staged.delta.doc ? &staged.delta : nullptr);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
   } catch (const Failed& f) {
-    store_failure_receipt(op_id, "reload", digest, f.failure);
-    throw;
+    const auto failure = identity ? bounded_operation_failure(f.failure) : f.failure;
+    if (!(identity && failure.kind == FailureKind::revision_conflict))
+      store_failure_receipt(op_id, "reload", digest, failure, identity);
+    throw Failed(failure);
   } catch (const std::exception& e) {
     // Any other error ends the operation too (retryable under the same id).
     auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "reload", digest, f);
+    store_failure_receipt(op_id, "reload", digest, f, identity);
     throw Failed(f);
   }
 }
@@ -1197,11 +1280,12 @@ void Service::version_checkout(RequestIn& req) {
     std::string receipt;
     store_->commit(staged, "reload", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
+      auto sr = save_result(b, d, *base, store_->cursor() + 1);
+      receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union(), store_->cursor() + 1);
       return receipt;
     });
     if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
+    publish_operation(receipt, staged.delta.doc ? &staged.delta : nullptr);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1496,6 +1580,62 @@ void Service::validate(RequestIn& req) {
   vb.add_diagnostics(dv);
   auto off = vb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectValidateResult, off.Union()));
+}
+
+auto Service::operation_refuse(RequestIn& req) -> void {
+  const auto* input = req.request()->value_as_OperationRefuseRequest();
+  const auto identity = Identity(input->operation());
+  const auto digest = input->operation()->semantic_digest()->str();
+  if (const auto completed = store_->operation(*identity, digest, std::time(nullptr))) {
+    reply(req, receipt_reply(req.request_id, completed->bytes, true));
+    return;
+  }
+  if (!crypto::is_uuid(input->op_id()->str()))
+    throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  FBB builder;
+  auto failure = wire::failure(builder, bounded_operation_failure(wire::failure(input->failure())));
+  auto receipt = finish_receipt(builder, input->op_id()->str(), R::ReceiptValue::Failure,
+                                 failure.Union(), store_->cursor() + 1, identity);
+  store_->record_receipt({input->op_id()->str(), "save", digest, receipt, identity});
+  publish_operation(receipt);
+  reply(req, receipt_reply(req.request_id, receipt, false));
+}
+
+auto Service::writer_begin(RequestIn& req) -> void {
+  const auto* input = req.request()->value_as_WriterBeginRequest();
+  const auto identity = Identity(input->operation());
+  store_->begin_operation(*identity, input->operation()->semantic_digest()->str(), std::time(nullptr));
+  FBB builder;
+  reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::Ack, R::CreateAck(builder).Union()));
+}
+
+auto Service::writer_open(RequestIn& req) -> void {
+  const auto id = store_->open_writer(std::time(nullptr));
+  FBB builder;
+  auto result = R::CreateWriterOpened(builder, builder.CreateString(id), 1, store_->cursor());
+  reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::WriterOpened, result.Union()));
+}
+
+auto Service::writer_acknowledge(RequestIn& req) -> void {
+  const auto* input = req.request()->value_as_WriterAcknowledgeRequest();
+  store_->acknowledge({input->identity()->lane()->str(), input->identity()->sequence()},
+                       input->incorporated_cursor(), std::time(nullptr));
+  if (input->retire()) store_->retire_writer(input->identity()->lane()->str(), std::time(nullptr));
+  FBB builder;
+  reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::Ack, R::CreateAck(builder).Union()));
+}
+
+auto Service::writer_status(RequestIn& req) -> void {
+  const auto* input = req.request()->value_as_WriterStatusRequest();
+  const auto identity = Identity(input->operation());
+  const auto result = store_->operation(*identity, input->operation()->semantic_digest()->str(), std::time(nullptr));
+  FBB builder;
+  flatbuffers::Offset<R::OperationReceipt> outcome;
+  if (result) outcome = flatbuffers::Offset<R::OperationReceipt>(wire::copy_table(
+      builder, "Tsugumi.RPC.OperationReceipt", reinterpret_cast<const flatbuffers::Table*>(
+          flatbuffers::GetRoot<R::OperationReceipt>(result->bytes.data()))).o);
+  auto status = R::CreateOperationResult(builder, result ? D::OperationState::completed : store_->operation_pending(*identity) ? D::OperationState::pending : D::OperationState::unknown, outcome);
+  reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::OperationResult, status.Union()));
 }
 
 void Service::operation_get(RequestIn& req) {

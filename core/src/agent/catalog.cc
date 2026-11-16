@@ -58,7 +58,7 @@ auto Docs(
   return out;
 }
 
-const std::set<std::string> kOwnedFields{"origin", "op_id",
+const std::set<std::string> kOwnedFields{"origin", "op_id", "operation",
                                          "approved_permissions", "run_ids",
                                          "restrict_to_run_ids", "check_permissions",
                                          "read_only", "hide_credentials", "no_project_socket",
@@ -340,6 +340,14 @@ Catalog::Catalog() {
     tools_.push_back({{name, json::Text(tool, "description"),
                        json::Get(tool, "inputSchema")}, name, false, json::Bool(json::Get(tool, "mutating", "false")), false});
   }
+  const std::vector<std::string> editing{"project_edit", "project_connect", "project_make_subgraph", "project_layout", "project_copy", "project_save"};
+  auto rank = [&](const CatalogTool& tool) { return std::find(editing.begin(), editing.end(), tool.spec.name) - editing.begin(); };
+  std::stable_sort(tools_.begin(), tools_.end(), [&](const auto& a, const auto& b) {
+    const auto ar = rank(a), br = rank(b);
+    if (ar == static_cast<decltype(ar)>(editing.size())) return br != static_cast<decltype(br)>(editing.size());
+    if (br == static_cast<decltype(br)>(editing.size())) return false;
+    return ar < br;
+  });
 }
 
 auto Catalog::Find(std::string_view name) const -> const CatalogTool * {

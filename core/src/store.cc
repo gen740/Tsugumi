@@ -1,11 +1,13 @@
 #include "store.hh"
 
 #include <thread>
+#include <algorithm>
 
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <cstring>
+#include <ctime>
 #include <set>
 #include <random>
 #include <sstream>
@@ -21,7 +23,7 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
-constexpr char kMagic[4] = {'T', 'S', 'J', '1'};
+constexpr char kMagic[4] = {'T', 'S', 'J', '2'};
 // The journal is compacted past this size, keeping the latest receipts (a
 // client retrying an operation within them gets its answer again): at most
 // this many, and at most this many bytes of them, the newest always, so a
@@ -48,8 +50,11 @@ bool writable(const stdfs::path& root, const std::string& rel) {
 
 std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, const std::string& op,
                             const std::string& kind, const std::string& digest, const std::string& receipt,
-                            const std::vector<FileOp>& ops) {
+                            const std::vector<FileOp>& ops, uint64_t cursor = 0,
+                            std::vector<schema::JournalLane> lanes = {}) {
   schema::JournalRecord r;
+  *r.cursor = cursor;
+  *r.lanes = std::move(lanes);
   *r.type = type;
   *r.rev = rev;
   *r.execution_rev = exec_rev;
@@ -72,6 +77,8 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, c
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
+
+Store::~Store() { if (journal_fd_ >= 0) ::close(journal_fd_); }
 
 auto Store::stage_file(const stdfs::path& root, const std::string& from,
                        const std::optional<std::string>& expected_hash,
@@ -185,6 +192,7 @@ void Store::open() {
     }
   }
   auto loaded = load_from_disk(opts_.root);
+  loaded->operation_cursor = cursor_;
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
   auto doc = finalize(loaded);
@@ -234,6 +242,9 @@ void Store::recover_journal() {
   journal_fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_APPEND, 0600);
   if (journal_fd_ < 0) throw fs::Error("open journal: " + std::string(std::strerror(errno)));
   auto data = fs::read_file_or_throw(path);
+  if (data.size() >= 4 && std::memcmp(data.data(), kMagic, 4) != 0)
+    throw fs::Error("Unsupported document journal format (expected TSJ2). Close all clients and preserve "
+                    "the project, including .tsugumi, before reopening it with its matching build.");
   size_t pos = 0;
   size_t good = 0;
   struct Txn {
@@ -241,6 +252,7 @@ void Store::recover_journal() {
     bool committed = false;
   };
   std::vector<Txn> txns;
+  std::vector<schema::JournalRecord> records;
   std::map<std::string, Receipt> receipts;
   std::deque<std::string> order;
   uint64_t rev = 0;
@@ -264,6 +276,7 @@ void Store::recover_journal() {
     if (crypto::crc32(payload.data(), payload.size()) != crc) break;
     schema::JournalRecord rec;
     if (schema::decode(payload, rec)) break;
+    records.push_back(rec);
     pos += 12 + len;
     good = pos;
     if (*rec.type == "base") {
@@ -286,47 +299,54 @@ void Store::recover_journal() {
       throw fs::Error("truncate journal: " + std::string(std::strerror(errno)));
     ::fsync(journal_fd_);
   }
-  for (auto& tx : txns) {
-    const auto& rec = tx.rec;
-    // The journal is a file in the project: a record that writes outside
-    // what a save may write was not made here, and is not applied.
-    bool foreign = false;
-    for (const auto& f : *rec.files) foreign |= !writable(opts_.root, *f.path);
-    if (foreign) {
-      log::warn("journal: a record of revision " + std::to_string(*rec.rev) +
-                " writes outside the project's documents and sources; ignored");
-      continue;
-    }
-    if (!tx.committed) {
-      // Redo: the txn record holds every file's final content.
-      std::vector<FileOp> ops;
-      for (const auto& f : *rec.files) {
-        FileOp op;
-        op.path = *f.path;
-        if (!f.blob->empty()) {
-          if (!crypto::is_uuid(*f.blob)) throw fs::Error("invalid journal blob");
-          op.file = std::make_shared<SourceFile>();
-          op.file->journaled = true;
-          op.file->path = state_dir() / "document-files" / *f.blob;
-          op.file->hash = *f.hash;
-          if (fs::sha256_file(op.file->path) != op.file->hash)
-            throw fs::Error("journal blob hash mismatch");
-        } else if (!*f.remove) {
-          std::string bytes;
-          crypto::base64_decode(*f.content_b64, bytes);
-          op.content = std::move(bytes);
+  receipts.clear();
+  order.clear();
+  for (const auto& rec : records) {
+    if (*rec.type == "commit") continue;
+    if (*rec.type == "txn") {
+      const auto tx = std::find_if(txns.begin(), txns.end(), [&](const auto& candidate) {
+        return *candidate.rec.op == *rec.op;
+      });
+      for (const auto& f : *rec.files)
+        if (!writable(opts_.root, *f.path))
+          throw fs::Error("document journal writes outside the project: " + *f.path);
+      if (tx == txns.end() || !tx->committed) {
+        std::vector<FileOp> ops;
+        for (const auto& f : *rec.files) {
+          FileOp op;
+          op.path = *f.path;
+          if (!f.blob->empty()) {
+            if (!crypto::is_uuid(*f.blob)) throw fs::Error("invalid journal blob");
+            op.file = std::make_shared<SourceFile>();
+            op.file->journaled = true;
+            op.file->path = state_dir() / "document-files" / *f.blob;
+            op.file->hash = *f.hash;
+            if (fs::sha256_file(op.file->path) != op.file->hash)
+              throw fs::Error("journal blob hash mismatch");
+          } else if (!*f.remove) {
+            std::string bytes;
+            crypto::base64_decode(*f.content_b64, bytes);
+            op.content = std::move(bytes);
+          }
+          ops.push_back(std::move(op));
         }
-        ops.push_back(std::move(op));
+        apply_ops(ops, false);
+        append_record(journal_payload("commit", *rec.rev, *rec.execution_rev, *rec.op, "", "", "", {}));
       }
-      apply_ops(ops, false);
-      append_record(journal_payload("commit", *rec.rev, *rec.execution_rev, *rec.op, "", "", "", {}));
     }
     rev = *rec.rev;
     exec_rev = *rec.execution_rev;
-    if (!receipts.count(*rec.op)) order.push_back(*rec.op);
-    receipts[*rec.op] = to_receipt(rec);
+    cursor_ = *rec.cursor;
+    for (const auto& lane : *rec.lanes) restore_lane(lane);
+    if ((*rec.type == "txn" || *rec.type == "receipt") && rec.lanes->empty()) {
+      if (!receipts.count(*rec.op)) order.push_back(*rec.op);
+      auto receipt = to_receipt(rec);
+      receipt.cursor = *rec.cursor;
+      receipts[*rec.op] = std::move(receipt);
+    }
   }
   auto doc = std::make_shared<Document>();
+  doc->operation_cursor = cursor_;
   doc->rev = rev;
   doc->execution_rev = exec_rev;
   std::lock_guard<std::mutex> l(mu_);
@@ -375,8 +395,10 @@ void Store::compact_journal() {
     r.append(reinterpret_cast<const char*>(&crc), 4);
     return r + payload;
   };
-  std::string data = record(journal_payload("base", rev, exec_rev, "", "", "", "", {}));
-  for (const auto& r : keep) data += record(journal_payload("receipt", rev, exec_rev, r.op_id, r.kind, r.digest, r.bytes, {}));
+  std::vector<schema::JournalLane> lanes;
+  for (const auto& [id, lane] : writers_) lanes.push_back(lane_record(id, lane));
+  std::string data = record(journal_payload("base", rev, exec_rev, "", "", "", "", {}, cursor_, std::move(lanes)));
+  for (const auto& r : keep) data += record(journal_payload("receipt", rev, exec_rev, r.op_id, r.kind, r.digest, r.bytes, {}, cursor_));
   // One rename: a crash leaves the old journal or the new one, both complete.
   fs::write_atomic(path, data, 0600);
   int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_APPEND);
@@ -471,10 +493,10 @@ std::string Store::read_source(const Document& doc, const std::string& rel) cons
 }
 
 Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::string& op_id,
-                           const std::string& origin) const {
+                           const std::string& origin, bool allow_empty) const {
   using K = ChangeIn::Kind;
   auto base = current();
-  if (changes.empty()) throw Failed(FailureKind::invalid_request, "changes must not be empty");
+  if (changes.empty() && !allow_empty) throw Failed(FailureKind::invalid_request, "changes must not be empty");
   std::set<std::string> targets;
   std::set<std::string> removed_defs;
   for (const auto& c : changes) {
@@ -799,12 +821,16 @@ Store::Staged Store::stage_reload(const std::string& op_id, const std::string& o
 
 void Store::commit(Staged& st, const std::string& kind, const std::string& digest,
                    const std::function<std::string(const Delta*)>& make_receipt,
-                   const std::function<void()>& check_cancelled) {
+                   const std::function<void()>& check_cancelled,
+                   const std::optional<OperationIdentity>& identity) {
   if (halted_)
     throw Failed(FailureKind::persistence_failed,
                  "changes are halted after a persistence failure; restart to recover");
   check_cancelled();
   auto base = current();
+  if (identity && operation(*identity, digest, std::time(nullptr)))
+    throw Failed(FailureKind::operation_conflict, "operation already completed; replay its outcome");
+  st.delta.cursor = cursor_ + 1;
   if (!st.effective) {
     // Receipt only: no revision change, no notification. A reload may still
     // learn new on-disk bytes (e.g. reformatted JSON with the same content).
@@ -815,13 +841,14 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
       doc_ = refreshed;
     }
     st.doc = nullptr;
-    Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
+    Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr), identity, st.delta.cursor};
     check_cancelled();
     record_receipt(r);
     return;
   }
   check_disk_unchanged(*base, st.ops);
   auto doc = st.doc;
+  doc->operation_cursor = st.delta.cursor;
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
   // Endpoint validity is a document invariant, including when a Draft becomes
@@ -836,7 +863,12 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   st.delta.doc = doc;
   std::string receipt = make_receipt(&st.delta);
 
-  auto intent = journal_payload("txn", doc->rev, doc->execution_rev, st.delta.op_id, kind, digest, receipt, st.ops);
+  Receipt completed{st.delta.op_id, kind, digest, receipt, identity, st.delta.cursor};
+  std::vector<schema::JournalLane> lanes;
+  if (identity) lanes.push_back(terminal_lane(completed));
+  auto intent = journal_payload("txn", doc->rev, doc->execution_rev, st.delta.op_id, kind, digest, receipt, st.ops,
+                                st.delta.cursor, lanes);
+  fault("before_journal");
   check_cancelled();
   // Mark before appending: even a failed append/fsync may have persisted the
   // intent. Recovery owns these files until the commit marker is durable.
@@ -858,18 +890,41 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   {
     std::lock_guard<std::mutex> l(mu_);
     doc_ = doc;
-    remember_receipt(Receipt{st.delta.op_id, kind, digest, receipt});
+    cursor_ = st.delta.cursor;
+    if (identity) restore_lane(lanes.front());
+    else remember_receipt(std::move(completed));
   }
   compact_journal();
 }
 
-void Store::record_receipt(const Receipt& r) {
+auto Store::persist_lane(const schema::JournalLane& lane) -> void {
+  if (halted_) throw Failed(FailureKind::persistence_failed, "restart to recover the document journal");
   auto base = current();
+  append_record(journal_payload("lane", base ? base->rev : 0, base ? base->execution_rev : 0,
+                                "", "", "", "", {}, cursor_, {lane}));
+  {
+    std::lock_guard lock(mu_);
+    restore_lane(lane);
+  }
+  compact_journal();
+}
+
+void Store::record_receipt(const Receipt& input) {
+  if (halted_) throw Failed(FailureKind::persistence_failed, "restart to recover the document journal");
+  auto r = input;
+  r.cursor = cursor_ + 1;
+  std::vector<schema::JournalLane> lanes;
+  if (r.identity) lanes.push_back(terminal_lane(r));
+  auto base = current();
+  fault("before_receipt");
   append_record(journal_payload("receipt", base ? base->rev : 0, base ? base->execution_rev : 0, r.op_id, r.kind,
-                                r.digest, r.bytes, {}));
+                                r.digest, r.bytes, {}, r.cursor, lanes));
   {
     std::lock_guard<std::mutex> l(mu_);
-    remember_receipt(r);
+    cursor_ = r.cursor;
+    if (doc_) { auto refreshed = std::make_shared<Document>(*doc_); refreshed->operation_cursor = cursor_; doc_ = std::move(refreshed); }
+    if (r.identity) restore_lane(lanes.front());
+    else remember_receipt(r);
   }
   compact_journal();
 }

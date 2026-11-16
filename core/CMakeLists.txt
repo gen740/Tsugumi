@@ -40,6 +40,7 @@ add_library(tsugumi_core STATIC
   src/module_source.cc
   src/wire.cc
   src/store.cc
+  src/store_operations.cc
   src/history.cc
   src/lanes.cc
   src/server.cc
@@ -171,6 +172,7 @@ add_library(tsugumi_host_core STATIC
   src/agent/approvals.cc
   src/agent/tools_files.cc
   src/agent/tools.cc
+  src/agent/tools_edit.cc
   src/agent/turns.cc
   src/host/access.cc
   src/host/state_format.cc
@@ -185,6 +187,8 @@ add_library(tsugumi_host_core STATIC
   src/util/process.cc
   src/host/comments.cc
   src/host/save.cc
+  src/host/project_edit.cc
+  src/host/project_operations.cc
   src/host/document_edits.cc
   src/host/templates.cc
   ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc

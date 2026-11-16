@@ -21,10 +21,11 @@ def main():
     fixture = json.loads(FIXTURE.read_text())
     with tempfile.TemporaryDirectory() as temporary:
         source = Path(temporary) / "vector.json"
-        for group, envelope in [("requests", "Request"), ("replies", "Reply")]:
-            for case in fixture[group]:
+        for group, envelope in [("requests", "Request"), ("replies", "Reply"),
+                                ("operationRequests", "Request"), ("operationReplies", "Reply")]:
+            for case in fixture.get(group, []):
                 schema = "host" if case["host"] else "agent"
-                name = case["method"] if group == "requests" else case["type"]
+                name = case["method"] if envelope == "Request" else case["type"]
                 value = case["fields"]
                 source.write_text(json.dumps({
                     "request_id": 7,

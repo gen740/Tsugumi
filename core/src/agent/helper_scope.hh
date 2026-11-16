@@ -24,6 +24,10 @@ public:
   static auto Validate(const json::Members &task, bool allow_unscoped) -> void;
   auto Check(const std::string &tool, const json::Members &args,
              const Reader &read) const -> void;
+  // Check an executor's full current-state plan without rewriting its bytes.
+  // Layout entries here have already been computed exclusively by the host;
+  // model-authored layout reads/edits must be authorized separately.
+  auto CheckCurrentSave(const json::Members& args, const Reader& read) const -> void;
   auto ExpandSave(json::Members args, const Reader& read) const
       -> json::Members;
   auto ProjectPrefix(const std::string& path, const Reader& read) const

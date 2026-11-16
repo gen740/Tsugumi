@@ -41,6 +41,7 @@ struct ChangeIn {
 
 // What changed in a committed transaction. Content comes from `doc`.
 struct Delta {
+  uint64_t cursor = 0;
   uint64_t base_rev = 0;
   uint64_t rev = 0;
   uint64_t execution_rev = 0;
@@ -55,11 +56,18 @@ struct Delta {
   DocumentPtr doc;
 };
 
+struct OperationIdentity {
+  std::string lane;
+  uint64_t sequence = 0;
+};
+
 struct Receipt {
   std::string op_id;
   std::string kind;    // "save", "reload", "run", "cache_clear", "sdk"
   std::string digest;  // canonical request digest
   std::string bytes;   // OperationReceipt FlatBuffer (root)
+  std::optional<OperationIdentity> identity = std::nullopt;
+  uint64_t cursor = 0;
 };
 
 struct StoreOptions {
@@ -71,6 +79,7 @@ struct StoreOptions {
 class Store {
  public:
   explicit Store(StoreOptions opts);
+  ~Store();
 
   // Recovers the journal and loads the document. Throws on failure.
   void open();
@@ -83,6 +92,21 @@ class Store {
   std::optional<Receipt> receipt(const std::string& op_id) const;
   bool halted() const { return halted_; }
 
+  // Mutation-lane mechanisms. Unknown lanes are always refused, never recreated.
+  static constexpr size_t kMaxWriterLanes = 64;
+  static constexpr size_t kMaxOutcomeBytes = 16u << 10;
+  static constexpr int64_t kWriterLeaseSeconds = 7 * 24 * 60 * 60;
+  auto open_writer(int64_t now) -> std::string;
+  auto operation(const OperationIdentity& identity, const std::string& digest,
+                 int64_t now) const -> std::optional<Receipt>;
+  auto begin_operation(const OperationIdentity& identity, const std::string& digest, int64_t now) -> void;
+  auto operation_pending(const OperationIdentity& identity) const -> bool;
+  auto acknowledge(const OperationIdentity& identity, uint64_t incorporated_cursor,
+                   int64_t now) -> void;
+  auto retire_writer(const std::string& lane, int64_t now) -> void;
+  auto cursor() const -> uint64_t;
+  auto expire_writers(int64_t now) -> void;
+
   // Builds a new document from `changes` (validation only, nothing written).
   struct Staged {
     std::shared_ptr<Document> doc;
@@ -91,7 +115,7 @@ class Store {
     bool effective = false;
   };
   Staged stage(const std::vector<ChangeIn>& changes, const std::string& op_id,
-               const std::string& origin) const;
+               const std::string& origin, bool allow_empty = false) const;
   auto stage_file(const std::filesystem::path& root, const std::string& from,
                   const std::optional<std::string>& expected_hash,
                   const std::function<void()>& check_cancelled) const -> std::shared_ptr<SourceFile>;
@@ -110,7 +134,8 @@ class Store {
   // and returns the OperationReceipt bytes. Publishes the new document.
   void commit(Staged& staged, const std::string& kind, const std::string& digest,
               const std::function<std::string(const Delta*)>& make_receipt,
-              const std::function<void()>& check_cancelled = [] {});
+              const std::function<void()>& check_cancelled = [] {},
+              const std::optional<OperationIdentity>& identity = std::nullopt);
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 
@@ -137,12 +162,25 @@ class Store {
   void check_disk_unchanged(const Document& base, const std::vector<FileOp>& ops) const;
   void fault(const char* point) const;
 
+  struct WriterLane {
+    uint64_t acknowledged = 0;
+    int64_t activity = 0;
+    std::string digest;
+    std::optional<Receipt> outcome;
+  };
+  auto lane_record(const std::string& id, const WriterLane& lane) const -> schema::JournalLane;
+  auto terminal_lane(const Receipt& receipt) const -> schema::JournalLane;
+  auto restore_lane(const schema::JournalLane& lane) -> void;
+  auto persist_lane(const schema::JournalLane& lane) -> void;
+
   StoreOptions opts_;
   std::string project_id_;
   mutable std::mutex mu_;
   DocumentPtr doc_;
   std::map<std::string, Receipt> receipts_;
   std::deque<std::string> receipt_order_;  // op ids, oldest first (the compaction keeps the newest)
+  std::map<std::string, WriterLane> writers_;
+  uint64_t cursor_ = 0;
   int journal_fd_ = -1;
   bool halted_ = false;
 };

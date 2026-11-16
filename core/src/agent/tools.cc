@@ -271,6 +271,16 @@ auto Tools::StoreBase(const std::string& project, const host::SaveBase& base)
       .run();
 }
 
+auto Tools::OperateProject(const std::string& project, const R::OperationSubmissionT& operation,
+                           const H::ProjectEditsT& edits, const host::OperationContext& context,
+                           std::stop_token stop) -> host::OperationReply {
+  return operations.Execute(project, operation, edits, context, [&](const auto& method, const auto& arguments) {
+    host::OperationReply reply;
+    reply.json = RawProjectCall(project, method, json::Encode(arguments), stop, &reply.wire);
+    return reply;
+  });
+}
+
 auto Tools::SaveProject(const std::string& project, json::Members original,
                         std::stop_token stop,
                         const std::function<void(const host::SaveBase&)>& check) -> std::string {
@@ -591,7 +601,7 @@ auto Tools::RawProjectCall(const std::string &project, const std::string &name,
       throw Failure("unavailable",
                     "Could not subscribe to project run changes");
   }
-  if (name == "project_save" || (name == "project_validate" &&
+  if ((name == "project_save" && !json::Object(arguments).contains("operation")) || (name == "project_validate" &&
                                  json::Object(arguments).contains("changes"))) {
     try {
       prepared = PrepareLayoutSave(project, arguments, stop);
@@ -1108,7 +1118,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     // the parent changes a container link in between, the project rejects
     // the stale at_rev/base_rev instead of reading a different Card.
     const auto read = HelperReader(conversation, stop, revision, authorization);
-    boundary->Check(call.name, args, read);
+    if (call.name != "project_edit") boundary->Check(call.name, args, read);
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
                                call.name == "card_s_d_k_prepare")) {
       json::Members plan{{"card", json::Get(args, "card")}};
@@ -1286,7 +1296,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
   std::vector<std::string> file_resources;
-  if (interrupted && spec->mutating) {
+  if (call.name == "project_edit") {
+    result = EditProjectTool(conversation, project, call, args, op_id, boundary, interrupted, stop);
+  } else if (interrupted && spec->mutating) {
     result = ProjectCall(
         project, "operation_get",
         json::Encode(json::Members{{"op_id", json::Quote(op_id)}}), stop);
@@ -1375,6 +1387,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
       dependencies.approve_operation(project, conversation, call, digest, args,
                                      wait, stop, permissions);
       args["approved_permissions"] = json::Encode(permissions);
+      if (call.name == "project_edit") {
+        result = EditProjectTool(conversation, project, call, args, op_id, boundary, false, stop);
+      } else {
       op_id = crypto::uuid4();
       args["op_id"] = json::Quote(op_id);
       {
@@ -1388,6 +1403,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         tx.commit();
       }
       result = project_call();
+      }
       error = json::Text(json::Object(result), "reply") == "Failure";
     }
   }
@@ -1453,6 +1469,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .bind(4, call.id)
         .run();
   }
+  if (call.name == "project_edit") AcknowledgeEdit(project, op_id, stop);
   if (spec->approval_required && !wait)
     dependencies.event(conversation, json::Encode(json::Members{
                                          {"kind", json::Quote("toolFinished")},

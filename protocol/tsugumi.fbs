@@ -122,6 +122,7 @@ table ProjectSnapshot {
   view_id:string (id: 11);
   view_rev:uint64 = null (id: 12);
   execution_services:[ExecutionService] (id: 13);
+  operation_cursor:uint64 (id: 14);
 }
 
 /// Requirements of the accepted, resolved definitions, per executable Card.
@@ -188,6 +189,28 @@ union DocumentChangeValue {
 
 table DocumentChange { value:DocumentChangeValue (id: 1); }
 
+// A server-issued lane and monotonically increasing sequence. Acknowledge only
+// after durably incorporating the terminal outcome and its stream cursor.
+table OperationIdentity { lane:string (required); sequence:uint64; }
+table OperationSubmission {
+  identity:OperationIdentity (required);
+  // Host-computed digest of the original semantic intent, before expansion.
+  semantic_digest:string (required);
+}
+
+// Host validation refusal, recorded on the same lane and ordered with commits.
+table OperationRefuseRequest {
+  operation:OperationSubmission (required);
+  op_id:string (required);
+  failure:Tsugumi.Data.Failure (required);
+}
+/// -> Ack. Durably bind the semantic payload before host preparation/approval.
+table WriterBeginRequest { operation:OperationSubmission (required); }
+table WriterOpenRequest {}
+table WriterOpened { lane:string (required); next_sequence:uint64 = 1; cursor:uint64; }
+table WriterAcknowledgeRequest { identity:OperationIdentity (required); incorporated_cursor:uint64; retire:bool; }
+table WriterStatusRequest { operation:OperationSubmission (required); }
+
 table DocumentDelta {
   base_rev:uint64 = null (id: 0);
   rev:uint64 = null (id: 1);
@@ -202,6 +225,7 @@ table DocumentDelta {
   sources_removed:[string] (id: 10, required);
   resolution:[ResolvedCard] (id: 11, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 12, required);
+  cursor:uint64 (id: 13);
 }
 
 table SaveResult {
@@ -209,6 +233,7 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
+  cursor:uint64 (id: 4);
 }
 
 table ProjectCacheClearResult {
@@ -256,6 +281,8 @@ union ReceiptValue {
 table OperationReceipt {
   op_id:string (id: 0, required);
   result:ReceiptValue (id: 2);
+  cursor:uint64 (id: 3);
+  identity:OperationIdentity (id: 4);
 }
 
 // ---- Requests ----------------------------------------------------------------
@@ -274,7 +301,11 @@ table SessionHelloRequest {
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
-table ProjectOpenRequest { view_id:string (id: 0); }
+table ProjectOpenRequest {
+  view_id:string (id: 0);
+  // One ordered operation stream, including refusals/no-ops, instead of DocPatched.
+  operation_stream:bool (id: 1);
+}
 
 /// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
 table ProjectCloseRequest { subscription_id:string (id: 0, required); }
@@ -328,6 +359,7 @@ table ProjectSaveRequest {
   check_permissions:bool (id: 5);
   /// Local file references; source bytes never travel through the RPC frame.
   transfers:[SourceTransfer] (id: 6);
+  operation:OperationSubmission (id: 7);
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.
@@ -341,6 +373,7 @@ table ProjectReloadRequest {
   approved_permissions:[string] (id: 3);
   /// Reject widenings absent from approved_permissions when true.
   check_permissions:bool (id: 4);
+  operation:OperationSubmission (id: 5);
 }
 
 /// -> ProjectValidateResult. targets = [] means everything; mode = executable.
@@ -808,6 +841,11 @@ union RequestPayload {
   VersionNoteRequest = 51,
   RunEnvironmentUsesRequest = 52,
   ProjectHostRequirementsRequest = 53,
+  WriterOpenRequest = 54,
+  WriterAcknowledgeRequest = 55,
+  WriterStatusRequest = 56,
+  OperationRefuseRequest = 57,
+  WriterBeginRequest = 58,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1148,9 +1186,17 @@ union ReplyPayload {
   VersionNote = 39,
   EnvironmentUsePage = 40,
   ProjectHostRequirements = 41,
+  WriterOpened = 42,
 }
 
 // ---- Notifications -----------------------------------------------------------
+
+// Authoritative ordered operation stream. Replies contain outcomes, never an
+// independently inspected snapshot. On a gap reopen for a coherent snapshot.
+table ProjectOperationEvent {
+  receipt:OperationReceipt (required);
+  delta:DocumentDelta;
+}
 
 table DocPatched { delta:DocumentDelta (id: 0, required); }
 
@@ -1198,6 +1244,7 @@ union NotificationPayload {
   RunEvent = 2,
   DisplayUpdated = 3,
   LogAvailable = 4,
+  ProjectOperationEvent = 5,
 }
 
 // ---- Frame -------------------------------------------------------------------

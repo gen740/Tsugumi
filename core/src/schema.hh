@@ -174,6 +174,18 @@ struct JournalFile {
   t::String<"hash"> hash;
 };
 
+struct JournalLane {
+  t::String<"id"> id;
+  t::Uint64<"acknowledged"> acknowledged;
+  t::Int64<"activity"> activity;
+  t::Bool<"retired"> retired;
+  t::String<"op"> op;
+  t::String<"digest"> digest;
+  t::String<"kind"> kind;
+  t::String<"receipt"> receipt_b64;
+  t::Uint64<"cursor"> cursor;
+};
+
 struct JournalRecord {
   t::String<"t"> type;  // "txn" | "commit" | "receipt"
   t::Uint64<"rev"> rev;
@@ -183,6 +195,8 @@ struct JournalRecord {
   t::String<"digest"> digest;
   t::String<"receipt"> receipt_b64;
   t::Array<"files", Obj<JournalFile>> files;
+  t::Uint64<"cursor"> cursor;
+  t::Array<"lanes", Obj<JournalLane>> lanes;
 };
 
 struct ViewEntry {

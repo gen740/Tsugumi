@@ -144,6 +144,12 @@ class Service : public RequestSink {
   void inspect(RequestIn& req);
   void validate(RequestIn& req);
   void operation_get(RequestIn& req);
+  auto operation_refuse(RequestIn& req) -> void;
+  auto writer_begin(RequestIn& req) -> void;
+  auto writer_open(RequestIn& req) -> void;
+  auto writer_acknowledge(RequestIn& req) -> void;
+  auto writer_status(RequestIn& req) -> void;
+  auto publish_operation(const std::string& receipt, const Delta* delta = nullptr) -> void;
   void file_list(RequestIn& req);
   void file_stat(RequestIn& req);
   void file_read(RequestIn& req);
@@ -177,7 +183,8 @@ class Service : public RequestSink {
   void finish_op(const std::string& op_id, const std::string& receipt_bytes);
   std::string receipt_reply(uint64_t request_id, const std::string& receipt_bytes, bool replayed);
   void store_failure_receipt(const std::string& op_id, const std::string& kind,
-                             const std::string& digest, const FailureData& f);
+                             const std::string& digest, const FailureData& f,
+                             const std::optional<OperationIdentity>& identity = std::nullopt);
 
   std::string snapshot_reply(uint64_t request_id, const Document& doc,
                              const std::optional<std::string>& view_id, bool open,

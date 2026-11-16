@@ -76,6 +76,32 @@ TEST(ServiceContracts, SharedGoldensKeepRequestsOnTheirOwningListener) {
   }
 }
 
+TEST(ServiceContracts, OperationGoldensAllowEmptyOptionalEditVectors) {
+  const auto fixture = json::Object(fs::read_file_or_throw(TSUGUMI_SERVICE_FIXTURES));
+  for (const auto& raw : json::Array(json::Get(fixture, "operationRequests"))) {
+    const auto bytes = Bytes(json::Text(json::Object(raw), "hex"));
+    flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
+    const auto* input = H::GetMessage(bytes.data())->payload_as_Request()->value_as_ProjectOperateRequest();
+    ASSERT_NE(input, nullptr);
+    std::unique_ptr<H::ProjectOperateRequestT> object(input->UnPack());
+    ASSERT_TRUE(object->body.AsProjectEdits()->edits.empty());
+    H::MessageT message; H::RequestT request; request.value.Set(*object); message.payload.Set(std::move(request));
+    flatbuffers::FlatBufferBuilder builder; H::FinishMessageBuffer(builder, H::Message::Pack(builder, &message));
+    flatbuffers::Verifier roundtrip(builder.GetBufferPointer(), builder.GetSize());
+    EXPECT_TRUE(H::VerifyMessageBuffer(roundtrip));
+  }
+  for (const auto& raw : json::Array(json::Get(fixture, "operationReplies"))) {
+    const auto bytes = Bytes(json::Text(json::Object(raw), "hex"));
+    flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
+    const auto* result = H::GetMessage(bytes.data())->payload_as_Reply()->value_as_ProjectOperationResult();
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->reply()->value_as_SaveResult()->cursor(), 2u);
+    EXPECT_EQ(result->reply()->value_as_SaveResult()->delta(), nullptr);
+  }
+}
+
 TEST(ServiceContracts, BothRepliesUseOneTextResultAndHostListsMayBeOmitted) {
   S::TextResultT text;
   text.text = "summary";

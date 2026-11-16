@@ -76,6 +76,7 @@ struct Server::Command {
   std::string sub_id;
   std::set<std::string> cards;
   bool enabled = true;
+  bool operation_stream = false;
   std::vector<Note> notes;
 };
 
@@ -106,6 +107,7 @@ struct Server::Conn {
   // Subscription.
   std::string sub_id;
   uint64_t seq = 0;
+  bool operation_stream = false;
   std::set<std::string> visible;
   bool visible_enabled = true;
 };
@@ -199,11 +201,12 @@ void Server::reply(ConnId conn, std::string bytes) {
   post(std::move(c));
 }
 
-void Server::subscribe(ConnId conn, std::string sub_id, std::string open_reply) {
+void Server::subscribe(ConnId conn, std::string sub_id, std::string open_reply, bool operation_stream) {
   Command c{Command::Kind::Subscribe};
   c.conn = conn;
   c.sub_id = std::move(sub_id);
   c.bytes = std::move(open_reply);
+  c.operation_stream = operation_stream;
   post(std::move(c));
 }
 
@@ -244,6 +247,8 @@ void Server::apply(Command& cmd) {
     for (auto& [_, c] : conns_) {
       if (c->sub_id.empty()) continue;
       const Note& n = cmd.notes.front();
+      if ((n.kind == Note::Kind::Operation && !c->operation_stream) ||
+          (n.kind == Note::Kind::Doc && c->operation_stream)) continue;
       if (n.kind == Note::Kind::Display && (!c->visible_enabled || !c->visible.count(n.card_key)))
         continue;
       enqueue_note(*c, n);
@@ -268,6 +273,7 @@ void Server::apply(Command& cmd) {
         }
       }
       c.sub_id = cmd.sub_id;
+      c.operation_stream = cmd.operation_stream;
       c.seq = 1;  // the Open reply carries seq 1
       c.visible.clear();
       c.visible_enabled = true;

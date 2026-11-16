@@ -44,7 +44,7 @@ struct Limits {
 struct Note {
   using Build = std::function<std::pair<Tsugumi::RPC::NotificationPayload, flatbuffers::Offset<void>>(
       flatbuffers::FlatBufferBuilder&)>;
-  enum class Kind { Doc, Run, Display, Log };
+  enum class Kind { Doc, Operation, Run, Display, Log };
   Kind kind = Kind::Doc;
   std::string coalesce_key;  // Display/Log: same key replaces an unsent note
   std::string card_key;      // Display: target card path key
@@ -100,7 +100,7 @@ class Server {
 
   // Thread safe commands. All are applied in posting order.
   void reply(ConnId conn, std::string bytes);
-  void subscribe(ConnId conn, std::string sub_id, std::string open_reply);
+  void subscribe(ConnId conn, std::string sub_id, std::string open_reply, bool operation_stream = false);
   void unsubscribe(ConnId conn, std::string sub_id, std::string ack);
   void set_visible(ConnId conn, std::string sub_id, std::set<std::string> cards, bool enabled,
                    std::string ack, std::vector<Note> initial);

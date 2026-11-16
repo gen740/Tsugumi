@@ -162,3 +162,14 @@ def test_run_wait_instructions_are_shared_with_external_mcp():
     mcp = (ROOT / 'web/server/mcpInstructions.ts').read_text()
     assert 'wait_seconds: 300' in mcp and 'still_running' in mcp
     assert 'it answers at once' not in mcp
+
+
+def test_narrow_edit_contract_precedes_whole_document_save():
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    tools = {tool["name"]: tool for tool in shared["hostTools"]}
+    assert tools["project_edit"]["mutating"]
+    assert "keyed selectors" in tools["project_edit"]["description"]
+    assert "for creating a project and for a large restructuring" in shared["saveNote"]
+    fixture = json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())
+    ordered = [tool["name"] for tool in fixture if tool["name"] in ("project_edit", "project_copy", "project_save")]
+    assert ordered == ["project_edit", "project_copy", "project_save"]
