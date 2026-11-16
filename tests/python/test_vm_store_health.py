@@ -16,9 +16,9 @@ def guest(tmp_path, monkeypatch):
         "sync": ('printf "sync %s marker=%s\\n" "$*" "$(test -e "$HEALTH/running" && echo present || echo absent)" >> "$CALLS"; '
                  '[ "${FAIL_SYNC:-never}" != "$*" ]'),
         "nix-store": 'printf "nix-store %s\\n" "$*" >> "$CALLS"; echo "repaired /nix/store/example"; exit "${CHECK_STATUS:-0}"',
-        # The overlay keeps its backing filesystem busy even after remount,ro.
+        # The overlay on /nix is never remounted: the kernel refuses it.
         "mount": ('printf "mount %s\\n" "$*" >> "$CALLS"; '
-                  'case "$3" in /history-disk|/nix) [ "$3" != "${BUSY_MOUNT:-}" ] ;; '
+                  'case "$3" in /history-disk) [ "$3" != "${BUSY_MOUNT:-}" ] ;; '
                   '*) echo "mount: target is busy" >&2; exit 32 ;; esac'),
         # Never signal a real daemon on the machine running this test.
         "cat": 'case "$1" in /proc/*/comm) exit 1 ;; esac; exec /bin/cat "$@"',
@@ -55,7 +55,6 @@ def test_existing_disk_checks_once_and_clean_boot_skips(tmp_path, monkeypatch):
     assert stop_calls == [
         "sync  marker=present",
         "mount -o remount,ro /history-disk",
-        "mount -o remount,ro /nix",
         "sync  marker=present",
         f"sync -f {health.parent} marker=present",
         f"sync -f {health.parent} marker=absent",
@@ -67,8 +66,7 @@ def test_existing_disk_checks_once_and_clean_boot_skips(tmp_path, monkeypatch):
     assert "nix-store --verify --check-contents --repair" in before
 
 
-@pytest.mark.parametrize("busy_mount", ["/history-disk", "/nix"])
-def test_failed_read_only_remount_retains_marker(tmp_path, monkeypatch, busy_mount):
+def test_failed_read_only_remount_retains_marker(tmp_path, monkeypatch, busy_mount="/history-disk"):
     health, run = guest(tmp_path, monkeypatch)
     assert run("begin", "image-a").returncode == 0
     assert run("check", "image-a", "upgrade").returncode == 0

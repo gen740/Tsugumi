@@ -49,18 +49,26 @@ case "$action" in
     sync -f "$persist"
     ;;
   poweroff)
-    # Stop daemon connections/builds before freezing the shared overlay. If a
-    # writer survives, read-only remount failure keeps the dirty marker.
-    for p in /proc/[0-9]*; do
-      [ "$(cat "$p/comm" 2>/dev/null)" != nix-daemon ] || kill -TERM "${p##*/}" 2>/dev/null || true
+    # The store is written only through nix-daemon (builds run under it).
+    # The overlay on /nix cannot be remounted read-only (the kernel refuses to
+    # reconfigure it), so end every daemon and wait until none is left: after
+    # that nothing can change registered store data. A daemon that survives
+    # keeps the dirty marker, and the next boot checks the store.
+    daemons() {
+      for p in /proc/[0-9]*; do
+        [ "$(cat "$p/comm" 2>/dev/null)" != nix-daemon ] || echo "${p##*/}"
+      done
+    }
+    for pid in $(daemons); do kill -TERM "$pid" 2>/dev/null || true; done
+    n=0
+    while [ -n "$(daemons)" ]; do
+      n=$((n + 1))
+      [ "$n" -le 50 ] || exit 1
+      sleep 0.1
     done
     sync
     mount -o remount,ro /history-disk || exit 1
-    mount -o remount,ro /nix || exit 1
-    # The overlay is now read-only: no registered store data can change.
-    # Do not remount its backing filesystem read-only: the mounted overlay
-    # holds /persist/nix/upper and work open for writing even when it is ro.
-    # Flush the backing filesystem instead, then durably clear the marker.
+    # Flush the store's backing filesystem, then durably clear the marker.
     bash "$0" clean "$persist"
     ;;
   clean)
