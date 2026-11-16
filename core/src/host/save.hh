@@ -29,11 +29,4 @@ auto AdvanceSaveBase(const SaveBase& base, const agent::json::Members& result,
                      const agent::json::Members& arguments) -> SaveBase;
 auto RebaseSave(agent::json::Members args, const SaveBase& base,
                 const SaveBase& latest) -> agent::json::Members;
-// The original base and edit remain fixed across CAS retries. send must make
-// each prepared attempt replayable before issuing it (including lost replies).
-auto SaveWithMerge(
-    const agent::json::Members &original, const SaveBase &base,
-    const SaveRead &read,
-    const std::function<agent::json::Members(const agent::json::Members &)>
-        &send) -> agent::json::Members;
 }  // namespace tsugumi::host

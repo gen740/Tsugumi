@@ -575,7 +575,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
 | `DocumentSubgraphRequest` | `project_json: string` (required), `cards: [string]`, `id: string` (required) |
 | `DocumentMergeRequest` | `base_json: string` (required), `ours_json: string` (required), `theirs_json: string` (required) |
-| `UISaveRequest` | `project: string` (required), `base_json: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
 | `DocumentCopyRequest` | `state_json: string` (required), `paths: [string]`, `from: string` (required), `to: string` (required), `name: string` |
 | `DocumentConnectRequest` | `state_json: string` (required), `from_card: string` (required), `from_port: string` (required), `to_card: string` (required), `to_port: string` (required), `fork_id: string` |
 | `DocumentTemplateRequest` | `name: string` (required), `id: string` (required) |
@@ -586,4 +585,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 | `DisplayGeometryRequest` | None |
 
-Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `UISaveResult`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`.
+Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`.

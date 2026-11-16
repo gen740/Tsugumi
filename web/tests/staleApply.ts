@@ -1,17 +1,14 @@
-// Editors keep their actual read base; the Host merges disjoint changes and
-// refuses real collisions without putting rejected values into autosave.
+// Settings copies never inherit a newer session revision without a user choice.
 import assert from 'node:assert/strict'
 import { clone, get, parse, str } from '../src/shared/json'
 import { D, R, RPCFailure } from '../src/shared/rpc'
 import { ProjectSession } from '../src/model/session'
 import { CardEditorModel } from '../src/ui/cardSettings'
 import { InlineParamEdit, RevisionEdit } from '../src/ui/revisionEdit'
-import { hostDocumentReply } from './hostDocument'
 
 function session() {
   const s = new ProjectSession('/p', 'k', 'p')
   s.connected = true
-  s.projectId = 'p'
   s.scheduleSave = () => {}
   s.project = parse('{"name":"base","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
   s.confirmedProject = parse('{"name":"base","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
@@ -20,24 +17,8 @@ function session() {
   s.confirmedDefinitions.set('a', parse('{"template":"draft","symbol":"base"}'))
   const requests: bigint[] = []
   s.client = {
-    save: async (base: bigint, op: string, origin: string, changes: R.DocumentChangeT[], _check: boolean, _permissions: string[], mergeBase: { json: string }) => {
+    save: async (base: bigint, op: string, origin: string, changes: R.DocumentChangeT[]) => {
       requests.push(base)
-      // The production Host now decides stale saves. Keep this transport
-      // double faithful instead of accepting an old revision unconditionally.
-      if (base !== s.rev) {
-        const before = JSON.parse(mergeBase.json).files
-        const ours = structuredClone(before)
-        for (const change of changes) {
-          if (change.valueType === R.DocumentChangeValue.PutDefinition) {
-            const d = change.value as R.PutDefinitionT, dir = `definitions/${d.id}/`
-            ours[dir + '_card.json'] = JSON.parse(String(d.cardJson))
-            if (d.metaJson) ours[dir + '_meta.json'] = JSON.parse(String(d.metaJson))
-          }
-        }
-        const latest = JSON.parse((s as unknown as { makeBase(): { saveJSON: string } }).makeBase().saveJSON).files
-        const reply = hostDocumentReply({ baseJson: JSON.stringify(before), oursJson: JSON.stringify(ours), theirsJson: JSON.stringify(latest) })
-        if (reply.conflicts.length) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: reply.conflicts.join(', '), currentRev: s.rev })
-      }
       const delta = new R.DocumentDeltaT()
       Object.assign(delta, { baseRev: base, rev: base + 1n, executionRev: 0n, opId: op, origin })
       for (const c of changes) {
@@ -341,7 +322,7 @@ console.log('Draft pending autosave, repeated finish, switch, run and leave: pas
   assert.equal(s.inlineDraft?.content, 'mine')
   assert.equal(s.inlineDraft?.revision.conflictRev, 1n)
   assert.equal(str(get(s.cardMeta('a'), 'content')), 'other editor')
-  assert.deepEqual(requests, [0n, 0n], 'the Host receives and refuses the stale conflicting edit')
+  assert.deepEqual(requests, [0n])
 }
 
 // The sticky-note and group-title forms submit through the same unchanged

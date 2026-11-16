@@ -11,7 +11,6 @@ import { RequestPayload } from '../gen/tsugumi/rpc/request-payload'
 import { RequestT } from '../gen/tsugumi/rpc/request'
 import { NotificationT } from '../gen/tsugumi/rpc/notification'
 import { L } from '../i18n'
-import { api, ApiError } from '../api'
 
 export { D, R, RequestPayload }
 
@@ -267,28 +266,9 @@ export class RPCClient {
   inspect() {
     return this.call<R.ProjectSnapshotT>(RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
   }
-  async save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = [], mergeBase?: { project: string; json: string }) {
-    const value = Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions })
-    if (!mergeBase) return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, value)
-    const builder = new Builder(1024)
-    const message = new R.MessageT(0n, R.Payload.Request, new R.RequestT(R.RequestPayload.ProjectSaveRequest, value))
-    builder.finish(message.pack(builder), 'TSG1')
-    const body = { project: mergeBase.project, base_json: mergeBase.json, request: Array.from(builder.asUint8Array()) }
-    let result: { response: number[]; snapshot?: number[] }
-    try { result = await api('/api/document/save', body) }
-    catch (error) {
-      // Replaying the identical host operation recovers its persisted attempt
-      // when the HTTP reply was lost after the core committed.
-      if (error instanceof ApiError) throw error
-      result = await api('/api/document/save', body)
-    }
-    const decode = (bytes: number[]) => R.Message.getRootAsMessage(new ByteBuffer(Uint8Array.from(bytes))).unpack().payload as R.ReplyT
-    const reply = decode(result.response)
-    if (reply.valueType === R.ReplyPayload.Failure) throw new RPCFailure(reply.value as D.FailureT)
-    if (reply.valueType !== R.ReplyPayload.SaveResult) throw new RPCError('protocol', 'Missing UI save result')
-    return Object.assign(reply.value as R.SaveResultT, { snapshot: result.snapshot ? decode(result.snapshot).value as R.ProjectSnapshotT : undefined })
+  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-
   /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
    *  for one revision and returns the file list when ready. */
   async generatedContracts(card: string[], atRev: bigint): Promise<R.SDKFileT[]> {
@@ -324,12 +304,12 @@ export class RPCClient {
   }
 
   /** Reads a whole file in chunks, verifying the final hash. */
-  async readFile(path: string, atRev: bigint | null, ifHash?: string): Promise<Uint8Array> {
+  async readFile(path: string, atRev: bigint): Promise<Uint8Array> {
     const parts: Uint8Array[] = []
     let offset = 0n
     let hash = ''
     for (;;) {
-      const r = Object.assign(new R.ProjectFileReadRequestT(), { path, atRev, ifHash: ifHash ?? null, offset, limitBytes: 1 << 20 })
+      const r = Object.assign(new R.ProjectFileReadRequestT(), { path, atRev, offset, limitBytes: 1 << 20 })
       const c = await this.call<R.FileContentT>(RequestPayload.ProjectFileReadRequest, r)
       parts.push(Uint8Array.from(c.bytes))
       hash = s(c.hash)

@@ -33,8 +33,6 @@
 #include "host/projects.hh"
 #include "host/registry.hh"
 #include "host/settings.hh"
-#include "host/save.hh"
-#include "agent/catalog.hh"
 #include "host/skills_service.hh"
 #include "host/state_gate.hh"
 #include "host/store.hh"
@@ -647,126 +645,6 @@ struct Service::State {
             request.request_id,
             host::CopyDocuments(p->state_json()->str(), paths, p->from()->str(),
                                 p->to()->str(), Text(p->name())));
-      }
-      case H::RequestPayload::UISaveRequest: {
-        Human(human);
-        const auto *input = r->value_as_UISaveRequest();
-        const auto project = input->project()->str();
-        const auto base_json = input->base_json()->str();
-        Tsugumi::RPC::MessageT message;
-        Tsugumi::RPC::RequestT save;
-        save.value.Set(*std::unique_ptr<Tsugumi::RPC::ProjectSaveRequestT>(
-            input->save()->UnPack()));
-        message.payload.Set(std::move(save));
-        flatbuffers::FlatBufferBuilder builder;
-        Tsugumi::RPC::FinishMessageBuffer(
-            builder, Tsugumi::RPC::Message::Pack(builder, &message));
-        const std::string bytes(
-            reinterpret_cast<const char *>(builder.GetBufferPointer()),
-            builder.GetSize());
-        // Catalog's reflection decoder also decodes the typed request value.
-        const auto original = json::Object(
-            json::Get(json::Object(agent::Catalog().Reply(bytes)), "value"));
-        const auto operation = json::Text(original, "op_id");
-        if (!crypto::is_uuid(operation))
-          throw Failure("invalid_request", "Save operation id must be a UUID");
-        const auto digest = crypto::sha256_hex(project + base_json + bytes);
-        const auto encoded_base = json::Object(base_json);
-        const SaveBase base{json::Object(json::Get(encoded_base, "snapshot")),
-                            json::Object(json::Get(encoded_base, "files"))};
-        if (json::Text(base.snapshot, "rev") != json::Text(original, "base_rev"))
-          throw Failure("invalid_request", "Save base revision differs");
-        lock.unlock();
-        std::lock_guard saving(tools->save_mutex);
-        auto call = [&](const std::string &method, const json::Members &args,
-                        std::string *raw = nullptr) {
-          return json::Object(tools->RawProjectCall(
-              project, method, json::Encode(args), shutdown.get_token(), raw));
-        };
-        std::string previous, response;
-        {
-          std::lock_guard state(state_gate.mutex);
-          auto q = db.prepare("SELECT digest,arguments,response FROM ui_saves "
-                              "WHERE project=? AND operation=?");
-          q.bind(1, project).bind(2, operation);
-          if (q.step()) {
-            if (q.text(0) != digest)
-              throw Failure("invalid_request", "Save operation id reused");
-            previous = q.text(1);
-            response = q.blob(2);
-          }
-        }
-        auto send = [&](const json::Members &args) {
-          {
-            std::lock_guard state(state_gate.mutex);
-            auto q = db.prepare("INSERT OR REPLACE INTO ui_saves "
-                                "VALUES(?,?,?,?,?)");
-            q.bind(1, project)
-                .bind(2, operation)
-                .bind(3, digest)
-                .bind(4, json::Encode(args))
-                .bind(5, "")
-                .run();
-          }
-          const auto result = call("project_save", args, &response);
-          {
-            std::lock_guard state(state_gate.mutex);
-            auto q = db.prepare("UPDATE ui_saves SET response=? "
-                                "WHERE project=? AND operation=?");
-            q.bind_blob(1, response).bind(2, project).bind(3, operation).run();
-          }
-          return result;
-        };
-        auto retry = [](const json::Members &result) {
-          return json::Text(result, "reply") == "Failure" &&
-                 json::Text(json::Object(json::Get(result, "value")), "kind") ==
-                     "revision_conflict";
-        };
-        bool needs_save = response.empty();
-        if (!previous.empty()) {
-          const auto result =
-              response.empty() ? send(json::Object(previous))
-                               : json::Object(agent::Catalog().Reply(response));
-          needs_save = retry(result);
-        }
-        try {
-          if (needs_save)
-            (void)SaveWithMerge(
-                original, base,
-                [&](const auto &method, const auto &args) {
-                  const auto result = call(method, args);
-                  const auto value =
-                      json::Object(json::Get(result, "value", "{}"));
-                  if (json::Text(result, "reply") == "Failure")
-                    throw Failure(json::Text(value, "kind"),
-                                  json::Text(value, "diagnostic"));
-                  return value;
-                },
-                send);
-        } catch (const Failure &error) {
-          if (error.code != "revision_conflict")
-            throw;
-          Tsugumi::Data::FailureT failure;
-          failure.kind = Tsugumi::Data::FailureKind::revision_conflict;
-          failure.diagnostic = error.what();
-          H::UISaveResultT result;
-          result.reply = std::make_unique<Tsugumi::RPC::ReplyT>();
-          result.reply->value.Set(std::move(failure));
-          return wire::HostReply(request.request_id, std::move(result));
-        }
-        H::UISaveResultT result;
-        result.reply.reset(Tsugumi::RPC::GetMessage(response.data())
-                               ->payload_as_Reply()
-                               ->UnPack());
-        if (result.reply->value.type == Tsugumi::RPC::ReplyPayload::SaveResult) {
-          std::string snapshot;
-          (void)call("project_inspect", {}, &snapshot);
-          if (const auto *value = Tsugumi::RPC::GetMessage(snapshot.data())
-                                      ->payload_as_Reply()
-                                      ->value_as_ProjectSnapshot())
-            result.snapshot.reset(value->UnPack());
-        }
-        return wire::HostReply(request.request_id, std::move(result));
       }
       case H::RequestPayload::DocumentMergeRequest: {
         const auto* p = r->value_as_DocumentMergeRequest();

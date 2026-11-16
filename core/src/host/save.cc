@@ -309,8 +309,8 @@ auto RebaseSave(json::Members args, const SaveBase& base,
         conflict(path + "/canvas/connections input " + key);
     }
   }
-  // Wrap by file path so every document, including nested layout, uses the
-  // same strict merge. Every collision is reported.
+  // Wrap by file path: the UI's layout-local preference does not apply to an
+  // unattended save. Every collision, including placement, is reported.
   const auto merge = MergeDocuments(
       json::Encode(base.files), json::Encode(ours), json::Encode(latest.files));
   if (!merge.conflicts.empty()) {
@@ -394,9 +394,6 @@ auto RebaseSave(json::Members args, const SaveBase& base,
         if (merged.contains(dir + file))
           value[key] = json::Quote(merged.at(dir + file));
       }
-      // The wire field is required even for a link, which carries an empty
-      // string (a nonempty Card document and link_json are mutually exclusive).
-      if (!value.contains("card_json")) value["card_json"] = json::Quote("");
       value.erase("keep_meta");
     } else if ((kind == "PutSource" || kind == "PatchSource") &&
                DocumentPath(path)) {
@@ -412,30 +409,5 @@ auto RebaseSave(json::Members args, const SaveBase& base,
   args["changes"] = json::Encode(rebased);
   args["base_rev"] = json::Get(latest.snapshot, "rev");
   return args;
-}
-auto SaveWithMerge(
-    const json::Members &original, const SaveBase &base, const SaveRead &read,
-    const std::function<json::Members(const json::Members &)> &send)
-    -> json::Members {
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    const auto latest = InspectForSave(read).base;
-    auto args = original;
-    try {
-      // External documents can finish loading behind a newer root snapshot.
-      // Merge their actual read values even when the root revision matches.
-      args = RebaseSave(args, base, latest);
-    } catch (const std::exception &error) {
-      throw Failure("revision_conflict", error.what());
-    }
-    // A refused CAS has a durable core receipt; never reuse its operation id.
-    args["op_id"] = json::Quote(crypto::uuid4());
-    const auto result = send(args);
-    const auto value = json::Object(json::Get(result, "value", "{}"));
-    if (json::Text(result, "reply") != "Failure" ||
-        json::Text(value, "kind") != "revision_conflict")
-      return result;
-  }
-  throw Failure("revision_conflict",
-                "Project kept changing during save; your edit is retained");
 }
 }  // namespace tsugumi::host
