@@ -24,8 +24,8 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   for (const auto* table :
        {"projects", "folders", "access_requests", "grants", "providers",
         "access_prompt_items", "operation_approvals", "credentials",
-        "environment_projects", "skill_catalogs", "conversation_locations",
-        "model_lists"}) { "project_paths",
+        "environment_projects", "project_paths", "skill_catalogs",
+        "conversation_locations", "model_lists"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
