@@ -587,6 +587,70 @@ TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
   ASSERT_FALSE(conversation.rows[0]->children[1]->links.empty());
   EXPECT_EQ(conversation.rows[0]->children[1]->links[0]->url, "card:a");
 }
+TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
+  for (const auto& name :
+       {"project_file_read", "run", "project_save", "project_shell"}) {
+    const auto arguments = agent::json::Encode(agent::json::Members{
+        {"path", agent::json::Quote("definitions/share/_outputs.fbs")}});
+    const auto raw = agent::json::Encode(agent::json::Members{
+        {"reply", "\"Failure\""},
+        {"value",
+         R"({"kind":"not_found","args":[{"key":"path","value":"definitions/share/_outputs.fbs"}],"diagnostic":"DIAGNOSTIC_SENTINEL\nsecond line","current_rev":null})"}});
+    A::ConversationT conversation;
+    auto call = std::make_unique<A::ModelMessageT>();
+    call->role = "assistant";
+    call->content_json =
+        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
+            agent::json::Members{{"type", "\"tool_use\""},
+                                 {"id", "\"bad\""},
+                                 {"name", agent::json::Quote(name)},
+                                 {"input", agent::json::Quote(arguments)}})});
+    conversation.archive.push_back(std::move(call));
+    auto result = std::make_unique<A::ModelMessageT>();
+    result->role = "user";
+    result->content_json =
+        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
+            agent::json::Members{{"type", "\"tool_result\""},
+                                 {"tool_use_id", "\"bad\""},
+                                 {"is_error", "true"},
+                                 {"content", agent::json::Quote(raw)}})});
+    conversation.messages.push_back(std::move(result));
+    const auto rows = agent::Presentation(conversation);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]->kind, "step");
+    EXPECT_EQ(rows[0]->failed, 1u);
+    ASSERT_EQ(rows[0]->children.size(), 1u);
+    const auto& row = *rows[0]->children[0];
+    EXPECT_EQ(row.kind, "tool");
+    EXPECT_EQ(row.name, name);
+    EXPECT_EQ(row.state, "failed");
+    EXPECT_TRUE(row.archived);
+    EXPECT_EQ(row.arguments, arguments);
+    EXPECT_EQ(row.result, raw);
+    for (const auto* summary : {&row.summary_ja, &row.summary_en}) {
+      EXPECT_NE(summary->find(name), std::string::npos);
+      EXPECT_NE(summary->find("definitions/share/_outputs.fbs"),
+                std::string::npos);
+      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL"), std::string::npos);
+      EXPECT_EQ(summary->find('\n'), std::string::npos);
+      EXPECT_EQ(summary->find("\"reply\""), std::string::npos);
+    }
+    EXPECT_EQ(JsonString(row.result, "/value/kind"), "not_found");
+    EXPECT_EQ(JsonString(row.result, "/value/args/0/key"), "path");
+  }
+}
+
+TEST(AgentPresentation, PlainToolErrorsKeepTheirDiagnosticInTheSummary) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"PLAIN_DIAGNOSTIC"}]}]})");
+  const auto& row = *conversation.rows[0]->children[0];
+  EXPECT_EQ(row.state, "failed");
+  EXPECT_EQ(row.result, "PLAIN_DIAGNOSTIC");
+  EXPECT_NE(row.summary_en.find("PLAIN_DIAGNOSTIC"), std::string::npos);
+  EXPECT_NE(row.summary_ja.find("PLAIN_DIAGNOSTIC"), std::string::npos);
+}
+
 TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveNames) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"user","display":"$review","content":[{"type":"text","text":"internal"}]},
