@@ -1303,26 +1303,14 @@ final class ProjectSession {
     return step
   }
 
-  /// Joins an asynchronous layout proposal to the drag that requested it.
-  func editInto(_ step: UndoEntry, _ change: (ProjectSession) -> Void) {
-    guard undoStack.last === step else { return }
-    let before = snapshot()
-    if !dirty { draftBase = makeBase() }
-    change(self)
-    normalizeExternalEdits()
-    if before != snapshot() {
-      step.after = docState()
-      scheduleSave()
-    }
-    settleDraftBase()
-  }
-
   func undo() async {
+    _ = try? await operationTask?.value
     guard let e = undoStack.last else { return }
     if let result = await revert(e, undo: true) { undoStack.removeLast(); if let inverse = result.inverse { redoStack.append(inverse) } }
   }
 
   func redo() async {
+    _ = try? await operationTask?.value
     guard let e = redoStack.last else { return }
     if let result = await revert(e, undo: false) { redoStack.removeLast(); if let inverse = result.inverse { undoStack.append(inverse) } }
   }
@@ -1540,6 +1528,11 @@ final class ProjectSession {
   /// One human action completes when its reply has entered the ordered document.
   @discardableResult
   func operate(_ type: Tsugumi_Host_ProjectOperationBody, body: NativeObject, record: Bool = true) async throws -> Tsugumi_RPC_SaveResultT {
+    try await submitOperation(type, body: { body }, record: record).value
+  }
+
+  /// Synchronous setters enter the same queue before returning to the canvas.
+  private func submitOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: @escaping () throws -> NativeObject, record: Bool = true) -> Task<Tsugumi_RPC_SaveResultT, Error> {
     let previous = operationTask
     let task = Task { @MainActor in
       _ = try? await previous?.value
@@ -1549,7 +1542,7 @@ final class ProjectSession {
       let request = Tsugumi_Host_ProjectOperateRequestT()
       request.projectId = projectId
       request.opId = UUID().uuidString.lowercased()
-      request.body = Tsugumi_Host_ProjectOperationBodyUnion(body, type: type)
+      request.body = Tsugumi_Host_ProjectOperationBodyUnion(try body(), type: type)
       let result = try await operateProject(request)
       guard connected, self.client === client else { throw RPCError.disconnected }
       if let delta = result.delta { applyDelta(delta) }
@@ -1569,7 +1562,7 @@ final class ProjectSession {
     operationTask = task
     // A later action may already own operationTask when this one finishes.
     // Keeping the completed tail is harmless and preserves submission order.
-    return try await task.value
+    return task
   }
 
   private func operationInverse(_ result: Tsugumi_RPC_SaveResultT) throws -> Tsugumi_Host_ProjectEditsT {
@@ -1602,6 +1595,26 @@ final class ProjectSession {
     let body = Tsugumi_Host_ProjectEditsT()
     body.edits = edits.map(Optional.some)
     try await operate(.projectedits, body: body)
+  }
+
+  func enqueueOperation(_ type: Tsugumi_Host_ProjectOperationBody, body: NativeObject) -> Task<Void, Never> {
+    let task = submitOperation(type, body: { body })
+    return Task { @MainActor in
+      do { _ = try await task.value }
+      catch { notice = error.localizedDescription }
+    }
+  }
+
+  func queueFields(_ edits: @escaping () throws -> [Tsugumi_Host_ProjectEditT]) {
+    let task = submitOperation(.projectedits, body: {
+      let body = Tsugumi_Host_ProjectEditsT()
+      body.edits = try edits().map(Optional.some)
+      return body
+    })
+    Task { @MainActor in
+      do { _ = try await task.value }
+      catch { notice = error.localizedDescription }
+    }
   }
 
   func save() async {

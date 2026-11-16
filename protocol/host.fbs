@@ -193,7 +193,11 @@ table ProjectFileMove {
   expected_destination_hash:string;
   destination_missing:bool;
 }
-union ProjectEditValue { ProjectFieldEdit, ProjectTextEdit, ProjectFilePut, ProjectFileRemove, ProjectFileMove }
+// Replace a complete definition/external folder, guarding its exact file closure.
+// Used by transformation undo so a later added file cannot be silently deleted.
+table ProjectFileHash { path:string (required); hash:string (required); }
+table ProjectTreeEdit { prefix:string (required); expected:[ProjectFileHash]; files:[ProjectFile]; }
+union ProjectEditValue { ProjectFieldEdit, ProjectTextEdit, ProjectFilePut, ProjectFileRemove, ProjectFileMove, ProjectTreeEdit }
 table ProjectEdit { value:ProjectEditValue; }
 table ProjectEdits { edits:[ProjectEdit]; }
 table ProjectConnect {
@@ -202,7 +206,13 @@ table ProjectConnect {
   to_card:string (required); to_port:string (required);
   fork_id:string;
 }
-table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
+table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
+// Source paths name a definition or an external folder in the current project.
+// The host copies its complete document/source closure and places the new Card.
+table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; }
+table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
+table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
+table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {
   project_path:string;
@@ -210,7 +220,11 @@ table ProjectLayout {
   // Measurements only; the host uses the current graph and saved positions.
   scene:LayoutScene;
 }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout }
+table ProjectMove {
+  project_path:string; cards:[string]; notes:[string]; frames:[string];
+  dx:double; dy:double; snap:double; scene:LayoutScene;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);

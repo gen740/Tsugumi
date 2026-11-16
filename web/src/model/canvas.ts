@@ -563,37 +563,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
    *  goes by the same step, so the arrangement stays. Notes and frames alone land
    *  on whole numbers, as when dragged alone. */
   moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, movedX: number, movedY: number, snap?: number): Promise<void> {
-    const onGrid = snap && cards.size ? snap : undefined
-    const dx = onGrid ? snapToGrid(movedX, onGrid) : movedX, dy = onGrid ? snapToGrid(movedY, onGrid) : movedY
-    const scene = this.scene()
-    const shown = new Set(scene.outputKeys)
-    const step = this.session.edit((x) => {
-      for (const k of frames) {
-        if (!shown.has(k) || x.frameFollowsCard(k, cards)) continue
-        // Worked out from its Card, so before the Cards move.
-        const r = scene.frameRect(k)
-        x.changeDisplayFrame(k, (f) => {
-          f.set('x', real(Math.round(r.x + dx)))
-          f.set('y', real(Math.round(r.y + dy)))
-          f.set('width', real(r.width))
-          f.set('height', real(r.height))
-        })
-      }
-      for (const k of cards) {
-        const p = x.position(k)
-        const from = snap ? { x: snapToGrid(p.x, snap), y: snapToGrid(p.y, snap) } : p
-        x.setPosition(k, { x: from.x + dx, y: from.y + dy })
-      }
-      for (const id of notes) {
-        x.changeNote(id, (n) => {
-          const r = noteRect(n)
-          n.set('x', real(Math.round(r.x + dx)))
-          n.set('y', real(Math.round(r.y + dy)))
-        })
-      }
-    })
-    // Wires that the move made cross: tsugumid's answer joins the move's step, so one undo takes both back.
-    return step && cards.size ? this.session.untangleAround(this.tab.scope, cards, step) : Promise.resolve()
+    return this.session.moveSelection(this.tab.scope, cards, notes, frames, movedX, movedY, snap)
   }
 
   /** Closes a frame, a step of an edit; its Card stays. The layout keeps a frame
@@ -610,7 +580,10 @@ export class CanvasController extends Observable implements CanvasOverlay {
 
   closeFrame(k: CardKey) {
     const r = this.scene().frameRect(k)
-    this.session.edit((x) => this.hideFrame(x, r, k))
+    this.session.updateDisplayFrame(k, f => {
+      f.set('x', real(Math.round(r.x))); f.set('y', real(Math.round(r.y)))
+      f.set('width', real(r.width)); f.set('height', real(r.height)); f.set('hidden', true)
+    })
   }
 
   deleteSelection() {

@@ -193,6 +193,29 @@ auto Populate(const f::path &destination, Write write) -> std::string {
 }
 }  // namespace
 
+auto ReadProjectFiles(const std::string &path)
+    -> std::map<std::string, std::string> {
+  const auto root = f::canonical(Path(path));
+  Info(root);
+  std::map<std::string, std::string> files;
+  uint64_t total = 0;
+  constexpr uint64_t kLimit = 64 << 20;
+  WalkProject(
+      root, {}, [](const auto &) {},
+      [&](const auto &file, const auto &rel) {
+        if (f::file_size(file) > kLimit - total || files.size() >= 65536)
+          throw ProjectFailure("project_too_large",
+                               "The project exceeds the import limit");
+        auto bytes = fs::read_file_or_throw(file);
+        if (bytes.size() > kLimit - total)
+          throw ProjectFailure("project_too_large",
+                               "The project exceeds the import limit");
+        total += bytes.size();
+        files.emplace(rel.generic_string(), std::move(bytes));
+      });
+  return files;
+}
+
 auto ProjectDisplayName(const std::filesystem::path& folder) -> std::string {
   try {
     return json::Text(json::Object(Info(folder)), "name");

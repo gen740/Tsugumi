@@ -101,4 +101,102 @@ for (const echoFirst of [false, true]) {
   assert.equal((restored.reply!.value as R.SaveResultT).rev, saved.rev)
   assert.deepEqual((restored.reply!.value as R.SaveResultT).operationData, saved.operationData)
 }
+
+// Canvas setters enqueue synchronously. A second gesture builds its selected
+// values after the first reply has entered the confirmed document.
+{
+  const s = new ProjectSession('/test', 'queued-settings', 'test') as any
+  s.projectId = 'p'; s.client = {}; s.connected = true
+  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.apply(Object.assign(new R.ProjectSnapshotT(), {
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{"flow":"topToBottom"}',
+  }), true)
+  const first = deferred<H.ProjectOperateRequestT>(), second = deferred<H.ProjectOperateRequestT>()
+  const firstReply = deferred<R.SaveResultT>(), secondReply = deferred<R.SaveResultT>()
+  let calls = 0
+  s.operateProject = (request: H.ProjectOperateRequestT) => {
+    if (calls++ === 0) { first.resolve(request); return firstReply.promise }
+    second.resolve(request); return secondReply.promise
+  }
+  s.setFlow('leftToRight'); s.setFlow('topToBottom')
+  const complete = s.operationTask
+  const one = await first.promise
+  const field = (r: H.ProjectOperateRequestT) => (r.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
+  assert.equal(JSON.parse(String(field(one).oldValue!.json)), 'topToBottom')
+  const d1 = delta(0n, String(one.opId), 'old'); d1.layoutJson = '{"flow":"leftToRight"}'
+  firstReply.resolve(result(d1))
+  const two = await second.promise
+  assert.equal(JSON.parse(String(field(two).oldValue!.json)), 'leftToRight')
+  assert.equal(JSON.parse(String(field(two).newValue!.json)), 'topToBottom')
+  const d2 = delta(1n, String(two.opId), 'old'); d2.layoutJson = '{"flow":"topToBottom"}'
+  secondReply.resolve(result(d2))
+  await complete
+  assert.equal(s.rev, 2n)
+  assert.equal(s.flow, 'topToBottom')
+  assert.equal(calls, 2)
+}
+
+// Transformations and moves send intent without reading or assembling source
+// bytes in the browser. The host tests exercise binary/nested closure and Undo.
+for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'] as const) {
+  const s = new ProjectSession('/test', 'intent-' + action, 'test') as any
+  s.projectId = 'p'; s.client = { readFile: () => { throw new Error('client source read') } }; s.connected = true
+  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.cardIdProvider = async () => 'new-card'
+  s.apply(Object.assign(new R.ProjectSnapshotT(), {
+    rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
+    definitions: [new R.DefinitionT('a', '{"template":"draft"}')],
+  }), true)
+  const requests: H.ProjectOperateRequestT[] = []
+  s.operateProject = async (request: H.ProjectOperateRequestT) => {
+    requests.push(request)
+    const d = Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, opId: request.opId, origin: 'ui' })
+    return result(d)
+  }
+  const at = { x: 120, y: 240 }
+  if (action === 'create') await s.addCard('draft', [], at)
+  else if (action === 'import') await s.importProject('/projects/source', [], at)
+  else if (action === 'copy') await s.placeDefinitionCopy('', 'a', [], at)
+  else if (action === 'duplicate') await s.duplicate(new Set(['a']), [])
+  else if (action === 'convert') await s.makeSubgraph(new Set(['a']), [])
+  else await s.moveSelection([], new Set(['a']), new Set(), new Set(), 100, 0)
+  assert.equal(requests.length, 1, action)
+  const types = { create: H.ProjectOperationBody.ProjectCreateCard, import: H.ProjectOperationBody.ProjectImport,
+    copy: H.ProjectOperationBody.ProjectCopy, duplicate: H.ProjectOperationBody.ProjectCopy,
+    convert: H.ProjectOperationBody.ProjectMakeSubgraph, move: H.ProjectOperationBody.ProjectMove }
+  assert.equal(requests[0].bodyType, types[action])
+  assert.equal(s.rev, 1n)
+  assert.equal(s.dirty, false)
+  assert.equal(s.sourceEdits.size, 0)
+}
+
+// Undo requested before an action's reply reverses that action once applied.
+{
+  const s = new ProjectSession('/test', 'pending-undo', 'test') as any
+  s.projectId = 'p'; s.client = {}; s.connected = true
+  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.apply(Object.assign(new R.ProjectSnapshotT(), {
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
+  }), true)
+  const entered = deferred<H.ProjectOperateRequestT>(), undoEntered = deferred<H.ProjectOperateRequestT>()
+  const reply = deferred<R.SaveResultT>(), undoReply = deferred<R.SaveResultT>()
+  let calls = 0
+  s.operateProject = (request: H.ProjectOperateRequestT) => {
+    if (calls++ === 0) { entered.resolve(request); return reply.promise }
+    undoEntered.resolve(request); return undoReply.promise
+  }
+  s.setFlow('leftToRight')
+  const undo = s.undo()
+  const request = await entered.promise
+  assert.equal(s.undoStack.length, 0)
+  reply.resolve(result(delta(0n, String(request.opId), 'new')))
+  const inverse = await undoEntered.promise
+  assert.equal(inverse.bodyType, H.ProjectOperationBody.ProjectEdits)
+  undoReply.resolve(result(delta(1n, String(inverse.opId), 'old')))
+  await undo
+  assert.equal(calls, 2)
+  assert.equal(s.rev, 2n)
+  assert.equal(s.undoStack.length, 0)
+  assert.equal(s.redoStack.length, 1)
+}
 console.log('projectOperations: passed')

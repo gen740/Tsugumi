@@ -1,6 +1,11 @@
 #include "host/project_operations.hh"
 
+#include "host/document_edits.hh"
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
+
+#include "util/crypto.hh"
 
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
@@ -284,6 +289,359 @@ TEST(ProjectOperationLayout,
   EXPECT_DOUBLE_EQ(std::stod(rectangle.at("width")), 320);
   EXPECT_DOUBLE_EQ(std::stod(rectangle.at("height")), 170);
   EXPECT_FALSE(layout.contains("boundary"));
+}
+} // namespace
+} // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+// A controllable project transport: every save is one atomic application, and
+// inspection/file reads all refer to the current confirmed revision.
+class TransformationProject {
+public:
+  std::map<std::string, std::string> files{
+      {"tsugumi.json",
+       R"({"name":"test","canvas":{"cards":[{"id":"a"},{"id":"sub"}],"connections":[]}})"},
+      {"layout.json",
+       R"({"cards":{"a":{"x":10,"y":20,"inputOrder":["q","p"]},"sub":{"x":200,"y":20}}})"},
+      {"definitions/a/_card.json", R"({"template":"draft"})"},
+      {"definitions/a/_meta.json", R"({"name":"source"})"},
+      {"definitions/a/data.bin", std::string("\0\xff\x80\n", 4)},
+      {"definitions/sub/_link.json", R"({"external":"inner"})"},
+      {"externals/inner/tsugumi.json",
+       R"({"name":"inner","canvas":{"cards":[{"id":"b"}],"connections":[]}})"},
+      {"externals/inner/layout.json", R"({"cards":{"b":{"x":1,"y":2}}})"},
+      {"externals/inner/definitions/b/_link.json", R"({"external":"deep"})"},
+      {"externals/inner/externals/deep/tsugumi.json",
+       R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
+      {"externals/inner/externals/deep/layout.json", "{}"},
+      {"externals/inner/externals/deep/definitions/c/_card.json",
+       R"({"template":"draft"})"},
+      {"externals/inner/externals/deep/definitions/c/raw.bin",
+       std::string("\xff\0\x81", 3)}};
+  int saves = 0;
+  auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
+    H::ProjectOperateRequestT request;
+    request.project_id = "p";
+    request.op_id = crypto::uuid4();
+    request.body = std::move(body);
+    const auto reply =
+        ProjectOperations().Execute("p", request, {"ui", {}, {}, {}},
+                                    [&](const auto &method, const auto &args) {
+                                      return Call(method, args);
+                                    });
+    const auto value =
+        json::Object(json::Get(json::Object(reply.json), "value"));
+    const auto encoded = json::Object(value.at("operation_data"));
+    std::string bytes;
+    EXPECT_TRUE(crypto::base64_decode(json::Text(encoded, "base64"), bytes));
+    return *std::unique_ptr<H::ProjectEditsT>(
+        flatbuffers::GetRoot<H::ProjectEdits>(bytes.data())->UnPack());
+  }
+  template <class T> auto Apply(T body) -> H::ProjectEditsT {
+    H::ProjectOperationBodyUnion operation;
+    operation.Set(std::move(body));
+    return Apply(std::move(operation));
+  }
+
+private:
+  auto Call(const std::string &method, const json::Members &args)
+      -> OperationReply {
+    std::string type;
+    json::Members value;
+    if (method == "operation_get") {
+      type = "OperationResult";
+      value["state"] = "\"unknown\"";
+    } else if (method == "project_inspect") {
+      type = "ProjectSnapshot";
+      value = {{"rev", std::to_string(saves)},
+               {"project_json", json::Quote(files.at("tsugumi.json"))},
+               {"layout_json", json::Quote(files.at("layout.json"))}};
+      json::Members definitions;
+      std::vector<std::string> sources;
+      for (const auto &[path, bytes] : files) {
+        if (path == "tsugumi.json" || path == "layout.json")
+          continue;
+        if (path.starts_with("definitions/") &&
+            std::count(path.begin(), path.end(), '/') == 2) {
+          const auto slash = path.find('/', 12);
+          const auto name = path.substr(slash + 1);
+          const auto key = name == "_card.json"   ? "card_json"
+                           : name == "_meta.json" ? "meta_json"
+                           : name == "_link.json" ? "link_json"
+                                                  : "";
+          if (key != std::string("")) {
+            const auto id = path.substr(12, slash - 12);
+            auto d = json::Object(json::Get(definitions, id, "{}"));
+            d["id"] = json::Quote(id);
+            d[key] = json::Quote(bytes);
+            definitions[id] = json::Encode(d);
+            continue;
+          }
+        }
+        sources.push_back(json::Encode(
+            json::Members{{"path", json::Quote(path)},
+                          {"hash", json::Quote(crypto::sha256_hex(bytes))}}));
+      }
+      std::vector<std::string> list;
+      for (const auto &[id, raw] : definitions) {
+        (void)id;
+        list.push_back(raw);
+      }
+      value["definitions"] = json::Encode(list);
+      value["sources"] = json::Encode(sources);
+    } else if (method == "project_file_read") {
+      type = "FileContent";
+      value = {{"bytes", json::Encode(json::Members{
+                             {"base64", json::Quote(crypto::base64(files.at(
+                                            json::Text(args, "path"))))}})},
+               {"eof", "true"}};
+    } else {
+      EXPECT_EQ(method, "project_save");
+      EXPECT_EQ(json::UInt(args.at("base_rev")), saves);
+      for (const auto &raw : json::Array(args.at("changes"))) {
+        const auto change = json::Object(raw),
+                   v = json::Object(change.at("value"));
+        const auto kind = json::Text(change, "value_type");
+        if (kind == "SetProject" || kind == "SetLayout")
+          files[kind == "SetProject" ? "tsugumi.json" : "layout.json"] =
+              json::Text(v, "json");
+        else if (kind == "PutDefinition") {
+          const auto dir = "definitions/" + json::Text(v, "id") + '/';
+          for (const auto &[key, name] : {std::pair{"card_json", "_card.json"},
+                                          {"meta_json", "_meta.json"},
+                                          {"link_json", "_link.json"}}) {
+            const auto text = json::Text(v, key);
+            if (text.empty())
+              files.erase(dir + name);
+            else
+              files[dir + name] = text;
+          }
+        } else if (kind == "RemoveDefinition") {
+          const auto dir = "definitions/" + json::Text(v, "id") + '/';
+          std::erase_if(files, [&](const auto &entry) {
+            return entry.first.starts_with(dir);
+          });
+        } else if (kind == "RemoveSource")
+          files.erase(json::Text(v, "path"));
+        else {
+          EXPECT_EQ(kind, "PutSource");
+          const auto data = json::Get(v, "bytes");
+          std::string bytes;
+          if (data.starts_with('"'))
+            bytes = json::String(data);
+          else
+            EXPECT_TRUE(crypto::base64_decode(
+                json::Text(json::Object(data), "base64"), bytes));
+          files[json::Text(v, "path")] = bytes;
+        }
+      }
+      ++saves;
+      type = "SaveResult";
+      value = {{"rev", std::to_string(saves)},
+               {"operation_data", args.at("operation_data")}};
+    }
+    return {json::Encode(json::Members{{"reply", json::Quote(type)},
+                                       {"value", json::Encode(value)}}),
+            {}};
+  }
+};
+TEST(ProjectOperationTransform,
+     ConvertCopyAndUndoKeepBinaryAndNestedDocuments) {
+  TransformationProject project;
+  const auto initial = project.files;
+  H::ProjectMakeSubgraphT convert;
+  convert.cards = {"a", "sub"};
+  convert.id = "converted";
+  convert.name = "converted";
+  auto inverse = project.Apply(convert);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_FALSE(project.files.contains("definitions/a/_card.json"));
+  EXPECT_EQ(project.files.at("externals/converted/definitions/a/data.bin"),
+            initial.at("definitions/a/data.bin"));
+  const auto deep = "externals/inner/externals/deep/definitions/c/raw.bin";
+  EXPECT_EQ(project.files.at("externals/converted/" + std::string(deep)),
+            initial.at(deep));
+  H::ProjectCopyT copy;
+  auto item = std::make_unique<H::ProjectCopyItemT>();
+  item->from = "definitions/converted/";
+  item->id = "copy";
+  copy.items.push_back(std::move(item));
+  auto undo_copy = project.Apply(copy);
+  EXPECT_EQ(project.saves, 2);
+  EXPECT_EQ(project.files.at("externals/copy/definitions/a/data.bin"),
+            initial.at("definitions/a/data.bin"));
+  EXPECT_EQ(project.files.at("externals/copy/" + std::string(deep)),
+            initial.at(deep));
+  // A later source addition makes removal of the copied folder unsafe.
+  project.files["externals/copy/later.bin"] = "later";
+  EXPECT_THROW(project.Apply(undo_copy), Failure);
+  EXPECT_EQ(project.saves, 2);
+  project.files.erase("externals/copy/later.bin");
+  auto redo_copy = project.Apply(undo_copy);
+  EXPECT_FALSE(project.files.contains("definitions/copy/_link.json"));
+  project.Apply(redo_copy);
+  EXPECT_EQ(project.files.at("externals/copy/definitions/a/data.bin"),
+            initial.at("definitions/a/data.bin"));
+  // An unrelated edit survives conversion Undo.
+  auto root = json::Object(project.files.at("tsugumi.json"));
+  root["name"] = "\"other writer\"";
+  project.files["tsugumi.json"] = json::Encode(root);
+  project.Apply(inverse);
+  EXPECT_EQ(project.files.at("definitions/a/data.bin"),
+            initial.at("definitions/a/data.bin"));
+  EXPECT_EQ(project.files.at(deep), initial.at(deep));
+  EXPECT_EQ(json::Text(json::Object(project.files.at("tsugumi.json")), "name"),
+            "other writer");
+  EXPECT_TRUE(project.files.contains("definitions/copy/_link.json"));
+}
+} // namespace
+} // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
+  TransformationProject project;
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("tsugumi-operation-" + crypto::uuid4());
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() {
+      std::error_code error;
+      std::filesystem::remove_all(path, error);
+    }
+  } cleanup{directory};
+  for (const auto &[path, bytes] : project.files) {
+    std::filesystem::create_directories((directory / path).parent_path());
+    std::ofstream(directory / path, std::ios::binary)
+        .write(bytes.data(), bytes.size());
+  }
+  H::ProjectImportT imported;
+  imported.path = directory.string();
+  imported.id = "imported";
+  imported.x = 400;
+  imported.y = 600;
+  const auto inverse = project.Apply(imported);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_EQ(project.files.at("externals/imported/definitions/a/data.bin"),
+            project.files.at("definitions/a/data.bin"));
+  EXPECT_EQ(project.files.at("externals/imported/externals/inner/externals/"
+                             "deep/definitions/c/raw.bin"),
+            std::string("\xff\0\x81", 3));
+  const auto at = json::Object(
+      json::Object(json::Object(project.files.at("layout.json")).at("cards"))
+          .at("imported"));
+  EXPECT_EQ(std::stod(at.at("x")), 400);
+  EXPECT_EQ(std::stod(at.at("y")), 600);
+  project.Apply(inverse);
+  EXPECT_EQ(project.saves, 2);
+  for (const auto &[path, ignored] : project.files) {
+    (void)ignored;
+    EXPECT_FALSE(path.starts_with("externals/imported/"));
+  }
+  EXPECT_FALSE(project.files.contains("definitions/imported/_link.json"));
+}
+
+TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
+  TransformationProject project;
+  project.files = {
+      {"tsugumi.json",
+       R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
+      {"layout.json",
+       R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
+      {"definitions/a/_card.json", R"({"language":"python"})"},
+      {"definitions/b/_card.json", R"({"language":"python"})"},
+      {"definitions/d/_card.json",
+       R"({"language":"python","inputs":[{"name":"p"},{"name":"q"}]})"}};
+  H::LayoutSceneT scene;
+  scene.flow = "topToBottom";
+  for (const auto &id : {"a", "b", "d"}) {
+    auto card = std::make_unique<H::LayoutCardT>();
+    card->id = id;
+    card->width = 120;
+    card->height = 60;
+    card->reorderable = true;
+    if (card->id == "d") {
+      for (const auto &name : {"p", "q"}) {
+        auto port = std::make_unique<H::LayoutPortT>();
+        port->name = name;
+        port->x = port->name == "p" ? 20 : 100;
+        card->inputs.push_back(std::move(port));
+      }
+    } else {
+      auto port = std::make_unique<H::LayoutPortT>();
+      port->name = "out";
+      port->x = 60;
+      port->y = 60;
+      card->outputs.push_back(std::move(port));
+    }
+    scene.cards.push_back(std::move(card));
+  }
+  auto order = [&]() {
+    const auto positions =
+        json::Object(json::Object(project.files.at("layout.json")).at("cards"));
+    return json::Get(json::Object(positions.at("d")), "inputOrder", "[]");
+  };
+  H::ProjectLayoutT untangle;
+  untangle.action = H::ProjectLayoutAction::Untangle;
+  untangle.scene = std::make_unique<H::LayoutSceneT>(scene);
+  project.Apply(untangle);
+  EXPECT_EQ(order(), R"(["q","p"])");
+  const auto accepted = project.files.at("layout.json");
+  H::ProjectMoveT move;
+  move.cards = {"a"};
+  move.dx = 400;
+  move.scene = std::make_unique<H::LayoutSceneT>(scene);
+  const auto undo_move = project.Apply(move);
+  EXPECT_EQ(project.saves, 2); // No later proposal/save can join this move.
+  EXPECT_EQ(order(), R"(["p","q"])");
+  project.Apply(undo_move);
+  EXPECT_TRUE(DocumentsEqual(project.files.at("layout.json"), accepted));
+}
+} // namespace
+} // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
+  TransformationProject project;
+  project.files["layout.json"] = "{}";
+  auto entity = [&](const std::string &field, const std::string &id) {
+    H::ProjectFieldEditT edit;
+    edit.file_path = "layout.json";
+    auto step = std::make_unique<H::ProjectSelectorT>();
+    step->field = field;
+    edit.selector.push_back(std::move(step));
+    auto match = std::make_unique<H::ProjectSelectorT>();
+    match->match_json = json::Encode(json::Members{{"id", json::Quote(id)}});
+    edit.selector.push_back(std::move(match));
+    edit.old_value = std::make_unique<H::ProjectValueT>();
+    edit.new_value = std::make_unique<H::ProjectValueT>();
+    edit.new_value->present = true;
+    json::Members value{{"id", json::Quote(id)}, {field == "notes" ? "text" : "name", json::Quote(id)}};
+    if (field == "notes") { value["x"] = "10"; value["y"] = "20"; }
+    edit.new_value->json = json::Encode(value);
+    H::ProjectEditsT body;
+    auto item = std::make_unique<H::ProjectEditT>();
+    item->value.Set(std::move(edit));
+    body.edits.push_back(std::move(item));
+    return project.Apply(body);
+  };
+  const auto undo_note = entity("notes", "mine");
+  entity("notes", "other");
+  const auto undo_group = entity("groups", "group");
+  entity("groups", "another");
+  project.Apply(undo_note);
+  project.Apply(undo_group);
+  const auto saved = json::Object(project.files.at("layout.json"));
+  EXPECT_EQ(json::Array(saved.at("notes")).size(), 1);
+  EXPECT_EQ(
+      json::Text(json::Object(json::Array(saved.at("notes")).front()), "id"),
+      "other");
+  EXPECT_EQ(json::Array(saved.at("groups")).size(), 1);
+  EXPECT_EQ(
+      json::Text(json::Object(json::Array(saved.at("groups")).front()), "id"),
+      "another");
 }
 } // namespace
 } // namespace tsugumi::host
