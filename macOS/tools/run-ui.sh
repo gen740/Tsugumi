@@ -62,7 +62,12 @@ for _ in $(seq 1 $(( ${TSUGUMI_UI_SECONDS:-600} * 5 ))); do
   sleep 0.2
 done
 sleep 1
-# This script ends the UI process directly; it does not exercise AppKit Quit.
+# TERM ends the app the way Quit does (without its questions): the app stops the
+# host service and the VM in order, then exits. Wait for that.
 kill $pid 2>/dev/null
+for _ in $(seq 1 100); do
+  kill -0 $pid 2>/dev/null || break
+  sleep 0.1
+done
 grep -v '^step' "$log" || exit $?
 ! grep -q '^trust-error ' "$log"

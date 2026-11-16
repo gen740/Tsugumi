@@ -148,6 +148,8 @@ struct OpenConsoleButton: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   @MainActor private let termination = AppTermination()
+  @MainActor private var signalled = false
+  private var signalSources: [DispatchSourceSignal] = []
   @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
   @MainActor var signInTerminationTimeout: Duration = .seconds(3)
   @MainActor var signInTerminationWait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -175,6 +177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activity: activityBeforeQuit,
         localActivity: localActivityBeforeQuit,
         confirm: {
+          // A signal cannot be answered: stop in order without asking.
+          if self.signalled { return true }
           let alert = NSAlert()
           alert.messageText = String(localized: "進行中の処理を停止して Tsugumi を終了しますか？")
           alert.informativeText = String(localized: "ほかのクライアントの処理も含め、実行・Agent・保存中の処理を停止し、実行環境を終了します。保存されていない変更は失われることがあります。")
@@ -182,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           alert.addButton(withTitle: String(localized: "キャンセル"))
           return alert.runModal() == .alertFirstButtonReturn
         },
-        settleEdits: { await self.settleEdits() },
+        settleEdits: { self.signalled ? true : await self.settleEdits() },
         stop: {
           self.signInTerminationTask = Task { await ChatGPTSignInModel.cancelPendingSignIns() }
           _ = await AppTermination.briefly(timeout: self.signInTerminationTimeout, wait: self.signInTerminationWait) {
@@ -225,6 +229,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // TERM and INT end the app the way Quit does, so the host service and the
+    // VM stop in order with it instead of staying behind.
+    for number in [SIGTERM, SIGINT] {
+      signal(number, SIG_IGN)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+      source.setEventHandler { [weak self] in
+        MainActor.assumeIsolated {
+          self?.signalled = true
+          NSApp.terminate(nil)
+        }
+      }
+      source.resume()
+      signalSources.append(source)
+    }
     // Launched with `swift run` there is no bundle: still behave as a regular app.
     NSApp.setActivationPolicy(.regular)
     // The Dock icon also when the executable is started directly (scripts,
