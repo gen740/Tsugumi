@@ -38,6 +38,7 @@ struct Turns {
                               const std::string&)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
+    std::function<bool(const std::string&, const std::string&, std::stop_token)> excluded = {};
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,

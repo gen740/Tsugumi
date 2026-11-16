@@ -574,6 +574,8 @@ table ProjectShellRequest {
   workspace_only:bool (id: 10);
   /// Read-only files inside writable subtrees (including reserved placeholders).
   protected_paths:[string] (id: 11);
+  /// Host-selected absolute paths denied in this shell view, including mounts.
+  excluded_paths:[string] (id: 12);
 }
 
 table ProjectShellResult {

@@ -181,6 +181,7 @@ add_library(tsugumi_host_core STATIC
   src/host/store.cc
   src/host/credentials.cc
   src/host/demo_references.cc
+  src/host/agent_exclude.cc
   src/host/registry.cc
   src/host/attached_folder.cc
   src/host/input_types.cc

@@ -158,7 +158,10 @@ struct Service::State {
                 [this](const auto& id) {
                   for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
-                }});
+                },
+            .excluded = [this](const auto& project, const auto& path, auto stop) {
+              return !project.empty() && tools->Exclusions(project, stop).Contains(path);
+            }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,

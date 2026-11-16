@@ -56,10 +56,12 @@
 "API キー" = "API key";
 "API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
+"Agent から除外するパス" = "Paths excluded from the Agent";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent がこの操作の承認を求めています" = "The Agent asks you to approve this operation";
 "Agent がアクセスの許可を求めています" = "The Agent is requesting access";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
+"Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。" = "Enter one path per line, relative to the project or absolute. Each path excludes the file and everything below it from the Agent. People can still see it.";
 "Agent が書きました" = "Written by the Agent";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
 "Agent が編集" = "Edited by the Agent";

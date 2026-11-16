@@ -8,6 +8,7 @@
 #include "agent/wire.hh"
 #include "document.hh"
 #include "host/skills.hh"
+#include "host/agent_exclude.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
@@ -250,6 +251,7 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
   switch (request.value_type()) {
   case A::RequestPayload::HostProjectDefaultsRequest: {
     A::ProjectDefaultsT value;
+    value.agent_exclude = AgentExclude::Defaults();
     value.nixpkgs_pin = json::Text(json::Object(raw), "nixpkgsPin");
     return reply(std::move(value));
   }
@@ -356,7 +358,30 @@ auto Projects::Apply(const A::Request &request) -> std::string {
           if (fs::resolves_inside(source, destination))
             throw ProjectFailure("invalid_project",
                                  "The copy must be outside the demo");
-          return Populate(destination, [&] { Copy(source, destination); });
+          return Populate(destination, [&] {
+            Copy(source, destination);
+            // Used only by the bundled demos: a Draft demo names its finished
+            // counterpart, and the copy records where that counterpart is in
+            // this installation so the Agent cannot read the answer. The path
+            // is absolute, so moving the app after the copy makes the finished
+            // version readable again. This assumes the app is not moved; no
+            // countermeasure will be added.
+            const auto counterparts = json::Array(json::Get(value, "agentExclude", "[]"));
+            if (!counterparts.empty()) {
+              auto document = json::Object(fs::read_file_or_throw(destination / "tsugumi.json"));
+              auto entries = AgentExclude::Entries(json::Encode(document));
+              for (const auto& counterpart : counterparts) {
+                const auto relative = json::String(counterpart);
+                if (!fs::valid_relative_path(relative) || !fs::resolves_inside(demos_, demos_ / relative))
+                  throw ProjectFailure("demo_not_found", "Invalid demo counterpart");
+                entries.push_back(f::canonical(demos_ / relative).string());
+              }
+              std::vector<std::string> encoded;
+              for (const auto& entry : entries) encoded.push_back(json::Quote(entry));
+              document["agentExclude"] = json::Encode(encoded);
+              fs::write_atomic(destination / "tsugumi.json", json::Encode(document) + '\n');
+            }
+          });
         }
         throw ProjectFailure("demo_not_found",
                              "The bundled demo was not found");

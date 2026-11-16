@@ -82,7 +82,7 @@ auto Versions::Note(const RequestIn& request, bool human,
   lock.unlock();
   std::lock_guard note_lock(*gate);
   const auto call = [&](const std::string& name, const std::string& args) {
-    const auto reply = json::Object(tools->ProjectCall(project, name, args));
+    const auto reply = json::Object(tools->UnfilteredProjectCall(project, name, args, {}));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
     if (json::Text(reply, "reply") == "Failure")
       throw Failure("unavailable", json::Text(value, "message"));

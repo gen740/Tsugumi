@@ -96,7 +96,8 @@ const std::set<std::string> kOwnedFields{"origin",
                                          "mounts",
                                          "output_prefix",
                                          "workspace_only",
-                                         "protected_paths"};
+                                         "protected_paths",
+                                         "excluded_paths"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();

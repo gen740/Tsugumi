@@ -240,6 +240,10 @@ auto Turns::SkillContent(const std::string& id,
   ContentBlock result;
   for (const auto& skill : catalog.skills) {
     if (automatic ? !skill->always : !selected.contains(skill->name)) continue;
+    if (!skill->path.starts_with("builtin:") && dependencies.excluded && dependencies.excluded(c.project, skill->path, stop)) {
+      if (!automatic) throw Failure("not_found", "Skill not found");
+      continue;
+    }
     names.erase(skill->name);
     if (automatic && trusted_project &&
         skill->source_folder ==
@@ -399,6 +403,8 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                   .project)
         throw Failure("permission_denied",
                       "Attached resource is not registered for this project");
+      if (dependencies.excluded && dependencies.excluded(c.project, folder.text(1), stop))
+        throw Failure("not_found", "Folder not found");
       require(resource->str(), p->conversation_id()->str(), Tsugumi::Service::Access::Read,
               true, stop, "Read the attached folder");
       resources.push_back(resource->str());

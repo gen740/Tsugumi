@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <filesystem>
 #include <string>
 
 #include "host/layout_saving.hh"
@@ -18,6 +19,7 @@ struct OperationContext {
   std::function<void(const std::string&, const SaveBase&)> authorize_file;
   std::function<void(agent::json::Members&, const SaveBase&)> authorize;
   std::function<LayoutWrite(const SaveBase&)> layout_scope;
+  std::function<std::filesystem::path(const std::string&)> demo = {};
 };
 class ProjectOperations {
  public:

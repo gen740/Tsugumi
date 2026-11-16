@@ -101,7 +101,7 @@ auto Tools::PrepareLayoutSave(const std::string& project,
   auto read = [&](const std::string& path) -> std::optional<host::LayoutFile> {
     if (!snapshot) {
       const auto response =
-          json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+          json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
       snapshot = json::Object(json::Get(response, "value", "{}"));
       const auto revision = json::Get(*snapshot, "rev");
       if (json::String(expected, expected) != json::String(revision, revision))
@@ -188,7 +188,13 @@ auto Tools::OperateProject(const std::string& project,
                            const host::OperationContext& context,
                            std::stop_token stop) -> host::OperationReply {
   std::lock_guard saving(save_mutex);
-  return operations.Execute(project, operation, context,
+  auto resolved_context = context;
+  resolved_context.demo = [&](const auto& name) {
+    const auto folder = demo_references.Project(name);
+    if (context.origin == "agent") Exclusions(project, stop).Check(folder);
+    return folder;
+  };
+  return operations.Execute(project, operation, resolved_context,
                             [&](const auto& method, const auto& arguments) {
                               host::OperationReply reply;
                               reply.json = RawProjectCall(
@@ -221,6 +227,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
       return LayoutToolFailure("revision_conflict",
                                "The project changed; read the project again "
                                "and re-apply your input.");
+    Exclusions(project, stop).CheckSave(original, latest.base);
     if (check) check(latest.base);
     original.erase("save_intent");
     auto prepared = PrepareAgentSave(
@@ -231,6 +238,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
         });
     prepared.arguments = json::Object(PrepareLayoutSave(
         project, json::Encode(prepared.arguments), stop, may_write));
+    Exclusions(project, stop).CheckSave(prepared.arguments, latest.base);
     host::RestrictAgentRequest("project_save", prepared.arguments);
     auto result = json::Object(RawProjectCall(
         project, "project_save", json::Encode(prepared.arguments), stop));
@@ -277,14 +285,67 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
   return host::InputTypes(*reply->value_as_InputTypesResult(), language);
 }
 
+auto Tools::Exclusions(const std::string& project, std::stop_token stop) -> host::AgentExclude {
+  if (project.empty()) return host::AgentExclude(std::filesystem::current_path(), "{}");
+  const auto reply = json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
+  const auto value = json::Object(json::Get(reply, "value", "{}"));
+  if (json::Text(reply, "reply") == "Failure")
+    throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+  std::lock_guard lock(mutex);
+  return host::AgentExclude(registry.Root(project), json::Text(value, "project_json", "{}"));
+}
+
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
+                        const std::string& arguments, std::stop_token stop) -> std::string {
+  const auto policy = Exclusions(project, stop);
+  const auto args = json::Object(arguments);
+  policy.CheckRequest(name, args);
+  if (name == "project_inspect") policy.Check("tsugumi.json");
+  if (name == "run") {
+    json::Members plan;
+    for (const auto* key : {"card", "propagate"})
+      if (args.contains(key)) plan[key] = args.at(key);
+    if (args.contains("base_rev")) plan["at_rev"] = args.at("base_rev");
+    const auto full_plan = RawProjectCall(project, "run_plan", json::Encode(plan), stop);
+    policy.CheckContent(full_plan);
+  }
+  auto result = UnfilteredProjectCall(project, name, arguments, stop);
+  const auto file_path = json::Text(args, "path");
+  const bool project_document = file_path == "tsugumi.json" || host::IsExternalDocument(file_path, "tsugumi.json");
+  const bool layout_document = file_path == "layout.json" || host::IsExternalDocument(file_path, "layout.json");
+  if (name == "project_file_read" && (project_document || layout_document)) {
+    // A projected document is a complete page. Guards retain the original hash.
+    auto envelope = json::Object(result);
+    if (json::Text(envelope, "reply") == "FileContent") {
+      if (json::UInt(json::Get(args, "offset", "0")) != 0)
+        throw Failure("invalid_request", "Read the project document in one page");
+      auto value = json::Object(json::Get(envelope, "value", "{}"));
+      if (!json::Bool(json::Get(value, "eof")))
+        throw Failure("invalid_request", "Read the project document in one page");
+      const auto path = json::Text(args, "path");
+      const auto text = path.ends_with("tsugumi.json")
+          ? policy.ProjectText(json::Text(value, "bytes"), path.substr(0, path.size() - 12))
+          : json::Text(json::Object(policy.Filter(json::Encode(json::Members{{"layout_json", json::Get(value, "bytes")}}))), "layout_json");
+      value["bytes"] = json::Quote(text);
+      value["size_bytes"] = value["next_offset"] = json::Quote(std::to_string(text.size()));
+      envelope["value"] = json::Encode(value);
+      result = json::Encode(envelope);
+    }
+  }
+  return policy.Filter(result);
+}
+
+auto Tools::UnfilteredProjectCall(const std::string& project, const std::string& name,
                         const std::string& arguments, std::stop_token stop)
     -> std::string {
   auto args = json::Object(arguments);
   if (name == "input_types")
     return catalog.HostReply(wire::HostReply(1, InputTypesQuery(project, std::move(args), stop)));
-  if (name == "project_save")
+  if (name == "project_save") {
+    if (args.contains("transfers") && !json::Array(args.at("transfers")).empty())
+      throw Failure("permission_denied", "Use project_copy for file transfers");
     return SaveProject(project, std::move(args), stop);
+  }
   if (name == "project_file_format") {
     H::FileFormatRequestT request;
     request.path = json::Text(args, "path");
@@ -837,9 +898,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
             {},
             {}};
   }
-  if (call.name == "demo_list") return {demo_references.List(), false, {}, {}};
-  if (call.name == "demo_read")
-    return {demo_references.Read(json::Text(args, "path")), false, {}, {}};
+  if (call.name == "demo_list" || call.name == "demo_read") {
+    const auto policy = Exclusions(project, stop);
+    return {call.name == "demo_list" ? demo_references.List(&policy)
+             : demo_references.Read(json::Text(args, "path"), &policy), false, {}, {}};
+  }
   if (call.name == "guide_show") {
     if (c.role != "guide" || helper)
       throw Failure("permission_denied", "Only the guide can show guidance");
@@ -951,7 +1014,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
         const auto snapshot =
-            json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+            json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
         revision =
             json::Get(json::Object(json::Get(snapshot, "value", "{}")), "rev");
       }
@@ -1020,6 +1083,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (call.name == "attached_folder_read" ||
       (call.name == "project_copy" &&
        json::Text(args, "source") == "attached")) {
+    Exclusions(project, stop).Check(json::Text(args, "folder"));
     {
       std::lock_guard lock(mutex);
       auto folder =
@@ -1038,7 +1102,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
        {"origin", "approved_permissions", "check_permissions", "read_only",
         "hide_credentials", "no_project_socket", "transfers",
         "working_directory", "writable_paths", "mounts", "protected_paths",
-        "workspace_only", "output_prefix"})
+        "workspace_only", "output_prefix", "excluded_paths"})
     args.erase(field);
   if (call.name == "run_history_delete") {
     args.erase("run_ids");
@@ -1211,7 +1275,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
                              boundary, stop, file_resources);
     } else if (call.name == "attached_folder_read") {
       try {
-        result = host::ReadAttachedFolder(json::Text(args, "folder"), args);
+        const auto policy = Exclusions(project, stop);
+        result = host::ReadAttachedFolder(json::Text(args, "folder"), args, &policy);
       } catch (const host::FolderReadFailure& error) {
         throw Failure(error.code, error.what());
       }
@@ -1239,6 +1304,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
+  result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";
   if (error) {
@@ -1263,7 +1329,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
       dependencies.approve_operation(project, conversation, call, digest, args,
                                      wait, stop, permissions);
       args["approved_permissions"] = json::Encode(permissions);
-      if (call.name == "project_edit" || call.name == "project_connect" ||
+      if (call.name == "project_copy" && json::Text(args, "source") == "demo") {
+        result = FileOperation(conversation, project, call.name, args, op_id, boundary, stop, file_resources);
+      } else if (call.name == "project_edit" || call.name == "project_connect" ||
           call.name == "project_make_subgraph" ||
           call.name == "project_layout") {
         result = EditProjectTool(conversation, project, call, args, op_id,

@@ -107,6 +107,10 @@
         "Pinned with Nix",
         "Astronomy",
         "Images"
+      ],
+      "agentExclude": [
+        "ja/casa",
+        "en/casa"
       ]
     },
     {
@@ -133,6 +137,10 @@
         "Network",
         "Physics",
         "Images"
+      ],
+      "agentExclude": [
+        "ja/gw150914",
+        "en/gw150914"
       ]
     },
     {
@@ -159,6 +167,10 @@
         "Network",
         "Biology",
         "Images"
+      ],
+      "agentExclude": [
+        "ja/protein-6lu7",
+        "en/protein-6lu7"
       ]
     },
     {
@@ -185,6 +197,10 @@
         "Network",
         "Astronomy",
         "Images"
+      ],
+      "agentExclude": [
+        "ja/exoplanet-transit",
+        "en/exoplanet-transit"
       ]
     },
     {
@@ -211,6 +227,10 @@
         "Network",
         "Earth science",
         "Images"
+      ],
+      "agentExclude": [
+        "ja/seismic-trench",
+        "en/seismic-trench"
       ]
     },
     {
@@ -442,6 +462,10 @@
         "Python",
         "Machine learning",
         "Branch, fork and merge"
+      ],
+      "agentExclude": [
+        "ja/mnist-classifiers",
+        "en/mnist-classifiers"
       ]
     },
     {
@@ -506,6 +530,10 @@
         "R Markdown",
         "Artifacts",
         "Draft"
+      ],
+      "agentExclude": [
+        "ja/r-reports",
+        "en/r-reports"
       ]
     },
     {
@@ -531,6 +559,10 @@
         "C++",
         "Draft",
         "Agent"
+      ],
+      "agentExclude": [
+        "ja/go-pipeline",
+        "en/go-pipeline"
       ]
     },
     {
@@ -556,6 +588,10 @@
         "C++",
         "Draft",
         "Agent"
+      ],
+      "agentExclude": [
+        "ja/rust-pipeline",
+        "en/rust-pipeline"
       ]
     }
   ]

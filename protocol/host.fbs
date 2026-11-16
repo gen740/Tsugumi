@@ -196,7 +196,7 @@ table ProjectConnect {
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
 // Source paths name a definition or an external folder in the current project.
 // The host copies its complete document/source closure and places the new Card.
-table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; }
+table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
 table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
@@ -270,7 +270,7 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table ProjectDefaults { nixpkgs_pin:string (required); }
+table ProjectDefaults { nixpkgs_pin:string (required); agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
 // opened_at is Unix epoch milliseconds. Forget never removes project folders.

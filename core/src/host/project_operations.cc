@@ -61,7 +61,8 @@ auto Intent(const H::ProjectOperateRequestT& operation,
 // Expand transformations into guarded file edits against this inspection only.
 auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
              const EditFileRead& read,
-             const std::function<void(const std::string&)>& authorize)
+             const std::function<void(const std::string&)>& authorize,
+             const std::function<std::filesystem::path(const std::string&)>& demo)
     -> json::Members {
   if (const auto* edits = body.AsProjectEdits())
     return PrepareProjectEdits(*edits, base, read, authorize);
@@ -226,12 +227,12 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
                    {"meta", json::Encode(
                                 json::Members{{"name", json::Quote(name)}})}}));
   };
-  auto document_state = [&]() {
+  auto document_state = [&](const auto& files) {
     auto scope = [&](const std::string &at) {
-      json::Members state{{"project", required(at + "tsugumi.json")},
-                          {"layout", get(at + "layout.json").value_or("{}")}};
+      json::Members state{{"project", files.at(at + "tsugumi.json")},
+                          {"layout", files.contains(at + "layout.json") ? files.at(at + "layout.json") : "{}"}};
       json::Members definitions;
-      for (const auto &[path, bytes] : base.files) {
+      for (const auto &[path, bytes] : files) {
         if (!path.starts_with(at + "definitions/"))
           continue;
         const auto rest = path.substr(at.size() + 12);
@@ -255,7 +256,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     };
     auto state = json::Object(scope(""));
     json::Members externals;
-    for (const auto &[path, ignored] : base.files) {
+    for (const auto &[path, ignored] : files) {
       (void)ignored;
       if (IsExternalDocument(path, "tsugumi.json")) {
         const auto at = path.substr(0, path.size() - 12);
@@ -512,7 +513,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
   } else if (const auto *copy = body.AsProjectCopy()) {
     if (copy->items.empty())
       throw Failure("invalid_request", "choose Cards to copy");
-    const auto state = document_state();
+    const auto state = document_state(base.files);
     std::map<std::string, std::string> copied_ids;
     for (const auto &item : copy->items) {
       if (!item || !valid_id(item->id))
@@ -524,9 +525,39 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           IsExternalDocument(item->from + "tsugumi.json", "tsugumi.json");
       const auto destination =
           is_external ? prefix + "externals/" + item->id + '/' : to;
-      const auto patch = CopyDocuments(
-          state, std::vector<std::string>(paths.begin(), paths.end()),
-          item->from, destination, item->name);
+      auto source_state = state;
+      auto source_paths = std::vector<std::string>(paths.begin(), paths.end());
+      std::map<std::string, std::string> demo_files;
+      std::filesystem::path demo_root;
+      auto from = item->from;
+      if (!item->demo.empty()) {
+        if (!demo || copy->copy_connections || !valid_id(item->from))
+          throw Failure("invalid_request", "Choose a demo and a Card id");
+        demo_root = demo(item->demo);
+        const auto files = ReadProjectFiles(demo_root.string());
+        demo_files = files;
+        source_paths.clear();
+        for (const auto& [path, bytes] : files) {
+          (void)bytes;
+          source_paths.push_back(path);
+        }
+        source_state = document_state(files);
+        from = "definitions/" + item->from + '/';
+      }
+      const auto& source_files = item->demo.empty() ? base.files : demo_files;
+      if (!source_files.contains(from + "_card.json") &&
+          !source_files.contains(from + "_link.json") && !is_external)
+        throw Failure("not_found", "Card not found");
+      std::vector<std::string> closure{from};
+      if (source_files.contains(from + "_link.json")) {
+        const auto at = from.substr(0, from.rfind("definitions/"));
+        closure.push_back(at + "externals/" + json::Text(json::Object(source_files.at(from + "_link.json")), "external") + '/');
+      }
+      for (const auto& path : source_paths)
+        for (const auto& dir : closure)
+          if (path.starts_with(dir) && authorize)
+            authorize(item->demo.empty() ? path : (demo_root / path).string());
+      const auto patch = CopyDocuments(source_state, source_paths, from, destination, item->name);
       const auto values = json::Object(patch.edits_json);
       for (const auto &[dir, raw] :
            json::Object(json::Get(values, "definitions", "{}")))
@@ -537,7 +568,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
         external(dir, raw);
       }
       for (const auto &file : patch.files)
-        put(file->to, required(file->from));
+        put(file->to, item->demo.empty() ? required(file->from) : demo_files.at(file->from));
       if (is_external)
         link(item->id, item->name.empty() ? item->id : item->name);
       double x = item->x, y = item->y;
@@ -945,7 +976,7 @@ auto ProjectOperations::Execute(const std::string& project,
           Prepare(operation.body, inspection.base, read, [&](const auto& path) {
             if (context.authorize_file)
               context.authorize_file(path, inspection.base);
-          });
+          }, context.demo);
       if (json::Array(plan.at("changes")).empty())
         plan["changes"] = json::Encode(std::vector<std::string>{
             Change("SetProject", {{"json", json::Quote(inspection.base.files.at(

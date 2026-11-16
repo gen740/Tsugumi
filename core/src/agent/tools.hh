@@ -15,6 +15,7 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "host/layout_saving.hh"
+#include "host/agent_exclude.hh"
 #include "host/project_operations.hh"
 #include "host/save.hh"
 #include "host/state_gate.hh"
@@ -74,6 +75,9 @@ struct Tools {
                          std::stop_token stop,
                          const host::LayoutWrite& may_write = {})
       -> std::string;
+  auto Exclusions(const std::string& project, std::stop_token stop = {}) -> host::AgentExclude;
+  auto UnfilteredProjectCall(const std::string& project, const std::string& name,
+                            const std::string& arguments, std::stop_token stop) -> std::string;
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {})
       -> std::string;

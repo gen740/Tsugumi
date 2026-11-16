@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "util/crypto.hh"
+#include "host/agent_exclude.hh"
 #include "util/fs.hh"
 #include "util/text.hh"
 
@@ -40,12 +41,13 @@ auto Number(const json::Members& args, const char* key, uint64_t fallback)
 }  // namespace
 
 auto ReadAttachedFolder(const std::filesystem::path& root,
-                        const json::Members& arguments) -> std::string {
+                        const json::Members& arguments, const AgentExclude* policy) -> std::string {
   if (!root.is_absolute() || root.string().find('\0') != std::string::npos)
     throw Failure("invalid_path", "Attached folder must be an absolute path");
   const auto path = json::Text(arguments, "path");
   if (!path.empty() && !fs::valid_relative_path(path))
     throw Failure("invalid_path", "Invalid attached-folder relative path");
+  if (policy) policy->Check(root / path);
   const auto offset = Number(arguments, "offset", 0);
   const auto limit = Number(arguments, "limit_bytes", 262144);
   if (!limit || limit > (1u << 20))
@@ -80,6 +82,7 @@ auto ReadAttachedFolder(const std::filesystem::path& root,
     while (const auto* entry = ::readdir(directory.get())) {
       const std::string name = entry->d_name;
       if (name == "." || name == "..") continue;
+      if (policy && policy->Contains(root / path / name)) continue;
       if (names.size() == 5000)
         throw Failure("limit_exceeded",
                       "Attached directory exceeds 5000 entries");
