@@ -13,6 +13,8 @@ import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
 import type { WorkflowTab } from '../model/workspace'
 import { runAll } from './actions'
+import { ChatGPTSettings } from './chatgpt'
+import { ChatGPTSignInModel } from '../model/chatgpt'
 import { Button, Sheet } from './controls'
 import { PALETTE, useBird } from './home'
 import { Icon } from './icons'
@@ -628,17 +630,23 @@ export function GuideInvite() {
 
 // ---- First start ------------------------------------------------------------------------
 
-/** The first start: choose Anthropic or OpenAI and enter that provider's API
- *  key (one is enough), checked by connecting, or start without a guide. The
- *  key goes where Settings > API puts it (the host's Keychain). */
+/** First start: connect an API key or ChatGPT plan, or skip. Key storage and
+ *  ChatGPT sign-in are the same as Settings > API. */
 export function GuideSetupSheet() {
   useObserve(guide)
+  if (!guide.needsSetup) return null
+  return <Sheet onClose={() => void guide.finishSetup()} width={500}><GuideSetupForm /></Sheet>
+}
+
+/** The sheet's form, also rendered without a portal in presentation tests. */
+export function GuideSetupForm() {
+  const [chatGPT] = useState(() => new ChatGPTSignInModel())
+  useObserve(chatGPT)
   const [provider, setProvider] = useState<'anthropic' | 'openai'>('anthropic')
   const [key, setKey] = useState('')
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
   const [saved, setSaved] = useState(false)
-  if (!guide.needsSetup) return null
   const check = async () => {
     setWorking(true)
     setMessage(undefined)
@@ -652,7 +660,7 @@ export function GuideSetupSheet() {
   }
   const connect = async () => {
     const k = key.trim()
-    if (!k || working) return
+    if (!k || working || chatGPT.state.signingIn) return
     try {
       await api('/api/settings', { provider })
       await api('/api/settings/key', { provider, key: k })
@@ -665,34 +673,33 @@ export function GuideSetupSheet() {
     await check()
   }
   return (
-    <Sheet onClose={() => void guide.finishSetup()} width={500}>
-      <form className="sheet-body guide-setup" onSubmit={(e) => { e.preventDefault(); void connect() }}>
-        <div className="row gap12 center">
-          <span className="guide-avatar still"><GuideBird /></span>
-          <div className="col">
-            <div className="title2">{L('ガイドのツグミを呼ぶ準備')}</div>
-            <div className="secondary">{L('右下のツグミが、使い方の質問に答えたりデモを案内したりします。')}</div>
-          </div>
+    <form className="sheet-body guide-setup" onSubmit={(e) => { e.preventDefault(); void connect() }}>
+      <div className="row gap12 center">
+        <span className="guide-avatar still"><GuideBird /></span>
+        <div className="col">
+          <div className="title2">{L('ガイドのツグミを呼ぶ準備')}</div>
+          <div className="secondary">{L('右下のツグミが、使い方の質問に答えたりデモを案内したりします。')}</div>
         </div>
-        <div className="callout">{L('ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
-        <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
-          {(['anthropic', 'openai'] as const).map((p) => (
-            <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}
-              onClick={() => { setProvider(p); setMessage(undefined); setSaved(false) }}>{p === 'openai' ? 'OpenAI' : 'Anthropic'}</button>
-          ))}
-        </div>
-        <input type="password" className="field" value={key} autoFocus autoComplete="off" spellCheck={false}
-          placeholder={provider === 'openai' ? L('OpenAI の API キー') : L('Anthropic の API キー')} aria-label={L('API キー')}
-          onChange={(e) => setKey(e.target.value)} />
-        {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
-        <div className="caption secondary">{L('キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。')}</div>
-        <div className="row gap8">
-          <Button onClick={() => void guide.finishSetup()}>{L('スキップして始める')}</Button>
-          <span className="spacer" />
-          {saved && message && <Button disabled={working} onClick={() => void check()}>{L('再試行')}</Button>}
-          <Button kind="prominent" type="submit" disabled={working || !key.trim()}>{working ? L('確かめています…') : L('接続して始める')}</Button>
-        </div>
-      </form>
-    </Sheet>
+      </div>
+      <div className="callout">{L('ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
+      <ChatGPTSettings onboarding controller={chatGPT} onConnected={() => guide.finishChatGPTSetup()} />
+      <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
+        {(['anthropic', 'openai'] as const).map((p) => (
+          <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}
+            onClick={() => { setProvider(p); setMessage(undefined); setSaved(false) }}>{p === 'openai' ? 'OpenAI' : 'Anthropic'}</button>
+        ))}
+      </div>
+      <input type="password" className="field" value={key} autoFocus autoComplete="off" spellCheck={false}
+        placeholder={provider === 'openai' ? L('OpenAI の API キー') : L('Anthropic の API キー')} aria-label={L('API キー')}
+        onChange={(e) => setKey(e.target.value)} />
+      {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
+      <div className="caption secondary">{L('接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。')}</div>
+      <div className="row gap8">
+        <Button onClick={() => void guide.finishSetup()}>{L('スキップして始める')}</Button>
+        <span className="spacer" />
+        {saved && message && <Button disabled={working} onClick={() => void check()}>{L('再試行')}</Button>}
+        <Button kind="prominent" type="submit" disabled={working || chatGPT.state.signingIn || !key.trim()}>{working ? L('確かめています…') : L('接続して始める')}</Button>
+      </div>
+    </form>
   )
 }

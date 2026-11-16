@@ -19,6 +19,7 @@ import { Icon } from './icons'
 import { ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
+import { ChatGPTSettings } from './chatgpt'
 import { ExecutionServicesSettings } from './executionServices'
 
 type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
@@ -519,7 +520,7 @@ function APISettings() {
       </Section>
       <KeySection id="anthropic" s={s} reload={reload} update={update} />
       <KeySection id="openai" s={s} reload={reload} update={update} />
-      <ChatGPTSettings model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
+      <ChatGPTSettings onConnected={() => refreshChats(true)} onChanged={() => refreshChats()} model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
       <Section title={L('Agent が確認なしに Card に与えてよい権限')}>
         {permissionCatalog.kinds.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
@@ -558,140 +559,6 @@ function GuideSettings() {
       {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />{L('設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。')}</span></Row>}
       <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('ガイドは上の接続先とキーを使います。キーがあると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。')}</span></Row>
     </Section>
-  )
-}
-
-interface ChatGPTAccountInfo { clientId: string; email: string | null; signedIn: boolean; planEnabled: boolean; active: boolean }
-interface ChatGPTState {
-  accounts: ChatGPTAccountInfo[]
-  signingIn: boolean
-  outcome: { ok: boolean; message: string; welcome?: string } | null
-  usageURL: string
-}
-
-/** Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. This server
- *  keeps the registrations and tokens in a 0600 file of its data folder; the
- *  page never sees a token. */
-function ChatGPTSettings({ model, setModel, inUse }: { model: string; setModel: (m: string) => void; inUse?: boolean }) {
-  const [st, setSt] = useState<ChatGPTState>()
-  const [message, setMessage] = useState<string>()
-  const [models, setModels] = useState<{ id: string; label: string }[]>([])
-  const [url, setUrl] = useState<string>()
-  const reload = () => api<ChatGPTState>('/api/chatgpt').then((v) => {
-    setSt(v)
-    return v
-  })
-  useEffect(() => {
-    void reload()
-  }, [])
-  // While a sign-in runs in the browser tab, its outcome is read back.
-  useEffect(() => {
-    if (!st?.signingIn) return
-    const t = setInterval(() => void reload().then((v) => {
-      if (v.signingIn) return
-      setUrl(undefined)
-      if (v.outcome) setMessage(v.outcome.message)
-      refreshChats(!!v.outcome?.ok)
-    }), 1000)
-    return () => clearInterval(t)
-  }, [st?.signingIn])
-  if (!st) return null
-  const active = st.accounts.find((a) => a.active)
-  const run = async (f: () => Promise<string | undefined>) => {
-    try {
-      setMessage(await f())
-    } catch (e) {
-      setMessage(errorText(e))
-    }
-  }
-  const signIn = (clientId?: string, consent = false) => {
-    // The tab opens within the click (a pop-up blocker allows it), then goes to the sign-in.
-    const tab = window.open('about:blank', '_blank')
-    void run(async () => {
-      let r: { url: string }
-      try {
-        r = await api<{ url: string }>('/api/chatgpt/signin', { clientId, consent })
-      } catch (e) {
-        tab?.close()
-        throw e
-      }
-      setUrl(r.url)
-      if (tab) {
-        tab.opener = null
-        tab.location.href = r.url
-      }
-      await reload()
-      return undefined
-    })
-  }
-  const welcome = st.outcome?.welcome
-  const welcomed = (go: boolean) => {
-    if (go) window.open(st.usageURL, '_blank', 'noopener,noreferrer')
-    void api<ChatGPTState>('/api/chatgpt/welcomed', { clientId: welcome }).then(setSt)
-  }
-  return (
-    <>
-      <Section title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
-        <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}</span></Row>
-        {active && <Row label={L('使用中のアカウント')}><span className="selectable">{active.email ?? active.clientId}</span></Row>}
-        {active?.signedIn && !active.planEnabled && (
-          <Row><span className="caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')}</span></Row>
-        )}
-        {st.accounts.map((a) => (
-          <Row key={a.clientId} label={<span><Icon name={a.active ? 'checkmark.circle.fill' : 'circle'} /> {a.email ?? a.clientId}</span>}>
-            <div className="row gap8 wrap center">
-              <span className="caption secondary">{!a.signedIn ? L('サインアウト済み') : a.planEnabled ? L('サインイン中') : L('サインイン中（プランの利用は未許可）')}</span>
-              {a.signedIn && !a.active && <Button small onClick={() => void run(async () => { setSt(await api<ChatGPTState>('/api/chatgpt/select', { clientId: a.clientId })); refreshChats(); return undefined })}>{L('このアカウントを使う')}</Button>}
-              {!a.signedIn && <Button small disabled={st.signingIn} onClick={() => signIn(a.clientId)}>Continue with ChatGPT</Button>}
-              {a.signedIn && !a.planEnabled && <Button small disabled={st.signingIn} onClick={() => signIn(a.clientId, true)}>{L('プランの利用を許可')}</Button>}
-              {a.signedIn && <Button small kind="destructive" onClick={() => void run(async () => {
-                const r = await api<ChatGPTState & { message: string }>('/api/chatgpt/signout', { clientId: a.clientId })
-                setSt(r)
-                refreshChats()
-                return r.message
-              })}>{L('サインアウト')}</Button>}
-            </div>
-          </Row>
-        ))}
-        <Row>
-          <div className="row gap8 wrap center">
-            {st.signingIn
-              ? <>
-                  <span className="caption secondary">{L('ブラウザでサインインを続けてください…')}</span>
-                  {url && <a className="caption" href={url} target="_blank" rel="noopener noreferrer">{L('サインインのページを開く')}</a>}
-                  <Button small onClick={() => void api<ChatGPTState>('/api/chatgpt/cancel', {}).then(setSt)}>{L('中止')}</Button>
-                </>
-              : <Button kind="prominent" onClick={() => signIn()}>{st.accounts.length ? L('Continue with ChatGPT（別のアカウント）') : 'Continue with ChatGPT'}</Button>}
-            <a href={st.usageURL} target="_blank" rel="noopener noreferrer">Manage usage</a>
-          </div>
-        </Row>
-        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</span></Row>
-      </Section>
-      <Section title={L('モデル')}>
-        <Row label={L('モデル')}><TextField value={model} onChange={setModel} /></Row>
-        <Row>
-          <Button disabled={!active?.signedIn} onClick={() => void run(async () => {
-            const r = await api<{ models: string[]; modelNames: Record<string, string> }>('/api/settings/models', { provider: 'chatgpt' })
-            setModels(r.models.map((id) => ({ id, label: r.modelNames[id] ?? id })))
-            return L('{0} 件のモデルを取得しました。', r.models.length)
-          })}>{L('モデル一覧を取得')}</Button>
-        </Row>
-        {models.length > 0 && <Row label={L('一覧から選択')}><Select value={model} onChange={setModel} options={models.map((m) => ({ value: m.id, label: m.label }))} /></Row>}
-      </Section>
-      {message && <div className="caption selectable">{message}</div>}
-      {welcome && (
-        <Sheet width={420} onClose={() => welcomed(false)}>
-          <div className="sheet-body">
-            <b>{L('ChatGPT プランを使っています')}</b>
-            <span className="callout secondary" style={{ whiteSpace: 'normal' }}>{L('Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。')}</span>
-            <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
-              <Button onClick={() => welcomed(true)}>Manage usage</Button>
-              <Button kind="prominent" onClick={() => welcomed(false)}>Got it</Button>
-            </div>
-          </div>
-        </Sheet>
-      )}
-    </>
   )
 }
 

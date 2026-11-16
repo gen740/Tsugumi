@@ -149,10 +149,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// Unsaved edits were saved (or the user chose to drop them) for this quit.
   private var editsSettled = false
 
+  @MainActor var signInTerminationTimeout: Duration = .seconds(3)
+  @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
+  @MainActor private var waitingForSignIn = false
+
   /// Settle unsaved edits; the resident host owns ongoing project execution.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if !editsSettled, let reply = MainActor.assumeIsolated({ settleEdits(sender) }) { return reply }
-    return .terminateNow
+    return MainActor.assumeIsolated {
+      if waitingForSignIn { return .terminateLater }
+      guard ChatGPTSignInModel.hasPendingSignIns else { return .terminateNow }
+      waitingForSignIn = true
+      // Unstructured tasks let the deadline bound quit even if the service is
+      // unresponsive; a task group would wait for the blocked RPC on scope exit.
+      let deadline = Task {
+        try? await Task.sleep(for: signInTerminationTimeout)
+        if !Task.isCancelled { finishSignInTermination() }
+      }
+      Task {
+        await ChatGPTSignInModel.cancelPendingSignIns()
+        deadline.cancel()
+        finishSignInTermination()
+      }
+      return .terminateLater
+    }
+  }
+
+  @MainActor private func finishSignInTermination() {
+    guard waitingForSignIn else { return }
+    waitingForSignIn = false
+    terminationReply(true)
   }
 
   /// Asks about unsaved edits; nil when there are none (the quit goes on).
