@@ -123,6 +123,7 @@ clangStdenv.mkDerivation {
       --set TSUGUMI_HOSTD ${core}/bin/tsugumi-hostd \
       ${lib.optionalString clangStdenv.hostPlatform.isLinux "--set TSUGUMI_REMOTE_TEST_RAW_WORKER ${core}/bin/tsugumi-workerd"} \
       --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
+      --set TSUGUMI_WORKERD ${core}/bin/tsugumi-workerd \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
       --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \

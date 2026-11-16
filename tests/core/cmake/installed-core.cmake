@@ -55,6 +55,7 @@ set_target_properties(tsugumi_workerd_support PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_workerd_support.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_workerd_support INTERFACE tsugumi_worker_protocol tsugumi_json)
+set(_local_service_source ${TSUGUMI_CORE_TEST_SUPPORT}/src/local_service.cc)
 set(_workerd_headers ${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-workerd)
 add_library(tsugumi_peer_tls STATIC IMPORTED)
 set_target_properties(tsugumi_peer_tls PROPERTIES
@@ -102,7 +103,7 @@ else()
   target_link_libraries(tsugumi_host_core INTERFACE ICU::uc ICU::i18n PkgConfig::CRYPTO)
 endif()
 
-foreach(program tsugumid tsugumi-hostd tsugumi-worker tsugumi-rpc)
+foreach(program tsugumid tsugumi-hostd tsugumi-worker tsugumi-workerd tsugumi-rpc)
   add_executable(${program} IMPORTED)
   set_target_properties(${program} PROPERTIES
     IMPORTED_LOCATION "${TSUGUMI_CORE_ROOT}/bin/${program}")

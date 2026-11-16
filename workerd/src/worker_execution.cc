@@ -127,8 +127,8 @@ auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& p
   }
 }
 
-auto run_invocation(WorkerPool& pool, WorkerPool::Lease& lease,
-                     const std::string& card, const std::string& key, bool reuse,
+auto run_invocation(const ReleaseWorker& release_worker, WorkerPool::Lease& lease,
+                     bool reuse,
                      const Invocation& invocation) -> InvocationResult {
   WorkerProc& worker = *lease.worker;
   InvocationResult result;
@@ -140,7 +140,7 @@ auto run_invocation(WorkerPool& pool, WorkerPool::Lease& lease,
     // Failed/dead/uncertain workers end without inspecting scratch. Transfer
     // failures retain living residents after clearing disposable call staging.
     if (between_calls && !validation_rejected && !result.outcome.failure && worker.alive()) worker.clear_scratch();
-    pool.release(card, key, std::move(lease.worker), disposition.keep, disposition.reason);
+    release_worker(std::move(lease.worker), disposition.keep, disposition.reason);
   };
   try {
     const bool local = invocation.delivery == OutputDelivery::local_paths;

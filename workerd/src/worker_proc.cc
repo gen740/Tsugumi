@@ -349,16 +349,60 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   ::setsockopt(control_fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
   alive_ = true;
+  resume_logs();
+}
+
+WorkerProc::WorkerProc(Borrowed borrowed)
+    : data_fd_(borrowed.descriptors[0]), control_fd_(borrowed.descriptors[1]),
+      out_fd_(borrowed.descriptors[2]), err_fd_(borrowed.descriptors[3]),
+      alive_(true), scratch_(std::move(borrowed.scratch)), call_id_(borrowed.call_id),
+      borrowed_(true), lease_id_(borrowed.lease),
+      borrowed_clear_(std::move(borrowed.clear)), borrowed_terminate_(std::move(borrowed.terminate)),
+      borrowed_abandon_(std::move(borrowed.abandon)) {
+  resume_logs();
+}
+
+auto WorkerProc::resume_logs() -> void {
+  if (log_thread_.joinable()) return;
+  if (::pipe(log_wake_.data()) != 0) throw std::runtime_error("cannot create log wake pipe");
+  for (int fd : log_wake_) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  stop_logs_ = false;
   log_thread_ = std::thread([this] {
     while (!stop_logs_) {
-      pollfd fds[2] = {{out_fd_, POLLIN, 0}, {err_fd_, POLLIN, 0}};
-      ::poll(fds, 2, 100);
+      pollfd fds[3] = {{out_fd_, POLLIN, 0}, {err_fd_, POLLIN, 0}, {log_wake_[0], POLLIN, 0}};
+      ::poll(fds, 3, -1);
       read_logs(false);
     }
   });
 }
 
+auto WorkerProc::stop_log_reader() -> void {
+  stop_logs_ = true;
+  if (log_thread_.joinable()) {
+    const char byte = 0;
+    const auto written = ::write(log_wake_[1], &byte, 1);
+    if (written < 0 && errno != EPIPE) log::warn("cannot wake worker log reader");
+    log_thread_.join();
+  }
+  for (auto& fd : log_wake_) close_fd(fd);
+}
+
+auto WorkerProc::hand_over() -> std::array<int, 4> {
+  stop_log_reader();
+  return {data_fd_, control_fd_, out_fd_, err_fd_};
+}
+
 WorkerProc::~WorkerProc() {
+  if (borrowed_) {
+    stop_log_reader();
+    for (auto* fd : {&data_fd_, &control_fd_, &out_fd_, &err_fd_}) close_fd(*fd);
+    // Exceptions during cleanup must not leave an active lease in workerd.
+    if (borrowed_abandon_) {
+      try { borrowed_abandon_(); }
+      catch (const std::exception& error) { log::warn(error.what()); }
+    }
+    return;
+  }
   terminate();
   std::error_code ec;
   if (!scratch_.empty()) {
@@ -375,6 +419,11 @@ WorkerProc::~WorkerProc() {
 }
 
 bool WorkerProc::alive() const {
+  if (borrowed_) {
+    if (!alive_ || data_fd_ < 0) return false;
+    pollfd state{data_fd_, 0, 0};
+    return ::poll(&state, 1, 0) >= 0 && !(state.revents & (POLLHUP | POLLERR | POLLNVAL));
+  }
   if (!alive_ || pid_ <= 0) return false;
   siginfo_t si{};
   if (::waitid(P_PID, static_cast<id_t>(pid_), &si, WEXITED | WNOHANG | WNOWAIT) == 0 && si.si_pid == pid_) return false;
@@ -388,6 +437,10 @@ void WorkerProc::set_logs(LogSink logs) {
 }
 
 void WorkerProc::clear_scratch() {
+  if (borrowed_) {
+    borrowed_clear_();
+    return;
+  }
   try {
     for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
       fs::clear_staging(d, recover_permissions_);
@@ -425,8 +478,16 @@ std::optional<uint64_t> WorkerProc::rss_bytes() const {
 #endif
 }
 
-void WorkerProc::terminate() {
+void WorkerProc::terminate(bool force) {
+  if (borrowed_) {
+    if (alive_) {
+      alive_ = false;
+      borrowed_terminate_(force);
+    }
+    return;
+  }
   if (pid_ > 0) {
+    if (force) proc::kill_group(pid_, SIGKILL);
     close_fd(data_fd_);
     close_fd(control_fd_);
     // Give a cooperative worker a moment to exit after its data socket closed.
@@ -435,8 +496,7 @@ void WorkerProc::terminate() {
     proc::wait(pid_);
     pid_ = -1;
   }
-  stop_logs_ = true;
-  if (log_thread_.joinable()) log_thread_.join();
+  stop_log_reader();
   read_logs(true);
   close_fd(out_fd_);
   close_fd(err_fd_);
@@ -506,8 +566,7 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {
-      proc::kill_group(pid_, SIGKILL);
-      terminate();
+      terminate(true);
       read_logs(true);
       outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
                                   : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");

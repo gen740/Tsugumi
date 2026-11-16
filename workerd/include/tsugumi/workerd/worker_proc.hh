@@ -4,6 +4,7 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <functional>
 #include <mutex>
@@ -87,6 +88,18 @@ class WorkerProc {
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
   explicit WorkerProc(const WorkerSpawn& spawn);
+  // A borrowed connection has no process/scratch ownership. Workerd retains
+  // that authority and performs cleanup and termination on request.
+  struct Borrowed {
+    std::array<int, 4> descriptors;
+    std::string scratch;
+    uint64_t call_id = 0;
+    uint64_t lease = 0;
+    std::function<void()> clear;
+    std::function<void(bool)> terminate;
+    std::function<void()> abandon;
+  };
+  explicit WorkerProc(Borrowed borrowed);
   ~WorkerProc();
   WorkerProc(const WorkerProc&) = delete;
 
@@ -97,11 +110,17 @@ class WorkerProc {
                      std::optional<std::chrono::steady_clock::time_point> deadline,
                      const DisplaySink& display);
   uint64_t next_call_id() { return ++call_id_; }
+  auto call_id() const -> uint64_t { return call_id_; }
+  auto set_call_id(uint64_t value) -> void { call_id_ = value; }
+  auto lease_id() const -> uint64_t { return lease_id_; }
+  auto returning_lease() -> void { borrowed_abandon_ = {}; }
+  auto hand_over() -> std::array<int, 4>;
+  auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.
   void set_logs(LogSink logs);
   // The process still runs (checked without reaping it).
   bool alive() const;
-  void terminate();
+  void terminate(bool force = false);
   std::string work_dir() const { return scratch_ + "/work"; }
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
   std::string out_dir() const { return scratch_ + "/out"; }
@@ -112,6 +131,7 @@ class WorkerProc {
   std::optional<uint64_t> rss_bytes() const;
 
  private:
+  auto stop_log_reader() -> void;
   void read_logs(bool drain);
   void send(int fd, const std::string& frame);
 
@@ -130,7 +150,13 @@ class WorkerProc {
   Utf8Decoder out_dec_;
   Utf8Decoder err_dec_;
   std::thread log_thread_;
+  std::array<int, 2> log_wake_{-1, -1};
   std::atomic<bool> stop_logs_{false};
+  bool borrowed_ = false;
+  uint64_t lease_id_ = 0;
+  std::function<void()> borrowed_clear_;
+  std::function<void(bool)> borrowed_terminate_;
+  std::function<void()> borrowed_abandon_;
 };
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.

@@ -18,6 +18,7 @@ BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
 DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "core/tsugumid"))
 MOCK_DAEMON = Path(os.environ.get("TSUGUMI_MOCK_DAEMON", BUILD / "tests/core/tsugumid-mock"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
+WORKERD = Path(os.environ.get("TSUGUMI_WORKERD", WORKER.parent / "tsugumi-workerd"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 
 # Adapter to existing crash points, not a contract asserted by test cases.
@@ -78,7 +79,7 @@ class Daemon:
                 "--run-scratch-dir", str(self.directory / "run-scratch"),
                 "--project", str(self.project), "--unix", self.unix,
                 "--listen", "127.0.0.1:0", "--control-dir", str(self.control),
-                "--worker", str(self.worker), "--sdk-dir", str(SDK),
+                "--worker", str(self.worker), "--workerd", str(WORKERD), "--sdk-dir", str(SDK),
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]
         args += self.args
         try:

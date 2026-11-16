@@ -29,7 +29,7 @@ namespace tsugumi {
 class Scheduler;
 class NixRunner;
 class ExecutionService;
-class NativeExecutionService;
+class LocalExecutionService;
 class RemoteExecutionService;
 class CacheUsage;
 
@@ -40,6 +40,7 @@ struct ServiceOptions {
   std::filesystem::path control_dir;  // launcher-managed files hidden from workers
   std::filesystem::path sdk_dir;      // installed SDK (share/tsugumi/sdk)
   std::filesystem::path worker_binary;
+  std::filesystem::path workerd_binary;
   std::string fault;                  // test-only fault injection point
   uint32_t env_cpus = 2;              // execution slot limits of the environment
   // Where build results are registered as Nix GC roots. Empty: the build
@@ -207,7 +208,7 @@ class Service : public RequestSink {
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
-  std::unique_ptr<NativeExecutionService> execution_service_;
+  std::unique_ptr<LocalExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
   std::unique_ptr<RemoteExecutionService> remote_execution_;
   std::unique_ptr<Scheduler> scheduler_;

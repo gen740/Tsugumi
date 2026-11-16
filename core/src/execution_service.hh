@@ -2,7 +2,7 @@
 // evaluating the Card, then hands the derivation and invocation to the service
 // the Card names; it validates, records and routes what comes back. A backend
 // resolves its target (prepare) and runs the invocation (execute):
-// NativeExecutionService on a native tsugumi-worker process sharing the host store,
+// LocalExecutionService borrowing a connection from local tsugumi-workerd,
 // RemoteExecutionService on a remote execution daemon with durable jobs.
 #pragma once
 
@@ -20,6 +20,7 @@
 #include "log_policy.hh"
 #include "nix.hh"
 #include "tsugumi/workerd/worker_execution.hh"
+#include "tsugumi/workerd/local.hh"
 
 namespace tsugumi {
 
@@ -95,21 +96,21 @@ class ExecutionService {
       -> std::unique_ptr<PreparedExecution> = 0;
 };
 
-class NativeExecutionService final : public ExecutionService {
+class LocalExecutionService final : public ExecutionService {
  public:
-  NativeExecutionService(Service& service, std::filesystem::path scratch_root);
+  LocalExecutionService(Service& service, std::filesystem::path scratch_root);
 
   auto reuses_builds() const -> bool override { return true; }
   auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;
-  // Runs the invocation on a worker of its Card.
+  // Runs the invocation directly on the connection workerd lends this Card.
   auto run(const ExecutionRequest& request) -> ExecutionResult;
   // Ends every worker before the build cache is cleared.
   auto clear() -> void;
 
  private:
   Service& service_;
-  WorkerPool workers_;
+  workerd::LocalWorkers workers_;
 };
 
 }  // namespace tsugumi

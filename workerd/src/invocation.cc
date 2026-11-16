@@ -149,7 +149,9 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   request.stop_before_outputs = true;
   request.log = log;
   request.display = display;
-  return workerd::run_invocation(pool, lease, spawn.card, "", false, request).outcome;
+  return workerd::run_invocation([&](auto worker, bool keep, const auto& reason) {
+    pool.release(spawn.card, "", std::move(worker), keep, reason);
+  }, lease, false, request).outcome;
 }
 
 }  // namespace

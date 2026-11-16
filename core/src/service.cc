@@ -236,7 +236,7 @@ void Service::open() {
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
                                                                  : opts_.run_scratch_dir);
-  execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
+  execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
