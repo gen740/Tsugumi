@@ -1,6 +1,7 @@
 #include "agent/helper_scope.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 #include "host/document_edits.hh"
@@ -246,48 +247,114 @@ auto HelperScope::ProjectPrefix(const std::string& path,
   Deny("project document outside readable Cards");
   return "";
 }
-auto HelperScope::SafeCollision(const std::string& message,
-                                const Reader& read) const -> bool {
-  const std::string prefix = "Concurrent edit conflicts at ";
-  if (!message.starts_with(prefix)) return false;
-  const auto end = message.find("; inspect and re-apply", prefix.size());
-  if (end == std::string::npos) return false;
-  auto cards = reads_;
-  cards.insert(writes_.begin(), writes_.end());
-  auto escape = [](const std::string& path) {
-    std::string out;
-    for (const auto c : path)
-      out += c == '/' ? "~1" : c == '~' ? "~0" : std::string(1, c);
-    return out;
-  };
-  size_t begin = prefix.size();
-  do {
-    const auto comma = std::min(message.find(", ", begin), end);
-    const auto collision = message.substr(begin, comma - begin);
-    bool visible = false;
-    for (const auto& card : cards) {
-      const auto root = Root(card, read);
-      const auto at = root.rfind("definitions/");
-      const auto id = card.substr(
-          card.rfind('/') == std::string::npos ? 0 : card.rfind('/') + 1);
-      const auto document = root.substr(0, at) + "tsugumi.json";
-      for (const auto& r : {root, escape(root)})
-        visible = visible || collision.starts_with(r + '/') ||
-                  collision.starts_with('/' + r + '~') || collision == r + '/';
-      visible = visible || collision == root + '/';
-      for (const auto& p : {document, escape(document)}) {
-        visible = visible ||
-                  collision.starts_with(p + "/canvas/connections input " + id +
-                                        ':') ||
-                  collision.starts_with('/' + p + "/canvas/cards/" + id) ||
-                  collision.starts_with(p + "/canvas/cards/" + id);
+auto HelperScope::FailureResult(const std::string &result,
+                                const Reader &read) const -> std::string {
+  if (!scoped_)
+    return result;
+  std::set<std::string> hidden, documents{"tsugumi.json"};
+  for (const auto &card : reads_) {
+    const auto root = Root(card, read);
+    documents.insert(root.substr(0, root.rfind("definitions/")) +
+                     "tsugumi.json");
+  }
+  for (const auto &path : documents) {
+    const auto text = read(path);
+    if (text.empty())
+      continue;
+    const auto canvas =
+        json::Object(json::Get(json::Object(text), "canvas", "{}"));
+    for (const auto &raw : json::Array(json::Get(canvas, "cards", "[]"))) {
+      const auto id = json::Text(json::Object(raw), "id");
+      bool visible = false;
+      for (const auto &card : reads_) {
+        const auto root = Root(card, read);
+        visible = visible || root == path.substr(0, path.size() - 12) +
+                                         "definitions/" + id;
       }
+      if (!id.empty() && !visible)
+        hidden.insert(id);
     }
-    if (!visible) return false;
-    if (comma == end) return true;
-    begin = comma + 2;
-  } while (begin < end);
-  return false;
+  }
+  const auto redact = [&](const std::string &message) {
+    std::string filtered;
+    const auto word = [](unsigned char c) {
+      return std::isalnum(c) || c >= 128 || c == '_' || c == '-' || c == '.' ||
+             c == '/' || c == '~';
+    };
+    for (size_t i = 0; i < message.size();) {
+      if (!word(message[i])) {
+        filtered += message[i++];
+        continue;
+      }
+      const auto start = i++;
+      while (i < message.size() && word(message[i]))
+        ++i;
+      auto token = message.substr(start, i - start);
+      // Scope-name redaction: hide whole Card/path tokens outside read_cards,
+      // including JSON-pointer paths. Retain the rest of the diagnostic so a
+      // helper can fix its own call without asking the parent for the failure.
+      auto decoded = token;
+      for (size_t at = 0; (at = decoded.find("~1", at)) != std::string::npos;)
+        decoded.replace(at, 2, "/");
+      if (decoded.starts_with('/'))
+        decoded.erase(0, 1);
+      bool visible_card = reads_.contains(decoded);
+      for (const auto& card : reads_)
+        visible_card = visible_card || decoded.starts_with(card + '.');
+      bool secret = false;
+      if (!visible_card)
+        for (const auto& id : hidden)
+          secret = secret || token == id || token.starts_with(id + '.') ||
+                   token.starts_with(id + '/') || decoded == id;
+      const auto dot = decoded.find('.');
+      const bool filename =
+          dot != std::string::npos && dot > 0 && dot + 1 < decoded.size() &&
+          std::isalpha(static_cast<unsigned char>(decoded[dot + 1])) &&
+          decoded != "from.port" && decoded != "to.port" &&
+          decoded != "_card.json" && decoded != "_meta.json" &&
+          decoded != "_outputs.fbs" && decoded != "tsugumi.json";
+      const bool path = decoded.find('/') != std::string::npos || filename;
+      bool visible_pointer = false;
+      for (const auto& card : reads_) {
+        const auto root = Root(card, read);
+        const auto document = root.substr(0, root.rfind("definitions/")) + "tsugumi.json";
+        const auto id = root.substr(root.rfind('/') + 1);
+        const auto pointer = document + "/canvas/cards/" + id;
+        visible_pointer = visible_pointer || decoded == pointer ||
+                          decoded.starts_with(pointer + '/') ||
+                          decoded == document + "/canvas/connections";
+      }
+      if (path && !visible_pointer && !reads_.contains(decoded)) {
+        try {
+          File(decoded, false, read);
+        } catch (const std::exception &) {
+          secret = true;
+        }
+      }
+      filtered += secret ? "[redacted]" : token;
+    }
+    return filtered;
+  };
+  const auto envelope = json::Object(result);
+  const auto failure = json::Object(json::Get(envelope, "value", "{}"));
+  json::Members safe;
+  for (const auto *key : {"kind", "current_rev", "retry_after_ms"})
+    if (failure.contains(key))
+      safe[key] = failure.at(key);
+  for (const auto *key : {"message", "diagnostic"})
+    if (failure.contains(key))
+      safe[key] = json::Quote(redact(json::Text(failure, key)));
+  std::vector<std::string> args;
+  for (const auto &raw : json::Array(json::Get(failure, "args", "[]"))) {
+    auto arg = json::Object(raw);
+    if (arg.contains("value"))
+      arg["value"] = json::Quote(redact(json::Text(arg, "value")));
+    args.push_back(json::Encode(arg));
+  }
+  if (failure.contains("args"))
+    safe["args"] = json::Encode(args);
+  return json::Encode(json::Members{{"reply", json::Quote("Failure")},
+                                    {"value", json::Encode(safe)}});
 }
 
 auto HelperScope::CheckBindings(const Reader& before, const Reader& now) const

@@ -306,8 +306,9 @@ auto ProjectOperations::Execute(const std::string& project,
                                 const OperationCall& call) -> OperationReply {
   if (project != operation.project_id ||
       !crypto::is_operation_id(operation.op_id))
-    throw Failure("invalid_request",
-                  "the operation needs its project and an operation id");
+    throw Failure("internal_error",
+                  "Internal error: the host operation has a mismatched project "
+                  "or invalid operation id; retrying will not help.");
   const auto intent = Intent(operation, context.origin);
   // Reuse the core's existing save receipt, before interpreting old values that
   // a successful first application has already changed.

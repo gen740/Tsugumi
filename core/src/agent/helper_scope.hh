@@ -33,8 +33,8 @@ public:
   auto LayoutWriteCards(const Reader &read) const -> std::set<std::string>;
   auto ProjectPrefix(const std::string& path, const Reader& read) const
       -> std::string;
-  auto SafeCollision(const std::string& message, const Reader& read) const
-      -> bool;
+  auto FailureResult(const std::string& result, const Reader& read) const
+      -> std::string;
   auto CheckBindings(const Reader& before, const Reader& now) const -> void;
   auto Graph(const std::string& text, const std::string& prefix) const
       -> std::string;

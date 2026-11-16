@@ -6,6 +6,7 @@
 #include <set>
 #include <utility>
 
+#include "document.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "util/crypto.hh"
@@ -104,6 +105,46 @@ auto Matches(const std::string& document, const Span& child,
   }
   return true;
 }
+// Remember explicitly authored input ends, including a no-op port "" edit.
+// Looking at only the final document would lose that explicit choice.
+auto MentionedInputs(const std::string &document,
+                     const H::ProjectFieldEditT &edit)
+    -> std::set<std::string> {
+  const auto tree = Spans(document).Value();
+  const Span *target = &tree;
+  for (const auto &step : edit.selector) {
+    if (!step)
+      return {};
+    const Span *next = nullptr;
+    for (const auto &child : target->children)
+      if (step->match_json.empty()
+              ? child.key == step->field
+              : Matches(document, child, json::Object(step->match_json))) {
+        next = &child;
+        break;
+      }
+    if (!next)
+      return {};
+    target = next;
+  }
+  std::set<std::string> cards;
+  for (const auto &canvas : tree.children) {
+    if (canvas.key != "canvas")
+      continue;
+    for (const auto &connections : canvas.children) {
+      if (connections.key != "connections")
+        continue;
+      for (const auto &wire : connections.children)
+        for (const auto &end : wire.children)
+          if (end.key == "to" && target->start < end.end &&
+              end.start < target->end)
+            cards.insert(json::Text(
+                json::Object(document.substr(end.start, end.end - end.start)),
+                "card"));
+    }
+  }
+  return cards;
+}
 auto SourceBytes(const std::vector<uint8_t>& value) -> std::string {
   return std::string(value.begin(), value.end());
 }
@@ -166,7 +207,9 @@ auto EditProjectField(const std::string& document,
                       edit.file_path + ": selector parent is missing");
       if (edit.old_value->present)
         throw Failure("value_conflict",
-                      edit.file_path + ": expected value is missing");
+                      edit.file_path +
+                          ": selected value is missing; write old_value as "
+                          "{\"present\":false} to insert it");
       if (!edit.new_value->present) return document;
       if (!keys.empty() && !Matches(edit.new_value->json,
                                     Spans(edit.new_value->json).Value(), keys))
@@ -187,7 +230,10 @@ auto EditProjectField(const std::string& document,
   if (!edit.old_value->present ||
       !DocumentsEqual(current, edit.old_value->json))
     throw Failure("value_conflict",
-                  edit.file_path + ": selected value differs from old_value");
+                  edit.file_path +
+                      ": selected value differs from old_value; reread the "
+                      "selected field and write old_value as {\"present\":true,"
+                      "\"value\":<current value>} before reapplying new_value");
   auto result = document;
   if (edit.new_value->present) {
     // Replacing a keyed entity must preserve the identity used to select it.
@@ -282,6 +328,8 @@ auto PrepareProjectEdits(
   if (edits.edits.empty())
     throw Failure("invalid_request", "project_edit requires at least one edit");
   std::map<std::string, std::optional<std::string>> originals, files;
+  std::map<std::string, std::set<std::string>> mentioned_inputs;
+  std::set<std::string> replaced_projects;
   auto file = [&](const std::string& path) -> std::optional<std::string>& {
     if (authorize) authorize(path);
     if (!fs::valid_relative_path(path)) throw Failure("invalid_path", path);
@@ -304,10 +352,27 @@ auto PrepareProjectEdits(
   };
   for (const auto& entry : edits.edits) {
     if (!entry) throw Failure("invalid_request", "empty project edit");
+    if (!entry->value.AsProjectFieldEdit()) {
+      const auto path = entry->value.AsProjectTextEdit()
+                            ? entry->value.AsProjectTextEdit()->file_path
+                        : entry->value.AsProjectFilePut()
+                            ? entry->value.AsProjectFilePut()->file_path
+                            : std::string{};
+      if (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))
+        replaced_projects.insert(path);
+    }
     if (const auto* field = entry->value.AsProjectFieldEdit()) {
       auto& text = file(field->file_path);
       if (!text) throw Failure("target_missing", field->file_path);
-      text = EditProjectField(*text, *field);
+      auto edited = EditProjectField(*text, *field);
+      if (field->file_path == "tsugumi.json" ||
+          field->file_path.ends_with("/tsugumi.json")) {
+        for (const auto* version : {&*text, &edited}) {
+          const auto mentioned = MentionedInputs(*version, *field);
+          mentioned_inputs[field->file_path].insert(mentioned.begin(), mentioned.end());
+        }
+      }
+      text = std::move(edited);
     } else if (const auto* replace = entry->value.AsProjectTextEdit()) {
       auto& text = file(replace->file_path);
       if (!text) throw Failure("target_missing", replace->file_path);
@@ -350,6 +415,65 @@ auto PrepareProjectEdits(
       from.reset();
     } else
       throw Failure("invalid_request", "missing project edit body");
+  }
+  // A single input and a single incoming wire leave no routing choice.
+  // Do this in the host's atomic plan only for Draft -> code, never in core
+  // resolution, and never override an explicitly authored input end.
+  std::vector<std::string> implemented;
+  for (const auto &[path, content] : files)
+    if (path.ends_with("/_card.json") &&
+        Document::is_card_meta_file(path.substr(0, path.size() - 10) + "_meta.json") &&
+        content && originals.at(path) &&
+        json::Text(json::Object(*originals.at(path)), "template") == "draft")
+      implemented.push_back(path);
+  for (const auto &path : implemented) {
+    const auto definition = json::Object(*files.at(path));
+    const auto kind = json::Text(definition, "template");
+    if (!kind.empty() && kind != "none")
+      continue;
+    const auto inputs = json::Array(json::Get(definition, "inputs", "[]"));
+    if (inputs.size() != 1)
+      continue;
+    const auto port = json::Text(json::Object(inputs.front()), "name");
+    if (!valid_id(port))
+      continue;
+    const auto at = path.rfind("definitions/");
+    if (at == std::string::npos)
+      continue;
+    const auto id = path.substr(at + 12, path.size() - at - 23);
+    if (id.find('/') != std::string::npos)
+      continue;
+    const auto project_path = path.substr(0, at) + "tsugumi.json";
+    if (replaced_projects.contains(project_path) ||
+        mentioned_inputs[project_path].contains(id))
+      continue;
+    auto &project = file(project_path);
+    if (!project || file(path.substr(0, path.size() - 10) + "_link.json"))
+      continue;
+    auto root = json::Object(*project);
+    auto canvas = json::Object(json::Get(root, "canvas", "{}"));
+    auto wires = json::Array(json::Get(canvas, "connections", "[]"));
+    size_t count = 0, candidate = 0;
+    for (size_t i = 0; i < wires.size(); ++i) {
+      const auto to =
+          json::Object(json::Get(json::Object(wires[i]), "to", "{}"));
+      if (json::Text(to, "card") == id) {
+        ++count;
+        candidate = i;
+      }
+    }
+    if (count != 1)
+      continue;
+    auto wire = json::Object(wires[candidate]);
+    auto to = json::Object(json::Get(wire, "to", "{}"));
+    if (!json::Text(to, "port").empty())
+      continue;
+    to["port"] = json::Quote(port);
+    wire["to"] = json::Encode(to);
+    wires[candidate] = json::Encode(wire);
+    canvas["connections"] = json::Encode(wires);
+    root["canvas"] = json::Encode(canvas);
+    project = PreserveProjectBytes(*project, json::Encode(root));
   }
   std::vector<std::string> changes;
   json::Members definitions;
