@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 46 requests.
+There are 47 requests.
 
 ## Connection
 
@@ -191,7 +191,8 @@ No fields.
 | --- | --- | --- |
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
-| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read incoming sources, port kinds and complete types. May help when writing a Card; routing types are resolved automatically. The host renders one SDK definition per input in language (default: the Card implementation; pass it for a Draft, or "schema" for plain tables). output_port selects an upstream output instead. No result size limit. |
+| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). For connected input definitions, input_types can read the resolved types directly. |
 | [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. To customize an approved package, save nixSources[].overrides = {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}. Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}} fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval. Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected. Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow the first time: it evaluates them, fetching what they need. |
 
 ### CardSDKPrepare
@@ -207,6 +208,15 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
+
+### InputTypes
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `output_port` | `string` |  |  |
+| `at_rev` | `uint64` |  |  |
+| `language` | `string` |  | Carried for host presentation, never interpreted by the project core. |
 
 ### OutputTypes
 
@@ -600,5 +610,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `LayoutPrepareSaveRequest` | `project: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
+| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`.

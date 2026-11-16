@@ -81,6 +81,8 @@ struct Tools {
                      json::Members& args, const std::string& operation,
                      HelperScope* boundary, std::stop_token stop,
                      std::vector<std::string>& resources) -> std::string;
+  auto InputTypesQuery(const std::string& project, json::Members args,
+                       std::stop_token stop = {}) -> Tsugumi::Host::InputTypesT;
   auto RawProjectCall(const std::string& project, const std::string& name,
                       const std::string& arguments, std::stop_token stop = {},
                       std::string* raw = nullptr) -> std::string;

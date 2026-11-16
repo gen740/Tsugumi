@@ -1,4 +1,5 @@
 #include "service.hh"
+#include "input_types.hh"
 #include "host_requirements.hh"
 
 #include <unistd.h>
@@ -403,7 +404,7 @@ std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "InputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -529,6 +530,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileListRequest: return on_lane(r, std::move(req), &Service::file_list);
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
+    case P::InputTypesRequest: return on_lane(r, std::move(req), &Service::input_types);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
@@ -1738,6 +1740,36 @@ void Service::nix_source_resolve(RequestIn& req) {
   auto hash = b.CreateString(info.nar_hash);
   auto res = R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved, res.Union()));
+}
+
+void Service::input_types(RequestIn& req) {
+  const auto* request = req.request()->value_as_InputTypesRequest();
+  auto doc = store_->current();
+  check_at_rev(request->at_rev(), *doc);
+  const auto card = wire::card_arg(request->card());
+  const auto& graph = *doc->resolution;
+  const auto* node = graph.find(card);
+  if (!node) throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
+  FBB b;
+  std::vector<flatbuffers::Offset<R::InputType>> inputs;
+  auto add = [&](const std::string& name, const Node* source,
+                 const std::string& port, const types::PortType* type) {
+    inputs.push_back(R::CreateInputType(b, b.CreateString(name),
+        source ? wire::path(b, source->path) : flatbuffers::Offset<D::CardPath>(),
+        source ? b.CreateString(port) : flatbuffers::Offset<flatbuffers::String>(),
+        type ? wire::port(b, *type) : flatbuffers::Offset<D::Port>()));
+  };
+  try {
+    const std::optional<std::string> output = request->output_port()
+        ? std::optional{request->output_port()->str()} : std::nullopt;
+    for (const auto& end : tsugumi::input_types(graph, card, output))
+      add(end.port, end.source, end.source_port, end.type);
+  } catch (const DocumentError& error) {
+    throw Failed(FailureKind::not_found, error.what());
+  }
+  auto result = R::CreateInputTypesResult(b, doc->rev,
+      b.CreateString(node->settings.language), b.CreateVector(inputs));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InputTypesResult, result.Union()));
 }
 
 void Service::output_types(RequestIn& req) {

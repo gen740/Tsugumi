@@ -521,6 +521,17 @@ struct Service::State {
       lock.unlock();
       return wire::HostReply(request.request_id, host::Format(*input));
     }
+    if (const auto* input = r->value_as_InputTypesRequest()) {
+      const auto project = input->project()->str();
+      std::vector<std::string> segments;
+      for (const auto* part : *input->card()->segments()) segments.push_back(json::Quote(part->str()));
+      json::Members args{{"card", json::Encode(json::Members{{"segments", json::Encode(segments)}})}};
+      if (input->output_port()) args["output_port"] = json::Quote(input->output_port()->str());
+      if (input->language()) args["language"] = json::Quote(input->language()->str());
+      if (input->at_rev()) args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
+      lock.unlock();
+      return wire::HostReply(request.request_id, tools->InputTypesQuery(project, std::move(args), shutdown.get_token()));
+    }
     if (r->value_as_HostVersionGraphRequest() ||
         r->value_as_HostVersionDiffRequest())
       return versions->HandleHost(request, human, lock);

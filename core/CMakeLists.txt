@@ -23,6 +23,7 @@ add_library(tsugumi_document STATIC
   src/types.cc
   src/document.cc
   src/graph.cc
+  src/input_types.cc
   src/nix_refs.cc
   src/collect_type.cc
   src/host_requirements.cc)
@@ -182,6 +183,7 @@ add_library(tsugumi_host_core STATIC
   src/host/demo_references.cc
   src/host/registry.cc
   src/host/attached_folder.cc
+  src/host/input_types.cc
   src/host/format.cc
   src/host/version_text.cc
   src/util/process.cc
@@ -228,7 +230,7 @@ target_include_directories(tsugumi_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 set(TSUGUMI_HOST_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native host service")
 target_link_libraries(tsugumi_host_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
+  Threads::Threads tsugumi_document tsugumi_sdk_describe tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
 if(TSUGUMI_HOST_SQLITE_LIBRARY)
   target_link_libraries(tsugumi_host_core PRIVATE ${TSUGUMI_HOST_SQLITE_LIBRARY})
 else()
@@ -247,8 +249,9 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bf
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_sdk_describe tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
+  install(FILES ${PROJECT_SOURCE_DIR}/sdk/describe/input.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-sdk-describe)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(FILES ${PROJECT_SOURCE_DIR}/workerd/src/journal.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-workerd)

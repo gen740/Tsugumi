@@ -131,6 +131,7 @@ clangStdenv.mkDerivation {
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
       --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \
       --set TSUGUMI_CLIENT_LIB_DIR ${core}/lib \
+      --set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests" \
       --set TSUGUMI_FLATC ${flatbuffers}/bin/flatc
   '';
   meta = {

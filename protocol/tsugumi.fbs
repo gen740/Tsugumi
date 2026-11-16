@@ -511,10 +511,37 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
+/// -> InputTypesResult. Read incoming sources, port kinds and complete types.
+/// May help when writing a Card; routing types are resolved automatically.
+/// The host renders one SDK definition per input in language (default: the
+/// Card implementation; pass it for a Draft, or "schema" for plain tables).
+/// output_port selects an upstream output instead. No result size limit.
+table InputTypesRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  output_port:string (id: 1);
+  at_rev:uint64 = null (id: 2);
+  /// Carried for host presentation, never interpreted by the project core.
+  language:string (id: 3);
+}
+
+table InputType {
+  port:string (id: 0, required);
+  source_card:Tsugumi.Data.CardPath (id: 1);
+  source_port:string (id: 2);
+  type:Tsugumi.Data.Port (id: 3);
+}
+
+table InputTypesResult {
+  rev:uint64 = null (id: 0);
+  language:string (id: 1);
+  inputs:[InputType] (id: 2);
+}
+
 /// -> OutputTypesResult. Compiles an _outputs.fbs text (nothing is saved):
 /// its reflection schema (bfbs), from which a client lists the types. With
 /// port and type_name, also the text with that port's type and kind set
-/// (File / Directory: the tsugumi attribute).
+/// (File / Directory: the tsugumi attribute). For connected input definitions,
+/// input_types can read the resolved types directly.
 table OutputTypesRequest {
   text:string (id: 0, required);
   port:string (id: 1);
@@ -812,6 +839,7 @@ union RequestPayload {
   VersionNoteRequest = 51,
   RunEnvironmentUsesRequest = 52,
   ProjectHostRequirementsRequest = 53,
+  InputTypesRequest = 54,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1152,6 +1180,7 @@ union ReplyPayload {
   VersionNote = 39,
   EnvironmentUsePage = 40,
   ProjectHostRequirements = 41,
+  InputTypesResult = 42,
 }
 
 // ---- Notifications -----------------------------------------------------------

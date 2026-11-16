@@ -23,6 +23,7 @@
     "ArtifactReadRequest",
     "LogRangeRequest",
     "OutputTypesRequest",
+    "InputTypesRequest",
     "VersionGraphRequest",
     "VersionCanvasRequest",
     "NixSourceResolveRequest",

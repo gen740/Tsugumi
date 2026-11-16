@@ -55,7 +55,7 @@ auto RequestMessages(const std::vector<Message>& messages,
             (call.name == "project_shell" || call.name == "project_file_read" ||
              call.name == "attached_folder_read"))
           block.text = FileResultForModel(block.text, result_limit, reference);
-        else
+        else if (call.name != "input_types")
           block.text = ClipMiddle(block.text, result_limit, reference);
       }
     }
