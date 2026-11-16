@@ -280,7 +280,8 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
                       t->available, c.resource_limits, c.max_jobs,
-                      t->heartbeat_interval_seconds, t->missed_heartbeats, t->grade});
+                      t->heartbeat_interval_seconds, t->missed_heartbeats, t->grade,
+                      t->unavailable_reason});
   }
   return targets;
 }

@@ -28,6 +28,7 @@ struct RemoteTarget {
   uint32_t heartbeat_interval_seconds = 15;
   uint32_t missed_heartbeats = 0;
   uint64_t grade = 0;
+  std::string unavailable_reason;
 };
 
 struct RemoteJobState {

@@ -247,8 +247,30 @@ auto AgentExclude::Filter(const std::string &raw,
 }
 auto AgentExclude::CheckSave(const j::Members &plan, const SaveBase &base) const
     -> void {
+  const auto hidden_tree = [&](const std::string& path) {
+    const auto resolved = Resolve(root_ / path);
+    return Contains(path) || std::any_of(paths_.begin(), paths_.end(), [&](const auto& entry) {
+      return Under(resolved, Resolve(entry));
+    });
+  };
+  const auto hidden_definition = [&](const std::string& dir) {
+    if (hidden_tree(dir)) return true;
+    const auto link = base.files.find(dir + "/_link.json");
+    if (link == base.files.end()) return false;
+    const auto prefix = dir.substr(0, dir.rfind("definitions/"));
+    return hidden_tree(prefix + "externals/" + j::Text(j::Object(link->second), "external"));
+  };
   auto document = [&](const std::string &path, const std::string &bytes) {
     Check(path);
+    const auto before = base.files.contains(path) ? base.files.at(path) : "{}";
+    if (path.ends_with("/_link.json")) {
+      const auto old = j::Object(before), after = j::Object(bytes);
+      const auto external = j::Text(old, "external");
+      const auto prefix = path.substr(0, path.rfind("definitions/"));
+      if (!external.empty() && external != j::Text(after, "external") &&
+          hidden_tree(prefix + "externals/" + external))
+        throw Failure("not_found", "Card not found");
+    }
     const bool project_document =
         path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json");
     const bool layout_document =
@@ -257,13 +279,25 @@ auto AgentExclude::CheckSave(const j::Members &plan, const SaveBase &base) const
       return;
     const auto prefix =
         path.substr(0, path.size() - (project_document ? 12 : 11));
-    const auto before = base.files.contains(path) ? base.files.at(path) : "{}";
     const auto old = j::Object(before), after = j::Object(bytes);
     if (path == "tsugumi.json" &&
         !DocumentsEqual(j::Get(old, "agentExclude", "null"),
                         j::Get(after, "agentExclude", "null")))
       throw Failure("permission_denied",
                     "Only a person can change agentExclude");
+    if (project_document) {
+      const auto old_graph = j::Object(j::Get(old, "canvas", "{}"));
+      const auto new_graph = j::Object(j::Get(after, "canvas", "{}"));
+      const auto cards = j::Array(j::Get(new_graph, "cards", "[]"));
+      for (const auto& raw : j::Array(j::Get(old_graph, "cards", "[]"))) {
+        const auto id = j::Text(j::Object(raw), "id");
+        if (hidden_definition(prefix + "definitions/" + id) &&
+            std::none_of(cards.begin(), cards.end(), [&](const auto& card) {
+              return j::Text(j::Object(card), "id") == id;
+            }))
+          throw Failure("not_found", "Card not found");
+      }
+    }
     // A whole-document replacement cannot delete or modify hidden graph items.
     const auto difference = [](const auto &self, const std::string &full,
                                const std::string &visible) -> std::string {
@@ -317,17 +351,23 @@ auto AgentExclude::CheckSave(const j::Members &plan, const SaveBase &base) const
     else if (type == "PutDefinition" || type == "RemoveDefinition") {
       const auto dir = "definitions/" + j::Text(value, "id");
       Check(dir);
+      if (type == "RemoveDefinition" && hidden_definition(dir))
+        throw Failure("not_found", "Card not found");
       for (const auto *file : {"_card.json", "_meta.json", "_link.json"})
         Check(dir + '/' + file);
+      if (type == "PutDefinition")
+        document(dir + "/_link.json", j::Text(value, "link_json", "{}"));
     } else if (value.contains("path")) {
       const auto path = j::Text(value, "path");
       Check(path);
+      if (type == "RemoveSource" && path.ends_with("/_link.json"))
+        document(path, "{}");
       if (type == "PutSource" &&
           (path == "tsugumi.json" || path == "layout.json" ||
-           IsExternalDocument(path, "tsugumi.json") || IsExternalDocument(path, "layout.json")))
+           IsExternalDocument(path, "tsugumi.json") || IsExternalDocument(path, "layout.json") || path.ends_with("/_link.json")))
         document(path, Bytes(j::Get(value, "bytes")));
       if (type == "PatchSource" &&
-          (IsExternalDocument(path, "tsugumi.json") || IsExternalDocument(path, "layout.json"))) {
+          (IsExternalDocument(path, "tsugumi.json") || IsExternalDocument(path, "layout.json") || path.ends_with("/_link.json"))) {
         if (!base.files.contains(path)) throw Failure("not_found", "Path not found");
         const auto& original = base.files.at(path);
         std::string patched;

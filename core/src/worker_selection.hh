@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -23,11 +24,17 @@ inline auto select_worker(std::span<const WorkerCandidate> workers,
                           std::string_view service = "auto",
                           std::string_view resident = {}) -> WorkerSelection {
   WorkerSelection result;
+  const bool keep_resident = !resident.empty() &&
+      std::any_of(workers.begin(), workers.end(), [&](const auto& worker) {
+        return worker.id == resident &&
+            (service == "auto" || service == worker.id) &&
+            (!condition || condition->matches(worker.grade));
+      });
   for (size_t i = 0; i < workers.size(); ++i) {
     const auto& worker = workers[i];
     if (service != "auto" && service != worker.id) continue;
-    if (!resident.empty() && resident != worker.id) continue;
-    if (resident.empty() && condition && !condition->matches(worker.grade)) continue;
+    if (keep_resident && resident != worker.id) continue;
+    if (condition && !condition->matches(worker.grade)) continue;
     result.matches = true;
     if (!worker.free) continue;
     if (!result.index || worker.grade < workers[*result.index].grade) result.index = i;

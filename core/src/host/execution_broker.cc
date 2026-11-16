@@ -418,8 +418,14 @@ struct ExecutionBroker::State {
             auto grant = db.prepare("SELECT generation FROM project_services "
                                     "WHERE project=? AND service=?");
             grant.bind(1, q.text(1)).bind(2, e.id);
-            target->available = e.id == "local" || (grant.step() && grant.text(0) == e.generation &&
-                                !e.capabilities.server_id.empty());
+            const bool approved = e.id == "local" ||
+                (grant.step() && grant.text(0) == e.generation);
+            target->available = e.id == "local" ||
+                (approved && !e.capabilities.server_id.empty());
+            if (!target->available)
+              target->unavailable_reason = "Worker " + e.id +
+                  (approved ? " needs its registration verified in settings"
+                            : " needs a person's approval for this project");
             target->capabilities =
                 std::make_unique<R::CapabilitiesT>(e.capabilities);
             catalog.services.push_back(std::move(target));

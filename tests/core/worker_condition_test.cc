@@ -388,4 +388,15 @@ TEST(WorkerSelection, ResidentWaitsForItsOwnWorker) {
   workers[1].free = true;
   EXPECT_EQ(select_worker(workers, nullptr, "auto", "resident").index, 1);
 }
+TEST(WorkerSelection, ChangedConditionDiscardsIneligibleResident) {
+  auto compiled = worker_condition::compile({"simple", "x >= 10"});
+  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  const std::array workers{WorkerCandidate{"local", 0, true},
+                           WorkerCandidate{"remote", 10, true}};
+  EXPECT_EQ(select_worker(workers, nullptr, "auto", "local").index, 0);
+  EXPECT_EQ(select_worker(workers, condition.get(), "auto", "local").index, 1);
+  EXPECT_FALSE(select_worker(std::span(workers).first(1), condition.get(), "auto", "local").matches);
+  EXPECT_EQ(select_worker(workers, condition.get(), "auto", "removed-worker").index, 1);
+  EXPECT_EQ(select_worker(workers, nullptr, "remote", "local").index, 1);
+}
 }  // namespace tsugumi
