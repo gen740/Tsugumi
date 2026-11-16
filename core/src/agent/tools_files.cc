@@ -199,10 +199,10 @@ auto Tools::FileOperation(const std::string& conversation,
     std::lock_guard lock(mutex);
     root = registry.Root(project);
   }
-  const auto private_path =
-      ".tsugumi/agent-files/" + crypto::sha256_hex(conversation) +
-      (boundary && !boundary->scratch_identity().empty()
-           ? "/helpers/" + crypto::sha256_hex(boundary->scratch_identity()) : "");
+  const auto private_path = ".tsugumi/agent-files/" + conversation +
+                            (boundary && !boundary->scratch_identity().empty()
+                                 ? "/helpers/" + boundary->scratch_identity()
+                                 : "");
   const auto scratch_path = private_path + "/scratch";
   std::filesystem::create_directories(root / scratch_path);
   std::map<std::string, std::string> hashes;

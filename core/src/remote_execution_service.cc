@@ -161,10 +161,12 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
             service_.store().state_dir() / "modules",
             node.outputs, [&](LogStream stream, const std::string& line) { output.logs.emplace_back(stream, line); },
             request.display, request.detach);
-        if (!result.environment.id.empty()) {
-          s.environment_id = result.environment.id;
+        if (!result.environment.paths.empty()) {
           s.build_cached = !result.built;
-          history.write_sync([&](sql::Db& db) { History::put_environment(db, s.run_id, result.environment); });
+          history.write_sync([&](sql::Db &db) {
+            s.environment_id =
+                History::put_environment(db, s.run_id, result.environment);
+          });
         }
         output.outcome = std::move(result.worker);
         if (output.outcome.failure) s.execution_state = RemoteExecutionState::failed;
@@ -252,10 +254,9 @@ auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_
   if (relative.empty() || *relative.begin() == ".." || !fs::resolves_inside(out_dir, path))
     throw Failed(FailureKind::output_invalid,
                  "remote artifact is outside the output directory");
-  const auto& id = inv.execution_job_id;
   ArtifactData artifact;
-  artifact.artifact_id = id.substr(0, 8) + "-" + id.substr(8, 4) + "-" + id.substr(12, 4) + "-" +
-                         id.substr(16, 4) + "-" + id.substr(20, 12);
+  artifact.artifact_id = inv.run_id + "/" + path_key(inv.card) + "/" +
+                         std::to_string(inv.invocation) + "/" + value.name;
   artifact.run_id = inv.run_id;
   artifact.card = inv.card;
   artifact.invocation = inv.invocation;

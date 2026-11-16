@@ -111,16 +111,19 @@ inline auto DescribeOperation(
       std::vector<json::Members> matches;
       for (const auto &row : json::Array(json::Get(graph, "commits", "[]"))) {
         const auto commit = json::Object(row);
-        bool match = json::Text(commit, "id") == requested;
-        // Require a full core-reported commit ID, so a moving ref cannot change
-        // what an approved call affects. The model can read version_graph
-        // first.
+        bool match =
+            requested.size() >= 7 && requested.size() <= 40 &&
+            requested.find_first_not_of("0123456789abcdef") == requested.npos &&
+            json::Text(commit, "id").starts_with(requested);
+        // Resolve an unambiguous core-reported object prefix; a moving ref
+        // cannot change what an approved call affects. The model can read
+        // version_graph first.
         if (match)
           matches.push_back(commit);
       }
       if (matches.size() != 1)
         throw std::runtime_error(
-            "use a full commit ID returned by version_graph");
+            "use an unambiguous commit ID returned by version_graph");
       targets["version"] = json::Encode(matches.front());
     }
     targets["effect"] = json::Quote(

@@ -1,4 +1,5 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
+#include <regex>
 #include <set>
 
 #include "agent/json.hh"
@@ -686,7 +687,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
             "project_inspect");
-  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "pending-read");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "1");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
             "{}");
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
@@ -712,7 +713,7 @@ TEST_F(AgentProjectFixture,
             "tool_result");
   EXPECT_EQ(
       JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
-      "pending-read");
+      "1");
   EXPECT_TRUE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"));
   EXPECT_EQ(JsonString(model.Requests()[1], "/messages/3/content/0/text"),
             "Do something else instead");
@@ -1063,17 +1064,15 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
     }
     return ids;
   };
-  const std::vector<std::string> expected{"inspect-0", "inspect-1",
-                                          "inspect-2"};
+  const std::vector<std::string> expected{"1", "2", "3"};
   EXPECT_EQ(calls(state), expected) << state;
-  EXPECT_EQ(
-      JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
-          .find("Inspect the demos three times."),
-      0u);
+  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+                .find("Inspect the demos three times."),
+            0u);
   EXPECT_EQ(
       JsonString(state,
                  "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
-      "inspect-0");
+      "1");
   // A restart reads the same messages from what was saved.
   external.reset();
   human.reset();
@@ -1471,13 +1470,12 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   // Tool results carry their payload in content, not a text block's text.
   EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/type"),
             "tool_result");
-  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/tool_use_id"),
-            "long-helper");
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/tool_use_id"), "1");
   EXPECT_FALSE(JsonBool(requests[2], "/messages/2/content/0/is_error"));
   const auto result = JsonString(requests[2], "/messages/2/content/0/content");
   EXPECT_TRUE(JsonBool(result, "/0/shortened"));
   EXPECT_EQ(JsonString(result, "/0/conversation_id"), conversation);
-  EXPECT_EQ(JsonString(result, "/0/call_id"), "long-helper");
+  EXPECT_EQ(JsonString(result, "/0/call_id"), "1");
   EXPECT_NE(JsonString(result, "/0/notice").find("full"), std::string::npos);
   EXPECT_LE(JsonString(result, "/0/report").size(), 8192u);
   EXPECT_TRUE(
@@ -1500,7 +1498,7 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
       Tool(
           conversation, "delegate",
           R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
-          "long-helper")
+          "1")
           .Code()
           .empty());
   EXPECT_EQ(model.Requests().size(), 3u);
@@ -1516,6 +1514,81 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/outputTokens"), 20u);
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheReadTokens"), 7u);
   EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheWriteTokens"), 3u);
+}
+
+TEST_F(AgentFixture,
+       ServiceCallNumbersSurviveRestartAndDoNotRetainProviderIds) {
+  ModelServer model;
+  const std::string provider_id = "call_0123456789abcdef0123456789abcdef";
+  model.Queue(AnthropicTool(provider_id, "demo_list", "{}"));
+  model.Queue(AnthropicText("Done."));
+  Configure(model);
+  const auto conversation = Conversation("numbered-calls");
+  ASSERT_TRUE(Send(conversation, "List demos.").Code().empty());
+  const auto first = WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/1/content/0/id"), "1");
+  EXPECT_EQ(
+      JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
+      "1");
+  EXPECT_EQ(first.find(provider_id), std::string::npos);
+  human.reset();
+  external.reset();
+  host.reset();
+  service.Stop();
+  StartHost();
+  model.Queue(AnthropicTool(provider_id, "demo_list", "{}"));
+  model.Queue(AnthropicText("Again."));
+  ASSERT_TRUE(Send(conversation, "List again.", "turn-2").Code().empty());
+  const auto second = WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 4u);
+  EXPECT_EQ(JsonString(model.Requests()[3], "/messages/5/content/0/id"), "2");
+  EXPECT_EQ(
+      JsonString(model.Requests()[3], "/messages/6/content/0/tool_use_id"),
+      "2");
+  EXPECT_EQ(second.find(provider_id), std::string::npos);
+  const auto reserved =
+      Call(*external, A::RequestPayload::CallIdRequest, [&](Builder &b) {
+        return A::CreateCallIdRequest(b, b.CreateString(conversation)).Union();
+      });
+  ASSERT_TRUE(reserved.Code().empty());
+  EXPECT_EQ(JsonString(reserved.View(), "/id"), "3");
+}
+
+TEST_F(AgentProjectFixture,
+       RecordedToolResultShapesContainOnlyShortServiceReferences) {
+  StartProject();
+  ModelServer model;
+  model.Queue(AnthropicTool("call_0123456789abcdef0123456789abcdef",
+                            "project_inspect", "{}"));
+  model.Queue(AnthropicText("Inspected."));
+  Configure(model);
+  const auto created = Call(
+      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder &b) {
+        return A::CreateConversationCreateRequest(b, 0,
+                                                  b.CreateString(project_id))
+            .Union();
+      });
+  ASSERT_TRUE(created.Code().empty()) << created.View();
+  const auto conversation = created.Value()
+                                ->value_as_ConversationResult()
+                                ->conversation()
+                                ->id()
+                                ->str();
+  EXPECT_TRUE(std::regex_match(
+      conversation, std::regex("[23456789abcdefghjkmnpqrstuvwxyz]{6}")));
+  Grant(conversation);
+  ASSERT_TRUE(
+      Send(conversation, "Inspect the current project.").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  const auto body = JsonString(requests[1], "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(body, "/value/project_id").size(), 6u);
+  EXPECT_FALSE(std::regex_search(
+      body, std::regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")));
+  EXPECT_EQ(body.find("call_"), std::string::npos);
+  EXPECT_EQ(JsonString(requests[1], "/messages/2/content/0/tool_use_id"), "1");
 }
 
 }  // namespace

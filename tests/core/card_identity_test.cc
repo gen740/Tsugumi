@@ -159,8 +159,9 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
   fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "layout.json", "{}");
   fs::write_atomic(root / "externals/child/tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / ".tsugumi/card-ids", "CASE\n");
   std::set<std::string> ids;
-  std::regex shape("aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}");
+  std::regex shape("aggregate(?:-[1-9][0-9]*)?");
   {
     Store store({root, ""});
     store.open();
@@ -175,18 +176,26 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
     EXPECT_THROW(store.allocate_card_id("A", "externals/../"), Failed);
     EXPECT_THROW(store.allocate_card_id("", ""), Failed);
     EXPECT_THROW(store.allocate_card_id(std::string(124, 'a'), ""), Failed);
-    EXPECT_EQ(store.allocate_card_id(std::string(123, 'a'), "").size(), 128u);
+    EXPECT_EQ(store.allocate_card_id(std::string(123, 'a'), "").size(), 123u);
     EXPECT_THROW(store.allocate_card_id("集計", ""), Failed);
-    EXPECT_TRUE(store.allocate_card_id("Already_Chosen", "").starts_with("Already_Chosen-"));
+    EXPECT_EQ(store.allocate_card_id("CASE", ""), "case-2");
+    EXPECT_EQ(store.allocate_card_id("Already_Chosen", ""), "already_chosen");
+    EXPECT_EQ(store.allocate_card_id("already_chosen", ""), "already_chosen-2");
+    fs::write_atomic(root / "definitions/occupied/_card.json",
+                     R"({"template":"draft"})");
+    EXPECT_EQ(store.allocate_card_id("occupied", ""), "occupied-2");
   }
   Store store({root, ""});
   store.open();
   EXPECT_TRUE(ids.insert(store.allocate_card_id("aggregate", "")).second);
   EXPECT_TRUE(std::regex_match(store.allocate_card_id("aggregate", "externals/child/"), shape));
-  EXPECT_TRUE(std::regex_match(store.allocate_card_id("aggregate", "externals/child/externals/inner/"), shape));
+  EXPECT_TRUE(std::regex_match(
+      store.allocate_card_id("aggregate", "externals/child/externals/inner/"),
+      shape));
   auto reservations = fs::read_file(root / ".tsugumi/card-ids").value();
-  for (const auto& id : ids) EXPECT_NE(reservations.find(id + '\n'), std::string::npos);
+  for (const auto &id : ids)
+    EXPECT_NE(reservations.find(id + '\n'), std::string::npos);
 }
 
-}  // namespace
-}  // namespace tsugumi
+} // namespace
+} // namespace tsugumi

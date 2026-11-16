@@ -43,7 +43,8 @@ auto Bytes(const std::string& raw) -> std::string {
 }
 }  // namespace
 
-auto PrepareAgentSave(json::Members args, const ProjectRead& read)
+auto PrepareAgentSave(json::Members args, const ProjectRead &read,
+                      const host::comments::ReserveComment &reserve)
     -> AgentSave {
   const auto snapshot = read("project_inspect", {});
   if (Integer(json::Get(snapshot, "rev")) !=
@@ -204,7 +205,8 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read)
         comments::is_meta(path) && after.contains(path)) {
       const auto original = after.at(path);
       after[path] = comments::stamped(
-          original, comments::card_of(path, after).value_or(path), was, cards);
+          original, comments::card_of(path, after).value_or(path), was, cards,
+          reserve);
       if (kind == "PutDefinition") {
         c["meta_json"] = json::Quote(after.at(path));
         c.erase("keep_meta");

@@ -73,8 +73,8 @@ enum SmokeTest {
 
         // Layout-only UI data (notes, groups, collapse, hidden output frame) passes the core schema.
         let first = s.cards(in: []).compactMap { $0["id"]?.string }.prefix(2).map { $0 }
-        _ = s.addNote(in: [], at: CGPoint(x: 10, y: 400))
-        _ = s.addGroup(Set(first), in: [])
+        _ = try await s.addNote(in: [], at: CGPoint(x: 10, y: 400))
+        _ = try await s.addGroup(Set(first), in: [])
         s.setCollapsed([first[0]], true)
         if let shown = s.resolution.keys.first(where: { s.displays[$0] != nil }) {
           s.closeDisplayFrame(shown)

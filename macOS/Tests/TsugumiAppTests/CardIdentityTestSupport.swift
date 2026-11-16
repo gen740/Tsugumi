@@ -2,7 +2,7 @@ import Foundation
 @testable import TsugumiApp
 
 /// Deterministic RPC boundary for presentation fixtures; core identity tests
-/// exercise the real allocator and its salt independently.
+/// exercise the real allocator independently.
 @MainActor func withTestCardIds(_ session: ProjectSession) -> ProjectSession {
   session.prepareSubgraph = { project, cards, id in
     let env = ProcessInfo.processInfo.environment
@@ -59,6 +59,18 @@ import Foundation
     var n = 2
     while used.contains(id) || issued.contains(prefix + id) { id = "\(stem)-\(n)"; n += 1 }
     issued.insert(prefix + id)
+    return id
+  }
+  var references: [String: Set<String>] = [:]
+  session.referenceIdProvider = { kind, scope, occupied in
+    let key = kind + ":" + scope
+    var used = (references[key] ?? []).union(occupied)
+    let prefix = kind == "comment" ? "" : kind + "-"
+    var number = used.count + 1
+    while used.contains(prefix + String(number)) { number += 1 }
+    let id = prefix + String(number)
+    used.insert(id)
+    references[key] = used
     return id
   }
   return session

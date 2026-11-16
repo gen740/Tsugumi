@@ -23,6 +23,18 @@ export function cardIds<T extends ProjectSession>(s: T): T {
     issued.add(prefix + id)
     return id
   }
+  const references = new Map<string, Set<string>>()
+  s.referenceIdProvider = async (kind, scope, occupied) => {
+    const key = kind + ':' + scope
+    const used = new Set([...(references.get(key) ?? []), ...occupied])
+    const prefix = kind === 'comment' ? '' : kind + '-'
+    let number = used.size + 1
+    while (used.has(prefix + number)) number++
+    const id = prefix + number
+    used.add(id)
+    references.set(key, used)
+    return id
+  }
   return s
 }
 

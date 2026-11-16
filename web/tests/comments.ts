@@ -30,9 +30,9 @@ const session = () => {
   assert.equal(get(s.cardMeta(k), 'comments'), undefined)
 
   const before = saves()
-  s.addComment(k, '  y 軸を対数に  ')
+  await s.addComment(k, '  y 軸を対数に  ')
   assert.equal(saves(), before + 1, 'a comment is saved at once')
-  s.addComment(k, '   ')
+  await s.addComment(k, '   ')
   assert.equal(s.comments(k).length, 1, 'an empty comment is not written')
   const [first] = s.comments(k)
   assert.equal(first.text, 'y 軸を対数に')
@@ -41,7 +41,7 @@ const session = () => {
   assert.deepEqual(s.cardsWithOpenComments([]), [k])
   assert.ok(s.cardDetails(k).some((l) => l.includes('y 軸を対数に')), 'the hover says what is asked')
 
-  s.addComment(k, '軸に名前を')
+  await s.addComment(k, '軸に名前を')
   s.edit((x) => x.setCommentText(k, first.id, '両軸を対数に'))
   assert.deepEqual(s.comments(k).map((c) => c.text), ['両軸を対数に', '軸に名前を'])
   s.edit((x) => x.setCommentText(k, first.id, '  '))
@@ -72,7 +72,7 @@ const session = () => {
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
-  s.addComment(k, 'one')
+  await s.addComment(k, 'one')
   assert.equal(str(get(s.cardMeta(k), 'description')), 'Plots')
   await s.undo()
   assert.deepEqual(s.comments(k), [])
@@ -84,7 +84,7 @@ const session = () => {
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
   s.setCardDefinition(k, { card: parse('{}'), link: parse('{"external":"inner"}') })
-  s.addComment(k, 'split this')
+  await s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
   assert.equal(str(get(s.cardDefinitionDraft(k)?.link, 'external')), 'inner', 'it stays a Card in Card')
 }
@@ -94,7 +94,7 @@ const session = () => {
   // A Draft takes comments as any Card.
   const { s } = session()
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
-  s.addComment(k, 'think about units')
+  await s.addComment(k, 'think about units')
   assert.deepEqual(s.cardsWithOpenComments([]), [k])
 }
 
@@ -102,7 +102,7 @@ const session = () => {
   // Who did what: the user's marks here, and what the core recorded of the Agent's.
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
-  s.addComment(k, 'mine')
+  await s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
   s.edit((x) => x.setCommentText(k, c.id, 'mine, reworded'))
@@ -134,12 +134,12 @@ console.log('comments: ok')
 {
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
-  s.addComment(k, 'Read only: [source](card:a?file=src%2Fmain.py&lines=2-4) uses a clock.', true)
+  await s.addComment(k, 'Read only: [source](card:a?file=src%2Fmain.py&lines=2-4) uses a clock.', true)
   assert.equal(s.comments(k)[0].finding, true)
   assert.equal(s.openComments(k).length, 1, 'Kept observations remain visible as comments')
   assert.deepEqual(s.changeRequests(k), [])
   assert.deepEqual(s.cardsWithOpenComments([]), [], 'A kept finding does not trigger generation')
-  s.addComment(k, 'Change the clock to an explicit input')
+  await s.addComment(k, 'Change the clock to an explicit input')
   assert.equal(s.changeRequests(k).length, 1)
   assert.deepEqual(s.cardsWithOpenComments([]), [k])
 }

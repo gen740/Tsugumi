@@ -17,6 +17,7 @@
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/format.hh"
+#include "host/identifiers.hh"
 #include "host/layout_saving.hh"
 #include "host/layout_service.hh"
 #include "host/save.hh"
@@ -48,6 +49,7 @@ auto LayoutToolFailure(const std::string& kind, const std::string& message)
 auto ToolOutput(std::string_view raw, bool error,
                 std::vector<std::string> resources) -> ToolResult {
   auto split = SplitToolImages(raw);
+  split.text = host::AgentReferences(split.text);
   return {std::move(split.text), error, std::move(split.images),
           std::move(resources)};
 }
@@ -256,7 +258,12 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                                "and re-apply your input.");
     if (check) check(latest.base);
     original.erase("save_intent");
-    auto prepared = PrepareAgentSave(original, read);
+    auto prepared = PrepareAgentSave(
+        original, read, [&](const auto &card, const auto &occupied) {
+          std::lock_guard lock(mutex);
+          return host::ReserveOrdinal(
+              db, "annotation:" + project + ":comment:" + card, "", occupied);
+        });
     prepared.arguments = json::Object(PrepareLayoutSave(
         project, json::Encode(prepared.arguments), stop, may_write));
     host::RestrictAgentRequest("project_save", prepared.arguments);
@@ -715,9 +722,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                        "helpers WHERE conversation=?");
       q.bind(1, conversation);
       while (q.step()) {
-        const auto scope =
-            crypto::sha256_hex(q.text(0) + ":" + std::to_string(q.i64(1))) +
-            ":";
+        const auto scope = q.text(0) + "." + std::to_string(q.i64(1)) + ".";
         if (!call.id.starts_with(scope)) continue;
         saved = ParseMessages(q.text(2));
         if (!q.text(3).empty()) {
@@ -1011,10 +1016,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (spec->mutating) args.erase("op_id");
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
                                          json::Encode(args));
-  const auto op = crypto::sha256_hex(conversation + ":" + call.id);
-  auto op_id = op.substr(0, 8) + "-" + op.substr(8, 4) + "-4" +
-               op.substr(13, 3) + "-8" + op.substr(17, 3) + "-" +
-               op.substr(20, 12);
+  auto op_id = conversation + "-" + call.id;
   if (spec->mutating) {
     if (spec->has_origin) args["origin"] = json::Quote("agent");
     args["op_id"] = json::Quote(op_id);
@@ -1236,7 +1238,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         result = EditProjectTool(conversation, project, call, args, op_id,
                                  boundary, false, stop);
       } else {
-        op_id = crypto::uuid4();
+        op_id += "-approved";
         args["op_id"] = json::Quote(op_id);
         {
           std::lock_guard lock(mutex);
@@ -1335,9 +1337,26 @@ auto Tools::ExecuteTool(const std::string& conversation,
   return ToolOutput(result, error, std::move(resources));
 }
 
+auto Tools::AllocateCall(const std::string &conversation,
+                         const std::string &scope) -> std::string {
+  std::lock_guard lock(mutex);
+  auto &store = conversations->ConversationDatabase(conversation);
+  auto q =
+      store.prepare("INSERT INTO call_counters VALUES(?,?,1) ON "
+                    "CONFLICT(conversation,scope) DO UPDATE SET value=value+1 "
+                    "WHERE value<9223372036854775807 RETURNING value");
+  q.bind(1, conversation).bind(2, scope);
+  if (!q.step())
+    throw Failure("persistence_failed", "Cannot allocate a tool call");
+  return std::to_string(q.i64(0));
+}
+
 auto Tools::Hooks(const std::string& id, bool helper,
                   std::shared_ptr<HelperScope> boundary) -> RuntimeHooks {
   RuntimeHooks hooks;
+  hooks.allocate_call = [this, id, boundary] {
+    return AllocateCall(id, boundary ? boundary->identity : "");
+  };
   hooks.authorize_context = [this, id](const auto& messages) {
     access_service.AuthorizeContext(id, messages);
   };
@@ -1495,6 +1514,14 @@ auto Tools::Handle(const RequestIn& request, bool human,
     -> std::string {
   const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
   switch (r->value_type()) {
+  case A::RequestPayload::CallIdRequest: {
+    const auto conversation =
+        r->value_as_CallIdRequest()->conversation_id()->str();
+    conversations->OwnConversation(conversation, human);
+    A::CallIdT result;
+    result.id = AllocateCall(conversation);
+    return wire::AgentReply(request.request_id, std::move(result));
+  }
     case A::RequestPayload::ToolCatalogRequest: {
       A::ToolCatalogT result;
       for (const auto& spec : Specs()) {

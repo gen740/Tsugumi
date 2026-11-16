@@ -649,7 +649,6 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   if (const auto* post = schema::get(manifest.post_run)) build.post_run = *post;
   if (const auto* views = schema::get(manifest.views)) build.views = *views;
   build.environment.paths = std::move(res.closure);
-  build.environment.id = crypto::sha256_hex(build.environment.derivation + "\n" + build.environment.manifest + "\n" + build.environment.system);
   build.key = build.environment.manifest;
   build.cached = !res.built;
   return plan;

@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -219,6 +219,13 @@ enum ServiceWire {
         let v = Tsugumi_Host_ExecutionProjectRevokeRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         return (Tsugumi_Host_RequestPayload.executionprojectrevokerequest.rawValue, v)
+      case "IdentifierReserveRequest":
+        let v = Tsugumi_Host_IdentifierReserveRequestT()
+        v.projectId = fields["project_id"] as? String ?? ""
+        v.kind = fields["kind"] as? String ?? ""
+        v.scope = fields["scope"] as? String
+        v.occupied = (fields["occupied"] as? [String] ?? []).map(Optional.some)
+        return (Tsugumi_Host_RequestPayload.identifierreserverequest.rawValue, v)
       case "HostRecentListRequest": return (Tsugumi_Host_RequestPayload.hostrecentlistrequest.rawValue, Tsugumi_Host_HostRecentListRequestT())
       case "HostProjectDefaultsRequest": return (Tsugumi_Host_RequestPayload.hostprojectdefaultsrequest.rawValue, Tsugumi_Host_HostProjectDefaultsRequestT())
       case "HelloRequest":
@@ -304,6 +311,10 @@ enum ServiceWire {
       }
     } else {
       switch method {
+      case "CallIdRequest":
+        let v = Tsugumi_Agent_CallIdRequestT()
+        v.conversationId = fields["conversation_id"] as? String ?? ""
+        return (Tsugumi_Agent_RequestPayload.callidrequest.rawValue, v)
       case "ToolCatalogRequest": return (Tsugumi_Agent_RequestPayload.toolcatalogrequest.rawValue, Tsugumi_Agent_ToolCatalogRequestT())
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
@@ -520,6 +531,7 @@ enum ServiceWire {
 
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
+    case let v as Tsugumi_Host_IdentifierT: return ["id": v.id]
     case let v as Tsugumi_Host_FileFormatResultT: return ["result": v]
     case let v as Tsugumi_RPC_VersionGraphT: return ["result": v]
     case let v as Tsugumi_Host_VersionDiffT: return ["result": v]
@@ -678,6 +690,7 @@ enum ServiceWire {
       out["isError"] = v.isError
       out["images"] = try v.images.compactMap { try $0.map { try view($0) } }
       return out
+    case let v as Tsugumi_Agent_CallIdT: return ["id": v.id]
     case let v as Tsugumi_Agent_AccessResultT:
       var out: [String: Any] = [:]
       out["id"] = v.id

@@ -138,7 +138,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // Arrange applies positions, frame sizes, notes and orders together, including
 // a frame still displayed beside its Card and a visual-only group.
 {
-  const s = await make(), note = s.addNote([], { x: 3, y: 4 })
+  const s = await make(), note = await s.addNote([], { x: 3, y: 4 })
   s.displays.set('source', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'shown' } })
   s.updateLayout([], l => l.set('groups', parse('[{"id":"g","title":"Group","cards":["source","left"]}]')))
   const was = before(s)

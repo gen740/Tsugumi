@@ -1237,8 +1237,11 @@ private struct CommentsCategory: View {
   }
 
   private func add() {
-    session.addComment(card, text)
-    text = ""
+    let submitted = text
+    session.performCardEdit {
+      try await session.addComment(card, submitted)
+      if text == submitted { text = "" }
+    }
   }
 
   /// Who resolved it, what was done and which Cards changed.

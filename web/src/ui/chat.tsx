@@ -312,7 +312,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
-      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => session.addComment(key(f.target.card!), f.text, true)}>{L('指摘をコメントに残す')}</Button></div>)}</div>
+      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => { void session.addComment(key(f.target.card!), f.text, true).catch(e => session.cardEditFailed(e)) }}>{L('指摘をコメントに残す')}</Button></div>)}</div>
   }
 }
 

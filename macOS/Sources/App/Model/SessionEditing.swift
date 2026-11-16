@@ -769,12 +769,31 @@ extension ProjectSession {
 
   // MARK: - Layout: notes, groups, output frames
 
+  func reserveReference(_ kind: String, scope: String = "") async throws -> String {
+    let project = projectId
+    var occupied: [String] = []
+    if kind == "comment" { occupied = comments(scope).map(\.id) }
+    else {
+      var queue: [[String]] = [[]]
+      while !queue.isEmpty {
+        let at = queue.removeFirst()
+        occupied += (layout(of: at)[kind == "note" ? "notes" : "groups"]?.array ?? []).compactMap { $0["id"]?.string }
+        queue += childScopes(of: at)
+      }
+    }
+    if let referenceIdProvider { return try await referenceIdProvider(kind, scope, occupied) }
+    guard let project else { throw RPCError.disconnected }
+    let reply = try await CoreHostClient.shared.call("IdentifierReserveRequest", ["project_id": project, "kind": kind, "scope": scope, "occupied": occupied])
+    guard projectId == project, connected, let id = reply["id"] as? String else { throw RPCError.disconnected }
+    return id
+  }
+
   func notes(in scope: [String]) -> [JSONValue] {
     (layout(of: scope)["notes"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == "" }
   }
 
-  func addNote(in scope: [String], at p: CGPoint) -> String {
-    let id = "note-" + UUID().uuidString.prefix(8).lowercased()
+  func addNote(in scope: [String], at p: CGPoint) async throws -> String {
+    let id = try await reserveReference("note")
     edit { s in
       s.updateLayout(of: scope) { l in
         var notes = l["notes"]?.array ?? []
@@ -844,8 +863,8 @@ extension ProjectSession {
     }
   }
 
-  func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "グループ")) -> String {
-    let id = "group-" + UUID().uuidString.prefix(8).lowercased()
+  func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "グループ")) async throws -> String {
+    let id = try await reserveReference("group")
     edit { s in
       s.updateGroups(in: scope) { g in
         g.append(.object([

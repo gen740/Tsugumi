@@ -410,6 +410,8 @@ struct Environments::Impl {
       throw std::runtime_error(
           "tsugumid is alive but its endpoint is "
           "unavailable; stop it before retrying");
+    if (options.prepare_project_identity)
+      options.prepare_project_identity(entry.state.project);
     options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
     entry.state.message = "Starting tsugumid";

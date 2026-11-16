@@ -488,8 +488,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
   }
 
   addNote(at?: Pt) {
-    const id = this.session.addNote(this.tab.scope, at ?? this.middle())
-    this.set('editingNote', id)
+    void this.session.addNote(this.tab.scope, at ?? this.middle()).then(id => this.set('editingNote', id)).catch(e => this.session.cardEditFailed(e))
   }
 
   /** Where a definition placed from the sidebar lands (near the top left of the view). */
@@ -548,13 +547,13 @@ export class CanvasController extends Observable implements CanvasOverlay {
     })
     const gid = g ? str(g.get('id')) : undefined
     if (gid) this.session.ungroup(gid)
-    else this.session.addGroup(sel, this.tab.scope)
+    else void this.session.addGroup(sel, this.tab.scope).catch(e => this.session.cardEditFailed(e))
   }
 
   /** "Group Selection": a new group, its editor open. */
   groupSelection() {
     if (!this.tab.selection.size) return
-    this.set('editingGroup', this.session.addGroup(this.tab.selection, this.tab.scope))
+    void this.session.addGroup(this.tab.selection, this.tab.scope).then(id => this.set('editingGroup', id)).catch(e => this.session.cardEditFailed(e))
   }
 
   /** Moves a selection (world units) as one edit: one save, one undo. Layout

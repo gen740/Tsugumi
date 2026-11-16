@@ -39,7 +39,7 @@ There are 46 requests.
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
 | [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
-| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
+| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Uses the lowercase stem itself, then -2, -3, etc. when occupied, with no random suffix. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end, with any number in or out. Implementing one requires SetProject in this same save rebinding every incoming end to a real input and every outgoing end to a real output (and boundary endpoints in its project's tsugumi.json). Even a single possible port must be stated. Ends on remaining Drafts stay empty. A non-existent port on a non-Draft Card is validation_failed, naming the wire. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
@@ -533,8 +533,9 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessListRequest` | `conversation_id: string` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
+| `CallIdRequest` | `conversation_id: string` (required) |
 
-Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`.
+Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`.
 
 ### Host service
 
@@ -598,5 +599,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `LayoutPrepareSaveRequest` | `project: string` (required), `save: Tsugumi.RPC.ProjectSaveRequest` (required) |
+| `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `LayoutPreparedSave`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`.

@@ -61,6 +61,7 @@ inline auto View(const A::Tool *value) -> std::string;
 inline auto View(const A::ToolCatalog *value) -> std::string;
 inline auto View(const A::Image *value) -> std::string;
 inline auto View(const A::ToolResult *value) -> std::string;
+inline auto View(const A::CallId *value) -> std::string;
 inline auto View(const A::AccessResult *value) -> std::string;
 inline auto View(const A::AccessEntry *value) -> std::string;
 inline auto View(const A::Grant *value) -> std::string;
@@ -262,6 +263,11 @@ inline auto View(const A::ToolResult *value) -> std::string {
   return Object({{"text", View(value->text())},
                  {"isError", View(value->is_error())},
                  {"images", View(value->images())}});
+}
+inline auto View(const A::CallId *value) -> std::string {
+  if (!value)
+    return "null";
+  return Object({{"id", View(value->id())}});
 }
 inline auto View(const A::AccessResult *value) -> std::string {
   if (!value)

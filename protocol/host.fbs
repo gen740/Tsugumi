@@ -478,6 +478,12 @@ table DemoReadRequest { path:string (required); }
 table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
 table DemoPaths { paths:[string]; }
 
+// Reserve an annotation reference across all clients of the project. kind is
+// note, group or comment; comments supply their Card path as scope. occupied
+// carries the client's existing document IDs. Absence means an empty list.
+table IdentifierReserveRequest { project_id:string (required); kind:string (required); scope:string; occupied:[string]; }
+table Identifier { id:string (required); }
+
 union RequestPayload {
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
@@ -489,7 +495,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, LayoutPrepareSaveRequest, IdentifierReserveRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -502,7 +508,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
   ModelSelection, LayoutPreparedSave,
-  DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries
+  DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

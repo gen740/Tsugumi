@@ -270,7 +270,7 @@ export class CoreHost {
     if (!this.api) {
       const schema = new BFBS(new Uint8Array(fs.readFileSync(this.schema)))
       const requests = schema.enums.find((e) => e.name === 'Tsugumi.Agent.RequestPayload')?.values
-        .filter((v) => v.value !== 0 && v.unionType && !['HelloRequest', 'ToolCallCancelRequest'].includes(v.name)).map((v) => v.name) ?? []
+        .filter((v) => v.value !== 0 && v.unionType && !['HelloRequest', 'ToolCallCancelRequest', 'CallIdRequest'].includes(v.name)).map((v) => v.name) ?? []
       this.api = new ToolCatalog(schema, requests, 'Tsugumi.Agent')
     }
     return this.api

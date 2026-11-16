@@ -933,7 +933,7 @@ struct GraphCanvas: View {
        let gid = g["id"]?.string {
       session.ungroup(gid)
     } else {
-      _ = session.addGroup(tab.selection, in: tab.scope)
+      session.performCardEdit { _ = try await session.addGroup(tab.selection, in: tab.scope) }
     }
   }
 
@@ -1266,7 +1266,7 @@ struct GraphCanvas: View {
 
   private func groupSelection() {
     guard !tab.selection.isEmpty else { return }
-    editingGroup = session.addGroup(tab.selection, in: tab.scope)
+    session.performCardEdit { editingGroup = try await session.addGroup(tab.selection, in: tab.scope) }
   }
 
   /// A built-in Card (from the + button or the canvas menu); a Draft is
@@ -1282,7 +1282,7 @@ struct GraphCanvas: View {
 
   private func addNote(at w: CGPoint? = nil) {
     let center = w ?? world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
-    editingNote = session.addNote(in: tab.scope, at: center)
+    session.performCardEdit { editingNote = try await session.addNote(in: tab.scope, at: center) }
   }
 
   // MARK: - Camera

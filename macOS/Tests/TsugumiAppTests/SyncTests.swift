@@ -230,7 +230,7 @@ import TsugumiTestSupport
       $0["width"] = .real(300)
       $0["height"] = .real(200)
     }
-    let group = s.addGroup([a, b], in: [])
+    let group = try await s.addGroup([a, b], in: [])
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
 
@@ -410,7 +410,7 @@ import TsugumiTestSupport
     try await Self.connected(s)
     let a = try await s.addCard(template: .trigger, in: [], at: CGPoint(x: 500, y: 500), name: "a")
     let b = try await s.addCard(template: .python, in: [], at: .zero, name: "b")
-    let note = s.addNote(in: [], at: CGPoint(x: 3, y: 4))
+    let note = try await s.addNote(in: [], at: CGPoint(x: 3, y: 4))
     s.updateDisplayFrame(b) { d in
       d["width"] = .real(300)
       d["height"] = .real(200)
@@ -457,8 +457,8 @@ import TsugumiTestSupport
       let framed = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 3000, y: 0), name: "framed")
       let outside = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 6000, y: 0), name: "outside")
       let beside = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0), name: "beside")
-      let note = s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
-      let outsideNote = s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
+      let note = try await s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
+      let outsideNote = try await s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
       s.updateDisplayFrame(framed) {
         $0["x"] = .real(400)
         $0["y"] = .real(400)
@@ -742,10 +742,10 @@ import TsugumiTestSupport
     let k = try await s.addCard(template: .python, in: [], at: .zero, name: "plot")
     #expect(s.comments(k).isEmpty && s.nodeData(k).openComments == 0)
 
-    s.addComment(k, "  y 軸を対数に  ")
-    s.addComment(k, "   ")
+    try await s.addComment(k, "  y 軸を対数に  ")
+    try await s.addComment(k, "   ")
     #expect(s.comments(k).map(\.text) == ["y 軸を対数に"])
-    s.addComment(k, "軸に名前を")
+    try await s.addComment(k, "軸に名前を")
     let first = s.comments(k)[0].id
     s.edit { $0.setCommentText(k, id: first, text: "両軸を対数に") }
     s.edit { $0.setCommentText(k, id: first, text: "  ") }
@@ -769,7 +769,7 @@ import TsugumiTestSupport
     #expect(s.comments(k)[0].stateBy == "user" && s.comments(k)[0].editedBy == "user" && s.comments(k)[1].author == "user")
     // A Draft takes comments as any Card.
     let plan = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
-    s.addComment(plan, "単位を考える")
+    try await s.addComment(plan, "単位を考える")
     #expect(s.cardsWithOpenComments(in: []).contains(plan))
     // What the core recorded of the Agent reads back, in the words the screen uses.
     let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))

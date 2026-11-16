@@ -622,6 +622,7 @@ struct ModelStream {
   std::map<uint32_t, ContentBlock> calls;
   std::string text;
   bool finished = false;
+  const std::function<std::string()> &allocate_call;
 
   auto Emit(ModelEvent value) const -> void {
     if (event) event(value);
@@ -763,7 +764,7 @@ struct ModelStream {
         throw ProviderError("model arguments have no tool call");
       const auto delta = String(json, "/delta");
       it->second.input += delta;
-      Emit({"toolInput", delta, it->second.id, it->second.name, index});
+      Emit({"toolInput", delta, {}, it->second.name, index});
     } else if (type == "response.function_call_arguments.done") {
       auto it = calls.find(index);
       if (it == calls.end())
@@ -944,6 +945,31 @@ struct ModelStream {
         throw ProviderError("model returned an invalid or duplicate tool call");
       }
     }
+    if (allocate_call && !reply.message.provider_content.empty()) {
+      auto original_blocks = Items(Parse(reply.message.provider_content));
+      std::vector<std::string> encoded;
+      size_t next = 0;
+      for (auto &block : reply.message.content) {
+        if (block.type != "tool_use")
+          continue;
+        block.id = allocate_call();
+        while (next < original_blocks.size()) {
+          auto item = Members(original_blocks[next]);
+          const auto kind = String(original_blocks[next], "/type");
+          if (kind == "tool_use" || kind == "function_call") {
+            item[kind == "tool_use" ? "id" : "call_id"] = Quote(block.id);
+            if (kind == "function_call")
+              item.erase("id");
+            original_blocks[next++] = Parse(Encode(item));
+            break;
+          }
+          ++next;
+        }
+      }
+      for (const auto &item : original_blocks)
+        encoded.push_back(schema::text(item));
+      reply.message.provider_content = Array(encoded);
+    }
     return std::move(reply);
   }
 };
@@ -967,10 +993,11 @@ auto ValidToolArguments(std::string_view json) -> bool {
   }
 }
 
-auto StreamReply(const ProviderConfig& config, std::string_view system,
-                 const std::vector<Message>& messages,
-                 const std::vector<ToolSpec>& tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent&)>& event)
+auto StreamReply(const ProviderConfig &config, std::string_view system,
+                 const std::vector<Message> &messages,
+                 const std::vector<ToolSpec> &tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent &)> &event,
+                 const std::function<std::string()> &allocate_call)
     -> ModelReply {
   if (config.model.empty()) throw std::runtime_error("model is not configured");
   const bool anthropic = config.api == ProviderAPI::AnthropicMessages;
@@ -978,7 +1005,8 @@ auto StreamReply(const ProviderConfig& config, std::string_view system,
                               : ResponsesBody(config, system, messages, tools);
   std::optional<ModelReply> reply;
   WithCredential(config, [&](std::string_view credential) {
-    ModelStream stream{config.api, event, {}, {}, {}, {}, {}, false};
+    ModelStream stream{config.api, event, {},    {},           {},
+                       {},         {},    false, allocate_call};
     SSE sse([&](std::string_view name, std::string_view data) {
       stream.Consume(name, data);
     });

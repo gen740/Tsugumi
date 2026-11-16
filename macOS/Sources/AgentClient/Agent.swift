@@ -62,7 +62,7 @@ public struct HelperTrace: Codable, Equatable {
   public var state: String
 }
 public struct Conversation: Codable, Equatable {
-  public var id = UUID().uuidString.lowercased()
+  public var id = ""
   public var title: String?
   public var updatedAt = Date()
   public var messages: [ChatMessage] = []

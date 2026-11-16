@@ -243,7 +243,10 @@ final class ChatController {
           return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
             updatedAt: Date(timeIntervalSince1970: (item["updatedAt"] as? Double ?? 0) / 1000), messages: item["messages"] as? Int ?? 0)
         }
-        if currentId.isEmpty { select(sessions.first?.id ?? UUID().uuidString.lowercased()) }
+        if currentId.isEmpty {
+          if let id = sessions.first?.id { select(id) }
+          else { newSession() }
+        }
       } catch { status = String(describing: error) }
     }
   }
@@ -347,8 +350,15 @@ final class ChatController {
   }
 
   func newSession() {
-    select(UUID().uuidString.lowercased())
-    refreshSessions()
+    Task {
+      do {
+        guard let project = try await RPCToolTransport(session: session).project() else { return }
+        let reply = try await CoreHostClient.shared.call("ConversationCreateRequest", ["project_id": project.id])
+        guard let conversation = reply["conversation"] as? Tsugumi_Agent_ConversationT else { return }
+        select(conversation.id)
+        refreshSessions()
+      } catch { status = String(describing: error) }
+    }
   }
 
   func delete(_ id: String) {

@@ -164,6 +164,22 @@ auto SummaryRef(bool english) -> const char* {
   return english ? "refs/notes/tsugumi-summary-en" : "refs/notes/tsugumi-summary-ja";
 }
 }  // namespace
+auto ResolveVersion(const std::filesystem::path &root, const std::string &name)
+    -> std::string {
+  init_once();
+  Repo repo;
+  git_oid oid;
+  Commit commit;
+  if (!open(repo, root) ||
+      git_oid_fromstrn(&oid, name.c_str(), name.size()) != 0 ||
+      git_commit_lookup_prefix(commit.out(), repo.get(), &oid, name.size()) !=
+          0)
+    throw ProjectFailure("not_found", "No unambiguous version " + name);
+  char full[GIT_OID_MAX_HEXSIZE + 1];
+  git_oid_tostr(full, sizeof full, git_commit_id(commit.get()));
+  return full;
+}
+
 auto SummaryReads(const std::string& path) -> bool {
   if (path == "tsugumi.json") return true;  // layout.json is where things sit, not what they do
   std::vector<std::string> parts;

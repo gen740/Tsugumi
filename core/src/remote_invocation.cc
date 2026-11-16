@@ -270,9 +270,6 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
       // The clients show unavailable presentation; computation still completes.
     }
   }
-  if (!result.environment.paths.empty())
-    result.environment.id = crypto::sha256_hex(result.environment.derivation + "\n" + result.environment.manifest + "\n" +
-                                              result.environment.system);
   if (const auto* failure = message->value_as_WorkerFailure()) {
     result.worker.failure = wire::failure(failure->failure());
   } else if (const auto* worker = message->value_as_WorkerResult()) {

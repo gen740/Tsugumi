@@ -595,7 +595,8 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
 
 bool Service::replay_or_join(RequestIn& req, const std::string& op_id, const std::string& kind,
                              const std::string& digest) {
-  if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
   if (kind == "shell") {
     // A running shell has a durable uncertainty receipt. In this process,
     // duplicate callers wait for its final result instead of reading that marker.
@@ -958,7 +959,8 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
 
 void require_mutation(std::optional<uint64_t> base_rev, const flatbuffers::String* op_id) {
   if (!base_rev) throw Failed(FailureKind::invalid_request, "base_rev is required");
-  if (!crypto::is_uuid(op_id->str())) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id->str()))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
 }
 
 auto RequireApprovedPermissions(
@@ -1143,7 +1145,8 @@ void Service::version_init(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    if (!crypto::is_operation_id(op_id))
+      throw Failed(FailureKind::invalid_request, "invalid op_id");
     auto commit = versions_->init();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
@@ -1165,7 +1168,8 @@ void Service::version_mark(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    if (!crypto::is_operation_id(op_id))
+      throw Failed(FailureKind::invalid_request, "invalid op_id");
     if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
     auto commit = versions_->mark(r->name()->str(), r->message() ? r->message()->str() : "");
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
@@ -1333,9 +1337,9 @@ void Service::scratch_delete(RequestIn& req) {
     for (const auto* item : *r->paths()) {
       if (!item) throw Failed(FailureKind::invalid_request, "scratch folder is missing");
       const auto path = item->str();
-      if (!(path.starts_with("runs/") && crypto::is_uuid(path.substr(5))))
+      if (!(path.starts_with("runs/") && crypto::is_run_id(path.substr(5))))
         throw Failed(FailureKind::invalid_request, "invalid scratch folder");
-      // A case-insensitive host filesystem must protect UUID case variants too.
+      // Canonical decimal names have no case aliases.
       if (std::ranges::equal(path, protected_path, [](unsigned char a, unsigned char b) {
             return std::tolower(a) == std::tolower(b);
           }))
@@ -1402,13 +1406,15 @@ void Service::history_delete(RequestIn& req) {
     uint64_t files = 0;
     auto ids = history_->delete_runs(runs_copy(), r->ended_before(), run_ids);
     for (const auto& id : ids)
-      if (crypto::is_uuid(id)) remove_run_scratch(run_scratch_ / "runs" / id);
+      if (crypto::is_run_id(id))
+        remove_run_scratch(run_scratch_ / "runs" / id);
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files += scratch_before > scratch_after ? scratch_before - scratch_after : 0;
     refresh_cache_usage();
     // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
-      if (!crypto::is_uuid(id)) continue;  // a run id from a copy names no folder of ours
+      if (!crypto::is_run_id(id))
+        continue; // a run id from a copy names no folder of ours
       auto dir = store_->state_dir() / "runs" / id;
       std::error_code ec;
       if (!stdfs::is_directory(dir, ec)) continue;
@@ -1508,7 +1514,8 @@ void Service::validate(RequestIn& req) {
 void Service::operation_get(RequestIn& req) {
   const auto* r = req.request()->value_as_OperationGetRequest();
   std::string op_id = r->op_id()->str();
-  if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
   std::optional<std::string> bytes;
   bool shell_receipt = false;
   if (auto rc = store_->receipt(op_id)) {

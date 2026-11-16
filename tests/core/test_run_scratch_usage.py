@@ -66,7 +66,7 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     assert sizes[f"runs/{first}"] == len(payload)
     assert sizes[f"runs/{second}"] == len("small")
     for paths, kind in [([f"runs/{first}", f"runs/{second}"], "busy"),
-                        ([f"runs/{first}", f"runs/{second.upper()}"], "busy"),
+                        ([f"runs/{first}", f"runs/0{second}"], "invalid_request"),
                         ([f"runs/{first}", "../outside"], "invalid_request")]:
         with pytest.raises(RpcFailure) as failure:
             client.call("RunScratchDeleteRequest", opId=new_id(), paths=paths)
@@ -92,7 +92,7 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
 def test_startup_keeps_scratch_without_history(core_factory, tmp_path):
     """Orphan scratch is reported and removed only by an explicit selection."""
     scratch = tmp_path / "scratch"
-    orphan = scratch / "runs" / new_id()
+    orphan = scratch / "runs" / "97"
     orphan.mkdir(parents=True)
     (orphan / "unfinished-output").write_bytes(b"orphaned scratch")
     daemon = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)])
@@ -200,7 +200,7 @@ def test_more_than_two_builds_remain_registered(core_factory, project, tmp_path)
 
 def test_scratch_deletion_refuses_active_run(core_factory, project, tmp_path):
     scratch = tmp_path / "scratch"
-    orphan = scratch / "runs" / new_id()
+    orphan = scratch / "runs" / "97"
     orphan.mkdir(parents=True)
     (orphan / "evidence").write_text("keep while running")
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
@@ -227,8 +227,8 @@ def test_unreadable_scratch_is_listed_and_explicitly_deletable(core_factory, tmp
     if os.geteuid() == 0:
         pytest.skip("permission denial requires a non-root user")
     scratch = tmp_path / "scratch"
-    locked = scratch / "runs" / new_id()
-    other = scratch / "runs" / new_id()
+    locked = scratch / "runs" / "97"
+    other = scratch / "runs" / "98"
     (locked / "private").mkdir(parents=True)
     other.mkdir(parents=True)
     (locked / "private" / "value").write_bytes(b"unknown")

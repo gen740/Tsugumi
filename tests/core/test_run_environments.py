@@ -11,7 +11,7 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 11])
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 12])
 def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = tmp_path / "history"
@@ -27,7 +27,7 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 10"):
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 11"):
         core_factory(history_dir=history_dir)
 
     assert database.read_bytes() == original
@@ -159,7 +159,7 @@ def test_failed_execution_keeps_its_environment(core_factory, project, tmp_path)
 def test_environment_queries_reject_invalid_ranges(client, method, fields):
     """Environment pages reject invalid limits and overflowing offsets."""
     with pytest.raises(RpcFailure) as error:
-        client.call(method, runId=new_id(), **fields)
+        client.call(method, runId="999999", **fields)
     assert error.value.kind == "invalid_request"
 
 
@@ -169,7 +169,7 @@ def test_unknown_environment_is_not_found(client):
                             ("RunEnvironmentPathsRequest", {"environmentId": "missing"}),
                             ("RunEnvironmentUsesRequest", {"environmentId": "missing"})]:
         with pytest.raises(RpcFailure) as error:
-            client.call(method, runId=new_id(), **fields)
+            client.call(method, runId="999999", **fields)
         assert error.value.kind == "not_found"
 
 

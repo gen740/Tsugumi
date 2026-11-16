@@ -275,10 +275,10 @@ for (const c of serviceVectors.replies) {
 }
 const agentSchema = new BFBS(new Uint8Array(fs.readFileSync(path.join(process.argv[2], 'web/src/gen/agent.bfbs'))))
 const agentRequests = agentSchema.enums.find(e => e.name === 'Tsugumi.Agent.RequestPayload')!.values
-  .filter(v => v.value && v.unionType && !['HelloRequest', 'ToolCallCancelRequest'].includes(v.name)).map(v => v.name)
+  .filter(v => v.value && v.unionType && !['HelloRequest', 'ToolCallCancelRequest', 'CallIdRequest'].includes(v.name)).map(v => v.name)
 assert.deepEqual(agentRequests, serviceVectors.agentRequests)
 const externalCatalog = new ToolCatalog(agentSchema, agentRequests, 'Tsugumi.Agent')
-for (const method of ['demo_list', 'demo_read', 'version_note']) assert.equal(externalCatalog.tool(method), undefined)
+for (const method of ['demo_list', 'demo_read', 'version_note', 'call_id']) assert.equal(externalCatalog.tool(method), undefined)
 for (const method of ['tool_call', 'access', 'conversation_summarize']) assert.ok(externalCatalog.tool(method))
 console.log('Separate Host/Agent contracts: shared goldens, routes and external MCP catalog passed')
 

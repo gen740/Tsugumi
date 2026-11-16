@@ -21,7 +21,7 @@ const setup = async () => {
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
   const near = await s.addCard('draft', [], { x: 0, y: 0 }), far = await s.addCard('draft', [], { x: 5000, y: 0 })
-  const note = s.addNote([], { x: 100, y: 300 }), farNote = s.addNote([], { x: 5000, y: 3000 })
+  const note = await s.addNote([], { x: 100, y: 300 }), farNote = await s.addNote([], { x: 5000, y: 3000 })
   // A frame with a place of its own, and one drawn beside its Card.
   s.updateDisplayFrame(far, (f) => f.set('hidden', false))
   const tab = new WorkflowTab([])

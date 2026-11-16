@@ -7,7 +7,6 @@
 
 #include <cstring>
 #include <set>
-#include <random>
 #include <sstream>
 
 #include "util/crypto.hh"
@@ -97,6 +96,13 @@ auto Store::stage_file(const stdfs::path& root, const std::string& from,
 auto Store::allocate_card_id(const std::string& stem, const std::string& project_path) -> std::string {
   if (!valid_id(stem) || stem.size() > 123)
     throw Failed(FailureKind::invalid_request, "Card stem must be 1..123 ASCII identifier characters");
+  const auto fold = [](std::string value) {
+    std::transform(
+        value.begin(), value.end(), value.begin(), [](unsigned char c) {
+          return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        });
+    return value;
+  };
   // A scope can still be a local draft, so validate its path rather than requiring it on disk.
   auto rest = project_path;
   while (!rest.empty()) {
@@ -113,26 +119,36 @@ auto Store::allocate_card_id(const std::string& stem, const std::string& project
   auto reservations = fs::read_file(state_dir() / "card-ids").value_or("");
   std::set<std::string> issued;
   std::istringstream lines(reservations);
-  for (std::string line; std::getline(lines, line);) issued.insert(line);
+  for (std::string line; std::getline(lines, line);)
+    issued.insert(fold(line));
   auto doc = current();
   std::set<std::string> canvas_ids;
   if (project_path.empty()) {
-    for (const auto& card : doc->project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+    for (const auto &card : doc->project.canvas->value().cards->value())
+      canvas_ids.insert(fold(card.id->value()));
   } else if (doc->sources.count(project_path + "tsugumi.json")) {
     auto project = parse_external_project(project_path + "tsugumi.json",
                                           read_source(*doc, project_path + "tsugumi.json"));
-    for (const auto& card : project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+    for (const auto &card : project.canvas->value().cards->value())
+      canvas_ids.insert(fold(card.id->value()));
   }
-  constexpr std::string_view alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
-  std::random_device random;
-  std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
-  for (size_t attempt = 0; attempt < 10000; ++attempt) {
-    std::string id = stem + '-';
-    for (int i = 0; i < 4; ++i) id += alphabet[pick(random)];
+  if (project_path.empty())
+    for (const auto &[id, definition] : doc->definitions) {
+      (void)definition;
+      canvas_ids.insert(fold(id));
+    }
+  const auto base = fold(stem);
+  // The name itself is the first candidate; duplicates compose a small index.
+  // One case keeps generated definition folders portable to macOS.
+  for (uint64_t number = 1; number != 0; ++number) {
+    const auto suffix = number == 1 ? "" : "-" + std::to_string(number);
+    auto id = base.substr(0, 128 - suffix.size()) + suffix;
     auto key = project_path + id;
     auto dir = project_path + def_dir(id);
-    bool exists = issued.count(key) || canvas_ids.count(id) || (project_path.empty() && doc->definitions.count(id)) ||
-                  stdfs::exists(opts_.root / dir) || stdfs::exists(opts_.root / project_path / "externals" / id);
+    bool exists = issued.count(fold(key)) || canvas_ids.count(id) ||
+                  (project_path.empty() && doc->definitions.count(id)) ||
+                  stdfs::exists(opts_.root / dir) ||
+                  stdfs::exists(opts_.root / project_path / "externals" / id);
     auto source = doc->sources.lower_bound(dir);
     exists = exists || (source != doc->sources.end() && source->first.starts_with(dir));
     if (exists) continue;
@@ -163,12 +179,13 @@ std::optional<Receipt> Store::receipt(const std::string& op_id) const {
 
 void Store::open() {
   stdfs::create_directories(state_dir());
-  // Project identity: a UUID persisted in internal state, never in the root files.
+  // Project identity: a short reference persisted in internal state, never in
+  // the root files.
   auto id_path = state_dir() / "project-id";
-  if (auto id = fs::read_file(id_path); id && crypto::is_uuid(*id)) {
+  if (auto id = fs::read_file(id_path); id && crypto::is_short_id(*id)) {
     project_id_ = *id;
   } else {
-    project_id_ = crypto::uuid4();
+    project_id_ = crypto::short_id();
     fs::write_atomic(id_path, project_id_, 0600);
   }
   recover_journal();

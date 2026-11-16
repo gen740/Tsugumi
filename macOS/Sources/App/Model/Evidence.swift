@@ -53,7 +53,8 @@ struct EvidenceTarget: Hashable, Identifiable {
       return target
     }
     let run = parts.removeFirst()
-    guard run.range(of: #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#, options: .regularExpression) != nil,
+    guard run.range(of: #"^[1-9][0-9]{0,18}$"#, options: .regularExpression) != nil,
+          let runNumber = Int64(run), runNumber > 0,
           parts.isEmpty || validCard(parts) else { return nil }
     target.run = run
     target.card = parts.isEmpty ? nil : parts

@@ -252,9 +252,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
     }
   std::set<std::string> nested_calls;
   for (const auto& parent : conversation.helpers) {
-    const auto scope = crypto::sha256_hex(parent->call_id + ":" +
-                                          std::to_string(parent->task)) +
-                       ":";
+    const auto scope =
+        parent->call_id + "." + std::to_string(parent->task) + ".";
     for (const auto& child : conversation.helpers)
       if (child->call_id.starts_with(scope))
         nested_calls.insert(child->call_id);
@@ -273,11 +272,9 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
     // The first message is the internal instruction, shown separately.
     for (size_t i = 1; i < task.messages.size(); ++i)
       trace.push_back(task.messages[i].get());
-    row->children = BuildRows(
-        trace, 0, conversation,
-        crypto::sha256_hex(task.call_id + ":" + std::to_string(task.task)) +
-            ":",
-        true);
+    row->children =
+        BuildRows(trace, 0, conversation,
+                  task.call_id + "." + std::to_string(task.task) + ".", true);
     for (auto it = row->children.rbegin(); it != row->children.rend(); ++it)
       if ((*it)->kind == "text" && (*it)->role == "assistant") {
         row->text = (*it)->text;

@@ -1351,7 +1351,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto src = path_value(v);
     if (!src) throw Failed(FailureKind::output_invalid, "artifact output has no path");
     ArtifactData a;
-    a.artifact_id = crypto::uuid4();
+    a.artifact_id = run_id_ + "/" + path_key(node.path) + "/" +
+                    std::to_string(inv) + "/" + v.name;
     a.run_id = run_id_;
     a.card = node.path;
     a.invocation = inv;
@@ -1529,8 +1530,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](const std::function<void(sql::Db&)>& records) {
            stage_begin(s, Phase::execute);
            svc_.history().write_sync([&](sql::Db& db) {
-             History::put_status(db, s);
              if (records) records(db);
+             History::put_status(db, s);
            });
            card_status(s);
            set_state(RunState::running);
@@ -1989,7 +1990,6 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     throw Failed(FailureKind::validation_failed, msg, {{"count", std::to_string(errors.size())}});
   }
   RunSummaryData s;
-  s.status.run_id = crypto::uuid4();
   s.status.state = RunState::queued;
   s.status.rev = doc->rev;
   s.status.execution_rev = doc->execution_rev;
@@ -1998,16 +1998,21 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   s.source_hash = doc->execution_fingerprint;
   s.target = p.card;
   s.propagate = p.propagate;
-  FBB b;
-  auto st = wire::run_status(b, s.status);
-  auto ra = R::CreateRunAccepted(b, b.CreateString(p.op_id), st, false);
-  auto rc = R::CreateOperationReceipt(b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
-  b.Finish(rc);
-  std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-  // The run id and the receipt are durable before any processing starts.
-  svc_.history().write_sync([&](sql::Db& db) {
+  std::string receipt;
+  // The accepted sequence and receipt commit together, before any processing.
+  svc_.history().write_sync([&](sql::Db &db) {
+    s.status.run_id = History::next_run_id(db);
+    FBB b;
+    auto st = wire::run_status(b, s.status);
+    auto ra = R::CreateRunAccepted(b, b.CreateString(p.op_id), st, false);
+    auto rc = R::CreateOperationReceipt(
+        b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
+    b.Finish(rc);
+    receipt.assign(reinterpret_cast<const char *>(b.GetBufferPointer()),
+                   b.GetSize());
     History::insert_run(db, s, p.op_id);
-    if (svc_.options().fault == "run_acceptance") throw sql::Error("injected: run acceptance write failed");
+    if (svc_.options().fault == "run_acceptance")
+      throw sql::Error("injected: run acceptance write failed");
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
