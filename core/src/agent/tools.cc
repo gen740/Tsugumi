@@ -636,23 +636,8 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
     -> ToolResult {
   if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
-    if (catalog.Find(call.name)) {
-      const auto envelope = json::Object(result.text);
-      const auto failure = json::Object(json::Get(envelope, "value", "{}"));
-      json::Members safe;
-      for (const auto* key : {"kind", "current_rev", "retry_after_ms"})
-        if (failure.contains(key)) safe[key] = failure.at(key);
-      const auto message = json::Text(failure, "message");
-      if (json::Text(failure, "kind") == "revision_conflict" &&
-          scope.SafeCollision(message, read))
-        safe["message"] = json::Quote(message);
-      safe["diagnostic"] = json::Quote(
-          "Card-scoped operation failed. Reinspect on revision_conflict; "
-          "otherwise ask the parent to inspect the full failure in this "
-          "tool's saved receipt.");
-      result.text = json::Encode(json::Members{
-          {"reply", json::Quote("Failure")}, {"value", json::Encode(safe)}});
-    }
+    if (catalog.Find(call.name))
+      result.text = scope.FailureResult(result.text, read);
     return result;
   }
   scope.Completed(call.name, json::Object(call.arguments), result.text, read);
@@ -1381,6 +1366,11 @@ auto Tools::Hooks(const std::string& id, bool helper,
                       : result;
     } catch (const Cancelled&) {
       throw;
+    } catch (const Failure& error) {
+      // Host invariant failures terminate the turn; the model cannot repair
+      // them by changing its arguments or retrying the operation.
+      if (error.code == "internal_error") throw;
+      return ToolResult{error.what(), true, {}, {}};
     } catch (const std::exception& error) {
       return ToolResult{error.what(), true, {}, {}};
     }

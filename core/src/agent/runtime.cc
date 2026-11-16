@@ -1,5 +1,7 @@
 #include "agent/runtime.hh"
 
+#include "agent/json.hh"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -39,6 +41,21 @@ auto EstimateMessageTokens(const Message& message) -> uint64_t {
 }
 
 namespace {
+// Only a typed service failure is terminal; ordinary tool text may start with
+// arbitrary or incomplete JSON and must remain a normal tool result.
+auto InternalToolFailure(const ToolResult& output) -> std::optional<std::string> {
+  if (!output.is_error) return {};
+  try {
+    const auto envelope = json::Object(output.text);
+    if (json::Text(envelope, "reply") != "Failure") return {};
+    const auto failure = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(failure, "kind") == "internal_error")
+      return json::Text(failure, "diagnostic", "Internal service error; retrying will not help.");
+  } catch (const std::exception&) {
+  }
+  return {};
+}
+
 auto Snapshot(const ProviderConfig& config, std::string_view system,
               const std::vector<Message>& messages,
               const std::vector<ToolSpec>& tools) -> ContextUsage {
@@ -531,6 +548,10 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           // operation receipts. Exceptions leave the call unresolved so a
           // subsequent turn must reconcile it instead of silently retrying.
           output = hooks.execute_tool(call, stop);
+          // Internal service failures cannot be repaired by the model. End
+          // this turn instead of presenting them as an argument refusal.
+          if (const auto internal = InternalToolFailure(output))
+            throw std::runtime_error(*internal);
         }
         const bool ok = !output.is_error;
         // Events are JSON too. A byte cap must not split a UTF-8 character in

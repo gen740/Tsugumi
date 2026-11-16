@@ -203,7 +203,8 @@ auto Tools::EditProjectTool(const std::string& conversation,
     throw;
   } catch (const Failure& error) {
     if (!error.request_id.empty() || error.code == "outcome_unknown" ||
-        error.code == "unavailable" || error.code == "busy")
+        error.code == "unavailable" || error.code == "busy" ||
+        error.code == "internal_error")
       throw;
     return refused(error.code, error.what());
   } catch (const std::exception& error) {

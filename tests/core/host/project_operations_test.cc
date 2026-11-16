@@ -8,6 +8,33 @@ namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
 namespace json = agent::json;
+TEST(ProjectOperations,
+     MissingHostIdentityIsAnInternalFailureBeforeAnyReadOrWrite) {
+  for (const auto &invalid : {"project", "operation"}) {
+    H::ProjectOperateRequestT request;
+    request.project_id = std::string(invalid) == "project" ? "other" : "p";
+    request.op_id = std::string(invalid) == "operation"
+                        ? ""
+                        : "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
+    bool called = false;
+    try {
+      ProjectOperations().Execute(
+          "p", request, {}, [&](const auto &, const auto &) -> OperationReply {
+            called = true;
+            return {};
+          });
+      FAIL() << "invalid host identity must fail";
+    } catch (const Failure &failure) {
+      EXPECT_EQ(failure.code, "internal_error");
+      EXPECT_NE(std::string(failure.what()).find("project"), std::string::npos);
+      EXPECT_NE(std::string(failure.what()).find("operation id"),
+                std::string::npos);
+      EXPECT_NE(std::string(failure.what()).find("retrying"),
+                std::string::npos);
+    }
+    EXPECT_FALSE(called);
+  }
+}
 TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
   H::ProjectTextEditT edit;
   edit.file_path = "definitions/a/main.py";

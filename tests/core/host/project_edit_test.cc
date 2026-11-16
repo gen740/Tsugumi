@@ -1,8 +1,11 @@
 #include "host/project_edit.hh"
 
+#include "graph.hh"
+
 #include <gtest/gtest.h>
 
 #include "host/failure.hh"
+#include "host/project_operations.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::host {
@@ -25,6 +28,235 @@ auto Field(std::vector<std::string> fields, std::string old_value,
   edit.new_value->present = true;
   edit.new_value->json = std::move(new_value);
   return edit;
+}
+auto WirePort(const std::string &from, const std::string &to,
+              const std::string &from_port, const std::string &to_port,
+              const std::string &side, const std::string &value)
+    -> H::ProjectFieldEditT {
+  auto edit = Field({"canvas", "connections"},
+                    json::Quote(side == "from" ? from_port : to_port),
+                    json::Quote(value));
+  auto match = std::make_unique<H::ProjectSelectorT>();
+  match->match_json = json::Encode(json::Members{
+      {"from", json::Encode(json::Members{{"card", json::Quote(from)},
+                                          {"port", json::Quote(from_port)}})},
+      {"to", json::Encode(json::Members{{"card", json::Quote(to)},
+                                        {"port", json::Quote(to_port)}})}});
+  edit.selector.push_back(std::move(match));
+  for (const auto &key : {side, std::string("port")}) {
+    auto step = std::make_unique<H::ProjectSelectorT>();
+    step->field = key;
+    edit.selector.push_back(std::move(step));
+  }
+  return edit;
+}
+auto Add(H::ProjectEditsT &edits, H::ProjectFieldEditT field) -> void {
+  auto entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(std::move(field));
+  edits.edits.push_back(std::move(entry));
+}
+TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
+  SaveBase base;
+  base.snapshot["rev"] = "7";
+  const std::string before =
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
+  base.files["tsugumi.json"] = before;
+  base.files["definitions/knn/_card.json"] = R"({"template":"draft"})";
+  H::ProjectEditsT edits;
+  auto implement = Field({}, R"({"template":"draft"})", "{}");
+  implement.file_path = "definitions/knn/_card.json";
+  Add(edits, std::move(implement));
+  Add(edits, WirePort("knn", "compare", "", "", "from", "result"));
+  Add(edits, WirePort("knn", "compare", "result", "", "to", ""));
+  const auto read = [](const auto &) -> std::optional<std::string> {
+    return {};
+  };
+  const auto changes =
+      json::Array(PrepareProjectEdits(edits, base, read).at("changes"));
+  ASSERT_EQ(changes.size(), 2u);
+  const auto change = json::Object(changes.front());
+  EXPECT_EQ(json::Text(change, "value_type"), "SetProject");
+  const auto project =
+      json::Text(json::Object(json::Get(change, "value")), "json");
+  const auto canvas = json::Object(json::Get(json::Object(project), "canvas"));
+  const auto wire = json::Object(json::Array(canvas.at("connections")).front());
+  EXPECT_EQ(json::Text(json::Object(wire.at("from")), "port"), "result");
+  EXPECT_EQ(json::Text(json::Object(wire.at("to")), "port"), "");
+  EXPECT_EQ(base.files.at("tsugumi.json"), before);
+  // Validate the final endpoints: the code end is bound while compare stays
+  // a Draft. No intermediate one-end document is sent to core.
+  Document doc;
+  doc.project_json = project;
+  doc.project = parse_project_json(project);
+  for (const auto& [id, raw] : {std::pair{"knn", "{}"},
+                                {"compare", "{\"template\":\"draft\"}"}}) {
+    DefinitionDoc definition;
+    definition.card_json = raw;
+    definition.card = parse_card_json(id, raw);
+    doc.definitions[id] = std::move(definition);
+  }
+  doc.sources["definitions/knn/_outputs.fbs"] = {"test-outputs", 0};
+  const auto resolved = resolve(doc, [](const auto& path) -> std::optional<std::string> {
+    if (path == "definitions/knn/_outputs.fbs")
+      return "table Result { value:string; } table Outputs { result:Result; } root_type Outputs;";
+    return {};
+  });
+  for (const auto& diagnostic : resolved->all_diagnostics(false))
+    EXPECT_NE(diagnostic.code, "unknown_port") << diagnostic.message;
+  ASSERT_EQ(resolved->edges.size(), 1u);
+
+  H::ProjectOperateRequestT request;
+  request.project_id = "p";
+  request.op_id = "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
+  request.body.Set(edits);
+  int saves = 0;
+  const auto call = [&](const std::string& method, const json::Members& args) {
+    json::Members value;
+    std::string reply;
+    if (method == "operation_get") {
+      reply = "OperationResult";
+      value = {{"state", "\"unknown\""}};
+    } else if (method == "project_inspect") {
+      reply = "ProjectSnapshot";
+      value = {{"rev", "\"7\""}, {"project_json", json::Quote(before)},
+               {"layout_json", "\"{}\""},
+               {"definitions", R"([{"id":"knn","card_json":"{\"template\":\"draft\"}"},{"id":"compare","card_json":"{\"template\":\"draft\"}"}])"}};
+    } else {
+      EXPECT_EQ(method, "project_save");
+      ++saves;
+      for (const auto& raw : json::Array(args.at("changes"))) {
+        const auto change = json::Object(raw);
+        if (json::Text(change, "value_type") == "SetProject")
+          EXPECT_EQ(json::Text(json::Object(change.at("value")), "json"), project);
+      }
+      reply = "SaveResult";
+      value = {{"rev", "\"8\""}};
+    }
+    return OperationReply{json::Encode(json::Members{
+                              {"reply", json::Quote(reply)},
+                              {"value", json::Encode(value)}}), {}};
+  };
+  EXPECT_NO_THROW(ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call));
+  EXPECT_EQ(saves, 1);
+
+  edits.edits.back()->value.AsProjectFieldEdit()->old_value->json = "\"stale\"";
+  try {
+    request.body.Set(edits);
+    ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+    FAIL() << "stale second end must refuse the entire plan";
+  } catch (const Failure &failure) {
+    EXPECT_EQ(failure.code, "value_conflict");
+    EXPECT_NE(std::string(failure.what()).find("old_value"), std::string::npos);
+    EXPECT_NE(std::string(failure.what()).find("new_value"), std::string::npos);
+  }
+  EXPECT_EQ(saves, 1);
+  EXPECT_EQ(base.files.at("tsugumi.json"), before);
+}
+TEST(ProjectEdit, BindsOnlyAnUnambiguousUnmentionedInputOnDraftImplementation) {
+  for (const auto &variant : {"single", "explicit", "multiple_inputs",
+                              "multiple_wires", "already_code", "nested"}) {
+    SCOPED_TRACE(variant);
+    const std::string prefix =
+        std::string(variant) == "nested" ? "externals/work/" : "";
+    SaveBase base;
+    base.snapshot["rev"] = "7";
+    base.files[prefix + "tsugumi.json"] =
+        R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":""}}]} })";
+    const auto definition = prefix + "definitions/compare/_card.json";
+    base.files[definition] = std::string(variant) == "already_code"
+                                 ? "{}"
+                                 : R"({"template":"draft"})";
+    H::ProjectEditsT edits;
+    auto implement =
+        Field({}, base.files.at(definition),
+              std::string(variant) == "multiple_inputs"
+                  ? R"({"inputs":[{"name":"source"},{"name":"other"}]})"
+                  : R"({"inputs":[{"name":"source"}]})");
+    implement.file_path = definition;
+    Add(edits, std::move(implement));
+    if (std::string(variant) == "explicit")
+      Add(edits, WirePort("knn", "compare", "out", "", "to", ""));
+    if (std::string(variant) == "multiple_wires") {
+      auto project = json::Object(base.files.at("tsugumi.json"));
+      auto canvas = json::Object(project.at("canvas"));
+      auto wires = json::Array(canvas.at("connections"));
+      wires.push_back(wires.front());
+      canvas["connections"] = json::Encode(wires);
+      project["canvas"] = json::Encode(canvas);
+      base.files["tsugumi.json"] = json::Encode(project);
+    }
+    const auto plan = PrepareProjectEdits(
+        edits, base,
+        [](const auto &) -> std::optional<std::string> { return {}; });
+    bool bound = false;
+    for (const auto &raw : json::Array(plan.at("changes"))) {
+      const auto change = json::Object(raw);
+      const auto value = json::Object(change.at("value"));
+      if (json::Text(change, "value_type") == "SetProject" ||
+          json::Text(value, "path") == prefix + "tsugumi.json") {
+        std::string project = json::Text(value, "json");
+        if (project.empty()) {
+          ASSERT_TRUE(crypto::base64_decode(
+              json::Text(json::Object(value.at("bytes")), "base64"), project));
+        }
+        const auto canvas =
+            json::Object(json::Get(json::Object(project), "canvas"));
+        const auto wire =
+            json::Object(json::Array(canvas.at("connections")).front());
+        bound = json::Text(json::Object(wire.at("to")), "port") == "source";
+      }
+    }
+    EXPECT_EQ(bound, std::string(variant) == "single" ||
+                         std::string(variant) == "nested");
+  }
+}
+TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
+  for (const auto &scenario : {"draft", "missing_input", "unknown_param"}) {
+    SCOPED_TRACE(scenario);
+    Document doc;
+    doc.project_json =
+        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
+    doc.project = parse_project_json(doc.project_json);
+    const auto add = [&](const std::string &id, const std::string &raw) {
+      DefinitionDoc definition;
+      definition.card_json = raw;
+      definition.card = parse_card_json(id, raw);
+      doc.definitions[id] = std::move(definition);
+    };
+    add("knn", R"({"template":"trigger"})");
+    add("compare",
+        std::string(scenario) == "draft" ? R"({"template":"draft"})"
+        : std::string(scenario) == "unknown_param"
+            ? R"({"inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":3}]})"
+            : R"({"inputs":[]})");
+    const auto resolved = resolve(
+        doc, [](const auto &) -> std::optional<std::string> { return {}; });
+    bool found = false;
+    for (const auto &diagnostic : resolved->all_diagnostics(false)) {
+      if (diagnostic.code != (std::string(scenario) == "unknown_param"
+                                  ? "invalid_param"
+                                  : "unknown_port"))
+        continue;
+      ASSERT_TRUE(diagnostic.card);
+      EXPECT_EQ(*diagnostic.card, CardPath{"compare"});
+      EXPECT_EQ(diagnostic.message.find('\n'), std::string::npos);
+      EXPECT_NE(diagnostic.message.find("compare"), std::string::npos);
+      if (std::string(scenario) == "unknown_param") {
+        EXPECT_NE(diagnostic.message.find("k"), std::string::npos);
+        EXPECT_NE(diagnostic.message.find("number"), std::string::npos);
+        EXPECT_NE(diagnostic.message.find("params[].type"), std::string::npos);
+        EXPECT_NE(diagnostic.message.find("double"), std::string::npos);
+      } else {
+        EXPECT_NE(diagnostic.message.find("knn"), std::string::npos);
+        EXPECT_NE(diagnostic.message.find("to"), std::string::npos);
+        EXPECT_NE(diagnostic.message.find(
+                      std::string(scenario) == "draft" ? "\"\"" : "_card.json"),
+                  std::string::npos);
+      }
+      found = true;
+    }
+    EXPECT_TRUE(found);
+  }
 }
 TEST(ProjectEdit,
      PreservesEveryUntouchedByteIncludingPinsHashesAndUint64Spelling) {

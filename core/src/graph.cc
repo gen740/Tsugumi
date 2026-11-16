@@ -1,4 +1,5 @@
 #include "graph.hh"
+
 #include "collect_type.hh"
 #include "nix_refs.hh"
 
@@ -340,9 +341,10 @@ class Builder {
         }
         auto pt = parse_param_type(*type);
         if (!pt) {
-          n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type +
-                                 " (types: bool, int64, uint64, double, string, "
-                                 "or one of them with [] for a list)"));
+          n.diags.push_back(diag(n.path, "invalid_param", "Card " + path_key(n.path) + ": param " + *name +
+                                 " has unknown type " + *type +
+                                 "; write params[].type as bool, int64, uint64, double, string, "
+                                 "or one of these with [] for a list"));
           continue;
         }
         if (!names.insert(*name).second) {
@@ -618,46 +620,55 @@ class Builder {
       CardPath to = e.scope;
       from.push_back(e.from);
       to.push_back(e.to);
-      const auto wire = "wire " + path_key(from) + "." + e.from_port + " -> " +
-                        path_key(to) + "." + e.to_port;
+      const auto wire = "wire " + path_key(from) + " -> " + path_key(to);
       auto src = leaf(from, e.from_port, true, from, wire);
       auto dst = leaf(to, e.to_port, false, to, wire);
       if (!src || !dst) continue;
       Node& sn = res_->nodes[src->first];
       Node& dn = res_->nodes[dst->first];
       bool ok = true;
-      if (sn.kind == Template::Draft ? !src->second.empty()
-                                     : !sn.output(src->second)) {
-        sn.diags.push_back(
-            diag(sn.path, "unknown_port",
-                 wire + ": " +
-                     (sn.kind == Template::Draft
-                          ? "Draft output end must have an empty port"
-                          : src->second.empty()
-                                ? std::string(
-                                      "the end on a Card that is no longer a "
-                                      "Draft needs one of its output ports")
-                                : "no output port " + src->second)));
+      const auto check = [&](Node& node, const std::string& port, bool output) {
+        const auto side = output ? "from" : "to";
+        const auto card = path_key(node.path);
+        const bool draft = node.kind == Template::Draft;
+        if (draft ? port.empty() : (output ? node.output(port) != nullptr
+                                          : node.input(port) != nullptr))
+          return;
+        std::string fix;
+        if (draft) {
+          fix = card + " is still a Draft, so its " + side + " end keeps port \"\"";
+        } else {
+          const auto direction = output ? "output" : "input";
+          fix = card + " has no " + direction + " port " + schema::text(schema::string_value(port));
+          std::string ports;
+          if (output) {
+            for (const auto& p : node.outputs) {
+              if (!ports.empty()) ports += ", ";
+              ports += schema::text(schema::string_value(p.name));
+            }
+          } else {
+            for (const auto& p : node.inputs) {
+              if (!ports.empty()) ports += ", ";
+              ports += schema::text(schema::string_value(p.name));
+            }
+          }
+          if (!ports.empty())
+            fix += "; write " + std::string(side) + ".port as one of " + ports;
+          if (!output && node.kind == Template::Code &&
+              (!port.empty() || ports.empty()))
+            fix += "; add {\"name\": " +
+                   schema::text(schema::string_value(port.empty() ? "source" : port)) +
+                   "} to " + node.def_dir +
+                   "_card.json inputs and write to.port with that name";
+          else if (ports.empty())
+            fix += "; declare an " + std::string(direction) +
+                   " port on " + card + " and write " + side + ".port with its name";
+        }
+        node.diags.push_back(diag(node.path, "unknown_port", wire + ": " + fix));
         ok = false;
-      }
-      if (dn.kind == Template::Draft ? !dst->second.empty()
-                                     : !dn.input(dst->second)) {
-        dn.diags.push_back(
-            diag(dn.path, "unknown_port",
-                 wire + ": " +
-                     (dn.kind == Template::Draft
-                          ? "Draft input end must have an empty port"
-                          : dst->second.empty()
-                                ? std::string(
-                                      "the end on a Card that is no longer a "
-                                      "Draft needs one of its input ports")
-                          : dn.kind == Template::Code
-                                ? "no input port " + dst->second +
-                                      "; add {\"name\": \"" + dst->second +
-                                      "\"} to its _card.json \"inputs\""
-                                : "no input port " + dst->second)));
-        ok = false;
-      }
+      };
+      check(sn, src->second, true);
+      check(dn, dst->second, false);
       if (ok) res_->edges.push_back({src->first, src->second, dst->first, dst->second});
     }
     // One output feeds one wire: a value goes to several Cards through a

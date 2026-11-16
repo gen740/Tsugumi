@@ -446,6 +446,48 @@ class ContextBudget : public testing::Test {
   }
 };
 
+TEST_F(ContextBudget,
+       InternalToolFailureEndsTheTurnWithoutAskingTheModelToRetry) {
+  Add("Implement the Draft");
+  model.Queue(AnthropicTool("edit", "project_edit", "{}"));
+  int calls = 0;
+  hooks.execute_tool = [&](const auto &, auto) {
+    ++calls;
+    return agent::ToolResult{
+        R"({"reply":"Failure","value":{"kind":"internal_error","diagnostic":"Internal error: project and operation id; retrying will not help."}})",
+        true,
+        {},
+        {}};
+  };
+  const auto result = agent::Runtime().Run(config, "system", messages,
+                                           {{"project_edit", "edit", "{}"}}, {},
+                                           hooks, &context);
+  EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(model.Requests().size(), 1u);
+  EXPECT_NE(result.error.find("project"), std::string::npos);
+  EXPECT_NE(result.error.find("operation id"), std::string::npos);
+  EXPECT_FALSE(messages.back().content.size());
+}
+
+TEST_F(ContextBudget, RepairableRefusalsAndNonJsonErrorsRemainToolResults) {
+  for (const auto* text : {
+           R"({"reply":"Failure","value":{"kind":"validation_failed","diagnostic":"write to.port"}})",
+           "{incomplete tool output"}) {
+    messages.clear();
+    Add("Implement the Draft");
+    model.Queue(AnthropicTool("edit", "project_edit", "{}"));
+    model.Queue(AnthropicText("done"));
+    hooks.execute_tool = [text](const auto&, auto) {
+      return agent::ToolResult{text, true, {}, {}};
+    };
+    const auto result = agent::Runtime().Run(
+        config, "system", messages, {{"project_edit", "edit", "{}"}}, {}, hooks, &context);
+    EXPECT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
+  }
+  EXPECT_EQ(model.Requests().size(), 4u);
+}
+
 TEST_F(ContextBudget, ConsecutiveRequestsHaveByteIdenticalCachedPrefixes) {
   for (const auto api : {agent::ProviderAPI::AnthropicMessages,
                          agent::ProviderAPI::OpenAIResponses}) {
