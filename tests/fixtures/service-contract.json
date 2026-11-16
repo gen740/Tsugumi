@@ -128,7 +128,6 @@
     }
   ],
   "agentRequests": [
-    "HelloRequest",
     "ConfigureRequest",
     "ConversationCreateRequest",
     "ConversationListRequest",
