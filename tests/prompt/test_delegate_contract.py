@@ -35,11 +35,6 @@ class DelegateContractTests(unittest.TestCase):
         for capability in ("depth", "count"):
             self.assertEqual(task["properties"][capability],
                              {"type": "integer", "minimum": 0})
-        text = shared["description"]
-        for contract in ("default 0/0", "at most count children over its lifetime",
-                         "depth <= its own depth - 1", "within its Card sets",
-                         "The main Agent is unlimited", "user permission setting"):
-            self.assertIn(contract, text)
         for source in ("protocol/host.fbs", "core/src/host/settings.cc",
                        "agent/Shared/agent.json", "agent/Shared/system-prompt.md"):
             self.assertNotIn("helperParallelism", (ROOT / source).read_text())

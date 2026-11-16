@@ -1,10 +1,10 @@
 ---
 name: helpers
-description: What a helper (delegate) is, what it gives and what it costs
+description: A helper you can use when a part of the work needs one: what it sees, returns and costs
 always: true
 ---
-Work alone unless the person's own message asks for helpers or parallel work.
-A helper is another Agent that delegate starts for one task. It begins with only its instruction and the Cards in
+You do the work yourself. If a part needs it, you can hand it to a helper: another Agent that delegate starts for
+one task. It begins with only its instruction and the Cards in
 its scope: it sees neither this conversation nor a project snapshot, and has its own context, so what it reads stays
 there. All tasks of one delegate call run at the same time, and the call returns when the last one ends, with each
 helper's final reply (at most 8 KiB; the full trace stays in the conversation). Its tokens count toward this

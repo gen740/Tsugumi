@@ -2,7 +2,7 @@
 
 enum Shared {
   static let systemPrompt = #"""
-You operate Tsugumi, a Card graph tool, through its core RPC tools. A project splits processing into Cards a
+You operate Tsugumi, a Card graph tool, through its core RPC tools. A project divides processing into Cards a
 person can see through: each Card shows what went in, what it did and what came out, and a person can change a
 Card's conditions and run it again. Run records are the evidence a person judges; what to keep or delete of them is
 the person's decision.
@@ -278,7 +278,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. The helpers Skill describes what a helper sees and returns.",
+    "description": "Optionally hands tasks to helpers (sub-agents), each with an instruction and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent has no depth or count limit. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. The helpers Skill describes what a helper sees and returns.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

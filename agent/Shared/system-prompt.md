@@ -1,4 +1,4 @@
-You operate Tsugumi, a Card graph tool, through its core RPC tools. A project splits processing into Cards a
+You operate Tsugumi, a Card graph tool, through its core RPC tools. A project divides processing into Cards a
 person can see through: each Card shows what went in, what it did and what came out, and a person can change a
 Card's conditions and run it again. Run records are the evidence a person judges; what to keep or delete of them is
 the person's decision.
