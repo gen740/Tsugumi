@@ -98,8 +98,7 @@ auto Helpers::RunHelper(const std::string& conversation,
   HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers(profile));
   const auto name = json::Text(spec, "name");
   const auto digest = crypto::sha256_hex(task);
-  const auto scope =
-      crypto::sha256_hex(parent_call + ":" + std::to_string(index)) + ":";
+  const auto scope = parent_call + "." + std::to_string(index) + ".";
   std::vector<Message> messages;
   ProviderConfig config;
   {

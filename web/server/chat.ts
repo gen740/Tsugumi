@@ -369,7 +369,7 @@ class ChatHost {
     await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
       if (!(error instanceof CoreHostError) || error.code !== 'permission_denied') throw error
     })
-    const op = randomUUID()
+    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id })).id
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
         arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op }, signal)
@@ -542,6 +542,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return Object.fromEntries((await skillMetadata(undefined, paths)).folders.map((f) => [f.path, f.status === 'ready']))
   },
   'POST /api/chat/sessions': (b) => chatFor(projectDir(b.path)).sessions(),
+  'POST /api/chat/new': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    const result = await core.user.call<{ conversation: { id: string } }>('ConversationCreateRequest', { project_id: project })
+    return { id: result.conversation.id }
+  },
   'POST /api/chat/conversation': async (b) => {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))

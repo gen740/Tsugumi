@@ -118,10 +118,11 @@ class ProviderError final : public std::runtime_error {
 
 // Runs one HTTP streaming request on the caller's worker thread. The callback
 // is synchronous and may throw; no exception crosses a libcurl C callback.
-auto StreamReply(const ProviderConfig& config, std::string_view system,
-                 const std::vector<Message>& messages,
-                 const std::vector<ToolSpec>& tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent&)>& event)
+auto StreamReply(const ProviderConfig &config, std::string_view system,
+                 const std::vector<Message> &messages,
+                 const std::vector<ToolSpec> &tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent &)> &event,
+                 const std::function<std::string()> &allocate_call = {})
     -> ModelReply;
 
 struct ModelInfo {

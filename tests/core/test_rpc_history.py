@@ -163,5 +163,5 @@ def test_a_client_opening_later_gets_each_cards_latest_invocation(core_factory, 
     assert all(records[name].state == CardState.succeeded and records[name].invocation == 1
                for name in ("src", "out"))
     with pytest.raises(RpcFailure) as failure:
-        later.call("RunLatestInvocationsRequest", runId=new_id())
+        later.call("RunLatestInvocationsRequest", runId="999999")
     assert failure.value.kind == "not_found"

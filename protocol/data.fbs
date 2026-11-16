@@ -4,7 +4,7 @@
 // Conventions
 // - Required scalars are declared as optional scalars (`= null`) and their
 //   presence is checked by semantic validation.
-// - Id: UUID string. Rev/Seq: uint64. Time: int64 UTC epoch ms.
+// - Id: opaque string; runs use positive project sequence numbers. Rev/Seq: uint64. Time: int64 UTC epoch ms.
 //   Duration: uint64 ms. Hash: lowercase SHA-256 hex. Path: project relative.
 // - Maps are vectors of KeyValue; duplicate keys are rejected.
 

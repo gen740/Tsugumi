@@ -26,6 +26,7 @@
 #include "host/failure.hh"
 #include "host/format.hh"
 #include "host/guide.hh"
+#include "host/identifiers.hh"
 #include "host/layout_service.hh"
 #include "host/models.hh"
 #include "host/permission_kinds.hh"
@@ -239,6 +240,31 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
+    options.environment.prepare_project_identity =
+        [this](const std::filesystem::path &root) {
+          std::lock_guard lock(mutex);
+          const auto file = root / ".tsugumi/project-id";
+          if (const auto id = fs::read_file(file)) {
+            if (!crypto::is_short_id(*id))
+              throw Failure("invalid_project",
+                            "Recreate this development project for the new "
+                            "identifier format");
+            registry.ValidateLocation(*id, root);
+            db.prepare("INSERT OR IGNORE INTO identifiers VALUES('project',?)")
+                .bind(1, *id)
+                .run();
+            return;
+          }
+          std::string id;
+          for (;;) {
+            id = host::AllocateId(db, "project");
+            auto known = db.prepare("SELECT 1 FROM projects WHERE id=?");
+            known.bind(1, id);
+            if (!known.step())
+              break;
+          }
+          fs::write_atomic(file, id, 0600);
+        };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
           options.environment,
@@ -469,6 +495,7 @@ struct Service::State {
             request.request_id,
             conversations->Events(*r->value_as_EventsRequest(), human));
       }
+      case A::RequestPayload::CallIdRequest:
       case A::RequestPayload::ToolCatalogRequest:
       case A::RequestPayload::ToolCallRequest:
         return tools->Handle(request, human, lock);
@@ -600,6 +627,26 @@ struct Service::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::IdentifierReserveRequest: {
+      const auto *input = r->value_as_IdentifierReserveRequest();
+      const auto project = input->project_id()->str(),
+                 kind = input->kind()->str();
+      registry.Lookup(project);
+      if (kind != "note" && kind != "group" && kind != "comment")
+        throw Failure("invalid_request", "Unknown annotation kind");
+      const auto scope = input->scope() ? input->scope()->str() : "";
+      if ((kind == "comment") != !scope.empty())
+        throw Failure("invalid_request", "Only comments require a Card scope");
+      std::vector<std::string> occupied;
+      if (input->occupied())
+        for (const auto *id : *input->occupied())
+          occupied.push_back(id->str());
+      H::IdentifierT result;
+      result.id = host::ReserveOrdinal(
+          db, "annotation:" + project + ":" + kind + ":" + scope,
+          kind == "comment" ? "" : kind + "-", occupied);
+      return wire::HostReply(request.request_id, std::move(result));
+    }
       case H::RequestPayload::DemoListRequest: {
         H::DemoPathsT result;
         for (const auto& path : json::Array(demo_references.ListFiles()))

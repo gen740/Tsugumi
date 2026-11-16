@@ -16,4 +16,4 @@ def test_every_run_table_is_copied():
     strategies = set(re.findall(r'\{"(\w+)"', copied))
     # Schemas are deduplicated by hash and selected through the copied values.
     assert '".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM "' in source
-    assert tables == strategies | {'schemas'}
+    assert tables == strategies | {'schemas', 'run_counter'}

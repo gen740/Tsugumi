@@ -39,6 +39,8 @@ struct RuntimeEvent {
 };
 
 struct RuntimeHooks {
+  // Durable service-owned sequence, including across transcript compaction.
+  std::function<std::string()> allocate_call;
   std::function<ToolResult(const ToolCall&, std::stop_token)> execute_tool;
   std::function<void(const RuntimeEvent&)> event;
   // Called before a model request, including retries and compaction. Throws

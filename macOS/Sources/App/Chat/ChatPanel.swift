@@ -505,7 +505,7 @@ struct ChatPanel: View {
           ForEach(ChatFinding.list(item.text)) { finding in
             HStack {
               Text("\(finding.target.file ?? ""):\(finding.target.lineStart ?? 1)-\(finding.target.lineEnd ?? 1)").font(.caption)
-              Button("指摘をコメントに残す") { session.addComment(key(finding.target.card!), finding.text, finding: true) }.disabled(!session.isEditable)
+              Button("指摘をコメントに残す") { session.performCardEdit { try await session.addComment(key(finding.target.card!), finding.text, finding: true) } }.disabled(!session.isEditable)
             }
           }
         }

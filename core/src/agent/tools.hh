@@ -90,6 +90,8 @@ struct Tools {
                    const std::string& requested_project, const ToolCall& call,
                    bool wait, std::stop_token stop, bool helper = false,
                    HelperScope* boundary = nullptr) -> ToolResult;
+  auto AllocateCall(const std::string &conversation,
+                    const std::string &scope = {}) -> std::string;
   auto Hooks(const std::string& id, bool helper = false,
              std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks;
   auto RequireHelperPermission(const std::string &conversation,

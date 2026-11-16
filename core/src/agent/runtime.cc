@@ -292,18 +292,20 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
     Authorize(hooks, messages);
     bool streamed = false;
     try {
-      auto reply = StreamReply(config, system, messages, tools, stop,
-                               [&](const ModelEvent& model) {
-                                 CheckCancelled(stop);
-                                 RuntimeEvent event;
-                                 event.kind = model.kind;
-                                 event.text = model.text;
-                                 event.id = model.id;
-                                 event.name = model.name;
-                                 event.index = model.index;
-                                 streamed = true;
-                                 Emit(hooks, std::move(event));
-                               });
+      auto reply = StreamReply(
+          config, system, messages, tools, stop,
+          [&](const ModelEvent &model) {
+            CheckCancelled(stop);
+            RuntimeEvent event;
+            event.kind = model.kind;
+            event.text = model.text;
+            event.id = model.id;
+            event.name = model.name;
+            event.index = model.index;
+            streamed = true;
+            Emit(hooks, std::move(event));
+          },
+          hooks.allocate_call);
       // Generated words and tool arguments can themselves contain private
       // context. Keep their provenance when this turn is saved or summarized.
       const auto resources = Resources(messages);

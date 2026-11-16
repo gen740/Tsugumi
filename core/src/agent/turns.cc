@@ -35,7 +35,7 @@ auto Human(bool human) -> void {
                   "This operation requires the authenticated user");
 }
 
-const char* kSystem =
+const char *kSystem =
     "You are Tsugumi, a scientific workflow assistant. Work "
     "through the core's public tools. "
     "A project is unavailable until the user grants access. "
@@ -49,16 +49,23 @@ const char* kSystem =
     "Use delegate for bounded helper tasks when it is offered. "
     "Cite evidence in reports with Markdown links to records you have "
     "inspected. "
-    "Links are local to the current project: [Card](card:outer/inner), "
-    "[Run](run:RUN_UUID), [Invocation](run:RUN_UUID/outer/inner#1), "
-    "[Log](log:RUN_UUID/outer/inner?invocation=1&stream=stdout&offset=0), "
-    "[Artifact](artifact:RUN_UUID?id=URL_ENCODED_ARTIFACT_ID&path=URL_ENCODED_"
+    "Links are local to the current project: [Name "
+    "(outer/inner)](card:outer/inner), "
+    "[Run 12 (start time or mark)](run:12), [inner "
+    "(12/outer/inner#1)](run:12/outer/inner#1), "
+    "[inner stdout "
+    "(12/outer/inner#1)](log:12/outer/"
+    "inner?invocation=1&stream=stdout&offset=0), "
+    "[plot.png "
+    "(12/inner#1)](artifact:12?id=URL_ENCODED_ARTIFACT_ID&path=URL_ENCODED_"
     "MEMBER). "
     "Log streams are stdout, stderr, build or journal; offsets are byte "
     "offsets. "
     "Omit the Card and invocation for a run-wide log, and omit path for a "
     "whole artifact. "
-    "Use actual run IDs, Card paths, invocation numbers and artifact IDs "
+    "Label each citation with its short reference and simple name (Card name, "
+    "artifact filename, or run start time/mark). Use actual project run "
+    "numbers, Card paths, invocation numbers and artifact IDs "
     "returned by tools. "
     "Never invent a link, attach a project path, or cite another project's "
     "record. ";
@@ -493,7 +500,11 @@ auto Turns::Start(const std::string& id, const std::string& turn,
           .run();
     }
   } else if (active_turn.empty()) {
-    active_turn = crypto::uuid4();
+    auto counter = conversations->ConversationDatabase(id).prepare(
+        "SELECT count(*) FROM turns WHERE conversation=?");
+    counter.bind(1, id);
+    counter.step();
+    active_turn = "action-" + std::to_string(counter.i64(0) + 1);
     auto q = conversations->ConversationDatabase(id).prepare(
         "INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
     q.bind(1, id)

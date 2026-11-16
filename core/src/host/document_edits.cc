@@ -382,9 +382,10 @@ auto CopyDocuments(const std::string &state,
         json::Quote(name.empty() ? json::Text(meta, "name", id) : name);
     if (meta.contains("comments")) {
       auto comments = json::Array(meta.at("comments"));
+      uint64_t comment_id = 0;
       for (auto &raw : comments) {
         auto comment = json::Object(raw);
-        comment["id"] = json::Quote(crypto::uuid4());
+        comment["id"] = json::Quote(std::to_string(++comment_id));
         raw = json::Encode(comment);
       }
       meta["comments"] = json::Encode(comments);

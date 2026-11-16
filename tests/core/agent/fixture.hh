@@ -101,6 +101,8 @@ struct Reply {
       return test::View(r->value_as_ToolCatalog()->tools());
     case A::ReplyPayload::ToolResult:
       return test::View(r->value_as_ToolResult());
+    case A::ReplyPayload::CallId:
+      return test::View(r->value_as_CallId());
     case A::ReplyPayload::AccessResult:
       return test::View(r->value_as_AccessResult());
     case A::ReplyPayload::AccessList:

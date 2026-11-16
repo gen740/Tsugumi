@@ -671,8 +671,8 @@ TEST(AgentPresentation, ResultsKeepTheirCallIdsAcrossTheArchiveBoundary) {
 TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvocation) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":[\"outer\",\"a\"]}}"}]},
-    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"11111111-1111-4111-8111-111111111111\"}}}"}]},
-    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"11111111-1111-4111-8111-111111111111\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"12\"}}}"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"12\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
   ASSERT_EQ(conversation.rows.size(), 1u);
   const auto& calls = conversation.rows[0]->children;
   ASSERT_EQ(calls.size(), 2u);
@@ -680,8 +680,11 @@ TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvoc
   for (const auto& link : calls[0]->links) run_links.push_back(link->url);
   for (const auto& link : calls[1]->links) log_links.push_back(link->url);
   EXPECT_NE(std::find(run_links.begin(), run_links.end(), "card:outer/a"), run_links.end());
-  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:11111111-1111-4111-8111-111111111111"), run_links.end());
-  EXPECT_NE(std::find(log_links.begin(), log_links.end(), "log:11111111-1111-4111-8111-111111111111/outer/a?invocation=2&stream=stderr&offset=16"), log_links.end());
+  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:12"),
+            run_links.end());
+  EXPECT_NE(std::find(log_links.begin(), log_links.end(),
+                      "log:12/outer/a?invocation=2&stream=stderr&offset=16"),
+            log_links.end());
 }
 TEST(AgentPresentation, InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSnapshot) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[

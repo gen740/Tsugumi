@@ -2253,9 +2253,11 @@ export class ProjectSession extends Observable {
     this.edit((x) => x.changeComments(k, fn))
   }
 
-  addComment(k: CardKey, text: string, finding = false) {
+  async addComment(k: CardKey, text: string, finding = false) {
     const t = text.trim()
-    if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user'], ['finding', finding]])])
+    if (!t) return
+    const id = await this.reserveReference('comment', k)
+    this.editComments(k, list => [...list, obj([['id', id], ['text', t], ['author', 'user'], ['finding', finding]])])
   }
 
   setCommentText(k: CardKey, id: string, text: string) {
@@ -2486,7 +2488,7 @@ export class ProjectSession extends Observable {
     } catch (e) { throw new Error(L('ファイル「{0}」を読み込めませんでした: {1}', p, errorText(e))) }
   }
 
-  private cardEditFailed(e: unknown) {
+  cardEditFailed(e: unknown) {
     this.notice = errorText(e)
     this.changed()
   }
@@ -3069,12 +3071,35 @@ export class ProjectSession extends Observable {
 
   // ---- Layout: notes, groups, output frames --------------------------------------------
 
+  referenceIdProvider?: (kind: string, scope: string, occupied: string[]) => Promise<string>
+  private async reserveReference(kind: string, scope = ''): Promise<string> {
+    const project = this.projectId
+    const occupied: string[] = []
+    if (kind === 'comment') occupied.push(...this.comments(scope).map(c => c.id))
+    else {
+      const queue: string[][] = [[]]
+      while (queue.length) {
+        const at = queue.shift()!
+        for (const item of arr(get(this.layoutOf(at), kind === 'note' ? 'notes' : 'groups')) ?? []) {
+          const id = str(get(item, 'id'))
+          if (id) occupied.push(id)
+        }
+        queue.push(...this.childScopes(at))
+      }
+    }
+    if (this.referenceIdProvider) return this.referenceIdProvider(kind, scope, occupied)
+    if (!project) throw new RPCError('disconnected', L('接続していません'))
+    const result = await api<{ id: string }>('/api/identifiers/reserve', { project_id: project, kind, scope, occupied })
+    if (this.projectId !== project || !this.connected) throw new RPCError('disconnected', L('接続していません'))
+    return result.id
+  }
+
   notes(scope: string[]): J[] {
     return (arr(get(this.layoutOf(scope), 'notes')) ?? []).filter((n) => (str(get(n, 'scope')) ?? '') === '')
   }
 
-  addNote(scope: string[], p: { x: number; y: number }): string {
-    const id = 'note-' + uuid().slice(0, 8)
+  async addNote(scope: string[], p: { x: number; y: number }): Promise<string> {
+    const id = await this.reserveReference('note')
     this.edit((x) => {
       x.updateLayout(scope, (l) => {
         l.set('notes', [...(arr(l.get('notes')) ?? []), obj([
@@ -3146,8 +3171,8 @@ export class ProjectSession extends Observable {
     })
   }
 
-  addGroup(keys: Set<CardKey>, scope: string[], name = L('グループ')): string {
-    const id = 'group-' + uuid().slice(0, 8)
+  async addGroup(keys: Set<CardKey>, scope: string[], name = L('グループ')): Promise<string> {
+    const id = await this.reserveReference('group')
     this.edit((x) => x.updateGroups(scope, (g) => g.push(obj([
       ['id', id], ['scope', ''], ['name', name], ['color', 'blue'], ['cards', [...keys].map((k) => path(k).pop()!).sort()],
     ]))))

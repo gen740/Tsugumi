@@ -208,7 +208,7 @@ export class ChatController extends Observable {
   private async init() {
     const turn = this.turn
     if (!await this.refreshSessions() || turn !== this.turn) return
-    this.select(this.sessions[0]?.id ?? uuid())
+    this.select(this.sessions[0]?.id ?? await this.createSession())
     void this.reloadSkills()
   }
 
@@ -303,15 +303,21 @@ export class ChatController extends Observable {
     this.items = c.rows.map(presentedItem)
   }
 
+  private async createSession(): Promise<string> {
+    return (await api<{ id: string }>('/api/chat/new', { path: this.session.dir })).id
+  }
+
   newSession() {
-    this.select(uuid())
-    void this.refreshSessions()
+    void this.createSession().then(id => {
+      this.select(id)
+      void this.refreshSessions()
+    }).catch(e => this.fail(e))
   }
 
   async delete(id: string) {
     await api('/api/chat/delete', { path: this.session.dir, session: id }).catch(() => {})
     await this.refreshSessions()
-    if (id === this.currentId) this.select(this.sessions[0]?.id ?? uuid())
+    if (id === this.currentId) this.select(this.sessions[0]?.id ?? await this.createSession())
   }
 
   /** Full-text search over every session, compacted parts included. */

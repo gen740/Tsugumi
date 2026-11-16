@@ -285,6 +285,7 @@ table ProjectInspectRequest {}
 /// -> CardIdResult. Reserves a permanent identifier for a new Card without
 /// changing the document revision. Supply a caller-derived stem (1..123 ASCII
 /// identifier characters); use the returned id in the canvas, paths and wires.
+/// Uses the lowercase stem itself, then -2, -3, etc. when occupied, with no random suffix.
 /// Each call reserves a fresh id; save the definition and canvas with project_save.
 table CardIdRequest {
   stem:string (id: 0, required);
@@ -371,7 +372,7 @@ table RunScratchDeleteResult {
   freed_bytes:uint64 (id: 2);
 }
 table RunScratchUsage {
-  /// Relative scratch folder: runs/<run UUID> or recovery.
+  /// Relative scratch folder: runs/<project run number> or recovery.
   path:string (id: 0, required);
   /// Measured bytes; use only when size_unknown is false.
   bytes:uint64 (id: 1);

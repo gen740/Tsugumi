@@ -35,6 +35,7 @@ import { ExecutionServiceRemoveRequestT } from '../src/gen/tsugumi/host/executio
 import { ExecutionProjectAuthorizeRequestT } from '../src/gen/tsugumi/host/execution-project-authorize-request'
 import { ExecutionProjectRevokeRequestT } from '../src/gen/tsugumi/host/execution-project-revoke-request'
 import { DemoListRequestT as HDemoListRequest } from '../src/gen/tsugumi/host/demo-list-request'
+import { CallIdRequestT } from '../src/gen/tsugumi/agent/call-id-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../src/gen/tsugumi/host/host-project-defaults-request'
@@ -166,6 +167,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
 
+    case 'IdentifierReserveRequest': return new H.IdentifierReserveRequestT(v.project_id, v.kind, v.scope, v.occupied)
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
@@ -184,6 +186,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostRecentForgetRequest': return new HHostRecentForgetRequest(v.paths)
   }
   else switch (method) {
+    case 'CallIdRequest': return new CallIdRequestT(v.conversation_id)
     case 'ToolCatalogRequest': return new AToolCatalogRequest()
     case 'HelloRequest': return new AHelloRequest(v.token, v.client_id, v.protocol)
     case 'ConfigureRequest': return new AConfigureRequest(provider(v.provider), v.conversation_id)

@@ -1185,9 +1185,12 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   const [editing, setEditing] = useState<{ id: string; text: string }>()
   const comments = session.comments(card)
   const open = comments.filter((c) => !c.resolved), resolved = comments.filter((c) => c.resolved)
-  const add = () => {
-    session.addComment(card, text)
-    setText('')
+  const add = async () => {
+    const submitted = text
+    try {
+      await session.addComment(card, submitted)
+      setText(current => current === submitted ? '' : current)
+    } catch (e) { session.cardEditFailed(e) }
   }
   const saveEdit = async (overwrite = false) => {
     if (!editing) return

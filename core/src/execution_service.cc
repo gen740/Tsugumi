@@ -50,14 +50,16 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
 
-  s.environment_id = build.environment.id;
   s.build_cached = build.cached;
   s.emulator = build.emulator;
   s.execution_service = node.settings.execution_service;
   // The environment and its invocation association must survive a crash
   // before the worker can execute any code, including a reused build.
   try {
-    request.start([&](sql::Db& db) { History::put_environment(db, s.run_id, build.environment); });
+    request.start([&](sql::Db &db) {
+      s.environment_id =
+          History::put_environment(db, s.run_id, build.environment);
+    });
   } catch (...) {
     s.environment_id.clear();
     s.execution_service.clear();

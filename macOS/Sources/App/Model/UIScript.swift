@@ -251,7 +251,10 @@ final class UIScript {
         }
       case "comment":
         // comment <card> <text>: a comment written on a Card, as in its settings window
-        if let s = session { s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
+        if let s = session {
+          do { try await s.addComment(w[1], w.dropFirst(2).joined(separator: " ")) }
+          catch { say("comment failed: \(error)") }
+        }
       case "generate-comments":
         // The canvas's "Generate from comments": the open comments of the shown scope go to the Agent.
         if let s = session, let t = workspace?.active {

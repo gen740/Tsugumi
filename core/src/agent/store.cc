@@ -11,6 +11,7 @@
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
+#include "host/identifiers.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::agent {
@@ -47,6 +48,9 @@ auto FoldAscii(std::string text) -> std::string {
 
 // Conversation records contain no provisioning, host capabilities or settings.
 auto CreateConversationTables(sql::Db& db) -> void {
+  db.exec("CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
+          "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
+          "KEY(conversation,scope))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
       "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
@@ -433,9 +437,13 @@ auto ConversationStore::Create(const A::ConversationCreateRequest& request,
                                bool human) -> Conversation {
   const auto* p = &request;
   auto id = Text(p->conversation_id());
-  if (id.empty()) id = crypto::uuid4();
-  if (id.size() > 256)
-    throw Failure("invalid_request", "Conversation ID is too long");
+  if (id.empty()) {
+    do {
+      id = host::AllocateId(db, "conversation");
+    } while (FindConversationDatabase(id));
+  }
+  if (!crypto::is_operation_id(id))
+    throw Failure("invalid_request", "Conversation ID must be a safe filename");
   const auto project = Text(p->project_id());
   if (!project.empty()) registry.Lookup(project);
   const auto role = Text(p->role()) == "guide" ? "guide" : "worker";

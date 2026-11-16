@@ -183,9 +183,10 @@ TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
     Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
-  const auto root = directory.path / "project/.tsugumi/agent-files" / crypto::sha256_hex(conversation);
+  const auto root =
+      directory.path / "project/.tsugumi/agent-files" / conversation;
   Write(root / "scratch/secret", "PARENT_SCRATCH_SENTINEL");
-  const auto sibling = root / "helpers" / crypto::sha256_hex(crypto::sha256_hex("sibling:0") + ":") / "scratch/secret";
+  const auto sibling = root / "helpers" / "sibling.0." / "scratch/secret";
   Write(sibling, "SIBLING_SCRATCH_SENTINEL");
   ModelServer model;
   const auto command = "printf HELPER_SHELL_STARTED; cat scratch/secret; cat " + (root / "scratch/secret").string() + "; cat " + sibling.string();
@@ -212,10 +213,12 @@ TEST_F(AgentProjectFixture, HelpersCannotCopyParentOrSiblingScratch) {
   const auto conversation = Conversation("private-helper-scratch");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
-  const auto private_root = directory.path / "project/.tsugumi/agent-files" / crypto::sha256_hex(conversation);
+  const auto private_root =
+      directory.path / "project/.tsugumi/agent-files" / conversation;
   Write(private_root / "scratch/parent.csv", "PARENT_PRIVATE");
-  const auto identity = crypto::sha256_hex("scratch-helper-a:0") + ":";
-  Write(private_root / "helpers" / crypto::sha256_hex(identity) / "scratch/own.csv", "HELPER_PRIVATE");
+  const auto identity = std::string("scratch-helper-a.0.");
+  Write(private_root / "helpers" / identity / "scratch/own.csv",
+        "HELPER_PRIVATE");
   ModelServer model;
   model.Queue(AnthropicTool("parent", "project_copy",
       R"({"source":"scratch","base_rev":"0","files":[{"from":"parent.csv","to":"definitions/own/leaked-parent.csv"}]})"));
@@ -281,14 +284,14 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
         Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
     Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
-  const auto root = directory.path / "project/.tsugumi/agent-files" /
-                    crypto::sha256_hex(conversation);
-  const auto outer = crypto::sha256_hex("scratch-tree:0") + ":";
-  const auto parent = crypto::sha256_hex(outer + "parent:0") + ":";
-  const auto child = crypto::sha256_hex(parent + "child:0") + ":";
-  const auto sibling = crypto::sha256_hex(parent + "sibling:0") + ":";
+  const auto root =
+      directory.path / "project/.tsugumi/agent-files" / conversation;
+  const auto outer = std::string("scratch-tree.0.");
+  const auto parent = outer + "1.0.";
+  const auto child = parent + "2.0.";
+  const auto sibling = parent + "3.0.";
   const auto scratch = [&](const std::string &identity) {
-    return root / "helpers" / crypto::sha256_hex(identity) / "scratch";
+    return root / "helpers" / identity / "scratch";
   };
   Write(root / "scratch/secret", "MAIN_PRIVATE");
   Write(scratch(sibling) / "sibling-only", "SIBLING_PRIVATE");
@@ -410,15 +413,13 @@ TEST_F(NestedFileFixture, NestedCopyUsesItsOwnScratchAndCannotWidenCardSets) {
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
         Tsugumi::Service::Access::Write);
-  const auto root = directory.path / "project/.tsugumi/agent-files" /
-                    crypto::sha256_hex(conversation);
-  const auto parent = crypto::sha256_hex("nested-copy:0") + ":";
-  const auto child = crypto::sha256_hex(parent + "child:0") + ":";
+  const auto root =
+      directory.path / "project/.tsugumi/agent-files" / conversation;
+  const auto parent = std::string("nested-copy.0.");
+  const auto child = parent + "1.0.";
   Write(root / "scratch/main.txt", "MAIN_PRIVATE");
-  Write(root / "helpers" / crypto::sha256_hex(parent) / "scratch/parent.txt",
-        "PARENT_PRIVATE");
-  Write(root / "helpers" / crypto::sha256_hex(child) / "scratch/child.txt",
-        "CHILD_PRIVATE");
+  Write(root / "helpers" / parent / "scratch/parent.txt", "PARENT_PRIVATE");
+  Write(root / "helpers" / child / "scratch/child.txt", "CHILD_PRIVATE");
   const auto task =
       R"({"tasks":[{"name":"child","instruction":"Copy only assigned files.","read_cards":[],"write_cards":["own"],"run_cards":[]}]})";
   ModelServer model;
@@ -1187,7 +1188,7 @@ TEST_F(AgentProjectFixture,
   // A malformed lookup ID must reach the project unchanged, rather than
   // being replaced by the Agent's own mutation ID.
   const auto invalid =
-      Tool(conversation, "operation_get", R"({"op_id":"not-a-uuid"})");
+      Tool(conversation, "operation_get", R"({"op_id":"../invalid"})");
   ASSERT_TRUE(invalid.Code().empty());
   EXPECT_TRUE(JsonBool(invalid.View(), "/isError"));
   const auto failure = JsonString(invalid.View(), "/text");
@@ -1318,9 +1319,9 @@ TEST_F(AgentProjectFixture,
   // The full public receipt stays available even when the model sees a page.
   EXPECT_NE(Get(conversation).View().find(std::string(50000, 'x')),
             std::string::npos);
-  const auto page = Tool(
-      conversation, "tool_result_read",
-      R"({"call_id":"inspect-large-result","offset":"24000","limit_bytes":1024})");
+  const auto page =
+      Tool(conversation, "tool_result_read",
+           R"({"call_id":"1","offset":"24000","limit_bytes":1024})");
   ASSERT_TRUE(page.Code().empty());
   const auto saved = JsonString(page.View(), "/text");
   EXPECT_EQ(JsonString(saved, "/offset"), "24000");
@@ -1328,9 +1329,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(saved, "/text"), std::string(1024, 'x'));
   // Saved output still requires the original grant.
   Revoke(grant);
-  EXPECT_EQ(Tool(conversation, "tool_result_read",
-                 R"({"call_id":"inspect-large-result"})")
-                .Code(),
+  EXPECT_EQ(Tool(conversation, "tool_result_read", R"({"call_id":"1"})").Code(),
             "permission_denied");
 }
 
@@ -1341,11 +1340,11 @@ TEST_F(AgentProjectFixture, HelpersRereadOnlyTheirOwnFilteredResults) {
   model.Queue(AnthropicTool(
       "delegate-reader", "delegate",
       R"({"tasks":[{"name":"reader","instruction":"Inspect and reread only your own result.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
-  model.Queue(AnthropicTool("guess-parent", "tool_result_read",
-                            R"({"call_id":"parent-read"})"));
+  model.Queue(
+      AnthropicTool("guess-parent", "tool_result_read", R"({"call_id":"1"})"));
   model.Queue(AnthropicTool("own-inspect", "project_inspect", "{}"));
   model.Queue(AnthropicTool("own-reread", "tool_result_read",
-                            R"({"call_id":"own-inspect","limit_bytes":100})"));
+                            R"({"call_id":"2","limit_bytes":100})"));
   model.Queue(AnthropicText("Helper report."));
   model.Queue(AnthropicText("Done."));
   Configure(model);
@@ -1393,9 +1392,9 @@ TEST_F(AgentProjectFixture,
   second.replace(second.find(marker), marker.size(), "\"input_tokens\":99000");
   model.Queue(std::move(second));
   model.Queue(AnthropicText("INTERNAL_HELPER_HANDOFF"));
-  model.Queue(AnthropicTool(
-      "helper-reload-one", "tool_result_read",
-      R"({"call_id":"helper-read-one","offset":"0","limit_bytes":100})"));
+  model.Queue(
+      AnthropicTool("helper-reload-one", "tool_result_read",
+                    R"({"call_id":"1","offset":"0","limit_bytes":100})"));
   model.Queue(AnthropicText("Both records inspected."));
   model.Queue(AnthropicText("The helper finished."));
   Configure(model, "fixture", 100000);
@@ -2140,8 +2139,7 @@ TEST_F(AgentProjectFixture,
   const std::vector<std::pair<std::string, std::string>> operations{
       {"run_history_delete", R"({"ended_before":"1"})"},
       {"project_cache_clear", "{}"},
-      {"run_scratch_delete",
-       R"({"paths":["runs/00000000-0000-4000-8000-000000000001"]})"},
+      {"run_scratch_delete", R"({"paths":["runs/1"]})"},
       {"version_checkout", "{\"commit\":" + Quote(commit) +
                                ",\"base_rev\":" + Quote(base_rev) + "}"},
       {"version_init", "{}"},
@@ -2326,7 +2324,7 @@ TEST_F(AgentProjectFixture,
     const bool denied = i != 0 && i != 2 && i != 3;
     EXPECT_EQ(JsonString(requests[i + 1], pointer + "/type"), "tool_result");
     EXPECT_EQ(JsonString(requests[i + 1], pointer + "/tool_use_id"),
-              "scope-call-" + std::to_string(i));
+              std::to_string(i + 1));
     EXPECT_EQ(JsonBool(requests[i + 1], pointer + "/is_error"), denied)
         << calls[i].first << ' ' << calls[i].second << '\n'
         << JsonString(requests[i + 1], pointer + "/content");
@@ -2369,8 +2367,9 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   const auto reservation_request = model.Requests()[1];
   EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/type"),
             "tool_result");
-  EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/tool_use_id"),
-            "reserve");
+  EXPECT_EQ(
+      JsonString(reservation_request, "/messages/2/content/0/tool_use_id"),
+      "1");
   EXPECT_FALSE(JsonBool(reservation_request, "/messages/2/content/0/is_error"));
   const auto reserved =
       JsonString(reservation_request, "/messages/2/content/0/content");
@@ -2394,19 +2393,57 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   ASSERT_EQ(requests.size(), 4u);
   EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/type"),
             "tool_result");
-  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/tool_use_id"),
-            "save-own");
+  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/tool_use_id"), "2");
   EXPECT_FALSE(JsonBool(requests[2], "/messages/4/content/0/is_error"));
   EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/type"),
             "tool_result");
-  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/tool_use_id"),
-            "read-own");
+  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/tool_use_id"), "3");
   EXPECT_FALSE(JsonBool(requests[3], "/messages/6/content/0/is_error"));
   const auto content = JsonString(requests[3], "/messages/6/content/0/content");
   EXPECT_EQ(JsonString(content, "/reply"), "FileContent");
   EXPECT_EQ(JsonString(content, "/value/bytes"), "own");
   EXPECT_TRUE(JsonBool(content, "/value/eof"));
   EXPECT_EQ(Read(directory.path / "project" / path), "own");
+}
+
+TEST_F(AgentProjectFixture,
+       AnnotationReferencesAreReservedAcrossClientsAndRestarts) {
+  StartProject();
+  auto second = ConnectHost(true);
+  const auto reserve = [&](client::Connection &connection,
+                           const std::string &kind, const std::string &scope,
+                           const std::vector<std::string> &occupied) {
+    const auto reply =
+        Call(connection, H::RequestPayload::IdentifierReserveRequest,
+             [&](Builder &b) {
+               std::vector<flatbuffers::Offset<flatbuffers::String>> ids;
+               for (const auto &id : occupied)
+                 ids.push_back(b.CreateString(id));
+               return H::CreateIdentifierReserveRequest(
+                          b, b.CreateString(project_id), b.CreateString(kind),
+                          b.CreateString(scope), b.CreateVector(ids))
+                   .Union();
+             });
+    if (!reply.Code().empty())
+      throw std::runtime_error(reply.Code());
+    const auto *value = reply.HostValue()->value_as_Identifier();
+    if (!value)
+      throw std::runtime_error("Missing reserved reference");
+    return value->id()->str();
+  };
+  EXPECT_EQ(reserve(*host, "note", "", {"note-1"}), "note-2");
+  EXPECT_EQ(reserve(*second, "note", "", {}), "note-3");
+  EXPECT_EQ(reserve(*host, "comment", "lorenz", {}), "1");
+  EXPECT_EQ(reserve(*second, "comment", "other", {}), "1");
+  EXPECT_EQ(reserve(*second, "comment", "lorenz", {}), "2");
+  second.reset();
+  host.reset();
+  human.reset();
+  external.reset();
+  service.Stop();
+  StartHost();
+  EXPECT_EQ(reserve(*host, "note", "", {}), "note-4");
+  EXPECT_EQ(reserve(*host, "comment", "lorenz", {}), "3");
 }
 
 } // namespace

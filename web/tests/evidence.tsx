@@ -14,7 +14,7 @@ for (const c of cases) {
     assert.deepEqual(typeof value === 'bigint' ? String(value) : value, c[field], `${c.href} ${field}`)
   }
 }
-const run = '12345678-1234-1234-1234-123456789abc'
+const run = '12'
 const calls: string[] = []
 const source: EvidenceSource = {
   cardExists: card => card.join('/') === 'spectrum',
@@ -35,7 +35,7 @@ assert.equal(await evidenceExists(parseEvidence(`artifact:${run}?id=missing`)!, 
 assert.equal(await evidenceExists(parseEvidence(`run:${run}`)!, { ...source, runExists: async () => { throw Error('offline') } }), false)
 assert.ok(calls.every(value => value === `run:${run}`))
 let touchedOtherRecord = false
-assert.equal(await evidenceExists(parseEvidence('run:00000000-0000-0000-0000-000000000000/spectrum#2')!, {
+assert.equal(await evidenceExists(parseEvidence('run:999/spectrum#2')!, {
   ...source, recordExists: async () => { touchedOtherRecord = true; return true },
 }), false)
 assert.equal(touchedOtherRecord, false, 'A run outside the current project is rejected before any record lookup')

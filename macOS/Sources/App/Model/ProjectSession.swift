@@ -303,6 +303,7 @@ final class ProjectSession {
   var prepareLayout: (String, String, [String: String]) async throws -> String = {
     try await CoreHostClient.shared.completeLayout(project: $0, layout: $1, definitions: $2)
   }
+  var referenceIdProvider: ((String, String, [String]) async throws -> String)?
   var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
@@ -2087,10 +2088,11 @@ final class ProjectSession {
     edit { $0.changeComments(k, fn) }
   }
 
-  func addComment(_ k: CardKey, _ text: String, finding: Bool = false) {
+  func addComment(_ k: CardKey, _ text: String, finding: Bool = false) async throws {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !t.isEmpty else { return }
-    editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] }
+    let id = try await reserveReference("comment", scope: k)
+    editComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] }
   }
 
   func setCommentText(_ k: CardKey, id: String, text: String) {

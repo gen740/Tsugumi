@@ -260,6 +260,7 @@ const routes: Record<string, Handler> = {
   'POST /api/document/connect': (b) => hostRequest('DocumentConnectRequest', b),
   'POST /api/document/copy': (b) => hostRequest('DocumentCopyRequest', b),
   'POST /api/document/subgraph': (b) => hostRequest('DocumentSubgraphRequest', b),
+  'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
   'POST /api/layout/display-geometry': () => hostRequest('DisplayGeometryRequest', {}),
   'POST /api/layout/arrange': (b) => hostRequest('LayoutArrangeRequest', b),
   'POST /api/layout/untangle': (b) => hostRequest('LayoutUntangleRequest', b),

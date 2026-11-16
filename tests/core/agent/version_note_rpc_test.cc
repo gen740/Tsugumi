@@ -22,7 +22,7 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   ASSERT_TRUE(initialized.Code().empty());
   const auto result = JsonString(initialized.View(), "/text");
   const auto commit = JsonString(result, "/value/commit");
-  ASSERT_EQ(commit.size(), 40u);
+  ASSERT_EQ(commit.size(), 12u);
   auto note = [&](client::Connection& connection, const std::string& language = "en",
                   const std::string& spelling = "") {
     return Call(connection, H::RequestPayload::VersionNoteRequest, [&](Builder& b) {
