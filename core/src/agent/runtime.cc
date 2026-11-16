@@ -531,7 +531,13 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           output = hooks.execute_tool(call, stop);
         }
         const bool ok = !output.is_error;
-        const std::string summary = output.text.substr(0, 512);
+        // Events are JSON too. A byte cap must not split a UTF-8 character in
+        // a tool result (for example a Japanese Draft's FileContent).
+        size_t end = std::min(output.text.size(), size_t{512});
+        while (end && end < output.text.size() &&
+               (static_cast<unsigned char>(output.text[end]) & 0xc0) == 0x80)
+          --end;
+        const std::string summary = output.text.substr(0, end);
         messages.back().content.push_back(ResultBlock(call, std::move(output)));
         Save(hooks, messages);
         Emit(hooks, {"toolFinished", summary, call.id, call.name, ok, step,

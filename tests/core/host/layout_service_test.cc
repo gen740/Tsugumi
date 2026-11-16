@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <functional>
+#include <limits>
 #include <memory>
 
 #include "agent/catalog.hh"
@@ -628,3 +630,124 @@ TEST(HostLayout, TwoClientsDeriveTheSamePlacesThroughTheHostHandler) {
 }
 } // namespace
 } // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
+  using Mutate = std::function<void(H::LayoutSceneT&, double)>;
+  const std::vector<std::pair<std::string, Mutate>> fields{
+      {"scene.grid", [](auto& s, double v) { s.grid = v; }},
+      {"scene.cards[0].x", [](auto& s, double v) { s.cards[0]->x = v; }},
+      {"scene.cards[0].y", [](auto& s, double v) { s.cards[0]->y = v; }},
+      {"scene.cards[0].width",
+       [](auto& s, double v) { s.cards[0]->width = v; }},
+      {"scene.cards[0].height",
+       [](auto& s, double v) { s.cards[0]->height = v; }},
+      {"scene.cards[0].inputs[0].x",
+       [](auto& s, double v) { s.cards[0]->inputs[0]->x = v; }},
+      {"scene.cards[0].outputs[0].y",
+       [](auto& s, double v) { s.cards[0]->outputs[0]->y = v; }},
+      {"scene.frames[0].width",
+       [](auto& s, double v) { s.frames[0]->width = v; }},
+      {"scene.notes[0].height",
+       [](auto& s, double v) { s.notes[0]->height = v; }},
+      {"scene.inputs.x", [](auto& s, double v) { s.inputs->x = v; }},
+      {"scene.outputs.y", [](auto& s, double v) { s.outputs->y = v; }},
+  };
+  for (const auto& [field, mutate] : fields) {
+    for (const double value : {std::numeric_limits<double>::quiet_NaN(),
+                               std::numeric_limits<double>::infinity(),
+                               -std::numeric_limits<double>::infinity()}) {
+      for (const bool arrange : {false, true}) {
+        SCOPED_TRACE(field);
+        auto scene = std::make_unique<H::LayoutSceneT>();
+        scene->flow = "topToBottom";
+        auto card = std::make_unique<H::LayoutCardT>();
+        card->id = "mnist";
+        auto port = std::make_unique<H::LayoutPortT>();
+        port->name = "data";
+        card->inputs.push_back(std::make_unique<H::LayoutPortT>(*port));
+        card->outputs.push_back(std::move(port));
+        scene->cards.push_back(std::move(card));
+        auto box = std::make_unique<H::LayoutBoxT>();
+        box->id = "mnist";
+        scene->frames.push_back(std::make_unique<H::LayoutBoxT>(*box));
+        scene->notes.push_back(std::move(box));
+        scene->inputs = std::make_unique<H::LayoutBarT>();
+        scene->outputs = std::make_unique<H::LayoutBarT>();
+        scene->inputs->x = scene->inputs->y = 0;
+        scene->outputs->x = scene->outputs->y = 0;
+        mutate(*scene, value);
+        H::RequestT request;
+        if (arrange) {
+          H::LayoutArrangeRequestT input;
+          input.scene = std::move(scene);
+          request.value.Set(std::move(input));
+        } else {
+          H::LayoutUntangleRequestT input;
+          input.scene = std::move(scene);
+          request.value.Set(std::move(input));
+        }
+        flatbuffers::FlatBufferBuilder b;
+        b.Finish(H::Request::Pack(b, &request));
+        try {
+          LayoutHandle(*flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()),
+                       7);
+          FAIL() << "Accepted non-finite " << field;
+        } catch (const LayoutFailure& error) {
+          EXPECT_NE(std::string(error.what()).find(field + ":"),
+                    std::string::npos)
+              << error.what();
+        }
+      }
+    }
+  }
+}
+
+TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
+  const agent::Catalog catalog;
+  for (const auto* flow : {"topToBottom", "leftToRight"}) {
+    for (const auto* cards :
+         {"[]", R"([{"id":"a"}])",
+          R"([{"id":"a","width":0,"height":0},{"id":"b"}])"}) {
+      SCOPED_TRACE(flow);
+      SCOPED_TRACE(cards);
+      std::vector<std::string> instances;
+      for (const auto& raw : agent::json::Array(cards))
+        instances.push_back(agent::json::Encode(agent::json::Members{
+            {"id", agent::json::Get(agent::json::Object(raw), "id")}}));
+      const auto document = agent::json::Encode(agent::json::Members{
+          {"canvas", agent::json::Encode(agent::json::Members{
+                         {"cards", agent::json::Encode(instances)}})}});
+      const auto completed = CompleteLayout(document, "{}", {});
+      EXPECT_NO_THROW(ValidateLayout(completed));
+      for (const auto* method : {"layout_arrange", "layout_untangle"}) {
+        const auto scene = agent::json::Encode(agent::json::Members{
+            {"flow", agent::json::Quote(flow)},
+            {"cards", cards},
+            {"inputs",
+             R"({"ends":[{"name":"data","card":"a","port":"data"}]})"},
+            {"outputs", "{}"}});
+        const auto request = catalog.HostRequest(
+            method, agent::json::Encode(agent::json::Members{{"scene", scene}}),
+            7);
+        const auto reply = LayoutHandle(
+            *H::GetMessage(request.data())->payload_as_Request(), 7);
+        const auto* proposal = H::GetMessage(reply.data())
+                                   ->payload_as_Reply()
+                                   ->value_as_LayoutProposal();
+        ASSERT_NE(proposal, nullptr);
+        if (proposal->cards())
+          for (const auto* card : *proposal->cards()) {
+            EXPECT_TRUE(std::isfinite(card->x()));
+            EXPECT_TRUE(std::isfinite(card->y()));
+            schema::Number coordinate;
+            coordinate.value() = card->x();
+            EXPECT_NO_THROW(schema::encode(coordinate));
+          }
+      }
+    }
+  }
+}
+}  // namespace
+}  // namespace tsugumi::host

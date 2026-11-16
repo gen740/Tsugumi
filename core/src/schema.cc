@@ -6,6 +6,81 @@ namespace tsugumi::schema {
 
 namespace detail {
 
+// CompactWriter retains the prefix up to the failed value, but hosq's encoder
+// does not attach a field path to its error. Read only that prefix on failure;
+// successful encodes do not pay for a second traversal or retain paths.
+auto encoding_failure(std::string_view type, std::string_view partial,
+                      const hosq::Error& error) -> std::string {
+  struct Frame {
+    std::string path;
+    bool object;
+    bool key = true;
+    std::string member;
+    size_t index = 0;
+  };
+  std::vector<Frame> stack;
+  auto path = [&]() -> std::string {
+    if (stack.empty()) return "$";
+    const auto& f = stack.back();
+    if (!f.object) return f.path + "[" + std::to_string(f.index) + "]";
+    return f.path + (f.key ? "[key " + std::to_string(f.index) + "]"
+                           : "[" + f.member + "]");
+  };
+  auto consumed = [&] {
+    if (stack.empty()) return;
+    auto& f = stack.back();
+    ++f.index;
+    f.key = f.object;
+  };
+  size_t i = 0;
+  while (i < partial.size()) {
+    const char c = partial[i];
+    if (c == '{' || c == '[') {
+      stack.push_back({path(), c == '{', true, {}, 0});
+      ++i;
+    } else if (c == '}' || c == ']') {
+      if (stack.empty()) break;
+      stack.pop_back();
+      consumed();
+      ++i;
+    } else if (c == '"') {
+      const size_t begin = i++;
+      while (i < partial.size() && partial[i] != '"')
+        i += partial[i] == '\\' ? 2 : 1;
+      if (i >= partial.size()) break;
+      ++i;
+      if (!stack.empty() && stack.back().object && stack.back().key) {
+        stack.back().member = partial.substr(begin, i - begin);
+        stack.back().key = false;
+      } else {
+        consumed();
+      }
+    } else if (c == ',' || c == ':' || c == ' ' || c == '\n' || c == '\r' ||
+               c == '\t') {
+      ++i;
+    } else {
+      while (i < partial.size() && partial[i] != ',' && partial[i] != '}' &&
+             partial[i] != ']')
+        ++i;
+      consumed();
+    }
+  }
+  std::string message = "JSON encoding failed: " + std::string(type) + " at " +
+                        path() + ": " + describe(error);
+  std::string line;
+  for (const unsigned char c : message) {
+    if (c < 0x20 || c == 0x7f) {
+      constexpr char hex[] = "0123456789abcdef";
+      line += "\\u00";
+      line += hex[c >> 4];
+      line += hex[c & 15];
+    } else {
+      line += static_cast<char>(c);
+    }
+  }
+  return line;
+}
+
 std::string describe(const hosq::Error& e) {
   std::string msg(e.detail);
   if (msg.empty()) msg = "invalid value";
