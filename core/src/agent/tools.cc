@@ -148,8 +148,9 @@ auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
 }
 
 // Read the exact revision being saved; never clean up a newer client's layout.
-auto Tools::PrepareLayoutSave(const std::string& project,
-                              const std::string& args, std::stop_token stop)
+auto Tools::PrepareLayoutSave(const std::string &project,
+                              const std::string &args, std::stop_token stop,
+                              const host::LayoutWrite &may_write)
     -> std::string {
   struct StaleRevision {};
   std::optional<json::Members> snapshot;
@@ -202,8 +203,7 @@ auto Tools::PrepareLayoutSave(const std::string& project,
         const auto failure = json::Object(json::Get(response, "value", "{}"));
         if (json::Text(failure, "kind") == "revision_conflict")
           throw StaleRevision{};
-        throw Failure(json::Text(failure, "kind"),
-                      json::Text(failure, "diagnostic"));
+        throw Failure(json::Text(failure, "kind"), json::Text(failure, "diagnostic"));
       }
       const auto chunk = json::Object(json::Get(response, "value", "{}"));
       const auto bytes = json::Get(chunk, "bytes");
@@ -228,7 +228,14 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     return host::LayoutFile{std::move(text), hash};
   };
   try {
-    return host::PrepareLayoutSave(args, read);
+    (void)read("tsugumi.json");
+    std::vector<std::string> documents{"tsugumi.json"};
+    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
+      const auto path = json::Text(json::Object(raw), "path");
+      if (host::IsExternalDocument(path, "tsugumi.json"))
+        documents.push_back(path);
+    }
+    return host::PrepareLayoutSave(args, read, documents, may_write);
   } catch (const StaleRevision&) {
     return args;
   }  // Let the core issue its normal CAS receipt.
@@ -271,9 +278,10 @@ auto Tools::StoreBase(const std::string& project, const host::SaveBase& base)
       .run();
 }
 
-auto Tools::SaveProject(const std::string& project, json::Members original,
-                        std::stop_token stop,
-                        const std::function<void(const host::SaveBase&)>& check) -> std::string {
+auto Tools::SaveProject(
+    const std::string &project, json::Members original, std::stop_token stop,
+    const std::function<void(const host::SaveBase &)> &check,
+    const host::LayoutWrite &may_write) -> std::string {
   std::lock_guard save_lock(save_mutex);
   const auto operation = json::Text(original, "op_id");
   auto failure = [](const std::string& kind, const std::string& message) {
@@ -321,7 +329,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
         args["op_id"] = json::Quote(attempt_id);
         prepared = PrepareAgentSave(args, read);
         prepared->arguments = json::Object(PrepareLayoutSave(
-            project, json::Encode(prepared->arguments), stop));
+            project, json::Encode(prepared->arguments), stop, may_write));
         std::lock_guard lock(mutex);
         auto q = db.prepare(
             "INSERT OR REPLACE INTO save_preparations VALUES(?,?,?)");
@@ -591,8 +599,9 @@ auto Tools::RawProjectCall(const std::string &project, const std::string &name,
       throw Failure("unavailable",
                     "Could not subscribe to project run changes");
   }
-  if (name == "project_save" || (name == "project_validate" &&
-                                 json::Object(arguments).contains("changes"))) {
+  // Saves were completed once, with the saver's range, by SaveProject.
+  if (name == "project_validate" &&
+      json::Object(arguments).contains("changes")) {
     try {
       prepared = PrepareLayoutSave(project, arguments, stop);
     } catch (const host::LayoutFailure &error) {
@@ -1274,13 +1283,25 @@ auto Tools::ExecuteTool(const std::string& conversation,
     const auto before = HelperReader(
         conversation, stop, json::Get(args, "base_rev"), authorization);
     const auto expanded = boundary->ExpandSave(args, before);
+    const auto roots = boundary->LayoutWriteCards(before);
+    const host::LayoutWrite may_write = [roots](const auto &path,
+                                                const auto &id) {
+      const auto prefix = path.substr(0, path.size() - 11);
+      if (!id.empty())
+        return roots.contains(prefix + "definitions/" + id);
+      return std::any_of(roots.begin(), roots.end(), [&](const auto &root) {
+        return root.substr(0, root.rfind("definitions/")) == prefix;
+      });
+    };
     return SaveProject(
-        project, expanded, stop, [&](const host::SaveBase& latest) {
+        project, expanded, stop,
+        [&](const host::SaveBase &latest) {
           boundary->CheckBindings(before, [&](const std::string& path) {
             const auto found = latest.files.find(path);
             return found == latest.files.end() ? std::string{} : found->second;
           });
-        });
+        },
+        may_write);
   };
   // An interrupted mutation can only be resolved by its durable receipt.
   // Reissuing it after a daemon restart may execute it a second time.

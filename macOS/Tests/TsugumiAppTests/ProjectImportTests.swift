@@ -14,6 +14,16 @@ extension ChatResumeTests {
       defer { try? FileManager.default.removeItem(at: other) }
       let blob = Data([0, 255, 128])
       try blob.write(to: other.appendingPathComponent("definitions/a/.asset.bin"))
+      let entered = AsyncStream<Void>.makeStream()
+      let release = AsyncStream<Void>.makeStream()
+      defer { release.continuation.finish(); entered.continuation.finish() }
+      let place = s.prepareLayout
+      s.prepareLayout = { project, layout, definitions in
+        let result = try await place(project, layout, definitions)
+        entered.continuation.yield(())
+        for await _ in release.stream { }
+        return result
+      }
       s.start()
       try await SyncTests.connected(s)
       func written(_ id: String) throws -> String? {
@@ -22,9 +32,28 @@ extension ChatResumeTests {
         return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
       }
 
+      // The editor captures its base before the open's derivation completes.
+      // Finish derivation deterministically before Apply: it cannot move that base.
+      for await _ in entered.stream { break }
+      let openedRev = s.rev
+      let projectBytes = try Data(contentsOf: dir.appendingPathComponent("tsugumi.json"))
+      let layoutBytes = try Data(contentsOf: dir.appendingPathComponent("layout.json"))
       let code = CardEditorModel(session: s, cardKey: "a")
       code.meta = .object([("description", .string("logs the value"))])
+      let second = try t.makeSession()
+      second.start()
+      try await SyncTests.connected(second)
+      release.continuation.finish()
+      await s.refreshDerivedLayout().value
+      await second.refreshDerivedLayout().value
+      #expect(s.rev == openedRev && second.rev == openedRev)
+      #expect(s.position("a") == second.position("a"))
+      #expect(!s.dirty && !second.dirty)
+      #expect(try Data(contentsOf: dir.appendingPathComponent("tsugumi.json")) == projectBytes)
+      #expect(try Data(contentsOf: dir.appendingPathComponent("layout.json")) == layoutBytes)
       #expect(await code.apply())
+      #expect(s.rev == openedRev + 1)
+      #expect(s.saveError == nil)
       #expect(try written("a") == "logs the value")
       #expect(s.nodeData("a").summary == "logs the value")
       #expect(s.cardDescription("a") == "logs the value")
@@ -41,6 +70,46 @@ extension ChatResumeTests {
       #expect(await link.apply())
       #expect(try written(name) == "the imported graph")
       #expect(s.nodeData(k).summary == "the imported graph")
+    }
+  }
+}
+
+extension ChatResumeTests {
+  @Test func importedUnplacedProjectIsOneSavedUndoEdit() async throws {
+    try await withFixture { t in
+      let s = withTestCardIds(t.session), other = try SyncTests.project()
+      defer { try? FileManager.default.removeItem(at: other) }
+      try Data("{}".utf8).write(to: other.appendingPathComponent("layout.json"))
+      s.start()
+      try await SyncTests.connected(s)
+      let key = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
+      await s.save()
+      #expect(s.saveError == nil)
+      let prefix = "externals/\(path(key).last!)/"
+      let layoutFile = s.identity.url.appendingPathComponent(prefix + "layout.json")
+      let saved = s.docState()
+      #expect(try JSONValue.parse(String(decoding: Data(contentsOf: layoutFile), as: UTF8.self))["cards"]?["a"] != nil)
+      await s.undo()
+      #expect(s.mergeEdit.conflictRev == nil && s.saveError == nil)
+      await s.save()
+      #expect(s.saveError == nil)
+      #expect(!FileManager.default.fileExists(atPath: layoutFile.path))
+      #expect(s.instance(key) == nil)
+      await s.redo()
+      #expect(s.docState() == saved)
+      await s.save()
+      #expect(s.saveError == nil)
+      #expect(FileManager.default.fileExists(atPath: layoutFile.path))
+      // The editor entry point must record its completed reply as well.
+      let before = s.docState()
+      _ = try await s.applyEdit(baseRev: s.rev) { session in
+        session.updateMeta("a") { $0["description"] = .string("Editor change") }
+      }
+      let after = s.docState()
+      await s.undo()
+      #expect(s.docState() == before)
+      await s.redo()
+      #expect(s.docState() == after)
     }
   }
 }

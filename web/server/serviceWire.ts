@@ -130,16 +130,13 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
     case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
     case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
-    case 'UISaveRequest': {
-      const m = R.Message.getRootAsMessage(new fb.ByteBuffer(Uint8Array.from(v.request))).unpack()
-      if (m.payloadType !== R.Payload.Request || (m.payload as R.RequestT)?.valueType !== R.RequestPayload.ProjectSaveRequest) throw new Error('Expected a project save')
-      return new H.UISaveRequestT(v.project, v.base_json, (m.payload as R.RequestT).value as R.ProjectSaveRequestT)
-    }
     case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
     case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
     case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
     case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
+    case 'LayoutCompleteRequest': return new H.LayoutCompleteRequestT(v.project_json, v.layout_json, v.definitions_json)
+    case 'LayoutPrepareSaveRequest': return new H.LayoutPrepareSaveRequestT(v.project, R.ProjectSaveRequest.getRootAsProjectSaveRequest(new fb.ByteBuffer(new Uint8Array(v.saveBytes))).unpack())
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
     case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
       v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
@@ -227,6 +224,11 @@ export function encodeRequest(method: string, value: unknown, id: bigint, host: 
 // Adapt generated native objects to the existing HTTP/SSE presentation DTOs.
 // This walks typed fields; it does not parse or generate a JSON envelope.
 function view(value: any): any {
+  if (value instanceof H.LayoutPreparedSaveT) {
+    const builder = new fb.Builder()
+    builder.finish(value.save!.pack(builder))
+    return { saveBytes: Array.from(builder.asUint8Array()) }
+  }
   if (value === null || value === undefined) return undefined
   if (Array.isArray(value)) return value.map(view)
   if (typeof value === 'bigint') {
@@ -267,17 +269,6 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.
-  if (host && reply.valueType === H.ReplyPayload.UISaveResult) {
-    const result = reply.value as H.UISaveResultT
-    const pack = (value: R.ReplyT) => {
-      const builder = new fb.Builder(1024)
-      const message = new R.MessageT(0n, R.Payload.Reply, value)
-      builder.finish(message.pack(builder), 'TSG1')
-      return Array.from(builder.asUint8Array())
-    }
-    return { id: message.requestId, value: { response: pack(result.reply!), snapshot: result.snapshot ?
-      pack(new R.ReplyT(R.ReplyPayload.ProjectSnapshot, result.snapshot)) : undefined } }
-  }
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,

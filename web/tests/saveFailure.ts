@@ -34,7 +34,7 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
 for (const failure of ['validation', 'save']) {
   const s = session(), at = { x: 320, y: 240 }
   let refuse = true
-  s.layoutHost.validate = async json => { if (refuse && failure === 'validation') throw refused; return json }
+  s.layoutHost.prepareSave = async (_project, _rev, changes) => { if (refuse && failure === 'validation') throw refused; return changes }
   s.client = {
     save: async (baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[]) => {
       if (refuse) throw refused
@@ -85,7 +85,7 @@ for (const failure of ['validation', 'save']) {
   const s = session()
   let refuse = true
   const sent: unknown[] = []
-  s.layoutHost.validate = async json => { if (refuse) throw refused; return json }
+  s.layoutHost.prepareSave = async (_project, _rev, changes) => { if (refuse) throw refused; return changes }
   s.client = {
     save: async (_rev: unknown, _op: unknown, _origin: unknown, changes: unknown[]) => {
       assert.equal(refuse, false, "invalid layout never reaches the project core")
@@ -114,7 +114,7 @@ for (const failure of ['validation', 'save']) {
 // The refused edit undone: nothing is left to save, so the error does not stay.
 {
   const s = session()
-  s.layoutHost.validate = async () => { throw refused }
+  s.layoutHost.prepareSave = async () => { throw refused }
   s.client = { save: async () => { assert.fail("invalid layout never reaches the core") } } as never
   s.edit((x) => x.setPosition('a', { x: 10, y: 20 }))
   await saveOnce(s)

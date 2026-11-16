@@ -1,10 +1,12 @@
 #include "host/layout_service.hh"
+#include "host/layout_saving.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
 
+#include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/layout.hh"
 #include "host/layout_schema.hh"
@@ -301,6 +303,7 @@ auto LayoutHandles(R::RequestPayload type) -> bool {
          type == R::RequestPayload::LayoutArrangeRequest ||
          type == R::RequestPayload::LayoutUntangleRequest ||
          type == R::RequestPayload::LayoutValidateRequest ||
+         type == R::RequestPayload::LayoutCompleteRequest ||
          type == R::RequestPayload::VersionCanvasRequest;
 }
 auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
@@ -310,6 +313,19 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
         std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(true));
     result.left_to_right =
         std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(false));
+    return agent::wire::HostReply(id, std::move(result));
+  }
+  if (const auto *v = req.value_as_LayoutCompleteRequest()) {
+    const auto definitions = agent::json::Object(v->definitions_json()->str());
+    R::LayoutValidatedT result;
+    result.json = CompleteLayout(
+        v->project_json()->str(), v->layout_json()->str(),
+        [&](const std::string &path) -> std::optional<LayoutFile> {
+          const auto id = path.substr(12, path.size() - 23);
+          if (!definitions.contains(id))
+            return std::nullopt;
+          return LayoutFile{agent::json::Text(definitions, id), {}};
+        });
     return agent::wire::HostReply(id, std::move(result));
   }
   if (const auto* v = req.value_as_LayoutValidateRequest()) {

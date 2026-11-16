@@ -223,6 +223,14 @@ auto HelperScope::Created(const std::string &id,
   runs_.insert(card);
   created_[card] = project_path + "definitions/" + id;
 }
+auto HelperScope::LayoutWriteCards(const Reader &read) const
+    -> std::set<std::string> {
+  std::set<std::string> roots;
+  for (const auto &card : writes_)
+    roots.insert(Root(card, read, true));
+  return roots;
+}
+
 auto HelperScope::ProjectPrefix(const std::string& path,
                                 const Reader& read) const -> std::string {
   if (path == "tsugumi.json") return "";
