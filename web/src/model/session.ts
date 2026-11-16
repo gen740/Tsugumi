@@ -1626,6 +1626,7 @@ export class ProjectSession extends Observable {
       const base = this.draftBase ?? this.makeBase()
       const layoutOnly = this.runActive && this.computationDirty
       this.savingAfterRun = layoutOnly
+      const sentState = this.docState()
       const { changes, sent, merged } = this.prepareSave(layoutOnly, base)
       if (!changes.length) {
         if (!layoutOnly) this.forgetSaved(sent, false, new Map())
@@ -1641,6 +1642,7 @@ export class ProjectSession extends Observable {
         this.saveError = undefined
         this.conflictRetries = 0
         this.forgetSaved(sent, layoutOnly, merged)
+        this.adoptSavedPlaces(sentState, layouts)
       } catch (e) {
         if (e instanceof RPCFailure) {
           switch (e.kind) {
@@ -1675,14 +1677,7 @@ export class ProjectSession extends Observable {
               this.saveError = errorText(e)
           }
         } else {
-          // The reply may have been lost after the save committed: ask the core.
-          const r = await client.operation(op).catch(() => undefined)
-          if (r && r.state === D.OperationState.completed) {
-            this.saveError = undefined
-            this.forgetSaved(sent, layoutOnly, merged)
-          } else {
-            this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
-          }
+          this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
         }
       }
     } finally {
@@ -1757,23 +1752,29 @@ export class ProjectSession extends Observable {
     try {
       changes = await this.layoutHost.prepareSave(this.projectId!, baseRev, changes)
       if (this.client !== client) throw new RPCError('disconnected', L('接続していません'))
-      const result = await client.save(baseRev, op, this.origin, changes)
+      let result: R.SaveResultT
+      try { result = await client.save(baseRev, op, this.origin, changes) }
+      catch (error) {
+        if (error instanceof RPCFailure) throw error
+        const operation = await client.operation(op).catch(() => undefined)
+        if (operation?.state !== D.OperationState.completed || operation.receipt?.resultType !== R.ReceiptValue.SaveResult) throw error
+        result = operation.receipt.result as R.SaveResultT
+      }
       if (result.delta) {
         if (editor) this.applyDelta(result.delta)
         else this.applyDeltaFromSave(result.delta)
       }
       const layouts = new Map<string, J>()
-      if (this.rev === result.rev) {
-        for (const change of changes) {
-          if (change.valueType !== R.DocumentChangeValue.PutSource) continue
-          const value = change.value as R.PutSourceT, file = s(value.path)
-          if (!/^(?:externals\/[^/]+\/)+layout\.json$/.test(file)) continue
-          const prefix = file.slice(0, -'layout.json'.length)
-          const layout = parse(new TextDecoder().decode(new Uint8Array(value.bytes)))
-          layouts.set(prefix, layout)
-          const external = this.externals.get(prefix)
-          if (external) external.layout = layout
-        }
+      if (result.delta?.layoutJson != null) layouts.set('', parse(s(result.delta.layoutJson)))
+      for (const change of changes) {
+        if (change.valueType !== R.DocumentChangeValue.PutSource) continue
+        const value = change.value as R.PutSourceT, file = s(value.path)
+        if (!/^(?:externals\/[^/]+\/)+layout\.json$/.test(file)) continue
+        const prefix = file.slice(0, -'layout.json'.length)
+        const layout = parse(new TextDecoder().decode(new Uint8Array(value.bytes)))
+        layouts.set(prefix, layout)
+        const external = this.externals.get(prefix)
+        if (external && this.rev === result.rev) external.layout = layout
       }
       return { result, layouts }
     } finally {
@@ -1809,6 +1810,7 @@ export class ProjectSession extends Observable {
         }
       }
     }
+    this.adoptSavedPlaces(after, layouts, [step])
     this.undoStack.push(step)
     if (this.undoStack.length > 500) this.undoStack.shift()
     this.redoStack = []
@@ -1819,6 +1821,47 @@ export class ProjectSession extends Observable {
   /** Whether a path is one of an external's documents (merged, not compared by hash). */
   private isExternalDocument(p: string): boolean {
     return [...this.effectiveExternals.keys()].some((pre) => p.startsWith(pre) && isDocument(p.slice(pre.length)))
+  }
+
+  /** Completion belongs to the saved edit. Backfill only absent places, in
+   *  states where that Card exists: undoing an edit must keep a pre-existing
+   *  Card's saved place, while undoing an add removes its place with the Card.
+   *  Include older entries and edits made during the RPC so neither can later
+   *  reintroduce an unplaced version or move a person's newer position. */
+  private adoptSavedPlaces(sent: DocState, layouts: Map<string, J>, extra: UndoEntry[] = []) {
+    for (const [prefix, completed] of layouts) {
+      const original = prefix ? sent.externals.get(prefix)?.layout : sent.layout
+      const added = (isObj(get(completed, 'cards')) ? (get(completed, 'cards') as JObj).entries() : []).filter(([id]) => get(get(original, 'cards'), id) === undefined)
+      if (!added.length) continue
+      const fill = (project: J, layout: J): J => {
+        const ids = new Set((arr(get(get(project, 'canvas'), 'cards')) ?? []).map(card => str(get(card, 'id'))))
+        const result = clone(layout), cards = clone(get(result, 'cards') ?? obj()) as JObj
+        for (const [id, position] of added) if (ids.has(id) && get(cards, id) === undefined) cards.set(id, clone(position))
+        if (!jeq(cards, get(result, 'cards') ?? obj())) (result as JObj).set('cards', cards)
+        return result
+      }
+      const external = (value: ExternalProject): ExternalProject => ({ ...value, layout: fill(value.project, value.layout) })
+      const state = (value: DocState): DocState => {
+        if (!prefix) return { ...value, layout: fill(value.project, value.layout) }
+        const ext = value.externals.get(prefix)
+        return ext ? { ...value, externals: new Map(value.externals).set(prefix, external(ext)) } : value
+      }
+      for (const entry of [...this.undoStack, ...this.redoStack, ...extra]) {
+        entry.before = state(entry.before); entry.after = state(entry.after)
+      }
+      if (!prefix) {
+        this.layout = fill(this.project, this.layout)
+        if (this.draftBase) this.draftBase.layout = fill(this.draftBase.project, this.draftBase.layout)
+      } else {
+        for (const values of [this.externals, this.externalEdits]) {
+          const ext = values.get(prefix)
+          if (ext) values.set(prefix, external(ext))
+        }
+        const base = this.externalBases.get(prefix)
+        if (base) this.externalBases.set(prefix, external(base))
+      }
+    }
+    this.settleDraftBase()
   }
 
   /** After a save: the parts sent are confirmed now; edits made while it was

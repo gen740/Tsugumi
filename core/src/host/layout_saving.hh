@@ -11,6 +11,10 @@ struct LayoutFile {
   std::string text;
   std::optional<std::string> hash;
 };
+// Empty id asks whether the layout file may be written; otherwise checks a
+// Card.
+using LayoutWrite =
+    std::function<bool(const std::string &, const std::string &)>;
 using LayoutRead = std::function<std::optional<LayoutFile>(const std::string&)>;
 // Only external project documents, never a Card's source file of that name.
 auto IsExternalDocument(std::string_view path, std::string_view name) -> bool;
@@ -20,7 +24,8 @@ auto CompleteLayout(const std::string& project, const std::string& layout,
                     const LayoutRead& read = {}) -> std::string;
 // Every saving client includes missing places and deletion cleanup in its
 // single revision/hash-guarded transaction. Reads use that revision.
-auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
-                       const std::vector<std::string>& documents = {"tsugumi.json"})
-    -> std::string;
+auto PrepareLayoutSave(
+    const std::string &arguments, const LayoutRead &read,
+    const std::vector<std::string> &documents = {"tsugumi.json"},
+    const LayoutWrite &may_write = {}) -> std::string;
 }  // namespace tsugumi::host

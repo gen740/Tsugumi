@@ -174,7 +174,7 @@ import TsugumiTestSupport
 
   static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
     for _ in 0..<200 where s.runActive { try await Task.sleep(for: .milliseconds(25)) }
-    try #require(s.runStatus?.state == .succeeded)
+    try #require(s.runStatus?.state == .succeeded, "\(s.runStatus?.failure?.diagnostic ?? "")")
   }
 
   @Test func defaultDisplayRectTransformsTheHostGeometry() throws {
@@ -582,7 +582,7 @@ import TsugumiTestSupport
         try await Task.sleep(for: .milliseconds(5))
         status = try await rpc.runStatus(runId: accepted.run.runId)
       }
-      try #require(status.state == .succeeded)
+      try #require(status.state == .succeeded, "\(status.failure?.diagnostic ?? "")")
     }
     _ = try await rpc.save(baseRev: saved.rev ?? 0, opId: marker, origin: "ui",
                             changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
@@ -1005,15 +1005,32 @@ import TsugumiTestSupport
     s.start()
     try await Self.connected(s)
     try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
-    let before = s.docState(), undos = s.undoStack.count
+    var before = s.docState()
+    let undos = s.undoStack.count
     try await s.connect(from: ("start", "out"), to: ("b", "in"), in: [])
-    let after = s.docState()
+    var after = s.docState()
     #expect(s.undoStack.count == undos + 1)
     await s.save()
     for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
     let snap = try await s.rpc!.inspect()
     let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
     #expect(!codes.contains("fan_out"))
+    // The save stores places for previously unplaced Cards too. Those Cards
+    // already existed before this connection edit, so undo must keep their
+    // stored places. Only the new fork and its place belong solely to after.
+    // Keep exact DocState equality below; normalize just the expected places.
+    let savedLayout = try JSONValue.parse(snap.layoutJson)
+    func expectedLayout(_ state: ProjectSession.DocState) -> JSONValue {
+      var layout = state.layout, places = layout["cards"] ?? .object([])
+      let ids = Set((state.project["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string })
+      for (id, position) in savedLayout["cards"]?.object ?? [] where ids.contains(id) && places[id] == nil {
+        places[id] = position
+      }
+      layout["cards"] = places
+      return layout
+    }
+    before.layout = expectedLayout(before)
+    after.layout = expectedLayout(after)
     await s.undo()
     #expect(s.docState() == before)
     await s.redo()

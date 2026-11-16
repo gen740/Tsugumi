@@ -407,7 +407,7 @@ final class ProjectSession {
   /// One saved operation: undo applies `before` over what is there now, so
   /// changes made since by the Agent or another window stay.
   final class UndoEntry {
-    let before: DocState
+    var before: DocState
     var after: DocState
     var sourcesBefore: [String: SourceValue]
     let sourcesAfter: [String: SourceValue]
@@ -1498,7 +1498,7 @@ final class ProjectSession {
   /// meanwhile are merged in first; a conflict means newer changes are on
   /// their way, so the save is tried again once they arrived.
   private func saveOnce() async {
-    guard let client else { return }
+    guard client != nil else { return }
     // Nothing left to save (undone, or met by what arrived): no failure is left either.
     guard dirty else {
       saveError = nil
@@ -1517,6 +1517,7 @@ final class ProjectSession {
     let base = draftBase ?? makeBase()
     let layoutOnly = runActive && computationDirty
     savingAfterRun = layoutOnly
+    let sentState = docState()
     let (changes, sent, merged) = prepareSave(layoutOnly: layoutOnly, base: base)
     guard !changes.isEmpty else {
       if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
@@ -1530,6 +1531,7 @@ final class ProjectSession {
       saveError = nil
       conflictRetries = 0
       forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
+      adoptSavedPlaces(sentState, layouts: layouts)
     } catch let f as RPCFailure {
       switch f.kind {
       case .revisionConflict, .hashConflict:
@@ -1557,13 +1559,7 @@ final class ProjectSession {
         saveError = f.description
       }
     } catch {
-      // The reply may have been lost after the save committed: ask the core.
-      if let r = try? await client.operation(op), r.state == .completed {
-        saveError = nil
-        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-      } else {
-        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
-      }
+      saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
     }
   }
 
@@ -1630,21 +1626,28 @@ final class ProjectSession {
     defer { if !editor { canvasSaveOp = nil } }
     guard let projectId else { throw RPCError.disconnected }
     let changes = try await CoreHostClient.shared.prepareLayoutSave(project: projectId, baseRev: baseRev, changes: changes)
-    let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
-                                       changes: changes)
+    let result: Tsugumi_RPC_SaveResultT
+    do {
+      result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
+    } catch {
+      if error is RPCFailure { throw error }
+      // A lost reply still supplies the exact saved edit through its receipt.
+      guard let operation = try? await client.operation(op), operation.state == .completed,
+            let saved = operation.receipt?.result?.value as? Tsugumi_RPC_SaveResultT else { throw error }
+      result = saved
+    }
     if let d = result.delta {
       if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
     }
     var layouts: [String: JSONValue] = [:]
-    if rev == result.rev {
-      for change in changes {
-        if let value = change.value?.value as? Tsugumi_RPC_PutSourceT,
-           value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
-          let prefix = String(value.path.dropLast("layout.json".count))
-          let layout = try JSONValue.parse(String(decoding: value.bytes, as: UTF8.self))
-          layouts[prefix] = layout
-          externals[prefix]?.layout = layout
-        }
+    if let text = result.delta?.layoutJson { layouts[""] = try JSONValue.parse(text) }
+    for change in changes {
+      if let value = change.value?.value as? Tsugumi_RPC_PutSourceT,
+         value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
+        let prefix = String(value.path.dropLast("layout.json".count))
+        let layout = try JSONValue.parse(String(decoding: value.bytes, as: UTF8.self))
+        layouts[prefix] = layout
+        if rev == result.rev { externals[prefix]?.layout = layout }
       }
     }
     return (result, layouts)
@@ -1677,6 +1680,7 @@ final class ProjectSession {
         for rel in ext.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
       }
     }
+    adoptSavedPlaces(after, layouts: layouts, extra: [step])
     undoStack.append(step)
     if undoStack.count > 500 { undoStack.removeFirst() }
     redoStack.removeAll()
@@ -1686,6 +1690,49 @@ final class ProjectSession {
   /// Whether a path is one of an external's documents (merged, not compared by hash).
   private func isExternalDocument(_ p: String) -> Bool {
     effectiveExternals.keys.contains { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }
+  }
+
+  /// Completion belongs to the saved edit. Backfill only absent places, in
+  /// states where that Card exists: undo keeps a pre-existing Card's saved
+  /// place, while undoing an add removes its place with the Card. Older undo
+  /// entries and edits made during the RPC follow the same rule.
+  private func adoptSavedPlaces(_ sent: DocState, layouts: [String: JSONValue], extra: [UndoEntry] = []) {
+    for (prefix, completed) in layouts {
+      let original = prefix.isEmpty ? sent.layout : sent.externals[prefix]?.layout
+      let added = (completed["cards"]?.object ?? []).filter { original?["cards"]?[$0.0] == nil }
+      guard !added.isEmpty else { continue }
+      func fill(_ project: JSONValue, _ layout: JSONValue) -> JSONValue {
+        let ids = Set((project["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string })
+        var result = layout, cards = layout["cards"] ?? .object([])
+        for (id, position) in added where ids.contains(id) && cards[id] == nil { cards[id] = position }
+        if cards != (layout["cards"] ?? .object([])) { result["cards"] = cards }
+        return result
+      }
+      func external(_ value: ExternalProject) -> ExternalProject {
+        var result = value
+        result.layout = fill(value.project, value.layout)
+        return result
+      }
+      func state(_ value: DocState) -> DocState {
+        var result = value
+        if prefix.isEmpty { result.layout = fill(value.project, value.layout) }
+        else if let ext = value.externals[prefix] { result.externals[prefix] = external(ext) }
+        return result
+      }
+      for entry in undoStack + redoStack + extra { entry.before = state(entry.before); entry.after = state(entry.after) }
+      if prefix.isEmpty {
+        layout = fill(project, layout)
+        if let base = draftBase {
+          draftBase = DraftBase(rev: base.rev, hashes: base.hashes, project: base.project,
+                                layout: fill(base.project, base.layout), definitions: base.definitions)
+        }
+      } else {
+        if let ext = externals[prefix] { externals[prefix] = external(ext) }
+        if let ext = externalEdits[prefix] { externalEdits[prefix] = external(ext) }
+        if let base = externalBases[prefix], let ext = base { externalBases[prefix] = .some(external(ext)) }
+      }
+    }
+    settleDraftBase()
   }
 
   /// After a save: the parts sent are confirmed now; edits made while it was

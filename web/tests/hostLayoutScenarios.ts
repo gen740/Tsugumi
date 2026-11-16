@@ -6,7 +6,7 @@ import { Builder, ByteBuffer } from 'flatbuffers'
 import fs from 'node:fs'
 import path from 'node:path'
 import { D, R } from '../src/shared/rpc'
-import { parse, serialize, get, dbl } from '../src/shared/json'
+import { parse, serialize, get, dbl, clone, JObj } from '../src/shared/json'
 import type { LayoutProposal, LayoutScene } from '../src/model/layoutScene'
 
 const page = globalThis as Record<string, unknown>
@@ -69,10 +69,11 @@ for (const v of vectors) {
   assert.deepEqual(restored.changes, save.changes)
 }
 
-// Opening derives positions without touching a document, revision or autosave.
+// A UI consumes the host proposal without touching a document, revision or autosave.
+// Real derivation agreement is covered by HostLayout.TwoClientsDeriveTheSamePlacesThroughTheHostHandler.
 // A person's immediate editor save materializes them in that same transaction.
 {
-  const sessions = [0, 1].map(() => {
+  const sessions = [0].map(() => {
     const session = new ProjectSession('/unplaced', 'unplaced', 'unplaced')
     session.project = parse('{"canvas":{"cards":[{"id":"a"}],"connections":[]}}')
     session.confirmedProject = parse(serialize(session.project))
@@ -258,3 +259,72 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   assert.equal(s.notice, 'layout failed')
 }
 console.log(`layout RPC: ${vectors.length} golden round trips; proposal application, undo and stale responses passed`)
+
+// Save replies complete the same undo edit in both canvas and editor paths.
+// Placement geometry itself is tested through the real host handler; this
+// boundary supplies a completion so these tests isolate session/history state.
+for (const editor of [false, true]) for (const lostReply of [false, true]) {
+  const s = cardIds(new ProjectSession('/p', 'placement-undo', 'p'))
+  s.project = parse('{"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
+  s.confirmedProject = clone(s.project)
+  s.confirmedDefinitions.set('a', parse('{"template":"draft"}'))
+  s.layout = parse('{}'); s.confirmedLayout = parse('{}')
+  s.projectId = 'p'; s.scheduleSave = () => {}
+  s.refreshExternals = async () => {}
+  s.layoutHost = { ...s.layoutHost, prepareSave: async (_project, _rev, changes) => {
+    const layoutEdit = changes.find(c => c.valueType === R.DocumentChangeValue.SetLayout)
+    const layout = parse(layoutEdit ? String((layoutEdit.value as R.SetLayoutT).json) : serialize(s.confirmedLayout)) as JObj
+    const positions = (get(layout, 'cards') ?? parse('{}')) as JObj
+    if (!positions.has('a')) positions.set('a', parse('{"x":0,"y":0}'))
+    layout.set('cards', positions)
+    return [...changes.filter(c => c !== layoutEdit).map(c => {
+      if (c.valueType !== R.DocumentChangeValue.PutSource || !String((c.value as R.PutSourceT).path).endsWith('/layout.json')) return c
+      return new R.DocumentChangeT(R.DocumentChangeValue.PutSource, new R.PutSourceT((c.value as R.PutSourceT).path,
+        Array.from(new TextEncoder().encode('{"cards":{"inner":{"x":120,"y":240}}}')), null))
+    }), new R.DocumentChangeT(R.DocumentChangeValue.SetLayout, new R.SetLayoutT(serialize(layout)))]
+  } }
+  const files = new Map<string, Uint8Array>()
+  let receipt: R.SaveResultT
+  s.client = { operation: async () => Object.assign(new R.OperationResultT(), { state: D.OperationState.completed,
+    receipt: Object.assign(new R.OperationReceiptT(), { resultType: R.ReceiptValue.SaveResult, result: receipt }) }), save: async (baseRev, opId, origin, changes) => {
+    const delta = Object.assign(new R.DocumentDeltaT(), { baseRev, rev: baseRev + 1n, opId, origin })
+    for (const c of changes) {
+      if (c.valueType === R.DocumentChangeValue.SetProject) delta.projectJson = (c.value as R.SetProjectT).json
+      if (c.valueType === R.DocumentChangeValue.SetLayout) delta.layoutJson = (c.value as R.SetLayoutT).json
+      if (c.valueType === R.DocumentChangeValue.PutDefinition) delta.definitionsUpsert.push(Object.assign(new R.DefinitionT(), c.value))
+      if (c.valueType === R.DocumentChangeValue.RemoveDefinition) delta.definitionsRemoved.push((c.value as R.RemoveDefinitionT).id)
+      if (c.valueType === R.DocumentChangeValue.PutSource) {
+        const v = c.value as R.PutSourceT, file = String(v.path), bytes = new Uint8Array(v.bytes)
+        files.set(file, bytes)
+        delta.sourcesUpsert.push(Object.assign(new R.SourceInfoT(), { path: file, hash: 'saved-' + file, sizeBytes: BigInt(bytes.length) }))
+      }
+      if (c.valueType === R.DocumentChangeValue.RemoveSource) {
+        const file = String((c.value as R.RemoveSourceT).path)
+        files.delete(file); delta.sourcesRemoved.push(file)
+      }
+    }
+    receipt = Object.assign(new R.SaveResultT(), { rev: delta.rev, delta })
+    if (lostReply) throw new Error('save reply lost')
+    return receipt
+  } } as never
+  const change = (x: InstanceType<typeof ProjectSession>) => {
+    x.externalEdits.set('externals/imported/', { project: parse('{"canvas":{"cards":[{"id":"inner"}],"connections":[]}}'),
+      layout: parse('{}'), definitions: new Map([['inner', { card: parse('{"template":"draft"}') }]]) })
+  }
+  if (editor) await s.applyEdit(0n, change)
+  else { s.edit(change); await (s as unknown as { saveOnce(): Promise<void> }).saveOnce() }
+  assert.equal(s.saveError, undefined)
+  const saved = s.docState()
+  assert.ok(get(saved.externals.get('externals/imported/')?.layout, 'cards', 'inner'))
+  assert.ok(get(saved.layout, 'cards', 'a'))
+  assert.equal(s.dirty, false)
+  await s.undo()
+  assert.equal(s.mergeConflict, undefined, 'the completed external is removable in one undo')
+  assert.equal(s.saveError, undefined)
+  assert.equal(s.effectiveExternals.has('externals/imported/'), false)
+  assert.deepEqual(s.layout, saved.layout, 'undo retains the pre-existing Card place')
+  await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
+  assert.equal(files.has('externals/imported/layout.json'), false)
+  await s.redo()
+  assert.deepEqual(s.docState(), saved, 'redo restores the exact completed state')
+}

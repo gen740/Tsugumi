@@ -654,3 +654,64 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
 }
 } // namespace
 } // namespace tsugumi::test
+
+namespace tsugumi::test {
+namespace {
+TEST_F(AgentProjectFixture, SourceOnlyScopedSaveMaterializesOnlyWritableCards) {
+  const auto root = directory.path / "project";
+  const std::string graph =
+      R"({"name":"Nested","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
+  for (const auto &prefix : {std::string{}, std::string{"externals/assigned/"},
+                             std::string{"externals/unrelated/"}}) {
+    for (const auto *id : {"a", "b"})
+      Write(root / prefix / "definitions" / id / "_card.json",
+            R"({"template":"draft"})");
+    if (!prefix.empty()) {
+      Write(root / prefix / "tsugumi.json", graph);
+      Write(root / prefix / "layout.json", "{}");
+    }
+  }
+  Write(root / "definitions/outer/_link.json", R"({"external":"assigned"})");
+  StartProject(
+      false,
+      R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
+  const auto conversation = Conversation("source-only-scoped");
+  Grant(conversation);
+  // A read grant never authorizes a save or its implicit placement writes.
+  const auto snapshot = json::Object(
+      json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
+                "value"));
+  const auto args = json::Encode(json::Members{
+      {"base_rev", json::Get(snapshot, "rev")},
+      {"changes",
+       R"json([{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"print(1)"}},{"value_type":"PutSource","value":{"path":"externals/assigned/definitions/a/code.py","bytes":"print(2)"}}])json"}});
+  const auto refused = Tool(conversation, "project_save", args, "no-write");
+  EXPECT_EQ(refused.Code(), "grant_required");
+  EXPECT_EQ(Read(root / "layout.json"), "{}");
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  ModelServer model;
+  Configure(model);
+  model.Queue(AnthropicTool("save", "project_save", args));
+  model.Queue(AnthropicText("Saved."));
+  const auto delegated = Tool(
+      conversation, "delegate",
+      R"({"tasks":[{"name":"source","instruction":"Save the supplied source edits.","read_cards":["a","outer/a"],"write_cards":["a","outer/a"],"run_cards":[]}]})",
+      "source-delegate");
+  ASSERT_TRUE(delegated.Code().empty()) << delegated.Code();
+  ASSERT_TRUE(model.WaitForRequests(2));
+  EXPECT_FALSE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"))
+      << model.Requests()[1];
+  for (const auto &prefix :
+       {std::string{}, std::string{"externals/assigned/"}}) {
+    EXPECT_EQ(Read(root / prefix / "definitions/a/code.py"),
+              prefix.empty() ? "print(1)" : "print(2)");
+    const auto places = json::Object(
+        json::Get(json::Object(Read(root / prefix / "layout.json")), "cards"));
+    EXPECT_EQ(places.size(), 1u);
+    EXPECT_TRUE(places.contains("a"));
+  }
+  EXPECT_EQ(Read(root / "externals/unrelated/layout.json"), "{}");
+}
+} // namespace
+} // namespace tsugumi::test

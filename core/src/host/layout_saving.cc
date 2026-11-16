@@ -186,9 +186,9 @@ auto CompleteLayout(const std::string& project, const std::string& text,
   return json::Encode(doc);
 }
 
-auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
-                       const std::vector<std::string> &documents)
-    -> std::string {
+auto PrepareLayoutSave(const std::string &arguments, const LayoutRead &read,
+                       const std::vector<std::string> &documents,
+                       const LayoutWrite &may_write) -> std::string {
   auto args = json::Object(arguments);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
   struct Edit {
@@ -255,6 +255,9 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
   for (const auto& [prefix, project] : projects) {
     if (deleted_projects.contains(prefix))
       continue;
+    const auto layout_path = prefix + "layout.json";
+    if (may_write && !may_write(layout_path, ""))
+      continue;
     const auto previous = read(prefix + "tsugumi.json");
     const auto before =
         previous ? CardIds(previous->text) : std::set<std::string>{};
@@ -291,7 +294,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
         seeded = json::Encode(doc);
       }
     }
-    const auto completed = CompleteLayout(
+    auto completed = CompleteLayout(
         project.text, seeded,
         [&](const std::string &path) -> std::optional<LayoutFile> {
           const auto file = prefix + path;
@@ -299,6 +302,24 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
             return pending.at(file);
           return read(file);
         });
+    // Derive with the entire scene so filtering cannot change anyone's place.
+    // Only materialize the part of that proposal the saver is allowed to write.
+    if (may_write) {
+      auto doc = json::Object(completed);
+      auto positions = json::Object(json::Get(doc, "cards", "{}"));
+      const auto original =
+          json::Object(json::Get(json::Object(old), "cards", "{}"));
+      std::erase_if(positions, [&](const auto &entry) {
+        return !original.contains(entry.first) &&
+               !may_write(layout_path, entry.first);
+      });
+      if (positions == original && seeded == old)
+        completed = old;
+      else {
+        doc["cards"] = json::Encode(positions);
+        completed = json::Encode(doc);
+      }
+    }
     if (layouts.contains(prefix)) {
       layouts.at(prefix).text = completed;
     } else if (completed != old) {

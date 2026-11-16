@@ -580,3 +580,51 @@ TEST(HostLayoutSaving, RemovingAnExternalDoesNotRecreateItsLayout) {
 }
 }  // namespace
 }  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
+  const std::string project = R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}]}})";
+  const auto saved = agent::json::Object(PrepareLayoutSave(
+      R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"edit"}}]})",
+      [&](const std::string &path) -> std::optional<LayoutFile> {
+        if (path == "tsugumi.json")
+          return LayoutFile{project, {}};
+        if (path == "layout.json")
+          return LayoutFile{"{}", {}};
+        return std::nullopt;
+      },
+      {"tsugumi.json"}, [](const auto &, const auto &) { return false; }));
+  EXPECT_EQ(agent::json::Array(saved.at("changes")).size(), 1u);
+  EXPECT_EQ(agent::json::Object(
+                agent::json::Object(CompleteLayout(project, "{}")).at("cards"))
+                .size(),
+            2u);
+}
+
+// Mac and Web both send LayoutCompleteRequest. Exercise that exact handler,
+// with separately serialized requests, rather than a UI stub's fixed answer.
+TEST(HostLayout, TwoClientsDeriveTheSamePlacesThroughTheHostHandler) {
+  const auto derive = [&](uint64_t client) {
+    flatbuffers::FlatBufferBuilder b;
+    const auto input = H::CreateLayoutCompleteRequest(
+        b, b.CreateString(R"({"canvas":{"cards":[{"id":"b"},{"id":"a"}]}})"),
+        b.CreateString("{}"), b.CreateString("{}"));
+    b.Finish(H::CreateRequest(b, H::RequestPayload::LayoutCompleteRequest,
+                              input.Union()));
+    const auto reply = LayoutHandle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), client);
+    EXPECT_EQ(H::GetMessage(reply.data())->request_id(), client);
+    return H::GetMessage(reply.data())
+        ->payload_as_Reply()
+        ->value_as_LayoutValidated()
+        ->json()
+        ->str();
+  };
+  const auto first = derive(1), second = derive(2);
+  EXPECT_EQ(first, second);
+  EXPECT_EQ(agent::json::Object(agent::json::Object(first).at("cards")).size(),
+            2u);
+}
+} // namespace
+} // namespace tsugumi::host
