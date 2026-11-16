@@ -14,6 +14,9 @@ const { CanvasController, noteRect, Scene } = await import('../src/model/canvas'
 const { snapToGrid } = await import('../src/model/canvasKit')
 const { ProjectSession } = await import('../src/model/session')
 const { WorkflowTab } = await import('../src/model/workspace')
+const { prefs } = await import('../src/model/prefs')
+const originalGrid = prefs.showGrid
+prefs.set('showGrid', false)
 
 const setup = async () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
@@ -23,6 +26,7 @@ const setup = async () => {
   const note = await s.addNote([], { x: 100, y: 300 }), farNote = await s.addNote([], { x: 5000, y: 3000 })
   // A frame with a place of its own, and one drawn beside its Card.
   s.updateDisplayFrame(far, (f) => f.set('hidden', false))
+  await s.save()
   const tab = new WorkflowTab([])
   const cv = new CanvasController(s, tab)
   return { s, near, far, note, farNote, tab, cv, undos: s.undoStack.length }
@@ -38,6 +42,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
     f.set('x', parse('400'))
     f.set('y', parse('400'))
   })
+  await s.save()
   const items = new Scene(s, []).itemsIn(everything)
   assert.deepEqual(items.cards, [near])
   assert.deepEqual(items.notes, [note])
@@ -65,6 +70,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
     f.set('width', parse('300'))
     f.set('height', parse('200'))
   })
+  await s.save()
   const before = { card: s.position(near), note: notePlace(s, note), undos: s.undoStack.length }
   const frame = new Scene(s, []).frameRect(placed)
 
@@ -72,7 +78,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   assert.equal(new Scene(s, [], undefined, { cards: { keys: new Set([near]), frames: new Set([placed]), dx: 7, dy: 9 } }).frameRect(placed).x, frame.x + 7)
   assert.equal(new Scene(s, []).frameRect(placed).x, frame.x)
 
-  cv.moveSelection(new Set([near]), new Set([note]), new Set([placed]), 30, 40)
+  await cv.moveSelection(new Set([near]), new Set([note]), new Set([placed]), 30, 40)
   assert.deepEqual(s.position(near), { x: before.card.x + 30, y: before.card.y + 40 })
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [before.note.x + 30, before.note.y + 40])
   assert.deepEqual([dbl(get(s.displayFrame(placed), 'x')), dbl(get(s.displayFrame(placed), 'y'))], [430, 440])
@@ -89,17 +95,17 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 {
   // A frame beside its Card goes with the Card: moved twice it would leave it.
   const { s, near, cv } = await setup()
-  s.updateDisplayFrame(near, (f) => f.set('hidden', false))
+  s.displays.set(near, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'result' } })
   const offset = (scene: InstanceType<typeof Scene>) => scene.frameRect(near).x - scene.origin(near).x
   const was = offset(new Scene(s, []))
   assert.equal(offset(new Scene(s, [], undefined, { cards: { keys: new Set([near]), frames: new Set([near]), dx: 50, dy: 0 } })), was)
-  cv.moveSelection(new Set([near]), new Set(), new Set([near]), 50, 0)
+  await cv.moveSelection(new Set([near]), new Set(), new Set([near]), 50, 0)
   assert.equal(dbl(get(s.displayFrame(near), 'x')), undefined, 'still no place of its own')
   assert.equal(offset(new Scene(s, [])), was)
 
   // Alone, it gets a place of its own where it was dropped.
   const r = new Scene(s, []).frameRect(near)
-  cv.moveSelection(new Set(), new Set(), new Set([near]), 11, 13)
+  await cv.moveSelection(new Set(), new Set(), new Set([near]), 11, 13)
   assert.deepEqual([dbl(get(s.displayFrame(near), 'x')), dbl(get(s.displayFrame(near), 'y'))], [Math.round(r.x + 11), Math.round(r.y + 13)])
   assert.deepEqual(s.position(near), { x: 50, y: 0 }, 'its Card stays')
 }
@@ -107,11 +113,12 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 {
   // Deleting: a frame alone is closed and its Card stays; notes go; one undo.
   const { s, near, note, tab, cv } = await setup()
-  s.updateDisplayFrame(near, (f) => f.set('hidden', false))
+  s.displays.set(near, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'result' } })
   s.connected = true
   const undos = s.undoStack.length
   tab.setSelection([], [note], [near])
   cv.deleteSelection()
+  await s.save()
   assert.equal(bool(get(s.displayFrame(near), 'hidden')), true)
   assert.equal(typeof dbl(get(s.displayFrame(near), 'width')), 'number', 'with its place and size, which the core wants')
   assert.equal(typeof dbl(get(s.displayFrame(near), 'x')), 'number')
@@ -126,28 +133,32 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   // A Card and its frame: the Card takes the frame with it.
   tab.setSelection([near], [], [near])
   cv.deleteSelection()
+  await s.save()
   assert.equal(s.instance(near), undefined)
   assert.equal(s.displayFrame(near), undefined)
 }
 {
   // With the grid, all go by the same whole grids, so the arrangement stays:
   // the Card goes from where it is drawn, what moves with it by the same step.
+  prefs.set('showGrid', true)
   const { s, note, cv } = await setup()
   const offGrid = await s.addCard('draft', [], { x: 3010, y: 950 })
   const framed = await s.addCard('draft', [], { x: 2000, y: 0 })
   s.updateDisplayFrame(framed, (f) => {
     for (const [name, v] of [['x', '400'], ['y', '400'], ['width', '300'], ['height', '200']]) f.set(name, parse(v))
   })
+  await s.save()
   const was = notePlace(s, note)
-  cv.moveSelection(new Set([offGrid]), new Set([note]), new Set([framed]), 33, 47, 20)
+  await cv.moveSelection(new Set([offGrid]), new Set([note]), new Set([framed]), 33, 47, 20)
   assert.deepEqual(s.position(offGrid), { x: snapToGrid(3010, 20) + 40, y: snapToGrid(950, 20) + 40 })
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 40, was.y + 40])
   assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [440, 440])
   await s.undo()
   // Without a Card there is nothing to keep to the grid: they land where dropped.
-  cv.moveSelection(new Set(), new Set([note]), new Set([framed]), 33, 47, 20)
+  await cv.moveSelection(new Set(), new Set([note]), new Set([framed]), 33, 47, 20)
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 33, was.y + 47])
   assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [433, 447])
+  prefs.set('showGrid', false)
 }
 console.log('marquee behavior: passed')
 
@@ -156,7 +167,7 @@ console.log('marquee behavior: passed')
   // no default offsets or dimensions are chosen by either UI path.
   const { s, near } = await setup()
   s.layout = parse('{"flow":"topToBottom"}')
-  s.updateDisplayFrame(near, (f) => f.set('hidden', false))
+  s.displays.set(near, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'result' } })
   const d = s.displayGeometries!.topToBottom!
   Object.assign(d, { anchorX: 0.5, anchorY: 0.25, x: 71, y: 93, width: 411, height: 219 })
   const size = s.geometry(near).size, at = s.placedPosition(near)
@@ -165,3 +176,4 @@ console.log('marquee behavior: passed')
   const frame = s.layoutScene([]).frames.find((f) => f.id === near)!
   assert.deepEqual(frame, { id: near, ...expected })
 }
+prefs.set('showGrid', originalGrid)

@@ -1773,6 +1773,7 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
     await this.operate(H.ProjectOperationBody.ProjectCreateCard, new H.ProjectCreateCardT(
       (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, t, name ?? templateBaseName(t), at.x, at.y, automaticPlacement))
+    this.forgetResult(key([...scope, id]))
     return key([...scope, id])
   }
 
@@ -1782,6 +1783,7 @@ export class ProjectSession extends Observable {
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
         (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(from, id, base, at.x, at.y)]))
+      this.forgetResult(key([...scope, id]))
       return key([...scope, id])
     } catch (e) { this.cardEditFailed(e); return undefined }
   }
@@ -1791,6 +1793,7 @@ export class ProjectSession extends Observable {
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
         (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, newId, null, at.x, at.y)]))
+      this.forgetResult(key([...scope, newId]))
       return key([...scope, newId])
     } catch (e) { this.cardEditFailed(e); return undefined }
   }
@@ -1799,6 +1802,7 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(folder.split('/').filter(Boolean).pop() ?? 'sub', scope)
     await this.operate(H.ProjectOperationBody.ProjectImport, new H.ProjectImportT(
       (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), folder, id, at.x, at.y))
+    this.forgetResult(key([...scope, id]))
     return key([...scope, id])
   }
 
@@ -1814,8 +1818,16 @@ export class ProjectSession extends Observable {
     if (!items.length) return new Set()
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(prefix.replace(/\/$/, ''), items, true))
+      for (const item of items) this.forgetResult(key([...scope, String(item.id)]))
       return new Set(items.map(item => key([...scope, String(item.id)])))
     } catch (e) { this.cardEditFailed(e); return new Set() }
+  }
+
+  /** A new Card must not display the result or run state of a previous owner of its ID. */
+  private forgetResult(k: CardKey) {
+    this.displays.delete(k)
+    this.cardStates.delete(k)
+    this.changed()
   }
 
   /** Names are independent of identifiers and may be shared by several Cards. */

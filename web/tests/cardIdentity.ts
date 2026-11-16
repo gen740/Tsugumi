@@ -58,6 +58,7 @@ projectValue.canvas.cards.push({ id: 'outer' })
 session.project = parse(JSON.stringify(projectValue))
 session.externals.set('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
 const inner = await session.addCard('draft', ['outer'], { x: 0, y: 0 }, 'Inside')
+await new Promise<void>(resolve => setImmediate(resolve)) // Read the external documents from the confirmed delta.
 assert.equal(inner, `outer/${ids[3]}`)
 assert.deepEqual(requests[3], { name: 'inside', prefix: 'externals/nested/' })
 assert.equal(session.displayPath(['outer', ids[3]]), 'Outer/Inside')
