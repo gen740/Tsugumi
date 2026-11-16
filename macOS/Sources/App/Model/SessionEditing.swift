@@ -1072,7 +1072,7 @@ extension ProjectSession {
   private func proposed(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, arrange: Bool,
                         around: [String] = []) async -> Tsugumi_Host_LayoutProposalT? {
     guard let client = rpc else { return nil }
-    let bytes = sceneBytes(scene), step = undoStack.last
+    let before = docState(), bytes = sceneBytes(scene), step = undoStack.last
     do {
       let result: Tsugumi_Host_LayoutProposalT
       if arrange {
@@ -1082,9 +1082,8 @@ extension ProjectSession {
         let request = Tsugumi_Host_LayoutUntangleRequestT(); request.scene = scene; request.around = around.map(Optional.some)
         result = try await CoreHostClient.shared.layoutCall(.layoutuntanglerequest, request)
       }
-      // A save may normalize JSON or acknowledge drafts without changing the
-      // proposal's inputs. Guard the measured scene and the person's edit step.
-      guard rpc === client, undoStack.last === step,
+      // Undo, another edit, reconnect or changed measurements invalidate the proposal.
+      guard rpc === client, docState() == before, undoStack.last === step,
             sceneBytes(layoutScene(scope)) == bytes else { return nil }
       return result
     } catch {
