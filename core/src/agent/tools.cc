@@ -708,6 +708,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   const auto project =
       requested_project.empty() ? c.project : requested_project;
+  catalog.ValidateArguments(call.name, call.arguments);
   auto args = json::Object(call.arguments);
   if (call.name == "tool_result_read") {
     std::lock_guard lock(mutex);
@@ -1381,6 +1382,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
                       : result;
     } catch (const Cancelled&) {
       throw;
+    } catch (const Failure& error) {
+      return ToolResult{LayoutToolFailure(error.code, error.what()), true, {}, {}};
     } catch (const std::exception& error) {
       return ToolResult{error.what(), true, {}, {}};
     }

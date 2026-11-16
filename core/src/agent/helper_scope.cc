@@ -13,6 +13,43 @@ auto Deny(const std::string &detail) -> void {
   throw host::Failure("permission_denied", "Helper scope denied: " + detail +
                       ". Ask the parent to delegate the required Cards.");
 }
+// A wire list is a set of edges; its order is not an authority boundary.
+// Projection/expansion puts hidden edges first, which must not deny an edit
+// depending on where its Card happened to appear in the original list.
+auto Difference(const std::string& a, const std::string& b,
+                const std::string& path = "") -> std::string {
+  if (host::DocumentsEqual(a, b)) return "";
+  if (a.starts_with('{') && b.starts_with('{')) {
+    const auto left = json::Object(a), right = json::Object(b);
+    auto keys = left;
+    keys.insert(right.begin(), right.end());
+    for (const auto& [key, ignored] : keys) {
+      (void)ignored;
+      const auto field = path + "/" + key;
+      if (!left.contains(key) || !right.contains(key)) return field;
+      if (const auto diff = Difference(left.at(key), right.at(key), field);
+          !diff.empty()) return diff;
+    }
+    return "";
+  }
+  if (a.starts_with('[') && b.starts_with('[')) {
+    const auto left = json::Array(a);
+    auto right = json::Array(b);
+    if (path == "/canvas/connections") {
+      for (const auto& wire : left) {
+        const auto found = std::find_if(right.begin(), right.end(),
+            [&](const auto& other) { return host::DocumentsEqual(wire, other); });
+        if (found == right.end()) return path;
+        right.erase(found);
+      }
+      return right.empty() ? "" : path;
+    }
+    for (size_t i = 0; i < std::min(left.size(), right.size()); ++i)
+      if (const auto diff = Difference(left[i], right[i], path + "/" + std::to_string(i));
+          !diff.empty()) return diff;
+  }
+  return path.empty() ? "/" : path;
+}
 auto Card(std::string_view raw) -> std::string {
   const auto value = json::Object(raw);
   std::string path;
@@ -367,7 +404,9 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
     }
     const auto original = read(path);
     auto full = json::Object(original);
-    auto before = json::Object(Graph(original, logical));
+    auto visible = *this;
+    visible.reads_.insert(writes_.begin(), writes_.end());
+    auto before = json::Object(visible.Graph(original, logical));
     const auto bytes = type == "SetProject" ? json::Text(value, "json")
                                             : json::Text(value, "bytes");
     auto after = json::Object(bytes);
@@ -400,15 +439,15 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
     }
     before.erase("canvas");
     after.erase("canvas");
-    if (!host::DocumentsEqual(json::Encode(before), json::Encode(after)))
-      Deny("project-wide fields");
+    if (const auto field = Difference(json::Encode(before), json::Encode(after));
+        !field.empty()) Deny("project field " + path + field);
     auto bfields = bg, afields = ag;
     for (const auto* key : {"cards", "connections"}) {
       bfields.erase(key);
       afields.erase(key);
     }
-    if (!host::DocumentsEqual(json::Encode(bfields), json::Encode(afields)))
-      Deny("project-wide canvas fields");
+    if (const auto field = Difference(json::Encode(bfields), json::Encode(afields));
+        !field.empty()) Deny("project field " + path + "/canvas" + field);
     const auto records = [](const std::string& text) {
       json::Members out;
       for (const auto& c : json::Array(text)) {
@@ -425,12 +464,14 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
           Deny("adding an unreserved Card " + logical + id);
         if (json::Object(c) != json::Members{{"id", json::Quote(id)}})
           Deny("new Card fields");
-      } else if (!host::DocumentsEqual(bc.at(id), c))
-        Require(logical + id, true);
+      } else if (!host::DocumentsEqual(bc.at(id), c) && !writes_.contains(logical + id)) {
+        Deny("project field " + path + "/canvas/cards/" + id + Difference(bc.at(id), c));
+      }
     }
     for (const auto& [id, ignored] : bc) {
       (void)ignored;
-      if (!ac.contains(id)) Require(logical + id, true);
+      if (!ac.contains(id) && !writes_.contains(logical + id))
+        Deny("project field " + path + "/canvas/cards/" + id);
     }
     const auto bw = json::Array(json::Get(bg, "connections", "[]"));
     const auto aw = json::Array(json::Get(ag, "connections", "[]"));
@@ -442,15 +483,21 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
             logical +
             json::Text(json::Object(json::Get(w, side, "{}")), "card");
         if (!reads_.contains(id) && !writes_.contains(id))
-          Deny("wire endpoint " + id);
+          Deny("project field " + path + "/canvas/connections/" + side +
+               "/card (" + id + ")");
         writable = writable || writes_.contains(id);
       }
-      if (!writable) Deny("wire between read-only Cards");
+      if (!writable) Deny("project field " + path + "/canvas/connections (wire between read-only Cards)");
+    };
+    const auto has_wire = [](const auto& wires, const auto& wire) {
+      return std::ranges::any_of(wires, [&](const auto& other) {
+        return host::DocumentsEqual(wire, other);
+      });
     };
     for (const auto& w : aw)
-      if (std::find(bw.begin(), bw.end(), w) == bw.end()) check_wire(w);
+      if (!has_wire(bw, w)) check_wire(w);
     for (const auto& w : bw)
-      if (std::find(aw.begin(), aw.end(), w) == aw.end()) check_wire(w);
+      if (!has_wire(aw, w)) check_wire(w);
     auto graph = json::Object(json::Get(full, "canvas", "{}"));
     std::vector<std::string> cards, wires;
     for (const auto& c : json::Array(json::Get(graph, "cards", "[]"))) {
@@ -479,6 +526,8 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
 
 auto HelperScope::CheckCurrentSave(const json::Members& args, const Reader& read) const -> void {
   if (!scoped_) return;
+  auto visible = *this;
+  visible.reads_.insert(writes_.begin(), writes_.end());
   auto projected = args;
   std::vector<std::string> changes;
   std::map<std::string, std::string> complete;
@@ -492,7 +541,7 @@ auto HelperScope::CheckCurrentSave(const json::Members& args, const Reader& read
       const auto key = type == "SetProject" ? "json" : "bytes";
       const auto text = json::Text(value, key);
       complete[path] = text;
-      value[key] = json::Quote(Graph(text, ProjectPrefix(path, read)));
+      value[key] = json::Quote(visible.Graph(text, visible.ProjectPrefix(path, read)));
       change["value"] = json::Encode(value);
       changes.push_back(json::Encode(change));
     } else changes.push_back(raw);
@@ -504,8 +553,10 @@ auto HelperScope::CheckCurrentSave(const json::Members& args, const Reader& read
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
     const auto path = type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
-    if (complete.contains(path) && !host::DocumentsEqual(complete.at(path), json::Text(value, type == "SetProject" ? "json" : "bytes")))
-      Deny("full operation changes fields outside the assigned Cards");
+    if (complete.contains(path)) {
+      const auto field = Difference(complete.at(path), json::Text(value, type == "SetProject" ? "json" : "bytes"));
+      if (!field.empty()) Deny("project field " + path + field + " is outside the assigned Cards");
+    }
   }
   Check("project_save", projected, read);
 }

@@ -74,6 +74,131 @@ TEST(HelperScope, ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) 
   EXPECT_THROW(scope.CheckCurrentSave(plan, reader), std::runtime_error);
 }
 
+TEST(HelperScope, WireEndEditsDoNotDependOnCardOrConnectionOrder) {
+  for (const auto nested : {false, true}) {
+    for (const auto source : {false, true}) {
+      for (size_t writable = 0; writable < 3; ++writable) {
+        const std::string prefix = nested ? "outer/" : "";
+        const std::string document =
+            nested ? "externals/storage/tsugumi.json" : "tsugumi.json";
+        const std::vector<std::string> ids{"alpha", "middle", "zulu"};
+        std::vector<std::string> cards{R"({"id":"share"})"}, wires;
+        for (const auto &id : ids) {
+          cards.push_back(json::Encode(json::Members{{"id", json::Quote(id)}}));
+          const auto own = json::Encode(json::Members{
+              {"card", json::Quote(id)}, {"port", json::Quote("")}});
+          const std::string share = R"({"card":"share","port":"X"})";
+          wires.push_back(json::Encode(json::Members{
+              {"from", source ? own : share}, {"to", source ? share : own}}));
+        }
+        auto graph = json::Members{{"cards", json::Encode(cards)},
+                                   {"connections", json::Encode(wires)}};
+        const auto before =
+            json::Encode(json::Members{{"canvas", json::Encode(graph)}});
+        auto wire = json::Object(wires[writable]);
+        auto endpoint = json::Object(wire.at(source ? "from" : "to"));
+        endpoint["port"] = json::Quote("settings");
+        wire[source ? "from" : "to"] = json::Encode(endpoint);
+        wires[writable] = json::Encode(wire);
+        graph["connections"] = json::Encode(wires);
+        const auto after =
+            json::Encode(json::Members{{"canvas", json::Encode(graph)}});
+        const auto read = [&](const std::string &path) {
+          if (path == document)
+            return before;
+          return kRead(path);
+        };
+        // Write ownership need not also grant a separate read capability.
+        for (const auto read_own : {false, true}) {
+          std::vector<std::string> reads{json::Quote(prefix + "share")};
+          if (read_own)
+            reads.push_back(json::Quote(prefix + ids[writable]));
+          HelperScope scope(
+              {{"read_cards", json::Encode(reads)},
+               {"write_cards", json::Encode(std::vector<std::string>{
+                                   json::Quote(prefix + ids[writable])})},
+               {"run_cards", "[]"}});
+          const auto value =
+              nested ? json::Members{{"path", json::Quote(document)},
+                                     {"bytes", json::Quote(after)}}
+                     : json::Members{{"json", json::Quote(after)}};
+          const auto plan = json::Members{
+              {"changes",
+               json::Encode(std::vector<std::string>{json::Encode(json::Members{
+                   {"value_type",
+                    json::Quote(nested ? "PutSource" : "SetProject")},
+                   {"value", json::Encode(value)}})})}};
+          SCOPED_TRACE(prefix + ids[writable] + (source ? ":from" : ":to"));
+          EXPECT_NO_THROW(scope.CheckCurrentSave(plan, read));
+        }
+      }
+    }
+  }
+}
+
+TEST(HelperScope, FullGraphDenialNamesTheUnassignedField) {
+  const std::string before =
+      R"({"name":"original","canvas":{"cards":[{"id":"writer"},{"id":"secret"}],"connections":[]}})";
+  const auto read = [&](const std::string &) { return before; };
+  HelperScope scope(json::Object(
+      R"({"read_cards":["writer"],"write_cards":["writer"],"run_cards":[]})"));
+  for (
+      const auto &after :
+      {std::string(
+           R"({"name":"changed","canvas":{"cards":[{"id":"writer"},{"id":"secret"}],"connections":[]}})"),
+       std::string(
+           R"({"name":"original","canvas":{"cards":[{"id":"writer"},{"id":"secret","extra":true}],"connections":[]}})")}) {
+    const auto plan = json::Object(
+        "{\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
+        json::Quote(after) + "}}]}");
+    try {
+      scope.CheckCurrentSave(plan, read);
+      FAIL() << "Unassigned edit was accepted";
+    } catch (const std::runtime_error &error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(after.find("changed") != std::string::npos
+                                 ? "tsugumi.json/name"
+                                 : "tsugumi.json/canvas/cards/1/extra"),
+                std::string::npos)
+          << message;
+    }
+  }
+}
+
+TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
+  const std::string before =
+      R"({"canvas":{"cards":[{"id":"writer"},{"id":"share"},{"id":"reader"},{"id":"secret"}],"connections":[{"from":{"card":"reader","port":"out"},"to":{"card":"share","port":"in"}}]}})";
+  const auto read = [&](const std::string &) { return before; };
+  HelperScope scope(json::Object(
+      R"({"read_cards":["writer","share","reader"],"write_cards":["writer"],"run_cards":[]})"));
+  const auto check = [&](const std::string &after) {
+    scope.CheckCurrentSave(json::Object("{\"changes\":[{\"value_type\":"
+                                        "\"SetProject\",\"value\":{\"json\":" +
+                                        json::Quote(after) + "}}]}"),
+                           read);
+  };
+  // JSON formatting of an untouched read-only wire is not a wire edit.
+  auto formatted = before;
+  formatted.insert(formatted.find("\"from\":"), " ");
+  EXPECT_NO_THROW(check(formatted));
+  for (const auto &replacement :
+       {std::string("reader"), std::string("secret")}) {
+    auto after = before;
+    if (replacement == "reader")
+      after.replace(after.find("out"), 3, "new");
+    else
+      after.replace(after.find("reader", after.find("connections")), 6,
+                    "secret");
+    try {
+      check(after);
+      FAIL() << "Out-of-scope wire edit was accepted";
+    } catch (const std::runtime_error &error) {
+      EXPECT_NE(std::string(error.what()).find("canvas/connections"),
+                std::string::npos);
+    }
+  }
+}
+
 TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
   const HelperScope::Reader read = [](const std::string &path) -> std::string {
     if (path == "tsugumi.json")
