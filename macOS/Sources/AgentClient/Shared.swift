@@ -39,7 +39,8 @@ the person's decision.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
-  Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. run_record
+  Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
+  run is known to work only once that run has been repeated. run_record
   shows what each Card produced (an image a Card displayed comes back as an image you can see) and tools family runs action logs its
   stderr (stream 2).
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
