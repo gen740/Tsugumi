@@ -152,6 +152,13 @@ table DocumentTemplate { definition_json:string (required); files:[DocumentTempl
 table DocumentMergeRequest { base_json:string (required); ours_json:string (required); theirs_json:string (required); }
 table DocumentMerge { merged_json:string (required); conflicts:[string]; }
 
+// Human UI saves use the same strict document merge as Agent saves. base_json
+// contains {snapshot:{rev,sources},files:{path:document}} from the actual read.
+// The core request/reply stay typed; snapshot catches up a UI whose change
+// notifications have not arrived yet. No run data is retained by this operation.
+table UISaveRequest { project:string (required); base_json:string (required); save:Tsugumi.RPC.ProjectSaveRequest (required); }
+table UISaveResult { reply:Tsugumi.RPC.Reply (required); snapshot:Tsugumi.RPC.ProjectSnapshot; }
+
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
 table PermissionKindsRequest { language:string; }
@@ -417,7 +424,7 @@ union RequestPayload {
   RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
-  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
+  DocumentSubgraphRequest, DocumentMergeRequest, UISaveRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
   ModelSelectionRequest,
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest
 }
@@ -429,7 +436,7 @@ union ReplyPayload {
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
-  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
+  DocumentSubgraph, DocumentMerge, UISaveResult, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
   ModelSelection,
   DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries
 }
