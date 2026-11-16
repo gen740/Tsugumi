@@ -215,9 +215,6 @@ TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
 TEST(HostLayout, AgentLayoutAppliesAnOperationAndEditorsKeepPureProposals) {
   const agent::Catalog catalog;
   ASSERT_NE(catalog.Find("project_save"), nullptr);
-  EXPECT_NE(catalog.Find("project_save")
-                ->spec.description.find("without SetLayout coordinates"),
-            std::string::npos);
   const auto* tool = catalog.Find("project_layout");
   ASSERT_NE(tool, nullptr);
   EXPECT_TRUE(tool->mutating);

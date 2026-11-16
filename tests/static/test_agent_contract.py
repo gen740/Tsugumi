@@ -101,3 +101,9 @@ def test_run_wait_schema_is_shared_with_external_mcp():
     for tool in fixtures:
         if tool['name'] in ('run', 'run_status'):
             assert structural_schema(tool['inputSchema']['properties']['wait_seconds']) == structural_schema(wait['schema'])
+
+
+def test_always_sent_prompt_stays_small_and_its_reference_is_bundled():
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_bytes()
+    assert len(prompt) < 8_000
+    assert (ROOT / "demos/reference/cards.md").is_file()

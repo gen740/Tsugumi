@@ -1,7 +1,70 @@
 #include "project_fixture.hh"
 
+#include "agent/json.hh"
+
 namespace tsugumi::test {
 namespace {
+TEST_F(AgentProjectFixture, CardReferenceDraftEditPreservesIntentAndRebindsWires) {
+  namespace json = agent::json;
+  const auto root = directory.path / "project";
+  Write(root / "definitions/start/_card.json", R"({"template":"trigger"})");
+  Write(root / "definitions/plan/_card.json", R"({"template":"draft"})");
+  Write(root / "definitions/plan/_meta.json",
+        R"({"description":"Make a greeting","content":"Return hello."})");
+  Write(root / "definitions/next/_card.json", R"({"template":"draft"})");
+  StartProject(
+      false,
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
+  const auto conversation = Conversation("reference-draft-edit");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto reference = Read(std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) /
+                              "demos/reference/cards.md");
+  const auto fence = reference.find("```json\n");
+  ASSERT_NE(fence, std::string::npos);
+  const auto begin = fence + std::string("```json\n").size();
+  const auto end = reference.find("\n```", begin);
+  ASSERT_NE(end, std::string::npos);
+  const auto args = reference.substr(begin, end - begin);
+  auto edits = json::Array(json::Get(json::Object(args), "edits"));
+  std::erase_if(edits, [](const auto &raw) {
+    return json::Text(json::Object(raw), "file_path") ==
+           "definitions/plan/_meta.json";
+  });
+  const auto before = Read(root / "tsugumi.json");
+  const auto refused =
+      Tool(conversation, "project_edit",
+           json::Encode(json::Members{{"edits", json::Encode(edits)}}),
+           "missing-context");
+  ASSERT_TRUE(refused.Code().empty()) << refused.View();
+  EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
+  EXPECT_EQ(Read(root / "tsugumi.json"), before);
+  EXPECT_EQ(Read(root / "definitions/plan/_card.json"),
+            R"({"template":"draft"})");
+  EXPECT_FALSE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
+
+  const auto reply = Tool(conversation, "project_edit", args, "implement");
+  ASSERT_TRUE(reply.Code().empty()) << reply.View();
+  ASSERT_FALSE(JsonBool(reply.View(), "/isError")) << reply.View();
+  const auto project = Read(root / "tsugumi.json");
+  EXPECT_EQ(JsonString(project, "/pkgsPath"), "tsugumi:default");
+  EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
+  EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
+  EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
+  const auto meta = Read(root / "definitions/plan/_meta.json");
+  EXPECT_EQ(JsonString(meta, "/description"), "Make a greeting");
+  EXPECT_EQ(JsonString(meta, "/content"), "Return hello.");
+  EXPECT_FALSE(JsonString(meta, "/context").empty());
+  EXPECT_EQ(JsonString(Read(root / "definitions/plan/_card.json"), "/language"),
+            "bash");
+  EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/default.nix"));
+  EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
+  const auto validation = Tool(conversation, "project_validate", "{}");
+  ASSERT_TRUE(validation.Code().empty()) << validation.View();
+  EXPECT_FALSE(JsonBool(validation.View(), "/isError")) << validation.View();
+}
+
 TEST_F(AgentProjectFixture,
        NarrowEditPreservesAllUntouchedProjectBytesAndReplaysTheToolCall) {
   StartProject();

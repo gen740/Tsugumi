@@ -340,7 +340,9 @@ class Builder {
         }
         auto pt = parse_param_type(*type);
         if (!pt) {
-          n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type));
+          n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type +
+                                 " (types: bool, int64, uint64, double, string, "
+                                 "or one of them with [] for a list)"));
           continue;
         }
         if (!names.insert(*name).second) {
@@ -631,7 +633,11 @@ class Builder {
                  wire + ": " +
                      (sn.kind == Template::Draft
                           ? "Draft output end must have an empty port"
-                          : "no output port " + src->second)));
+                          : src->second.empty()
+                                ? std::string(
+                                      "the end on a Card that is no longer a "
+                                      "Draft needs one of its output ports")
+                                : "no output port " + src->second)));
         ok = false;
       }
       if (dn.kind == Template::Draft ? !dst->second.empty()
@@ -641,7 +647,15 @@ class Builder {
                  wire + ": " +
                      (dn.kind == Template::Draft
                           ? "Draft input end must have an empty port"
-                          : "no input port " + dst->second)));
+                          : dst->second.empty()
+                                ? std::string(
+                                      "the end on a Card that is no longer a "
+                                      "Draft needs one of its input ports")
+                          : dn.kind == Template::Code
+                                ? "no input port " + dst->second +
+                                      "; add {\"name\": \"" + dst->second +
+                                      "\"} to its _card.json \"inputs\""
+                                : "no input port " + dst->second)));
         ok = false;
       }
       if (ok) res_->edges.push_back({src->first, src->second, dst->first, dst->second});

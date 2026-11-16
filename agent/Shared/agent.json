@@ -59,7 +59,7 @@
     },
     {
       "name": "attached_folder_read",
-      "description": "Read a user-registered attached folder after its Read grant. Returns a bounded page (default 256 KiB, maximum 1 MiB), total file size and continuation offset, or sorted directory entries (maximum 5000). Does not load the whole file. Symbolic links and paths outside the root are refused. To move files use project_copy, never read and retype them; to examine large files use project_shell.",
+      "description": "Read a user-registered attached folder after its Read grant. Returns a bounded page (default 256 KiB, maximum 1 MiB), total file size and continuation offset, or sorted directory entries (maximum 5000). Does not load the whole file. Symbolic links and paths outside the root are refused. project_copy moves files without reading them; project_shell examines large files.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -138,7 +138,7 @@
     {
       "name": "project_edit",
       "mutating": true,
-      "description": "Use for small project changes. One atomic edit against the current document; unrelated fields stay byte-identical. Structured edits use keyed selectors (field selects an object member; match selects one array entity by stable keys), and old_value/new_value with explicit present and a JSON value. Example: {\"file_path\":\"tsugumi.json\",\"selector\":[{\"field\":\"name\"}],\"old_value\":{\"present\":true,\"value\":\"Before\"},\"new_value\":{\"present\":true,\"value\":\"After\"}}. Sources use exact replacement, e.g. {\"file_path\":\"definitions/work/main.py\",\"old_string\":\"limit = 1\",\"new_string\":\"limit = 2\"}; exactly one match unless expected_matches is explicit. File put/remove/move require the hash read (or expect_missing/destination_missing). Missing, null and empty differ. A conflict changes nothing: inspect the target and submit a new guarded edit. Operation identities are supplied by the runtime.",
+      "description": "Apply guarded edits to project documents and Card files in one atomic save against current state; unrelated fields keep their bytes. Structured selectors use field for an object member and match for an array entity by stable keys; old_value/new_value carry explicit present and a JSON value. Source text uses exact old_string/new_string replacement (one match by default, or expected_matches). File put/remove/move use the inspected hash or expect_missing/destination_missing. Missing, null and empty differ. A conflict changes nothing; inspect the target before a new guarded edit. The runtime supplies operation identities.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -309,7 +309,7 @@
     {
       "name": "project_connect",
       "mutating": true,
-      "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire; inserts or extends a fork when required. Reserve a Card id and supply fork_id if a new fork is needed. project_path selects an external project; omit it for root. New Card placement is part of the same save.",
+      "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire and inserts or extends a fork as needed; a new fork takes a reserved fork_id from card_id. project_path selects an external project (omitted: root). New Card placement is part of the save.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -344,7 +344,7 @@
     {
       "name": "project_make_subgraph",
       "mutating": true,
-      "description": "Move selected Cards and their sources into a Card in Card in one atomic save. Reserve the new id with card_id first. project_path selects an external project; omit it for root.",
+      "description": "Move selected Cards and their sources into a Card in Card in one atomic save. id is reserved with card_id. project_path selects an external project (omitted: root).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -372,7 +372,7 @@
     {
       "name": "project_layout",
       "mutating": true,
-      "description": "Explicitly arrange Cards or untangle their wire port order in the current graph, saving once. project_path selects an external project; omit it for root. Use project_edit for a specific guarded position change.",
+      "description": "Arrange Card positions or untangle wire port order in one atomic save. project_path selects an external project (omitted: root). Specific guarded positions are editable with project_edit.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -395,14 +395,14 @@
     }
   ],
   "runWait": {
-    "description": "Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Pass 300 when waiting for results instead of polling. The reply includes still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss ends it with an unavailable error. Helpers may wait only on their own in-scope runs.",
+    "description": "Optional wait_seconds waits until the run ends or the timeout, capped at 300 seconds; 0 or omitted returns immediately. Returns still_running and wait_reason (ended, timeout or idle). Stop interrupts the wait without cancelling the run; connection loss returns an unavailable error. Helpers can wait on their own in-scope runs.",
     "schema": {
       "type": "integer",
       "minimum": 0,
       "description": "Seconds to wait for the end, capped at 300; 0 or omitted returns immediately."
     }
   },
-  "saveNote": "Use project_edit for small changes. project_save replaces whole documents: for creating a project and for a large restructuring. A stale base_rev is refused: read the project again and re-apply your input. New Cards need their definitions and connections, without SetLayout coordinates: the host supplies their places and keeps existing ones.",
+  "saveNote": "Whole-document transaction for creating a project or a large restructuring; project_edit applies small guarded changes to current state. changes contains SetProject (the entire tsugumi.json), PutDefinition, PutSource, RemoveDefinition or SetLayout. PutDefinition with keep_meta preserves _meta.json; meta_json replaces it, and fill_description/fill_context fill empty metadata fields. PutSource takes path, bytes and base_hash when replacing. A stale base_rev is refused: read the project again and re-apply your input. The host places new Cards near their connections and keeps existing positions.",
   "hostRequests": [
     "LayoutValidateRequest"
   ],
@@ -432,14 +432,14 @@
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Keep existing _meta.json text and fill an empty description and context in that edit (context records what the person asked and what the Draft says). How to write Cards and an atomic Draft edit: demo_read reference/cards.md. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
   },
   "commentRequest": {
-    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections in the same save; the host supplies new Card positions. A Draft among them is implemented as the rules say, following its comments. Read each Card and its comments after access is granted. Skip finding=true comments; those are observations, not change requests. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
+    "text": "The user left comments on these Cards in {where}; do what they ask. By default the Card a comment is on changes, keeping its id and wiring; a comment may ask for new Cards or a split (project_edit for the Cards and connections in one atomic save). A Draft among them is implemented following its comments. Comments with finding=true are observations, not change requests. The save that does what a comment asks also resolves it: project_edit of the Card's _meta.json with that comment's \"resolved\": true and a one-line \"resolution\" in the user's language; Tsugumi records which Cards that save changed. How to write code Cards: demo_read reference/cards.md. Then check them with project_validate, run what changed once and check each result with run_record; a result that is not what its comment asks means the work is not done. A comment you cannot do stays open, with the reason in your reply.\n{list}"
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
+    "description": "Optionally hands tasks to helpers (sub-agents), each with an instruction and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent has no depth or count limit. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. The helpers Skill describes what a helper sees and returns.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -830,5 +830,5 @@
     }
   },
   "invalidArguments": "The arguments of this call were not a complete JSON object, so it was not run and nothing was changed. Make the call again with valid JSON (mind the escapes in source files). What you wrote:\n{json}",
-  "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. Do not retry it; tell the user what the Card needs and why, and leave the setting to them."
+  "permissionDeclined": "The user did not approve what this save gives Cards: {permissions}. Nothing was saved. The setting is the user's: tell them what the Card needs and why."
 }
