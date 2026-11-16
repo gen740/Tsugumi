@@ -702,7 +702,10 @@ struct GraphCanvas: View {
       selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
       CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
-                   onParamBegin: { session.rev },
+                   onParamBegin: { edit, name in
+                     edit.paramBase = InlineParamEdit.ParamBase(parameter: session.cardDefinition(k)?["params"]?.array?.first { $0["name"]?.string == name })
+                     return session.rev
+                   },
                    onParamCommit: data.kind.editsValueOnCanvas ? { name, text, edit, overwrite in await commitParam(k, name, text, edit, overwrite: overwrite) } : nil,
                    paramsEditable: session.isEditable,
                    onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), true) } },
@@ -1246,7 +1249,7 @@ struct GraphCanvas: View {
     let type = session.kind(k) == .switchCard && name == "value" ? "bool"
       : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
     guard let type else { return false }
-    return await edit.commit(session, text: text, overwrite: overwrite) { $0.updateParam(k, name, parseParam(text, type)) }
+    return await edit.commit(session, text: text, overwrite: overwrite) { $0.updateParam(k, name, parseParam(text, type), initial: overwrite ? nil : edit.paramBase) }
   }
 
   private func deleteSelection() {

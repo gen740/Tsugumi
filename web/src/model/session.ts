@@ -173,6 +173,7 @@ export interface InlineDraft {
   content: string
   initialName: string
   initialContent: string
+  initialMeta?: J
   revision: RevisionEdit
 }
 
@@ -1140,30 +1141,18 @@ export class ProjectSession extends Observable {
     return result.rev ?? this.rev
   }
 
-  async undo() {
-    await this.operationTask?.catch(() => undefined)
-    const e = this.undoStack.at(-1)
-    if (!e) return
-    const result = await this.revert(e, true)
-    if (result) { this.undoStack.pop(); if (result.inverse) this.redoStack.push(result.inverse) }
-    this.changed()
-  }
+  async undo() { await this.revert(true) }
+  async redo() { await this.revert(false) }
 
-  async redo() {
-    await this.operationTask?.catch(() => undefined)
-    const e = this.redoStack.at(-1)
-    if (!e) return
-    const result = await this.revert(e, false)
-    if (result) { this.redoStack.pop(); if (result.inverse) this.undoStack.push(result.inverse) }
-    this.changed()
-  }
-
-  private async revert(e: UndoEntry, _undo: boolean): Promise<{ inverse?: UndoEntry } | undefined> {
+  private async revert(undo: boolean) {
     try {
-      const result = await this.operate(H.ProjectOperationBody.ProjectEdits, e.operation, false)
-      const inverse = operationInverse(result)
-      return { inverse: inverse.edits.length ? { operation: inverse } : undefined }
-    } catch (error) { this.saveError = errorText(error); this.changed(); return }
+      await this.operate(H.ProjectOperationBody.ProjectEdits, () =>
+        (undo ? this.undoStack : this.redoStack).at(-1)?.operation ?? new H.ProjectEditsT(), false, result => {
+          const inverse = operationInverse(result)
+          ;(undo ? this.undoStack : this.redoStack).pop()
+          if (inverse.edits.length) (undo ? this.redoStack : this.undoStack).push({ operation: inverse })
+        })
+    } catch (error) { this.saveError = errorText(error); this.changed() }
   }
 
   discardDraft() { this.inlineDraft = undefined; this.changed() }
@@ -1178,7 +1167,7 @@ export class ProjectSession extends Observable {
   }
 
   /** Submit one action, then complete only after its reply is in the confirmed state. */
-  async operate(bodyType: H.ProjectOperationBody, body: H.ProjectOperateRequestT['body'] | (() => H.ProjectOperateRequestT['body']), record = true): Promise<R.SaveResultT> {
+  async operate(bodyType: H.ProjectOperationBody, body: H.ProjectOperateRequestT['body'] | (() => H.ProjectOperateRequestT['body']), record = true, applied?: (result: R.SaveResultT) => void): Promise<R.SaveResultT> {
     const previous = this.operationTask
     const task = (async () => {
       await previous?.catch(() => undefined)
@@ -1192,12 +1181,16 @@ export class ProjectSession extends Observable {
       if (!this.connected || this.client !== client) throw new RPCError('disconnected', L('接続していません'))
       if (result.delta) this.applyDelta(result.delta)
       await this.documentRevisions.applied(result.rev ?? this.rev)
+      // A delta updates source hashes before the internal documents are read.
+      let externals: Promise<void> | undefined
+      do { externals = this.externalsTask; await externals } while (externals !== this.externalsTask)
       const inverse = record ? operationInverse(result) : new H.ProjectEditsT()
       if (record && inverse.edits.length) {
         this.undoStack.push({ operation: inverse })
         if (this.undoStack.length > 500) this.undoStack.shift()
         this.redoStack = []
       }
+      applied?.(result)
       this.saveError = undefined
       this.changed()
       return result
@@ -1603,6 +1596,8 @@ export class ProjectSession extends Observable {
   }
 
   /** Reads the externals' documents when their sources changed. */
+  private externalsTask?: Promise<void>
+
   refreshExternals() {
     const paths = [...this.sources.keys()].filter((p) => p.startsWith('externals/')).sort()
     const k = paths.map((p) => `${p}=${this.sources.get(p)?.hash ?? ''}`).join(';')
@@ -1617,7 +1612,7 @@ export class ProjectSession extends Observable {
     }
     const atRev = this.rev
     const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    void (async () => {
+    this.externalsTask = (async () => {
       const found = new Map<string, ExternalProject>()
       const read = new Map<string, string>()
       const doc = async (rel: string): Promise<J | undefined> => {
@@ -1664,7 +1659,7 @@ export class ProjectSession extends Observable {
       for (const prefix of found.keys()) this.refreshDerivedLayout(prefix)
       this.changed()
       // Cards inside Cards in Card are known now: their displays are wanted too.
-      await this.refreshVisibleDisplays()
+      void this.refreshVisibleDisplays()
     })()
   }
 
@@ -1853,7 +1848,7 @@ export class ProjectSession extends Observable {
     revision ??= new RevisionEdit()
     const name = this.draftUntitled(k) ? '' : this.displayName(k), content = str(get(this.cardMeta(k), 'content')) ?? ''
     revision.reload(this.rev)
-    this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, revision }
+    this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, initialMeta: clone(this.cardMeta(k)), revision }
     this.changed()
   }
 
@@ -1897,13 +1892,18 @@ export class ProjectSession extends Observable {
     const name = e.name.trim() || 'draft'
     const problem = nameChanged ? this.cardNameProblem(e.card, name) : undefined
     if (problem) { this.notice = problem; e.revision.error = problem; e.revision.changed(); this.changed(); return undefined }
-    const ok = await e.revision.apply(this, overwrite, x => x.updateMeta(e.card, m => {
-      if (contentChanged) m.set('content', e.content || undefined)
-      if (nameChanged) m.set('name', name)
-    }))
+    const before = overwrite ? this.cardMeta(e.card) : e.initialMeta
+    const after = clone(before) ?? obj()
+    if (!isObj(after)) return undefined
+    if (contentChanged) after.set('content', e.content || undefined)
+    if (nameChanged) after.set('name', name)
+    const ok = await e.revision.apply(this, overwrite, x => {
+      const dir = x.definitionDir(e.card)
+      if (dir) x.appendEdits([x.jsonEdit(dir + '_meta.json', before, after)])
+    })
     if (ok && this.inlineDraft?.revision === e.revision) {
       if (this.inlineDraft.name === e.name && this.inlineDraft.content === e.content) this.inlineDraft = undefined
-      else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content }
+      else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content, initialMeta: clone(after) }
     }
     this.changed()
     return ok && nameChanged ? e.card : undefined
@@ -1978,7 +1978,17 @@ export class ProjectSession extends Observable {
   }
 
   /** Mutates the value inside the caller's transaction, without an autosave. */
-  updateParam(k: CardKey, name: string, value: J | undefined) {
+  updateParam(k: CardKey, name: string, value: J | undefined, initial?: { parameter?: J }) {
+    if (initial) {
+      const dir = this.definitionDir(k)
+      if (dir) {
+        const selector = ['params', obj([['name', name]])]
+        this.appendEdits([initial.parameter === undefined
+          ? this.fieldEdit(dir + '_card.json', selector, undefined, obj([['name', name], ['type', 'bool'], ['data', value!]]))
+          : this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'), value)])
+      }
+      return
+    }
     this.updateCard(k, (c) => {
       const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
       const p = params.find((p) => str(get(p, 'name')) === name)

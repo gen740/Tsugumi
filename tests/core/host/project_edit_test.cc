@@ -136,13 +136,27 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
                               {"reply", json::Quote(reply)},
                               {"value", json::Encode(value)}}), {}};
   };
-  EXPECT_NO_THROW(ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call));
+  const auto saved =
+      ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+  EXPECT_EQ(json::Text(json::Object(saved.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 1);
 
   edits.edits.back()->value.AsProjectFieldEdit()->old_value->json = "\"stale\"";
+  request.body.Set(edits);
+  // UI conflicts are typed replies; Agent conflicts still throw. Neither
+  // origin may send a partially applied wire edit to core.
+  const auto conflict =
+      ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto envelope = json::Object(conflict.json);
+  ASSERT_EQ(json::Text(envelope, "reply"), "Failure");
+  const auto value = json::Object(envelope.at("value"));
+  EXPECT_EQ(json::Text(value, "kind"), "value_conflict");
+  const auto diagnostic = json::Text(value, "diagnostic");
+  EXPECT_NE(diagnostic.find("old_value"), std::string::npos);
+  EXPECT_NE(diagnostic.find("new_value"), std::string::npos);
+  EXPECT_EQ(saves, 1);
   try {
-    request.body.Set(edits);
-    ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+    ProjectOperations().Execute("p", request, {"agent", {}, {}, {}}, call);
     FAIL() << "stale second end must refuse the entire plan";
   } catch (const Failure &failure) {
     EXPECT_EQ(failure.code, "value_conflict");
@@ -382,5 +396,112 @@ TEST(ProjectEdit, AuthorizesEveryReadBeforeMaterializingIt) {
                Failure);
   EXPECT_FALSE(read);
 }
+TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
+  const std::string path = "definitions/a/_meta.json";
+  const std::string meta = R"({"comments":[{"id":"c","text":"first"}]})";
+  SaveBase base;
+  base.snapshot["rev"] = "0";
+  base.files["definitions/a/_card.json"] = R"({"template":"draft"})";
+  const auto read = [](const auto &) -> std::optional<std::string> { return {}; };
+  H::ProjectJSONEditT create;
+  create.file_path = path;
+  create.old_value = std::make_unique<H::ProjectValueT>();
+  create.new_value = std::make_unique<H::ProjectValueT>();
+  create.new_value->present = true;
+  create.new_value->json = meta;
+  H::ProjectEditsT edits;
+  auto entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(std::move(create));
+  edits.edits.push_back(std::move(entry));
+  const auto plan = PrepareProjectEdits(edits, base, read);
+  const auto undo = ReverseProjectChanges(plan, base, read);
+  ASSERT_EQ(undo.edits.size(), 1u);
+  ASSERT_NE(undo.edits.front()->value.AsProjectFileRemove(), nullptr);
+  base.files[path] = meta;
+  const auto undone = PrepareProjectEdits(undo, base, read);
+  const auto redo = ReverseProjectChanges(undone, base, read);
+  ASSERT_EQ(redo.edits.size(), 1u);
+  const auto *put = redo.edits.front()->value.AsProjectFilePut();
+  ASSERT_NE(put, nullptr);
+  EXPECT_EQ(put->file_path, path);
+  EXPECT_TRUE(put->expect_missing);
+  EXPECT_EQ(std::string(put->bytes.begin(), put->bytes.end()), meta);
+  base.files.erase(path);
+  const auto redone = PrepareProjectEdits(redo, base, read);
+  const auto changes = json::Array(redone.at("changes"));
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(json::Get(json::Object(changes[0]), "value")), "meta_json"), meta);
+}
+
+TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
+  const std::string path = "definitions/a/_meta.json";
+  const std::string meta = R"({"comments":[{"id":"c","text":"last"}]})";
+  SaveBase base;
+  base.snapshot["rev"] = "0";
+  base.files["definitions/a/_card.json"] = R"({"template":"draft"})";
+  base.files[path] = "\n  " + meta + "\n";
+  H::ProjectJSONEditT remove;
+  remove.file_path = path;
+  remove.old_value = std::make_unique<H::ProjectValueT>();
+  remove.old_value->present = true;
+  remove.old_value->json = meta;
+  remove.new_value = std::make_unique<H::ProjectValueT>();
+  H::ProjectEditsT edits;
+  auto entry = std::make_unique<H::ProjectEditT>();
+  entry->value.Set(std::move(remove));
+  edits.edits.push_back(std::move(entry));
+  const auto read = [](const auto &) -> std::optional<std::string> { return {}; };
+  const auto plan = PrepareProjectEdits(edits, base, read);
+  const auto changes = json::Array(plan.at("changes"));
+  ASSERT_EQ(changes.size(), 1u);
+  const auto definition = json::Object(json::Get(json::Object(changes[0]), "value"));
+  EXPECT_FALSE(definition.contains("meta_json"));
+  EXPECT_EQ(json::Text(definition, "card_json"), base.files.at("definitions/a/_card.json"));
+  base.files[path] = R"({"comments":[{"id":"c","text":"changed"}]})";
+  try {
+    PrepareProjectEdits(edits, base, read);
+    FAIL() << "Stale document deletion was accepted";
+  } catch (const Failure &failure) {
+    EXPECT_EQ(failure.code, "value_conflict");
+  }
+}
+
+TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
+  for (const auto kind : {Tsugumi::Data::FailureKind::value_conflict,
+                          Tsugumi::Data::FailureKind::source_changed}) {
+    H::ProjectEditsT edits;
+    auto entry = std::make_unique<H::ProjectEditT>();
+    if (kind == Tsugumi::Data::FailureKind::value_conflict) {
+      auto field = Field({"content"}, "\"stale\"", "\"mine\"");
+      field.file_path = "definitions/a/_meta.json";
+      entry->value.Set(std::move(field));
+    } else {
+      H::ProjectFileRemoveT remove;
+      remove.file_path = "definitions/a/_meta.json";
+      remove.expected_hash = crypto::sha256_hex("stale");
+      entry->value.Set(std::move(remove));
+    }
+    edits.edits.push_back(std::move(entry));
+    H::ProjectOperateRequestT request;
+    request.project_id = "p";
+    request.op_id = "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
+    request.body.Set(std::move(edits));
+    const auto call = [](const std::string& method, const json::Members&) {
+      if (method == "operation_get")
+        return OperationReply{R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
+      EXPECT_EQ(method, "project_inspect");
+      return OperationReply{R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{}","meta_json":"{}"}]}})", {}};
+    };
+    const auto conflict = ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+    flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(conflict.wire.data()), conflict.wire.size());
+    ASSERT_TRUE(Tsugumi::RPC::VerifyMessageBuffer(verifier));
+    const auto* failure = Tsugumi::RPC::GetMessage(conflict.wire.data())
+                              ->payload_as_Reply()->value_as_Failure();
+    ASSERT_NE(failure, nullptr);
+    EXPECT_EQ(failure->kind(), kind);
+    EXPECT_THROW(ProjectOperations().Execute("p", request, {"agent", {}, {}, {}}, call), Failure);
+  }
+}
+
 }  // namespace
 }  // namespace tsugumi::host

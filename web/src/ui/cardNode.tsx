@@ -64,7 +64,7 @@ export interface CardNodeProps {
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
   /** Committing an input or Switch Card's param (undefined: read-only). */
-  onParamBegin?: () => bigint
+  onParamBegin?: (edit: InlineParamEdit, name: string) => bigint
   onParamCommit?: (name: string, text: string, edit?: InlineParamEdit, overwrite?: boolean) => Promise<boolean> | void
   paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
@@ -193,7 +193,7 @@ function SwitchBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
         pointerStarted.current = false
         if (!activate || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return
         const value = on ? 'false' : 'true'
-        edit.begin(on ? 'true' : 'false', p.onParamBegin?.() ?? 0n)
+        edit.begin(on ? 'true' : 'false', p.onParamBegin?.(edit, 'value') ?? 0n)
         setPending(value)
         void save(value)
       }}>
@@ -202,7 +202,7 @@ function SwitchBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
     </button>
     {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
       <RevisionEditNotice edit={edit} text={() => pending} overwrite={() => void save(pending, true)}
-        reload={() => { edit.begin(on ? 'true' : 'false', p.onParamBegin?.() ?? 0n); setPending('') }} />
+        reload={() => { edit.begin(on ? 'true' : 'false', p.onParamBegin?.(edit, 'value') ?? 0n); setPending('') }} />
     </div>}
   </>)
 }
@@ -298,7 +298,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {data.params.map((param) => (
             <div key={param.name} className="cv-param-row" style={{ height: s(CardGeometry.paramRow), padding: `0 ${s(10)}px` }}>
               <ParamFieldView param={param} editable={!!p.onParamCommit && p.paramsEditable !== false} zoom={z}
-                revision={p.onParamBegin} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
+                revision={edit => p.onParamBegin?.(edit, param.name) ?? 0n} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
             </div>
           ))}
           {g.result && (
@@ -475,7 +475,7 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
 // ---- Param field --------------------------------------------------------------------------
 
 /** A param shown on an input Card; committed on Return or focus loss. */
-export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: () => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
+export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: (edit: InlineParamEdit) => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
   const z = zoom
   const [text, setText] = useState(param.value)
   const [editing, setEditing] = useState(false)
@@ -486,7 +486,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
   useEffect(() => {
     if (!editing) setText(param.value)
   }, [param.value, editing])
-  const begin = () => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(true) }
+  const begin = () => { edit.begin(param.value, revision?.(edit) ?? 0n); setText(param.value); setEditing(true) }
   const finish = async (cancel = false, overwrite = false) => {
     if (!editing || edit.applying) return
     if (cancel) { setEditing(false); setText(param.value); return }
@@ -503,7 +503,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <input type="checkbox" checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
             const value = e.target.checked ? 'true' : 'false'
-            edit.begin(param.value, revision?.() ?? 0n); setText(value); setEditing(true)
+            edit.begin(param.value, revision?.(edit) ?? 0n); setText(value); setEditing(true)
             void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })
           }} />
           <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
@@ -534,7 +534,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
       )}
       {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
         <RevisionEditNotice edit={edit} text={() => text} overwrite={() => void finish(false, true)}
-          reload={() => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(false) }} />
+          reload={() => { edit.begin(param.value, revision?.(edit) ?? 0n); setText(param.value); setEditing(false) }} />
       </div>}
     </div>
   )

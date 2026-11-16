@@ -35,7 +35,7 @@ final class RevisionEdit {
       savedRev = try await session.applyMutation(change)
       reload(savedRev ?? session.rev)
       return true
-    } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict {
+    } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict || failure.kind == .valueConflict || failure.kind == .sourceChanged {
       conflictRev = session.rev
       error = nil
     } catch {
@@ -90,6 +90,8 @@ struct RevisionEditNotice: View {
 final class InlineParamEdit {
   let revision = RevisionEdit()
   private(set) var initial = ""
+  struct ParamBase { let parameter: JSONValue? }
+  var paramBase: ParamBase?
   func begin(_ value: String, rev: UInt64) { initial = value; revision.reload(rev) }
   func commit(_ session: ProjectSession, text: String, overwrite: Bool = false,
               _ change: (ProjectSession) -> Void) async -> Bool {

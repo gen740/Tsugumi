@@ -323,16 +323,18 @@ public:
        std::string("\xff\0\x81", 3)}};
   int saves = 0;
   OperationContext context{"ui", {}, {}, {}};
-  auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
+  auto Execute(H::ProjectOperationBodyUnion body) -> OperationReply {
     H::ProjectOperateRequestT request;
     request.project_id = "p";
     request.op_id = crypto::uuid4();
     request.body = std::move(body);
-    const auto reply =
-        ProjectOperations().Execute("p", request, context,
-                                    [&](const auto &method, const auto &args) {
-                                      return Call(method, args);
-                                    });
+    return ProjectOperations().Execute(
+        "p", request, context,
+        [&](const auto &method, const auto &args) { return Call(method, args); });
+  }
+  auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
+    const auto reply = Execute(std::move(body));
+    EXPECT_EQ(json::Text(json::Object(reply.json), "reply"), "SaveResult");
     const auto value =
         json::Object(json::Get(json::Object(reply.json), "value"));
     const auto encoded = json::Object(value.at("operation_data"));
@@ -345,6 +347,18 @@ public:
     H::ProjectOperationBodyUnion operation;
     operation.Set(std::move(body));
     return Apply(std::move(operation));
+  }
+  template <class T>
+  auto ExpectConflict(T body, const std::string &kind) -> void {
+    const auto before = files;
+    const auto saves_before = saves;
+    H::ProjectOperationBodyUnion operation;
+    operation.Set(std::move(body));
+    const auto reply = json::Object(Execute(std::move(operation)).json);
+    ASSERT_EQ(json::Text(reply, "reply"), "Failure");
+    EXPECT_EQ(json::Text(json::Object(reply.at("value")), "kind"), kind);
+    EXPECT_EQ(saves, saves_before);
+    EXPECT_EQ(files, before);
   }
 
 private:
@@ -548,7 +562,7 @@ TEST(ProjectOperationTransform,
             initial.at(deep));
   // A later source addition makes removal of the copied folder unsafe.
   project.files["externals/copy/later.bin"] = "later";
-  EXPECT_THROW(project.Apply(undo_copy), Failure);
+  project.ExpectConflict(undo_copy, "source_changed");
   EXPECT_EQ(project.saves, 2);
   project.files.erase("externals/copy/later.bin");
   auto redo_copy = project.Apply(undo_copy);
@@ -758,7 +772,7 @@ TEST(ProjectOperationCutover,
       "false");
   EXPECT_FALSE(project.files.contains(put.file_path));
   project.files[form.file_path] = R"({"template":"draft","symbol":"other"})";
-  EXPECT_THROW(project.Apply(body), Failure);
+  project.ExpectConflict(body, "value_conflict");
   EXPECT_FALSE(project.files.contains(put.file_path));
 }
 TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
@@ -808,7 +822,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   H::ProjectSelectionT unplaced;
   unplaced.action = H::ProjectSelectionAction::DeleteDefinitions;
   unplaced.cards = {"a"};
-  EXPECT_THROW(project.Apply(unplaced), Failure);
+  project.ExpectConflict(unplaced, "value_conflict");
   project.files["definitions/unplaced/_card.json"] = R"({"template":"draft"})";
   H::ProjectSelectionT place;
   place.action = H::ProjectSelectionAction::Place;

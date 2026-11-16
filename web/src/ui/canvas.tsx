@@ -19,7 +19,7 @@ import {
   CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
-import { arr, dbl, get, J, JObj, obj, real, str } from '../shared/json'
+import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../shared/json'
 import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
@@ -262,7 +262,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
       : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
     if (!type) return false
-    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type)))
+    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type), overwrite ? undefined : edit.paramBase))
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
@@ -616,7 +616,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamBegin={() => session.rev}
+            onParamBegin={(edit, name) => {
+              edit.paramBase = { parameter: clone((arr(get(session.cardDefinition(k), 'params')) ?? []).find(p => str(get(p, 'name')) === name)) }
+              return session.rev
+            }}
             onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text, edit, overwrite) => {
               if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
               return commitParam(k, name, text, edit, overwrite)
