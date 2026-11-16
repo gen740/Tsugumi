@@ -39,6 +39,39 @@ TEST(AgentContext, ResultCapKeepsBothEndsAndLeavesTheRecordUntouched) {
   EXPECT_EQ(omitted.front().content[0].input, call.input);
 }
 
+TEST(AgentContext, FamilyCallResultsAreShapedAsTheToolTheyRan) {
+  ContentBlock call;
+  call.type = "tool_use";
+  call.id = "family-shell";
+  call.name = "tools";
+  call.input = R"({"family":"files","action":"shell","arguments":{}})";
+  ContentBlock result;
+  result.type = "tool_result";
+  result.id = call.id;
+  result.text = json::Encode(json::Members{
+      {"reply", json::Quote("ProjectShellResult")},
+      {"value",
+       json::Encode(json::Members{
+           {"stdout_bytes",
+            json::Quote("HEAD" + std::string(300000, '0') + "TAIL")},
+           {"stderr_bytes", json::Quote("")},
+           {"exit_code", "0"}})}});
+  const std::vector<Message> messages{
+      {"assistant", {call}, {}, {}, ProviderAPI::AnthropicMessages},
+      {"user", {result}, {}, {}, ProviderAPI::AnthropicMessages}};
+  for (const auto cap : {kToolResultBytes, kToolResultBytes / 2}) {
+    const auto shaped = RequestMessages(messages, 0, cap).back().content[0].text;
+    ASSERT_LE(shaped.size(), cap);
+    const auto value = json::Object(json::Get(json::Object(shaped), "value"));
+    const auto output = json::String(value.at("stdout_bytes"));
+    EXPECT_TRUE(output.starts_with("HEAD"));
+    EXPECT_TRUE(output.ends_with("TAIL"));
+    EXPECT_EQ(json::UInt(value.at("stdout_head_bytes")) +
+                  json::UInt(value.at("stdout_tail_bytes")),
+              output.size());
+  }
+}
+
 TEST(AgentContext, HelperAlwaysReturnsItsLastReportWithoutTheTranscript) {
   ContentBlock text;
   text.text = "earlier private detail";
