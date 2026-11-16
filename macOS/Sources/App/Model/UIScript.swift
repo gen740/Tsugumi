@@ -284,9 +284,8 @@ final class UIScript {
           say("generate-comments \(cards)")
         }
       case "presence":
-        // presence [thought]: plays the Agent's scenes over the shown scope's
-        // Cards along the flow (read, write out, thread the next wire), as
-        // a save by the Agent would; `thought` adds sample thought lines.
+        // presence [thought]: one save cue over the shown scope, with all
+        // changed Cards and wires together; `thought` adds a sample line.
         if let s = session, let t = workspace?.active {
           let ids = s.cards(in: t.scope).compactMap { $0["id"]?.string }
           let across = s.flow == .leftToRight
@@ -294,17 +293,14 @@ final class UIScript {
           let p = s.presence
           p.name = { [weak s] k in s?.nodeData(k).title ?? k }
           p.turnStarted()
-          for id in order where s.kind(key(t.scope + [id])) != .trigger {
-            let k = key(t.scope + [id])
-            p.enqueue(.visit(k))
-            p.enqueue(.write(k, reveal: true))
-            for c in s.connections(in: t.scope) where c["from"]?["card"]?.string == id {
-              if let to = c["to"]?["card"]?.string, let fp = c["from"]?["port"]?.string, let tp = c["to"]?["port"]?.string {
-                p.enqueue(.thread(AgentPresence.Wire(from: k, fromPort: fp, to: key(t.scope + [to]), toPort: tp)))
-              }
-            }
+          let written = order.filter { s.kind(key(t.scope + [$0])) != .trigger }.map { (key(t.scope + [$0]), reveal: true) }
+          let wires = s.connections(in: t.scope).compactMap { c -> AgentPresence.Wire? in
+            guard let from = c["from"]?["card"]?.string, let to = c["to"]?["card"]?.string,
+                  let fp = c["from"]?["port"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+            return AgentPresence.Wire(from: key(t.scope + [from]), fromPort: fp, to: key(t.scope + [to]), toPort: tp)
           }
-          if w.count > 1 && w[1] == "thought" { p.think(String(localized: "上流から順に Card を書いて、糸でつないでいく")) }
+          p.saved(written: written, wires: wires)
+          if w.count > 1 && w[1] == "thought" { p.think(String(localized: "変更を保存しています")) }
           let end = p.beats.last?.end ?? Date()
           Task { @MainActor in
             try? await Task.sleep(for: .seconds(max(0, end.timeIntervalSinceNow)))

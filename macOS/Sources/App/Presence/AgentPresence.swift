@@ -2,12 +2,8 @@ import Foundation
 import Observation
 import TsugumiAgentClient
 
-/// What the Agent is doing, for the canvas: a queue of short scenes (beats)
-/// that the tsugumi plays one after another. It looks into a Card the Agent
-/// reads, writes out a Card the Agent saved (a Draft becoming code is written
-/// left to right), threads the wires of what it wrote, and flies to the
-/// trigger Card when the Agent runs the workflow. Beats never overlap: one
-/// that comes while others still play waits for them.
+/// The latest Agent activity on the canvas. One save is one short, simultaneous
+/// cue; newer work supersedes it immediately. Nothing waits behind playback.
 @MainActor
 @Observable
 final class AgentPresence {
@@ -26,17 +22,21 @@ final class AgentPresence {
     let toPort: String
   }
 
+  struct Written: Equatable {
+    let card: CardKey
+    let reveal: Bool
+  }
+
   enum Beat: Equatable {
     case visit(CardKey)  // reads it
     case compose(CardKey)  // writes a file of it, not saved yet
-    case write(CardKey, reveal: Bool)  // saved it; `reveal`: a Draft (or a new Card) became code
-    case thread(Wire)  // threads a wire of what it wrote
+    case save([Written], [Wire])
     case run(CardKey)  // runs the workflow from this trigger Card
 
     var card: CardKey {
       switch self {
-      case .visit(let k), .compose(let k), .write(let k, _), .run(let k): k
-      case .thread(let w): w.to
+      case .visit(let k), .compose(let k), .run(let k): k
+      case .save(let cards, let wires): cards.last?.card ?? wires.last!.to
       }
     }
   }
@@ -53,24 +53,14 @@ final class AgentPresence {
     var end: Date { start.addingTimeInterval(length) }
   }
 
-  /// Lengths of the scenes (seconds): unhurried, so the bird glides.
   enum Timing {
-    static let visit = 1.6
-    static let reveal = 1.7  // approach 0.4, written over 1.1, a moment after
-    static let revealStart = 0.4, revealLength = 1.1
-    static let update = 1.3
-    static let thread = 1.5
-    static let threadStart = 0.35, threadLength = 1.1
-    static let run = 1.4
-    /// Its last lines stay this long when no other file comes after it.
+    static let visit = 0.24
+    static let save = 0.24
+    static let run = 0.24
+    static let flight = 0.24
     static let codeHold = 0.8
-    /// A pause in what arrives may last this long before its scene ends by itself.
     static let codeStalled = 5.0
-    /// How long the colour of a written Card takes to settle and fade.
-    static let settle = 4.0
-    /// Beats that would start further ahead than this are dropped if they
-    /// only look (visits): the bird does not lag far behind the Agent.
-    static let maxBacklog = 5.0
+    static let settle = save
     /// The bird stays this long after the turn ended, the last part of it
     /// fading away (and the "done" bubble before it).
     static let linger = 8.0
@@ -140,14 +130,16 @@ final class AgentPresence {
     thought = nil
     activity = nil
     outcome = .done
-    beats.removeAll { $0.end < now }
+    beats.removeAll()
+    codes.removeAll()
   }
 
   func turnEnded(_ outcome: Outcome = .done, now: Date = Date()) {
     self.outcome = outcome
     working = false
     toolInputEnded(ok: outcome == .done, now: now)
-    endedAt = animateWork ? max(now, beats.last?.end ?? now) : now
+    if outcome != .done { finishStep(now: now) }
+    endedAt = now
     sweep()
   }
 
@@ -162,6 +154,7 @@ final class AgentPresence {
     guard working, let text else { return }
     // The same thing still going on (text streams in many pieces) keeps its time.
     if let a = activity, a.text == text, a.at >= (current(at: now)?.beat.start ?? .distantPast) { return }
+    finishStep(now: now)
     activity = (text, now)
   }
 
@@ -191,23 +184,14 @@ final class AgentPresence {
         beats[i].length = now.timeIntervalSince(beats[i].start) + Timing.codeStalled
       }
     } else if !w.done {
-      // It waited behind the bird's other scenes, or its earlier scene has ended: it may have room now.
+      // The previous file ended; show what is arriving now.
       startCode(LiveCode(card: key([id]), file: file, text: w.text, patch: w.patch), now: now)
     }
     if w.done { arrived(now: now) }
   }
 
   private func startCode(_ code: LiveCode, now: Date) {
-    // The file arriving now replaces older files: one that still waits is not
-    // shown, and the one on the screen ends. The scenes of a change that was
-    // saved (its Cards written out, its wires threaded) are what happened and
-    // stay; the new file shows once they have played, with all that has arrived.
-    beats.removeAll { $0.code != nil && $0.start >= now }
-    if let i = beats.lastIndex(where: { $0.code != nil && $0.end > now }) {
-      beats[i].length = now.timeIntervalSince(beats[i].start)
-    }
     enqueue(.compose(code.card), now: now)
-    // Not there (too far behind): not shown yet. Not by the count: enqueue also drops old scenes.
     guard let i = beats.indices.last, beats[i].beat == .compose(code.card), beats[i].code == nil else { return }
     let id = nextCode
     nextCode += 1
@@ -221,7 +205,6 @@ final class AgentPresence {
   private func arrived(now: Date) {
     defer { liveID = nil }
     guard let liveID, let i = beats.indices.last, beats[i].code == liveID else { return }
-    // One that still waits behind other scenes holds from when it starts.
     beats[i].length = max(0, now.timeIntervalSince(beats[i].start)) + Timing.codeHold
   }
 
@@ -237,11 +220,7 @@ final class AgentPresence {
 
   /// No file is on the screen from `now` on: a call failed, or the workflow runs.
   func stopShowingCode(now: Date = Date()) {
-    beats.removeAll { $0.code != nil && $0.start > now }
-    if let i = beats.lastIndex(where: { $0.code != nil && $0.start <= now && $0.end > now }) {
-      beats[i].length = now.timeIntervalSince(beats[i].start)
-    }
-    codes.removeAll()
+    if beats.last?.code != nil { finishStep(now: now) }
   }
 
   /// The file to show at `now`, as far as it has been written out, never past
@@ -251,42 +230,42 @@ final class AgentPresence {
     return code
   }
 
+  func running(now: Date = Date()) {
+    finishStep(now: now)
+    thought = nil
+    activity = (String(localized: "実行しています"), now)
+  }
+
+  /// Complete the old cue at once. Retain just one predecessor for flight
+  /// geometry, never a playback queue or old saved-state effects.
+  func finishStep(now: Date = Date()) {
+    if let i = beats.indices.last, beats[i].end > now {
+      beats[i].length = max(0, now.timeIntervalSince(beats[i].start))
+    }
+    codes.removeAll()
+    liveID = nil
+    revision += 1
+  }
+
   func enqueue(_ beat: Beat, now: Date = Date()) {
-    if !animateWork {
-      // Follow the latest work without waiting for saved-state scenes. Source
-      // streaming keeps its own scene and is still shown as text arrives.
-      beats.removeAll { $0.start > now }
-      if let i = beats.indices.last, beats[i].end > now { beats[i].length = now.timeIntervalSince(beats[i].start) }
-    }
-    let start = max(now, beats.last?.end ?? now)
-    if !visible(at: start) || appearedAt == nil { appearedAt = start }
-    switch beat {
-    case .visit(let k), .compose(let k):
-      // Already there, or too far behind to be worth showing.
-      if case .visit = beat, let last = beats.last, last.beat.card == k, last.end > now.addingTimeInterval(-0.5) { return }
-      if start.timeIntervalSince(now) > Timing.maxBacklog { return }
-    default: break
-    }
-    beats.append(Scheduled(beat: beat, start: start, received: now, length: length(of: beat), line: line(for: beat)))
-    // Played and gone beats are kept only as long as their effects last.
-    beats.removeAll { $0.end.addingTimeInterval(Timing.settle + 1) < now }
+    finishStep(now: now)
+    if !visible(at: now) || appearedAt == nil { appearedAt = now }
+    beats = Array(beats.suffix(1))
+    beats.append(Scheduled(beat: beat, start: now, received: now, length: length(of: beat), line: line(for: beat)))
     sweep()
   }
 
-  /// A save by the Agent: the Cards it wrote (in flow order) and the wires
-  /// to thread after them.
+  /// Every change of a landed save shares one clock and one bird position.
   func saved(written: [(CardKey, reveal: Bool)], wires: [Wire], now: Date = Date()) {
-    // The save has gone through: a file that still waits is not shown, and the
-    // one on the screen says so for what is left of its hold.
-    beats.removeAll { $0.code != nil && $0.start > now }
-    for (id, code) in codes where written.contains(where: { $0.0 == code.card }) { codes[id]?.saved = true }
-    if animateWork {
-      for (k, reveal) in written { enqueue(.write(k, reveal: reveal), now: now) }
-      for w in wires { enqueue(.thread(w), now: now) }
-    } else if liveCode(at: now) == nil {
-      // Keep the source panel's hold, but put the marker at the saved Card now.
-      if let k = written.last?.0 { enqueue(.write(k, reveal: false), now: now) }
-      else if let w = wires.last { enqueue(.thread(w), now: now) }
+    guard !written.isEmpty || !wires.isEmpty else { return }
+    var code = liveCode(at: now)
+    code?.saved = true
+    enqueue(.save(written.map { Written(card: $0.0, reveal: $0.reveal) }, wires), now: now)
+    if let code, let i = beats.indices.last {
+      let id = nextCode
+      nextCode += 1
+      codes[id] = code
+      beats[i].code = id
     }
   }
 
@@ -326,6 +305,9 @@ final class AgentPresence {
   /// a Card while the Agent looks something else up).
   func line(at now: Date) -> (text: String, since: Date)? {
     let scene = current(at: now)
+    if !working, let e = endedAt {
+      return now.timeIntervalSince(e) < Timing.doneLine ? (outcome.line, e) : nil
+    }
     // A scene that started after the thought is newer than it (the bird
     // writes rgb while the thought still says it checks bands).
     if working, let t = thought, now.timeIntervalSince(t.at) < 8, t.at >= (scene?.beat.start ?? .distantPast) {
@@ -339,45 +321,28 @@ final class AgentPresence {
     }
     // Ended: said for a moment, then the bubble goes before the bird.
     guard let e = endedAt else { return nil }
-    let doneAt = max(scene?.beat.end ?? e, e)
+    let doneAt = e
     return now.timeIntervalSince(doneAt) < Timing.doneLine ? (outcome.line, doneAt) : nil
   }
 
-  /// How far a written Card is (reveal 0…1 while it is written out; nil when
-  /// it is not being written) and how strongly its colour settles (0…1).
+  /// All changed Cards and new wires of the latest save share this short cue.
   func writing(_ k: CardKey, at now: Date) -> (reveal: Double?, settle: Double)? {
-    guard animateWork else { return nil }
-    guard let s = beats.last(where: { if case .write(let c, _) = $0.beat { return c == k } else { return false } }) else { return nil }
-    guard case .write(_, let revealing) = s.beat else { return nil }
-    let t = now.timeIntervalSince(s.start)
-    guard t >= 0 else { return revealing ? (0, 0) : nil }  // queued: the new face waits hidden
-    let settleFrom = revealing ? Timing.revealStart + Timing.revealLength - 0.3 : 0.4
-    let settleT = (t - settleFrom) / Timing.settle
-    let settle = settleT <= 0 ? 0 : settleT >= 1 ? 0 : AgentPresence.rise(settleT / 0.35) * (1 - AgentPresence.rise((settleT - 0.45) / 0.55))
-    let reveal: Double? = revealing && t < Timing.revealStart + Timing.revealLength
-      ? AgentPresence.ease((t - Timing.revealStart) / Timing.revealLength) : nil
-    if reveal == nil && settleT >= 1 { return nil }
-    return (reveal, settle)
+    guard animateWork, let s = beats.last, s.start <= now, now < s.end,
+          case .save(let cards, _) = s.beat, let card = cards.first(where: { $0.card == k }) else { return nil }
+    let u = Self.ease(now.timeIntervalSince(s.start) / Timing.save)
+    return (card.reveal ? u : nil, sin(.pi * u))
   }
 
   enum ThreadState: Equatable {
     case drawing(progress: Double, sag: Double)
-    case hidden  // waits for its scene
+    case hidden
     case plain
   }
 
-  /// Where a wire is in its threading at `now`.
   func thread(_ w: Wire, at now: Date) -> ThreadState {
-    guard animateWork else { return .plain }
-    guard let s = beats.last(where: { $0.beat == .thread(w) }) else { return .plain }
-    let t = now.timeIntervalSince(s.start)
-    if t < Timing.threadStart { return .hidden }
-    let u = (t - Timing.threadStart) / Timing.threadLength
-    if u >= 1.6 { return .plain }
-    // Hanging while it is drawn, pulled taut as it arrives (a small bounce).
-    let x = u / 1.5
-    let sag = x < 0.6 ? 1 : exp(-5 * (x - 0.6)) * cos(8 * (x - 0.6))
-    return .drawing(progress: AgentPresence.ease(min(1, u)), sag: sag)
+    guard animateWork, let s = beats.last, s.start <= now, now < s.end,
+          case .save(_, let wires) = s.beat, wires.contains(w) else { return .plain }
+    return .drawing(progress: Self.ease(now.timeIntervalSince(s.start) / Timing.save), sag: 0)
   }
 
   /// Something is moving: views animate frame by frame only then.
@@ -403,8 +368,7 @@ final class AgentPresence {
     switch beat {
     case .visit: Timing.visit
     case .compose: Timing.codeStalled
-    case .write(_, let reveal): reveal ? Timing.reveal : Timing.update
-    case .thread: Timing.thread
+    case .save: Timing.save
     case .run: Timing.run
     }
   }
@@ -413,8 +377,7 @@ final class AgentPresence {
     switch beat {
     case .visit(let k): String(localized: "\(name(k)) を読んでいます")
     case .compose(let k): String(localized: "\(name(k)) を書いています")
-    case .write(let k, let reveal): reveal ? String(localized: "\(name(k)) を書いています") : String(localized: "\(name(k)) を直しています")
-    case .thread(let w): String(localized: "\(name(w.from)) から \(name(w.to)) へつないでいます")
+    case .save: String(localized: "\(name(beat.card)) を直しています")
     case .run(let k): String(localized: "\(name(k)) から実行しています")
     }
   }

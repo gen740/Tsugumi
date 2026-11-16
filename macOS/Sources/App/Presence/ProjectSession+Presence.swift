@@ -40,7 +40,9 @@ extension ProjectSession {
       let bird = from === presence ? presence(forCard: key([x.to])) : from
       parts[part(bird)]!.wires.append(AgentPresence.Wire(from: key([x.from]), fromPort: x.fromPort, to: key([x.to]), toPort: x.toPort))
     }
-    for id in order { let p = parts[id]!; p.bird.saved(written: p.cards, wires: p.wires) }
+    let now = Date()
+    for bird in presences where parts[ObjectIdentifier(bird)] == nil { bird.finishStep(now: now) }
+    for id in order { let p = parts[id]!; p.bird.saved(written: p.cards, wires: p.wires, now: now) }
   }
 
   private func topConnections(_ project: JSONValue) -> [PresenceEvents.Connection] {

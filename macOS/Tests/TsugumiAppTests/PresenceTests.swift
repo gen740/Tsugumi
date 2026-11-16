@@ -1,8 +1,10 @@
 import Foundation
 import Testing
+import SwiftUI
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
+@Suite struct PresenceTests {
 @Test func toolCallsTellWhichCardTheAgentLooksAt() {
   #expect(PresenceEvents.look(tool: "project_file_read", arguments: #"{"path": "definitions/bands/src/main.py"}"#) == .visit(["bands"]))
   #expect(PresenceEvents.look(tool: "run", arguments: #"{"card": ["start"], "propagate": true}"#) == .run(["start"]))
@@ -16,31 +18,6 @@ import Testing
   #expect(PresenceEvents.look(tool: "log_range", arguments: #"{"run_id": "r", "card": {"segments": []}}"#) == nil)
 }
 
-@MainActor @Test func betweenScenesTheBubbleSaysWhatTheAgentDoesNow() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  p.turnStarted(now: t0)
-  #expect(p.line(at: t0)?.text == "考えています")
-  p.enqueue(.write("load", reveal: true), now: t0)
-  let end = p.beats[0].end
-  // Looking something up while the scene still plays: the scene is said.
-  p.doing(PresenceEvents.activity(tool: "project_inspect"), now: t0.addingTimeInterval(0.5))
-  #expect(p.line(at: t0.addingTimeInterval(0.6))?.text == "load を書いています")
-  // Once it has played, what the Agent does now, not the old scene.
-  #expect(p.line(at: end.addingTimeInterval(0.1))?.text == "プロジェクトを見ています")
-  p.doing(PresenceEvents.activity(tool: "run_status"), now: end.addingTimeInterval(1))
-  #expect(p.line(at: end.addingTimeInterval(1.1))?.text == "実行の終わりを待っています")
-  // A tool the scenes show says nothing of its own; text streaming keeps its time.
-  #expect(PresenceEvents.activity(tool: "run") == nil)
-  p.doing("考えています", now: end.addingTimeInterval(2))
-  p.doing("考えています", now: end.addingTimeInterval(3))
-  #expect(p.line(at: end.addingTimeInterval(3.5))?.since == end.addingTimeInterval(2))
-  // A thought summary is said over the activity, until a later scene starts.
-  p.think("bands の検証が通ったことを確かめています", now: end.addingTimeInterval(4))
-  #expect(p.line(at: end.addingTimeInterval(4.5))?.text == "bands の検証が通ったことを確かめています")
-  p.enqueue(.write("rgb", reveal: true), now: end.addingTimeInterval(5))
-  #expect(p.line(at: end.addingTimeInterval(5.5))?.text == "rgb を書いています")
-}
 
 @MainActor @Test func theLastWordsSayHowTheTurnEnded() {
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
@@ -76,8 +53,8 @@ import Testing
   // load: a Draft that became code (written out); bands: still a Draft (only touched).
   #expect(w.cards.map(\.0) == ["load", "bands"])
   #expect(w.cards.map(\.reveal) == [true, false])
-  // The wire out of the Card written out is threaded again; others stay.
-  #expect(w.wires == [C(from: "load", fromPort: "events", to: "bands", toPort: "input")])
+  // Existing wires are not newly connected by a source edit.
+  #expect(w.wires.isEmpty)
 
   // A wire the save adds is threaded too; Cards in Card and unknown ids are left out.
   let added = C(from: "bands", fromPort: "images", to: "rgb", toPort: "input")
@@ -88,69 +65,8 @@ import Testing
   #expect(w2.wires == [added])
 }
 
-@MainActor @Test func scenesPlayOneAfterAnotherWithoutLaggingFarBehind() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  p.turnStarted(now: t0)
-  p.enqueue(.visit("load"), now: t0)
-  p.saved(written: [("load", reveal: true)], wires: [AgentPresence.Wire(from: "load", fromPort: "events", to: "bands", toPort: "input")], now: t0)
-  #expect(p.beats.count == 3)
-  // Each starts where the one before ends.
-  #expect(p.beats[1].start == p.beats[0].end && p.beats[2].start == p.beats[1].end)
-  // Where the bird already is (the thread brought it to bands), and a visit
-  // twice in a row, are not shown again.
-  p.enqueue(.visit("bands"), now: t0)
-  #expect(!p.beats.contains { $0.beat == .visit("bands") })
-  p.enqueue(.visit("rgb"), now: t0)
-  p.enqueue(.visit("rgb"), now: t0)
-  #expect(p.beats.filter { $0.beat == .visit("rgb") }.count == 1)
-  // Visits that would start far behind the Agent are dropped.
-  for i in 0..<10 { p.enqueue(.write("c\(i)", reveal: false), now: t0) }
-  p.enqueue(.visit("late"), now: t0)
-  #expect(!p.beats.contains { $0.beat == .visit("late") })
-  // Visible during the turn and a while after its scenes.
-  #expect(p.visible(at: t0))
-  p.turnEnded(now: t0)
-  let last = p.beats.last!.end
-  #expect(p.visible(at: last.addingTimeInterval(1)))
-  #expect(!p.visible(at: last.addingTimeInterval(AgentPresence.Timing.linger + 1)))
-}
 
-@MainActor @Test func aWrittenCardRevealsThenItsColourSettlesAndFades() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  p.enqueue(.visit("start"), now: t0)
-  p.enqueue(.write("load", reveal: true), now: t0)
-  let s = p.beats[1].start
-  // Queued: the new face waits hidden behind the Draft.
-  #expect(p.writing("load", at: t0)?.reveal == 0)
-  // Written out left to right, then only the colour remains, then nothing.
-  let mid = p.writing("load", at: s.addingTimeInterval(AgentPresence.Timing.revealStart + AgentPresence.Timing.revealLength / 2))
-  #expect(mid?.reveal.map { $0 > 0.3 && $0 < 0.7 } == true)
-  let after = p.writing("load", at: s.addingTimeInterval(2.6))
-  #expect(after?.reveal == nil && (after?.settle ?? 0) > 0.5)
-  #expect(p.writing("load", at: s.addingTimeInterval(10)) == nil)
-  #expect(p.writing("other", at: s) == nil)
-}
 
-@MainActor @Test func aThreadHangsWhileDrawnAndIsPulledTaut() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  let w = AgentPresence.Wire(from: "a", fromPort: "out", to: "b", toPort: "in")
-  p.enqueue(.thread(w), now: t0)
-  let T = AgentPresence.Timing.self
-  #expect(p.thread(w, at: t0) == .hidden)
-  guard case .drawing(let half, let sag) = p.thread(w, at: t0.addingTimeInterval(T.threadStart + T.threadLength / 2)) else {
-    Issue.record("drawing expected"); return
-  }
-  #expect(half > 0.3 && half < 0.7 && sag == 1)
-  guard case .drawing(let full, let taut) = p.thread(w, at: t0.addingTimeInterval(T.threadStart + T.threadLength * 1.4)) else {
-    Issue.record("still settling expected"); return
-  }
-  #expect(full == 1 && abs(taut) < 0.6)
-  #expect(p.thread(w, at: t0.addingTimeInterval(T.threadStart + T.threadLength * 2)) == .plain)
-  #expect(p.thread(AgentPresence.Wire(from: "x", fromPort: "o", to: "y", toPort: "i"), at: t0) == .plain)
-}
 
 @Test func thoughtLinesAreOneShortLine() {
   #expect(ThoughtSummarizer.clean("「帯域の境界を広げる」\n二行目") == "帯域の境界を広げる")
@@ -167,7 +83,7 @@ import Testing
   #expect(p.fade(at: t0).opacity == 0)
   #expect(p.fade(at: t0.addingTimeInterval(T.fadeIn)).opacity == 1)
   p.turnEnded(now: t0.addingTimeInterval(1))
-  let end = p.beats.last!.end
+  let end = t0.addingTimeInterval(1)
   // Still fully there, the done line said and then gone before the bird.
   #expect(p.fade(at: end.addingTimeInterval(1)).opacity == 1)
   #expect(p.line(at: end.addingTimeInterval(1))?.text == "できました")
@@ -199,27 +115,6 @@ import Testing
   #expect(p.liveCode(at: start.addingTimeInterval(1.5)) == nil)
 }
 
-@MainActor @Test func aNewFileKeepsTheScenesOfTheChangeThatWasSaved() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  let at = { (s: Double) in t0.addingTimeInterval(s) }
-  let wire = AgentPresence.Wire(from: "a", fromPort: "out", to: "c", toPort: "in")
-  p.turnStarted(now: t0)
-  // A save went through: its Card is written out and its wire threaded.
-  p.saved(written: [("a", reveal: true)], wires: [wire], now: t0)
-  // The next file starts to arrive while those scenes still play.
-  p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/b/main.py","bytes":"now"#, now: at(0.1))
-  #expect(p.beats.map(\.beat) == [.write("a", reveal: true), .thread(wire), .compose("b")])
-  // What was saved is still shown as it was: written out, then threaded.
-  #expect(p.writing("a", at: at(0.8))?.reveal != nil)
-  let threading = p.beats[1].start.addingTimeInterval(AgentPresence.Timing.threadStart + AgentPresence.Timing.threadLength / 2)
-  #expect(p.thread(wire, at: threading) != .plain && p.thread(wire, at: threading) != .hidden)
-  // The new file waits for them, then shows all that has arrived, as unsaved.
-  #expect(p.liveCode(at: at(0.1)) == nil)
-  p.toolInput(index: 0, tool: "project_save", delta: " more", now: at(1))
-  let shown = p.liveCode(at: p.beats[2].start)
-  #expect(shown?.card == "b" && shown?.text == "now more" && shown?.saved == false)
-}
 
 @MainActor @Test func aNewFileReplacesAnOlderFileAtOnce() {
   let p = AgentPresence(animateWork: { true })
@@ -236,40 +131,7 @@ import Testing
   #expect(p.beats[0].end == at(0.2))
 }
 
-@MainActor @Test func aFileTooFarBehindTheBirdShowsWhenItCan() {
-  typealias T = AgentPresence.Timing
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  let at = { (s: Double) in t0.addingTimeInterval(s) }
-  p.turnStarted(now: t0)
-  // The bird is threading the wires of the last save, far behind.
-  let wires = (0..<8).map { AgentPresence.Wire(from: "a", fromPort: "o", to: "b\($0)", toPort: "i") }
-  p.saved(written: [], wires: wires, now: t0)
-  let free = p.beats.last!.end.timeIntervalSince(t0)
-  #expect(free > T.maxBacklog)
-  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/m.py","bytes":"x"#, now: t0)
-  // None of the threading is given up for it.
-  #expect(p.beats.map(\.beat) == wires.map { AgentPresence.Beat.thread($0) })
-  #expect(p.liveCode(at: t0) == nil)
-  // Once the bird is close enough, the file still being written gets its scene, whole so far.
-  p.toolInput(index: 0, tool: "project_save", delta: "y", now: at(free))
-  #expect(p.liveCode(at: at(free))?.text == "xy")
-}
 
-@MainActor @Test func aRunEndsTheWindowAndKeepsTheScenesOfTheSave() {
-  let p = AgentPresence(animateWork: { true })
-  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
-  let at = { (s: Double) in t0.addingTimeInterval(s) }
-  p.turnStarted(now: t0)
-  p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/c/m.py","bytes":"code"}},"#, now: t0)
-  p.saved(written: [("c", reveal: true)], wires: [], now: at(0.1))
-  p.toolInputEnded(ok: true, now: at(0.1))
-  #expect(p.liveCode(at: at(0.2))?.card == "c" && p.liveCode(at: at(0.2))?.saved == true)
-  // The workflow starts: the window goes at once, and the Card is still written out.
-  p.stopShowingCode(now: at(0.2))
-  #expect(p.liveCode(at: at(0.2)) == nil && p.liveCode(at: at(1)) == nil)
-  #expect(p.beats.contains { $0.beat == .write("c", reveal: true) })
-}
 
 @MainActor @Test func aStoppedTurnOrAnUnansweredApprovalLeavesNoUnsavedText() {
   typealias T = AgentPresence.Timing
@@ -342,7 +204,7 @@ import Testing
   p.turnStarted(now: t0)
   p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
   p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: t0)
-  #expect(p.beats.count == 1)
+  #expect(p.beats.count <= 2)
   p.toolInputEnded(ok: false, now: at(0.5))
   #expect(p.liveCode(at: at(0.5)) == nil && p.liveCode(at: at(4)) == nil)
   // What is not a Card's file shows nothing, and the next call starts afresh.
@@ -403,31 +265,113 @@ import Testing
   #expect(WritingPanel.scale(zoom: 0.5) == 0.8 && WritingPanel.scale(zoom: 1) == 1 && WritingPanel.scale(zoom: 3) == 1.3)
 }
 
-@MainActor @Test func savedCardsAndWiresAppearImmediatelyWhenStagingIsOff() {
-  var animate = true
-  let p = AgentPresence(animateWork: { animate })
+
+@MainActor @Test func oneSaveIsOneSimultaneousShortStepAndRunSupersedesIt() {
+  let p = AgentPresence(animateWork: { true })
   let t = Date(timeIntervalSinceReferenceDate: 1000)
-  let wire = AgentPresence.Wire(from: "a", fromPort: "out", to: "b", toPort: "in")
+  let wires = (0..<12).map { AgentPresence.Wire(from: "a", fromPort: "out", to: "b\($0)", toPort: "in") }
   p.turnStarted(now: t)
-  p.enqueue(.visit("start"), now: t)
-  p.saved(written: [("a", reveal: true)], wires: [wire], now: t)
-  #expect(p.writing("a", at: t)?.reveal == 0)
-  #expect(p.thread(wire, at: t) == .hidden)
-  // Switching off also releases effects that are already queued.
-  animate = false
+  p.saved(written: [("a", reveal: true), ("b", reveal: false)], wires: wires, now: t)
+  #expect(p.beats.count == 1)
+  #expect(p.beats[0].start == t)
+  #expect(p.beats[0].length == 0.24)
+  let mid = t.addingTimeInterval(0.12)
+  for w in wires {
+    guard case .drawing(let progress, let sag) = p.thread(w, at: mid) else { Issue.record("wire must draw"); return }
+    #expect(abs(progress - 0.5) < 0.0001 && sag == 0)
+  }
+  #expect(abs((p.writing("a", at: mid)?.reveal ?? -1) - 0.5) < 0.0001)
+  #expect((p.writing("b", at: mid)?.settle ?? 0) > 0.99)
+  for w in wires { #expect(p.thread(w, at: t.addingTimeInterval(0.25)) == .plain) }
+  p.enqueue(.run("start"), now: mid)
+  #expect(p.current(at: mid)?.beat.beat == .run("start"))
+  #expect(p.line(at: mid)?.text == "start から実行しています")
+  #expect(p.writing("a", at: mid) == nil)
+  for w in wires { #expect(p.thread(w, at: mid) == .plain) }
+  // Every later event replaces playback, including another save and visits.
+  for i in 0..<1000 {
+    p.saved(written: [("c\(i)", reveal: false)], wires: wires, now: mid)
+    p.enqueue(.visit("v\(i)"), now: mid)
+    #expect(p.beats.count <= 2)
+    #expect(p.current(at: mid)?.beat.beat == .visit("v\(i)"))
+    #expect(p.beats.allSatisfy { $0.start <= mid })
+  }
+}
+
+@MainActor @Test func newerActivityFinishesSavedEffectsForEveryHelper() {
+  let t = Date(timeIntervalSinceReferenceDate: 1000)
+  let birds = (0..<3).map { _ in AgentPresence(animateWork: { true }) }
+  for p in birds {
+    p.turnStarted(now: t)
+    p.saved(written: [("a", reveal: true)], wires: [], now: t)
+    p.doing("checking", now: t.addingTimeInterval(0.05))
+    #expect(p.writing("a", at: t.addingTimeInterval(0.05)) == nil)
+    #expect(p.line(at: t.addingTimeInterval(0.05))?.text == "checking")
+  }
+}
+
+@MainActor @Test func presenceUsesTheLayoutCameraExactlyOnceEvenDuringFlight() {
+  let t = Date(timeIntervalSinceReferenceDate: 1000)
+  let p = AgentPresence(animateWork: { true })
+  let cards = ["a": CGRect(x: 100, y: 150, width: 200, height: 100),
+               "b": CGRect(x: 600, y: 350, width: 200, height: 100)]
+  p.enqueue(.visit("a"), now: t)
+  p.enqueue(.visit("b"), now: t.addingTimeInterval(1))
+  for zoom in [0.25, 0.7, 1.0, 2.5] {
+    let base = CanvasCamera(x: 40, y: 60, zoom: zoom)
+    let geometry = PresenceGeometry(card: { cards[$0] }, wire: { _ in nil }, camera: base)
+    let ch = Choreography(presence: p, g: geometry)
+    for seconds in [1.0, 1.12, 1.3] {
+      let pose = ch.pose(at: t.addingTimeInterval(seconds))!
+      let before = geometry.screen(pose.center)
+      var camera = base
+      camera.x += 73; camera.y -= 39
+      let host = CanvasPanHost<EmptyView>.Container()
+      host.base = base; host.now = camera
+      let d = host.shift
+      let shown = CGPoint(x: before.x * d.scale + d.dx, y: before.y * d.scale + d.dy)
+      #expect(abs(shown.x - before.x - 73) < 0.0001)
+      #expect(abs(shown.y - before.y + 39) < 0.0001)
+      #expect(abs(shown.x - camera.screen(pose.center).x) < 0.0001 && abs(shown.y - camera.screen(pose.center).y) < 0.0001)
+      // Zoom/scroll, then a new layout pass (also used after a resize),
+      // preserve the same world pose and agree with the Card transform.
+      camera.zoom(to: zoom * 1.1, around: CGPoint(x: 320, y: 240))
+      host.now = camera
+      let shift = host.shift
+      let zoomed = CGPoint(x: before.x * shift.scale + shift.dx, y: before.y * shift.scale + shift.dy)
+      let expected = camera.screen(pose.center)
+      #expect(abs(zoomed.x - expected.x) < 0.0001 && abs(zoomed.y - expected.y) < 0.0001)
+      let relaid = PresenceGeometry(card: { cards[$0] }, wire: { _ in nil }, camera: camera)
+      #expect(Choreography(presence: p, g: relaid).pose(at: t.addingTimeInterval(seconds))?.center == pose.center)
+    }
+  }
+}
+
+@MainActor @Test func anAcceptedRunStopsHelpersFlightsAndSavedEffectsAtOnce() {
+  let t = Date(timeIntervalSinceReferenceDate: 1000)
+  let p = AgentPresence(animateWork: { true })
+  p.turnStarted(now: t)
+  p.enqueue(.visit("a"), now: t)
+  p.enqueue(.visit("b"), now: t.addingTimeInterval(1))
+  let geometry = PresenceGeometry(card: { k in CGRect(x: k == "a" ? 0 : 500, y: 100, width: 200, height: 100) },
+                                  wire: { _ in nil }, camera: CanvasCamera())
+  let ch = Choreography(presence: p, g: geometry)
+  let now = t.addingTimeInterval(1.1)
+  #expect(ch.pose(at: now)?.mood == .flying)
+  p.running(now: now)
+  #expect(ch.pose(at: now)?.mood == .perched)
+  #expect(ch.pose(at: now)?.center == ch.perch("b"))
+  #expect(p.line(at: now)?.text == "実行しています")
+}
+
+@MainActor @Test func disablingSavedEffectsKeepsLatestWorkAndStreaming() {
+  let p = AgentPresence(animateWork: { false })
+  let t = Date(timeIntervalSinceReferenceDate: 1000)
+  let w = AgentPresence.Wire(from: "a", fromPort: "out", to: "b", toPort: "in")
+  p.saved(written: [("a", reveal: true)], wires: [w], now: t)
+  #expect(p.thread(w, at: t) == .plain)
   #expect(p.writing("a", at: t) == nil)
-  #expect(p.thread(wire, at: t) == .plain)
-  #expect(p.current(at: t)?.beat.beat.card == "b")
-  #expect(p.current(at: t.addingTimeInterval(0.2))?.beat.start == t)
-  p.saved(written: [("c", reveal: true)], wires: [], now: t)
-  #expect(p.current(at: t)?.beat.beat.card == "c")
-  #expect(p.writing("c", at: t) == nil)
-  #expect(p.visible(at: t))
-  p.think("checking", now: t)
-  #expect(p.line(at: t)?.text == "checking")
-  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/c/main.py","bytes":"print"#, now: t)
-  #expect(p.liveCode(at: t)?.text == "print")
-  p.saved(written: [("c", reveal: true)], wires: [wire], now: t)
-  #expect(p.liveCode(at: t)?.saved == true)
-  #expect(p.thread(wire, at: t) == .plain)
+  #expect(p.current(at: t)?.beat.beat.card == "a")
+}
+
 }

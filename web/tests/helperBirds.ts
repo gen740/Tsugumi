@@ -33,15 +33,15 @@ const noWriter = () => undefined
   team.start([{ name: 'a', cards: ['one'] }, { name: 'b', cards: ['two'] }], 100)
   const read = (card: string) => ({ kind: 'toolStarted', name: 'project_file_read', arguments: JSON.stringify({ path: `definitions/${card}/m.py` }) })
   team.note('a', read('three'), 100.1)
-  assert.equal(team.bird('a')!.card(100.1), 'one', 'its first scene goes on')
+  assert.equal(team.bird('a')!.card(100.1), 'three', 'new work supersedes the old scene')
   assert.equal(team.bird('a')!.card(100 + T.scene), 'three')
   assert.equal(team.bird('b')!.card(100 + T.scene), 'two')
   assert.equal(team.bird('a')!.line(100 + T.scene)?.text, 'three を読んでいます')
   // Reading again what it reads is no new scene; one far behind the Agent is left out.
   team.note('a', read('three'), 100.2)
-  assert.equal(team.bird('a')!.scenes.length, 2)
+  assert.equal(team.bird('a')!.scenes.length, 1)
   for (let i = 0; i < 20; i++) team.note('a', read(`far${i}`), 100.3)
-  assert.ok(team.bird('a')!.scenes.length < 8)
+  assert.equal(team.bird('a')!.scenes.length, 1)
   // A save and a run are never left out.
   team.note('a', { kind: 'toolStarted', name: 'run', arguments: JSON.stringify({ card: { segments: ['start'] } }) }, 100.4)
   assert.equal(team.bird('a')!.scenes.at(-1)?.card, 'start')
@@ -78,8 +78,8 @@ const noWriter = () => undefined
   team.start([{ name: 'a', cards: ['one'] }, { name: 'b', cards: ['two'] }], 100)
   assert.ok(team.out(100))
   team.note('a', { kind: 'finished' }, 100.5)
-  const end = 100 + T.scene
-  assert.equal(team.bird('a')!.endedAt, end, 'after the scene that plays')
+  const end = 100.5
+  assert.equal(team.bird('a')!.endedAt, end, 'at the real end')
   assert.equal(team.bird('a')!.line(end + 0.1)?.text, 'できました')
   assert.equal(team.bird('a')!.line(end + T.doneLine + 0.1), undefined)
   assert.equal(team.bird('a')!.fade(end + 1).opacity, 1)
@@ -195,7 +195,7 @@ console.log('helper birds: passed')
   const team = new HelperTeam(noWriter, () => animate)
   team.start([{ name: 'helper', cards: ['a'] }], 100)
   team.bird('helper')!.visit('b', 'saving', 100.1, true)
-  assert.equal(team.bird('helper')!.card(100.1), 'a')
+  assert.equal(team.bird('helper')!.card(100.1), 'b')
   animate = false
   assert.equal(team.bird('helper')!.card(100.1), 'b')
   team.bird('helper')!.visit('c', 'checking', 100.2, true)

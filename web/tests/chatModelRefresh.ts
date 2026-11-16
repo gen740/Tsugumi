@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { Observable } from '../src/model/observable'
+import { LiveCodePlayer } from '../src/model/liveCode'
 
 // Drive presentation and stream events directly: no sockets or timer waits.
 const page = globalThis as Record<string, any>
@@ -30,7 +32,8 @@ globalThis.fetch = (async (url, init) => {
 }) as typeof fetch
 const { ChatController } = await import('../src/model/chat')
 const { api } = await import('../src/api')
-const chat = new ChatController({ dir: '/model-refresh' } as never, { status: { chatAvailable: true } } as never)
+const session = Object.assign(new Observable(), { dir: '/model-refresh', currentRunId: undefined as string | undefined, runActive: false })
+const chat = new ChatController(session as never, { status: { chatAvailable: true } } as never)
 try {
   await flush()
   assert.equal(chat.provider.model, selected)
@@ -87,6 +90,25 @@ try {
   await flush()
   assert.equal(reads, beforeLeave, 'leaving removes presentation listeners')
   assert.equal(intervals, 0)
+  // A run accepted through the session supersedes every helper's old flight
+  // and source hold, even when no Agent `run` tool event reached this page.
+  const now = Date.now() / 1000 - 0.1
+  chat.team.start([{ name: 'helper', cards: ['a'] }, { name: 'other', cards: ['b'] }], now)
+  const writer = new LiveCodePlayer()
+  writer.input(0, '{"value":{"path":"definitions/a/m.py","bytes":"old"', now)
+  chat.writers.set('helper', writer)
+  const helper = chat.team.birds[0]
+  helper.place(now, () => ({ x: 0, y: 0 }))
+  helper.visit('b', 'reading', now + 0.01)
+  helper.place(now + 0.01, () => ({ x: 500, y: 0 }))
+  session.currentRunId = 'accepted-run'
+  session.runActive = true
+  session.changed()
+  await flush()
+  const after = Date.now() / 1000
+  assert.equal(writer.at(after), undefined)
+  assert.equal(helper.place(after, () => ({ x: 500, y: 0 }))?.flying, false)
+  for (const bird of chat.team.birds) assert.equal(bird.line(after)?.text, '実行しています')
 } finally {
   chat.close()
   globalThis.fetch = originalFetch

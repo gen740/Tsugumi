@@ -159,6 +159,7 @@ export class ChatController extends Observable {
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
   private readonly offEvents: () => void
+  private readonly offSession: () => void
   private providerRefresh = 0
   readonly thoughts: Thoughts
 
@@ -186,6 +187,16 @@ export class ChatController extends Observable {
         } else void this.refreshProvider()
       }
     })
+    let run = session.currentRunId
+    this.offSession = session.subscribe(() => {
+      const latest = session.currentRunId
+      if (latest && latest !== run && session.runActive) {
+        this.showRunning(Date.now() / 1000)
+        if (guide.contextSession === session) guide.chatWork('run', '{}')
+        this.changed()
+      }
+      run = latest
+    })
     void this.init()
   }
 
@@ -196,6 +207,7 @@ export class ChatController extends Observable {
     this.reload++
     this.thoughts.close()
     this.offEvents()
+    this.offSession()
     this.permissions = []
     this.team.endAll('stopped', Date.now() / 1000)
     guide.chatClosed(this)
@@ -557,11 +569,21 @@ export class ChatController extends Observable {
     return w
   }
 
+  private showRunning(now: number) {
+    for (const writer of this.writers.values()) writer.stop()
+    this.team.running(now)
+  }
+
   /** What an event means for the file being written; true: nothing else to do. */
   private noteWriting(who: string, e: any) {
     const now = Date.now() / 1000
     switch (e.kind) {
+      case 'text':
+        this.session.presence?.finish()
+        this.writers.get(who)?.stop()
+        return false
       case 'toolInput':
+        this.session.presence?.finish()
         // Many a second, so nothing else changes: the panel looks for itself.
         if (!writesSources(e.name)) return true
         this.writer(who).input(e.index, e.delta, now)
@@ -574,8 +596,10 @@ export class ChatController extends Observable {
         }
         return false
       case 'toolStarted':
-        // What was written is not on the screen once it runs.
-        if (e.name === 'run') this.writer(who).stop()
+        this.session.presence?.finish()
+        // A new tool supersedes the previous file's presentation hold.
+        if (!writesSources(e.name)) this.writers.get(who)?.stop()
+        if (e.name === 'run') this.showRunning(now)
         return false
       case 'finished':
         this.writer(who).ended(true, now)
