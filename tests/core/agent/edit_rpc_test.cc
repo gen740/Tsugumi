@@ -4,7 +4,107 @@
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentProjectFixture, CardReferenceDraftEditPreservesIntentAndRebindsWires) {
+TEST_F(AgentProjectFixture,
+       PutCreatesMissingFilesAndKeepsExplicitExpectations) {
+  StartProject();
+  const auto conversation = Conversation("put-missing");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto root = directory.path / "project";
+  const std::string create =
+      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"template\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
+  const auto first = Tool(conversation, "project_edit", create, "create");
+  ASSERT_TRUE(first.Code().empty());
+  ASSERT_FALSE(JsonBool(first.View(), "/isError")) << first.View();
+  EXPECT_EQ(Read(root / "definitions/data/src/main.py"), "original");
+
+  const auto changed = Tool(
+      conversation, "project_edit",
+      R"({"edits":[{"file_path":"definitions/data/src/main.py","old_string":"original","new_string":"changed"}]})",
+      "change");
+  ASSERT_TRUE(changed.Code().empty());
+  ASSERT_FALSE(JsonBool(changed.View(), "/isError")) << changed.View();
+  const auto replay = Tool(conversation, "project_edit", create, "create");
+  ASSERT_TRUE(replay.Code().empty());
+  EXPECT_EQ(JsonString(replay.View(), "/text"),
+            JsonString(first.View(), "/text"));
+  EXPECT_EQ(Read(root / "definitions/data/src/main.py"), "changed");
+
+  int id = 0;
+  for (
+      const auto& edit :
+      {R"({"file_path":"definitions/data/src/main.py","put":"new"})",
+       R"({"file_path":"definitions/data/src/main.py","put":"new","expect_missing":true})",
+       R"({"file_path":"definitions/data/src/main.py","put":"new","expected_hash":"wrong"})",
+       R"({"file_path":"definitions/data/src/missing.py","put":"new","expected_hash":"wrong"})"}) {
+    const auto refused = Tool(conversation, "project_edit",
+                              "{\"edits\":[" + std::string(edit) + "]}",
+                              "refused-" + std::to_string(id++));
+    ASSERT_TRUE(refused.Code().empty());
+    EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
+    EXPECT_EQ(JsonString(JsonString(refused.View(), "/text"), "/value/kind"),
+              "source_changed");
+    EXPECT_EQ(Read(root / "definitions/data/src/main.py"), "changed");
+    EXPECT_FALSE(
+        std::filesystem::exists(root / "definitions/data/src/missing.py"));
+  }
+}
+
+TEST_F(AgentProjectFixture, EditDecodeErrorsIdentifyTheFieldAndExpectedType) {
+  Write(directory.path / "project/definitions/data/_card.json",
+        R"({"template":"draft"})");
+  Write(
+      directory.path / "project/definitions/data/_meta.json",
+      R"({"description":"Decoding fixture","context":"Check edit field paths"})");
+  StartProject(
+      false,
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"data"}],"connections":[]}})");
+  const auto conversation = Conversation("edit-decode");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  struct Case {
+    std::string args, field, type;
+  };
+  int id = 0;
+  for (
+      const auto& test : std::vector<Case>{
+          {R"({"edits":{}})", "edits", "array"},
+          {R"({"edits":[null]})", "edits[0]", "object"},
+          {R"({"edits":[{"file_path":"tsugumi.json","selector":{}}]})",
+           "edits[0].selector", "array"},
+          {R"({"edits":[{"file_path":"tsugumi.json","selector":[null]}]})",
+           "edits[0].selector[0]", "object"},
+          {R"({"edits":[{"file_path":"tsugumi.json","selector":[{"match":[]}]}]})",
+           "edits[0].selector[0].match", "object"},
+          {R"({"edits":[{"file_path":"tsugumi.json","selector":[],"old_value":[]}]})",
+           "edits[0].old_value", "object"},
+          {R"({"edits":[{"file_path":"tsugumi.json","selector":[],"old_value":{"present":false},"new_value":[]}]})",
+           "edits[0].new_value", "object"},
+          {R"({"edits":[{"file_path":"definitions/data/_card.json","old_string":"\"draft\"","new_string":"\"fork\""},{"file_path":"definitions/data/_card.json","old_string":"\"fork\"","new_string":"\"draft\""},{"file_path":"definitions/data/_card.json","old_string":"{\"template\":\"draft\"}","new_string":"{\"inputs\":[null]}"}]})",
+           "definitions/data/_card.json.inputs[0]", "object"},
+          {R"({"edits":[{"file_path":"definitions/data/_card.json","old_string":"{\"template\":\"draft\"}","new_string":"{\"params\":{}}"}]})",
+           "definitions/data/_card.json.params", "array"},
+          {R"({"edits":[{"file_path":"tsugumi.json","old_string":"{\"id\":\"data\"}","new_string":"null"}]})",
+           "tsugumi.json.canvas.cards[0]", "object"},
+          {R"({"edits":[{"file_path":"layout.json","old_string":"{}","new_string":"{\"cards\":[]}"}]})",
+           "cards", "object"}}) {
+    const auto reply = Tool(conversation, "project_edit", test.args,
+                            "decode-" + std::to_string(id++));
+    ASSERT_TRUE(reply.Code().empty()) << reply.Code();
+    EXPECT_TRUE(JsonBool(reply.View(), "/isError"));
+    const auto failure = JsonString(reply.View(), "/text");
+    // Field identity and expected type are the recovery data, not prose.
+    EXPECT_NE(failure.find(test.field), std::string::npos) << failure;
+    EXPECT_NE(failure.find(test.type), std::string::npos) << failure;
+    EXPECT_EQ(Read(directory.path / "project/definitions/data/_card.json"),
+              R"({"template":"draft"})");
+  }
+}
+
+TEST_F(AgentProjectFixture,
+       CardReferenceDraftEditPreservesIntentAndRebindsWires) {
   namespace json = agent::json;
   const auto root = directory.path / "project";
   Write(root / "definitions/start/_card.json", R"({"template":"trigger"})");
