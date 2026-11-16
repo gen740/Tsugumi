@@ -79,6 +79,23 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
   EXPECT_TRUE(port);
   EXPECT_TRUE(param);
 }
+TEST_F(OpaqueMetadata, AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
+  fs::write_atomic(root / "definitions/b/_card.json", R"({"language":"python"})");
+  Store store({root, ""});
+  store.open();
+  const auto* node = store.current()->resolution->find({"b"});
+  ASSERT_NE(node, nullptr);
+  bool port = false;
+  for (const auto& d : node->diags)
+    if (d.code == "unknown_port") {
+      port = true;
+      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos) << d.message;
+    }
+  EXPECT_TRUE(port);
+}
 TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   Store store({root, ""});
   store.open();

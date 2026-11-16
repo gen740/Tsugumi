@@ -29,7 +29,7 @@ the person's decision.
   definitions/<id>/_card.json holds its settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
-  permanent id from its name; the name is what people read, the id is what tool arguments, paths, wires and evidence
+  permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
   links use. An output port has one wire; a fork Card ({"template": "fork", "params": [{"name": "branches", "type":
   "string[]", "data": ["<a name per output>"]}]}) sends a value to several Cards. Input types come from the connected
   outputs.
@@ -70,7 +70,8 @@ the person's decision.
   what was said). Data already in the project is handed on by an input Card, fixed values by its params, anything
   else by a code Card. A reply has an output limit: one Card per project_save keeps each save within it. Upstream
   Cards first, since their outputs are the types downstream Cards read. project_validate reports Drafts not written
-  yet with the code "draft". A refused save, a validation error and a failed Card each name what to fix.
+  yet with the code "draft". A refused save, a validation error and a failed Card each name what to fix:
+  fix it and try again in the same turn, which ends when the work is done or only the person can decide.
 - Comments. A Card's _meta.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]): what the person
   and you write to each other about it. One with "finding": true records an observation, not a request. The save that
   does what a comment asks resolves it ("resolved": true and a one-line "resolution"); a new one needs only "text";

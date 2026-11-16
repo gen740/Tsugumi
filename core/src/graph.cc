@@ -633,7 +633,11 @@ class Builder {
                  wire + ": " +
                      (sn.kind == Template::Draft
                           ? "Draft output end must have an empty port"
-                          : "no output port " + src->second)));
+                          : src->second.empty()
+                                ? std::string(
+                                      "the end on a Card that is no longer a "
+                                      "Draft needs one of its output ports")
+                                : "no output port " + src->second)));
         ok = false;
       }
       if (dn.kind == Template::Draft ? !dst->second.empty()
@@ -643,6 +647,10 @@ class Builder {
                  wire + ": " +
                      (dn.kind == Template::Draft
                           ? "Draft input end must have an empty port"
+                          : dst->second.empty()
+                                ? std::string(
+                                      "the end on a Card that is no longer a "
+                                      "Draft needs one of its input ports")
                           : dn.kind == Template::Code
                                 ? "no input port " + dst->second +
                                       "; add {\"name\": \"" + dst->second +
