@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { act, create } from 'react-test-renderer'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { modelErrorMessage } from '../src/i18n'
 import { api } from '../src/api'
 import { ChatGPTSignInModel, ChatGPTState, chatGPTSignInIsLocal } from '../src/model/chatgpt'
 import { ChatGPTSettings } from '../src/ui/chatgpt'
@@ -249,6 +250,23 @@ for (const beginPending of [false, true]) {
     assert.equal(calls.find(c => c.path === '/api/guide/advance')?.body.event.kind, 'setup')
     assert.equal(g.setupDone, true)
     assert.equal(g.connected, true)
+  } finally { globalThis.fetch = original }
+}
+
+// Expired sessions expose the recovery action in both Settings and guide errors.
+{
+  const model = fixture().model()
+  model.setState({ ...model.state, accounts: [{ ...account, signedIn: false }] })
+  const html = renderToStaticMarkup(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  assert.match(html, /ChatGPT にもう一度サインインしてください。/)
+  assert.equal(modelErrorMessage('Sign in to ChatGPT again'), 'ChatGPT にもう一度サインインしてください。')
+  assert.equal(modelErrorMessage('model returned HTTP 503: Capacity exhausted'), 'model returned HTTP 503: Capacity exhausted')
+}
+{
+  const original = globalThis.fetch
+  globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Sign in to ChatGPT again' }) })) as typeof fetch
+  try {
+    await assert.rejects(api('/api/settings/models'), { message: 'ChatGPT にもう一度サインインしてください。' })
   } finally { globalThis.fetch = original }
 }
 console.log('ChatGPT first start and Settings: shared button, success, consent, cancellation, failures, non-local page and once-only welcome passed')

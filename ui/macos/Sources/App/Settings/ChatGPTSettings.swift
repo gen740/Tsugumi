@@ -149,7 +149,7 @@ struct ChatGPTConnection: View {
         HStack {
           VStack(alignment: .leading, spacing: 2) {
             Text(a.email ?? a.clientId).textSelection(.enabled)
-            Text(!a.signedIn ? String(localized: "サインアウト済み") : a.planEnabled ? String(localized: "サインイン中") : String(localized: "サインイン中（プランの利用は未許可）"))
+            Text(!a.signedIn ? String(localized: "ChatGPT にもう一度サインインしてください。") : a.planEnabled ? String(localized: "サインイン中") : String(localized: "サインイン中（プランの利用は未許可）"))
               .font(.caption).foregroundStyle(.secondary)
           }
           Spacer()

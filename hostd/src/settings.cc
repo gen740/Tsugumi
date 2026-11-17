@@ -366,12 +366,23 @@ struct Settings::State {
       q.bind(1, profile);
       while (q.step()) {
         const auto v = j::Object(q.text(0));
+        if (j::Bool(j::Get(v, "active"))) {
+          if (!j::Bool(j::Get(v, "signed_in")))
+            out.message = "Sign in to ChatGPT again";
+          else if (!j::Bool(j::Get(v, "plan_enabled")))
+            out.message =
+                "The ChatGPT plan is not enabled for this registration";
+        }
         out.configured |= j::Bool(j::Get(v, "active")) &&
                           j::Bool(j::Get(v, "signed_in")) &&
                           j::Bool(j::Get(v, "plan_enabled"));
       }
-      if (out.configured) out.source = "oauth";
-      else out.message = "Sign in to ChatGPT first";
+      if (out.configured) {
+        out.source = "oauth";
+        out.message.clear();
+      } else if (out.message.empty()) {
+        out.message = "Sign in to ChatGPT first";
+      }
       return out;
     }
     const auto [key, source] =
@@ -1138,11 +1149,34 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     std::string client;
     for (const auto& a : status.accounts)
       if (a->active && a->signed_in && a->plan_enabled) client = a->client_id;
-    if (client.empty()) throw std::runtime_error("Sign in to ChatGPT first");
+    if (client.empty())
+      throw std::runtime_error(
+          s.ProviderStatus(account_profile, "chatgpt").message);
     c.base_url = j::Text(s.Account(account_profile, client), "resource",
                          "https://api.openai.com/v1");
-    c.access_token = [get = s.token, client](std::string_view stale) {
-      return get(client, stale);
+    c.access_token = [state = state_.get(), client](std::string_view stale) {
+      try {
+        return state->token(client, stale);
+      } catch (const agent::ProviderError& error) {
+        if (error.sign_in_required || error.code == "chatgpt_plan_disabled") {
+          // Credentials have already been persisted and its refresh lock has
+          // been released. Account presentation belongs to the settings DB.
+          std::lock_guard lock(state->mutex);
+          auto q =
+              state->db.prepare("SELECT profile,json FROM accounts WHERE id=?");
+          q.bind(1, client);
+          std::vector<std::pair<std::string, j::Members>> accounts;
+          while (q.step()) {
+            auto account = j::Object(q.text(1));
+            account[error.sign_in_required ? "signed_in" : "plan_enabled"] =
+                "false";
+            accounts.emplace_back(q.text(0), std::move(account));
+          }
+          for (const auto& [profile, account] : accounts)
+            state->SaveAccount(profile, client, account);
+        }
+        throw;
+      }
     };
   }
   const auto window = host::Models::ContextWindowTokens(

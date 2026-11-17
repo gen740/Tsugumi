@@ -43,24 +43,65 @@ auto Credentials::AccessToken(const std::string& id, std::string_view stale)
     -> std::string {
   std::lock_guard credential_lock(credential_mutex);
   auto value = Get(id);
+  if (json::Text(value, "refresh_token").empty()) {
+    agent::ProviderError failure("Sign in to ChatGPT again");
+    failure.sign_in_required = true;
+    throw failure;
+  }
+  const auto scopes = ' ' + json::Text(value, "scope") + ' ';
+  if (scopes.find(" chatgpt.tokens.use.direct ") == std::string::npos)
+    throw agent::ProviderError(
+        "The ChatGPT plan is not enabled for this registration", false, 0, {},
+        "chatgpt_plan_disabled");
   const auto token = json::Text(value, "access_token");
   const auto expires = json::UInt(json::Get(value, "expires_at_ms"));
   if (!token.empty() &&
       ((!stale.empty() && token != stale) ||
        (stale.empty() && expires > static_cast<uint64_t>(Now() + 300000))))
     return token;
-  auto refreshed = agent::RefreshCredential(
-      {json::Text(value, "token_endpoint"), id,
-       json::Text(value, "refresh_token"), json::Text(value, "resource")},
-      stop);
+  agent::RefreshedCredential refreshed;
+  try {
+    refreshed = agent::RefreshCredential(
+        {json::Text(value, "token_endpoint"), id,
+         json::Text(value, "refresh_token"), json::Text(value, "resource")},
+        stop);
+  } catch (const agent::ProviderError& error) {
+    if (!error.retryable && (error.code == "invalid_grant" ||
+                             error.code == "invalid_refresh_token" ||
+                             error.code == "token_expired" ||
+                             error.code == "refresh_token_expired" ||
+                             error.code == "refresh_token_invalidated" ||
+                             error.code == "refresh_token_reused" ||
+                             error.code == "refresh_token_revoked")) {
+      value.erase("access_token");
+      value.erase("refresh_token");
+      value.erase("expires_at_ms");
+      Save(id, value);
+      agent::ProviderError failure("Sign in to ChatGPT again", false,
+                                   error.status, error.retry_after, error.code,
+                                   error.curl_code);
+      failure.sign_in_required = true;
+      throw failure;
+    }
+    throw;
+  }
   value["access_token"] = json::Quote(refreshed.access_token);
   value["refresh_token"] = json::Quote(refreshed.refresh_token);
   value["expires_at_ms"] =
       std::to_string(Now() + static_cast<int64_t>(refreshed.expires_in) * 1000);
   if (!refreshed.id_token.empty())
     value["id_token"] = json::Quote(refreshed.id_token);
-  if (!refreshed.scope.empty()) value["scope"] = json::Quote(refreshed.scope);
+  if (refreshed.has_scope) value["scope"] = json::Quote(refreshed.scope);
+  // A successful refresh consumes the old token even if permission narrowed.
+  // Persist its replacement before deciding whether inference is allowed.
   Save(id, value);
+  const auto granted = ' ' + json::Text(value, "scope") + ' ';
+  const bool enabled =
+      granted.find(" chatgpt.tokens.use.direct ") != std::string::npos;
+  if (!enabled)
+    throw agent::ProviderError(
+        "The ChatGPT plan is not enabled for this registration", false, 0, {},
+        "chatgpt_plan_disabled");
   return refreshed.access_token;
 }
 auto Credentials::Forget(const std::string& id) -> bool {

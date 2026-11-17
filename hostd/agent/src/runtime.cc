@@ -362,14 +362,14 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
           std::chrono::milliseconds(120000),
           std::max(error.retry_after,
                    std::chrono::milliseconds(1000u << std::min(attempt, 6u))));
-      Emit(hooks,
-           {"retrying",
-            "The model connection failed; retry " + std::to_string(attempt + 1),
-            {},
-            {},
-            true,
-            0,
-            {}});
+      Emit(hooks, {"retrying",
+                   std::string(error.what()) + "; retry " +
+                       std::to_string(attempt + 1),
+                   {},
+                   {},
+                   true,
+                   0,
+                   {}});
       Sleep(delay, stop);
     }
   }

@@ -1,3 +1,4 @@
+import { modelErrorMessage } from './i18n'
 // Calls to the host server (files, processes, the Agent). Mutating calls
 // carry a header that a cross-origin page cannot send.
 
@@ -16,7 +17,7 @@ export async function api<T = any>(path: string, body?: unknown): Promise<T> {
     ? { headers: { 'x-tsugumi': '1' } }
     : { method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new ApiError(v.error ?? `HTTP ${r.status}`)
+  if (!r.ok) throw new ApiError(modelErrorMessage(v.error ?? `HTTP ${r.status}`))
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })

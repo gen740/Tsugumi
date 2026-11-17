@@ -38,3 +38,11 @@ export function adoptLanguage(l: unknown) {
   if ((globalThis as { TSUGUMI_LANGUAGE?: string }).TSUGUMI_LANGUAGE) return
   location.reload()
 }
+
+/** Known host authentication states use the same wording in chat and the guide. */
+export function modelErrorMessage(message: string): string {
+  if (message === 'Sign in to ChatGPT again') return L('ChatGPT にもう一度サインインしてください。')
+  if (message === 'The ChatGPT plan is not enabled for this registration')
+    return L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')
+  return message
+}

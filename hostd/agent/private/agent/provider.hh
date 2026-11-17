@@ -110,10 +110,14 @@ class Cancelled final : public std::runtime_error {
 class ProviderError final : public std::runtime_error {
  public:
   ProviderError(std::string message, bool retryable = false, int status = 0,
-                std::chrono::milliseconds retry_after = {});
+                std::chrono::milliseconds retry_after = {},
+                std::string code = {}, int curl_code = 0);
   bool retryable;
   int status;
   std::chrono::milliseconds retry_after;
+  std::string code;
+  int curl_code;
+  bool sign_in_required = false;
 };
 
 // Runs one HTTP streaming request on the caller's worker thread. The callback
@@ -145,6 +149,7 @@ struct RefreshedCredential {
   std::string refresh_token;
   std::string id_token;
   std::string scope;
+  bool has_scope = false;
   uint64_t expires_in = 3600;
 };
 

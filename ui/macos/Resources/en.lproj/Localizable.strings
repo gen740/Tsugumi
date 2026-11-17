@@ -117,6 +117,7 @@
 "Card 設定を開く" = "Open Card Settings";
 "Card 間の Nix 参照はありません" = "No Nix references between Cards.";
 "Card「%@」の定義（definitions/%@/）です。" = "The definition of Card “%@” (definitions/%@/).";
+"ChatGPT にもう一度サインインしてください。" = "Sign in to ChatGPT again";
 "ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。" = "The Agent uses your ChatGPT Plus or Pro plan. Requests go to OpenAI's Responses API and count against your plan's usage (apart from API key billing; Tsugumi charges nothing). Plus has one five-hour usage limit shared with other apps, open-source tools included. Pro has no such limit.";
 "ChatGPT プラン" = "ChatGPT plan";
 "ChatGPT プランを使っています" = "You're using your ChatGPT plan";
@@ -296,6 +297,7 @@
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
+"このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。" = "ChatGPT plan usage is not allowed for this account. Allow plan use or choose an API key connection.";
 "このアカウントを使う" = "Use This Account";
 "このアプリの Nixpkgs に固定" = "Pin to This App's Nixpkgs";
 "このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
@@ -470,7 +472,6 @@
 "コンテナに接続しています…" = "Connecting to the container…";
 "コードと設定の差分" = "Code and settings changes";
 "サインアウト" = "Sign Out";
-"サインアウト済み" = "Signed out";
 "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。" = "You are signed in, but using your ChatGPT plan was not allowed. Allow it with “Allow Plan Use”, or use an API key connection.";
 "サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。" = "Sign in in your browser. hostd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.";
 "サインインを中止しました。" = "The sign-in was cancelled.";

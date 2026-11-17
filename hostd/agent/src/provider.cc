@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "tsugumi/util/json.hh"
+#include "tsugumi/util/log.hh"
 
 namespace tsugumi::agent {
 namespace {
@@ -82,6 +83,12 @@ auto Raw(const Json& json, std::string_view pointer,
                                 : fallback;
 }
 
+// Error fields may be absent or null even when a useful message is present.
+auto ErrorString(const Json& json, std::string_view pointer,
+                 std::string fallback = {}) -> std::string {
+  return Raw(json, pointer).starts_with('"') ? String(json, pointer) : fallback;
+}
+
 auto Items(const Json& json, std::string_view pointer = "")
     -> std::vector<Json> {
   if (!json[pointer].exists()) return {};
@@ -124,6 +131,74 @@ auto Strings(const std::vector<std::string>& values) -> std::string {
   strings.reserve(values.size());
   for (const auto& value : values) strings.push_back(Quote(value));
   return Array(strings);
+}
+
+// Diagnostic text is never a raw response. Remove request strings, including
+// credentials and context that a provider might echo in an error message.
+auto RequestStrings(const Json& value, std::vector<std::string>& strings,
+                    bool content = false, bool payload = false) -> void {
+  const auto raw = value[""].source();
+  if (raw.starts_with('{')) {
+    for (const auto& [key, child] : Members(value)) {
+      // Protocol labels (role, type, model, tool name) are metadata, not
+      // context. Redacting them would obscure unrelated diagnostic words.
+      if (!payload &&
+          (key == "role" || key == "type" || key == "model" || key == "name"))
+        continue;
+      RequestStrings(
+          Parse(child), strings,
+          content || key == "text" || key == "instructions" ||
+              key == "system" || key == "content" || key == "input" ||
+              key == "output" || key == "arguments" || key == "description",
+          payload || key == "arguments" ||
+              (key == "input" && Raw(value, "/type") == Quote("tool_use")));
+    }
+  } else if (raw.starts_with('[')) {
+    for (const auto& child : Items(value))
+      RequestStrings(child, strings, content, payload);
+  } else if (content && raw.starts_with('"')) {
+    const auto text = String(value, "");
+    if (!text.empty()) strings.push_back(text);
+    if (payload && (text.starts_with('{') || text.starts_with('['))) {
+      try {
+        RequestStrings(Parse(text), strings, true, true);
+      } catch (...) {
+        // Partial streamed arguments still have their complete string redacted.
+      }
+    }
+  }
+}
+
+auto DiagnosticText(std::string text, std::vector<std::string> secrets)
+    -> std::string {
+  std::sort(secrets.begin(), secrets.end(),
+            [](const auto& a, const auto& b) { return a.size() > b.size(); });
+  for (const auto& secret : secrets) {
+    if (secret.empty()) continue;
+    size_t at = 0;
+    while ((at = text.find(secret, at)) != std::string::npos) {
+      text.replace(at, secret.size(), "[redacted]");
+      at += 10;
+    }
+  }
+  return text.substr(0, 400);
+}
+
+auto LogFailure(std::string_view operation, const ProviderConfig& config,
+                const ProviderError& error, std::string_view summary = {})
+    -> void {
+  log::warn(
+      std::string(operation) + " api=" +
+      (config.api == ProviderAPI::OpenAIResponses ? "responses" : "messages") +
+      " auth=" +
+      (config.auth == ProviderAuth::ChatGPT  ? "chatgpt"
+       : config.auth == ProviderAuth::ApiKey ? "api_key"
+                                             : "none") +
+      " model=" + Quote(config.model) +
+      " http_status=" + std::to_string(error.status) +
+      " curl_code=" + std::to_string(error.curl_code) +
+      " error_code=" + Quote(error.code) + " message=" + Quote(error.what()) +
+      (summary.empty() ? "" : " stream=" + std::string(summary)));
 }
 
 auto TextBlock(std::string_view text) -> std::string {
@@ -393,6 +468,11 @@ class SSE {
   std::string event_;
 };
 
+struct RequestStatus {
+  int http = 0;
+  int curl = 0;
+};
+
 struct Transfer {
   std::stop_token stop;
   std::function<void(std::string_view)> receive;
@@ -485,7 +565,8 @@ auto Request(const ProviderConfig& config, std::string_view path,
              const std::function<void(std::string_view)>& receive,
              std::string_view credential,
              std::string_view content_type = "application/json",
-             bool allow_no_content = false) -> std::string {
+             bool allow_no_content = false, RequestStatus* status = nullptr)
+    -> std::string {
   if (stop.stop_requested()) throw Cancelled();
   InitCurl();
   std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(),
@@ -543,7 +624,18 @@ auto Request(const ProviderConfig& config, std::string_view path,
                      static_cast<curl_off_t>(body->size()));
   }
   const auto code = curl_easy_perform(curl.get());
-  if (transfer.error) std::rethrow_exception(transfer.error);
+  curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &transfer.status);
+  if (status)
+    *status = {static_cast<int>(transfer.status), static_cast<int>(code)};
+  if (transfer.error) {
+    try {
+      std::rethrow_exception(transfer.error);
+    } catch (ProviderError& error) {
+      error.status = static_cast<int>(transfer.status);
+      error.curl_code = static_cast<int>(code);
+      throw;
+    }
+  }
   if (stop.stop_requested()) throw Cancelled();
   if (code != CURLE_OK) {
     const bool transient =
@@ -553,39 +645,49 @@ auto Request(const ProviderConfig& config, std::string_view path,
         code == CURLE_GOT_NOTHING || code == CURLE_HTTP2;
     throw ProviderError(
         std::string("model connection failed: ") + curl_easy_strerror(code),
-        transient);
+        transient, static_cast<int>(transfer.status), {}, {},
+        static_cast<int>(code));
   }
-  curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &transfer.status);
   if (transfer.status != 200 && !(allow_no_content && transfer.status == 204)) {
     std::string detail;
     std::string error_code;
     try {
       const auto error = Parse(transfer.body);
-      detail = String(error, "/error/message");
-      error_code = String(error, "/error/code",
-                          String(error, "/error/type", String(error, "/code")));
+      error_code = Raw(error, "/error").starts_with('"')
+                       ? ErrorString(error, "/error")
+                       : ErrorString(error, "/error/code",
+                                     ErrorString(error, "/error/type",
+                                                 ErrorString(error, "/code")));
+      detail =
+          ErrorString(error, "/error/message",
+                      ErrorString(error, "/error_description",
+                                  ErrorString(error, "/description",
+                                              ErrorString(error, "/detail"))));
     } catch (...) {
     }
+    std::vector<std::string> secrets{std::string(credential)};
+    if (content_type == "application/x-www-form-urlencoded")
+      secrets.push_back(FormEscape(credential));
+    if (body && content_type == "application/json")
+      RequestStrings(Parse(*body), secrets);
+    // Token requests pass their refresh token as the redaction credential,
+    // while auth=None keeps it out of HTTP headers.
+    detail = DiagnosticText(detail, secrets);
+    error_code = DiagnosticText(error_code, secrets);
+    if (detail.empty()) detail = "request refused";
     if (config.auth == ProviderAuth::ChatGPT &&
         error_code == "subscription_sharing_usage_limit_exceeded")
       throw ProviderError(
           "ChatGPT usage limit reached: review your plan or this app's limit "
           "in ChatGPT settings",
-          false, static_cast<int>(transfer.status));
-    if (detail.empty()) detail = "request refused";
-    if (!credential.empty()) {
-      for (size_t at = detail.find(credential); at != std::string::npos;
-           at = detail.find(credential, at + 10)) {
-        detail.replace(at, credential.size(), "[redacted]");
-      }
-    }
-    // Do not persist a raw HTTP response: providers may echo credentials or
-    // entire prompts. Only their bounded error message belongs in UI events.
+          false, static_cast<int>(transfer.status), transfer.retry_after,
+          error_code);
     throw ProviderError(
         "model returned HTTP " + std::to_string(transfer.status) + ": " +
-            detail.substr(0, 400),
-        transfer.status == 429 || transfer.status >= 500,
-        static_cast<int>(transfer.status), transfer.retry_after);
+            (error_code.empty() ? "" : error_code + ": ") + detail,
+        (transfer.status == 429 || transfer.status >= 500) &&
+            error_code != "subscription_sharing_usage_limit_exceeded",
+        static_cast<int>(transfer.status), transfer.retry_after, error_code);
   }
   return transfer.body;
 }
@@ -593,9 +695,17 @@ auto Request(const ProviderConfig& config, std::string_view path,
 auto WithCredential(const ProviderConfig& config,
                     const std::function<std::string(std::string_view)>& request)
     -> std::string {
+  const auto get_token = [&](std::string_view stale) {
+    try {
+      return config.access_token(stale);
+    } catch (const ProviderError& error) {
+      LogFailure("Model credential failed", config, error);
+      throw;
+    }
+  };
   const auto credential =
       config.auth == ProviderAuth::ChatGPT && config.access_token
-          ? config.access_token({})
+          ? get_token({})
           : config.credential;
   try {
     return request(credential);
@@ -603,7 +713,7 @@ auto WithCredential(const ProviderConfig& config,
     if (error.status != 401 || config.auth != ProviderAuth::ChatGPT ||
         !config.access_token)
       throw;
-    return request(config.access_token(credential));
+    return request(get_token(credential));
   }
 }
 
@@ -623,6 +733,41 @@ struct ModelStream {
   std::string text;
   bool finished = false;
   const std::function<std::string()> &allocate_call;
+  std::vector<std::pair<std::string, size_t>> event_types;
+  std::vector<std::string> output_items;
+  bool terminal_output = false;
+  size_t terminal_output_length = 0;
+  bool remote_error = false;
+
+  auto RecordItem(uint32_t index, const Json& item, std::string_view stage)
+      -> void {
+    Object metadata{{"stage", Quote(stage)}, {"index", std::to_string(index)}};
+    for (const auto* field : {"type", "name", "namespace", "call_id"}) {
+      const auto value = Raw(item, "/" + std::string(field));
+      metadata[field] = value.starts_with('"') ? value : "null";
+    }
+    output_items.push_back(Encode(metadata));
+  }
+
+  auto Summary() const -> std::string {
+    std::vector<std::string> events;
+    for (const auto& [type, count] : event_types)
+      events.push_back(
+          Encode({{"type", Quote(type)}, {"count", std::to_string(count)}}));
+    size_t completed_call_count = 0;
+    for (const auto& [index, item] : output) {
+      (void)index;
+      if (Raw(Parse(item), "/type") == Quote("function_call"))
+        ++completed_call_count;
+    }
+    return Encode(
+        {{"events", Array(events)},
+         {"items", Array(output_items)},
+         {"streamed_calls", std::to_string(calls.size())},
+         {"completed_calls", std::to_string(completed_call_count)},
+         {"terminal_output", terminal_output ? "true" : "false"},
+         {"terminal_output_length", std::to_string(terminal_output_length)}});
+  }
 
   auto Emit(ModelEvent value) const -> void {
     if (event) event(value);
@@ -640,6 +785,12 @@ struct ModelStream {
   auto Consume(std::string_view event_name, std::string_view data) -> void {
     const auto json = Parse(data);
     const auto type = String(json, "/type", std::string(event_name));
+    if (api == ProviderAPI::OpenAIResponses) {
+      if (!event_types.empty() && event_types.back().first == type)
+        ++event_types.back().second;
+      else
+        event_types.emplace_back(type, 1);
+    }
     if (finished) return;
     if (api == ProviderAPI::AnthropicMessages)
       Anthropic(json, type);
@@ -732,10 +883,13 @@ struct ModelStream {
     } else if (type == "message_stop") {
       finished = true;
     } else if (type == "error") {
-      const auto code = String(json, "/error/type");
-      throw ProviderError(String(json, "/error/message", "model stream failed"),
-                          code == "overloaded_error" || code == "api_error" ||
-                              code == "rate_limit_error");
+      const auto code = ErrorString(json, "/error/type");
+      remote_error = true;
+      throw ProviderError(
+          ErrorString(json, "/error/message", "model stream failed"),
+          code == "overloaded_error" || code == "api_error" ||
+              code == "rate_limit_error",
+          0, {}, code);
     }
   }
 
@@ -748,6 +902,7 @@ struct ModelStream {
       text += delta;
       Emit({"text", delta, {}, {}, index});
     } else if (type == "response.output_item.added") {
+      RecordItem(index, Parse(Raw(json, "/item", "{}")), "added");
       if (String(json, "/item/type") == "function_call") {
         if (calls.contains(index))
           throw ProviderError("duplicate model tool call");
@@ -774,6 +929,7 @@ struct ModelStream {
         throw ProviderError("model arguments changed after streaming");
       it->second.input = complete;
     } else if (type == "response.output_item.done") {
+      RecordItem(index, Parse(Raw(json, "/item", "{}")), "done");
       output[index] = Raw(json, "/item", "{}");
       if (String(json, "/item/type") == "web_search_call") {
         Emit({"searchStarted", String(json, "/item/action/query"),
@@ -790,24 +946,42 @@ struct ModelStream {
                           : calls.empty()               ? "end_turn"
                                                         : "tool_use";
       // The terminal response is authoritative, including encrypted reasoning.
-      if (json["/response/output"].exists()) {
+      terminal_output = json["/response/output"].exists();
+      if (terminal_output) {
         output.clear();
         uint32_t i = 0;
-        for (const auto& item : Items(json, "/response/output"))
+        for (const auto& item : Items(json, "/response/output")) {
+          RecordItem(i, item, "terminal");
           output[i++] = schema::text(item);
+        }
+        terminal_output_length = i;
       }
       finished = true;
     } else if (type == "response.failed" || type == "error") {
-      const auto code =
-          String(json, "/response/error/code", String(json, "/error/code"));
+      terminal_output = json["/response/output"].exists();
+      if (terminal_output) {
+        output.clear();
+        for (const auto& item : Items(json, "/response/output")) {
+          RecordItem(static_cast<uint32_t>(output.size()), item, "terminal");
+          output[static_cast<uint32_t>(output.size())] = schema::text(item);
+        }
+        terminal_output_length = output.size();
+      }
+      const auto code = ErrorString(
+          json, "/response/error/code",
+          ErrorString(json, "/error/code", ErrorString(json, "/code")));
       if (code == "subscription_sharing_usage_limit_exceeded")
         throw ProviderError(
             "ChatGPT usage limit reached: review your plan or this app's limit "
-            "in ChatGPT settings");
+            "in ChatGPT settings",
+            false, 0, {}, code);
+      remote_error = true;
       throw ProviderError(
-          String(json, "/response/error/message",
-                 String(json, "/error/message", "model stream failed")),
-          code == "server_error" || code == "rate_limit_exceeded");
+          ErrorString(json, "/response/error/message",
+                      ErrorString(json, "/error/message",
+                                  ErrorString(json, "/message",
+                                              "model stream failed"))),
+          code == "server_error" || code == "rate_limit_exceeded", 0, {}, code);
     }
   }
 
@@ -978,11 +1152,14 @@ struct ModelStream {
 
 ProviderError::ProviderError(std::string message, bool retryable_value,
                              int status_value,
-                             std::chrono::milliseconds retry_after_value)
+                             std::chrono::milliseconds retry_after_value,
+                             std::string code_value, int curl_code_value)
     : std::runtime_error(std::move(message)),
       retryable(retryable_value),
       status(status_value),
-      retry_after(retry_after_value) {}
+      retry_after(retry_after_value),
+      code(std::move(code_value)),
+      curl_code(curl_code_value) {}
 
 auto ValidToolArguments(std::string_view json) -> bool {
   try {
@@ -1005,16 +1182,48 @@ auto StreamReply(const ProviderConfig &config, std::string_view system,
                               : ResponsesBody(config, system, messages, tools);
   std::optional<ModelReply> reply;
   WithCredential(config, [&](std::string_view credential) {
-    ModelStream stream{config.api, event, {},    {},           {},
-                       {},         {},    false, allocate_call};
+    ModelStream stream{config.api, event,         {}, {}, {},    {}, {},
+                       false,      allocate_call, {}, {}, false, 0,  false};
     SSE sse([&](std::string_view name, std::string_view data) {
       stream.Consume(name, data);
     });
-    Request(
-        config, anthropic ? "v1/messages" : "v1/responses", body, stop,
-        [&](std::string_view data) { sse.Feed(data); }, credential);
-    sse.Finish();
-    reply = stream.Finish();
+    RequestStatus status;
+    try {
+      Request(
+          config, anthropic ? "v1/messages" : "v1/responses", body, stop,
+          [&](std::string_view data) { sse.Feed(data); }, credential,
+          "application/json", false, &status);
+      sse.Finish();
+      reply = stream.Finish();
+    } catch (const ProviderError& error) {
+      std::string detail = error.what();
+      std::string code = error.code;
+      if (stream.remote_error) {
+        std::vector<std::string> secrets{std::string(credential)};
+        RequestStrings(Parse(body), secrets);
+        if (!stream.text.empty()) secrets.push_back(stream.text);
+        for (const auto& [index, call] : stream.calls) {
+          (void)index;
+          if (!call.input.empty()) secrets.push_back(call.input);
+        }
+        for (const auto& [index, item] : stream.output) {
+          (void)index;
+          RequestStrings(Parse(item), secrets);
+        }
+        for (const auto& [index, block] : stream.blocks) {
+          (void)index;
+          RequestStrings(Parse(Encode(block.value)), secrets);
+          if (!block.arguments.empty()) secrets.push_back(block.arguments);
+        }
+        detail = DiagnosticText(std::move(detail), secrets);
+        code = DiagnosticText(std::move(code), secrets);
+      }
+      ProviderError safe(std::move(detail), error.retryable, status.http,
+                         error.retry_after, std::move(code), status.curl);
+      LogFailure("Model call failed", config, safe,
+                 anthropic ? "" : stream.Summary());
+      throw safe;
+    }
     return std::string{};
   });
   return std::move(*reply);
@@ -1023,7 +1232,12 @@ auto StreamReply(const ProviderConfig &config, std::string_view system,
 auto ListModels(const ProviderConfig& config, std::stop_token stop)
     -> std::vector<ModelInfo> {
   const auto body = WithCredential(config, [&](std::string_view credential) {
-    return Request(config, "v1/models", std::nullopt, stop, {}, credential);
+    try {
+      return Request(config, "v1/models", std::nullopt, stop, {}, credential);
+    } catch (const ProviderError& error) {
+      LogFailure("Model catalog failed", config, error);
+      throw;
+    }
   });
   std::vector<ModelInfo> models;
   const bool plan = config.auth == ProviderAuth::ChatGPT;
@@ -1062,40 +1276,38 @@ auto RefreshCredential(const CredentialRefresh& request, std::stop_token stop)
   config.auth = ProviderAuth::None;
   config.base_url = request.endpoint;
   config.timeout_seconds = 15;
-  std::string reply;
+  RequestStatus status;
   try {
-    reply = Request(config, {}, body, stop, {}, {},
-                    "application/x-www-form-urlencoded");
-  } catch (const ProviderError& error) {
-    // The authorization server's response may echo a submitted token.
-    throw ProviderError("ChatGPT token refresh failed (HTTP " +
-                            std::to_string(error.status) + ')',
-                        error.retryable, error.status, error.retry_after);
-  }
-  const auto json = Parse(reply);
-  RefreshedCredential credential;
-  credential.access_token = String(json, "/access_token");
-  if (credential.access_token.empty())
-    throw ProviderError("ChatGPT token refresh returned no access token");
-  credential.refresh_token =
-      String(json, "/refresh_token", request.refresh_token);
-  credential.id_token = String(json, "/id_token");
-  credential.scope = String(json, "/scope");
-  credential.expires_in = Number(json, "/expires_in", 3600);
-  auto type = String(json, "/token_type", "Bearer");
-  std::transform(type.begin(), type.end(), type.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  if (type != "bearer")
-    throw ProviderError(
-        "ChatGPT token refresh returned an unsupported token type");
-  if (!credential.scope.empty()) {
-    const auto scopes = ' ' + credential.scope + ' ';
-    if (scopes.find(" chatgpt.tokens.use.direct ") == std::string::npos) {
+    const auto reply =
+        Request(config, {}, body, stop, {}, request.refresh_token,
+                "application/x-www-form-urlencoded", false, &status);
+    const auto json = Parse(reply);
+    RefreshedCredential credential;
+    credential.access_token = String(json, "/access_token");
+    if (credential.access_token.empty())
+      throw ProviderError("ChatGPT token refresh returned no access token");
+    credential.refresh_token =
+        String(json, "/refresh_token", request.refresh_token);
+    credential.id_token = String(json, "/id_token");
+    credential.has_scope = json["/scope"].exists();
+    credential.scope = String(json, "/scope");
+    credential.expires_in = Number(json, "/expires_in", 3600);
+    auto type = String(json, "/token_type", "Bearer");
+    std::transform(type.begin(), type.end(), type.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (type != "bearer")
       throw ProviderError(
-          "The ChatGPT plan is not enabled for this registration");
-    }
+          "ChatGPT token refresh returned an unsupported token type");
+    return credential;
+  } catch (const ProviderError& error) {
+    ProviderError failure(
+        "ChatGPT token refresh failed: " + std::string(error.what()),
+        error.retryable, status.http, error.retry_after, error.code,
+        status.curl);
+    config.auth = ProviderAuth::ChatGPT;
+    LogFailure("Token refresh failed", config, failure);
+    throw failure;
   }
-  return credential;
 }
 
 auto RevokeCredential(std::string_view endpoint, std::string_view client_id,

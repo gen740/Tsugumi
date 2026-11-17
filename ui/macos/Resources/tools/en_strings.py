@@ -31,6 +31,8 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+'ChatGPT にもう一度サインインしてください。': "Sign in to ChatGPT again",
+'このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。': "ChatGPT plan usage is not allowed for this account. Allow plan use or choose an API key connection.",
 "vm/guest/build-image.sh で作り直すか、アプリを入れ直してください。": "Rebuild it with vm/guest/build-image.sh, or reinstall the app.",
 "最後のウインドウを閉じたら Tsugumi を終了する": "Quit Tsugumi when the last window closes",
 "進行中の処理を停止して Tsugumi を終了しますか？": "Quit Tsugumi and stop ongoing work?",
@@ -1315,7 +1317,6 @@ EN = {
 "ChatGPT プランを使っています": "You're using your ChatGPT plan",
 "Got it": "Got it",
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。": "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).",
-"サインアウト済み": "Signed out",
 "サインイン中": "Signed in",
 "サインイン中（プランの利用は未許可）": "Signed in (plan use not allowed)",
 "このアカウントを使う": "Use This Account",

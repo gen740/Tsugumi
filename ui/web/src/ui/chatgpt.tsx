@@ -36,7 +36,7 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
         {st.accounts.filter(a => !onboarding || a.active).map((a) => (
           <Row key={a.clientId} label={<span><Icon name={a.active ? 'checkmark.circle.fill' : 'circle'} /> {a.email ?? a.clientId}</span>}>
             <div className="row gap8 wrap center">
-              <span className="caption secondary">{!a.signedIn ? L('サインアウト済み') : a.planEnabled ? L('サインイン中') : L('サインイン中（プランの利用は未許可）')}</span>
+              <span className="caption secondary">{!a.signedIn ? L('ChatGPT にもう一度サインインしてください。') : a.planEnabled ? L('サインイン中') : L('サインイン中（プランの利用は未許可）')}</span>
               {!onboarding && a.signedIn && !a.active && <Button small onClick={() => void connection.run(async () => { connection.setState(await api<ChatGPTState>('/api/chatgpt/select', { clientId: a.clientId })); onChanged?.(); return undefined })}>{L('このアカウントを使う')}</Button>}
               {!a.signedIn && <ChatGPTButton disabled={st.signingIn || !connection.local} onClick={() => connection.signIn(a.clientId)} />}
               {a.signedIn && !a.planEnabled && <Button small disabled={st.signingIn || !connection.local} onClick={() => connection.signIn(a.clientId, true)}>{L('プランの利用を許可')}</Button>}

@@ -782,7 +782,7 @@ final class ChatController {
     case .retrying(let s):
       // The reply is asked again from its beginning.
       session.presence.toolInputEnded(ok: false)
-      status = String(localized: "再試行中: \(s)")
+      status = String(localized: "再試行中: \(ChatGPTError.localizedMessage(s))")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       session.presence.toolInputEnded(ok: false)
@@ -798,7 +798,7 @@ final class ChatController {
       status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
         : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
-        : String(localized: "エラー: \(s)")
+        : String(localized: "エラー: \(ChatGPTError.localizedMessage(s))")
       refreshAfterTurn()
     case .interrupted:
       busy = false

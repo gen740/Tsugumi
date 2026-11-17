@@ -11,7 +11,7 @@ import { Observable } from './observable'
 import { ProjectSession } from './session'
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
-import { L } from '../i18n'
+import { L, modelErrorMessage } from '../i18n'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
 const KINDS: GuideActionKind[] = ['open_demo', 'show_demos', 'run', 'stop', 'open_card', 'open_settings', 'new_project', 'home']
@@ -571,7 +571,7 @@ export class GuideController extends Observable {
         if (this.items[this.items.length - 1]?.role === 'assistant') this.items.pop()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', e.message)
+        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
         break
       case 'finished':
         this.ended()
@@ -582,7 +582,7 @@ export class GuideController extends Observable {
         this.bubble = undefined
         this.queued = []
         this.failed = e.message !== 'cancelled'
-        this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', e.message)
+        this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message))
         break
       default:
         return

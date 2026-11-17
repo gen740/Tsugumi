@@ -11,7 +11,7 @@ import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { Thoughts, type ThoughtReply } from './thoughts'
 import { CardKey, ProjectSession, path } from './session'
-import { L } from '../i18n'
+import { L, modelErrorMessage } from '../i18n'
 import { cardRequest } from '../../shared/agentShared'
 
 export interface ChatItem {
@@ -663,7 +663,7 @@ export class ChatController extends Observable {
         this.reloadCurrent()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', e.message)
+        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
         break
       case 'error':
         // The stopped answer ended after the next one began, which goes on.
@@ -683,7 +683,7 @@ export class ChatController extends Observable {
         this.status = e.message === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
           : this.usageLimited ? L('Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。')
           : this.contextFull ? L('この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。')
-          : L('エラー: {0}', e.message)
+          : L('エラー: {0}', modelErrorMessage(e.message))
         this.refreshAfterTurn()
         break
       case 'finished':

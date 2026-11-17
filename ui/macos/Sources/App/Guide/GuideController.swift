@@ -544,7 +544,7 @@ final class GuideController {
     case .discardText:
       if let last = items.last, last.role == "assistant" { items.removeLast() }
     case .retrying(let s):
-      status = String(localized: "再試行中: \(s)")
+      status = String(localized: "再試行中: \(ChatGPTError.localizedMessage(s))")
     case .presentation, .modelAccepted, .compacting, .compacted, .helper, .helperStarted:
       break
     case .finished:
@@ -560,7 +560,7 @@ final class GuideController {
       bubble = nil
       queued = []
       failed = s != "cancelled"
-      status = s == "cancelled" ? String(localized: "回答を止めました。") : String(localized: "うまく答えられませんでした: \(s)")
+      status = s == "cancelled" ? String(localized: "回答を止めました。") : String(localized: "うまく答えられませんでした: \(ChatGPTError.localizedMessage(s))")
     }
   }
 

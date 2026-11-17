@@ -30,6 +30,16 @@ public enum ChatGPTError: Error, CustomStringConvertible, Equatable {
     switch self { case .failed(let message): return "ChatGPT: \(message)" }
   }
 
+  public static func localizedMessage(_ message: String) -> String {
+    switch message {
+    case "Sign in to ChatGPT again":
+      return String(localized: "ChatGPT にもう一度サインインしてください。")
+    case "The ChatGPT plan is not enabled for this registration":
+      return String(localized: "このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。")
+    default: return message
+    }
+  }
+
   /// The chat shows "Manage usage" with this error.
   public static let usageLimitText = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 }
