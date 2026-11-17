@@ -382,3 +382,83 @@ The sandbox grants read-only access to `.agents`. Its
 and Web paths. The exact path-only repair is prepared in
 `plans/layout-protected-skill-paths.patch`; applying it requires a writable
 instruction directory. No permission bypass, index mutation or commit was used.
+
+## Validation continuation (2026-11-17, after the sleep snapshot)
+
+The final layout in `0dd24979` was retained. No relocation was repeated and no
+index mutation or commit was made. The interrupted native/image patches and the
+snapshot were inspected before continuing validation.
+
+### Mechanical repairs
+
+- Register `kernel`, `vm-system`, `vm-boot` and `vm` only on `aarch64-linux`.
+  Evaluating all package derivations exposed the ARM-only kernel on
+  `x86_64-linux`, where nixpkgs correctly refused it. Native CLI/workerd remain
+  available on both Linux architectures; the guest's existing x86 execution
+  choices are unchanged.
+- Supply `TSUGUMI_RPC_CLIENT` and `TSUGUMI_PROJECT_SCHEMA` in the build-tree
+  `core_rpc` CTest registration, matching the installed test runner. The existing
+  environment-inventory CLI case requires both and the previous log had a
+  `KeyError` for the absent schema variable. Building `tsugumid-mock` also builds
+  the CLI required by that suite, including the documented minimal local build.
+
+### Validation evidence
+
+- Native configure and full build passed. The CMake ownership/link/include gate
+  ran during configuration. Native CTest excluding `core_rpc`: 765 passed,
+  12 failed because nested Seatbelt cannot start, 7 skipped (784 total).
+  Host cache validation/private-cache integration and VM lifetime cases passed.
+  The skips are four outer-sandbox shell probes, the scenario-only
+  `AgentShellProbe.DirectProjectRequest`, and two formatter tests whose pinned
+  paths were not configured in this local CMake build.
+- Install into a temporary prefix and configure the tests against the installed
+  production archives passed. The installed document edit driver and VM lifetime
+  targets built; all 4 installed lifetime tests passed.
+- All package and check derivations evaluated for `aarch64-darwin`,
+  `aarch64-linux` and `x86_64-linux` after the guest registration repair.
+  This is evaluation, not a Linux image build or a VM boot.
+- Static suite: 79 passed, including native/Swift boundaries and CI selection.
+  Web generation, resolved-import boundaries, separate shared/browser/server
+  typechecks, `npx tsc --noEmit`, the complete Web behavior suite, and the
+  Wasm/browser/server/player build passed. The Keychain OS-command record was
+  empty. Nix also built the Wasm/Web/player packages for the documentation app.
+- Documentation build: 31 pages; all 10 documentation tests passed.
+- Server/CLI/plugin plus artifact/store-health pytest: 72 passed, 1 skipped;
+  6 plugin setup errors were due to the local invocation omitting
+  `TSUGUMI_MOCK_DAEMON`. Rerunning those 6 with the existing build-tree mock
+  passed. No fixture behavior was changed to hide a failure.
+- Protocol documentation, the relocated Agent generator and service-vector
+  generator completed with no tracked generated-file changes.
+- Complete core pytest with `-m 'not environment'`: 442 passed, 4 xfailed,
+  106 deselected, 23 failed in 732.96 seconds. The failures are the read-only
+  Project shell case and 22 real display-Card cases. An isolated real
+  display-Card diagnostic confirms its worker stderr contains
+  `sandbox-exec: sandbox_apply: Operation not permitted`. The environment
+  inventory CLI case passed with the corrected binary/schema environment.
+  No non-environmental test failure remains from these runs.
+
+### Remaining environment checks and observed unused code
+
+- Swift CoreTests and independent VM tests cannot start: SwiftPM's manifest
+  process requires Seatbelt. UI/client package attempts also encounter the
+  sandbox's read-only system module cache. No sandbox-disabling workaround was
+  attempted, and no Swift compilation/test pass is claimed.
+- Every isolated runner reports forbidden `ps` during cleanup; concurrent
+  validation also reports other validators' temporary paths. Test assertions
+  can pass while the wrapper exits nonzero. Clean process cleanup/isolation is
+  not established by these runs.
+- App/VM/Docker execution, Linux image build/boot, copied signed packaging,
+  offline/x86/store-upgrade scenarios and source-bundle reconstruction require
+  a capable environment and were not run here. The protected skill path patch
+  remains for the owner to apply.
+- Unused candidate noticed, retained as requested:
+  `vm/macos/runtime/Sources/VMTypes/HistoryVersionMismatch.swift`'s `diagnostic`
+  computed property has no caller in the tracked Swift sources. Its decoding
+  initializer and the mismatch type are used. No unused-code deletion was made.
+
+The available validation is finished; the final native tree builds after the
+registration fixes. The remaining acceptance checks above need an environment
+with SwiftPM/Seatbelt, Linux builders and VM/app execution. Apply
+`plans/layout-protected-skill-paths.patch` when `.agents` is writable. No further
+source relocation is pending in this continuation. The owner will stage and
+commit the three changed files.

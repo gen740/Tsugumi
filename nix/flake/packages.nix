@@ -37,13 +37,15 @@ in
         tsugumid = core;
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        inherit kernel vm-boot vm-system;
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
         # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
         cli = pkgs.callPackage ../cli.nix {
           tsugumid = core;
           inherit web;
         };
+      }
+      // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
+        inherit kernel vm-boot vm-system;
         # One distributable image; the helper extracts its VZ attachments.
         vm =
           pkgs.runCommand "tsugumi-vm"
