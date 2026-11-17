@@ -48,7 +48,7 @@ const documents = defineCollection({
       }
       await sync()
       if (watcher) {
-        const sources = [path.join(ROOT, 'README.md'), path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), path.join(ROOT, 'docs')]
+        const sources = [path.join(ROOT, 'README.md'), path.join(ROOT, 'docs')]
         watcher.add(sources)
         let pending = Promise.resolve()
         watcher.on('all', (event, file) => {

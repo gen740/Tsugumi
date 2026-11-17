@@ -4,12 +4,10 @@ import argparse
 import hashlib
 import json
 import shutil
-import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
 PAYLOAD = "tsugumi-vm.tar.gz"
 
 
@@ -56,14 +54,9 @@ def build(args):
         with tarfile.open(destination / PAYLOAD) as tar:
             tar.extractall(stage, members=[tar.getmember(n) for n in ["vmlinux", "rootfs.erofs", "vm-version"]])
         identity = (stage / "vm-version").read_text().strip()
-        inventory = stage / "vm-guest"
-        subprocess.run(["python3", str(REPO / "vm/guest/tools/vm-inventory.py"), str(stage), identity, str(inventory),
-                        args.revision], check=True)
-        with tarfile.open(destination / "vm-licenses.tar.gz", "w:gz") as tar:
-            tar.add(inventory, arcname="vm-guest")
         manifest = {"identity": identity, "system": "aarch64-linux", "revision": args.revision,
                     "members": {name: digest(stage / name) for name in ["vmlinux", "rootfs.erofs", "vm-version"]},
-                    "files": {name: digest(destination / name) for name in [PAYLOAD, "vm-licenses.tar.gz"]}}
+                    "files": {PAYLOAD: digest(destination / PAYLOAD)}}
         (destination / "vm-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     files = [destination / name for name in manifest["files"]] + [destination / "vm-manifest.json"]
     (destination / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in sorted(files)))

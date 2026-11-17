@@ -22,7 +22,7 @@ Releases are signed ad hoc (with the virtualization entitlement needed to run th
 xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 ```
 
-From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The ChatGPT button is text only because permission to redistribute the logo in an open-source repository could not be established. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
+From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
 
 ### Automatic updates
 
@@ -121,7 +121,7 @@ vm/guest/build-image.sh --vm
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
 `ui/macos/build-app.sh` packages the app into `dist/Tsugumi.app`, including the shared
-module host, demos, guest archive/manifest and expanded license inventory, then
+module host, demos, guest archive/manifest, then
 signs it. It resolves the current guest on every build. Set `TSUGUMI_VM_BUILD=1`
 to force a local guest build, or `TSUGUMI_VM_NIX_BUILDERS` to use a configured
 Linux builder. For release artifact requirements and signing, see

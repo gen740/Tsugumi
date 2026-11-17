@@ -32,7 +32,7 @@ def consumers(path):
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
         return ALL
-    if path in {"README.md", "THIRD_PARTY_NOTICES.md", "tests/README.md"}:
+    if path in {"README.md", "tests/README.md"}:
         return {"docs"}
     if path.startswith("docs/"):
         jobs = {"docs"}

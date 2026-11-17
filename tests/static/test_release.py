@@ -86,7 +86,6 @@ def test_guest_boot_uses_the_shipped_runtime_without_source_or_compilation():
         script = (ROOT / file).read_text()
         assert '"$repo/vm/guest/build-image.sh" --vm' in script
         assert '"$vm/tsugumi-vm.tar.gz"' in script
-        assert '"$vm/vm-licenses.tar.gz"' in script
         assert 'releases/download/vm-' not in script
 
 

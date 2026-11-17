@@ -6,7 +6,7 @@ let
     name: file:
     pkgs.runCommand "${name}-view-library" { } ''
       mkdir -p $out
-      tar -xzf ${pkgs.fetchurl packages.${name}} --strip-components=1 -C $out package/${file} package/LICENSE
+      tar -xzf ${pkgs.fetchurl packages.${name}} --strip-components=1 -C $out package/${file}
     '';
   plotly = library "plotly.js-dist-min" "plotly.min.js";
   vega = library "vega" "build/vega.min.js";
@@ -31,10 +31,16 @@ in
     src = source;
     entry = "plotly.js";
     name = "tsugumi-view-plotly";
+    licenseDirs = [ ../views/third-party/plotly.js-dist-min ];
   };
   vega-lite = bundle {
     src = source;
     entry = "vega-lite.js";
     name = "tsugumi-view-vega-lite";
+    licenseDirs = [
+      ../views/third-party/vega
+      ../views/third-party/vega-lite
+      ../views/third-party/vega-embed
+    ];
   };
 }

@@ -16,10 +16,10 @@ let
   # Use the standard webgpu-headers snapshot already pinned by nixpkgs, without
   # building wgpu-native's Rust library. The port's own extensions stay private.
   headers = pkgs.runCommand "tsugumi-view-headers" { } ''
-    mkdir -p $out/include/webgpu $out/include/tsugumi $out/share/licenses
+    mkdir -p $out/include/webgpu $out/include/tsugumi
     cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/webgpu.h $out/include/webgpu/
     cp ${../include/tsugumi/view.h} $out/include/tsugumi/view.h
-    cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/LICENSE $out/share/licenses/webgpu-headers
+    cp ${source}/third-party/webgpu-headers/LICENSE $out/include/webgpu/LICENSE
   '';
   template =
     pkgs.runCommand "tsugumi-wasm-view-template"
@@ -47,9 +47,9 @@ let
         cp ${source}/index.js index.js
         esbuild index.js --bundle --format=esm --platform=browser --target=es2022 \
           --minify --outfile=$out/index.js
-        # Keep upstream license notices alongside the shared implementation.
-        cp ${port}/webgpu/src/LICENSE $out/LICENSE.emdawnwebgpu
-        cp ${pkgs.emscripten}/share/emscripten/LICENSE $out/LICENSE.emscripten
+        mkdir -p $out/licenses/emscripten
+        cp ${../../third-party/emscripten/LICENSE} $out/licenses/emscripten/LICENSE
+        cp -R ${source}/third-party/. $out/licenses/
         wc -c < $out/index.js > $out/size-bytes
       '';
 in
@@ -80,6 +80,7 @@ in
         -sEXPORTED_FUNCTIONS='["_tsugumi_view_initialise","_tsugumi_view_update","_tsugumi_view_resize","_tsugumi_view_dispose"]' \
         -o $out/view.wasm
       ln -s ${template}/index.js $out/index.js
+      ln -s ${template}/licenses $out/licenses
       wc -c < $out/view.wasm > $out/size-bytes
     '';
 }

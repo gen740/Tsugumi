@@ -137,8 +137,7 @@ final class ChatGPTSignInModel {
   }
 }
 
-/// The same sign-in controls and welcome in both entry points. The approved
-/// text-only button avoids bundling a logo without redistribution permission.
+/// The same sign-in controls and welcome in both entry points.
 struct ChatGPTConnection: View {
   @Bindable var model: ChatGPTSignInModel
   var onboarding = false

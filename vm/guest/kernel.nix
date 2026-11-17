@@ -47,7 +47,6 @@ stdenv.mkDerivation rec {
   '';
   installPhase = ''
     install -Dm644 arch/arm64/boot/Image $out/vmlinux
-    install -Dm644 .config $out/config
   '';
   meta.platforms = [ "aarch64-linux" ];
 }

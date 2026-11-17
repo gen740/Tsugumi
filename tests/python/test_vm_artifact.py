@@ -1,5 +1,5 @@
-"""Guest integrity and runtime package notices."""
-import gzip
+"""Guest artifact assembly and integrity."""
+import argparse
 import hashlib
 import importlib.util
 import io
@@ -20,7 +20,6 @@ def module(name, filename):
 
 
 artifact = module("vm_artifact", "vm-artifact.py")
-inventory = module("vm_inventory", "vm-inventory.py")
 
 
 def fixture(directory):
@@ -29,7 +28,6 @@ def fixture(directory):
             entry = tarfile.TarInfo(name)
             entry.size = len(data)
             tar.addfile(entry, io.BytesIO(data))
-    (directory / "vm-licenses.tar.gz").write_bytes(b"inventory")
     value = {"identity": "definition", "system": "aarch64-linux", "revision": "commit",
              "files": {p.name: artifact.digest(p) for p in directory.iterdir()},
              "members": {name: hashlib.sha256(data).hexdigest() for name, data in
@@ -66,32 +64,16 @@ def test_attachment_checksums_match_extracted_bytes(tmp_path):
         artifact.verify(tmp_path, "definition")
 
 
-def test_runtime_packages_keep_versions_and_group_own_code():
-    paths = ["/nix/store/" + "0" * 32 + "-" + name for name in
-             ["bash-5.3", "bash-5.3", "bash-5.2", "tsugumid-0.9.0", "hosq-source", "passwd", "unlisted"]]
-    assert inventory.runtime_packages(paths) == [
-        {"name": "bash", "version": "5.2"}, {"name": "bash", "version": "5.3"},
-        {"name": "unlisted", "version": ""}]
-
-
-def test_notices_share_spdx_texts_and_report_missing_metadata(tmp_path):
-    vm, out, texts = [tmp_path / name for name in ["image", "notices", "texts"]]
-    vm.mkdir()
-    texts.mkdir()
-    config = b"CONFIG_IKCONFIG=y\n"
-    (vm / "vmlinux").write_bytes(b"kernelIKCFG_ST" + gzip.compress(config) + b"IKCFG_ED")
-    for identifier in ["MIT", "GPL-2.0-only", "GCC-exception-2.0"]:
-        (texts / f"{identifier}.txt").write_text(identifier)
-    packages = [{"name": "a", "version": "1"}, {"name": "a", "version": "1-lib"},
-                {"name": "b", "version": "2"}, {"name": "unknown", "version": "3"}]
-    inventory.write_notices(vm, "definition", out, "revision", packages,
-                            {"a": {"licenses": ["MIT"], "outputs": ["out", "lib"]},
-                             "b": {"licenses": ["MIT WITH GCC-exception-2.0"]}, "unknown": {"licenses": []}}, texts, "6.12.115")
-    value = json.loads((out / "inventory.json").read_text())
-    assert value["vm_version"] == "definition"
-    assert value["packages"][2]["licenses"] == []
-    assert value["tsugumi"]["licenses"] == ["MIT"]
-    assert (out / "licenses/Tsugumi/LICENSE").read_text() == (ROOT / "LICENSE").read_text()
-    assert sorted(p.name for p in (out / "licenses").iterdir()) == ["GCC-exception-2.0.txt", "GPL-2.0-only.txt", "MIT.txt", "Tsugumi"]
-    assert (out / "kernel-config").read_bytes() == config
-    assert "No SPDX license metadata" in (out / "README.md").read_text()
+def test_build_emits_payload_manifest_and_checksums(tmp_path):
+    image, out = tmp_path / "image", tmp_path / "artifact"
+    image.mkdir()
+    fixture(image)
+    artifact.build(argparse.Namespace(image=image, directory=out, revision="commit"))
+    assert {path.name for path in out.iterdir()} == {
+        artifact.PAYLOAD, "vm-manifest.json", "SHA256SUMS"}
+    value = artifact.verify(out, "definition", "commit")
+    assert value["files"] == {artifact.PAYLOAD: artifact.digest(out / artifact.PAYLOAD)}
+    assert (out / artifact.PAYLOAD).read_bytes() == (image / artifact.PAYLOAD).read_bytes()
+    assert (out / "SHA256SUMS").read_text() == "".join(
+        f"{artifact.digest(out / name)}  {name}\n"
+        for name in sorted([artifact.PAYLOAD, "vm-manifest.json"]))

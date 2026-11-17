@@ -41,10 +41,9 @@ Start from the document that fits what you want to read. To read with moving fig
 | [Protocol.md](Protocol.md) | The project RPC requests and notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |
 
-## Dependencies and distribution
+## Runtime details
 
 | Document | Contents |
 | --- | --- |
-| [LicenseAudit.md](LicenseAudit.md) | License bundling, VM notices and dependency updates |
 | [ShortIdentifiers.md](ShortIdentifiers.md) | The identifiers the Agent sees: run numbers, Card ids and short counters instead of UUIDs |
 | [VMStoreHealth.md](VMStoreHealth.md) | How the shared VM stops in order, and when its Nix store is checked and repaired |

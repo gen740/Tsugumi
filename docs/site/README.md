@@ -2,7 +2,7 @@
 
 Run commands from the repository root. This README describes site development and is not a published document.
 
-The top-level Markdown files in `docs/` are the source documents. The repository's `README.md` is the entry point; `THIRD_PARTY_NOTICES.md` stays with the license. Edit these sources, never a generated copy. [docs/README.md](../README.md) supplies the navigation groups and descriptions.
+The top-level Markdown files in `docs/` are the source documents. The repository's `README.md` is the entry point. Edit these sources, never a generated copy. [docs/README.md](../README.md) supplies the navigation groups and descriptions.
 
 The site is an Astro project in `docs/site/`, with its own pinned dependencies. Nix supplies Node.js and builds the site's packages from `docs/site/package-lock.json` ([nix/docs-site.nix](../../nix/docs-site.nix)); `docs/site/node_modules` is a link to them, and nothing is installed with npm.
 

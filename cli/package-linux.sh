@@ -11,7 +11,7 @@ dist="$repo/dist"
 mkdir -p "$dist"
 # What nix/cli.nix and nix/core.nix read, and the flake itself.
 git -C "$repo" archive --format=tar.gz --prefix=tsugumi/ -o "$dist/tsugumi-linux.tar.gz" HEAD \
-  flake.nix flake.lock VERSION LICENSE THIRD_PARTY_NOTICES.md CMakeLists.txt cmake util rpc tsugumid hostd client sdk workerd protocol nix tests/core vm/guest/CMakeLists.txt vm/guest/src \
+  flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid hostd client sdk workerd protocol nix third-party cli/third-party tests/core vm/guest/CMakeLists.txt vm/guest/src \
   ui/web ui/shared demos docs/CardGuide.md docs/site/player docs/site/player-data/assets docs/assets/tsugumi-icon.svg vm/guest/vm-system.nix
 (cd "$dist" && shasum -a 256 tsugumi-linux.tar.gz > tsugumi-linux.tar.gz.sha256)
 ls -l "$dist/tsugumi-linux.tar.gz"

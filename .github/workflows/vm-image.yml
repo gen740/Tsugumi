@@ -50,14 +50,17 @@ jobs:
           test -x "$runtime/bin/tsugumid"
           test -x "$runtime/bin/tsugumi-vmd"
           test -x "$runtime/bin/tsugumi-worker"
-      - name: Inventory and license texts of the image
+      - name: Assemble and verify the image artifact
         env:
           REVISION: ${{ inputs.revision }}
         run: |
-          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
+          python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
           python3 vm/guest/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
       - uses: actions/upload-artifact@v4
         with:
           name: vm-${{ steps.definition.outputs.identity }}
-          path: dist/tsugumi-vm/*
+          path: |
+            dist/tsugumi-vm/tsugumi-vm.tar.gz
+            dist/tsugumi-vm/vm-manifest.json
+            dist/tsugumi-vm/SHA256SUMS
           if-no-files-found: error

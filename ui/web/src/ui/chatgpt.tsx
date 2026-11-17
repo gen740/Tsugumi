@@ -93,7 +93,6 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
 }
 
 
-/** Text-only approved wording: no logo is bundled without redistribution permission. */
 export function ChatGPTButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
   return <button type="button" className="btn" data-oai-siwc-button="" disabled={disabled}
     style={{ background: '#000', color: '#fff', border: '1px solid #000', borderRadius: 6, padding: '10px 16px' }}

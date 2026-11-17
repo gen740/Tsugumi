@@ -30,8 +30,10 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$dist/cli"
-mkdir -p "$tree/bin" "$tree/ui/web" "$tree/licenses" "$tree/Frameworks"
+mkdir -p "$tree/bin" "$tree/ui/web" "$tree/Frameworks"
 cp "$repo/VERSION" "$tree/"
+mkdir -p "$tree/licenses"
+cp -R "$repo/third-party/". "$repo/cli/third-party/node" "$tree/licenses/"
 install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 
 # Node.js: the official build, checked against the pinned checksum.
@@ -41,8 +43,6 @@ mkdir -p "$cache"
 [ -f "$cache/$node_tar" ] || curl -fsSL -o "$cache/$node_tar" "https://nodejs.org/dist/v$NODE_VERSION/$node_tar"
 echo "$NODE_SHA256_DARWIN_ARM64  $cache/$node_tar" | shasum -a 256 -c - >/dev/null
 tar -xzf "$cache/$node_tar" -C "$tree/bin" --strip-components=2 "node-v$NODE_VERSION-darwin-arm64/bin/node"
-tar -xzf "$cache/$node_tar" -C "$tree/licenses" --strip-components=1 "node-v$NODE_VERSION-darwin-arm64/LICENSE"
-mv "$tree/licenses/LICENSE" "$tree/licenses/node.LICENSE"
 
 cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
@@ -61,19 +61,6 @@ cp "$repo/flake.lock" "$tree/"
 
 mkdir -p "$tree/vm"
 cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$tree/vm/"
-
-# Licenses: ours, the packages bundled into the server and the page, FlatBuffers
-# in tsugumi-vmhost, OpenSSL, and the complete guest closure.
-cp "$repo/LICENSE" "$repo/THIRD_PARTY_NOTICES.md" "$tree/licenses/"
-nix develop "$repo" -c node "$repo/ui/web/scripts/licenses.mjs" --all "$tree/licenses/npm"
-mkdir -p "$tree/licenses/openssl"
-openssl_source="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#openssl.src)"
-openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
-[ -n "$openssl_license" ] || { echo "OpenSSL license is missing" >&2; exit 1; }
-tar -xOf "$openssl_source" "$openssl_license" > "$tree/licenses/openssl/LICENSE.txt"
-mkdir -p "$tree/licenses/swift-packages/flatbuffers"
-cp "$repo/vm/macos/runtime/.build/checkouts/flatbuffers/LICENSE"* "$tree/licenses/swift-packages/flatbuffers/"
-tar -xzf "$vm/vm-licenses.tar.gz" -C "$tree/licenses"
 
 tar -czf "$dist/tsugumi-macos-arm64.tar.gz" -C "$dist/cli" tsugumi
 (cd "$dist" && shasum -a 256 tsugumi-macos-arm64.tar.gz > tsugumi-macos-arm64.tar.gz.sha256)

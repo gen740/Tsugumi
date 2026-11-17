@@ -1,5 +1,4 @@
-"""build-app.sh keeps only SwiftMath's default math font, so choosing another
-would fail at run time; docs/LicenseAudit.md says why."""
+"""The app uses only the default math font included in its bundle."""
 
 from __future__ import annotations
 

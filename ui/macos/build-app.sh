@@ -70,11 +70,20 @@ if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$'
   exit 1
 fi
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
-# SwiftMath's bundle has 12 math fonts, each with its own terms; the app draws
-# with one, the default of MTMathUILabel, loaded on demand. The others stay out.
+# Keep only Latin Modern Math, the default font loaded by MTMathUILabel.
 math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle"
 [ -f "$math_fonts/latinmodern-math.otf" ]
-find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
+find "$math_fonts" -type f ! -name 'latinmodern-math.*' -delete
+cp "$repo/ui/macos/Resources/Fonts/latin-modern-math/"* "$math_fonts/"
+licenses="$app/Contents/Resources/licenses"
+mkdir -p "$licenses"
+cp -R "$repo/ui/macos/third-party/". "$repo/third-party/". "$licenses/"
+for grammar in TreeSitterNix TreeSitterPython TreeSitterJuliaScanner; do
+  mkdir -p "$licenses/$grammar"
+  cp "$repo/ui/macos/Sources/Grammars/$grammar/LICENSE" "$licenses/$grammar/"
+done
+cp "$repo/ui/macos/Sources/Grammars/LICENSE.tree-sitter" "$licenses/"
+cp -R "$repo/hostd/formatters/third-party" "$licenses/formatters"
 cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The common isolated frame host. Modules and libraries come from tsugumid over RPC.
@@ -98,8 +107,6 @@ cp -R "$repo/ui/macos/Resources/ja.lproj" "$repo/ui/macos/Resources/en.lproj" "$
 # The app carries one guest payload; the helper extracts it in private support.
 mkdir -p "$app/Contents/Resources/tsugumi-vm"
 cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$app/Contents/Resources/tsugumi-vm/"
-"$repo/ui/macos/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
-tar -xzf "$vm/vm-licenses.tar.gz" -C "$app/Contents/Resources/licenses"
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/ui/macos/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST

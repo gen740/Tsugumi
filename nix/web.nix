@@ -29,6 +29,9 @@ buildNpmPackage {
       ../ui/web/server
       ../ui/web/src
       ../ui/web/shared
+      ../ui/web/third-party
+      ../third-party/emscripten
+      ../third-party/flatbuffers
       ../ui/web/tsconfig.json
       ../ui/web/tsconfig.base.json
       ../ui/web/tsconfig.shared.json

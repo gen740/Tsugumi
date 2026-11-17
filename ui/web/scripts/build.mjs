@@ -14,6 +14,10 @@ if (!fs.existsSync(gen)) {
   process.exit(1)
 }
 fs.mkdirSync(path.join(out, 'public'), { recursive: true })
+fs.cpSync(path.join(root, 'third-party'), path.join(out, 'licenses'), { recursive: true })
+for (const component of ['flatbuffers', 'emscripten']) {
+  fs.cpSync(path.join(root, '../../third-party', component), path.join(out, 'licenses', component), { recursive: true })
+}
 // The module viewer (ui/shared/modules) and the plot libraries the page sends it,
 // served from /modules/. The viewer is sandboxed and loads nothing itself, so
 // its script goes inline.

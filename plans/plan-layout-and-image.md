@@ -40,7 +40,6 @@ These are the reasons for the changes below, not additional product features.
 | Transport must be reusable; `server.hh` exposes Project `Note`, visibility and generated request types, while client transports include `client.hh`. | A moved server would still know Cards and Agent messages. | Present code. Endpoint adapters remove protocol knowledge; ordered-loop tests detect sequencing regressions but do not prove all concurrency behavior. |
 | A development build must use the image for its current definition; build-app/CLI currently accept any existing vmlinux/rootfs pair. | New Tsugumi sources could silently run an older guest. | Existing existence-only checks become incorrect once code enters the image. Compare the evaluated full image identity and checksums before reuse; this detects mismatch/corruption, not malicious CI or all runtime bugs. |
 | Boot compilation and manual publication have failed (issue #293); `/init` still hashes `/source` and runs `nix build`. | Missing shipped source, untested guest binary, manual publish dependency. | Reported failures plus current code. Build once on Linux CI, consume the same artifact, delete source-on-boot. Card definitions may still build normally. |
-| Shipping the populated closure expands redistribution; inventory currently assumes nixpkgs packages and boot-only own scripts. | Tsugumi/hosq/local sources and additional libraries would be missing or misclassified. | Concrete `OWN`, nixpkgs attribute lookup, fixed-output-only source collection and `BUILD_FILES` limitations. Full closure inventory/source reconstruction addresses completeness; it is not a claim of legal certification. |
 | VZ uses separate kernel and block-device URLs (`SharedVM.configuration`). | A literal raw single disk cannot replace both inputs without a new boot architecture. | Present API calls. One distributable archive contains kernel+rootfs; helper extraction supplies both URLs. No split base/Tsugumi image or custom disk format. |
 | Pure renames change repository depth and source-derived Nix identities. | Filename grep alone misses ancestor walks, filtered sources, installed roots and zero-match scans. | Present constructors and filesets listed below. Inventory/build/resource checks catch these specific failures; no promise of bit-identical signed binaries. |
 
@@ -82,7 +81,6 @@ Recursive rows preserve suffixes; more specific rows and the split ledger overri
 | `macOS/Sources/{RPC,ClientC}/**`, `Plugins/FlatcPlugin` | Recommended D4: `client/swift/` minimal package for UI and VM; includes FlatcPlugin once, without AgentClient/renderer dependencies. This is protocol-aware client adaptation, keeping rpc strictly transport-only. |
 | `macOS/Sources/KeychainUI/**` | Minimal OS primitive under `hostd/platform/macos/`; process placement D1. Do not move SwiftUI or conversation DTOs with it. |
 | `macOS/Container/**` | `vm/guest/**`: kernel/config/provenance, boot/system Nix, store-health, versions, local image builder; delete vm-source.txt in A. |
-| `macOS/tools/{vm-inventory.py,vm-source-bundle.py}` | `vm/guest/tools/`; full-image inventory/source, independent of app assembly. Delete publish-vm.sh in A. |
 | `macOS/tools/build-host.sh` | `hostd/tools/build-macos.sh`; retain pinned native formatter/dylib packaging integration. |
 | `macOS/tools/build-vmctl.sh` | `vm/macos/tools/build-vmctl.sh`; independent VM package, signing and entitlements. |
 | `macOS/tools/release.sh` | `cli/release.sh`; repository version PR/tag helper. |
@@ -90,8 +88,8 @@ Recursive rows preserve suffixes; more specific rows and the split ledger overri
 | `macOS/CoreTests/**` | UI adapters stay `ui/macos/CoreTests`; `ExecutionBrokerBridgeTests`, `VMResetTests` → `vm/macos/Tests`; BinaryCache/SecretStore policy cases → host tests, retain OS/UI adapter cases. Include current `DocumentRevisionsTests` in UI operation coverage. |
 | `macOS/{Package.swift,Package.resolved,CoreTests/Package*}` | UI package/CoreTests at `ui/macos`; VM/RPC manifests prepared in A and moved to respective roots. Keep dependency pins unchanged. |
 | `protocol/**` | Keep all schemas including `local_worker.fbs`, `vm_host.fbs`, host operations, service common; generated outputs stay build outputs. |
-| Support roots | Keep `.agents`, `.claude-plugin`, `.github`, `cli`, `cmake`, `demos` (both languages and every nested external), `docs`, `nix`, `plugins`, `tests`, `third-party`. Only references change. |
-| Root files | Keep root build/flake/lock/VERSION/licenses/notices/README/RELEASING/AGENTS/ignore/attributes. Preserve `CLAUDE.md -> AGENTS.md`; no generated artifacts or worktree metadata moves. |
+| Support roots | Keep `.agents`, `.claude-plugin`, `.github`, `cli`, `cmake`, `demos` (both languages and every nested external), `docs`, `nix`, `plugins`, `tests`. Only references change. |
+| Root files | Keep root build/flake/lock/VERSION/LICENSE/README/RELEASING/AGENTS/ignore/attributes. Preserve `CLAUDE.md -> AGENTS.md`; no generated artifacts or worktree metadata moves. |
 
 ## Refreshed split ledger (A, before bulk relocation)
 
@@ -135,24 +133,13 @@ The following preserves the old S identifiers for review. S12 is closed and omit
 | --- | --- |
 | Resolve release revision | Refactor release.yml's existing version/tag validation into a first job returning immutable commit SHA, tag, version. Dispatch validates VERSION and tags once; tag trigger resolves that tag. Both Linux and Mac checkout that exact SHA. Preserve RC/latest behavior and VERSION-through-PR policy. |
 | Build image | Reusable image workflow/job on existing `ubuntu-24.04-arm` / aarch64-linux Nix setup. Build `.#packages.aarch64-linux.vm` and the production native/test packages at the same checkout. Cache kernel and dependencies via existing Cachix mechanisms; PR builds require no write token. Expand current ci-platform `vm` job (today only vm-system) to exercise final image assembly. |
-| CI artifact | Upload image, manifest/checksums, license inventory/archive and corresponding sources as one artifact set, named with evaluated guest identity, associated with immutable revision. A manifest carries identity, system, revision and filenames/checksums; it is not a replacement source list. No public vm-hash release used as artifact cache. Add image job to selected prerequisites/result gate; failed inventory/build prevents Mac packaging/publication. |
+| CI artifact | Upload image and manifest/checksums as one artifact set, named with evaluated guest identity, associated with immutable revision. A manifest carries identity, system, revision and filenames/checksums. No public vm-hash release used as artifact cache. Add image job to selected prerequisites/result gate; failed build prevents Mac packaging/publication. |
 | Native checks | Test binaries linked to the same Nix production archives as the image; do not rebuild a separate guest executable in the Mac job. Image closure membership/init checks run on Linux. A real VZ boot remains a Mac integration check, not something inferred from Linux package success. |
-| Mac release | `needs` resolved revision and successful image job; download that run's artifact directly, verify expected definition identity/checksums, stage it for build-app and package-macos. They consume local inventory, not a release URL that cannot exist yet. Release mode never silently builds or downloads a different image. |
-| Publish | Existing app release gets `tsugumi-vm.tar.gz`, `vm-manifest.json`, checksums, `vm-licenses.tar.gz` (inventory.json, license texts, kernel config), and `vm-sources.tar.gz` plus checksum, together with existing app/CLI assets. One publish job after all artifacts/checks; no `vm-<hash>` tags/releases or publish-vm step. |
+| Mac release | `needs` resolved revision and successful image job; download that run's artifact directly, verify expected definition identity/checksums, stage it for build-app and package-macos. They consume the local image artifact, not a release URL that cannot exist yet. Release mode never silently builds or downloads a different image. |
+| Publish | Existing app release gets `tsugumi-vm.tar.gz`, `vm-manifest.json` and checksums, together with existing app/CLI assets. One publish job after all artifacts/checks; no `vm-<hash>` tags/releases or publish-vm step. |
 | Development download | Builder evaluates current aarch64-linux vm-boot identity using full filtered native/guest definitions (includes dirty/untracked intended sources as current local builder does). Reuse matching local payload; otherwise locate a successful CI artifact with that identity using `gh`/Actions artifact APIs, download and verify. Optionally use the matching manifest/payload on an app release; never choose latest solely by tag. Auth unavailable, artifact expired, or no exact match → local build. Document `gh` authentication; no new public hosting service. |
-| Development local build | Retain `TSUGUMI_VM_BUILD=1` and Apple-container builder fallback; on a native/remote aarch64-linux builder run Nix directly. Build exactly the same vm output. Stage one payload+inventory with definition identity; update app/CLI scripts to call the resolver even if old files exist. `--check` and `--kernel` remain local builder utilities. |
-| Retention | Keep release image/inventory/corresponding source assets while released binaries are distributed; Actions artifacts are an expendable development cache. Stop producing new vm-hash releases; do not delete historic releases/source assets. |
-
-### Redistribution work (part of the image change, not deferred)
-
-| Current code limitation | Required implementation / validation |
-| --- | --- |
-| vm-inventory.py inspects EROFS /store-paths and adds kernel separately | Retain that actual-image approach; accept explicit extracted image directory and evaluated derivation identity so Linux CI and local builds use one tool. Walk the full recursive derivation graph, record all runtime outputs and kernel; no boot-only package inventory. |
-| `declared_licenses` assumes every non-OWN name is a nixpkgs attr | Resolve actual output owners, nixpkgs aliases and local derivations explicitly. Include Tsugumi's MIT license and own generated scripts, hosq and other flake-input sources; do not mark all unfamiliar outputs OWN. Existing kernel-config extraction stays. Unknown/missing source or license fails release inventory. |
-| Fixed-output source collection misses local source filesets/flake inputs; BUILD_FILES has only nix + Container | Include exact Tsugumi build sources (all native component roots, protocol, SDK, embedded Agent/template inputs, CMake and Nix recipes), pinned flake inputs including hosq, upstream sources, fetched and nixpkgs-resident patches/configuration. Derive from actual build source inputs/manifests and compare membership; no replacement vm-source.txt to keep by hand. Source bundle must reconstruct the image from its unpacked tree, not rely on the checkout or an unrecorded input. |
-| Source script currently `git archive HEAD` with small allowlist | Release uses immutable checked-out commit; local dirty builds must inventory/archive the same staged source the local Nix build used, never label HEAD as that binary's source. Include full recipes and rebuild instructions. Separately keep notices of Mac host/Swift/npm/formatters. |
-| Boot-only README links to vm-hash release | Link inventory/source to app release tag, record image identity and pin; update THIRD_PARTY_NOTICES, LicenseAudit, RELEASING and asset lists. Bundle expanded license texts/inventory in app and CLI. Corresponding source is a release attachment, not runtime VM source. |
-| Existing source archive has an explicit 2 GiB asset guard | Measure the full compressed archive on runner before deciding capacity. If it exceeds the existing per-asset limit, split **the source archive only** into numbered chunks plus checksums/reassembly instructions. One image payload is still fixed; do not silently omit sources. No speculative multi-image system. |
+| Development local build | Retain `TSUGUMI_VM_BUILD=1` and Apple-container builder fallback; on a native/remote aarch64-linux builder run Nix directly. Build exactly the same vm output. Stage one payload+manifest with definition identity; update app/CLI scripts to call the resolver even if old files exist. `--check` and `--kernel` remain local builder utilities. |
+| Retention | Keep release image assets while released binaries are distributed; Actions artifacts are an expendable development cache. Stop producing new vm-hash releases; do not delete historic releases/source assets. |
 
 ### Delete and replace together
 
@@ -161,9 +148,9 @@ The following preserves the old S identifiers for review. S12 is closed and omit
 | `macOS/Container/vm-source.txt`; bundled `tsugumi-source` / CLI `vm-source` | build-app.sh, package-macos.sh; VMImage source/sourceEntries/sourceList and source staging; `tsugumi-source` virtiofs device, /source directory and mount. |
 | `TSUGUMI_VM_SOURCE`, host `--vm-source` / `--vm-source-entry`, helper `--source` / `--source-entry` | HostRuntimeConfiguration, host main/options/vm_process, VMHost main, cli/tsugumi-macos, web/server main/environment, tests/doubles. Do not remove unrelated source-writing APIs or signal DispatchSource. |
 | `/init` compile-on-boot source hash/build/cache path | vm-boot.nix, old vm-system comments, Swift/Web stage "building Tsugumi in the VM", EnvironmentManager/SharedVM stage mapping, localized strings/progress tests and docs. Keep a truthful supervisor-start stage. |
-| `macOS/tools/publish-vm.sh`, `TSUGUMI_VM_RELEASES`, vm-hash URL construction | build-image.sh, app/CLI license fetches, inventory README/source links, release/static/license tests and documents. The separate repository route is already retired, but verify no active reference remains. |
+| `macOS/tools/publish-vm.sh`, `TSUGUMI_VM_RELEASES`, vm-hash URL construction | build-image.sh, app/CLI image resolution, release/static tests and documents. The separate repository route is already retired, but verify no active reference remains. |
 | Existence-only local image reuse and boot-only vm-version contract | Resolver/manifest plus helper extraction tests; preserve explicit local build option, not old payload compatibility. |
-| Static assertion that vm-source.txt covers Nix inputs | Replace with final image closure/source-bundle membership and no-runtime-source/compile-path checks; keep VERSION/build-machine-path checks over new source roots. |
+| Static assertion that vm-source.txt covers Nix inputs | Replace with final image closure membership and no-runtime-source/compile-path checks; keep VERSION/build-machine-path checks over new source roots. |
 
 ## Commit schedule and worker allocation
 
@@ -185,13 +172,13 @@ A0 first partitions CMake and test source registration by concern without changi
 | A9 `Centralize remaining credential decisions` | S9: host Settings/SecretStore/platform primitive, Provider/CoreHostClient/ApplicationSettings, web providerKeys/keychain, host protocol if needed, isolated secret tests. Preserve already-central policy; D1 determines minimal primitive placement. | A7,A8 | `tsugumi_host_settings_tests`. | No guaranteed parallel partner; owns cross-platform credential contracts. |
 | A10 `Separate Swift VM and RPC products` | S8/S11: Package manifests/locks, RPC/ClientC/plugin, VMHost/VMCtl/Launcher value imports, CoreTests allocation, helper entitlements, build-host/build-app/build-vmctl/package-macos wiring at existing roots. VM and RPC package staging dirs remain under macOS until B. | A8,A9 | `swift build --package-path macOS/VM --product tsugumi-vmhost` (new prepared package). | A11 after exclusive TS files assigned; no common manifests/scripts. |
 | A11 `Separate Web shared contracts from browser and server` | S11 TS: tsconfig/project refs and scripts, server shared imports, src/shared/i18n split, tests and nix/web filesets; no credential/environment ownership edits. No React in shared wire target. | A7,A9 | `nix build .#checks.aarch64-linux.web`. | A10; reserve web/server main/environment and CLI scripts for A12. |
-| A12 `Ship the release-built guest closure` | Entire #293 contract above: packages.nix, Container boot/system/builder, inventory/source tools, release/CI, app/CLI payload packaging, host/helper source-option removal, VMImage/archive install, Web launch/progress, notices/static/VM tests; delete vm-source/publish-vm. All producers/consumers switch together. | A5,A10,A11 | `nix build .#packages.aarch64-linux.vm` on Linux builder. | None; cross-cutting integration commit. Keep code review sections by image/inventory/CI/consumer, not partial runnable commits. |
+| A12 `Ship the release-built guest closure` | Entire #293 contract above: packages.nix, Container boot/system/builder, artifact tools, release/CI, app/CLI payload packaging, host/helper source-option removal, VMImage/archive install, Web launch/progress, static/VM tests; delete vm-source/publish-vm. All producers/consumers switch together. | A5,A10,A11 | `nix build .#packages.aarch64-linux.vm` on Linux builder. | None; cross-cutting integration commit. Keep code review sections by image/CI/consumer, not partial runnable commits. |
 | A13 `Close the pre-move integration baseline` | Finish S11 component manifests/installed test support and package source lists; remove interim core-cycle links/exposed headers; fix only residual split integration. Freeze source membership, products, test inventory and resources for B. | A1–A12 | `nix build .#ci-core`. | None. If a residual behavior change is needed, separate it before this checkpoint. |
 | B1 `Move components to their program owners` | One pure git-mv commit using frozen file map, including manifests; zero content edits/deletions/additions beyond renames. Same blob IDs/modes. | A13 | Mechanical blob/mode/map comparison only; **not buildable alone** (D5). | None; repository-wide move barrier. |
 | B2 `Update paths for the program layout` | All integration rows below; path/include/package identity changes only. No source-list policy or protocol/behavior changes, no pin/version churn. | B1 | `nix build .#ci-core` (full matrix follows). | None; same integrator as B1. |
 | C1 `Enforce native ownership boundaries` | Component include/link/install manifests, tests/static dependency checks + small negative-include/configure probes, installed-source/export checks; update CI invocation. | B2 | New `tsugumi-boundaries` CMake check target. | C2 (different native vs Swift/TS manifests and test modules). Root CI invocation belongs C3. |
 | C2 `Enforce Swift and Web dependency boundaries` | Swift package graph/import test, TS resolved-import/browser metafile check; dedicated static modules. No new ownership refactor. | B2 | `nix build .#checks.aarch64-linux.web`. | C1. |
-| C3 `Gate the integrated layout and image` | CI selector/result gate integration, final docs/maps and release/source reconstruction instructions; only shared gate files. | C1,C2 | `tests/check-fast.sh` (required before push). | None. Full acceptance matrix below before merging. |
+| C3 `Gate the integrated layout and image` | CI selector/result gate integration, final docs/maps and release instructions; only shared gate files. | C1,C2 | `tests/check-fast.sh` (required before push). | None. Full acceptance matrix below before merging. |
 
 Parallel waves (integration order remains the table): A0 → A1 with A3 → A2 → A4 → A5 with A7 → A6 → A8 → A9 → A10 with A11 → A12 → A13 → B1+B2 → C1 with C2 → C3. Explicitly named overlap exceptions above require exclusive file assignment, not conflict resolution after simultaneous edits. No separate worker should change prompts, operations, execution ownership or VM lifecycle during the move barrier.
 
@@ -208,7 +195,7 @@ Behavioral #293 edits have already happened in A12. This table includes survivin
 | Guest vm/guest Nix/scripts/tools | Relative root depth/imports, build-image staging/dist path, inventory/source recipes, own-script provenance and rebuilt-source instructions. Archive identity legitimately changes if derivation paths change; rebuild at final layout, do not relabel old payload. |
 | Source staging/archive manifests | CLI Linux git archive allowlist, native/Web/test Nix filesets, SDK installed worker sources, local builder and tests/ci-local staging. Final tar must evaluate flake outputs without obsolete paths. No all-repository source filter as a shortcut. |
 | Swift Package/Plugin/ClientC/CoreTests/VM manifests | Flatc protocol root, client headers/default lib directory, package dependency identities (`macOS` → new names), shared resources and test support. All `#filePath` ancestor walks gain depth. Build VM/RPC without renderer dependencies; lockfile pins unchanged. |
-| ui/macos/build-app + tools; hostd/tools/build-macos; vm/macos/tools; cli/package-macos | Native target output (`build-host/core/tsugumi-hostd` changes), independent Swift bin dirs/resource bundles, dylib install names, formatter resources, icons/help/math fonts, localization and VM payload licenses. Sign helpers using VM-owned entitlement file; preserve development identity/release signing policy. |
+| ui/macos/build-app + tools; hostd/tools/build-macos; vm/macos/tools; cli/package-macos | Native target output (`build-host/core/tsugumi-hostd` changes), independent Swift bin dirs/resource bundles, dylib install names, formatter resources, icons/help/math fonts, localization and VM payloads. Sign helpers using VM-owned entitlement file; preserve development identity/release signing policy. |
 | Web scripts/package/tsconfigs/tests | Repo ancestor depth, docs/icon/player imports, ui/shared modules/templates, Wasm output/build script location, Node/npm CWD, generated bindings, native operation-driver location. |
 | Web server main/coreHost/paths/environment/mcp; src/shared | Checkout `ui/web/dist` root differs from installed `web/dist`. Separate explicit checkout roots from injected installed roots; native host/core fallback output paths, SDK/demos/Agent catalog. Preserve serverBuild's runtime identity and old-server refusal. No new automatic shutdown of other installations. |
 | agent Shared generator → hostd/agent/Shared/generate.py | Actual current outputs: Swift Shared.swift and demos/reference/cards.md; HERE parent depth, banner and SDK source path. No obsolete MCP_OUT assignment. Generate in disposable staging; `--check` and byte comparison except declared paths. |
@@ -217,10 +204,10 @@ Behavioral #293 edits have already happened in A12. This table includes survivin
 | .github workflows/actions | Commands, reusable image workflow paths, native/Web/Swift cache inputs and new VM/RPC package manifests/resolved/source hashes, upload/download names. Exact release revision and same-artifact handoff preserved. |
 | tests/ci/select_jobs.py + test_ci_selection | Specific ui/macos/ui/web/ui/shared rules before generic ui; vm/macos/guest, util/rpc, tsugumid/document, hostd/agent. rpc affects native/Wasm/Web/player; guest affects VM/host/SDK/Swift; Agent catalog affects native/Web/Swift/prompt. Keep unknown=ALL, no-renames diff and prerequisite/result semantics. Run full CI for combined move. |
 | tests scripts and suite paths | check-fast/ci-local/ci-remote-worker/run-isolated, core/python/remote/bench/prompt roots, source scans/binary defaults/CWDs/fixtures. Tests stay tests; do not recreate removed tests or pin prompt wording. |
-| tests/static scans | Agent/CI/en_strings/host-state/licenses/marimo/history/release/templates/first-start/script-launch path assumptions. Assert expected scan roots are nonempty; VM tests now assert image/source bundle coverage, not runtime source list. |
+| tests/static scans | Agent/CI/en_strings/host-state/marimo/history/release/templates/first-start/script-launch path assumptions. Assert expected scan roots are nonempty; VM tests now assert image coverage, not runtime source list. |
 | docs/site player/build/harvest/svg and src/lib/tests | WEB constant/npm imports, source-link mapping, bundles/help/player assets; keep published pages, URLs, demo data and player-data routes unchanged. |
 | Plugins and CLI | marketplace/plugin discovery unchanged; checkout MCP fallback → ui/web/dist, installed fallback unchanged. install scripts/help/release helper references, Linux source archive membership. Test copied plugin/CLI outside checkout. |
-| Docs/instructions | AGENTS map + background run/build commands; README, RELEASING, notices; docs HostPresentation/INSTALL/LicenseAudit/Versions/Visualization/WebUI/VMStoreHealth/features/security/claude-code; tests/bench/tool READMEs and optimize-tsugumi-prompts skill paths. Philosophy only link repair. No new prompt content. |
+| Docs/instructions | AGENTS map + background run/build commands; README, RELEASING; docs HostPresentation/INSTALL/Versions/Visualization/WebUI/VMStoreHealth/features/security/claude-code; tests/bench/tool READMEs and optimize-tsugumi-prompts skill paths. Philosophy only link repair. No new prompt content. |
 | Ignore/attributes/symlinks | Swift .build/.swiftpm caches in all packages, generated grammar paths/modes, case-sensitive Linux paths, CLAUDE symlink. No retained obsolete core/macOS/web/agent directories or compatibility links. |
 
 Search all tracked/hidden text and constructed paths: slash literals, split path joins, parent indexing, CWD assumptions and build output names. Use the frozen file map to distinguish repository prefixes from Card/project paths or historical citations; never globally replace words such as core/web in datasets or documents.
@@ -250,8 +237,7 @@ Search all tracked/hidden text and constructed paths: slash literals, split path
 | Final automated checks | Full tests/check-fast.sh before push; normal CI matrix (aarch64/x86 Linux + Darwin), docs/site/player, client-wasm, installed SDK/CLI/plugin smokes, Swift UI/CoreTests/VM/RPC checks. Use existing isolated runner. No real-model prompt evaluation for path changes. |
 | Guest proof | Fresh isolated VM with no source share: prebuilt supervisor ready and compiled binaries present, no boot `nix build`/source-flake evaluation; terminal and real Card execution with workerd slots/descriptor handoff. Nix may build the Card. Test with network blocked and x86=none/native smoke; separately exercise Rosetta/qemu when available. |
 | Store/lifetime proof | Clean stop skips dirty verification as before; interrupted stop checks/repairs or reports failure; image upgrade checks full closure. Quit/TERM ends host/helper/guest in order. Test update with existing history/store, reset retention, concurrent projects/shares. Use only temporary test stores/support, never user's real VM. |
-| Packaging proof | Signed copied app and CLI outside checkout/no host Nix; codesign/entitlements/dylib checks, app/localized resources/help/module/player coverage; app and CLI manifest identify same image. Background run-ui only. Verify failed/missing/mismatched image or inventory blocks release. |
-| Source/license proof | Extract image and reconcile all store paths plus kernel to inventory; inspect generated own/input/library licenses. Rebuild from extracted corresponding sources/recipes without checkout to verify complete source membership. Record compressed image/source/app sizes and runner build/cache timings. Missing tools/hardware checks remain explicitly incomplete. |
+| Packaging proof | Signed copied app and CLI outside checkout/no host Nix; codesign/entitlements/dylib checks, app/localized resources/help/module/player coverage; app and CLI manifest identify same image. Background run-ui only. Verify failed/missing/mismatched image blocks release. |
 
 ## Remaining owner decisions (refreshed Q2–Q8)
 
@@ -306,7 +292,7 @@ The first requested `git mv` was refused while creating `/private/var/piagent/wo
 1. Resolve the move constraint, then separate and relocate each responsibility together with its manifest and dependency enforcement. The original destination/split ledgers remain applicable; no final-layout deviation has yet been implemented. Draft native move/manifest scripts exist in `/tmp/layout-native.py` and `/tmp/layout-manifests.py`; they were not applied and are **unverified drafts**, not a buildable implementation.
 2. Complete util/JSON, generic RPC/TLS/client transport, document, worker values/store/authorization and narrow runtime support in their final roots. Remove broad/private source exports. Host needs generic byte transport, not the project notification server; keep project subscription/visibility/sequence state in the project endpoint.
 3. Complete hostd/agent, Host cache/credential policy and the remaining project runtime; split the independent `client/swift` and VM packages, then move UI/shared/Web/Mac resources and repair checkout-versus-installed paths.
-4. Complete the guest image in `vm/guest`, VM mechanics in `vm/macos`, source/license reconstruction, release artifact handoff and final-layout image identity. Preserve D1, D3, D4, one payload and the existing x86 choice.
+4. Complete the guest image in `vm/guest`, VM mechanics in `vm/macos`, release artifact handoff and final-layout image identity. Preserve D1, D3, D4, one payload and the existing x86 choice.
 5. Update SDK/CLI/Nix/tests/docs/CI source sets and path construction, add the planned dependency gates, resolve the catalog-budget failure, and run the acceptance suites in the final layout. Real VM/app/Seatbelt/packaging checks still need a capable environment.
 
 ## Active continuation (2026-11-17)
@@ -352,7 +338,7 @@ This is a source-selection issue, not evidence of a missing component.
   when constructing a new VM. The existing validation/privacy/frozen-snapshot
   cases and private-cache Nix probe are being ported to the native owner.
   New Host/VM adapter fields were regenerated with the wire fixtures.
-- The guest build, provenance and redistribution tools are in `vm/guest`.
+- The guest build and artifact tools are in `vm/guest`.
   The image remains one archive with the kernel and EROFS attachment; boot
   starts the prebuilt runtime and has no source share or Tsugumi compilation.
   Rosetta / explicit qemu / none is unchanged.
@@ -375,7 +361,7 @@ against the downloaded image after assembling the signed app. This addresses
 the concrete #293 boot/runtime failures: compiling Linux binaries alone did not
 exercise the shipped image or descriptor handoff. The smoke can catch those
 startup/execution failures, but does not prove offline boot, image upgrade/store
-repair, all x86 modes, or source-bundle reconstruction. It has not run here.
+repair or all x86 modes. It has not run here.
 
 The sandbox grants read-only access to `.agents`. Its
 `skills/optimize-tsugumi-prompts/SKILL.md` therefore still names the old Agent
@@ -448,7 +434,7 @@ snapshot were inspected before continuing validation.
   can pass while the wrapper exits nonzero. Clean process cleanup/isolation is
   not established by these runs.
 - App/VM/Docker execution, Linux image build/boot, copied signed packaging,
-  offline/x86/store-upgrade scenarios and source-bundle reconstruction require
+  offline/x86/store-upgrade scenarios require
   a capable environment and were not run here. The protected skill path patch
   remains for the owner to apply.
 - Unused candidate noticed, retained as requested:
@@ -501,8 +487,7 @@ A declaration or a test alone was not treated as a production caller.
   search finds no direct caller. Cross-platform source and packaging references
   supplied no additional proven dead target or platform path.
 - The compile-on-boot source share, `vm-<hash>` publication and idle self-exit
-  implementations are already absent. Current `vm-source-bundle.py` produces
-  release redistribution sources; history format refusal/explicit archival is
+  implementations are already absent. History format refusal/explicit archival is
   active recovery behavior, not a compatibility reader. Similar worker-loading
   tests cover different standby/reuse boundaries; the Python AST comparison
   found no identical test bodies to delete.

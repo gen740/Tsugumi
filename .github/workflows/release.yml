@@ -194,8 +194,8 @@ jobs:
           ```
           NOTES
           fi
-          gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg cli/install.sh cli/install.ps1 \
+          gh release create "$TAG" LICENSE dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg cli/install.sh cli/install.ps1 \
             dist/tsugumi-macos-arm64.tar.gz dist/tsugumi-macos-arm64.tar.gz.sha256 \
             dist/tsugumi-linux.tar.gz dist/tsugumi-linux.tar.gz.sha256 \
-            dist/tsugumi-vm/* \
+            dist/tsugumi-vm/tsugumi-vm.tar.gz dist/tsugumi-vm/vm-manifest.json dist/tsugumi-vm/SHA256SUMS \
             --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes ${release_flags[@]+"${release_flags[@]}"}

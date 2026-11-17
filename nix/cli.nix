@@ -19,7 +19,9 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
     };
   }
   ''
-    mkdir -p $out/bin $out/share
+    mkdir -p $out/bin $out/share/licenses/node
+    cp -R ${../third-party}/. $out/share/licenses/
+    cp ${../cli/third-party/node-linux/LICENSE} $out/share/licenses/node/LICENSE
     ln -s ${web}/share/tsugumi $out/share/tsugumi
     makeWrapper ${nodejs}/bin/node $out/bin/tsugumi \
       --add-flags "${web}/share/tsugumi/ui/web/dist/server.js --open --reuse" \
