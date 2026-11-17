@@ -1,3 +1,5 @@
+# TODO(#316): build a 3D SDK (primitives, camera, typed array inputs) on these
+# WebAssembly/WebGPU views; only a test fixture uses them today.
 # One Emscripten main module for every Card; each Card supplies only a side module.
 { pkgs }:
 let
