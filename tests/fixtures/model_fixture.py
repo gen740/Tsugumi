@@ -31,7 +31,7 @@ project_inspect -> one project_save that changes each Card and marks its
 comments resolved, adding an input Card for a comment saying "add a Card
 <id>" and a comment of its own for one saying "leave a comment" -> run -> report.
 
-The guide (its system prompt begins "You are Tsugumi, the guide bird"): a
+The guide (its role offers guide_show): a
 question gets project_inspect -> an attempt at project_save (the guide only
 reads: it is refused) -> guide_show pointing at the run button with a run
 button -> a line saying how many Cards it read, whether the save was refused
@@ -94,6 +94,7 @@ import socketserver
 import threading
 import time
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -163,9 +164,14 @@ def system_text(body):
 
 
 def asks_summary(body):
-    """A summary-only request interprets quoted history as data, not a task."""
+    """Detect the appended handoff instruction on the normal request prefix."""
+    messages = body.get("messages", body.get("input", []))
+    last = messages[-1] if messages else {}
+    continuation = any(b.get("text", "").startswith("Create a short handoff for the next model continuation")
+                       for b in blocks(last))
     instruction = body.get("instructions", "") or system_text(body)
-    return not body.get("tools") and re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None
+    return continuation or (not body.get("tools") and
+                            re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None)
 
 
 def unanswered_tool_uses(messages):
@@ -577,7 +583,6 @@ def decide_stale_read(messages, start):
     return ("text", f"Refused: {value.get('kind')}." if is_error else f"Checked at revision {value.get('rev')}.")
 
 
-GUIDE = "You are Tsugumi, the guide bird"
 EVENT = re.compile(r"\[Event\] The run (\S+) ended: (\w+)")
 
 
@@ -627,7 +632,7 @@ def decide(messages, system="", tools=()):
     broken, broken_start = last_broken_task(messages)
     if broken:
         return decide_broken(messages, broken, broken_start)
-    if system.startswith(GUIDE):
+    if "guide_show" in tools:
         return decide_guide(messages, tools)
     if h := HELPER.search(system):
         return decide_helper(messages, h.group(1), [c.strip() for c in h.group(2).split(",")])
@@ -791,6 +796,7 @@ def plan_violations(body: dict) -> list[tuple[str, str]]:
 class Handler(BaseHTTPRequestHandler):
     server_version = "TsugumiModelFixture/1"
     slow = 0.0
+    stream_release = None
     drop_once = False
     dropped = False
     cut_once = False
@@ -1295,6 +1301,15 @@ class Handler(BaseHTTPRequestHandler):
     def _event(self, name, data):
         self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())
         self.wfile.flush()
+        # A streamed text chunk is visible before the fixture waits. Tests can
+        # inspect/detach/cancel the UI without racing a wall-clock delay.
+        if Handler.stream_release and (name == "response.output_text.delta" or
+                (name == "content_block_delta" and data.get("delta", {}).get("type") == "text_delta")):
+            deadline = time.monotonic() + 60
+            while not Handler.stream_release.exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("model stream release was not signalled")
+                time.sleep(0.01)
         if Handler.slow:
             time.sleep(Handler.slow)
 
@@ -1329,6 +1344,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--slow", type=float, default=0.0)
+    ap.add_argument("--stream-release", type=Path, help="wait after each text chunk until this file exists")
     ap.add_argument("--drop-once", action="store_true")
     ap.add_argument("--cut-once", action="store_true", help="cut the first project_save reply at the output limit")
     ap.add_argument("--window-cut-once", action="store_true", help="end the first project_save reply at the context window")
@@ -1340,6 +1356,7 @@ def main():
     ChatGPT.refuse_model_lists = a.refuse_model_lists
     ChatGPT.expires = a.chatgpt_expires
     Handler.slow = a.slow
+    Handler.stream_release = a.stream_release
     Handler.drop_once = a.drop_once
     Handler.cut_once = a.cut_once or a.window_cut_once
     if a.window_cut_once:

@@ -26,27 +26,17 @@ extra-substituters = https://tsugumi.cachix.org
 extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI="
 step() { printf '\n== %s\n' "$1"; }
 core_run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
-agent_checks() {
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_peer_tls_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
-}
-core_checks() {
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"
-  core_run python3 -m pytest -q --core-report -m 'not environment' -n auto --dist load --durations=40 tests/core
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_native_contract_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_execution_service_tests"
-  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_worker_staging_tests"
-}
+system_name() { nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem; }
+agent_checks() { bash tests/ci/run-suite.sh agent "$(system_name)"; }
+core_checks() { bash tests/ci/run-suite.sh core "$(system_name)"; }
 
 linux_job() {
+  export TSUGUMI_FULL_RULES=1 # This pass represents CI's canonical full Linux job.
   step "Build or fetch the native runtime, tests and Web CLI"
-  nix --extra-experimental-features 'nix-command flakes' build --no-link .#ci-core .#cli
-  nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#ci-core .#cli
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   local web system sdk_python
-  web=$(nix --extra-experimental-features 'nix-command flakes' build '.#web^out' --no-link --print-out-paths)
+  web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
   step "Public Agent RPC tests"
   agent_checks
@@ -54,20 +44,21 @@ linux_job() {
   core_checks
   step "Web UI typecheck and behavior contracts"
   system=$(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem)
-  nix --extra-experimental-features 'nix-command flakes' build --no-link ".#checks.$system.web"
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link ".#checks.$system.web"
   step "Core integration tests with the real host environment"
   core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
-  sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build .#ci-python --no-link --print-out-paths)
+  sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
   core_run "$sdk_python/bin/python3" -c 'import matplotlib, plotly, altair'
-  # The adapter tests start resident services and a Web server (see ci-platform.yml): serial.
-  adapters=(tests/python/test_claude_code_plugin.py tests/python/test_web_server.py tests/python/test_cli.py)
-  core_run "$sdk_python/bin/python3" -m pytest -q -m 'not static' -n auto --dist loadfile --durations=40 tests/python \
-    "${adapters[@]/#/--ignore=}"
-  core_run "$sdk_python/bin/python3" -m pytest -q "${adapters[@]}"
+  bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
+  bash tests/ci/run-suite.sh adapters "$system"
+  if [[ "${TSUGUMI_LOCAL_REMOTE:-1}" == 1 ]]; then
+    step "Real remote worker execution"
+    bash tests/ci-remote-worker.sh
+  fi
   if [ "$system" = aarch64-linux ]; then
     step "Cache the VM runtime"
-    nix --extra-experimental-features 'nix-command flakes' build --no-link .#vm-system
+    nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#vm-system
   fi
   step "Prompt probe scoring (offline)"
   python3 -m unittest discover -s tests/prompt
@@ -76,9 +67,9 @@ linux_job() {
 linux_in_container() {
   local image=nixos/nix:latest
   step "Linux job in a container ($image)"
-  # The tracked files as they are now (a file not yet added is left out, as a
-  # commit would leave it out); macOS tar leaves out its ._ resource files.
-  git ls-files -z -c |
+  # Include new non-ignored files and omit tracked deletions, just like the
+  # staged-copy build. macOS tar leaves out resource forks.
+  git ls-files -z -co --exclude-standard |
     python3 -c 'import os, sys; sys.stdout.buffer.write(b"".join(p + b"\0" for p in sys.stdin.buffer.read().split(b"\0") if p and os.path.lexists(p)))' |
     COPYFILE_DISABLE=1 tar --null -T - -cf - |
     docker run --rm -i --privileged -v tsugumi-ci-nix:/nix "$image" bash -c '
@@ -87,14 +78,15 @@ linux_in_container() {
       git config --global --add safe.directory /src
       git init -q && git add -A
       echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
-      bash tests/ci-local.sh linux'
+      # The image has no ps, which the isolated test runner uses to clean up.
+      nix shell --inputs-from . nixpkgs#procps -c bash tests/ci-local.sh linux'
 }
 
 mac_job() {
   step "Build-tool plugin warnings"
   bash macOS/tools/check-plugin-warnings.sh
   step "Build or fetch the native runtime and public RPC tests"
-  nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   step "Public Agent RPC tests"
   agent_checks
   step "Core RPC behavior tests"
@@ -111,8 +103,8 @@ mac_job() {
 
 case "${1:-all}" in
   agent)
-    nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
-    agent_checks ;;
+    nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
+    TSUGUMI_FULL_RULES=1 agent_checks ;;
   mac) mac_job ;;
   linux) if [ "$(uname)" = Linux ]; then linux_job; else linux_in_container; fi ;;
   all)

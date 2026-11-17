@@ -14,13 +14,18 @@ struct FileJson {
 };
 
 struct InvocationJson {
-  schema::t::String<"project_id"> project_id;
   schema::t::String<"call_sha256"> call_sha256;
   schema::t::String<"archive_sha256"> archive_sha256;
   schema::t::Array<"files", schema::Obj<FileJson>> files;
   schema::t::Array<"directories", schema::v::String> directories;
   schema::t::Bool<"network"> network;
   schema::t::Uint64<"implementation_index"> implementation_index;
+};
+
+struct TransferJson {
+  schema::t::String<"name"> name;
+  schema::t::Uint64<"done"> done;
+  schema::t::Uint64<"total"> total;
 };
 
 struct EnvironmentJson {

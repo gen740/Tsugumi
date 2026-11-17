@@ -37,7 +37,8 @@ struct Turns {
                               const std::string&, std::stop_token,
                               const std::string&)>
         run_helper;
-    std::function<void(const std::string&)> cancel_shells;
+    std::function<void(const std::string&)> cancel_file_tools;
+    std::function<bool(const std::string&, const std::string&, std::stop_token)> excluded = {};
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
@@ -58,6 +59,11 @@ struct Turns {
   auto Summarize(const std::string& id, const ProviderConfig& config,
                  const std::string& instruction, std::vector<Message> messages)
       -> std::string;
+  auto SkillContent(const std::string& id,
+                    const std::vector<std::string>& names, bool automatic,
+                    std::stop_token stop,
+                    std::string* trusted_project = nullptr) -> ContentBlock;
+  auto RequireSkillTrust(const std::string& path) -> void;
   auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* p,
                    std::stop_token stop, std::string& task,
                    std::string& authorization) -> ContentBlock;
@@ -84,6 +90,7 @@ struct Turns {
   Dependencies dependencies;
   std::map<std::string, std::shared_ptr<std::jthread>> jobs;
   std::set<std::string> running;
+  std::map<std::string, std::shared_ptr<ContextUsage>> context_usage;
   std::map<std::string, std::shared_ptr<ThoughtSchedule>> thoughts;
 };
 }  // namespace tsugumi::agent

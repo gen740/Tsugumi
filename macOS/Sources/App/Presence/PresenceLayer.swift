@@ -32,8 +32,9 @@ struct PresenceGeometry {
   var card: (CardKey) -> CGRect?  // nil: not in the scope shown
   var wire: (AgentPresence.Wire) -> Path?
   var dotted: (AgentPresence.Wire) -> Bool = { _ in false }
-  var screen: (CGPoint) -> CGPoint
-  var zoom: Double
+  let camera: CanvasCamera
+  func screen(_ point: CGPoint) -> CGPoint { camera.screen(point) }
+  var zoom: Double { camera.zoom }
   /// The Cards and frames of the scope, which a panel keeps clear of if it can.
   var obstacles: () -> [CGRect] = { [] }
 }
@@ -74,8 +75,7 @@ func threadPath(_ route: Path, progress: Double, sag: Double) -> Path {
 }
 
 /// Where the bird is during each scene: on a Card's top edge while the Agent
-/// reads it, along the writing line while a Card is written out, at the head
-/// of the thread while a wire is threaded; it flies between them unhurried.
+/// reads or changes it. Only visits fly; saves and runs take their place at once.
 @MainActor
 struct Choreography {
   let presence: AgentPresence
@@ -85,22 +85,8 @@ struct Choreography {
     g.card(k).map { CGPoint(x: $0.minX + 26, y: $0.minY) + BirdMetrics.feetToCenter }
   }
 
-  func writing(_ k: CardKey, _ u: Double) -> CGPoint? {
-    g.card(k).map { CGPoint(x: $0.minX + $0.width * CGFloat(u), y: $0.midY) + BirdMetrics.beakToCenter }
-  }
-
-  func head(_ w: AgentPresence.Wire, _ p: Double, sag: Double) -> CGPoint? {
-    g.wire(w).flatMap { threadPath($0, progress: max(0.02, p), sag: sag).currentPoint }.map { $0 + BirdMetrics.beakToCenter }
-  }
-
-  /// Where a scene leaves the bird.
-  func end(of s: AgentPresence.Scheduled) -> CGPoint? {
-    switch s.beat {
-    case .visit(let k), .compose(let k), .run(let k), .write(let k, false): perch(k)
-    case .write(let k, true): writing(k, 1)
-    case .thread(let w): head(w, 1, sag: 0)
-    }
-  }
+  /// A save is a simultaneous cue; the bird never traces individual wires.
+  func end(of s: AgentPresence.Scheduled) -> CGPoint? { perch(s.beat.card) }
 
   /// Without motion: at each scene's place at once, no flight.
   func still(at t: Date) -> AvatarPose? {
@@ -121,14 +107,8 @@ struct Choreography {
   func pose(at t: Date) -> AvatarPose? {
     guard let (cur, prev) = presence.current(at: t) else { return nil }
     let local = t.timeIntervalSince(cur.start)
-    // Nothing follows: it settles onto the top edge of the Card it was at.
-    if local > cur.length + 0.2, let from = end(of: cur), let to = perch(cur.beat.card) {
-      let u = (local - cur.length - 0.2) / 1.0
-      if u < 1 && from != to {
-        let e = AgentPresence.rise(u)
-        let p = lerp(from, to, e)
-        return AvatarPose(center: CGPoint(x: p.x, y: p.y - CGFloat(20 * sin(.pi * e))), mood: .flying)
-      }
+    // Finishing/superseding a step also finishes any flight immediately.
+    if local >= cur.length, let to = perch(cur.beat.card) {
       return AvatarPose(center: to, mood: .perched)
     }
     let fly = { (a: CGPoint, b: CGPoint, u: Double) -> CGPoint in
@@ -136,31 +116,16 @@ struct Choreography {
       let p = lerp(a, b, e)
       return CGPoint(x: p.x, y: p.y - CGFloat(20 * sin(.pi * e)))
     }
-    typealias T = AgentPresence.Timing
+    guard let to = perch(cur.beat.card) else { return nil }
     switch cur.beat {
-    case .visit(let k), .compose(let k), .run(let k), .write(let k, false):
-      guard let to = perch(k) else { return nil }
+    case .save: return AvatarPose(center: to, mood: .writing)
+    case .run: return AvatarPose(center: to, mood: .reading)
+    case .visit, .compose:
       let from = prev.flatMap(end) ?? to
-      if local < 1.0 && from != to { return AvatarPose(center: fly(from, to, local / 1.0), mood: .flying) }
-      switch cur.beat {
-      case .write, .compose: return AvatarPose(center: to, mood: .writing)
-      default: break
+      if local < AgentPresence.Timing.flight && from != to {
+        return AvatarPose(center: fly(from, to, local / AgentPresence.Timing.flight), mood: .flying)
       }
-      return AvatarPose(center: to, mood: .reading)
-    case .write(let k, true):
-      guard let start = writing(k, 0) else { return nil }
-      let from = prev.flatMap(end) ?? start
-      if local < T.revealStart { return AvatarPose(center: lerp(from, start, AgentPresence.rise(local / T.revealStart)), mood: .flying) }
-      let u = AgentPresence.ease((local - T.revealStart) / T.revealLength)
-      return writing(k, u).map { AvatarPose(center: $0, mood: .writing) }
-    case .thread(let w):
-      guard case .drawing(let p, let sag) = presence.thread(w, at: t), let h = head(w, p, sag: sag) else {
-        // Before the thread starts: to its beginning.
-        guard let h0 = head(w, 0, sag: 1) else { return nil }
-        let from = prev.flatMap(end) ?? h0
-        return AvatarPose(center: lerp(from, h0, AgentPresence.rise(local / T.threadStart)), mood: .flying)
-      }
-      return AvatarPose(center: h, mood: .flying)
+      return AvatarPose(center: to, mood: cur.code == nil ? .reading : .writing)
     }
   }
 }
@@ -212,7 +177,7 @@ struct PresenceLayer: View {
         let p = geometry.screen(pose.center).applying(CGAffineTransform(translationX: 0, y: CGFloat(-16 * fade.lift)))
         let inside = CGRect(origin: .zero, size: size).insetBy(dx: 8, dy: 8).contains(p)
         if !reduceMotion {
-          Trail(points: (0...18).compactMap { k in ch.pose(at: t.addingTimeInterval(-0.045 * Double(k))).map { geometry.screen($0.center) } },
+          Trail(points: (0...18).compactMap { k in ch.pose(at: t.addingTimeInterval(-min(0.045, AgentPresence.Timing.flight / 18) * Double(k))).map { geometry.screen($0.center) } },
                 strong: avatar == .dot, zoom: z, color: color)
             .opacity(fade.opacity)
         }
@@ -267,8 +232,11 @@ struct PresenceLayer: View {
   private func threads(at t: Date) -> some View {
     Canvas { ctx, _ in
       let w = max(1, 1.6 * min(1.4, geometry.zoom))
-      for s in presence.beats {
-        guard case .thread(let wire) = s.beat, case .drawing(let p, let sag) = presence.thread(wire, at: t),
+      let wires: [AgentPresence.Wire] = presence.beats.last.map {
+        if case .save(_, let wires) = $0.beat { return wires }; return []
+      } ?? []
+      for wire in wires {
+        guard case .drawing(let p, let sag) = presence.thread(wire, at: t),
               let route = geometry.wire(wire) else { continue }
         let path = threadPath(route, progress: p, sag: sag).applying(CGAffineTransform(
           a: CGFloat(geometry.zoom), b: 0, c: 0, d: CGFloat(geometry.zoom),

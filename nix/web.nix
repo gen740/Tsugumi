@@ -33,6 +33,7 @@ buildNpmPackage {
       ../ui/modules
       ../ui/templates
       ../protocol/remote_worker.fbs
+      ../protocol/local_worker.fbs
       ../protocol/service_common.fbs
       ../protocol/host.fbs
       ../protocol/vm_host.fbs

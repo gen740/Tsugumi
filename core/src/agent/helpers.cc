@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "agent/context.hh"
 #include "agent/helper_scope.hh"
 #include "agent/json.hh"
 #include "agent/providers.hh"
@@ -31,58 +32,49 @@ auto Helpers::HelperResult(const std::string& output,
                            const std::string& conversation,
                            const std::string& call, size_t task)
     -> std::string {
-  // Eight results fit below Runtime's 60,000-byte tool-result bound. The
-  // original transcript and full result stay in the existing helper record.
-  if (output.size() <= 7000) return output;
   const auto value = json::Object(output);
-  std::string excerpt;
+  std::string report;
   const auto messages = ParseMessages(json::Get(value, "messages", "[]"));
-  for (auto message = messages.rbegin();
-       message != messages.rend() && excerpt.empty(); ++message)
-    if (message->role == "assistant")
-      for (const auto& block : message->content)
-        if (block.type == "text") {
-          excerpt = Turns::Excerpt(block.text);
-          break;
-        }
-  json::Members shortened{
+  for (auto message = messages.rbegin(); message != messages.rend();
+       ++message) {
+    if (message->role != "assistant") continue;
+    for (const auto& block : message->content)
+      if (block.type == "text") report += block.text;
+    if (!report.empty()) break;
+  }
+  constexpr size_t kReportBytes = 8192;
+  const bool shortened = report.size() > kReportBytes;
+  if (shortened) {
+    const auto marker = "\n[Report clipped; open helper " + conversation + "/" +
+                        call + "/" + std::to_string(task) +
+                        " for the full trace.]";
+    const auto room =
+        kReportBytes > marker.size() ? kReportBytes - marker.size() : 0;
+    size_t end = std::min(report.size(), room);
+    while (end && (static_cast<unsigned char>(report[end]) & 0xc0) == 0x80)
+      --end;
+    report.resize(end);
+    report += marker;
+  }
+  return json::Encode(json::Members{
       {"name", json::Get(value, "name")},
-      {"shortened", "true"},
-      {"notice", json::Quote("Helper result shortened. Open this helper in the "
-                             "conversation for the full messages and result.")},
+      {"shortened", shortened ? "true" : "false"},
+      {"notice",
+       json::Quote("Open this helper in the conversation for the full trace.")},
       {"conversation_id", json::Quote(conversation)},
       {"call_id", json::Quote(call)},
       {"task", std::to_string(task)},
-      {"error", json::Quote(Turns::Excerpt(json::Text(value, "error")))},
-      {"excerpt", json::Quote(excerpt)}};
-  auto result = json::Encode(shortened);
-  if (result.size() > 7000) {
-    shortened.erase("excerpt");
-    shortened.erase("error");
-    result = json::Encode(shortened);
-  }
-  return result;
+      {"error",
+       json::Quote(Turns::Excerpt(json::Text(value, "error"), 0, 1024))},
+      {"report", json::Quote(report)}});
 }
 
 auto Helpers::Displaced(const std::vector<Message>& previous,
                         const std::vector<Message>& saved)
     -> std::vector<Message> {
-  // A compaction saves a summary followed by the messages it kept, which are
-  // the last ones of the previous save (their tool results may have been
-  // shortened, so they are matched by shape). Any other save displaces nothing.
-  if (saved.empty() || !saved.front().context_summary ||
-      saved.size() - 1 > previous.size())
-    return {};
-  const auto count = previous.size() - (saved.size() - 1);
-  for (size_t i = 1; i < saved.size(); ++i) {
-    const auto& before = previous[count + i - 1];
-    if (before.role != saved[i].role ||
-        before.content.size() != saved[i].content.size())
-      return {};
-  }
-  std::vector<Message> displaced;
-  for (size_t i = 0; i < count; ++i)
-    if (!previous[i].context_summary) displaced.push_back(previous[i]);
+  auto displaced = RemovedMessages(previous, saved);
+  std::erase_if(displaced,
+                [](const auto& message) { return message.context_summary; });
   return displaced;
 }
 
@@ -102,27 +94,11 @@ auto Helpers::RunHelper(const std::string& conversation,
     }
   }
   std::lock_guard helper_lock(*gate);
-  {
-    std::unique_lock lock(mutex);
-    if (!helpers_changed.wait(lock, stop, [&] {
-          return active_helpers[profile] <
-                 host_settings->HelperPolicy(profile).first;
-        }))
-      throw Cancelled();
-    ++active_helpers[profile];
-  }
-  const auto release = [this, profile](void*) {
-    std::lock_guard lock(mutex);
-    --active_helpers[profile];
-    helpers_changed.notify_all();
-  };
-  std::unique_ptr<void, decltype(release)> slot(this, release);
   const auto spec = json::Object(task);
-  HelperScope::Validate(spec, host_settings->HelperPolicy(profile).second);
+  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers(profile));
   const auto name = json::Text(spec, "name");
   const auto digest = crypto::sha256_hex(task);
-  const auto scope =
-      crypto::sha256_hex(parent_call + ":" + std::to_string(index)) + ":";
+  const auto scope = parent_call + "." + std::to_string(index) + ".";
   std::vector<Message> messages;
   ProviderConfig config;
   {
@@ -150,7 +126,10 @@ auto Helpers::RunHelper(const std::string& conversation,
           "; write_cards=" + json::Get(spec, "write_cards", "null") +
           "; run_cards=" + json::Get(spec, "run_cards", "null") +
           ". Exact permanent Card paths; no implicit descendants. null means "
-          "unscoped.";
+          "unscoped. Spawn capability: depth=" +
+          json::Get(spec, "depth", "0") +
+          "; count=" + json::Get(spec, "count", "0") +
+          " children over your lifetime. The host enforces this capability.";
       instruction.resource_ids = authorization.empty()
                                      ? conversations->Resources(conversation)
                                      : std::vector<std::string>{authorization};
@@ -192,7 +171,8 @@ auto Helpers::RunHelper(const std::string& conversation,
                                        {"name", json::Quote(name)},
                                        {"index", std::to_string(index)},
                                        {"event", R"({"kind":"checkpoint"})"}}));
-  auto boundary = std::make_shared<HelperScope>(spec, authorization);
+  auto boundary = std::make_shared<HelperScope>(spec, authorization, scope);
+  boundary->identity = scope;
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.
   std::vector<std::string> owned_receipts;
@@ -247,43 +227,30 @@ auto Helpers::RunHelper(const std::string& conversation,
       for (const auto& block : message.content)
         for (const auto& resource : block.resource_ids)
           conversations->RememberResource(conversation, resource);
-    // Compaction replaces the earlier messages with a summary for the model.
-    // A person still reads the helper's operations and failures from them, so
-    // they move to the archive instead of being overwritten.
-    std::string archive;
-    if (!saved.empty() && saved.front().context_summary) {
-      auto old = conversations->ConversationDatabase(conversation)
-                     .prepare(
-                         "SELECT messages,archive FROM helpers WHERE "
-                         "conversation=? AND parent_call=? AND task=?");
-      old.bind(1, conversation)
-          .bind(2, parent_call)
-          .bind(3, static_cast<int>(index));
-      if (old.step()) {
-        const auto previous = ParseMessages(old.text(0));
-        auto displaced = Displaced(previous, saved);
-        if (!displaced.empty()) {
-          auto earlier = ParseMessages(old.text(1));
-          earlier.insert(earlier.end(),
-                         std::make_move_iterator(displaced.begin()),
-                         std::make_move_iterator(displaced.end()));
-          archive = dependencies.scrub(SerializeMessages(earlier));
-        }
-      }
-    }
-    auto update =
-        conversations->ConversationDatabase(conversation)
-            .prepare(archive.empty()
-                         ? "UPDATE helpers SET messages=? WHERE "
-                           "conversation=? AND parent_call=? AND task=?"
-                         : "UPDATE helpers SET messages=?,archive=? WHERE "
-                           "conversation=? AND parent_call=? AND task=?");
-    int field = 0;
-    update.bind(++field, dependencies.scrub(SerializeMessages(saved)));
-    if (!archive.empty()) update.bind(++field, archive);
-    update.bind(field + 1, conversation)
-        .bind(field + 2, parent_call)
-        .bind(field + 3, static_cast<int>(index))
+    auto old = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT messages,archive FROM helpers WHERE "
+                       "conversation=? AND parent_call=? AND task=?");
+    old.bind(1, conversation)
+        .bind(2, parent_call)
+        .bind(3, static_cast<int>(index));
+    if (!old.step()) throw Failure("not_found", "Missing helper checkpoint");
+    auto archive = ParseMessages(old.text(1));
+    const auto serialized = dependencies.scrub(SerializeMessages(saved));
+    const auto removed =
+        Displaced(ParseMessages(old.text(0)), ParseMessages(serialized));
+    archive.insert(archive.end(), removed.begin(), removed.end());
+    // Archive and replacement are committed together, including equal-sized
+    // replacements. The result remains the helper's final report.
+    auto update = conversations->ConversationDatabase(conversation)
+                      .prepare(
+                          "UPDATE helpers SET messages=?,archive=? WHERE "
+                          "conversation=? AND parent_call=? AND task=?");
+    update.bind(1, serialized)
+        .bind(2, dependencies.scrub(SerializeMessages(archive)))
+        .bind(3, conversation)
+        .bind(4, parent_call)
+        .bind(5, static_cast<int>(index))
         .run();
     tx.commit();
     dependencies.event(
@@ -293,21 +260,36 @@ auto Helpers::RunHelper(const std::string& conversation,
                                    {"index", std::to_string(index)},
                                    {"event", R"({"kind":"checkpoint"})"}}));
   };
-  auto tools = this->tools->Specs();
-  std::erase_if(tools,
-                [](const auto& tool) { return tool.name == "delegate"; });
-  const auto result =
-      Runtime()
-          .Run(config, Turns::System(), messages, tools, stop, hooks);
-  const auto output = json::Encode(json::Members{
-      {"name", json::Quote(name)},
-      {"messages", dependencies.scrub(SerializeMessages(messages))},
-      {"error", json::Quote(result.error)}});
+  auto tools = this->tools->catalog.ModelSpecs(
+      boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper,
+      boundary->depth() > 0 && boundary->count() > 0);
+  std::string trusted_project;
+  const auto automatic =
+      turns->SkillContent(conversation, {}, true, stop, &trusted_project);
+  const auto authorize = hooks.authorize_context;
+  hooks.authorize_context = [this, authorize, automatic,
+                             trusted_project](const auto& context) {
+    turns->RequireSkillTrust(trusted_project);
+    auto with_skills = context;
+    with_skills.push_back(
+        {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+    authorize(with_skills);
+  };
+  const auto result = Runtime().Run(config, Turns::System() + automatic.text,
+                                    messages, tools, stop, hooks);
+  std::string output;
   {
     std::lock_guard lock(mutex);
     sql::Transaction transaction(
         conversations->ConversationDatabase(conversation));
     turns->AddUsage(conversation, result.usage);
+    auto trace = messages;
+    std::erase_if(trace,
+                  [](const auto& message) { return message.context_summary; });
+    output = json::Encode(json::Members{
+        {"name", json::Quote(name)},
+        {"messages", dependencies.scrub(SerializeMessages(trace))},
+        {"error", json::Quote(result.error)}});
     auto update = conversations->ConversationDatabase(conversation)
                       .prepare(
                           "UPDATE helpers SET result=?,state=? WHERE "

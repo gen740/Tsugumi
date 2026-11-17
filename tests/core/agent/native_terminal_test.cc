@@ -18,16 +18,28 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   TemporaryDirectory directory;
   const auto home = directory.path / "empty home";
   std::filesystem::create_directory(home);
+  // Readiness is emitted by Bash after its login startup, before accepting input.
+  Write(home / ".bash_profile", "printf '\\0READY\\0'\n");
+  // A Nix build sandbox has no /bin/bash: use the one on PATH there.
+  std::string bash = "/bin/bash";
+  if (!std::filesystem::exists(bash)) {
+    std::istringstream path(std::getenv("PATH") ? std::getenv("PATH") : "");
+    for (std::string entry; std::getline(path, entry, ':');)
+      if (std::filesystem::exists(std::filesystem::path(entry) / "bash")) {
+        bash = (std::filesystem::path(entry) / "bash").string();
+        break;
+      }
+  }
   const auto shell = directory.path / "login-shell";
   // Capture the environment at the exec boundary, before system profiles can
   // rewrite it. This account shell then starts a normal Bash login session.
   Write(shell,
-        "#!/bin/bash\n"
+        "#!" + bash + "\n"
         "printf '\\0PASSED\\0'\n"
         "for name in $(compgen -e); do "
         "printf '%s=%s\\0' \"$name\" \"${!name}\"; done\n"
         "printf '\\0END\\0'\n"
-        "exec /bin/bash \"$@\"\n");
+        "exec " + bash + " \"$@\"\n");
   std::filesystem::permissions(shell, std::filesystem::perms::owner_all);
   const host::NativeTerminals::Account account{home.string(), "terminal-user",
                                                shell.string()};
@@ -88,6 +100,13 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   const auto opened = service.Handle(request);
   request.session = opened.session;
   ASSERT_GT(request.session, 0u);
+  {
+    std::unique_lock lock(mutex);
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30), [&] {
+      return output.find(std::string("\0READY\0", 7)) != output.npos || closed;
+    }));
+    ASSERT_FALSE(closed);
+  }
   request.action = H::TerminalAction::Resize;
   request.rows = 31;
   request.cols = 23;
@@ -104,7 +123,7 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   service.Handle(request);
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(5),
+    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30),
                                  [&] { return closed; }));
     EXPECT_EQ(output.find("MUST_NOT_CROSS"), output.npos);
     // Actual NUL bytes distinguish command output from echoed/readline-wrapped

@@ -15,7 +15,7 @@
 
 ## How the VM's corresponding source is provided
 
-[macOS/tools/publish-vm.sh](../macOS/tools/publish-vm.sh) publishes `sources.tar.gz` and `licenses.tar.gz` alongside the boot disk on [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm). The app's `licenses/vm-boot/README.md` points to that release. Release builds require a published boot disk and its license archive.
+[macOS/tools/publish-vm.sh](../macOS/tools/publish-vm.sh) publishes `sources.tar.gz` and `licenses.tar.gz` alongside the boot disk on [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`). The app's `licenses/vm-boot/README.md` points to that release. Release builds require a published boot disk and its license archive.
 
 [vm-inventory.py](../macOS/tools/vm-inventory.py) derives the package inventory from the image's `/store-paths` and derivation graph. [vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) uses that inventory to collect package sources, fetched patches, pinned nixpkgs definitions, and Tsugumi's image assembly files and build instructions. Package license names come from nixpkgs declarations.
 

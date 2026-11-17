@@ -208,7 +208,10 @@ bool char_start(unsigned char c) { return (c & 0xC0) != 0x80; }
 // The tables a run lives in, the same in the history and in its copy
 // (.tsugumi/runs.sqlite); `p` is the schema prefix ("" or "ex.").
 std::string run_tables(const std::string& p) {
-  return "CREATE TABLE IF NOT EXISTS " + p + R"SQL(runs(
+  return "CREATE TABLE IF NOT EXISTS " + p + R"SQL(run_counter(
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(runs(
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id TEXT NOT NULL UNIQUE, op_id TEXT NOT NULL,
   state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
@@ -217,44 +220,62 @@ std::string run_tables(const std::string& p) {
   has_artifacts INTEGER NOT NULL DEFAULT 0,
   local_run INTEGER NOT NULL DEFAULT 0,
   partial_run INTEGER NOT NULL DEFAULT 0, uses_partial_result INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(build_environments(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(build_environments(
   run_id TEXT NOT NULL, id TEXT NOT NULL, derivation TEXT NOT NULL, manifest TEXT NOT NULL,
   system TEXT NOT NULL, path_count INTEGER NOT NULL, PRIMARY KEY(run_id, id));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(environment_paths(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(environment_paths(
   run_id TEXT NOT NULL, environment_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL,
   PRIMARY KEY(run_id, environment_id, position));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_substituters(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(run_substituters(
   run_id TEXT NOT NULL, position INTEGER NOT NULL, url TEXT NOT NULL, PRIMARY KEY(run_id, position));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_batches(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p +
+         R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(run_batches(
   run_id TEXT NOT NULL, card TEXT NOT NULL, activation INTEGER NOT NULL, invocation_count INTEGER NOT NULL,
   execution_list INTEGER NOT NULL, complete INTEGER NOT NULL, failed INTEGER NOT NULL, outputs TEXT NOT NULL,
   PRIMARY KEY(run_id, card, activation));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p +
+         R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(invocations(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
   duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
   input_sources TEXT, display BLOB, build_cached INTEGER, detail TEXT,
   PRIMARY KEY(run_id, card, invocation));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(ivalues(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p +
+         R"SQL(schemas(hash TEXT PRIMARY KEY, root_type TEXT NOT NULL, bfbs BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(ivalues(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
   port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
   size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT, file_content_hash TEXT,
   PRIMARY KEY(run_id, card, invocation, side, port));
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(logs(
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
   run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
-CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(logs_run ON logs(run_id, stream, run_off);
-CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(logs_inv ON logs(run_id, card, invocation, stream, inv_off);
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(artifacts(
+CREATE INDEX IF NOT EXISTS )SQL" +
+         p + R"SQL(logs_run ON logs(run_id, stream, run_off);
+CREATE INDEX IF NOT EXISTS )SQL" +
+         p + R"SQL(logs_inv ON logs(run_id, card, invocation, stream, inv_off);
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(artifacts(
   artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
   members TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS )SQL" + p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
-CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
+CREATE INDEX IF NOT EXISTS )SQL" +
+         p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(displays(
   run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
   PRIMARY KEY(run_id, card));
 )SQL";
@@ -262,9 +283,9 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 
 // Version of the local history's tables (PRAGMA user_version).
 // Includes partial-run provenance, portable run commits and File content digests.
-constexpr int kHistoryVersion = 10;
+constexpr int kHistoryVersion = 11;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "8";
+constexpr const char *kCopyVersion = "9";
 
 namespace stdfs = std::filesystem;
 
@@ -284,7 +305,7 @@ auto history_file(const stdfs::path& path, const char* suffix) -> stdfs::path {
 auto regular_history_file(const stdfs::path& path) -> bool {
   const auto status = stdfs::symlink_status(path);
   if (!stdfs::exists(status)) return false;
-  if (!stdfs::is_regular_file(status)) throw std::runtime_error("history is not a regular file: " + path.string());
+  if (!stdfs::is_regular_file(status)) throw HistoryOpenError(HistoryOpenCode::NotRegular, "history is not a regular file: " + path.string());
   return true;
 }
 
@@ -328,7 +349,7 @@ auto history_archive(const stdfs::path& database, std::string id, bool pending) 
     const bool has_source = regular_history_file(source);
     const bool has_destination = regular_history_file(destination);
     if (has_source && has_destination)
-      throw std::runtime_error("history archive has both source and destination: " + source.string());
+      throw HistoryOpenError(HistoryOpenCode::ArchiveConflict, "history archive has both source and destination: " + source.string());
     if (!*suffix && !has_source && !has_destination)
       throw std::runtime_error("history archive is missing its database: " + database.string());
   }
@@ -567,21 +588,39 @@ void History::writer_loop() {
   }
 }
 
-auto History::put_environment(sql::Db& db, const std::string& run_id, const BuildEnvironmentData& e) -> void {
-  db.prepare("INSERT OR IGNORE INTO build_environments VALUES(?,?,?,?,?,?)")
+auto History::put_environment(sql::Db &db, const std::string &run_id,
+                              const BuildEnvironmentData &e) -> std::string {
+  auto existing = db.prepare("SELECT id FROM build_environments WHERE run_id=? "
+                             "AND derivation=? AND manifest=? AND system=?");
+  existing.bind(1, run_id)
+      .bind(2, e.derivation)
+      .bind(3, e.manifest)
+      .bind(4, e.system);
+  if (existing.step())
+    return existing.text(0);
+  auto count =
+      db.prepare("SELECT count(*) FROM build_environments WHERE run_id=?");
+  count.bind(1, run_id);
+  count.step();
+  const auto id = std::to_string(count.i64(0) + 1);
+  db.prepare("INSERT INTO build_environments VALUES(?,?,?,?,?,?)")
       .bind(1, run_id)
-      .bind(2, e.id)
+      .bind(2, id)
       .bind(3, e.derivation)
       .bind(4, e.manifest)
       .bind(5, e.system)
       .bind(6, static_cast<uint64_t>(e.paths.size()))
       .run();
-  if (!db.changes()) return;
   auto insert = db.prepare("INSERT INTO environment_paths VALUES(?,?,?,?)");
   for (size_t i = 0; i < e.paths.size(); ++i) {
-    insert.bind(1, run_id).bind(2, e.id).bind(3, static_cast<uint64_t>(i)).bind(4, e.paths[i]).run();
+    insert.bind(1, run_id)
+        .bind(2, id)
+        .bind(3, static_cast<uint64_t>(i))
+        .bind(4, e.paths[i])
+        .run();
     insert.reset();
   }
+  return id;
 }
 
 auto History::put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void {
@@ -590,6 +629,15 @@ auto History::put_substituters(sql::Db& db, const std::string& run_id, const std
     insert.bind(1, run_id).bind(2, static_cast<uint64_t>(i)).bind(3, urls[i]).run();
     insert.reset();
   }
+}
+
+auto History::next_run_id(sql::Db &db) -> std::string {
+  db.exec("INSERT OR IGNORE INTO run_counter VALUES(1,0)");
+  auto q = db.prepare("UPDATE run_counter SET value=value+1 WHERE singleton=1 "
+                      "AND value<9223372036854775807 RETURNING value");
+  if (!q.step())
+    throw std::runtime_error("project run numbers exhausted");
+  return std::to_string(q.i64(0));
 }
 
 void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id) {
@@ -1472,25 +1520,22 @@ class Txn {
 };
 
 // Copies the finished runs `from` has and `to` lacks; inside a transaction.
-// A run or artifact id names a folder: only UUIDs are taken from a copy.
-const std::string kUuidGlob = [] {
-  std::string h = "[0-9a-fA-F]";
-  std::string g;
-  for (int n : {8, 4, 4, 4, 12}) {
-    if (!g.empty()) g += "-";
-    for (int i = 0; i < n; ++i) g += h;
-  }
-  return "'" + g + "'";
-}();
+// Canonical decimal run numbers cannot escape their directory.
+const std::string kRunPredicate = "run_id GLOB '[1-9]*' AND run_id NOT GLOB "
+                                  "'*[^0-9]*' AND length(run_id)<=19";
 
 size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
+  db.exec("INSERT INTO " + to + ".run_counter SELECT * FROM " + from +
+          ".run_counter WHERE true ON CONFLICT(singleton) DO UPDATE SET "
+          "value=max(value,excluded.value)");
   db.exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
   // A finished run can still have detached jobs to reconcile. Export only
   // after they have written their final invocation records.
   const std::string pending = from == "main" ? " AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)" : "";
-  db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from + ".runs WHERE state IN (" + finished_states() +
-          ") AND run_id GLOB " + kUuidGlob + " AND run_id NOT IN (SELECT run_id FROM " + to + ".runs)" +
-          pending + " ORDER BY seq");
+  db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from +
+          ".runs WHERE state IN (" + finished_states() + ") AND " +
+          kRunPredicate + " AND run_id NOT IN (SELECT run_id FROM " + to +
+          ".runs)" + pending + " ORDER BY seq");
   size_t n = static_cast<size_t>(db.changes());
   if (n == 0) return 0;
   for (const auto& c : kCopied)
@@ -1499,8 +1544,17 @@ size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   db.exec("INSERT OR IGNORE INTO " + to + ".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM " + from +
           ".schemas WHERE hash IN (SELECT schema_hash FROM " + from +
           ".ivalues WHERE run_id IN (SELECT run_id FROM temp.moving))");
-  db.exec("DELETE FROM " + to + ".artifacts WHERE run_id IN (SELECT run_id FROM temp.moving) AND NOT artifact_id GLOB " +
-          kUuidGlob);
+  auto artifacts =
+      db.prepare("SELECT artifact_id FROM " + to +
+                 ".artifacts WHERE run_id IN (SELECT run_id FROM temp.moving)");
+  std::vector<std::string> invalid;
+  while (artifacts.step())
+    if (!fs::valid_relative_path(artifacts.text(0)))
+      invalid.push_back(artifacts.text(0));
+  for (const auto &id : invalid)
+    db.prepare("DELETE FROM " + to + ".artifacts WHERE artifact_id=?")
+        .bind(1, id)
+        .run();
   return n;
 }
 

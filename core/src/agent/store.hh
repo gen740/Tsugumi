@@ -20,6 +20,7 @@ namespace tsugumi::agent {
 // records share HostStore's connection. Requests retain the caller's gate and
 // turns/tools/helpers retain their original transactions on these databases.
 struct ConversationStore {
+  enum class SaveMode { Checkpoint, PrepareSend };
   struct Conversation {
     std::string id;
     std::string project;
@@ -42,7 +43,12 @@ struct ConversationStore {
   auto ProjectDatabase(const std::string& project, bool create = false)
       -> sql::Db*;
   auto Databases(const std::string& project = {}) -> std::vector<sql::Db*>;
-  auto FindConversationDatabase(const std::string& id) -> sql::Db*;
+  auto FindConversationDatabase(
+      const std::string& id,
+      const std::optional<std::string>& project = std::nullopt) -> sql::Db*;
+  auto ConversationProject(const std::string& id) -> std::optional<std::string>;
+  auto RememberConversation(const std::string& id, const std::string& project)
+      -> void;
   auto ConversationDatabase(const std::string& id) -> sql::Db&;
   auto GetConversation(const std::string& id) -> Conversation;
   auto OwnConversation(const std::string& id, bool human) -> void;
@@ -50,8 +56,8 @@ struct ConversationStore {
   auto RememberResource(const std::string& id, const std::string& project)
       -> void;
   auto AuthorizeHistory(const std::string& id) -> void;
-  auto SaveMessages(const std::string& id, const std::vector<Message>& messages)
-      -> void;
+  auto SaveMessages(const std::string& id, const std::vector<Message>& messages,
+                    SaveMode mode = SaveMode::Checkpoint) -> void;
   auto ConversationJson(const Conversation& conversation) -> std::string;
   auto Create(const Tsugumi::Agent::ConversationCreateRequest& request,
               bool human) -> Conversation;

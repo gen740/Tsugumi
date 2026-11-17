@@ -90,7 +90,7 @@ struct CardDatabaseView: View {
           }
           .disabled(session.unplacedDefinitions.contains(id))
           .help("Card の設定画面で開きます")
-          Button("削除", role: .destructive) { session.edit { $0.removeDefinition(id) }; selected = nil }
+          Button("削除", role: .destructive) { session.removeDefinition(id); selected = nil }
             .disabled(!session.unplacedDefinitions.contains(id) || !session.isEditable)
             .help(session.unplacedDefinitions.contains(id) ? "定義とソースを削除" : "Card を削除すると定義も削除されます")
           Spacer()
@@ -116,8 +116,8 @@ struct CardDatabaseView: View {
   }
 
   private func place(_ id: String) {
-    let k = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
-    message = String(localized: "\(k) を Workflow に配置しました（未保存）。")
+    _ = session.placeDefinition(id, at: CGPoint(x: 40, y: 40))
+    message = nil
   }
 
   private func apply(_ id: String, overwrite: Bool = false) async {
@@ -126,12 +126,9 @@ struct CardDatabaseView: View {
       let card = try JSONValue.parse(sentCard)
       let meta = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(sentMeta)
       parseError = nil
-      guard await revisionEdit.apply(session, overwrite: overwrite, { s in
-        var d = s.cardDefinitionDraft(key([id])) ?? DefinitionDraft(card: card, meta: meta)
-        if d.link == nil { d.card = card }
-        d.meta = meta
-        s.setCardDefinition(key([id]), d)
-      }) else { return }
+      guard await revisionEdit.replaceDocuments(session, [
+        ("definitions/\(id)/_card.json", card), ("definitions/\(id)/_meta.json", meta),
+      ]) else { return }
       guard selected == id else { return }
       baseCard = sentCard
       baseMeta = sentMeta
@@ -192,7 +189,7 @@ private struct NixSourceSettings: View {
 
   private func save(_ list: [JSONValue], overwrite: Bool = false) async {
     pending = list
-    if await revisionEdit.apply(session, overwrite: overwrite, { $0.project["nixSources"] = .array(list) }) {
+    if await revisionEdit.apply(session, overwrite: overwrite, { $0.setProjectField("nixSources", .array(list)) }) {
       pending = nil
     }
   }
@@ -275,15 +272,20 @@ private struct NixSourceSettings: View {
 
 private struct GeneralProjectSettings: View {
   let session: ProjectSession
+  @State private var selectedProject: JSONValue = .object([])
   @State private var name = ""
   @State private var pkgs = ""
   @State private var versionPaths = ""
+  @State private var agentExclude = ""
+  private func excludeText(_ project: JSONValue) -> String {
+    (project["agentExclude"]?.array?.compactMap(\.string) ?? AppModel.shared.agentExcludeDefaults).joined(separator: "\n")
+  }
   @State private var message: String?
   @State private var revisionEdit = RevisionEdit()
 
   var body: some View {
-    let savedPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-    let changed = name != (session.project["name"]?.string ?? "") || pkgs != (session.project["pkgsPath"]?.string ?? "") || versionPaths != savedPaths
+    let savedPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    let changed = name != (selectedProject["name"]?.string ?? "") || pkgs != (selectedProject["pkgsPath"]?.string ?? "") || versionPaths != savedPaths || agentExclude != excludeText(selectedProject)
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
@@ -305,11 +307,24 @@ private struct GeneralProjectSettings: View {
           Text("定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
             .font(.caption).foregroundStyle(.secondary)
         }
+        Section {
+          LabeledContent("Agent から除外するパス") {
+            TextEditor(text: $agentExclude).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+          }
+          Text("Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Toggle("このプロジェクトを信頼する", isOn: Binding(get: { session.projectTrust == 1 }, set: { trusted in
+          Task { await session.setProjectTrust(trusted) }
+        }))
+        .disabled(!session.trustedFolder.isEmpty)
+        TrustedFoldersSettings()
+        Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。").font(.caption).foregroundStyle(.secondary)
         LabeledContent("場所", value: session.identity.url.path)
         NixSourceSettings(session: session)
       }
       .formStyle(.grouped)
-      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)\nversionPaths:\n\(versionPaths)" },
+      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)\nversionPaths:\n\(versionPaths)\nagentExclude:\n\(agentExclude)" },
                          overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
         .padding(.horizontal, 12)
       HStack {
@@ -327,21 +342,28 @@ private struct GeneralProjectSettings: View {
   }
 
   private func load() {
+    selectedProject = session.project
     name = session.project["name"]?.string ?? ""
     pkgs = session.project["pkgsPath"]?.string ?? ""
     versionPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    agentExclude = excludeText(session.project)
     revisionEdit.reload(session.rev)
   }
 
   private func save(overwrite: Bool = false) async {
-    let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths
+    let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths, sentExclude = agentExclude
     let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
+    var after = selectedProject
+    if sentName != (selectedProject["name"]?.string ?? "") { after["name"] = .string(sentName) }
+    if sentPkgs != (selectedProject["pkgsPath"]?.string ?? "") { after["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs) }
+    let originalPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    if sentPaths != originalPaths { after["versionPaths"] = .array(paths.map { .string($0) }) }
+    if sentExclude != excludeText(selectedProject) { after["agentExclude"] = .array(sentExclude.components(separatedBy: .newlines).filter { !$0.isEmpty }.map { .string($0) }) }
     if await revisionEdit.apply(session, overwrite: overwrite, { s in
-      s.project["name"] = .string(sentName)
-      s.project["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs)
-      s.project["versionPaths"] = .array(paths.map { .string($0) })
+      s.appendEdits([s.jsonEdit("tsugumi.json", old: selectedProject, new: after)])
     }) {
-      if pkgs == sentPkgs { pkgs = sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs }
+      selectedProject = after
+      if pkgs == sentPkgs { pkgs = after["pkgsPath"]?.string ?? "" }
       if versionPaths == sentPaths { versionPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }
@@ -389,7 +411,7 @@ private struct RunHistorySettings: View {
   }
 
   private func saveHistorySetting(overwrite: Bool = false) async {
-    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.project["saveRunHistory"] = .bool(pendingSaving) }
+    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.setProjectField("saveRunHistory", .bool(pendingSaving)) }
   }
 
   var body: some View {

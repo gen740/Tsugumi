@@ -267,6 +267,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
     std::optional<CardBuildPlan> build;
+    std::optional<ExecutionTarget> build_target;
     std::shared_ptr<BatchCancellation> cancellation;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
@@ -435,8 +436,26 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   auto missing_saved_inputs(const Node& node) -> Failed {
     const auto card = path_key(node.path);
-    return Failed(FailureKind::input_missing, "no saved inputs for " + card +
-                  "; run the workflow from its trigger Card once first (it saves every Card's inputs)", {{"card", card}});
+    const auto& res = *doc_->resolution;
+    std::set<std::string> triggers;
+    // A trigger starts the whole resolved workflow, including unwired sources
+    // and nested projects (the same scope used by plan()).
+    for (const auto& candidate : res.nodes)
+      if (!candidate.is_virtual && candidate.kind == Template::Trigger)
+        triggers.insert(path_key(candidate.path));
+    std::string next;
+    for (const auto& trigger : triggers) {
+      if (!next.empty()) next += ", ";
+      next += '`' + trigger + '`';
+    }
+    const auto fix =
+        next.empty() ? "run the workflow from its trigger Card once first (it "
+                       "saves every Card's inputs)"
+                     : "run " + next +
+                           " (workflow trigger; choose one) first, then run `" +
+                           card + "` again";
+    return Failed(FailureKind::input_missing,
+                  "no saved inputs for " + card + ": " + fix, {{"card", card}});
   }
 
   auto reject_start(NodeRt& node, const FailureData& failure) -> void {
@@ -687,7 +706,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                     std::unique_ptr<PreparedExecution>& prepared) -> const CardBuildPlan& {
     const auto& node = *rt.node;
     auto& s = *work.prepared;
-    auto& execution = svc_.execution_service(node.settings.execution_service);
+
     BuildRequest request;
     request.node = &node;
     request.doc = doc_;
@@ -697,8 +716,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.max_implementations = max_implementations;
     request.cancel = &work.cancellation->stop;
     // Resolve worker kind and system before any Card or source evaluation.
-    prepared = execution.prepare(node, invocation_dir(node, work.invocation), request);
-    if (rt.build && execution.reuses_builds()) {
+    prepared = svc_.prepare_execution(node, invocation_dir(node, work.invocation), request);
+    const bool reuses_builds = request.target.kind == WorkerKind::native;
+    if (rt.build && reuses_builds && rt.build_target && rt.build_target->kind == request.target.kind &&
+        rt.build_target->system == request.target.system) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
       return *rt.build;
@@ -716,8 +737,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     };
     set_state(RunState::preparing);
     rt.build = svc_.nix().build(request);
+    rt.build_target = request.target;
     trace_phase();
-    if (execution.reuses_builds()) {
+    if (reuses_builds) {
       journal("build", "output", node.path, s.invocation,
               rt.build->common.cached ? "evaluated; the store already had the result" : "built");
       if (rt.build->common.cached) stage_begin(s, Phase::build, StageOutcome::cached);
@@ -1351,7 +1373,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto src = path_value(v);
     if (!src) throw Failed(FailureKind::output_invalid, "artifact output has no path");
     ArtifactData a;
-    a.artifact_id = crypto::uuid4();
+    a.artifact_id = run_id_ + "/" + path_key(node.path) + "/" +
+                    std::to_string(inv) + "/" + v.name;
     a.run_id = run_id_;
     a.card = node.path;
     a.invocation = inv;
@@ -1518,6 +1541,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                 const std::vector<InputSourceData>& sources, uint32_t lane) -> Produced {
     const Node& node = *rt.node;
     const auto inv = s.invocation;
+    int64_t last_transfer = 0;
     auto result = w.execution->execute(
         {node, *w.implementation, in, sources, s, invocation_dir(node, inv), w.cancellation->stop,
          [&] { return explicit_cancel_.load() || w.cancellation->failed.load(); }, detaching_,
@@ -1529,8 +1553,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](const std::function<void(sql::Db&)>& records) {
            stage_begin(s, Phase::execute);
            svc_.history().write_sync([&](sql::Db& db) {
-             History::put_status(db, s);
              if (records) records(db);
+             History::put_status(db, s);
            });
            card_status(s);
            set_state(RunState::running);
@@ -1549,7 +1573,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              svc_.server()->broadcast(timeline_note(run_id_, node.path, inv, Phase::validate, lane, started, now_ms()));
              throw;
            }
+         }, kInvocationLogLimitBytes,
+         [&](std::string_view direction, std::string_view name, uint64_t done, uint64_t total) {
+           const auto now = now_ms();
+           if (done && done != total && s.transfer_name == name && now - last_transfer < 100) return;
+           last_transfer = now;
+           s.transfer_direction = direction;
+           s.transfer_name = name;
+           s.transfer_done = done;
+           s.transfer_total = total;
+           card_status(s);
          }});
+    s.transfer_direction.clear();
+    s.transfer_name.clear();
     w.out_alias = std::move(result.out_alias);
     Produced p;
     p.failure = result.outcome.failure;
@@ -1989,7 +2025,6 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     throw Failed(FailureKind::validation_failed, msg, {{"count", std::to_string(errors.size())}});
   }
   RunSummaryData s;
-  s.status.run_id = crypto::uuid4();
   s.status.state = RunState::queued;
   s.status.rev = doc->rev;
   s.status.execution_rev = doc->execution_rev;
@@ -1998,16 +2033,21 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   s.source_hash = doc->execution_fingerprint;
   s.target = p.card;
   s.propagate = p.propagate;
-  FBB b;
-  auto st = wire::run_status(b, s.status);
-  auto ra = R::CreateRunAccepted(b, b.CreateString(p.op_id), st, false);
-  auto rc = R::CreateOperationReceipt(b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
-  b.Finish(rc);
-  std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-  // The run id and the receipt are durable before any processing starts.
-  svc_.history().write_sync([&](sql::Db& db) {
+  std::string receipt;
+  // The accepted sequence and receipt commit together, before any processing.
+  svc_.history().write_sync([&](sql::Db &db) {
+    s.status.run_id = History::next_run_id(db);
+    FBB b;
+    auto st = wire::run_status(b, s.status);
+    auto ra = R::CreateRunAccepted(b, b.CreateString(p.op_id), st, false);
+    auto rc = R::CreateOperationReceipt(
+        b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
+    b.Finish(rc);
+    receipt.assign(reinterpret_cast<const char *>(b.GetBufferPointer()),
+                   b.GetSize());
     History::insert_run(db, s, p.op_id);
-    if (svc_.options().fault == "run_acceptance") throw sql::Error("injected: run acceptance write failed");
+    if (svc_.options().fault == "run_acceptance")
+      throw sql::Error("injected: run acceptance write failed");
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });

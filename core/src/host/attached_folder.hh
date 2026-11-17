@@ -8,6 +8,7 @@
 
 namespace tsugumi::host {
 
+class AgentExclude;
 struct FolderReadFailure : std::runtime_error {
   FolderReadFailure(std::string kind, std::string message)
       : std::runtime_error(std::move(message)), code(std::move(kind)) {}
@@ -17,6 +18,7 @@ struct FolderReadFailure : std::runtime_error {
 // The caller must authorize this registered root and recheck the grant before
 // releasing the result. Opens components without following symbolic links.
 auto ReadAttachedFolder(const std::filesystem::path& root,
-                        const agent::json::Members& arguments) -> std::string;
+                        const agent::json::Members& arguments,
+                        const AgentExclude* policy = nullptr) -> std::string;
 
 }  // namespace tsugumi::host

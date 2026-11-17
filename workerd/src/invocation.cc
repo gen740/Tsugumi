@@ -75,7 +75,8 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
 
 auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocation, const stdfs::path& input,
                 const stdfs::path& directory, const stdfs::path& store, const NixResult& env,
-                const WorkerProc::LogSink& log, const WorkerProc::DisplaySink& display) -> WorkerOutcome {
+                const WorkerProc::LogSink& log, const WorkerProc::DisplaySink& display,
+                const fs::TransferProgress& progress) -> WorkerOutcome {
   schema::CardManifest manifest;
   if (schema::decode(env.manifest, manifest)) throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
   const auto* single = schema::get(manifest.run);
@@ -147,9 +148,14 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
   request.stop_before_outputs = true;
+  if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
+  request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
+  request.transfer = progress;
   request.display = display;
-  return workerd::run_invocation(pool, lease, spawn.card, "", false, request).outcome;
+  return workerd::run_invocation([&](auto worker, bool keep, const auto& reason) {
+    pool.release(spawn.card, "", std::move(worker), keep, reason);
+  }, lease, false, request).outcome;
 }
 
 }  // namespace
@@ -166,9 +172,19 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
     return blobs / digest;
   };
   remote::InvocationJson invocation;
-  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit), invocation) ||
-      !crypto::is_uuid(*invocation.project_id))
+  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit), invocation))
     throw std::runtime_error("invalid remote invocation manifest");
+  int64_t last_progress = 0;
+  const auto progress = [&](const stdfs::path& name, uint64_t done, uint64_t total) {
+    const auto now = now_ms();
+    if (done && done != total && now - last_progress < 100) return;
+    last_progress = now;
+    remote::TransferJson value;
+    *value.name = name.generic_string();
+    *value.done = done;
+    *value.total = total;
+    fs::write_atomic(directory / "progress.json", schema::encode(value), 0600);
+  };
   const auto input = directory / "staged";
   stdfs::create_directories(input);
   for (const auto& dir : *invocation.directories)
@@ -178,7 +194,11 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
     const auto source = blob(*file.sha256);
     if (stdfs::file_size(source) != *file.size) throw std::runtime_error("remote input size mismatch");
     stdfs::create_directories(path.parent_path());
-    fs::copy_beneath(blobs, *file.sha256, path, {});
+    uint64_t done = 0;
+    progress(*file.path, 0, *file.size);
+    fs::copy_beneath(blobs, *file.sha256, path, [&](std::string_view chunk) {
+      done += chunk.size(); progress(*file.path, done, *file.size);
+    });
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
@@ -201,9 +221,9 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
   try {
     environment = RemoteWorkerStore::realise(ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
         WorkerDerivation{derivation, output, job->system},
-        [&](const std::string& line) { log(LogStream::build, line + "\n"); });
+        [&](const std::string& line) { log(LogStream::build, line + "\n"); }, job->build_timeout_ms);
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
-        [&](const DisplayData& data) { display = wire::standalone_display(data); });
+        [&](const DisplayData& data) { display = wire::standalone_display(data); }, progress);
     if (!display.empty()) {
       const auto* module = flatbuffers::GetRoot<Tsugumi::Data::Display>(display.data())->value_as_DisplayModule();
       if (module && module->module_()) {

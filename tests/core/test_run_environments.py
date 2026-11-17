@@ -6,12 +6,12 @@ import sqlite3
 
 import pytest
 from harness.fixtures import worker_project
-from harness.scenario import STRING_OUTPUT, Project, run, wait_run
+from harness.scenario import HOST_BASH, STRING_OUTPUT, Project, run, wait_run
 from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 11])
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 12])
 def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = tmp_path / "history"
@@ -27,9 +27,14 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 10"):
+    from harness.daemon import StartupFailure
+    with pytest.raises(StartupFailure) as failure:
         core_factory(history_dir=history_dir)
 
+    assert failure.value.kind == "incompatible_history"
+    assert failure.value.record["found"] == str(version)
+    assert failure.value.record["expected"].isdigit()
+    assert failure.value.record["source"] == "local"
     assert database.read_bytes() == original
 
 
@@ -159,7 +164,7 @@ def test_failed_execution_keeps_its_environment(core_factory, project, tmp_path)
 def test_environment_queries_reject_invalid_ranges(client, method, fields):
     """Environment pages reject invalid limits and overflowing offsets."""
     with pytest.raises(RpcFailure) as error:
-        client.call(method, runId=new_id(), **fields)
+        client.call(method, runId="999999", **fields)
     assert error.value.kind == "invalid_request"
 
 
@@ -169,12 +174,12 @@ def test_unknown_environment_is_not_found(client):
                             ("RunEnvironmentPathsRequest", {"environmentId": "missing"}),
                             ("RunEnvironmentUsesRequest", {"environmentId": "missing"})]:
         with pytest.raises(RpcFailure) as error:
-            client.call(method, runId=new_id(), **fields)
+            client.call(method, runId="999999", **fields)
         assert error.value.kind == "not_found"
 
 
-def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory, project, tmp_path):
-    """Cards sharing a build share one inventory entry; a changed build gets a new ID."""
+def test_cards_share_one_environment_and_changed_builds_get_separate_entries(core_factory, project, tmp_path):
+    """Cards sharing a build share one run-local inventory entry."""
     package = tmp_path / "package"
     package.mkdir()
     (package / "scenario.json").write_text(json.dumps({"actions": []}))
@@ -190,6 +195,7 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     assert wait_run(client, first).state == RunState.succeeded
     page = client.call("RunEnvironmentsRequest", runId=first)
     assert len(page.environments) == 1
+    original_environment = (text(page.environments[0].derivation), text(page.environments[0].manifest))
     original_id = text(page.environments[0].id)
     users = client.call("RunEnvironmentUsesRequest", runId=first, environmentId=original_id, limit=1)
     assert [(text(u.card), u.invocation) for u in users.uses] == [("a", 1)]
@@ -215,7 +221,10 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     assert {text(first_page.environments[0].id), text(second_page.environments[0].id)} == {text(e.id) for e in page.environments}
     rows = client.call("RunLatestInvocationsRequest", runId=second).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in rows}
-    assert ids["a"] == original_id and ids["b"] != original_id
+    assert ids["a"] != ids["b"]
+    environments = {text(e.id): (text(e.derivation), text(e.manifest)) for e in page.environments}
+    assert environments[ids["a"]] == original_environment
+    assert environments[ids["b"]] != original_environment
     assert len(client.call("RunEnvironmentsRequest", runId=first).environments) == 1
     changed_id = ids["b"]
     def closure(run_id, environment_id):
@@ -225,7 +234,7 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     for run_id, environment_id, other_run, other_id, expected in [
         (first, original_id, second, changed_id, sorted(set(old_paths) - set(new_paths))),
         (second, changed_id, first, original_id, sorted(set(new_paths) - set(old_paths))),
-        (first, original_id, second, original_id, []),
+        (first, original_id, second, ids["a"], []),
     ]:
         for query in ["", "NIX", "%", "no-such-dependency"]:
             matching = [p for p in expected if query.lower() in p.lower()]
@@ -387,7 +396,7 @@ def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_pa
         tools = tmp_path / version
         tools.mkdir()
         shell = tools / "bash"
-        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec /bin/bash "$@"\n')
+        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec {HOST_BASH} "$@"\n')
         shell.chmod(0o755)
         jq = tools / "jq"
         jq.write_text(f'#!/bin/sh\nprintf %s {version}\n')

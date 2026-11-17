@@ -76,3 +76,10 @@ export function savedComments(rowText: string): SavedComment[] {
     return []
   }
 }
+
+/** Model text for the Mac and Web generation buttons comes from agent.json. */
+export function cardRequest(kind: 'draftRequest' | 'commentRequest', scope: string[], cards: string[]): string {
+  const request = shared[kind]
+  const where = scope.length ? fill(shared.draftRequest.child, { scope: scope.join('/') }) : shared.draftRequest.root
+  return fill(request.text, { where, list: cards.map(card => `- ${card}`).join('\n') })
+}

@@ -7,7 +7,6 @@
 
 #include <cstring>
 #include <set>
-#include <random>
 #include <sstream>
 
 #include "util/crypto.hh"
@@ -60,8 +59,10 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, c
   for (const auto& o : ops) {
     schema::JournalFile f;
     *f.path = o.path;
-    *f.remove = !o.content.has_value();
+    *f.remove = !o.content && !o.file;
     *f.content_b64 = o.content ? crypto::base64(*o.content) : "";
+    *f.blob = o.file ? o.file->path.filename().string() : "";
+    *f.hash = o.file ? o.file->hash : "";
     r.files->push_back(std::move(f));
   }
   return schema::encode(r);
@@ -71,9 +72,49 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, c
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
 
+auto Store::stage_file(const stdfs::path& root, const std::string& from,
+                       const std::optional<std::string>& expected_hash,
+                       const std::function<void()>& check_cancelled) const -> std::shared_ptr<SourceFile> {
+  if (!fs::valid_relative_path(from)) throw Failed(FailureKind::invalid_path, "invalid transfer path " + from);
+  auto file = std::make_shared<SourceFile>();
+  const auto directory = state_dir() / "document-files";
+  stdfs::create_directories(directory);
+  stdfs::permissions(directory, stdfs::perms::owner_all);
+  fs::fsync_dir(state_dir());
+  file->path = directory / crypto::uuid4();
+  crypto::Sha256 hash;
+  bool entered = false;
+  file->size = fs::copy_beneath(root, from, file->path, [&](std::string_view chunk) {
+    check_cancelled();
+    if (opts_.fault == "transfer_gate" && !entered) {
+      entered = true;
+      fs::write_atomic(state_dir() / "transfer.started", "ready");
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+      while (!stdfs::exists(state_dir() / "transfer.release")) {
+        check_cancelled();
+        if (std::chrono::steady_clock::now() >= deadline)
+          throw std::runtime_error("transfer fault gate was not released");
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
+    hash.update(chunk);
+  });
+  file->hash = hash.finish_hex();
+  if (expected_hash && *expected_hash != file->hash)
+    throw Failed(FailureKind::external_change, from + " differs from the confirmed document; Reload before retrying");
+  return file;
+}
+
 auto Store::allocate_card_id(const std::string& stem, const std::string& project_path) -> std::string {
   if (!valid_id(stem) || stem.size() > 123)
     throw Failed(FailureKind::invalid_request, "Card stem must be 1..123 ASCII identifier characters");
+  const auto fold = [](std::string value) {
+    std::transform(
+        value.begin(), value.end(), value.begin(), [](unsigned char c) {
+          return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        });
+    return value;
+  };
   // A scope can still be a local draft, so validate its path rather than requiring it on disk.
   auto rest = project_path;
   while (!rest.empty()) {
@@ -90,26 +131,36 @@ auto Store::allocate_card_id(const std::string& stem, const std::string& project
   auto reservations = fs::read_file(state_dir() / "card-ids").value_or("");
   std::set<std::string> issued;
   std::istringstream lines(reservations);
-  for (std::string line; std::getline(lines, line);) issued.insert(line);
+  for (std::string line; std::getline(lines, line);)
+    issued.insert(fold(line));
   auto doc = current();
   std::set<std::string> canvas_ids;
   if (project_path.empty()) {
-    for (const auto& card : doc->project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+    for (const auto &card : doc->project.canvas->value().cards->value())
+      canvas_ids.insert(fold(card.id->value()));
   } else if (doc->sources.count(project_path + "tsugumi.json")) {
     auto project = parse_external_project(project_path + "tsugumi.json",
                                           read_source(*doc, project_path + "tsugumi.json"));
-    for (const auto& card : project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+    for (const auto &card : project.canvas->value().cards->value())
+      canvas_ids.insert(fold(card.id->value()));
   }
-  constexpr std::string_view alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
-  std::random_device random;
-  std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
-  for (size_t attempt = 0; attempt < 10000; ++attempt) {
-    std::string id = stem + '-';
-    for (int i = 0; i < 4; ++i) id += alphabet[pick(random)];
+  if (project_path.empty())
+    for (const auto &[id, definition] : doc->definitions) {
+      (void)definition;
+      canvas_ids.insert(fold(id));
+    }
+  const auto base = fold(stem);
+  // The name itself is the first candidate; duplicates compose a small index.
+  // One case keeps generated definition folders portable to macOS.
+  for (uint64_t number = 1; number != 0; ++number) {
+    const auto suffix = number == 1 ? "" : "-" + std::to_string(number);
+    auto id = base.substr(0, 128 - suffix.size()) + suffix;
     auto key = project_path + id;
     auto dir = project_path + def_dir(id);
-    bool exists = issued.count(key) || canvas_ids.count(id) || (project_path.empty() && doc->definitions.count(id)) ||
-                  stdfs::exists(opts_.root / dir) || stdfs::exists(opts_.root / project_path / "externals" / id);
+    bool exists = issued.count(fold(key)) || canvas_ids.count(id) ||
+                  (project_path.empty() && doc->definitions.count(id)) ||
+                  stdfs::exists(opts_.root / dir) ||
+                  stdfs::exists(opts_.root / project_path / "externals" / id);
     auto source = doc->sources.lower_bound(dir);
     exists = exists || (source != doc->sources.end() && source->first.starts_with(dir));
     if (exists) continue;
@@ -140,15 +191,19 @@ std::optional<Receipt> Store::receipt(const std::string& op_id) const {
 
 void Store::open() {
   stdfs::create_directories(state_dir());
-  // Project identity: a UUID persisted in internal state, never in the root files.
+  // Project identity: a short reference persisted in internal state, never in
+  // the root files.
   auto id_path = state_dir() / "project-id";
-  if (auto id = fs::read_file(id_path); id && crypto::is_uuid(*id)) {
+  if (auto id = fs::read_file(id_path); id && crypto::is_short_id(*id)) {
     project_id_ = *id;
   } else {
-    project_id_ = crypto::uuid4();
+    project_id_ = crypto::short_id();
     fs::write_atomic(id_path, project_id_, 0600);
   }
   recover_journal();
+  // Recovery has completed every durable intent. Remaining private files
+  // belong to completed transactions or staging interrupted before journaling.
+  stdfs::remove_all(state_dir() / "document-files");
   uint64_t rev = 0;
   uint64_t exec_rev = 0;
   {
@@ -194,7 +249,7 @@ SourceReader Store::reader(const Document& doc, const std::vector<FileOp>* pendi
     if (it == doc.sources.end()) return std::nullopt;
     if (pending) {
       for (const auto& op : *pending)
-        if (op.path == rel) return op.content;
+        if (op.path == rel) return op.file ? fs::read_file(op.file->path) : op.content;
     }
     auto data = fs::read_file(root / rel);
     if (!data || crypto::sha256_hex(*data) != it->second.hash) return std::nullopt;
@@ -277,7 +332,15 @@ void Store::recover_journal() {
       for (const auto& f : *rec.files) {
         FileOp op;
         op.path = *f.path;
-        if (!*f.remove) {
+        if (!f.blob->empty()) {
+          if (!crypto::is_uuid(*f.blob)) throw fs::Error("invalid journal blob");
+          op.file = std::make_shared<SourceFile>();
+          op.file->journaled = true;
+          op.file->path = state_dir() / "document-files" / *f.blob;
+          op.file->hash = *f.hash;
+          if (fs::sha256_file(op.file->path) != op.file->hash)
+            throw fs::Error("journal blob hash mismatch");
+        } else if (!*f.remove) {
           std::string bytes;
           crypto::base64_decode(*f.content_b64, bytes);
           op.content = std::move(bytes);
@@ -386,7 +449,12 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
     if (!writable(opts_.root, op.path))
       throw Failed(FailureKind::invalid_path, op.path + " is not a document or source path", {{"path", op.path}});
     auto target = opts_.root / op.path;
-    if (op.content) {
+    if (op.file) {
+      crypto::Sha256 hash;
+      fs::copy_beneath(op.file->path.parent_path(), op.file->path.filename(), target,
+                       [&](std::string_view chunk) { hash.update(chunk); });
+      if (hash.finish_hex() != op.file->hash) throw fs::Error("staged source hash mismatch");
+    } else if (op.content) {
       fs::write_atomic(target, *op.content);
     } else {
       fs::remove_file_durable(target);
@@ -468,6 +536,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   st.delta.op_id = op_id;
   st.delta.origin = origin;
   std::map<std::string, std::optional<std::string>> files;  // final content per path
+  std::map<std::string, std::shared_ptr<SourceFile>> streamed;
 
   auto hash_conflict = [](const std::string& path, const std::string& expected,
                           const std::string& actual) {
@@ -561,8 +630,13 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
                            c.path + " exists on disk but not in the document; Reload first",
                            {{"path", c.path}});
           }
-          doc->sources[c.path] = SourceEntry{crypto::sha256_hex(c.bytes), c.bytes.size()};
-          files[c.path] = c.bytes;
+          if (c.file) {
+            doc->sources[c.path] = SourceEntry{c.file->hash, c.file->size};
+            streamed[c.path] = c.file;
+          } else {
+            doc->sources[c.path] = SourceEntry{crypto::sha256_hex(c.bytes), c.bytes.size()};
+            files[c.path] = c.bytes;
+          }
         } else if (c.kind == K::PatchSource) {
           if (it == doc->sources.end())
             throw Failed(FailureKind::not_found, c.path + " does not exist", {{"path", c.path}});
@@ -614,9 +688,9 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   for (const auto& [_, d] : doc->definitions)
     json_bytes += d.card_json.size() + (d.meta_json ? d.meta_json->size() : 0);
   if (json_bytes > kMaxDocumentJsonBytes)
-    throw Failed(FailureKind::resource_limit, "document JSON exceeds 8 MiB");
+    throw Failed(FailureKind::resource_limit, "document JSON has " + std::to_string(json_bytes) + " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached folder and read it through hostFolders (/host/<name>).");
   if (doc->sources.size() > kMaxManifestEntries)
-    throw Failed(FailureKind::resource_limit, "source manifest exceeds 10,000 entries");
+    throw Failed(FailureKind::resource_limit, "source manifest has " + std::to_string(doc->sources.size()) + " entries; limit is 10000 (10,000). Keep data in an attached folder and read it through hostFolders (/host/<name>).");
 
   // File operations for document files, computed from the final model.
   if (doc->project_json != base->project_json) {
@@ -676,6 +750,19 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
       if (same) continue;
     }
     st.ops.push_back({path, content});
+  }
+  for (const auto& [path, file] : streamed) {
+    if (Document::is_card_meta_file(path)) wrap([&] {
+      // Apply the existing metadata limit before reading its JSON into memory.
+      if (file->size > (1u << 20))
+        throw DocumentError("invalid_document", path + " has " + std::to_string(file->size) +
+                            " bytes; limit is 1048576 bytes (1 MiB)");
+      check_meta_json(fs::read_file_or_throw(file->path));
+    });
+    auto old = base->sources.find(path);
+    if (old != base->sources.end() && old->second.hash == file->hash) continue;
+    st.delta.sources_upsert.push_back(path);
+    st.ops.push_back({path, std::nullopt, file});
   }
   st.effective = st.delta.project_changed || st.delta.layout_changed ||
                  !st.delta.definitions_upsert.empty() || !st.delta.definitions_removed.empty() ||
@@ -740,10 +827,12 @@ Store::Staged Store::stage_reload(const std::string& op_id, const std::string& o
 }
 
 void Store::commit(Staged& st, const std::string& kind, const std::string& digest,
-                   const std::function<std::string(const Delta*)>& make_receipt) {
+                   const std::function<std::string(const Delta*)>& make_receipt,
+                   const std::function<void()>& check_cancelled) {
   if (halted_)
     throw Failed(FailureKind::persistence_failed,
                  "changes are halted after a persistence failure; restart to recover");
+  check_cancelled();
   auto base = current();
   if (!st.effective) {
     // Receipt only: no revision change, no notification. A reload may still
@@ -756,6 +845,7 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
     }
     st.doc = nullptr;
     Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
+    check_cancelled();
     record_receipt(r);
     return;
   }
@@ -775,12 +865,18 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   st.delta.doc = doc;
   std::string receipt = make_receipt(&st.delta);
 
-  append_record(journal_payload("txn", doc->rev, doc->execution_rev, st.delta.op_id, kind, digest, receipt, st.ops));
+  auto intent = journal_payload("txn", doc->rev, doc->execution_rev, st.delta.op_id, kind, digest, receipt, st.ops);
+  check_cancelled();
+  // Mark before appending: even a failed append/fsync may have persisted the
+  // intent. Recovery owns these files until the commit marker is durable.
+  for (const auto& op : st.ops) if (op.file) op.file->journaled = true;
+  append_record(intent);
   fault("after_journal");
   try {
     apply_ops(st.ops, true);
     fault("before_commit");
     append_record(journal_payload("commit", doc->rev, doc->execution_rev, st.delta.op_id, "", "", "", {}));
+    for (const auto& op : st.ops) if (op.file) op.file->journaled = false;
   } catch (const Failed&) {
     throw;
   } catch (const std::exception& e) {

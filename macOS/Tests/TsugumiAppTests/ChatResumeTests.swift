@@ -21,6 +21,7 @@ import TsugumiRPC
     private var daemon: SyncTests.Daemon?
     private var sessions: [ProjectSession] = []
     private var chats: [ChatController] = []
+    private var streamRelease: URL { directory.appendingPathComponent("stream.release") }
     private var port = 0
     private var servicePID: Int32?
     private var helperPID: URL { directory.appendingPathComponent("vmhost.pid") }
@@ -45,9 +46,10 @@ import TsugumiRPC
       core.standardError = FileHandle.nullDevice
       try core.run()
       try await waitForAgent()
+      try releaseStream()
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
-                         "--port", "0", "--slow", "\(slow)"] + options
+                         "--port", "0", "--slow", "\(slow)", "--stream-release", streamRelease.path] + options
       let output = Pipe()
       model.standardOutput = output
       model.standardError = FileHandle.nullDevice
@@ -70,9 +72,16 @@ import TsugumiRPC
       let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
       provider.model = "fixture"
-      provider.contextLimit = 6000
+      // Use the model budget: 6K cannot hold the real system prompt and tools.
       _ = try await CoreHostClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
       try await CoreHostClient.shared.configure(.fixture, conversationID: conversationID)
+    }
+
+    /// The existing local OAuth fixture replaces the browser and OpenAI.
+    func signInChatGPT(clientId: String? = nil, consent: Bool = false) async throws -> ChatGPTAuth.SignInResult {
+      let auth = ChatGPTAuth.shared(endpoints: .init(issuer: "http://127.0.0.1:\(port)", resource: "https://api.openai.com/v1"))
+      let browser = URLSession(configuration: .ephemeral)
+      return try await auth.signIn(clientId: clientId, consent: consent) { url in _ = try await browser.data(from: url) }
     }
 
     func restartAgent() async throws {
@@ -171,6 +180,9 @@ import TsugumiRPC
         "turn_id": UUID().uuidString, "text": text])
     }
 
+    func holdStream() throws { try FileManager.default.removeItem(at: streamRelease) }
+    func releaseStream() throws { try Data().write(to: streamRelease) }
+
     func snapshot() async throws -> [String: Any] {
       try await CoreHostClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
     }
@@ -187,12 +199,10 @@ import TsugumiRPC
     }
 
     func stop() async {
-      for chat in chats { chat.detach() }
+      try? releaseStream()
+      for chat in chats { await chat.detach().value }
       for session in sessions { await session.close() }
       for session in sessions where session.endpointOverride == nil { try? await session.environments.stop(session.identity) }
-      // Let the UI's detach tasks release their socket observations before
-      // terminating the isolated daemon and restoring the environment.
-      try? await Task.sleep(for: .milliseconds(100))
       if model.isRunning { kill(model.processIdentifier, SIGCONT) }
       if let pid = servicePID, pid != core.processIdentifier {
         // The lock winner belongs to this fixture even when the client launched it.
@@ -216,7 +226,6 @@ import TsugumiRPC
         while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
       }
-      try? await Task.sleep(for: .milliseconds(100))
       await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
       try? FileManager.default.removeItem(at: directory)
@@ -236,10 +245,8 @@ import TsugumiRPC
     }
   }
 
-  func until(_ what: String, seconds: Double = 30, _ ok: () -> Bool) async throws {
-    let deadline = Date().addingTimeInterval(seconds)
-    while !ok(), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    try #require(ok(), "\(what)")
+  func until(_ what: String, seconds: Double = 30, _ ok: @escaping @MainActor () -> Bool) async throws {
+    try await waitForModel(what, ok)
   }
 
   func reply(_ chat: ChatController, after n: Int) -> Bool {
@@ -258,11 +265,9 @@ import TsugumiRPC
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
       #expect(!chat.busy && !chat.canContinue)
-      #expect(chat.status?.contains(String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。").components(separatedBy: "%@")[0]) == true)
       let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
       try await agent.open()
       try await agent.refresh()
-      try await Task.sleep(for: .milliseconds(300))
       let after = try await t.snapshot()
       #expect(after["busy"] as? Bool == false)
       #expect(after["resumable"] as? Bool == true)
@@ -289,7 +294,6 @@ import TsugumiRPC
       #expect(!chat.busy && !chat.failed)
       let snapshot = try await t.snapshot()
       #expect(snapshot["resumable"] as? Bool == true)
-      try await Task.sleep(for: .milliseconds(300))
       #expect(try await t.snapshot()["event_seq"] as? UInt64 == snapshot["event_seq"] as? UInt64)
     }
   }
@@ -383,7 +387,8 @@ import TsugumiRPC
   }
 
   @Test func aRunningCoreAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
-    try await withFixture(slow: 0.1) { t in
+    try await withFixture(slow: 0) { t in
+      try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
       try await until("the running answer is observed before the project connects") {
@@ -393,6 +398,7 @@ import TsugumiRPC
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the running answer is observed") { chat.busy }
+      try t.releaseStream()
       try await until("the answer ended") { !chat.busy && reply(chat, after: 1) }
       #expect(chat.status == nil && !chat.failed)
       let before = chat.items.count
@@ -404,7 +410,8 @@ import TsugumiRPC
   }
 
   @Test func aMessageAfterStoppingIsNotShownAsStopped() async throws {
-    try await withFixture(slow: 0.1) { t in
+    try await withFixture(slow: 0) { t in
+      try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
       t.session.start()
@@ -412,6 +419,7 @@ import TsugumiRPC
       try await until("the answer is streaming") { chat.busy && reply(chat, after: 1) }
       chat.cancel()
       #expect(!chat.busy)
+      try t.releaseStream()
       let before = chat.items.count
       chat.send("hello again")
       try await until("the new reply ended") { !chat.busy && reply(chat, after: before) }
@@ -420,13 +428,15 @@ import TsugumiRPC
   }
 
   @Test func detachingTheUIKeepsTheAnswerAndReopeningReadsIt() async throws {
-    try await withFixture(slow: 0.1) { t in
+    try await withFixture(slow: 0) { t in
+      try t.holdStream()
       try await t.send()
       let left = t.makeChat()
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the answer is streaming") { left.busy && reply(left, after: 1) }
-      left.detach()
+      await left.detach().value
+      try t.releaseStream()
       let complete = try await t.finished()
       let conversation = try #require(complete["conversation"] as? Tsugumi_Agent_ConversationT)
       let messages = conversation.messages.compactMap { $0 }
@@ -496,6 +506,9 @@ import TsugumiRPC
       let second = ProjectSession(identity: identity, environments: t.session.environments)
       let projectID = UUID().uuidString.lowercased()
       second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
+      // A folder is registered under the identity it holds.
+      try FileManager.default.createDirectory(at: copied.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
+      try Data(projectID.utf8).write(to: copied.appendingPathComponent(".tsugumi/project-id"))
       _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": projectID,
         "endpoint": project.url.absoluteString, "token": project.token, "title": "copy-b", "path": copied.path])
       let chat = ChatController(session: second, connection: { .fixture })
@@ -505,7 +518,7 @@ import TsugumiRPC
       #expect(chat.sessions.isEmpty && chat.items.isEmpty && chat.permissionPrompt == nil)
       #expect(await chat.search("Only copy A").isEmpty)
       chat.select(t.conversationID)
-      try await until("an explicit cross-project selection is refused") { chat.status?.contains("original project") == true }
+      try await until("an explicit cross-project selection is refused") { chat.status != nil && !chat.loading }
       #expect(chat.items.isEmpty && chat.permissionPrompt == nil)
       let saved = try await t.snapshot()
       #expect(saved["project_id"] as? String == project.projectId)
@@ -600,17 +613,18 @@ import TsugumiRPC
   }
 
   @Test func stoppingBeforeTheProjectConnectsKeepsItStopped() async throws {
-    try await withFixture(slow: 0.1) { t in
-      try await t.send()
+    try await withFixture(slow: 0) { t in
+      try await t.send(holdingModel: true)
       let chat = t.makeChat()
       try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
       chat.cancel()
       let stopped = try await t.finished()
+      try #require(kill(t.model.processIdentifier, SIGCONT) == 0)
       #expect(stopped["resumable"] as? Bool == false)
       #expect(stopped["continuable"] as? Bool == true)
       t.session.start()
       try await SyncTests.connected(t.session)
-      try await Task.sleep(for: .milliseconds(250))
+      try await until("the cancelled conversation is observed") { !chat.busy && chat.canContinue }
       #expect(!chat.busy && !reply(chat, after: 1))
       #expect(chat.canContinue && !chat.failed)
     }

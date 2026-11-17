@@ -5,11 +5,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <set>
 
 #include "agent/json.hh"
-#include "tsugumi/protocol/tsugumi_generated.h"
+#include "host/failure.hh"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/tsugumi_generated.h"
 #include "util/crypto.hh"
 #include "util/text.hh"
 
@@ -31,9 +33,12 @@ struct SchemaScope {
   explicit SchemaScope(bool host) { host_schema = host; }
   ~SchemaScope() { host_schema = previous; }
 };
-auto Namespace() -> std::string { return host_schema ? "Tsugumi.Host." : "Tsugumi.RPC."; }
+auto Namespace() -> std::string {
+  return host_schema ? "Tsugumi.Host." : "Tsugumi.RPC.";
+}
 auto Schema() -> const reflection::Schema & {
-  return *reflection::GetSchema(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs);
+  return *reflection::GetSchema(host_schema ? tsugumi_host_bfbs
+                                            : tsugumi_rpc_bfbs);
 }
 
 auto Name(std::string name) -> std::string {
@@ -48,6 +53,23 @@ auto Name(std::string name) -> std::string {
   return out;
 }
 
+// Shared JSON keeps readable indentation on disk. Provider request builders
+// embed schemas verbatim, so remove formatting outside JSON strings once here.
+auto CompactSchema(std::string_view raw) -> std::string {
+  std::string out;
+  bool quoted = false, escaped = false;
+  for (const char c : raw) {
+    if (quoted || !std::isspace(static_cast<unsigned char>(c))) out += c;
+    if (escaped)
+      escaped = false;
+    else if (quoted && c == '\\')
+      escaped = true;
+    else if (c == '"')
+      quoted = !quoted;
+  }
+  return out;
+}
+
 auto Docs(
     const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *docs)
     -> std::string {
@@ -58,10 +80,24 @@ auto Docs(
   return out;
 }
 
-const std::set<std::string> kOwnedFields{"origin", "op_id",
-                                         "approved_permissions", "run_ids",
-                                         "restrict_to_run_ids", "check_permissions",
-                                         "read_only", "hide_credentials", "no_project_socket"};
+const std::set<std::string> kOwnedFields{"origin",
+                                         "op_id",
+                                         "save_intent",
+                                         "approved_permissions",
+                                         "run_ids",
+                                         "restrict_to_run_ids",
+                                         "check_permissions",
+                                         "read_only",
+                                         "hide_credentials",
+                                         "no_project_socket",
+                                         "transfers",
+                                         "working_directory",
+                                         "writable_paths",
+                                         "mounts",
+                                         "output_prefix",
+                                         "workspace_only",
+                                         "protected_paths",
+                                         "excluded_paths"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
@@ -84,7 +120,7 @@ auto TypeSchema(reflection::BaseType type, reflection::BaseType element,
     return ObjectSchema(*Schema().objects()->Get(index), depth + 1, false);
   if (type == Vector) {
     if (element == UByte || element == Byte)
-      return R"({"type":"string","description":"UTF-8 text; binary data may be supplied as an object with a base64 field"})";
+      return R"({"oneOf":[{"type":"string"},{"type":"object","properties":{"base64":{"type":"string"}},"required":["base64"],"additionalProperties":false}]})";
     return json::Encode(
         json::Members{{"type", json::Quote("array")},
                       {"items", TypeSchema(element, None, index, depth)}});
@@ -146,12 +182,15 @@ auto ObjectSchema(const reflection::Object &object, int depth, bool top)
   }
   // Agent save conveniences belong to hostd, not the project protocol.
   if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
-    properties["fill_description"] = R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
-    properties["fill_context"] = R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
+    properties["fill_description"] =
+        R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
+    properties["fill_context"] =
+        R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
   }
   if (object.name()->str() == "Tsugumi.RPC.CardIdRequest") {
     properties.erase("stem");
-    properties["name"] = R"({"type":"string","description":"Human name; the host derives the identifier stem."})";
+    properties["name"] =
+        R"({"type":"string","description":"Human name; the host derives the identifier stem."})";
     required = {json::Quote("name")};
   }
   json::Members schema{{"type", json::Quote("object")},
@@ -257,12 +296,116 @@ auto Output(const reflection::Object &object, std::string_view raw)
   return json::Encode(values);
 }
 
+struct UnknownArgument {
+  std::string field;
+  std::string path;
+};
+auto UnknownField(const std::string &schema, const std::string &raw,
+                  const std::string &path) -> std::optional<UnknownArgument> {
+  const auto spec = json::Object(schema);
+  const auto alternatives = spec.contains("oneOf") ? "oneOf" : "anyOf";
+  if (spec.contains(alternatives)) {
+    std::optional<UnknownArgument> first;
+    size_t best_score = SIZE_MAX;
+    for (const auto &variant : json::Array(spec.at(alternatives))) {
+      const auto unknown = UnknownField(variant, raw, path);
+      if (!unknown)
+        return {};
+      // Select the closest documented variant, so an extra field on a text
+      // edit is not misreported as a field from the structured-edit variant.
+      const auto shape = json::Object(variant);
+      const auto values =
+          raw.starts_with('{') ? json::Object(raw) : json::Members{};
+      const auto properties =
+          json::Object(json::Get(shape, "properties", "{}"));
+      size_t score = 0;
+      for (const auto &required :
+           json::Array(json::Get(shape, "required", "[]")))
+        if (!values.contains(json::String(required)))
+          ++score;
+      for (const auto &[key, ignored] : values) {
+        (void)ignored;
+        if (!properties.contains(key))
+          ++score;
+      }
+      if (score < best_score) {
+        first = unknown;
+        best_score = score;
+      }
+    }
+    return first;
+  }
+  if (raw.starts_with('{') && spec.contains("properties")) {
+    const auto properties = json::Object(spec.at("properties"));
+    for (const auto &[key, value] : json::Object(raw)) {
+      if (!properties.contains(key)) {
+        if (json::Get(spec, "additionalProperties") == "false")
+          return UnknownArgument{key, path + "." + key};
+      } else if (auto unknown =
+                     UnknownField(properties.at(key), value, path + "." + key))
+        return unknown;
+    }
+  } else if (raw.starts_with('[') && spec.contains("items")) {
+    size_t i = 0;
+    for (const auto &value : json::Array(raw)) {
+      if (auto unknown = UnknownField(spec.at("items"), value,
+                                      path + "[" + std::to_string(i++) + "]"))
+        return unknown;
+    }
+  }
+  return {};
+}
+auto HasField(const std::string &schema, const std::string &field) -> bool {
+  const auto spec = json::Object(schema);
+  if (spec.contains("properties")) {
+    const auto properties = json::Object(spec.at("properties"));
+    if (properties.contains(field))
+      return true;
+    for (const auto &[key, child] : properties) {
+      (void)key;
+      if (HasField(child, field))
+        return true;
+    }
+  }
+  if (spec.contains("items") && HasField(spec.at("items"), field))
+    return true;
+  for (const auto *alternatives : {"anyOf", "oneOf"})
+    for (const auto &child : json::Array(json::Get(spec, alternatives, "[]")))
+      if (HasField(child, field))
+        return true;
+  return false;
+}
+auto ArgumentDiagnostic(const Catalog &catalog, std::string_view tool,
+                        const UnknownArgument &unknown) -> std::string {
+  auto message = std::string(tool) + ": unknown field '" + unknown.field +
+                 "' at " + unknown.path + ".";
+  if (tool == "project_save")
+    message += " project_save takes changes tagged with value_type and value "
+               "(SetProject, PutDefinition, PutSource, RemoveDefinition, "
+               "SetLayout, etc.).";
+  std::vector<std::string> accepts;
+  for (const auto &candidate : catalog.tools())
+    if (candidate.spec.name != tool &&
+        HasField(candidate.spec.input_schema, unknown.field))
+      accepts.push_back(candidate.spec.name);
+  if (!accepts.empty()) {
+    message += " Use ";
+    for (size_t i = 0; i < accepts.size(); ++i)
+      message += (i ? ", " : "") + accepts[i];
+    message +=
+        " for '" + unknown.field + "' edits/arguments in its documented shape.";
+  }
+  return message;
+}
+
 auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
   auto parser = std::make_unique<flatbuffers::Parser>();
   parser->opts.strict_json = true;
   parser->opts.output_default_scalars_in_json = true;
   parser->opts.indent_step = -1;
-  if (!parser->Deserialize(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs, host_schema ? tsugumi_host_bfbs_size : tsugumi_rpc_bfbs_size))
+  if (!parser->Deserialize(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs,
+                           host_schema ? tsugumi_host_bfbs_size
+                                       : tsugumi_rpc_bfbs_size))
     throw std::runtime_error("cannot load project RPC schema");
   return parser;
 }
@@ -276,15 +419,23 @@ auto Catalog::shared() const -> json::Members {
 }
 
 Catalog::Catalog() {
-  tools_.push_back({{"project_file_format", "Format editor text without changing files. The host supplies fixed formatters.",
-    R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"}, "FileFormatRequest", false, false, false});
+  tools_.push_back(
+      {{"project_file_format",
+        "Return formatted text for path and language using the host's "
+        "formatter.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
+       "FileFormatRequest",
+       false,
+       false,
+       false});
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));
   std::set<std::string> seen;
   for (const auto *list : {"requests", "approvalRequests", "hostRequests"}) {
     SchemaScope scope(std::string_view(list) == "hostRequests");
-    const auto* requests = Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
+    const auto *requests =
+        Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
     for (const auto &entry : json::Array(json::Get(settings, list, "[]"))) {
       const auto name = json::String(entry);
       const auto found = std::find_if(
@@ -301,25 +452,221 @@ Catalog::Catalog() {
                        name,
                        false};
       tool.host = host_schema;
+      // Client-only RPC fields are not model arguments.
+      const auto hidden =
+          json::Object(json::Get(settings, "notForModels", "{}"));
+      if (hidden.contains(name)) {
+        auto schema = json::Object(tool.spec.input_schema);
+        auto properties = json::Object(json::Get(schema, "properties"));
+        for (const auto& field : json::Array(hidden.at(name)))
+          properties.erase(json::String(field));
+        schema["properties"] = json::Encode(properties);
+        tool.spec.input_schema = json::Encode(schema);
+      }
       if (tool.spec.name == "card_id")
-        tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
-      tool.approval_required = std::string_view(list) == "approvalRequests";
-      if (tool.approval_required)
+        tool.spec.description =
+            "Reserve a permanent Card id from name; returns id. project_path "
+            "selects an external project; omitted means root.";
+      if (tool.spec.name == "run_value_read" ||
+          tool.spec.name == "artifact_read" || tool.spec.name == "log_range" ||
+          tool.spec.name == "module_read")
         tool.spec.description +=
-            " Requires the person's approval for this call and its exact "
-            "targets; a declined call changes nothing.";
+            " Agent pages default to 2048 bytes; continue with next_offset.";
+      if (tool.spec.name == "run_history" ||
+          tool.spec.name == "run_invocations" ||
+          tool.spec.name == "artifact_list" ||
+          tool.spec.name == "run_environments" ||
+          tool.spec.name == "run_environment_paths")
+        tool.spec.description +=
+            " Agent pages default to 8; continue with the "
+            "returned cursor or next_offset.";
+      if (tool.spec.name == "project_save")
+        tool.spec.description += " " + json::Text(settings, "saveNote");
+      if (tool.spec.name == "run" || tool.spec.name == "run_status") {
+        const auto wait = json::Object(json::Get(settings, "runWait"));
+        auto schema = json::Object(tool.spec.input_schema);
+        auto properties = json::Object(json::Get(schema, "properties"));
+        properties["wait_seconds"] = json::Get(wait, "schema");
+        schema["properties"] = json::Encode(properties);
+        tool.spec.input_schema = json::Encode(schema);
+        tool.spec.description += " " + json::Text(wait, "description");
+      }
+      tool.approval_required = std::string_view(list) == "approvalRequests";
       tool.mutating = OwnOperationId(object);
       tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
       tools_.push_back(std::move(tool));
     }
   }
-  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]"))) {
+  for (const auto &raw : json::Array(json::Get(settings, "hostTools", "[]"))) {
     const auto tool = json::Object(raw);
     const auto name = json::Text(tool, "name");
-    if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
+    if (Find(name))
+      throw std::runtime_error("duplicate host tool: " + name);
     tools_.push_back({{name, json::Text(tool, "description"),
-                       json::Get(tool, "inputSchema")}, name, false, false, false});
+                       CompactSchema(json::Get(tool, "inputSchema"))},
+                      name,
+                      false,
+                      json::Bool(json::Get(tool, "mutating", "false")),
+                      false});
   }
+  for (auto& tool : tools_)
+    tool.spec.input_schema = CompactSchema(tool.spec.input_schema);
+  const std::vector<std::string> editing{
+      "project_edit",   "project_connect", "project_make_subgraph",
+      "project_layout", "project_copy",    "project_save"};
+  auto rank = [&](const CatalogTool &tool) {
+    return std::find(editing.begin(), editing.end(), tool.spec.name) -
+           editing.begin();
+  };
+  std::stable_sort(tools_.begin(), tools_.end(),
+                   [&](const auto &a, const auto &b) {
+                     const auto ar = rank(a), br = rank(b);
+                     if (ar == static_cast<decltype(ar)>(editing.size()))
+                       return br != static_cast<decltype(br)>(editing.size());
+                     if (br == static_cast<decltype(br)>(editing.size()))
+                       return false;
+                     return ar < br;
+                   });
+}
+
+auto Catalog::AllSpecs() const -> std::vector<ToolSpec> {
+  std::vector<ToolSpec> specs;
+  for (const auto& tool : tools()) specs.push_back(tool.spec);
+  specs.push_back(
+      {"document_template",
+       "Read a Card template by name and reserved id. Returns definition_json "
+       "and source files for one project_edit under definitions/<id>/.",
+       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
+  specs.push_back(
+      {"demo_list",
+       "List bundled demos with paths, names and one-line descriptions.",
+       R"({"type":"object","properties":{},"additionalProperties":false})"});
+  specs.push_back(
+      {"demo_read",
+       "Read a bundled demo or reference file; path is relative to demos/.",
+       R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
+  {
+    const auto definition = json::Object(
+        json::Get(json::Object(json::Get(shared(), "guide")), "showTool"));
+    specs.push_back({json::Text(definition, "name"),
+                     json::Text(definition, "description"),
+                     json::Get(definition, "inputSchema")});
+  }
+  {
+    const auto definition =
+        json::Object(json::Get(shared(), "delegateTool", "{}"));
+    specs.push_back({"delegate", json::Text(definition, "description"),
+                     json::Get(definition, "inputSchema", "{}")});
+  }
+  for (auto& spec : specs) spec.input_schema = CompactSchema(spec.input_schema);
+  return specs;
+}
+
+namespace {
+auto ContainsName(const std::string& raw, std::string_view name) -> bool {
+  for (const auto& value : json::Array(raw))
+    if (json::String(value) == name) return true;
+  return false;
+}
+}  // namespace
+
+auto Catalog::Allows(std::string_view name, ModelRole role) const -> bool {
+  if (role == ModelRole::Guide) {
+    const auto guide = json::Object(json::Get(shared(), "guide"));
+    return name == "guide_show" || name == "demo_list" || name == "demo_read" ||
+           name == "tool_result_read" ||
+           ContainsName(json::Get(guide, "tools"), name);
+  }
+  if (name == "guide_show") return false;
+  if (role == ModelRole::ScopedHelper)
+    return ContainsName(
+        json::Get(json::Object(json::Get(shared(), "modelTools")), "scoped"),
+        name);
+  return true;
+}
+
+auto Catalog::FamilySpecs(std::string_view family, ModelRole role) const
+    -> std::vector<ToolSpec> {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto families = json::Object(json::Get(settings, "families"));
+  const auto found = families.find(std::string(family));
+  if (found == families.end())
+    throw host::Failure("invalid_request", "Unknown tool family");
+  const auto all = AllSpecs();
+  std::vector<ToolSpec> result;
+  for (const auto& [action, raw] : json::Object(found->second)) {
+    const auto name = json::String(raw);
+    if (!Allows(name, role)) continue;
+    const auto spec =
+        std::find_if(all.begin(), all.end(),
+                     [&](const auto& tool) { return tool.name == name; });
+    if (spec == all.end())
+      throw std::runtime_error("Unknown family tool: " + name);
+    result.push_back({action, spec->description, spec->input_schema});
+  }
+  return result;
+}
+
+auto Catalog::FamilyTool(std::string_view family, std::string_view action,
+                         ModelRole role) const -> std::string {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto families = json::Object(json::Get(settings, "families"));
+  const auto actions = json::Object(json::Get(families, family, "{}"));
+  const auto name = json::Text(actions, action);
+  if (name.empty() || !Allows(name, role))
+    throw host::Failure("permission_denied",
+                        "Tool action unavailable for this role");
+  return name;
+}
+
+auto Catalog::ModelSpecs(ModelRole role, bool can_delegate) const
+    -> std::vector<ToolSpec> {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto all = AllSpecs();
+  std::vector<ToolSpec> result;
+  for (const auto& raw : json::Array(json::Get(settings, "core"))) {
+    const auto name = json::String(raw);
+    if (!Allows(name, role) || (name == "delegate" && !can_delegate)) continue;
+    const auto found =
+        std::find_if(all.begin(), all.end(),
+                     [&](const auto& tool) { return tool.name == name; });
+    if (found == all.end())
+      throw std::runtime_error("Unknown core tool: " + name);
+    result.push_back(*found);
+  }
+  std::vector<std::string> families;
+  for (const auto& [family, actions] :
+       json::Object(json::Get(settings, "families"))) {
+    (void)actions;
+    if (!FamilySpecs(family, role).empty())
+      families.push_back(json::Quote(family));
+  }
+  const auto schema = json::Encode(json::Members{
+      {"type", json::Quote("object")},
+      {"additionalProperties", "false"},
+      {"required", R"(["family"])"},
+      {"properties",
+       json::Encode(json::Members{
+           {"family",
+            json::Encode(json::Members{{"type", json::Quote("string")},
+                                       {"enum", json::Encode(families)}})},
+           {"action", R"({"type":"string"})"},
+           {"arguments",
+            R"({"type":"object","additionalProperties":true})"}})}});
+  const ToolSpec index{
+      "tools",
+      "Fetch a family's actions and argument schemas (omit action), "
+      "or call action with arguments; returns that action's result.",
+      schema};
+  // Keep narrow edit tools first and whole-document save last.
+  const auto save = std::find_if(
+      result.begin(), result.end(),
+      [](const auto& tool) { return tool.name == "project_save"; });
+  result.insert(save, index);
+  if (role == ModelRole::Guide)
+    for (const auto& tool : all)
+      if (tool.name == "guide_show") result.push_back(tool);
+  return result;
 }
 
 auto Catalog::Find(std::string_view name) const -> const CatalogTool * {
@@ -340,12 +687,32 @@ auto Catalog::Json() const -> std::string {
   return json::Encode(tools);
 }
 
+auto Catalog::ValidateArguments(std::string_view name,
+                                std::string_view arguments) const -> void {
+  const auto *tool = Find(name);
+  std::string input_schema;
+  if (name == "tools") {
+    for (const auto& spec : ModelSpecs())
+      if (spec.name == name) input_schema = spec.input_schema;
+  } else if (tool) {
+    input_schema = tool->spec.input_schema;
+  } else {
+    return;
+  }
+  if (const auto unknown =
+          UnknownField(input_schema, json::Encode(json::Object(arguments)),
+                       std::string(name)))
+    throw host::Failure("invalid_request",
+                        ArgumentDiagnostic(*this, name, *unknown));
+}
+
 auto Catalog::Request(std::string_view name, std::string_view arguments,
                       uint64_t id) const -> std::string {
   const auto *tool = Find(name);
   if (!tool)
     throw std::runtime_error("unknown project operation");
-  return tool->host ? HostRequest(name, arguments, id) : EncodeProjectRequest(name, arguments, id);
+  return tool->host ? HostRequest(name, arguments, id)
+                    : EncodeProjectRequest(name, arguments, id);
 }
 
 auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
@@ -360,22 +727,37 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
   if (found == requests->values()->end())
     throw std::runtime_error("unknown project operation");
   const auto request_name = (*found)->name()->str();
-  const auto *object = Schema().objects()->LookupByKey(
-      (Namespace() + request_name).c_str());
+  const auto *object =
+      Schema().objects()->LookupByKey((Namespace() + request_name).c_str());
   auto body = json::Encode(json::Members{
       {"request_id", std::to_string(id)},
       {"payload_type", json::Quote("Request")},
-      {"payload", json::Encode(json::Members{
-                      {"value_type", json::Quote(request_name)},
-                      {"value", Normalize(*object, arguments)}})}});
+      {"payload",
+       json::Encode(json::Members{{"value_type", json::Quote(request_name)},
+                                  {"value", Normalize(*object, arguments)}})}});
   auto parser = Parser();
-  if (!parser->ParseJson(body.c_str()))
-    throw std::runtime_error(parser->error_);
+  if (!parser->ParseJson(body.c_str())) {
+    const std::string marker = "unknown field: ";
+    const auto at = parser->error_.find(marker);
+    if (at != std::string::npos) {
+      const auto field = parser->error_.substr(at + marker.size());
+      throw host::Failure(
+          "invalid_request",
+          ArgumentDiagnostic(Catalog{}, name, {field, std::string(name)}));
+    }
+    auto diagnostic = parser->error_;
+    std::replace(diagnostic.begin(), diagnostic.end(), '\n', ' ');
+    throw host::Failure(
+        "invalid_request",
+        std::string(name) +
+            ": arguments do not match its schema: " + diagnostic);
+  }
   return {reinterpret_cast<const char *>(parser->builder_.GetBufferPointer()),
           parser->builder_.GetSize()};
 }
 
-auto Catalog::HostRequest(std::string_view name, std::string_view arguments, uint64_t id) const -> std::string {
+auto Catalog::HostRequest(std::string_view name, std::string_view arguments,
+                          uint64_t id) const -> std::string {
   SchemaScope scope(true);
   return EncodeProjectRequest(name, arguments, id);
 }
@@ -386,7 +768,8 @@ auto Catalog::HostReply(std::string_view bytes) const -> std::string {
 auto Catalog::Reply(std::string_view bytes) const -> std::string {
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
-  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier) : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
+  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier)
+                    : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
     throw std::runtime_error("invalid project reply");
   auto parser = Parser();
   std::string raw;

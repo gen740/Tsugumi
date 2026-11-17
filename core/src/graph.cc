@@ -1,4 +1,5 @@
 #include "graph.hh"
+
 #include "collect_type.hh"
 #include "nix_refs.hh"
 
@@ -16,6 +17,16 @@ namespace tsugumi {
 using types::PortKind;
 using types::PortType;
 using types::TypeRef;
+
+auto Resolution::endpoint(const CardPath& card, const std::string& port, bool output) const
+    -> std::optional<std::pair<size_t, std::string>> {
+  const auto found = index.find(path_key(card));
+  if (found == index.end()) return std::nullopt;
+  if (!nodes[found->second].is_virtual) return std::pair{found->second, port};
+  const auto alias = endpoints.find({path_key(card), port, output});
+  if (alias == endpoints.end()) return std::nullopt;
+  return alias->second;
+}
 
 const char* template_name(Template t) {
   switch (t) {
@@ -283,16 +294,24 @@ class Builder {
       else
         s.execution_service = *v;
     }
-    const bool remote = s.execution_service != kLocalExecutionService;
+    if (const auto* condition = schema::get(d.worker_condition)) {
+      auto compiled = worker_condition::compile({*condition->language, *condition->expression});
+      if (const auto* diagnostic = std::get_if<worker_condition::Diagnostic>(&compiled))
+        n.diags.push_back(diag(n.path, "invalid_setting", "workerCondition: " + diagnostic->message +
+            " at byte " + std::to_string(diagnostic->position)));
+      else
+        s.worker_condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+    }
+    const bool remote = s.execution_service != kLocalExecutionService && s.execution_service != "auto";
     const auto* host_folders = schema::get(d.host_folders);
-    if (remote && (!s.sandbox || s.reuse_worker || s.timeout_seconds.value_or(3600) > 604800 ||
+    if (remote && (!s.sandbox || s.reuse_worker ||
                    (host_folders && !host_folders->empty())))
       n.diags.push_back(diag(n.path, "invalid_setting",
-          "external execution requires sandbox, no worker reuse or host folders, and a timeout of at most seven days"));
+          "external execution requires sandbox, no worker reuse or host folders"));
     if (const auto* resources = schema::get(d.execution_resources)) {
       const auto* cpu = schema::get(resources->cpu_millis);
       const auto* memory = schema::get(resources->memory_bytes);
-      if (!remote)
+      if (s.execution_service == kLocalExecutionService)
         n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires an external execution service"));
       else if (!cpu || *cpu == 0 || *cpu > 256'000 || !memory || *memory == 0 || *memory > (uint64_t{1} << 40))
         n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires 1–256000 cpuMillis and up to 1 TiB of memoryBytes"));
@@ -340,7 +359,10 @@ class Builder {
         }
         auto pt = parse_param_type(*type);
         if (!pt) {
-          n.diags.push_back(diag(n.path, "invalid_param", "param " + *name + " has unknown type " + *type));
+          n.diags.push_back(diag(n.path, "invalid_param", "Card " + path_key(n.path) + ": param " + *name +
+                                 " has unknown type " + *type +
+                                 "; write params[].type as bool, int64, uint64, double, string, "
+                                 "or one of these with [] for a list"));
           continue;
         }
         if (!names.insert(*name).second) {
@@ -568,7 +590,7 @@ class Builder {
                                                      std::string port,
                                                      bool output,
                                                      const CardPath& report_on,
-                                                     const std::string& wire) {
+                                                     const std::string& wire, bool diagnose = true) {
     for (int guard = 0; guard < 32; ++guard) {
       auto it = res_->index.find(path_key(path));
       if (it == res_->index.end()) return std::nullopt;
@@ -581,7 +603,7 @@ class Builder {
         for (const auto& [name, e] : side->entries())
           if (name == port) ep = &e;
       if (!ep) {
-        n.diags.push_back(diag(n.path, "unknown_port",
+        if (diagnose) n.diags.push_back(diag(n.path, "unknown_port",
                                wire + ": subgraph has no boundary " +
                                    (output ? "output " : "input ") + port));
         return std::nullopt;
@@ -589,14 +611,14 @@ class Builder {
       path.push_back(ep->card->value());
       port = ep->port->value();
       if (!res_->index.count(path_key(path))) {
-        n.diags.push_back(diag(n.path, "unknown_card",
+        if (diagnose) n.diags.push_back(diag(n.path, "unknown_card",
                                wire + ": boundary " + port +
                                    " points to unknown card " +
                                    path_key(path)));
         return std::nullopt;
       }
     }
-    res_->diags.push_back(diag(report_on, "invalid_graph", "subgraph boundary nesting too deep"));
+    if (diagnose) res_->diags.push_back(diag(report_on, "invalid_graph", "subgraph boundary nesting too deep"));
     return std::nullopt;
   }
 
@@ -611,39 +633,67 @@ class Builder {
           for (const auto& [name, _] : outs->entries()) n.outputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
       }
     }
+    for (const auto& node : res_->nodes) {
+      if (!node.is_virtual) continue;
+      for (const bool output : {false, true})
+        for (const auto& port : output ? node.outputs : node.inputs)
+          if (auto end = leaf(node.path, port.name, output, node.path, "boundary", false))
+            res_->endpoints[{path_key(node.path), port.name, output}] = *end;
+    }
     for (const auto& e : raw_) {
       CardPath from = e.scope;
       CardPath to = e.scope;
       from.push_back(e.from);
       to.push_back(e.to);
-      const auto wire = "wire " + path_key(from) + "." + e.from_port + " -> " +
-                        path_key(to) + "." + e.to_port;
+      const auto wire = "wire " + path_key(from) + " -> " + path_key(to);
       auto src = leaf(from, e.from_port, true, from, wire);
       auto dst = leaf(to, e.to_port, false, to, wire);
       if (!src || !dst) continue;
       Node& sn = res_->nodes[src->first];
       Node& dn = res_->nodes[dst->first];
       bool ok = true;
-      if (sn.kind == Template::Draft ? !src->second.empty()
-                                     : !sn.output(src->second)) {
-        sn.diags.push_back(
-            diag(sn.path, "unknown_port",
-                 wire + ": " +
-                     (sn.kind == Template::Draft
-                          ? "Draft output end must have an empty port"
-                          : "no output port " + src->second)));
+      const auto check = [&](Node& node, const std::string& port, bool output) {
+        const auto side = output ? "from" : "to";
+        const auto card = path_key(node.path);
+        const bool draft = node.kind == Template::Draft;
+        if (draft ? port.empty() : (output ? node.output(port) != nullptr
+                                          : node.input(port) != nullptr))
+          return;
+        std::string fix;
+        if (draft) {
+          fix = card + " is still a Draft, so its " + side + " end keeps port \"\"";
+        } else {
+          const auto direction = output ? "output" : "input";
+          fix = card + " has no " + direction + " port " + schema::text(schema::string_value(port));
+          std::string ports;
+          if (output) {
+            for (const auto& p : node.outputs) {
+              if (!ports.empty()) ports += ", ";
+              ports += schema::text(schema::string_value(p.name));
+            }
+          } else {
+            for (const auto& p : node.inputs) {
+              if (!ports.empty()) ports += ", ";
+              ports += schema::text(schema::string_value(p.name));
+            }
+          }
+          if (!ports.empty())
+            fix += "; write " + std::string(side) + ".port as one of " + ports;
+          if (!output && node.kind == Template::Code &&
+              (!port.empty() || ports.empty()))
+            fix += "; add {\"name\": " +
+                   schema::text(schema::string_value(port.empty() ? "source" : port)) +
+                   "} to " + node.def_dir +
+                   "_card.json inputs and write to.port with that name";
+          else if (ports.empty())
+            fix += "; declare an " + std::string(direction) +
+                   " port on " + card + " and write " + side + ".port with its name";
+        }
+        node.diags.push_back(diag(node.path, "unknown_port", wire + ": " + fix));
         ok = false;
-      }
-      if (dn.kind == Template::Draft ? !dst->second.empty()
-                                     : !dn.input(dst->second)) {
-        dn.diags.push_back(
-            diag(dn.path, "unknown_port",
-                 wire + ": " +
-                     (dn.kind == Template::Draft
-                          ? "Draft input end must have an empty port"
-                          : "no input port " + dst->second)));
-        ok = false;
-      }
+      };
+      check(sn, src->second, true);
+      check(dn, dst->second, false);
       if (ok) res_->edges.push_back({src->first, src->second, dst->first, dst->second});
     }
     // One output feeds one wire: a value goes to several Cards through a

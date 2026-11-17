@@ -112,7 +112,7 @@ extension SyncTests {
       _ = try await agent.save(baseRev: snapshot.rev ?? 0, opId: UUID(), origin: "agent", changes: [
         Change.putDefinition(id: "a", cardJSON: #"{"template":"draft"}"#, metaJSON: meta.serialized()),
       ])
-      for _ in 0..<100 where session.rev <= (snapshot.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+      try await waitForModel { !(session.rev <= (snapshot.rev ?? 0)) }
       #expect(session.rev > (snapshot.rev ?? 0))
     }
     try await save("base", "base")
@@ -128,9 +128,8 @@ extension SyncTests {
       try await save("newer", "newer")
       _ = await session.finishDraftEdit()
       #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
+      // Overwriting replaces the value now saved; the field left alone keeps the newest.
       try await save("newest", "newest")
-      _ = await session.finishDraftEdit(overwrite: true)
-      #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
       _ = await session.finishDraftEdit(overwrite: true)
       #expect(session.inlineDraft == nil && !session.dirty)
       #expect(session.cardMeta("a")?[field]?.string == "mine")

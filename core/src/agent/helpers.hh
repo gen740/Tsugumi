@@ -32,9 +32,10 @@ struct Helpers {
   Helpers(host::StateGate& gate, ConversationStore& conversations,
           Providers& providers, host::Settings& settings, Tools& tools,
           Turns& turns, host::Access& access, Dependencies dependencies);
-  auto HelperResult(const std::string& output, const std::string& conversation,
-                    const std::string& call, size_t task) -> std::string;
-  // The messages a compaction took out of a helper's context.
+  static auto HelperResult(const std::string& output,
+                           const std::string& conversation,
+                           const std::string& call, size_t task) -> std::string;
+  // Original messages displaced by a checkpoint, excluding model summaries.
   static auto Displaced(const std::vector<Message>& previous,
                         const std::vector<Message>& saved)
       -> std::vector<Message>;
@@ -51,10 +52,8 @@ struct Helpers {
   Turns* turns;
   host::Access& access_service;
   Dependencies dependencies;
-  std::map<std::string, size_t> active_helpers;
   std::map<std::tuple<std::string, std::string, size_t>,
            std::weak_ptr<std::mutex>>
       helper_gates;
-  std::condition_variable_any helpers_changed;
 };
 }  // namespace tsugumi::agent

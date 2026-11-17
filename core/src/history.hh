@@ -22,6 +22,13 @@
 
 namespace tsugumi {
 
+enum class HistoryOpenCode { NotRegular, ArchiveConflict };
+struct HistoryOpenError : std::runtime_error {
+  HistoryOpenCode code;
+  HistoryOpenError(HistoryOpenCode reason, std::string message)
+      : std::runtime_error(std::move(message)), code(reason) {}
+};
+
 struct IncompatibleHistory : std::runtime_error {
   std::string found, expected, source;
   IncompatibleHistory(std::string message, std::string stored, std::string required, std::string location)
@@ -94,11 +101,13 @@ class History {
   auto read(F&& f) -> decltype(f(std::declval<sql::Db&>()));
 
   // --- write helpers (call inside a Work) ---
-  static auto put_environment(sql::Db& db, const std::string& run_id, const BuildEnvironmentData& environment)
-      -> void;
+  static auto put_environment(sql::Db &db, const std::string &run_id,
+                              const BuildEnvironmentData &environment)
+      -> std::string;
   // The binary caches configured while the run built its environments. A
   // run's first list stays (the daemon's settings are fixed for its life).
   static auto put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void;
+  static auto next_run_id(sql::Db &db) -> std::string;
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);

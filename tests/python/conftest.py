@@ -174,7 +174,11 @@ class SharedVM:
             try:
                 l = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
             except queue.Empty:
-                self.proc.kill()
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=47)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
                 raise TimeoutError(f"tsugumi-vmctl did not answer {line.split()[0]!r} within {timeout:.0f} s; see {self.console}")
             if l is None:
                 raise RuntimeError(f"tsugumi-vmctl exited; see {self.console}")
@@ -188,12 +192,16 @@ class SharedVM:
                 self.command("quit", until=lambda l: l == "bye", timeout=120)
                 self.proc.wait(timeout=60)
             except Exception:
-                self.proc.kill()
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=47)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
                 self.proc.wait()
         self.proc.stdin.close()
         self.proc.stdout.close()
-        # The controller stops the VM, but its host and signed helper are
-        # resident services. Reuse the runner's ownership-scoped cleanup.
+        # The controller asks for orderly shutdown; clean up any remaining
+        # owned resident services with the same bounded signal path.
         import importlib.util
         spec = importlib.util.spec_from_file_location("test_runner_cleanup", ROOT / "tests/run-isolated.py")
         cleanup = importlib.util.module_from_spec(spec)
@@ -245,9 +253,10 @@ class VMEnv:
 '''.join(lines)
 
     def crash(self):
-        """Abnormal termination: the project's tsugumid is killed."""
-        self.exec("for f in /proc/[0-9]*/comm; do [ \"$(< $f)\" = tsugumid ] && p=${f#/proc/} && kill -9 ${p%/comm}; done; true")
-        time.sleep(1)
+        """Abnormal termination: await the old core's actual transport EOF."""
+        with self.client() as observer:
+            self.exec("for f in /proc/[0-9]*/comm; do [ \"$(< $f)\" = tsugumid ] && p=${f#/proc/} && kill -9 ${p%/comm}; done; true")
+            observer.wait_closed()
 
     def stop(self):
         if self.id:

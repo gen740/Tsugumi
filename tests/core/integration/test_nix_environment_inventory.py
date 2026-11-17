@@ -36,10 +36,12 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
             offset = page.nextOffset
         assert paths == sorted(actual.splitlines())
         assert environment.pathCount == len(paths)
-        environments.append((run_id, text(environment.id), paths))
+        # The ID is a number within the run; the derivation and manifest say what was built.
+        environments.append((run_id, (text(environment.derivation), text(environment.manifest)), paths))
     assert environments[0][1:] == environments[1][1:]
     assert environments[0][1] != environments[2][1]
-    assert text(client.call("RunEnvironmentsRequest", runId=environments[0][0]).environments[0].id) == environments[0][1]
+    earlier = client.call("RunEnvironmentsRequest", runId=environments[0][0]).environments[0]
+    assert (text(earlier.derivation), text(earlier.manifest)) == environments[0][1]
 
 
 def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, project):

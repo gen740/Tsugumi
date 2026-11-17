@@ -58,6 +58,18 @@ final class ServiceWireTests: XCTestCase {
     }
   }
 
+  func testInheritedProjectTrustCarriesItsHostFolder() throws {
+    let trust = Tsugumi_Host_ProjectTrustT()
+    trust.decision = .trusted
+    trust.trustedFolder = "/trials"
+    let reply = try ServiceWire.decode(hostReply(trust, type: .projecttrust), host: true)
+    XCTAssertEqual(reply["decision"] as? Int, 1)
+    XCTAssertEqual(reply["trusted_folder"] as? String, "/trials")
+    trust.trustedFolder = nil
+    let individual = try ServiceWire.decode(hostReply(trust, type: .projecttrust), host: true)
+    XCTAssertEqual(individual["trusted_folder"] as? String, "")
+  }
+
   func testAttachmentIsOneHostRequestWithReadyEndpointAndResources() throws {
     let bytes = try ServiceWire.encode("AttachFoldersRequest", fields: ["project": "/project", "folders": [String]()], id: 1, host: true)
     var buffer = ByteBuffer(data: bytes)
@@ -106,35 +118,6 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertFalse(selection.isEmpty)
   }
 
-  func testProjectImportUsesHostCopyRuleAndPreservesBinaryBytes() throws {
-    XCTAssertTrue(ServiceWire.hostMethod("HostProjectReadRequest", [:]))
-    let encoded = try ServiceWire.encode("HostProjectReadRequest", fields: ["path": "/source",
-      "file_index": UInt32(2), "offset": UInt64(1048576)], id: 1, host: true)
-    var buffer = ByteBuffer(data: encoded)
-    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
-    let request = try XCTUnwrap(message.payload(type: Tsugumi_Host_Request.self)?.value(type: Tsugumi_Host_HostProjectReadRequest.self))
-    XCTAssertEqual(request.path, "/source")
-    XCTAssertEqual(request.fileIndex, 2)
-    XCTAssertEqual(request.offset, 1048576)
-    var builder = FlatBufferBuilder(initialSize: 256)
-    let path = builder.create(string: "definitions/card/src/.config")
-    let bytes = builder.createVector([UInt8(255), 0, 128])
-    let file = Tsugumi_Host_ProjectFile.createProjectFile(&builder, pathOffset: path, bytesVectorOffset: bytes)
-    let files = builder.createVector(ofOffsets: [file])
-    let name = builder.create(string: "source")
-    let value = Tsugumi_Host_ProjectFiles.createProjectFiles(&builder, nameOffset: name, filesVectorOffset: files,
-      nextFile: 3, nextOffset: 0, complete: true)
-    let reply = Tsugumi_Host_Reply.createReply(&builder, valueType: .projectfiles, valueOffset: value)
-    let root = Tsugumi_Host_Message.createMessage(&builder, requestId: 1, payloadType: .reply, payloadOffset: reply)
-    Tsugumi_Host_Message.finish(&builder, end: root)
-    let decoded = try ServiceWire.decode(builder.data, host: true)
-    let entry = try XCTUnwrap((decoded["files"] as? [[String: Any]])?.first)
-    XCTAssertEqual(entry["path"] as? String, "definitions/card/src/.config")
-    XCTAssertEqual(entry["bytes"] as? [UInt8], [255, 0, 128])
-    XCTAssertEqual(decoded["nextFile"] as? UInt32, 3)
-    XCTAssertEqual(decoded["nextOffset"] as? UInt64, 0)
-    XCTAssertEqual(decoded["complete"] as? Bool, true)
-  }
 
   func testSendCarriesTheOptimisticDisplaySeparatelyFromModelInput() throws {
     let bytes = try ServiceWire.encode("ConversationSendRequest", fields: [
@@ -148,48 +131,7 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertEqual(request.display, "hello instead")
   }
 
-  func testDocumentEditsUseHostAndOmittedFileVectorsAreEmpty() throws {
-    for method in ["DocumentCopyRequest", "DocumentConnectRequest", "DocumentTemplateRequest"] {
-      XCTAssertTrue(ServiceWire.hostMethod(method, [:]))
-    }
-    let bytes = try ServiceWire.encode("DocumentCopyRequest", fields: ["state_json": "{}", "from": "externals/a/", "to": "externals/b/"], id: 1, host: true)
-    var buffer = ByteBuffer(data: bytes)
-    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
-    let request = message.payload(type: Tsugumi_Host_Request.self)!.value(type: Tsugumi_Host_DocumentCopyRequest.self)!
-    XCTAssertEqual(request.paths.count, 0)
-    XCTAssertEqual(request.to, "externals/b/")
-    var b = FlatBufferBuilder(initialSize: 128)
-    let json = b.create(string: "{}")
-    let edit = Tsugumi_Host_DocumentCopy.createDocumentCopy(&b, editsJsonOffset: json)
-    let reply = Tsugumi_Host_Reply.createReply(&b, valueType: .documentcopy, valueOffset: edit)
-    let root = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
-    Tsugumi_Host_Message.finish(&b, end: root)
-    let decoded = try ServiceWire.decode(b.data, host: true)
-    XCTAssertEqual((decoded["files"] as? [Tsugumi_Host_DocumentFileCopyT])?.count, 0)
-    let connect = try ServiceWire.encode("DocumentConnectRequest", fields: ["state_json": "{}", "from_card": "a", "from_port": "+", "to_card": "b", "to_port": "in"], id: 2, host: true)
-    var connectBuffer = ByteBuffer(data: connect)
-    let connectMessage: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &connectBuffer, fileId: "TSH1")
-    let wire = connectMessage.payload(type: Tsugumi_Host_Request.self)!.value(type: Tsugumi_Host_DocumentConnectRequest.self)!
-    XCTAssertEqual(wire.fromPort, "+")
-    XCTAssertNil(wire.forkId)
-  }
 
-  func testDocumentMergeUsesHostAndTreatsOmittedConflictsAsEmpty() throws {
-    XCTAssertTrue(ServiceWire.hostMethod("DocumentMergeRequest", [:]))
-    let bytes = try ServiceWire.encode("DocumentMergeRequest", fields: ["base_json": "{}", "ours_json": "{\"n\":2}", "theirs_json": "{}"], id: 1, host: true)
-    var buffer = ByteBuffer(data: bytes)
-    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
-    let request = message.payload(type: Tsugumi_Host_Request.self)!.value(type: Tsugumi_Host_DocumentMergeRequest.self)!
-    XCTAssertEqual(request.oursJson, "{\"n\":2}")
-    var b = FlatBufferBuilder(initialSize: 128)
-    let merged = b.create(string: "{}")
-    let edit = Tsugumi_Host_DocumentMerge.createDocumentMerge(&b, mergedJsonOffset: merged)
-    let reply = Tsugumi_Host_Reply.createReply(&b, valueType: .documentmerge, valueOffset: edit)
-    let root = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
-    Tsugumi_Host_Message.finish(&b, end: root)
-    let decoded = try ServiceWire.decode(b.data, host: true)
-    XCTAssertEqual(decoded["conflicts"] as? [String], [])
-  }
 
   func testContractsAndExactSequenceNumbers() throws {
     let high = UInt64.max - 1

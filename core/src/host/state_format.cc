@@ -18,7 +18,8 @@ StateFormatError::StateFormatError(const std::filesystem::path& directory)
           "The host state folder \"" +
           std::filesystem::absolute(directory).lexically_normal().string() +
           "\" was written by another version of Tsugumi. Move or rename this "
-          "folder to set it aside, then start Tsugumi again.") {}
+          "folder to set it aside, then start Tsugumi again."),
+      directory(std::filesystem::absolute(directory).lexically_normal()) {}
 
 auto PrepareStateDirectory(const std::filesystem::path& directory) -> void {
   const auto path = std::filesystem::absolute(directory).lexically_normal();

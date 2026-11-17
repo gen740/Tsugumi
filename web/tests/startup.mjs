@@ -95,6 +95,9 @@ try {
   assert.deepEqual(readServer(dir), s)
   await assert.rejects(runningServer(dir, 'b'.repeat(64)), /different Tsugumi build.*Stop that host/)
   const originalFetch = globalThis.fetch
+  const originalTimeout = AbortSignal.timeout
+  const timeouts = []
+  AbortSignal.timeout = (ms) => { timeouts.push(ms); return originalTimeout(ms) }
   const requests = []
   globalThis.fetch = async (url, options) => {
     requests.push({ url, options })
@@ -105,9 +108,12 @@ try {
     await serverRequest(s, '/api/page/open', { path: '/project with spaces' })
     assert.deepEqual(JSON.parse(requests.at(-1).options.body), { path: '/project with spaces' })
     assert.equal(requests.at(-1).options.headers['x-tsugumi-agent'], s.agentKey)
+    assert.equal(timeouts.at(-1), 5000)
+    await serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, 360_000)
+    assert.equal(timeouts.at(-1), 360_000)
     globalThis.fetch = async () => { throw new Error('unreachable') }
     await assert.rejects(runningServer(dir, identity), /unreachable/)
-  } finally { globalThis.fetch = originalFetch }
+  } finally { globalThis.fetch = originalFetch; AbortSignal.timeout = originalTimeout }
   fs.appendFileSync(bundle, '\n// rebuilt')
   assert.notEqual(serverBuild(bundle), identity)
   console.log('host startup and discovery: passed')

@@ -18,7 +18,7 @@ set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
 # One implementation of worker ownership and invocation, shared by the core and
 # remote launcher. Embed these objects in the core archive for installed users;
 # the engine does not link back to the core's scheduling or service layer.
-add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc src/worker_execution.cc)
+add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc src/worker_execution.cc src/local_transport.cc src/local_client.cc)
 target_include_directories(tsugumi_worker_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
 target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_workerd_support Threads::Threads)
@@ -31,16 +31,21 @@ target_link_libraries(tsugumi-worker PRIVATE tsugumi_protocol tsugumi_json flatb
   Threads::Threads ${CMAKE_DL_LIBS})
 install(TARGETS tsugumi-worker RUNTIME DESTINATION bin)
 
+add_executable(tsugumi-workerd src/main.cc src/local_service.cc)
+target_include_directories(tsugumi-workerd PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(tsugumi-workerd PRIVATE tsugumi_core)
+target_compile_options(tsugumi-workerd PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+install(TARGETS tsugumi-workerd RUNTIME DESTINATION bin)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_library(tsugumi_remote_store STATIC src/nix_store.cc)
   target_compile_features(tsugumi_remote_store PRIVATE cxx_std_23)
   target_include_directories(tsugumi_remote_store PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX)
-  add_executable(tsugumi-workerd src/remote_main.cc src/invocation.cc)
+  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX tsugumi_core)
+  target_sources(tsugumi-workerd PRIVATE src/remote_main.cc src/invocation.cc)
   target_compile_definitions(tsugumi-workerd PRIVATE _GNU_SOURCE)
   target_include_directories(tsugumi-workerd PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
   target_link_libraries(tsugumi-workerd PRIVATE tsugumi_core tsugumi_nix_eval tsugumi_workerd_support tsugumi_remote_store)
-  install(TARGETS tsugumi-workerd RUNTIME DESTINATION bin)
 endif()
 
 # Cross-system Cards rebuild this light worker with their own nixpkgs/libc.

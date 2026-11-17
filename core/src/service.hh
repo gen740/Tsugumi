@@ -29,7 +29,9 @@ namespace tsugumi {
 class Scheduler;
 class NixRunner;
 class ExecutionService;
-class NativeExecutionService;
+class PreparedExecution;
+struct BuildRequest;
+class LocalExecutionService;
 class RemoteExecutionService;
 class CacheUsage;
 
@@ -40,6 +42,7 @@ struct ServiceOptions {
   std::filesystem::path control_dir;  // launcher-managed files hidden from workers
   std::filesystem::path sdk_dir;      // installed SDK (share/tsugumi/sdk)
   std::filesystem::path worker_binary;
+  std::filesystem::path workerd_binary;
   std::string fault;                  // test-only fault injection point
   uint32_t env_cpus = 2;              // execution slot limits of the environment
   // Where build results are registered as Nix GC roots. Empty: the build
@@ -80,6 +83,7 @@ class Service : public RequestSink {
   void open();  // recovers state; must succeed before the server starts
   void attach(Server* server) { server_ = server; }
   auto start_remote_cleanup() -> void;
+  auto busy() -> bool;
   void shutdown();  // interrupts runs and stops lanes
   std::string project_id() const { return store_->project_id(); }
 
@@ -102,9 +106,12 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& { return run_scratch_; }
   auto file_roots() const -> std::vector<std::filesystem::path>;
   auto keep_file_value(const Value& value, const std::filesystem::path& directory,
-                       const std::atomic<bool>& stop) -> Value;
+                       const std::atomic<bool>& stop,
+                       const std::function<void(std::string_view, uint64_t, uint64_t)>& progress = {}) -> Value;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
+  auto prepare_execution(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+      -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
@@ -148,6 +155,7 @@ class Service : public RequestSink {
   void file_stat(RequestIn& req);
   void file_read(RequestIn& req);
   void output_types(RequestIn& req);
+  void input_types(RequestIn& req);
   void nix_source_resolve(RequestIn& req);
   void sdk_status(RequestIn& req);
   void run_plan(RequestIn& req);
@@ -207,16 +215,21 @@ class Service : public RequestSink {
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
-  std::unique_ptr<NativeExecutionService> execution_service_;
+  std::mutex worker_selection_mutex_;
+  std::condition_variable worker_selection_cv_;
+  std::map<std::string, uint32_t> worker_slots_;
+  std::map<std::string, std::string> resident_targets_;
+  std::unique_ptr<LocalExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
   std::unique_ptr<RemoteExecutionService> remote_execution_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> shell_lane_;
-  std::mutex shell_mu_;
+  std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> shell_cancellations_;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> save_cancellations_;
   Server* server_ = nullptr;
 
   std::mutex ops_mu_;

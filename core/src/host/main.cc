@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <thread>
 
 #include "agent/json.hh"
 #include "host/service.hh"
@@ -110,6 +111,7 @@ auto RunHost(int argc, char** argv) -> int {
     sigemptyset(&signals);
     sigaddset(&signals, SIGTERM);
     sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGHUP);
     ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
     // Detached project daemons must reconnect to the same broker after a
     // hostd restart, even when its UI RPC sockets get a new temp directory.
@@ -188,10 +190,24 @@ auto RunHost(int argc, char** argv) -> int {
         0600);
     int signal = 0;
     sigwait(&signals, &signal);
+    // Keep the guest stop bounded even if draining a host request hangs.
+    // A second termination signal also ends hostd; vmhost observes Watch EOF
+    // and independently completes its bounded guest shutdown.
+    std::thread([signals]() mutable {
+      int again = 0;
+      sigwait(&signals, &again);
+      std::_Exit(128 + again);
+    }).detach();
+    std::jthread deadline([](std::stop_token stop) {
+      for (int i = 0; i < 450 && !stop.stop_requested(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (!stop.stop_requested()) std::_Exit(1);
+    });
     fs::remove_file_durable(options.state_dir / "host.ready");
     host.Shutdown();
     server.stop();
     host_server.stop();
+    deadline.request_stop();
     return 0;
   } catch (const StateFormatError& error) {
     log::error(error.what());

@@ -7,11 +7,13 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "document.hh"
 #include "model.hh"
 #include "types.hh"
+#include "worker_condition.hh"
 
 namespace tsugumi {
 
@@ -57,7 +59,8 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = false;
   bool network = false;
-  std::string execution_service = kLocalExecutionService;
+  std::string execution_service = "auto";
+  std::shared_ptr<const worker_condition::Condition> worker_condition;
   std::optional<ExecutionResources> execution_resources;
   std::string system;     // "" = the execution service's native system
   std::vector<HostFolder> host_folders;
@@ -131,6 +134,10 @@ struct Resolution {
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;               // between executable nodes only
   std::vector<Diag> diags;
+  // Boundary aliases produced by the same leaf resolution as executable wires.
+  std::map<std::tuple<std::string, std::string, bool>, std::pair<size_t, std::string>> endpoints;
+  auto endpoint(const CardPath& card, const std::string& port, bool output) const
+      -> std::optional<std::pair<size_t, std::string>>;
   // Per node: the nodes that have always run before it fires, whichever path
   // its inputs arrived on (sorted). The basis for Nix upstream references.
   std::vector<std::vector<size_t>> guaranteed;

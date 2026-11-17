@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 import { ModuleThumbnailQueue, moduleThumbnailKey, settledThumbnailSize, ThumbnailRequest } from '../src/model/moduleThumbnails'
-const sleep = (ms = 5) => new Promise(r => setTimeout(r, ms))
+// Virtual idle/linger deadlines; setImmediate only drains the finite promise chain.
+const advance = async (ms = 0) => { mock.timers.tick(ms); await new Promise<void>(r => setImmediate(r)) }
+const draw = async (queue: ModuleThumbnailQueue, request: ThumbnailRequest, signal: AbortSignal, lingerMs = 0) => {
+  const pending = queue.request(request, signal, lingerMs)
+  pending.catch(() => {}) // observed below after the virtual yield and microtasks
+  await advance()
+  return await pending
+}
+mock.timers.enable({ apis: ['setTimeout'] })
+try {
 let calls: string[] = [], active = 0, peak = 0, closed = 0
 let finish: (image: string) => void = () => {}
 const renderer = {
@@ -19,17 +29,17 @@ const same = queue.request(req('first'), b.signal)
 const removed = queue.request(req('removed'), c.signal)
 c.abort()
 assert.equal(await removed, undefined)
-await sleep(); assert.deepEqual(calls, ['first'])
+await advance(); assert.deepEqual(calls, ['first'])
 a.abort(); assert.equal(await first, undefined)
 finish('png-first'); assert.equal(await same, 'png-first')
 assert.equal(await queue.request(req('first'), new AbortController().signal), 'png-first')
 assert.equal(calls.length, 1, 'same content is rendered once')
 const second = queue.request(req('second'), new AbortController().signal)
 const third = queue.request(req('third'), new AbortController().signal)
-await sleep(); finish('png-second'); await second
-await sleep(); finish('png-third'); await third
+await advance(); finish('png-second'); await second
+await advance(); finish('png-third'); await third
 assert.equal(peak, 1)
-await sleep(15); assert.equal(closed, 1, 'idle runtime is released')
+await advance(15); assert.equal(closed, 1, 'idle runtime is released')
 assert.notEqual(await moduleThumbnailKey('plotly', '{"data":[1]}', 100, 80), await moduleThumbnailKey('plotly', '{"data":[2]}', 100, 80))
 assert.notEqual(await moduleThumbnailKey('plotly', '{}', 100, 80), await moduleThumbnailKey('vega-lite', '{}', 100, 80))
 assert.notEqual(await moduleThumbnailKey('plotly', '{}', 100, 80), await moduleThumbnailKey('plotly', '{}', 120, 80))
@@ -43,14 +53,14 @@ console.log('module thumbnails: shared work, cancellation, content identity and 
     close() { closed++ },
   }, 300, 5)
   const signal = new AbortController().signal
-  await bounded.request(req('one'), signal)
-  await bounded.request(req('two'), signal)
-  await bounded.request(req('one'), signal)
+  await draw(bounded, req('one'), signal)
+  await draw(bounded, req('two'), signal)
+  await draw(bounded, req('one'), signal)
   assert.deepEqual(calls, ['one', 'two', 'one'], 'budget evicts old encoded images and decoded pixel cost')
-  await assert.rejects(bounded.request(req('bad'), signal), /render failed/)
+  await assert.rejects(draw(bounded, req('bad'), signal), /render failed/)
   assert.equal(closed, 1, 'failed renderer is disposed before the next request')
-  await bounded.request(req('recovered'), signal)
-  await sleep(15)
+  await draw(bounded, req('recovered'), signal)
+  await advance(15)
 }
 
 let size = settledThumbnailSize(264, 200, 1, { width: 0, height: 0 })
@@ -65,11 +75,13 @@ assert.notDeepEqual(settledThumbnailSize(500, 300, 1, size), size, 'resizing cre
   let closed = 0
   const renderer = { async draw(request: ThumbnailRequest) { return { image: request.key, pixelBytes: 4 } }, close() { closed++ } }
   const queue = new ModuleThumbnailQueue(renderer, 1000, 5)
-  await queue.request(req('live-1'), new AbortController().signal, 60)
-  await sleep(25); assert.equal(closed, 0, 'kept for the next revision')
-  await queue.request(req('live-2'), new AbortController().signal, 60)
-  await sleep(25); assert.equal(closed, 0)
-  await sleep(60); assert.equal(closed, 1, 'released once the stream stopped')
-  await queue.request(req('still'), new AbortController().signal)
-  await sleep(25); assert.equal(closed, 2, 'a figure not followed does not hold it')
+  await draw(queue, req('live-1'), new AbortController().signal, 60)
+  await advance(25); assert.equal(closed, 0, 'kept for the next revision')
+  await draw(queue, req('live-2'), new AbortController().signal, 60)
+  await advance(25); assert.equal(closed, 0)
+  await advance(60); assert.equal(closed, 1, 'released once the stream stopped')
+  await draw(queue, req('still'), new AbortController().signal)
+  await advance(25); assert.equal(closed, 2, 'a figure not followed does not hold it')
 }
+
+} finally { mock.timers.reset() }

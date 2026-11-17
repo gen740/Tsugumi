@@ -25,20 +25,30 @@ inline auto String(std::string_view raw, std::string fallback = {})
   return v.value();
 }
 
-inline auto Object(std::string_view raw) -> Members {
+struct DecodeFailure : std::runtime_error {
+  DecodeFailure(std::string field, std::string expected, std::string detail)
+      : std::runtime_error(field + ": expected " + expected + "; " + detail),
+        path(std::move(field)),
+        expected_type(std::move(expected)) {}
+  std::string path;
+  std::string expected_type;
+};
+
+inline auto Object(std::string_view raw, std::string path = "$") -> Members {
   schema::v::Mapping<schema::v::String, schema::Json> v;
   if (auto error = schema::decode(raw, v))
-    throw std::runtime_error(error->message);
+    throw DecodeFailure(std::move(path), "object", error->message);
   Members out;
   for (const auto &[key, value] : v.value())
     out.emplace(key, schema::text(value));
   return out;
 }
 
-inline auto Array(std::string_view raw) -> std::vector<std::string> {
+inline auto Array(std::string_view raw, std::string path = "$")
+    -> std::vector<std::string> {
   schema::v::Array<schema::Json> v;
   if (auto error = schema::decode(raw, v))
-    throw std::runtime_error(error->message);
+    throw DecodeFailure(std::move(path), "array", error->message);
   std::vector<std::string> out;
   for (const auto &value : v.value())
     out.push_back(schema::text(value));

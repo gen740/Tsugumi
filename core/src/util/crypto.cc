@@ -192,6 +192,45 @@ std::string hex(const void* data, size_t size) {
   return out;
 }
 
+auto short_id() -> std::string {
+  std::string value;
+  // Rejection sampling avoids a modulo bias for an alphabet of 31.
+  while (value.size() < 6) {
+    uint8_t byte;
+    random_bytes(&byte, 1);
+    if (byte < 248)
+      value += kShortAlphabet[byte % kShortAlphabet.size()];
+  }
+  return value;
+}
+auto is_short_id(std::string_view value) -> bool {
+  return value.size() == 6 &&
+         value.find_first_not_of(kShortAlphabet) == value.npos;
+}
+auto is_run_id(std::string_view value) -> bool {
+  if (value.empty() || value.size() > 19 || value.front() == '0' ||
+      value.find_first_not_of("0123456789") != value.npos)
+    return false;
+  return value.size() < 19 || value <= "9223372036854775807";
+}
+auto is_operation_id(std::string_view value) -> bool {
+  return !value.empty() && value.size() <= 128 && value != "." &&
+         value != ".." &&
+         value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
+                                 "TUVWXYZ0123456789-_.") == value.npos;
+}
+auto unique_short_id(const std::function<bool(const std::string &)> &exists,
+                     const std::function<std::string()> &generate)
+    -> std::string {
+  for (;;) {
+    auto value = generate();
+    if (!is_short_id(value))
+      throw std::runtime_error("invalid short identifier generator");
+    if (!exists(value))
+      return value;
+  }
+}
+
 std::string uuid4() {
   uint8_t b[16];
   random_bytes(b, sizeof b);

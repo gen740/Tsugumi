@@ -2,12 +2,13 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
+#include <sys/stat.h>
 
 #include "agent/helper_scope.hh"
-
 #include "util/fs.hh"
 
 #ifdef __APPLE__
@@ -19,6 +20,10 @@
 #include <unicode/unistr.h>
 #endif
 
+extern const unsigned char tsugumi_agent_helpers_skill[];
+extern const unsigned long tsugumi_agent_helpers_skill_size;
+extern const unsigned char tsugumi_agent_demo_skill[];
+extern const unsigned long tsugumi_agent_demo_skill_size;
 extern const unsigned char tsugumi_agent_review_skill[];
 extern const unsigned long tsugumi_agent_review_skill_size;
 extern const unsigned char tsugumi_agent_rerun_compare_skill[];
@@ -277,13 +282,15 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
               line.clear();
             }
           }
+          std::string scope_error;
           try {
             if (const auto scope = SkillScope(text)) {
               skill->scoped = true;
               skill->scope = *scope;
             }
-          } catch (const std::exception &) {
+          } catch (const std::exception &error) {
             skill->status = "invalid_scope";
+            scope_error = error.what();
           }
           size_t body = 0;
           if (!lines.empty() && lines.front() == "---") {
@@ -291,6 +298,8 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
             if (end != lines.end()) {
               body = end - lines.begin() + 1;
               for (auto line = lines.begin() + 1; line != end; ++line) {
+                if (line->starts_with("always:"))
+                  skill->always = TrimWhitespace(line->substr(7)) == "true";
                 if (line->starts_with("name:"))
                   skill->name =
                       Normalize(CleanName(TrimWhitespace(line->substr(5))));
@@ -306,6 +315,8 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
                 break;
               }
           }
+          if (!scope_error.empty())
+            skill->description = scope_error;
         }
       }
     }
@@ -328,9 +339,17 @@ auto SkillScope(std::string_view text)
   if (!next() || line != "---")
     return std::nullopt;
   std::optional<std::vector<std::string>> result;
+  bool always = false;
   while (next()) {
-    if (line == "---")
+    if (line == "---") {
+      if (always && result)
+        throw std::runtime_error(
+            "A Skill cannot combine always: true with scope; select target "
+            "Cards to run a scoped Skill");
       return result;
+    }
+    if (line.starts_with("always:"))
+      always = TrimWhitespace(line.substr(7)) == "true";
     if (!line.starts_with("scope:"))
       continue;
     if (result)
@@ -405,6 +424,12 @@ auto SelectScopedSkill(const H::SkillsListT &catalog,
 }
 
 auto BundledSkill(const std::string &path) -> std::string {
+  if (path == "builtin:helpers")
+    return {reinterpret_cast<const char*>(tsugumi_agent_helpers_skill),
+            tsugumi_agent_helpers_skill_size};
+  if (path == "builtin:demo")
+    return {reinterpret_cast<const char*>(tsugumi_agent_demo_skill),
+            tsugumi_agent_demo_skill_size};
   if (path == "builtin:review")
     return {reinterpret_cast<const char *>(tsugumi_agent_review_skill),
             tsugumi_agent_review_skill_size};
@@ -434,8 +459,72 @@ auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
 
-auto ListSkills(const fs::path &project,
-                const std::vector<std::string> &folders) -> H::SkillsListT {
+auto ProjectTrusted(sql::Db& db, const fs::path& path,
+                    const std::vector<std::string>& folders) -> bool {
+  return ProjectTrust(db, path, folders) == H::ProjectTrustDecision::Trusted;
+}
+
+auto TrustedParent(const fs::path& path,
+                   const std::vector<std::string>& folders) -> std::string {
+  if (path.empty()) return {};
+  std::error_code error;
+  const auto project = fs::canonical(path, error);
+  if (error) return {};
+  for (const auto& folder : folders) {
+    const auto root = fs::canonical(folder, error);
+    if (error || root != fs::path(folder) || !fs::is_directory(root, error))
+      continue;
+    const auto match =
+        std::mismatch(root.begin(), root.end(), project.begin(), project.end());
+    if (match.first == root.end()) return folder;
+  }
+  return {};
+}
+
+auto ProjectTrust(sql::Db& db, const fs::path& path,
+                  const std::vector<std::string>& folders)
+    -> H::ProjectTrustDecision {
+  if (path.empty())
+    return H::ProjectTrustDecision::Unknown;
+  if (!TrustedParent(path, folders).empty())
+    return H::ProjectTrustDecision::Trusted;
+  const auto canonical = fs::weakly_canonical(path);
+  struct stat folder{};
+  auto query = db.prepare(
+      "SELECT device,inode,decision FROM project_trust WHERE path=?");
+  query.bind(1, canonical.string());
+  if (!query.step())
+    return H::ProjectTrustDecision::Unknown;
+  if (::stat(canonical.c_str(), &folder) == 0 && S_ISDIR(folder.st_mode) &&
+      query.u64(0) == static_cast<uint64_t>(folder.st_dev) &&
+      query.u64(1) == static_cast<uint64_t>(folder.st_ino))
+    return static_cast<H::ProjectTrustDecision>(query.i64(2));
+  // Forget mismatched decisions, including declines. A replacement is a new
+  // project; moving the old folder back later must not restore its old answer.
+  auto forget = db.prepare("DELETE FROM project_trust WHERE path=?");
+  forget.bind(1, canonical.string()).run();
+  return H::ProjectTrustDecision::Unknown;
+}
+
+auto SetProjectTrust(sql::Db &db, const fs::path &path,
+                     H::ProjectTrustDecision decision) -> void {
+  const auto canonical = fs::canonical(path);
+  struct stat folder{};
+  if (::stat(canonical.c_str(), &folder) != 0 || !S_ISDIR(folder.st_mode))
+    throw std::runtime_error("Cannot identify the project folder");
+  // Folder identity survives atomic saves of tsugumi.json and other files.
+  auto save =
+      db.prepare("INSERT OR REPLACE INTO project_trust VALUES(?,?,?,?)");
+  save.bind(1, canonical.string())
+      .bind(2, static_cast<uint64_t>(folder.st_dev))
+      .bind(3, static_cast<uint64_t>(folder.st_ino))
+      .bind(4, static_cast<int>(decision))
+      .run();
+}
+
+auto ListSkills(const fs::path& project,
+                const std::vector<std::string>& folders, bool trusted)
+    -> H::SkillsListT {
   H::SkillsListT out;
   {
     auto demo = std::make_unique<H::SkillT>();
@@ -453,12 +542,59 @@ auto ListSkills(const fs::path &project,
       skill->description = name;
       out.skills.push_back(std::move(skill));
     }
-    if (!project.empty())
-      Scan(project / "skills", out);
+    auto helpers = std::make_unique<H::SkillT>();
+    helpers->name = "helpers";
+    helpers->path = "builtin:helpers";
+    helpers->description = "How to delegate when the person asks";
+    helpers->status = "ready";
+    helpers->always = true;
+    out.skills.push_back(std::move(helpers));
   }
+  if (!project.empty()) Scan(project / "skills", out);
   for (const auto &folder : folders)
     Scan(fs::path(folder).lexically_normal(), out);
+  // Registered folders are ordered; the last matching source wins. Project
+  // sources outrank registered sources, which outrank built-ins.
+  std::set<std::string> builtins;
+  for (const auto& skill : out.skills)
+    if (skill->path.starts_with("builtin:")) builtins.insert(skill->name);
+  std::map<std::string, std::string> winners;
+  std::map<std::string, int> priorities;
+  for (const auto& skill : out.skills) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    const int priority = in_project                            ? 2
+                         : skill->path.starts_with("builtin:") ? 0
+                                                               : 1;
+    if (builtins.contains(skill->name) && (!in_project || trusted) &&
+        (!winners.contains(skill->name) ||
+         priority >= priorities[skill->name])) {
+      winners[skill->name] = skill->path;
+      priorities[skill->name] = priority;
+    }
+  }
+  std::erase_if(out.skills, [&](const auto& skill) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    return builtins.contains(skill->name) && (!in_project || trusted) &&
+           winners[skill->name] != skill->path;
+  });
   for (auto &skill : out.skills) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    if (skill->name == "helpers" && (!in_project || trusted))
+      skill->always = true;
+    if (skill->always && skill->scoped) {
+      skill->status = "invalid_scope";
+      skill->description =
+          "An automatically applied Skill cannot declare scope; select target "
+          "Cards to run a scoped Skill";
+    }
+    if (in_project && !trusted)
+      skill->always = false;
     if (skill->path.starts_with("builtin:"))
       continue;
     if (project.empty() ||

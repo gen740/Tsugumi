@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "agent/wire.hh"
+#include "host/models.hh"
 #include "util/crypto.hh"
 #include "util/sqlite.hh"
 
@@ -251,15 +252,16 @@ auto Defaults() -> j::Members {
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
           {"agent.animateWork", "true"},
-          {"agent.helperParallelism", "4"},
           {"agent.allowUnscopedHelpers", "false"},
           {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
+          {"agent.trustedFolders", "[]"},
           {"versions.noteMode", j::Quote("mechanical")},
           {"app.language", j::Quote("ja")}};
 }
 }  // namespace
 struct Settings::State {
+  std::filesystem::path directory;
   sql::Db db;
   std::unique_ptr<SecretStore> secrets;
   Import import;
@@ -284,7 +286,8 @@ struct Settings::State {
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
         Models model_list)
-      : db((dir / "host-settings.sqlite").string()),
+      : directory(dir),
+        db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
         import(std::move(i)),
         token(std::move(t)),
@@ -715,6 +718,35 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
             if (key == "app.language" && j::String(value) != "ja" &&
                 j::String(value) != "en")
               throw std::runtime_error("Unknown language");
+            if (key == "agent.trustedFolders") {
+              if (p.profile()->str() != "desktop")
+                throw std::runtime_error(
+                    "Trusted folders belong to the host profile");
+              const auto previous = j::Array(j::Get(values, key, "[]"));
+              std::vector<std::string> folders;
+              for (const auto& raw : j::Array(value)) {
+                const auto path = std::filesystem::path(j::String(raw));
+                const auto registered = std::any_of(
+                    previous.begin(), previous.end(), [&](const auto& old) {
+                      return j::String(old) == path.string();
+                    });
+                if (!path.is_absolute() ||
+                    (!registered && !std::filesystem::is_directory(path)))
+                  throw std::runtime_error(
+                      "Choose an existing absolute folder");
+                // Preserve existing canonical registrations even if a folder
+                // is missing or replaced by a link while another entry is
+                // edited.
+                const auto canonical =
+                    registered ? path.string()
+                               : std::filesystem::canonical(path).string();
+                const auto encoded = j::Quote(canonical);
+                if (std::find(folders.begin(), folders.end(), encoded) ==
+                    folders.end())
+                  folders.push_back(encoded);
+              }
+              value = j::Encode(folders);
+            }
             if (key == "agent.skillFolders")
               for (const auto& folder : j::Array(value)) {
                 const auto entry = j::Object(folder);
@@ -744,11 +776,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "openai" && j::String(value) != "chatgpt" &&
                 j::String(value) != "fixture")
               throw std::runtime_error("Unknown provider");
-            if (key == "agent.helperParallelism" &&
-                (value != std::to_string(j::UInt(value)) ||
-                 j::UInt(value) < 1 || j::UInt(value) > 8))
-              throw std::runtime_error(
-                  "Helper parallelism must be an integer from 1 to 8");
             if (key == "agent.fixturePort" &&
                 (j::UInt(value) < 1 || j::UInt(value) > 65535))
               throw std::runtime_error("Invalid fixture port");
@@ -916,14 +943,20 @@ auto Settings::Redact(std::string text) -> std::string {
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
-auto Settings::HelperPolicy(const std::string &profile)
-    -> std::pair<size_t, bool> {
+auto Settings::AllowUnscopedHelpers(const std::string& profile) -> bool {
   std::lock_guard lock(state_->mutex);
   const auto values = state_->Values(profile).second;
-  return {j::UInt(j::Get(values, "agent.helperParallelism"), 4),
-          j::Bool(j::Get(values, "agent.allowUnscopedHelpers"))};
+  return j::Bool(j::Get(values, "agent.allowUnscopedHelpers"));
 }
 
+auto Settings::TrustedFolders() -> std::vector<std::string> {
+  std::lock_guard lock(state_->mutex);
+  const auto [revision, values] = state_->Values("desktop");
+  std::vector<std::string> folders;
+  for (const auto& raw : j::Array(j::Get(values, "agent.trustedFolders", "[]")))
+    folders.push_back(j::String(raw));
+  return folders;
+}
 auto Settings::Language(const std::string& profile) -> std::string {
   std::lock_guard lock(state_->mutex);
   return j::Text(state_->Values(profile).second, "app.language", "ja");
@@ -1043,13 +1076,12 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
                                   : id == "chatgpt" ? "agent.model.chatgpt"
                                                     : "agent.model");
   c.max_tokens = 32768;
-  c.context_limit = 180000;
+  uint32_t input_limit_tokens = 0;
   if (id == "fixture") {
     c.base_url =
         "http://127.0.0.1:" +
         std::to_string(j::UInt(j::Get(values, "agent.fixturePort"), 8765));
     c.model = "fixture";
-    c.context_limit = 6000;
   }
   auto q = s.db.prepare("SELECT json FROM providers WHERE profile=? AND id=?");
   q.bind(1, profile).bind(2, id);
@@ -1057,7 +1089,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     const auto v = j::Object(q.text(0));
     if (!j::Text(v, "baseURL").empty()) c.base_url = j::Text(v, "baseURL");
     if (!j::Text(v, "model").empty()) c.model = j::Text(v, "model");
-    c.context_limit = j::UInt(j::Get(v, "contextLimit"), c.context_limit);
+    input_limit_tokens = j::UInt(j::Get(v, "contextLimit"), input_limit_tokens);
     c.max_tokens = j::UInt(j::Get(v, "maxTokens"), c.max_tokens);
   }
   if (!j::Text(selection, "model").empty())
@@ -1113,6 +1145,19 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
       return get(client, stale);
     };
   }
+  const auto window = host::Models::ContextWindowTokens(
+      s.directory, id, c.model, profile, j::Text(selection, "account_profile"),
+      j::Text(selection, "key_profile"));
+  const auto margin =
+      window / 20;  // Reserve 5% for estimation/protocol overhead.
+  if (c.max_tokens >= window - margin)
+    throw std::runtime_error(
+        "The reply token limit leaves no model input room");
+  c.context_limit_tokens = window - c.max_tokens - margin;
+  // An explicit input budget may lower the model budget, never enlarge it.
+  if (input_limit_tokens)
+    c.context_limit_tokens =
+        std::min(c.context_limit_tokens, input_limit_tokens);
   return c;
 }
 }  // namespace tsugumi::host

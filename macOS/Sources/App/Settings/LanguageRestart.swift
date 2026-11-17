@@ -28,7 +28,7 @@ struct LanguageRestartText {
   }
   var title: String { String(localized: "表示言語を変えるには再起動が必要です", bundle: bundle) }
   var message: String {
-    String(localized: "表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。", bundle: bundle)
+    String(localized: "表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。再起動すると実行中の処理は停止します。", bundle: bundle)
   }
   var now: String { String(localized: "今すぐ再起動", bundle: bundle) }
   var later: String { String(localized: "あとで", bundle: bundle) }

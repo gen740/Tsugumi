@@ -4,7 +4,7 @@
 #
 #   macOS/Container/build-image.sh --vm       # the shared VM's boot disk into dist/tsugumi-vm/
 #                                             # (vm-boot.nix: kernel and a small rootfs with Nix),
-#                                             # downloaded from gen740/tsugumi-vm when released;
+#                                             # downloaded from a vm-<hash> release of gen740/Tsugumi when released;
 #                                             # Tsugumi itself is built inside the VM (vm-system.nix)
 #   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
 #   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
@@ -48,8 +48,8 @@ install_vm() {
 }
 if [ "$attr" = vm ]; then
   # The boot disk changes only with nixpkgs and vm-boot.nix: kept from the
-  # last build, or downloaded from gen740/tsugumi-vm where it is released
-  # under the hash of its store name (macOS/tools/publish-vm.sh), evaluated
+  # last build, or downloaded from the releases of gen740/Tsugumi where it is released
+  # as vm-<hash of its store name> (macOS/tools/publish-vm.sh), evaluated
   # here without building anything. TSUGUMI_VM_BUILD=1 builds it.
   boot=$(nix --extra-experimental-features "nix-command flakes" eval --raw \
     "git+file://$stage#packages.aarch64-linux.vm-boot.outPath" 2>/dev/null || true)
@@ -59,7 +59,7 @@ if [ "$attr" = vm ]; then
       echo "vm: $dist_vm is $boot"
       exit 0
     fi
-    url="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/tsugumi-vm}/releases/download/${boot%%-*}"
+    url="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-${boot%%-*}"
     if curl -fsSL -o "$out/SHA256SUMS" "$url/SHA256SUMS" 2>/dev/null; then
       echo "downloading the boot disk $boot"
       for f in vmlinux rootfs.erofs vm-version; do curl -fL --retry 3 -o "$out/$f" "$url/$f"; done
@@ -88,7 +88,7 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
     exec > /out/log 2>&1
     {
       # Chroot store under /cache: persistent across builds, separate from the image store.
-      nixf() { nix --extra-experimental-features "nix-command flakes" --accept-flake-config --store /cache "$@"; }
+      nixf() { nix --option fsync-store-paths true --option fsync-metadata true --extra-experimental-features "nix-command flakes" --accept-flake-config --store /cache "$@"; }
       # build.log grows while it builds (watch it from the Mac).
       img=$(nixf build --no-link --print-out-paths -L "git+file:///src#packages.aarch64-linux.'"$attr"'" 2>&1 | grep -v "^copying path" | tee /out/build.log | tail -1)
       # A failed build prints no store path: stop here instead of copying nothing.
@@ -100,6 +100,8 @@ container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c
         cp /cache$img/vm-version /out/
       fi
     }
+    # Persist the private builder store before its container exits.
+    sync -f /cache
     touch /out/done
   ' >/dev/null
 echo "building $attr in $builder (progress: $out/build.log)"

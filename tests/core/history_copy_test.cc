@@ -28,7 +28,7 @@ TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
   } cleanup{directory};
   for (const int version : {5, 6, 7, 8, 9, 10, 11}) {
     for (const bool portable : {false, true}) {
-      const std::string expected = portable ? "8" : "10";
+      const std::string expected = portable ? "9" : "11";
       if (std::to_string(version) == expected) continue;
       SCOPED_TRACE(std::to_string(version) + (portable ? " portable" : " local"));
       const auto local = directory / "history.sqlite";
@@ -91,7 +91,7 @@ TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
     Value value{"file", PortKind::File, *type,
                 std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize()), {}};
     RunSummaryData run;
-    run.status.run_id = crypto::uuid4();
+    run.status.run_id = std::to_string(i + 1);
     run.status.state = RunState::succeeded;
     InvocationRecordData invocation;
     invocation.summary.run_id = *run.status.run_id;
@@ -135,7 +135,7 @@ TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
   History restored(directory / "restored.sqlite", "secret");
   for (const auto state : {RunState::succeeded, RunState::failed, RunState::cancelled}) {
     RunSummaryData input;
-    input.status.run_id = crypto::uuid4();
+    input.status.run_id = std::to_string(static_cast<int>(state) + 1);
     input.status.state = state;
     input.status.partial_run = true;
     input.status.uses_partial_result = true;
@@ -232,11 +232,11 @@ TEST(HistoryCopy, OlderImportedRunCannotReplaceTheLatestLocalRun) {
   History local(directory / "local.sqlite", "secret");
   History elsewhere(directory / "elsewhere.sqlite", "secret");
   RunSummaryData here, imported;
-  here.status.run_id = crypto::uuid4();
+  here.status.run_id = "1";
   here.status.state = RunState::succeeded;
   here.status.accepted_at = 100;
   imported = here;
-  imported.status.run_id = crypto::uuid4();
+  imported.status.run_id = "2";
   imported.status.accepted_at = 50;
   local.write_sync([&](sql::Db& db) { History::insert_run(db, here, crypto::uuid4()); });
   elsewhere.write_sync([&](sql::Db& db) { History::insert_run(db, imported, crypto::uuid4()); });
@@ -285,10 +285,10 @@ TEST(HistoryCopy, DeletionCannotExpandBeyondTheApprovedRuns) {
   History history(directory / "history.sqlite", "secret");
   const auto copy = directory / "copy.sqlite";
   RunSummaryData approved, running;
-  approved.status.run_id = crypto::uuid4();
+  approved.status.run_id = "1";
   approved.status.state = RunState::succeeded;
   approved.status.ended_at = 10;
-  running.status.run_id = crypto::uuid4();
+  running.status.run_id = "3";
   running.status.state = RunState::running;
   history.write_sync([&](sql::Db& db) {
     History::insert_run(db, approved, crypto::uuid4());
@@ -325,13 +325,13 @@ TEST(HistoryCopy, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
   } cleanup{directory};
   History history(directory / "history.sqlite", "secret");
   RunSummaryData old, recent, running;
-  old.status.run_id = crypto::uuid4();
+  old.status.run_id = "1";
   old.status.state = RunState::succeeded;
   old.status.ended_at = 10;
   recent = old;
-  recent.status.run_id = crypto::uuid4();
+  recent.status.run_id = "2";
   recent.status.ended_at = 30;
-  running.status.run_id = crypto::uuid4();
+  running.status.run_id = "3";
   running.status.state = RunState::running;
   history.write_sync([&](sql::Db& db) {
     for (const auto& run : {old, recent, running}) History::insert_run(db, run, crypto::uuid4());

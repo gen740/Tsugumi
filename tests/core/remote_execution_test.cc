@@ -31,6 +31,34 @@ TEST(RemoteExecutionCapabilities, MissingOrRevokedRegistrationStillRefusesARun) 
   revoked.available = false;
   EXPECT_TRUE(Service::execution_diagnostic(node, {revoked}));
 }
+TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
+  Node node;
+  node.path = {"work"};
+  node.kind = Template::Code;
+  node.settings.execution_service = "auto";
+  auto compiled = worker_condition::compile({"simple", "x >= 10"});
+  node.settings.worker_condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  RemoteTarget local;
+  local.id = "local";
+  local.available = true;
+  RemoteTarget remote;
+  remote.id = "remote";
+  remote.grade = 10;
+  remote.unavailable_reason = "host refusal for remote";
+  auto diagnostic = Service::execution_diagnostic(node, {local, remote});
+  ASSERT_TRUE(diagnostic);
+  EXPECT_TRUE(diagnostic->error);
+  EXPECT_EQ(diagnostic->card, node.path);
+  EXPECT_EQ(diagnostic->message, remote.unavailable_reason);
+  node.settings.execution_service = remote.id;
+  EXPECT_EQ(Service::execution_diagnostic(node, {local, remote})->message, remote.unavailable_reason);
+  node.settings.execution_service = "auto";
+  remote.available = true;
+  EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
+  remote.available = false;
+  local.grade = 10;
+  EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
+}
 
 TEST(RemoteExecutionLifetime,
      StartupInterruptsLocalAndRemoteWithoutAWorkerOrResults) {

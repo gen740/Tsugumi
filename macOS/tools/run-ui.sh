@@ -11,6 +11,9 @@
 # reads before the saved ones and never saves. The Agent's settings (provider,
 # model) live in the host service: set them from the script with
 # `setting <key> <json>`, which saves them.
+# TSUGUMI_UI_TRUSTED_FOLDER=/absolute/folder registers that folder before opening
+# projects. Like `setting`, this saves a host setting (remove it in Settings).
+# TSUGUMI_HOST_STATE can select a separate host state for isolated trials.
 # TSUGUMI_UI_LANGUAGE=en (or ja) does the same for the app's language.
 set -u
 absolute() { (cd "$(dirname "$1")" && echo "$(pwd -P)/$(basename "$1")"); }
@@ -59,5 +62,12 @@ for _ in $(seq 1 $(( ${TSUGUMI_UI_SECONDS:-600} * 5 ))); do
   sleep 0.2
 done
 sleep 1
+# TERM ends the app the way Quit does (without its questions): the app stops the
+# host service and the VM in order, then exits. Wait for that.
 kill $pid 2>/dev/null
-grep -v '^step' "$log"
+for _ in $(seq 1 100); do
+  kill -0 $pid 2>/dev/null || break
+  sleep 0.1
+done
+grep -v '^step' "$log" || exit $?
+! grep -q '^trust-error ' "$log"

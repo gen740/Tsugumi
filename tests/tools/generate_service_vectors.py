@@ -21,10 +21,11 @@ def main():
     fixture = json.loads(FIXTURE.read_text())
     with tempfile.TemporaryDirectory() as temporary:
         source = Path(temporary) / "vector.json"
-        for group, envelope in [("requests", "Request"), ("replies", "Reply")]:
-            for case in fixture[group]:
+        for group, envelope in [("requests", "Request"), ("replies", "Reply"),
+                                ("operationRequests", "Request"), ("operationReplies", "Reply")]:
+            for case in fixture.get(group, []):
                 schema = "host" if case["host"] else "agent"
-                name = case["method"] if group == "requests" else case["type"]
+                name = case["method"] if envelope == "Request" else case["type"]
                 value = case["fields"]
                 source.write_text(json.dumps({
                     "request_id": 7,
@@ -40,7 +41,7 @@ def main():
     members = re.search(r"union RequestPayload \{(.*?)\}", schema, re.S).group(1)
     fixture["agentRequests"] = [
         member.strip().split(":")[0] for member in members.split(",")
-        if member.strip() and not member.strip().startswith("HelloRequest")
+        if member.strip() and not member.strip().startswith(("HelloRequest", "ToolCallCancelRequest", "CallIdRequest"))
     ]
     FIXTURE.write_text(json.dumps(fixture, indent=2) + "\n")
 

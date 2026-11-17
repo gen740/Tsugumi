@@ -7,10 +7,13 @@
 #include <chrono>
 #include <utility>
 
+#include "agent/context.hh"
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
+#include "host/identifiers.hh"
 #include "util/crypto.hh"
+#include "util/log.hh"
 
 namespace tsugumi::agent {
 namespace A = Tsugumi::Agent;
@@ -46,6 +49,9 @@ auto FoldAscii(std::string text) -> std::string {
 
 // Conversation records contain no provisioning, host capabilities or settings.
 auto CreateConversationTables(sql::Db& db) -> void {
+  db.exec("CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
+          "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
+          "KEY(conversation,scope))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
       "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
@@ -73,6 +79,11 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "KEY, "
       "provider TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, fast "
       "INTEGER NOT NULL)");
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS helper_delegations(conversation TEXT NOT "
+      "NULL, "
+      "parent TEXT NOT NULL, call TEXT NOT NULL, count INTEGER NOT NULL, "
+      "digest TEXT NOT NULL, PRIMARY KEY(conversation,parent,call))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
       "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
@@ -103,7 +114,6 @@ ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
   // DELETE keeps a quiescent project copy self-contained (no WAL sidecar).
   db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;");
   CreateConversationTables(db);
-  db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
 }
 
 ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
@@ -160,6 +170,11 @@ auto ConversationStore::ProjectDatabase(const std::string& project, bool create)
     if (std::filesystem::is_symlink(std::filesystem::symlink_status(entry)))
       throw Failure("invalid_request",
                     "Agent state must not be a symbolic link");
+  // A newly registered identity can replace a folder whose old database was
+  // open here. Release that obsolete handle before locking the current state.
+  std::erase_if(project_stores, [&](const auto& entry) {
+    return entry.first != project && entry.second->path == path;
+  });
   auto lock = fs::FileLock::try_acquire(path / "agent.lock");
   if (!lock)
     throw Failure("busy",
@@ -169,8 +184,13 @@ auto ConversationStore::ProjectDatabase(const std::string& project, bool create)
       store->db.prepare("SELECT 1 FROM conversations WHERE project<>? LIMIT 1");
   identity.bind(1, project);
   if (identity.step())
-    throw Failure("conflict",
-                  "Conversation records belong to another project identity");
+    throw Failure(
+        "conversation_identity_mismatch",
+        "These conversation records belong to another project identity. "
+        "Restore the matching .tsugumi folder from a backup. To start new "
+        "conversations, close the project, move agent.sqlite out of .tsugumi "
+        "to preserve it, then reopen the project. No records were deleted.");
+  store->db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
   auto* result = &store->db;
   project_stores.emplace(project, std::move(store));
   return result;
@@ -183,37 +203,70 @@ auto ConversationStore::Databases(const std::string& project)
     return {};
   }
   std::vector<sql::Db*> result{&db};
-  for (const auto& id : registry.Locations())
-    if (auto* store = ProjectDatabase(id)) result.push_back(store);
+  for (const auto& id : registry.Locations()) {
+    try {
+      if (auto* store = ProjectDatabase(id)) result.push_back(store);
+    } catch (const std::exception& error) {
+      log::warn("Cannot open conversations for project " + id + ": " +
+                error.what());
+    }
+  }
   return result;
 }
 
-auto ConversationStore::FindConversationDatabase(const std::string& id)
+auto ConversationStore::FindConversationDatabase(
+    const std::string& id, const std::optional<std::string>& project)
     -> sql::Db* {
   auto contains = [&](sql::Db& store) {
-    auto q = store.prepare("SELECT 1 FROM conversations WHERE id=?");
+    auto q = store.prepare("SELECT project FROM conversations WHERE id=?");
     q.bind(1, id);
-    return q.step();
+    if (!q.step()) return false;
+    RememberConversation(id, q.text(0));
+    return true;
   };
-  // Known conversations remain usable when an unrelated project is offline
-  // or locked by another host. No conversation contents are cached here.
-  sql::Db* result = contains(db) ? &db : nullptr;
-  for (const auto& [_, store] : project_stores)
-    if (contains(store->db)) {
-      if (result)
-        throw Failure("conflict",
-                      "Conversation ID exists in multiple projects");
-      result = &store->db;
-    }
-  if (result) return result;
+  if (project) {
+    if (auto* store = ProjectDatabase(*project); store && contains(*store))
+      return store;
+    return nullptr;
+  }
+  if (const auto known = ConversationProject(id)) {
+    auto* store = ProjectDatabase(*known);
+    return store && contains(*store) ? store : nullptr;
+  }
+  sql::Db* result = nullptr;
   for (auto* store : Databases())
     if (contains(*store)) {
-      if (result)
+      if (result) {
         throw Failure("conflict",
                       "Conversation ID exists in multiple projects");
+      }
       result = store;
     }
   return result;
+}
+
+// Routing metadata belongs to the host, so a known ID can be resolved after a
+// restart without opening any unrelated project's conversation records.
+auto ConversationStore::ConversationProject(const std::string& id)
+    -> std::optional<std::string> {
+  auto q = db.prepare(
+      "SELECT project FROM conversation_locations WHERE conversation=?");
+  q.bind(1, id);
+  if (!q.step()) return std::nullopt;
+  return q.text(0);
+}
+
+auto ConversationStore::RememberConversation(const std::string& id,
+                                             const std::string& project)
+    -> void {
+  if (const auto known = ConversationProject(id)) {
+    if (*known != project)
+      throw Failure("conflict", "A conversation belongs to its original project");
+    return;
+  }
+  auto q =
+      db.prepare("INSERT OR IGNORE INTO conversation_locations VALUES(?,?)");
+  q.bind(1, id).bind(2, project).run();
 }
 
 auto ConversationStore::ConversationDatabase(const std::string& id)
@@ -269,21 +322,23 @@ auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
 }
 
 auto ConversationStore::SaveMessages(const std::string& id,
-                                     const std::vector<Message>& messages)
-    -> void {
+                                     const std::vector<Message>& messages,
+                                     SaveMode mode) -> void {
   std::lock_guard lock(gate.mutex);
-  auto before = GetConversation(id);
-  const auto previous = ParseMessages(before.messages);
-  if (messages.size() < previous.size()) {
-    size_t retained = 0;
-    while (retained < messages.size() && retained < previous.size() &&
-           SerializeMessages({messages[messages.size() - retained - 1]}) ==
-               SerializeMessages({previous[previous.size() - retained - 1]}))
-      ++retained;
-    const std::vector<Message> removed(previous.begin(),
-                                       previous.end() - retained);
-    auto archive =
-        ConversationDatabase(id).prepare("INSERT INTO archives VALUES(?,?)");
+  auto& database = ConversationDatabase(id);
+  std::optional<sql::Transaction> transaction;
+  if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
+  const auto previous = ParseMessages(GetConversation(id).messages);
+  const auto serialized = scrub(SerializeMessages(messages));
+  // Compare the same persisted representation on both sides. Scrubbing also
+  // orders JSON objects in providerContent; that is not a history replacement.
+  // Preparing a send expands the provisional request in place. Only runtime
+  // replacements remove conversation history that belongs in the archive.
+  const auto removed = mode == SaveMode::PrepareSend
+                           ? std::vector<Message>{}
+                           : RemovedMessages(previous, ParseMessages(serialized));
+  if (!removed.empty()) {
+    auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();
   }
   for (const auto& message : messages)
@@ -292,10 +347,11 @@ auto ConversationStore::SaveMessages(const std::string& id,
         RememberResource(id, resource);
   auto q = ConversationDatabase(id).prepare(
       "UPDATE conversations SET messages=?,updated=? WHERE id=?");
-  q.bind(1, scrub(SerializeMessages(messages)))
+  q.bind(1, serialized)
       .bind(2, Now())
       .bind(3, id)
       .run();
+  if (transaction) transaction->commit();
 }
 
 auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
@@ -349,7 +405,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
       "SELECT parent_call,task,messages,result,state,spec,anchor,archive FROM "
       "helpers WHERE conversation=? ORDER BY rowid");
   helper.bind(1, c.id);
-  while (helper.step())
+  while (helper.step()) {
     helpers.push_back(json::Encode(json::Members{
         {"call_id", json::Quote(helper.text(0))},
         {"task", std::to_string(helper.i64(1))},
@@ -362,6 +418,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
         {"streaming",
          json::Quote(helper_streams[{
              helper.text(0), static_cast<uint32_t>(helper.i64(1))}])}}));
+  }
   std::vector<std::string> tools;
   auto q = ConversationDatabase(c.id).prepare(
       "SELECT id,result,error,state FROM receipts WHERE "
@@ -423,13 +480,19 @@ auto ConversationStore::Create(const A::ConversationCreateRequest& request,
                                bool human) -> Conversation {
   const auto* p = &request;
   auto id = Text(p->conversation_id());
-  if (id.empty()) id = crypto::uuid4();
-  if (id.size() > 256)
-    throw Failure("invalid_request", "Conversation ID is too long");
+  if (id.empty()) {
+    do {
+      id = host::AllocateId(db, "conversation");
+    } while (FindConversationDatabase(id));
+  }
+  if (!crypto::is_operation_id(id))
+    throw Failure("invalid_request", "Conversation ID must be a safe filename");
   const auto project = Text(p->project_id());
   if (!project.empty()) registry.Lookup(project);
   const auto role = Text(p->role()) == "guide" ? "guide" : "worker";
-  if (FindConversationDatabase(id)) {
+  if (const auto known = ConversationProject(id); known && *known != project)
+    throw Failure("conflict", "A conversation belongs to its original project");
+  if (FindConversationDatabase(id, project)) {
     OwnConversation(id, human);
     if (!human) AuthorizeHistory(id);
     const auto current = GetConversation(id);
@@ -447,6 +510,7 @@ auto ConversationStore::Create(const A::ConversationCreateRequest& request,
       .bind(4, Now())
       .bind(5, human ? "user" : "external")
       .run();
+  RememberConversation(id, project);
   return GetConversation(id);
 }
 
@@ -459,6 +523,7 @@ auto ConversationStore::List(const A::ConversationListRequest& request,
         "SELECT id,project,title,updated FROM conversations "
         "ORDER BY updated DESC LIMIT 500");
     while (q.step()) {
+      RememberConversation(q.text(0), q.text(1));
       if (!human) {
         try {
           OwnConversation(q.text(0), false);
@@ -509,7 +574,8 @@ auto ConversationStore::Delete(const std::string& id) -> void {
     sql::Transaction tx(store);
     for (const auto* table :
          {"events", "receipts", "turns", "model_bindings", "archives", "usage",
-          "conversation_resources", "helpers", "pending_sends"}) {
+          "conversation_resources", "helpers", "helper_delegations",
+          "pending_sends"}) {
       auto q = store.prepare(std::string("DELETE FROM ") + table +
                              " WHERE conversation=?");
       q.bind(1, id).run();
@@ -518,6 +584,9 @@ auto ConversationStore::Delete(const std::string& id) -> void {
     q.bind(1, id).run();
     tx.commit();
   }
+  auto location =
+      db.prepare("DELETE FROM conversation_locations WHERE conversation=?");
+  location.bind(1, id).run();
 }
 
 auto ConversationStore::Search(const A::ConversationSearchRequest& request,
@@ -534,6 +603,7 @@ auto ConversationStore::Search(const A::ConversationSearchRequest& request,
         "updated DESC LIMIT 100");
     q.bind(1, p->text()->str()).bind(2, p->text()->str());
     while (q.step()) {
+      RememberConversation(q.text(0), q.text(1));
       if (!human) {
         try {
           OwnConversation(q.text(0), false);

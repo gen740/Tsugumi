@@ -123,8 +123,7 @@ def test_a_folder_on_path_is_not_reported(machine):
 def test_another_checksum_installs_nothing(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3", sha="0" * 64)
     r = machine("Darwin", "arm64")
-    assert r.returncode != 0
-    assert "チェックサム" in r.stderr
+    assert r.returncode == 65
     assert not (machine.home / ".local" / "bin" / "tsugumi").exists()
     assert list((machine.home / ".local" / "share" / "tsugumi").iterdir()) == []
 
@@ -188,8 +187,7 @@ def test_failed_version_check_keeps_the_current_command(machine):
         archive.add(tree, "tsugumi")
     (machine.release / f"{name}.sha256").write_text(hashlib.sha256((machine.release / name).read_bytes()).hexdigest())
     result = machine("Darwin", "arm64")
-    assert result.returncode != 0
-    assert "Version check failed" in result.stderr
+    assert result.returncode == 70
     assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
     assert len(list((machine.home / ".local/share/tsugumi").iterdir())) == 2
 
@@ -233,8 +231,7 @@ def test_update_without_the_release_script_says_so_and_keeps_what_is_there(machi
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
     assert machine("Darwin", "arm64").returncode == 0
     r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
-    assert r.returncode != 0
-    assert "install.sh を取得できませんでした" in r.stderr
+    assert r.returncode == 69
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.0"
 
 
@@ -247,10 +244,10 @@ def test_linux_builds_the_source_with_nix(machine, arch):
 
 
 def test_what_is_not_supported_says_so(machine):
-    assert "Nix が必要" in machine("Linux", "x86_64").stderr
-    assert "macOS 26" in machine("Darwin", "arm64", macos="15.5").stderr
-    assert "Apple silicon" in machine("Darwin", "x86_64").stderr
-    assert "対応していません" in machine("FreeBSD", "amd64").stderr
+    assert machine("Linux", "x86_64").returncode == 69
+    assert machine("Darwin", "arm64", macos="15.5").returncode == 69
+    assert machine("Darwin", "x86_64").returncode == 69
+    assert machine("FreeBSD", "amd64").returncode == 69
     assert not (machine.home / ".local").exists()
 
 
@@ -376,7 +373,7 @@ def test_uninstall_rejects_unknown_options_without_deleting(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     assert machine("Darwin", "arm64").returncode == 0
     r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--purge"])
-    assert r.returncode != 0 and "Usage:" in r.stderr
+    assert r.returncode == 64
     assert (machine.home / ".local/bin/tsugumi").exists()
 
 

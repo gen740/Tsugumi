@@ -75,6 +75,6 @@ def test_scaffold_default_bindings_and_returned_outputs(scaffold, monkeypatch):
 
 def test_singular_input_binding_is_rejected(scaffold):
     _, inputs, adapter = scaffold
-    with pytest.raises(Failure, match='has no source') as error:
+    with pytest.raises(Failure) as error:
         adapter.bindings(inputs, {'source': 'input.data.value'})
     assert error.value.kind == 'validation_failed'

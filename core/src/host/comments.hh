@@ -5,6 +5,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -52,9 +53,12 @@ auto is_meta(const std::string &path) -> bool;
 auto card_of(const std::string &path, const Files &files = {})
     -> std::optional<std::string>;
 auto of(const Files &files) -> std::vector<Comment>;
+using ReserveComment = std::function<std::string(
+    const std::string &, const std::vector<std::string> &)>;
 auto stamped(const std::string &text, const std::string &card,
              const std::vector<Comment> &before,
-             const std::vector<std::string> &changed) -> std::string;
+             const std::vector<std::string> &changed,
+             const ReserveComment &reserve) -> std::string;
 auto record_json(const std::vector<Change> &changes) -> std::string;
 auto version(const std::filesystem::path &root, const std::string &commit)
     -> std::vector<Change>;

@@ -35,27 +35,6 @@ TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
   EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
   EXPECT_TRUE(!formatted->diagnostics() || formatted->diagnostics()->size() == 0);
 }
-TEST_F(AgentFixture, DocumentMergeUsesTheSameHostAndAgentOperation) {
-  const std::string base = R"({"settings":{"n":1}})", ours = R"({"settings":{"n":2}})", theirs = R"({"settings":{"n":3}})";
-  const auto reply = Call(*host, H::RequestPayload::DocumentMergeRequest, [&](Builder& b) {
-    return H::CreateDocumentMergeRequest(b, b.CreateString(base), b.CreateString(ours), b.CreateString(theirs)).Union();
-  });
-  const auto* edit = reply.HostValue()->value_as_DocumentMerge();
-  ASSERT_NE(edit, nullptr);
-  ASSERT_NE(edit->conflicts(), nullptr);
-  ASSERT_EQ(edit->conflicts()->size(), 1U);
-  EXPECT_EQ(edit->conflicts()->Get(0)->str(), "/settings/n");
-  EXPECT_EQ(edit->merged_json()->str(), ours);
-  const auto conversation = Conversation("merge");
-  const auto result = Tool(conversation, "document_merge", agent::json::Encode(agent::json::Members{
-      {"base_json", agent::json::Quote(base)}, {"ours_json", agent::json::Quote(ours)}, {"theirs_json", agent::json::Quote(theirs)}}));
-  const auto* tool = result.Value()->value_as_ToolResult();
-  ASSERT_NE(tool, nullptr) << result.Code();
-  EXPECT_FALSE(tool->is_error());
-  const auto value = agent::json::Object(tool->text()->str());
-  EXPECT_EQ(agent::json::Text(value, "merged_json"), edit->merged_json()->str());
-  EXPECT_EQ(agent::json::Array(value.at("conflicts")), std::vector<std::string>({agent::json::Quote("/settings/n")}));
-}
 
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
   for (const bool websocket : {false, true})
@@ -113,6 +92,13 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
       });
   ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
   const auto folder = directory.path / "new";
+  const auto trust =
+      Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+        return H::CreateProjectTrustRequest(b, b.CreateString(folder.string()))
+            .Union();
+      });
+  EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Trusted);
   EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
             JsonString(defaults.View(), "/nixpkgsPin"));
   EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
@@ -181,6 +167,16 @@ TEST_F(HostProjectsFixture,
             (std::filesystem::canonical(directory.path) / "sample").string());
   EXPECT_EQ(JsonString(second.View(), "/path"),
             (std::filesystem::canonical(directory.path) / "sample-2").string());
+  for (const auto* name : {"sample", "sample-2"}) {
+    const auto trust =
+        Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+          return H::CreateProjectTrustRequest(
+                     b, b.CreateString((directory.path / name).string()))
+              .Union();
+        });
+    EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
+              H::ProjectTrustDecision::Trusted);
+  }
   EXPECT_EQ(copy("missing").Code(), "demo_not_found");
   const auto duplicate = Call(
       *host, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder &b) {
@@ -191,6 +187,15 @@ TEST_F(HostProjectsFixture,
             .Union();
       });
   ASSERT_TRUE(duplicate.Code().empty());
+  const auto duplicate_trust =
+      Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+        return H::CreateProjectTrustRequest(
+                   b, b.CreateString((directory.path / "duplicate").string()))
+            .Union();
+      });
+  EXPECT_EQ(duplicate_trust.HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Unknown);
+
   for (const auto *name : {"sample", "duplicate"}) {
     const auto dest = directory.path / name;
     EXPECT_FALSE(std::filesystem::exists(dest / ".tsugumi"));

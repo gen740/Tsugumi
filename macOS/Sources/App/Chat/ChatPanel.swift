@@ -505,7 +505,7 @@ struct ChatPanel: View {
           ForEach(ChatFinding.list(item.text)) { finding in
             HStack {
               Text("\(finding.target.file ?? ""):\(finding.target.lineStart ?? 1)-\(finding.target.lineEnd ?? 1)").font(.caption)
-              Button("指摘をコメントに残す") { session.addComment(key(finding.target.card!), finding.text, finding: true) }.disabled(!session.isEditable)
+              Button("指摘をコメントに残す") { session.performCardEdit { try await session.addComment(key(finding.target.card!), finding.text, finding: true) } }.disabled(!session.isEditable)
             }
           }
         }
@@ -759,7 +759,7 @@ private struct StructuredChatRow: View {
         }
         // Unresolved failures remain visible even when the step is folded.
         ForEach(row.children.filter { $0.kind == "tool" && $0.state == "failed" }) { failure in
-          Text(failure.name + ": " + failure.result).font(.caption).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          Text(english ? failure.summaryEn : failure.summaryJa).font(.caption).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
       } else if row.kind == "tool" {
         ToolRow(item: ChatController.presentedItem(row), tab: tab, session: session)

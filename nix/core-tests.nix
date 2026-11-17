@@ -40,7 +40,6 @@ clangStdenv.mkDerivation {
       ../demos
       ../tests/run-isolated.py
       ../tests/fixtures/subgraph-edits.json
-      ../tests/fixtures/merge-contract.json
       ../tests/fixtures/service-contract.json
       (lib.fileset.fileFilter (
         file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
@@ -123,6 +122,7 @@ clangStdenv.mkDerivation {
       --set TSUGUMI_HOSTD ${core}/bin/tsugumi-hostd \
       ${lib.optionalString clangStdenv.hostPlatform.isLinux "--set TSUGUMI_REMOTE_TEST_RAW_WORKER ${core}/bin/tsugumi-workerd"} \
       --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
+      --set TSUGUMI_WORKERD ${core}/bin/tsugumi-workerd \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
       --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \
@@ -130,6 +130,7 @@ clangStdenv.mkDerivation {
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
       --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \
       --set TSUGUMI_CLIENT_LIB_DIR ${core}/lib \
+      --set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests" \
       --set TSUGUMI_FLATC ${flatbuffers}/bin/flatc
   '';
   meta = {

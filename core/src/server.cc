@@ -1,5 +1,7 @@
 #include "server.hh"
 
+#include <optional>
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>

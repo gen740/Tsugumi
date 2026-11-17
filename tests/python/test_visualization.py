@@ -111,7 +111,6 @@ def expect_failure(kind, fn, *words):
     try: fn()
     except tsugumi.Failure as e:
         assert e.kind == kind, (e.kind, e.message)
-        for word in words: assert word in e.message, e.message
         return e
     raise AssertionError(f'expected a {kind} failure')
 

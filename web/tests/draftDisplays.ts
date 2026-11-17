@@ -19,17 +19,12 @@ const delta = (rev: bigint, fields: Partial<R.DocumentDeltaT>) =>
 const session = () => {
   const s = new ProjectSession('/p', 'k', 'p')
   const project = '{"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}'
-  s.project = parse(project)
-  s.confirmedProject = parse(project)
-  s.layout = parse('{}')
-  s.confirmedLayout = parse('{}')
-  s.confirmedDefinitions.set('a', parse('{"template":"draft"}'))
-  s.rev = 1n
   const asked: string[][] = []
   s.client = { setVisible: async (_sub: unknown, cards: string[][]) => { asked.push(cards.map((c) => c.join('/'))) } } as never
-  const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; applyResolution(r: R.ResolvedCardT[], d: unknown[]): void }
+  const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
   inner.subscription = 'sub'
-  inner.applyResolution([resolved('a')], [])
+  inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}',
+    definitions: [definition('a', '{"template":"draft"}')], resolution: [resolved('a')] }), true)
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }
 

@@ -274,21 +274,6 @@ for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWit
   assert.deepEqual(reversed, once, `${s.name}: the order of the wires changes nothing`)
 }
 
-// ---- The time of one frame -------------------------------------------------------------
-{
-  const big = [...demos].sort((a, b) => b.wires.length - a.wires.length)[0]
-  const t0 = performance.now()
-  const frames = 200
-  for (let f = 0; f < frames; f++) {
-    // As while dragging: the first Card moves, so nothing can be kept from the frame before.
-    const obstacles = big.obstacles.map((r, i) => (i ? r : { ...r, x: r.x + f }))
-    new WireRouter(big.flow, obstacles).routeAll(big.wires)
-  }
-  const perFrame = (performance.now() - t0) / frames
-  console.log(`wire routes: ${big.name}, ${big.wires.length} wires, ${perFrame.toFixed(3)} ms per frame`)
-  assert.ok(perFrame < 25, `routing keeps up with a frame: ${perFrame} ms`)
-}
-
 // ---- The cases Mac and web must route alike ---------------------------------------------
 type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[]; paths: (Pt[] | null)[] }
 const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
@@ -308,3 +293,8 @@ const cases: Case[] = read(fixture)
 assert.ok(cases.length > 0)
 for (const c of cases) assert.deepEqual(routed(c), c.paths, `the paths Mac also has to find: ${c.name} (a change to the router on purpose: WIRE_ROUTES_WRITE=1 npm test)`)
 console.log('wire routes: passed')
+
+if (process.env.TSUGUMI_WIRE_BENCH === '1') {
+  const { wireFrameBudget } = await import('../../tests/bench/wire-frames')
+  wireFrameBudget([...demos].sort((a, b) => b.wires.length - a.wires.length)[0], WireRouter)
+}

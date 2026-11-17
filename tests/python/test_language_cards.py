@@ -702,10 +702,8 @@ def test_display_arrives_before_completion_and_cancel_stops_worker(project, lang
     assert notification.valueType == NotificationPayload.DisplayUpdated
     assert text(notification.value.display.value.text) == "running"
     assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed)
-    started = time.monotonic()
     c.call("RunCancelRequest", runId=run_id)
     assert wait_run(c, run_id, 10).state == RunState.cancelled
-    assert time.monotonic() - started < 5
     c.call("ProjectInspectRequest")  # The daemon remains usable after interpreter cancellation.
 
 

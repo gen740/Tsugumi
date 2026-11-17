@@ -1,3 +1,5 @@
+import { connectionKey } from '../model/presence'
+import { agentAppearance } from '../model/agentAppearance'
 import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
 import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
@@ -17,7 +19,7 @@ import {
   CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
-import { arr, dbl, get, J, JObj, obj, real, str } from '../shared/json'
+import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../shared/json'
 import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
@@ -55,7 +57,7 @@ const isTyping = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest
 
 export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
   const cv = canvasFor(session, tab)
-  useObserve(session, tab, cv, prefs)
+  useObserve(session, tab, cv, prefs, agentAppearance)
   const root = useRef<HTMLDivElement>(null)
   const [cardDrag, setCardDrag] = useState<SceneDrag['cards']>()
   const [boundaryDrag, setBoundaryDrag] = useState<SceneDrag['boundary']>()
@@ -75,6 +77,17 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const bubble = useRef<HTMLDivElement>(null)
   const findField = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
+  const [, cueFrame] = useState(0)
+  const saveStep = session.presence.step
+  useEffect(() => {
+    if (!saveStep) return
+    let id = requestAnimationFrame(function frame() {
+      cueFrame(n => n + 1)
+      if (session.presence.progress(Date.now() / 1000) !== undefined) id = requestAnimationFrame(frame)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [saveStep, session])
+  const saveProgress = agentAppearance.animateWork && !prefs.tsugumiStill ? session.presence.progress(Date.now() / 1000) : undefined
   const scene = cv.scene({ cards: cardDrag, boundary: boundaryDrag })
   const nixLinks = tab.showNixReferences ? linksIn(nixReferences(session), tab.scope, new Set(scene.cardKeys)) : []
   const activeNix = activeNixLinks(nixLinks, tab.hoveredNixCard, tab.selectedNixReference)
@@ -249,7 +262,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
       : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
     if (!type) return false
-    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type)))
+    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type), overwrite ? undefined : edit.paramBase))
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
@@ -554,10 +567,20 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       <WireLayer wires={wires.map((w) => {
         const countLabel = w.count !== undefined ? `×${w.count}` : w.executionList && session.runActive ? '×?' : undefined
         const middle = countLabel ? midPoint(w.pts) : undefined
-        return { d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted, executionList: w.executionList,
+        const connection = w.connection === undefined ? undefined : session.connections(scope)[w.connection]
+        const drawProgress = saveProgress !== undefined && connection && saveStep?.wires.has(connectionKey(connection)) ? saveProgress : undefined
+        return { d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted, executionList: w.executionList, drawProgress,
           countLabel, countAt: middle && screen(middle) }
       })}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
+
+      {saveProgress !== undefined && <svg className="cv-wires" width={cv.size.width} height={cv.size.height} aria-hidden>
+        {scene.cardKeys.filter(k => saveStep?.cards.has(path(k).at(-1)!) && path(k).length === 1).map(k => {
+          const r = scene.cardRect(k), p = screen(r)
+          return <rect key={k} x={p.x - 2} y={p.y - 2} width={r.width * z + 4} height={r.height * z + 4}
+            rx={10} fill="none" stroke="var(--green)" strokeWidth={3} opacity={Math.sin(Math.PI * saveProgress)} />
+        })}
+      </svg>}
 
       {tab.showNixReferences && <svg width={cv.size.width} height={cv.size.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}>
         <defs><marker id={`nix-arrow-${tab.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
@@ -593,7 +616,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamBegin={() => session.rev}
+            onParamBegin={(edit, name) => {
+              edit.paramBase = { parameter: clone((arr(get(session.cardDefinition(k), 'params')) ?? []).find(p => str(get(p, 'name')) === name)) }
+              return session.rev
+            }}
             onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text, edit, overwrite) => {
               if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
               return commitParam(k, name, text, edit, overwrite)

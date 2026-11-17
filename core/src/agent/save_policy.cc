@@ -2,6 +2,7 @@
 
 #include <set>
 
+#include "host/failure.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::agent {
@@ -43,7 +44,8 @@ auto Bytes(const std::string& raw) -> std::string {
 }
 }  // namespace
 
-auto PrepareAgentSave(json::Members args, const ProjectRead& read)
+auto PrepareAgentSave(json::Members args, const ProjectRead &read,
+                      const host::comments::ReserveComment &reserve)
     -> AgentSave {
   const auto snapshot = read("project_inspect", {});
   if (Integer(json::Get(snapshot, "rev")) !=
@@ -168,8 +170,9 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read)
     auto new_meta =
         Object(after.contains(meta_path) ? after.at(meta_path) : "{}");
     auto fail = [&](const std::string& why) {
-      throw std::runtime_error(comments::card_of(path, after).value_or(path) +
-                               ": " + why);
+      throw host::Failure("validation_failed",
+                          comments::card_of(path, after).value_or(path) +
+                              ": " + why);
     };
     for (const auto* field : {"description", "content", "context"})
       if (!Blank(json::Text(old_meta, field)) &&
@@ -183,7 +186,8 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read)
     if (Blank(json::Text(new_meta, "context")) &&
         !(Blank(json::Text(old_meta, "description")) &&
           Blank(json::Text(old_meta, "content"))))
-      fail("context is empty; write what the user asked of this Card");
+      fail("_meta.json context is empty; write context as what the user asked "
+           "of this Card, preserving its existing description and content");
   }
   for (const auto& [path, text] : after)
     if (!comments::is_meta(path) &&
@@ -204,7 +208,8 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read)
         comments::is_meta(path) && after.contains(path)) {
       const auto original = after.at(path);
       after[path] = comments::stamped(
-          original, comments::card_of(path, after).value_or(path), was, cards);
+          original, comments::card_of(path, after).value_or(path), was, cards,
+          reserve);
       if (kind == "PutDefinition") {
         c["meta_json"] = json::Quote(after.at(path));
         c.erase("keep_meta");

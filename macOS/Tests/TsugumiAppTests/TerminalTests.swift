@@ -224,7 +224,7 @@ private final class Shells {
   await settle(terminals)
   // The first shell ends (the environment went away, or the user typed exit).
   Darwin.shutdown(shells.remote[0], SHUT_RDWR)
-  for _ in 0..<2000 where terminals.tabs[0].ended == nil { try await Task.sleep(for: .milliseconds(5)) }
+  try await waitForModel { !(terminals.tabs[0].ended == nil) }
   #expect(terminals.tabs[0].ended != nil && !terminals.tabs[0].live)
   #expect(terminals.tabs[1].ended == nil && terminals.tabs[1].live)
   terminals.environment(connected: false)

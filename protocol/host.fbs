@@ -7,7 +7,9 @@ namespace Tsugumi.Host;
 // Every optional list in this contract is empty when its vector is omitted.
 
 // Secret input is accepted only by the human-only Host ProviderSet request.
-table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
+// context_limit is an optional input-token budget (0 selects the model budget).
+// The host reserves max_tokens and a margin from the model context window.
+table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 0; }
 
 // Host settings are patched against a revision, never overwritten blindly.
 table Setting { key:string (required); value_json:string (required); }
@@ -36,6 +38,7 @@ table SignInStatus { attempt_id:string; state:string (required); message:string;
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
+enum EnvironmentFailureCode:ubyte { None, ProcessExit, ReadinessTimeout, Cancelled, LaunchFailed }
 table EnvironmentRequest {
   project:string (required);
   action:EnvironmentAction;
@@ -43,10 +46,13 @@ table EnvironmentRequest {
   folders:[string];
   archive_incompatible_history:bool;
 }
+// Host-selected attached roots in the running project environment.
+table AttachedRoot { host_path:string (required); execution_path:string (required); }
 table EnvironmentState {
   project:string (required);
   key:string (required);
   phase:EnvironmentPhase;
+  failure_code:EnvironmentFailureCode;
   endpoint:string;
   token:string;
   project_id:string;
@@ -62,13 +68,19 @@ table EnvironmentState {
   startup_error_json:string;
   execution_scope_unavailable:bool;
   folders:[string];
+  attached_roots:[AttachedRoot];
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
+// Snapshot for the app's quit confirmation, including work from other clients.
+// Connections alone are not work. This neither stops nor transfers any work.
+/// -> HostActivity. Agent turns, host requests and project-core activity.
+table HostActivityRequest {}
+table HostActivity { busy:bool; }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
 table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
@@ -97,21 +109,19 @@ table AttachedFolders { state:EnvironmentState (required); folders:[FolderAttach
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
 // Listing metadata never grants permission to put a skill in a prompt.
 // conversation_id records ordered sources for that send; omission only previews.
+enum ProjectTrustDecision:ubyte { Unknown, Trusted, Untrusted }
+table ProjectTrustRequest { path:string (required); decision:ProjectTrustDecision; }
+table ProjectTrust { decision:ProjectTrustDecision; trusted_folder:string; }
 table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
-table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; }
+table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; always:bool; }
 table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs
 // a provider configuration; ordinary reads never need credentials.
 table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; key_profile:string; }
 table HostProjectDefaultsRequest {}
-// Read the same regular files as project duplication: keep hidden definition
-// files, omit .git, .tsugumi and symbolic links at every depth. Bytes stay bytes.
-// Continuations split files across bounded replies, including binary files
-// larger than one service frame. The initial cursor is (0, 0).
-table HostProjectReadRequest { path:string (required); file_index:uint; offset:ulong; }
+// Binary file payload used by guarded operation inverses.
 table ProjectFile { path:string (required); bytes:[ubyte]; }
-table ProjectFiles { name:string (required); files:[ProjectFile]; next_file:uint; next_offset:ulong; complete:bool; }
 table HostProjectInfoRequest { path:string (required); }
 table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
 table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
@@ -124,31 +134,101 @@ table HostRecentForgetRequest { paths:[string]; }
 // Pure edit of the affected project document. Definition folders and their
 // bytes move unchanged under externals/<id>/ in the caller's single save.
 // Existing scope boundary references are rerouted through the new Card.
-table DocumentSubgraphRequest { project_json:string (required); cards:[string]; id:string (required); }
 table DocumentSubgraph { project_json:string (required); external_json:string (required); link_json:string (required); }
 
-// Copy documents and plan exact byte transfers from the caller's current state.
-// The caller reads every source before applying the returned patch in one edit,
-// and keeps those bytes in that edit for undo/redo, even after an autosave.
+// Internal transformation result: the host stages these byte transfers in
+// the same atomic operation as the document edits.
 table DocumentFileCopy { from:string (required); to:string (required); }
-table DocumentCopyRequest { state_json:string (required); paths:[string]; from:string (required); to:string (required); name:string; }
 table DocumentCopy { edits_json:string (required); files:[DocumentFileCopy]; }
 
 // Scope state contains project, layout and definitions, plus current visible
 // port names under ports/<card>/{inputs,outputs} for a Draft '+' gesture.
-table DocumentConnectRequest { state_json:string (required); from_card:string (required); from_port:string (required); to_card:string (required); to_port:string (required); fork_id:string; }
 table DocumentConnect { state_json:string (required); inserted_id:string; needs_fork:bool; }
 
 // The host serves the shared ui/templates catalog for a new Card.
-table DocumentTemplateRequest { name:string (required); id:string (required); }
 table DocumentTemplateFile { path:string (required); text:string (required); }
 table DocumentTemplate { definition_json:string (required); files:[DocumentTemplateFile]; }
 
-// Pure three-way merge of document states (project, layout, definitions and
-// externals). Conflicts are paths in that state; the proposed local values
-// must not be saved until the person explicitly chooses them.
-table DocumentMergeRequest { base_json:string (required); ours_json:string (required); theirs_json:string (required); }
-table DocumentMerge { merged_json:string (required); conflicts:[string]; }
+// Intent editing, shared by all clients. Object fields and keyed array entities
+// are selected by identity; numeric array offsets are never entity identities.
+table ProjectSelector {
+  field:string;
+  match_json:string; // nonempty object whose members identify an array entity
+}
+table ProjectValue { present:bool; json:string; }
+table ProjectFieldEdit {
+  file_path:string (required);
+  selector:[ProjectSelector];
+  old_value:ProjectValue (required);
+  new_value:ProjectValue (required);
+}
+table ProjectTextEdit {
+  file_path:string (required);
+  old_string:string (required);
+  new_string:string (required);
+  expected_matches:uint32 = 1;
+}
+table ProjectFilePut {
+  file_path:string (required);
+  expected_hash:string;
+  expect_missing:bool;
+  bytes:[ubyte];
+}
+table ProjectFileRemove { file_path:string (required); expected_hash:string (required); }
+table ProjectFileMove {
+  file_path:string (required);
+  expected_hash:string (required);
+  to:string (required);
+  expected_destination_hash:string;
+  destination_missing:bool;
+}
+// Replace a complete definition/external folder, guarding its exact file closure.
+// Used by transformation undo so a later added file cannot be silently deleted.
+table ProjectFileHash { path:string (required); hash:string (required); }
+table ProjectTreeEdit { prefix:string (required); expected:[ProjectFileHash]; files:[ProjectFile]; }
+// The host extracts guarded field edits from a form's selected before/after values.
+// This is not whole-document replacement; raw editors use ProjectReplaceDocuments.
+table ProjectJSONEdit { file_path:string (required); old_value:ProjectValue (required); new_value:ProjectValue (required); }
+union ProjectEditValue { ProjectFieldEdit, ProjectTextEdit, ProjectFilePut, ProjectFileRemove, ProjectFileMove, ProjectTreeEdit, ProjectJSONEdit }
+table ProjectEdit { value:ProjectEditValue; }
+table ProjectEdits { edits:[ProjectEdit]; }
+table ProjectConnect {
+  project_path:string;
+  from_card:string (required); from_port:string (required);
+  to_card:string (required); to_port:string (required);
+  fork_id:string;
+}
+table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
+// Source paths name a definition or an external folder in the current project.
+// The host copies its complete document/source closure and places the new Card.
+table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; }
+table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
+table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
+table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
+enum ProjectLayoutAction:ubyte { Arrange, Untangle }
+table ProjectLayout {
+  project_path:string;
+  action:ProjectLayoutAction;
+  // Measurements only; the host uses the current graph and saved positions.
+  scene:LayoutScene;
+}
+table ProjectMove {
+  project_path:string; cards:[string]; notes:[string]; frames:[string];
+  dx:double; dy:double; snap:double; scene:LayoutScene;
+}
+table ProjectDocument { path:string (required); present:bool = true; json:string; }
+// Raw editors refuse every stale revision, including unrelated changes.
+table ProjectReplaceDocuments { expected_rev:ulong; documents:[ProjectDocument]; }
+enum ProjectSelectionAction:ubyte { Place, Delete, DeleteDefinitions, DisconnectInputs, DisconnectOutputs, RemoveConnections }
+table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; frames:[string]; connections_json:string; x:double; y:double; scene:LayoutScene; }
+table ProjectReload { expected_rev:ulong; approved_permissions:[string]; }
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload }
+table ProjectOperateRequest {
+  project_id:string (required);
+  op_id:string (required);
+  body:ProjectOperationBody;
+}
+table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
 
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
@@ -184,18 +264,18 @@ table GuideState {
 // Heartbeat intervals are >= 1 second; missed_heartbeats = 0 means never.
 // New registrations default to 15 seconds and never expire for silence.
 table ExecutionServicesRequest {}
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
 table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table ProjectDefaults { nixpkgs_pin:string (required); }
+table ProjectDefaults { nixpkgs_pin:string (required); agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
 // opened_at is Unix epoch milliseconds. Forget never removes project folders.
@@ -250,6 +330,23 @@ table LayoutBox {
   height:double (id: 4);
 }
 
+/// A rectangle in Card-local coordinates. Anchors multiply the measured Card
+/// width/height; x/y are world-unit offsets. Clients only transform coordinates.
+table DisplayGeometry {
+  anchor_x:double;
+  anchor_y:double;
+  x:double;
+  y:double;
+  width:double;
+  height:double;
+}
+/// -> DisplayGeometries. Host-owned default output-frame geometry for both flows.
+table DisplayGeometryRequest {}
+table DisplayGeometries {
+  top_to_bottom:DisplayGeometry (required);
+  left_to_right:DisplayGeometry (required);
+}
+
 /// One port of a Card in Card and the inner Card it goes to or comes from.
 table LayoutBarEnd {
   name:string (id: 0, required);
@@ -283,40 +380,11 @@ table LayoutScene {
   outputs:LayoutBar (id: 8);
 }
 
-/// -> LayoutProposal. Places the scope's Cards, output frames and notes, then
-/// gives ports the order that crosses fewer wires and places the Cards once
-/// more for it. The bars are taken to follow the Cards again. Nothing is saved.
-table LayoutArrangeRequest { scene:LayoutScene (id: 0, required); }
 
-/// -> LayoutProposal (port_orders only). Reorders ports where the wires then
-/// cross less; no Card moves. With `around` (the Cards a drag just moved) only
-/// they and the Cards wired to them may change. Nothing is saved.
-table LayoutUntangleRequest {
-  scene:LayoutScene (id: 0, required);
-  around:[string] (id: 1);
-}
-
-table LayoutPlace {
-  id:string (id: 0, required);
-  x:double (id: 1);
-  y:double (id: 2);
-}
 
 /// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
-table LayoutPortOrder {
-  id:string (id: 0, required);
-  inputs:[string] (id: 1);
-  outputs:[string] (id: 2);
-}
 
 /// What LayoutArrange or LayoutUntangle would change; the client saves it.
-table LayoutProposal {
-  cards:[LayoutPlace] (id: 0);
-  frames:[LayoutPlace] (id: 1);
-  notes:[LayoutPlace] (id: 2);
-  /// Only the Cards whose order changes.
-  port_orders:[LayoutPortOrder] (id: 3);
-}
 
 table VersionCanvasCard {
   id:string (id: 0, required);
@@ -350,6 +418,13 @@ table VersionCanvas {
 /// Card references. The caller includes the returned JSON in the same save.
 table LayoutValidateRequest { json:string (required); removed_cards:[string]; }
 table LayoutValidated { json:string (required); }
+/// Pure display derivation for one workflow. definitions_json maps Card ids to
+/// their _card.json text. Same document yields the same places on every client.
+/// The returned layout is presentation only; opening never saves it.
+table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
+/// Add missing places and deletion cleanup to the caller's exact CAS save.
+/// No write, retry or merge occurs here. The caller sends the returned save to
+/// the core as its single transaction. Agent saves use the same implementation.
 /// -> VersionCanvas. Draw the raw definition data and layout returned by the
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {
@@ -377,6 +452,30 @@ table VersionComment {
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 table VersionComments { comments:[VersionComment]; }
 
+/// -> InputTypes. Read each incoming wire's source, kind and complete input
+/// definition as Card code sees it. May help when writing a Card; routing types
+/// are resolved automatically. language defaults to the Card implementation;
+/// pass it for a Draft, or "schema" for plain tables. output_port selects
+/// one upstream output instead. No result size limit.
+table InputTypesRequest {
+  project:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  output_port:string;
+  language:string;
+  at_rev:ulong = null;
+}
+table InputType {
+  port:string (required);
+  source_card:Tsugumi.Data.CardPath;
+  source_port:string;
+  /// value, file or directory; empty when unresolved.
+  kind:string;
+  /// no_source, unresolved or resolved.
+  state:string (required);
+  definition:string;
+}
+table InputTypes { rev:ulong = null; language:string; inputs:[InputType]; }
+
 // Pure editing support: paths select a language and label diagnostics, never files.
 table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
@@ -391,28 +490,36 @@ table DemoReadRequest { path:string (required); }
 table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
 table DemoPaths { paths:[string]; }
 
+// Reserve an annotation reference across all clients of the project. kind is
+// note, group or comment; comments supply their Card path as scope. occupied
+// carries the client's existing document IDs. Absence means an empty list.
+table IdentifierReserveRequest { project_id:string (required); kind:string (required); scope:string; occupied:[string]; }
+table Identifier { id:string (required); }
+
 union RequestPayload {
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
-  LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
+  RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ProjectTrustRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
+  LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
-  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
+  PermissionKindsRequest,
+  ProjectOperateRequest,
+
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
+  ProjectOperationResult,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
-  RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
-  LayoutProposal, LayoutValidated, VersionCanvas,
+  GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
+  LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
-  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
-  ModelSelection,
-  DemoPaths, TextResult:Tsugumi.Service.TextResult
+  PermissionKinds,
+  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

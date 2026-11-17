@@ -26,6 +26,7 @@
 #include "host/failure.hh"
 #include "host/format.hh"
 #include "host/guide.hh"
+#include "host/identifiers.hh"
 #include "host/layout_service.hh"
 #include "host/models.hh"
 #include "host/permission_kinds.hh"
@@ -92,11 +93,12 @@ struct Service::State {
                    return conversations ? conversations->OpenedPath(project)
                                         : std::nullopt;
                  }),
-        host_projects(options.state_dir, options.demos_dir),
+        host_projects(options.state_dir, options.demos_dir, &db),
         demo_references(options.demos_dir),
         guide(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
         tool_requests(4, 128, std::chrono::seconds(30)),
+        wait_requests(4, 128, std::chrono::seconds(30)),
         terminal_requests(1, 128, std::chrono::seconds(30)) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
@@ -127,7 +129,7 @@ struct Service::State {
                             const auto& raw) { Event(id, raw); },
             .cancel =
                 [this](const auto& project, const auto& conversation) {
-                  for (const auto& [key, call] : tools->shell_calls)
+                  for (const auto& [key, call] : tools->file_calls)
                     if (call.project == project &&
                         (conversation.empty() || key.first == conversation))
                       call.stop->request_stop();
@@ -152,11 +154,14 @@ struct Service::State {
                   return helpers->RunHelper(id, call, index, task, stop,
                                             authorization);
                 },
-            .cancel_shells =
+            .cancel_file_tools =
                 [this](const auto& id) {
-                  for (const auto& [key, source] : tools->shell_calls)
+                  for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
-                }});
+                },
+            .excluded = [this](const auto& project, const auto& path, auto stop) {
+              return !project.empty() && tools->Exclusions(project, stop).Contains(path);
+            }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,
@@ -193,7 +198,7 @@ struct Service::State {
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
         });
-    skills_service = std::make_unique<host::SkillsService>(db);
+    skills_service = std::make_unique<host::SkillsService>(db, *host_settings);
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
         [this](std::string raw) { return Scrub(std::move(raw)); });
@@ -238,6 +243,31 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
+    options.environment.prepare_project_identity =
+        [this](const std::filesystem::path &root) {
+          std::lock_guard lock(mutex);
+          const auto file = root / ".tsugumi/project-id";
+          if (const auto id = fs::read_file(file)) {
+            if (!crypto::is_short_id(*id))
+              throw Failure("invalid_project",
+                            "Recreate this development project for the new "
+                            "identifier format");
+            registry.ValidateLocation(*id, root);
+            db.prepare("INSERT OR IGNORE INTO identifiers VALUES('project',?)")
+                .bind(1, *id)
+                .run();
+            return;
+          }
+          std::string id;
+          for (;;) {
+            id = host::AllocateId(db, "project");
+            auto known = db.prepare("SELECT 1 FROM projects WHERE id=?");
+            known.bind(1, id);
+            if (!known.step())
+              break;
+          }
+          fs::write_atomic(file, id, 0600);
+        };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
           options.environment,
@@ -315,6 +345,10 @@ struct Service::State {
   bool stopping = false;
   Lane requests;
   Lane tool_requests;
+  Lane wait_requests;
+  std::map<ConnId, std::stop_source> connection_stops;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>>
+      tool_stops;
   Lane terminal_requests;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
@@ -438,6 +472,15 @@ struct Service::State {
         const auto id =
             r->value_as_ConversationDeleteRequest()->conversation_id()->str();
         conversations->Delete(id);
+        for (auto call = tools->file_calls.begin();
+             call != tools->file_calls.end();) {
+          if (call->first.first != id) {
+            ++call;
+            continue;
+          }
+          call->second.stop->request_stop();
+          call = tools->file_calls.erase(call);
+        }
         turns->thoughts.erase(id);
         return wire::AgentReply(request.request_id, S::AcknowledgementT{});
       }
@@ -456,6 +499,7 @@ struct Service::State {
             request.request_id,
             conversations->Events(*r->value_as_EventsRequest(), human));
       }
+      case A::RequestPayload::CallIdRequest:
       case A::RequestPayload::ToolCatalogRequest:
       case A::RequestPayload::ToolCallRequest:
         return tools->Handle(request, human, lock);
@@ -475,10 +519,30 @@ struct Service::State {
     const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
+    if (r->value_as_HostActivityRequest()) {
+      H::HostActivityT activity;
+      activity.busy = !turns->running.empty() || requests.pending() > 1 ||
+                      !tool_requests.idle() || !wait_requests.idle() ||
+                      !terminal_requests.idle();
+      lock.unlock();
+      if (!activity.busy && environments) activity.busy = environments->Busy();
+      return wire::HostReply(request.request_id, activity);
+    }
     if (const auto* format = r->value_as_FileFormatRequest()) {
       auto input = std::unique_ptr<H::FileFormatRequestT>(format->UnPack());
       lock.unlock();
       return wire::HostReply(request.request_id, host::Format(*input));
+    }
+    if (const auto* input = r->value_as_InputTypesRequest()) {
+      const auto project = input->project()->str();
+      std::vector<std::string> segments;
+      for (const auto* part : *input->card()->segments()) segments.push_back(json::Quote(part->str()));
+      json::Members args{{"card", json::Encode(json::Members{{"segments", json::Encode(segments)}})}};
+      if (input->output_port()) args["output_port"] = json::Quote(input->output_port()->str());
+      if (input->language()) args["language"] = json::Quote(input->language()->str());
+      if (input->at_rev()) args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
+      lock.unlock();
+      return wire::HostReply(request.request_id, tools->InputTypesQuery(project, std::move(args), shutdown.get_token()));
     }
     if (r->value_as_HostVersionGraphRequest() ||
         r->value_as_HostVersionDiffRequest())
@@ -565,7 +629,6 @@ struct Service::State {
         const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
         const auto* snapshot = result ? result->value_as_Settings() : nullptr;
         lock.lock();
-        helpers->helpers_changed.notify_all();
         if (snapshot) {
           H::SettingsChangedT changed;
           changed.profile =
@@ -588,9 +651,29 @@ struct Service::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::IdentifierReserveRequest: {
+      const auto *input = r->value_as_IdentifierReserveRequest();
+      const auto project = input->project_id()->str(),
+                 kind = input->kind()->str();
+      registry.Lookup(project);
+      if (kind != "note" && kind != "group" && kind != "comment")
+        throw Failure("invalid_request", "Unknown annotation kind");
+      const auto scope = input->scope() ? input->scope()->str() : "";
+      if ((kind == "comment") != !scope.empty())
+        throw Failure("invalid_request", "Only comments require a Card scope");
+      std::vector<std::string> occupied;
+      if (input->occupied())
+        for (const auto *id : *input->occupied())
+          occupied.push_back(id->str());
+      H::IdentifierT result;
+      result.id = host::ReserveOrdinal(
+          db, "annotation:" + project + ":" + kind + ":" + scope,
+          kind == "comment" ? "" : kind + "-", occupied);
+      return wire::HostReply(request.request_id, std::move(result));
+    }
       case H::RequestPayload::DemoListRequest: {
         H::DemoPathsT result;
-        for (const auto& path : json::Array(demo_references.List()))
+        for (const auto& path : json::Array(demo_references.ListFiles()))
           result.paths.push_back(json::String(path));
         return wire::HostReply(request.request_id, std::move(result));
       }
@@ -607,47 +690,24 @@ struct Service::State {
         return wire::HostReply(request.request_id,
                                host::PermissionKinds(Text(p->language())));
       }
-      case H::RequestPayload::DocumentTemplateRequest: {
-        const auto* p = r->value_as_DocumentTemplateRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::WriteTemplate(p->name()->str(), p->id()->str()));
+
+      case H::RequestPayload::ProjectOperateRequest: {
+        Human(human);
+        const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
+            r->value_as_ProjectOperateRequest()->UnPack());
+        const auto project = operation->project_id;
+        lock.unlock();
+        const auto reply = tools->OperateProject(
+            project, *operation, {"ui", {}, {}, {}}, shutdown.get_token());
+        if (reply.wire.empty())
+          throw Failure("unavailable", "operation returned no typed outcome");
+        H::ProjectOperationResultT result;
+        result.reply.reset(Tsugumi::RPC::GetMessage(reply.wire.data())
+                               ->payload_as_Reply()
+                               ->UnPack());
+        return wire::HostReply(request.request_id, std::move(result));
       }
-      case H::RequestPayload::DocumentConnectRequest: {
-        const auto* p = r->value_as_DocumentConnectRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::ConnectDocuments(p->state_json()->str(),
-                                   p->from_card()->str(), p->from_port()->str(),
-                                   p->to_card()->str(), p->to_port()->str(),
-                                   Text(p->fork_id())));
-      }
-      case H::RequestPayload::DocumentCopyRequest: {
-        const auto* p = r->value_as_DocumentCopyRequest();
-        std::vector<std::string> paths;
-        if (p->paths())
-          for (const auto* path : *p->paths()) paths.push_back(path->str());
-        return wire::HostReply(
-            request.request_id,
-            host::CopyDocuments(p->state_json()->str(), paths, p->from()->str(),
-                                p->to()->str(), Text(p->name())));
-      }
-      case H::RequestPayload::DocumentMergeRequest: {
-        const auto* p = r->value_as_DocumentMergeRequest();
-        return wire::HostReply(
-            request.request_id,
-            host::MergeDocuments(p->base_json()->str(), p->ours_json()->str(),
-                                 p->theirs_json()->str()));
-      }
-      case H::RequestPayload::DocumentSubgraphRequest: {
-        const auto* p = r->value_as_DocumentSubgraphRequest();
-        std::vector<std::string> cards;
-        if (p->cards())
-          for (const auto* card : *p->cards()) cards.push_back(card->str());
-        return wire::HostReply(request.request_id,
-                               host::MakeSubgraph(p->project_json()->str(),
-                                                  cards, p->id()->str()));
-      }
+
       case H::RequestPayload::VersionCommentsRequest:
         return versions->HandleHost(request, human, lock);
       case H::RequestPayload::RegisterProjectRequest: {
@@ -660,6 +720,7 @@ struct Service::State {
         registry.RegisterFolder(*r->value_as_RegisterFolderRequest());
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
+      case H::RequestPayload::ProjectTrustRequest:
       case H::RequestPayload::SkillsListRequest:
         return skills_service->Handle(request, human, lock);
       case H::RequestPayload::ModelsListRequest:
@@ -695,6 +756,7 @@ auto Service::Shutdown() -> void {
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->tool_requests.stop();
+  state_->wait_requests.stop();
   state_->terminal_requests.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
@@ -727,8 +789,10 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
     std::lock_guard lock(state_->mutex);
     if (host)
       state_->events->host_connections.insert(request.conn);
-    else
+    else {
       state_->events->principals[request.conn] = human;
+      state_->connection_stops.try_emplace(request.conn);
+    }
   }
   S::HelloResultT result;
   result.server_id = state_->options.server_id;
@@ -740,18 +804,52 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
 auto Service::dispatch(RequestIn request) -> void {
   const bool host = H::MessageBufferHasIdentifier(request.frame->data());
   bool human = true;
+  std::shared_ptr<std::stop_source> tool_stop;
+  bool tool = false, waiting = false;
   if (!host) {
     std::lock_guard lock(state_->mutex);
     human = state_->events->principals.at(request.conn);
+    request.connection_stop =
+        state_->connection_stops.at(request.conn).get_token();
+    const auto* payload =
+        A::GetMessage(request.frame->data())->payload_as_Request();
+    if (payload->value_type() == A::RequestPayload::ToolCallCancelRequest) {
+      const auto key = std::make_pair(
+          request.conn,
+          payload->value_as_ToolCallCancelRequest()->request_id());
+      if (auto found = state_->tool_stops.find(key);
+          found != state_->tool_stops.end())
+        found->second->request_stop();
+      state_->server->reply(
+          request.conn,
+          wire::AgentReply(request.request_id, S::AcknowledgementT{}));
+      return;
+    }
+    tool = payload->value_type() == A::RequestPayload::ToolCallRequest;
+    if (tool) {
+      tool_stop = std::make_shared<std::stop_source>();
+      state_->tool_stops.emplace(
+          std::make_pair(request.conn, request.request_id), tool_stop);
+      const auto name =
+          payload->value_as_ToolCallRequest()->name()->string_view();
+      waiting = name == "run" || name == "run_status";
+    }
   }
   auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
-  auto task = [this, request, human, host, server, fail](bool expired) {
+  auto task = [this, request, human, host, server, fail,
+               tool_stop](bool expired) {
+    std::stop_callback disconnected(request.connection_stop, [tool_stop] {
+      if (tool_stop) tool_stop->request_stop();
+    });
+    auto invocation = request;
+    if (tool_stop) invocation.connection_stop = tool_stop->get_token();
     std::string bytes;
     try {
+      if (tool_stop && tool_stop->stop_requested()) throw Cancelled();
       if (expired) throw Failure("timeout", "Service request queue timed out");
-      bytes =
-          host ? state_->HandleHost(request) : state_->Handle(request, human);
+      bytes = host ? state_->HandleHost(invocation)
+                   : state_->Handle(invocation, human);
     } catch (const Cancelled&) {
       bytes = fail(request.request_id, "cancelled",
                    "The operation was cancelled", {});
@@ -764,24 +862,36 @@ auto Service::dispatch(RequestIn request) -> void {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});
     }
+    if (tool_stop) {
+      std::lock_guard lock(state_->mutex);
+      state_->tool_stops.erase({request.conn, request.request_id});
+    }
     server->reply(request.conn, std::move(bytes));
   };
-  const bool tool =
-      !host && A::GetMessage(request.frame->data())
-                       ->payload_as_Request()
-                       ->value_type() == A::RequestPayload::ToolCallRequest;
   const bool terminal =
       host && H::GetMessage(request.frame->data())
                       ->payload_as_Request()
                       ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto& lane = terminal ? state_->terminal_requests
-               : tool   ? state_->tool_requests
-                        : state_->requests;
-  if (!lane.submit(task))
+  auto& lane = terminal  ? state_->terminal_requests
+               : waiting ? state_->wait_requests
+               : tool    ? state_->tool_requests
+                         : state_->requests;
+  if (!lane.submit(task)) {
+    if (tool_stop) {
+      std::lock_guard lock(state_->mutex);
+      state_->tool_stops.erase({request.conn, request.request_id});
+    }
     server->reply(request.conn, fail(request.request_id, "busy",
                                      "Service request queue is full", {}));
+  }
 }
 auto Service::disconnected(ConnId connection) -> void {
+  std::lock_guard lock(state_->mutex);
+  if (auto stop = state_->connection_stops.find(connection);
+      stop != state_->connection_stops.end()) {
+    stop->second.request_stop();
+    state_->connection_stops.erase(stop);
+  }
   state_->events->Disconnected(connection);
 }
 auto Service::host_disconnected(ConnId connection) -> void {

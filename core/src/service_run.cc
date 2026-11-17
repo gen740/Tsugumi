@@ -49,8 +49,10 @@ std::string sdk_result(FBB& b, const SDKJob& job, flatbuffers::Offset<R::CardSDK
   return {};
 }
 
-void require_uuid(const flatbuffers::String* s, const char* what) {
-  if (!s || !crypto::is_uuid(s->str())) throw Failed(FailureKind::invalid_request, std::string(what) + " must be a UUID");
+void require_run_id(const flatbuffers::String *s, const char *what) {
+  if (!s || !crypto::is_run_id(s->str()))
+    throw Failed(FailureKind::invalid_request,
+                 std::string(what) + " must be a positive project run number");
 }
 
 }  // namespace
@@ -146,7 +148,8 @@ void Service::sdk_prepare(RequestIn& req) {
 
 void Service::sdk_status(RequestIn& req) {
   const auto* r = req.request()->value_as_CardSDKStatusRequest();
-  require_uuid(r->op_id(), "op_id");
+  if (!r->op_id() || !crypto::is_operation_id(r->op_id()->str()))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
   auto job = nix_->sdk_job(r->op_id()->str());
   if (!job) throw Failed(FailureKind::not_found, "unknown SDK job");
   if (job->state == SDKJob::State::Failed) throw Failed(*job->failure);
@@ -187,7 +190,7 @@ void Service::run_plan(RequestIn& req) {
 
 void Service::run_cancel(RequestIn& req) {
   const auto* r = req.request()->value_as_RunCancelRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   auto st = scheduler_->cancel(r->run_id()->str());
   FBB b;
   auto off = wire::run_status(b, st);
@@ -198,7 +201,7 @@ void Service::run_status(RequestIn& req) {
   const auto* r = req.request()->value_as_RunStatusRequest();
   RunStatusData st;
   if (r->run_id()) {
-    require_uuid(r->run_id(), "run_id");
+    require_run_id(r->run_id(), "run_id");
     auto active = scheduler_->active_status();
     if (active && active->run_id == r->run_id()->str()) {
       st = *active;
@@ -264,7 +267,7 @@ void Service::run_history(RequestIn& req) {
 
 void Service::run_latest_invocations(RequestIn& req) {
   const auto* r = req.request()->value_as_RunLatestInvocationsRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   const auto fingerprint = store_->current()->execution_fingerprint;
   auto [rows, batches] = history_->read([&](sql::Db& db) {
@@ -290,7 +293,7 @@ void Service::run_latest_invocations(RequestIn& req) {
 
 void Service::run_invocations(RequestIn& req) {
   const auto* r = req.request()->value_as_RunInvocationsRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
   uint32_t limit = page_limit(r->limit());
@@ -325,7 +328,7 @@ void Service::run_invocations(RequestIn& req) {
 
 auto Service::run_environments(RequestIn& req) -> void {
   const auto* r = req.request()->value_as_RunEnvironmentsRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str();
   const auto offset = r->offset().value_or(0);
   const auto limit = page_limit(r->limit());
@@ -368,7 +371,7 @@ auto Service::run_environments(RequestIn& req) -> void {
 
 auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto* r = req.request()->value_as_RunEnvironmentPathsRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str();
   const auto id = r->environment_id()->str();
   const auto offset = r->offset().value_or(0);
@@ -377,7 +380,8 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto query = r->query() ? r->query()->str() : std::string{};
   if (bool(r->excluding_run_id()) != bool(r->excluding_environment_id()))
     throw Failed(FailureKind::invalid_request, "both excluded run and environment are required");
-  if (r->excluding_run_id()) require_uuid(r->excluding_run_id(), "excluding_run_id");
+  if (r->excluding_run_id())
+    require_run_id(r->excluding_run_id(), "excluding_run_id");
   const auto excluded_run = r->excluding_run_id() ? r->excluding_run_id()->str() : std::string{};
   const auto excluded_id = r->excluding_environment_id() ? r->excluding_environment_id()->str() : std::string{};
   FBB b;
@@ -436,7 +440,7 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
 
 auto Service::run_environment_uses(RequestIn& req) -> void {
   const auto* r = req.request()->value_as_RunEnvironmentUsesRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str(), id = r->environment_id()->str();
   const auto offset = r->offset().value_or(0);
   const auto limit = page_limit(r->limit());
@@ -474,7 +478,7 @@ auto Service::run_environment_uses(RequestIn& req) -> void {
 
 void Service::run_record(RequestIn& req) {
   const auto* r = req.request()->value_as_RunRecordRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
   bool follow = r->follow_latest().value_or(false);
@@ -668,7 +672,7 @@ void Service::run_record(RequestIn& req) {
 
 void Service::run_value_read(RequestIn& req) {
   const auto* r = req.request()->value_as_RunValueReadRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
   if (!r->invocation()) throw Failed(FailureKind::invalid_request, "invocation is required");
@@ -693,7 +697,7 @@ void Service::run_value_read(RequestIn& req) {
 
 void Service::artifact_list(RequestIn& req) {
   const auto* r = req.request()->value_as_ArtifactListRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   std::optional<CardPath> card;
   if (r->card()) card = wire::card_arg(r->card());
@@ -761,10 +765,12 @@ auto Service::module_read(RequestIn& req) -> void {
 
 void Service::artifact_read(RequestIn& req) {
   const auto* r = req.request()->value_as_ArtifactReadRequest();
-  require_uuid(r->artifact_id(), "artifact_id");
+  if (!r->artifact_id() || !fs::valid_relative_path(r->artifact_id()->str()))
+    throw Failed(FailureKind::invalid_request, "invalid artifact_id");
   auto a = history_->read([&](sql::Db& db) { return History::artifact(db, r->artifact_id()->str()); });
-  // Rows may come from a copied history: they name folders only as UUIDs.
-  if (!a || !crypto::is_uuid(a->run_id) || !crypto::is_uuid(a->artifact_id) || a->members.empty())
+  // Copied rows must still name folders inside this run.
+  if (!a || !crypto::is_run_id(a->run_id) ||
+      !fs::valid_relative_path(a->artifact_id) || a->members.empty())
     throw Failed(FailureKind::not_found, "unknown artifact");
   const ArtifactMemberData* member = nullptr;
   if (a->kind == PortKind::File) {
@@ -812,7 +818,7 @@ void Service::artifact_read(RequestIn& req) {
 
 void Service::log_range(RequestIn& req) {
   const auto* r = req.request()->value_as_LogRangeRequest();
-  require_uuid(r->run_id(), "run_id");
+  require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   std::optional<CardPath> card;
   if (r->card()) card = wire::card_arg(r->card());

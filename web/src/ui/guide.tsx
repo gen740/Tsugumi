@@ -7,12 +7,14 @@ import { api } from '../api'
 import { app } from '../model/app'
 import type { ChatController } from '../model/chat'
 import { guide, GuideAction, GuideBubble, GuideItem, GuideScreen, GuideTour } from '../model/guide'
-import { leadColor, perchScale } from '../model/helperBirds'
+import { canvasBirdBox, leadColor, perchScale } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
 import type { WorkflowTab } from '../model/workspace'
 import { runAll } from './actions'
+import { ChatGPTSettings } from './chatgpt'
+import { ChatGPTSignInModel } from '../model/chatgpt'
 import { Button, Sheet } from './controls'
 import { PALETTE, useBird } from './home'
 import { Icon } from './icons'
@@ -216,7 +218,7 @@ export function targetSelector(h: string): string {
   return sel.join(', ')
 }
 
-type Box = { left: number; top: number; width: number; height: number; flip: boolean }
+type Box = { left: number; top: number; width: number; height: number; flip: boolean; zoom?: number }
 const BIRD = { w: 90, h: 64 }
 const visible = (el: Element | null | undefined) => !!el && (el as HTMLElement).getClientRects().length > 0
 
@@ -242,9 +244,16 @@ export function GuideFlyer() {
   // Where the target and home are now (Cards move with the canvas, loading comes and goes).
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 250)
-    return () => clearInterval(t)
-  }, [])
+    if (!target?.startsWith('card:')) {
+      const id = setInterval(() => setTick(n => n + 1), 250)
+      return () => clearInterval(id)
+    }
+    let id = requestAnimationFrame(function frame() {
+      setTick((n) => n + 1)
+      id = requestAnimationFrame(frame)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [target])
   const homeBox = (): Box | undefined => {
     const el = [...document.querySelectorAll('[data-guide-home]')].find(visible)
     const r = el?.getBoundingClientRect()
@@ -266,13 +275,17 @@ export function GuideFlyer() {
     const panel = !atTarget && writing && target === `card:${writing}` ? document.querySelector(`.cv-writing[data-writing-card="${CSS.escape(writing)}"]`) : null
     const el = atTarget ?? (visible(panel) ? panel! : undefined)
     // A demo card or a control out of view is brought into view once.
-    if (el && scrolled.current !== target) {
+    if (el && !target.startsWith('card:') && scrolled.current !== target) {
       scrolled.current = target
       const r0 = el.getBoundingClientRect()
       if (r0.bottom < 0 || r0.top > window.innerHeight) el.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' })
     }
     const r = el?.getBoundingClientRect()
     if (!r || r.width === 0) return undefined
+    const canvasZoom = el?.closest<HTMLElement>('[data-canvas-zoom]')?.dataset.canvasZoom
+    if (canvasZoom !== undefined && el === atTarget && target.startsWith('card:')) {
+      return canvasBirdBox({ x: r.left, y: r.top }, Number(canvasZoom))
+    }
     const right = r.right + 320 < window.innerWidth
     const x = Math.min(Math.max(right ? r.right + 18 : r.left - 18, 40), window.innerWidth - 40)
     // The panel of a new Card is up under the toolbar: halfway down it, the bird stays off the toolbar's buttons.
@@ -285,12 +298,13 @@ export function GuideFlyer() {
   const [drag, setDrag] = useState<{ x0: number; y0: number; dx: number; dy: number }>()
   const loading = guide.available ? loadingBox() : undefined
   let perch = loading ? undefined : perchBox()
-  if (perch && nudge && nudge.target === target) perch = { ...perch, left: perch.left + nudge.dx, top: perch.top + nudge.dy }
+  if (perch && nudge && nudge.target === target) perch = { ...perch, left: perch.left + nudge.dx * (perch.zoom ?? 1), top: perch.top + nudge.dy * (perch.zoom ?? 1) }
   // The whole answer is in the chat (to the right): the bird turns to look at it.
   if (perch && guide.bubble?.more && guide.speakingChat) perch = { ...perch, flip: false }
   const home = !loading && !perch ? homeBox() : undefined
   const goal = loading ? 'loading' : perch ? 'perch' : 'home'
   const at = loading ?? perch ?? home
+  const canvasPerch = target?.startsWith('card:') ? perch : undefined
   const key = goal + (at ? `${Math.round(at.left)},${Math.round(at.top)}` : '')
   void tick
   useEffect(() => {
@@ -299,9 +313,9 @@ export function GuideFlyer() {
     const flyTo = (to: Box, then: () => void) => {
       setMoving(true)
       // The next frame starts the flight from where the bird is.
-      requestAnimationFrame(() => setBox(to))
+      const frame = requestAnimationFrame(() => setBox(to))
       const t = setTimeout(() => { setMoving(false); then() }, ms)
-      return () => clearTimeout(t)
+      return () => { cancelAnimationFrame(frame); clearTimeout(t) }
     }
     if (goal === 'loading' && loading) {
       if (!guide.away) {
@@ -318,6 +332,14 @@ export function GuideFlyer() {
     }
     document.body.classList.remove('guide-handoff')
     if (goal === 'perch' && perch) {
+      if (canvasPerch) {
+        setBox(perch)
+        setInCard(false)
+        setAway(true)
+        setMoving(false)
+        setArrived(true)
+        return
+      }
       if (!guide.away || inCard) {
         if (!inCard) setBox(homeBox() ?? perch)
         setInCard(false)
@@ -341,14 +363,15 @@ export function GuideFlyer() {
     {!guide.away && !loading && !guide.bubble && home && thought && <div className="guide-work-line material" aria-live="polite"
       style={{ left: Math.min(home.left, window.innerWidth - 228), top: home.top + home.height + 6, maxWidth: 220 }}>{thought}</div>}
   </>
+  const shownBox = canvasPerch ?? box
   const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
   const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0
-  const feetX = box.left + box.width / 2 + dx, feetY = box.top + box.height + dy
+  const feetX = shownBox.left + shownBox.width / 2 + dx, feetY = shownBox.top + shownBox.height + dy
   // The Agent among its helpers: gold, with its name. By a Card it shrinks with the
   // canvas as theirs does, only less (perchScale): larger than theirs up to a zoom of 220%.
   const lead = goal === 'perch' && !!guide.team?.out(Date.now() / 1000)
   const leadStyle = lead ? { ['--bird' as string]: leadColor(prefs.dark) } : undefined
-  let bx = box.flip ? feetX - 30 : feetX - bw + 30
+  let bx = shownBox.flip ? feetX - 30 : feetX - bw + 30
   let by = feetY + 12
   if (by + bh > window.innerHeight - 8) by = feetY - 70 - bh
   bx = Math.min(Math.max(bx, 8), window.innerWidth - bw - 8)
@@ -356,8 +379,8 @@ export function GuideFlyer() {
   return (
     <div className="guide-flyer" aria-live="polite">
       <GuideRings />
-      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${box.flip ? ' left' : ''}${arrived ? ' draggable' : ''}${lead ? ' lead' : ''}`}
-        style={{ left: box.left + dx, top: box.top + dy, width: box.width, height: box.height, transition: still || drag ? 'none' : undefined, ...leadStyle }}
+      <div className={`guide-flying-bird${moving ? ' moving' : ''}${still ? ' still' : ''}${shownBox.flip ? ' left' : ''}${arrived ? ' draggable' : ''}${lead ? ' lead' : ''}`}
+        style={{ left: shownBox.left + dx, top: shownBox.top + dy, width: shownBox.width, height: shownBox.height, transition: still || drag || canvasPerch ? 'none' : undefined, ...leadStyle }}
         aria-hidden title={arrived ? L('ドラッグで動かせます') : undefined}
         onPointerDown={(e) => {
           if (!arrived) return
@@ -368,8 +391,8 @@ export function GuideFlyer() {
         onPointerUp={() => {
           if (!drag || !target) { setDrag(undefined); return }
           const before = nudge?.target === target ? nudge : { dx: 0, dy: 0 }
-          setNudge({ target, dx: before.dx + drag.dx, dy: before.dy + drag.dy })
-          setBox({ ...box, left: box.left + drag.dx, top: box.top + drag.dy })
+          setNudge({ target, dx: before.dx + drag.dx / (shownBox.zoom ?? 1), dy: before.dy + drag.dy / (shownBox.zoom ?? 1) })
+          setBox({ ...box, left: shownBox.left + drag.dx, top: shownBox.top + drag.dy })
           setDrag(undefined)
         }}>
         {lead && <span className="helper-halo" />}
@@ -383,7 +406,7 @@ export function GuideFlyer() {
       )}
       {arrived && goal === 'perch' && !guide.bubble && workLine && (
         // The Agent at work: what it does, in a line beside the bird (nothing to press).
-        <div className={`guide-work-line material${lead ? ' lead' : ''}`} style={{ ...(box.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (box.flip ? window.innerWidth - feetX : feetX) + 2), ...leadStyle }} aria-live="polite">{working?.from && !thought ? `${working.from}: ${workLine}` : workLine}</div>
+        <div className={`guide-work-line material${lead ? ' lead' : ''}`} style={{ ...(shownBox.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (shownBox.flip ? window.innerWidth - feetX : feetX) + 2), ...leadStyle }} aria-live="polite">{working?.from && !thought ? `${working.from}: ${workLine}` : workLine}</div>
       )}
     </div>
   )
@@ -628,17 +651,23 @@ export function GuideInvite() {
 
 // ---- First start ------------------------------------------------------------------------
 
-/** The first start: choose Anthropic or OpenAI and enter that provider's API
- *  key (one is enough), checked by connecting, or start without a guide. The
- *  key goes where Settings > API puts it (the host's Keychain). */
+/** First start: connect an API key or ChatGPT plan, or skip. Key storage and
+ *  ChatGPT sign-in are the same as Settings > API. */
 export function GuideSetupSheet() {
   useObserve(guide)
+  if (!guide.needsSetup) return null
+  return <Sheet onClose={() => void guide.finishSetup()} width={500}><GuideSetupForm /></Sheet>
+}
+
+/** The sheet's form, also rendered without a portal in presentation tests. */
+export function GuideSetupForm() {
+  const [chatGPT] = useState(() => new ChatGPTSignInModel())
+  useObserve(chatGPT)
   const [provider, setProvider] = useState<'anthropic' | 'openai'>('anthropic')
   const [key, setKey] = useState('')
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
   const [saved, setSaved] = useState(false)
-  if (!guide.needsSetup) return null
   const check = async () => {
     setWorking(true)
     setMessage(undefined)
@@ -652,7 +681,7 @@ export function GuideSetupSheet() {
   }
   const connect = async () => {
     const k = key.trim()
-    if (!k || working) return
+    if (!k || working || chatGPT.state.signingIn) return
     try {
       await api('/api/settings', { provider })
       await api('/api/settings/key', { provider, key: k })
@@ -665,34 +694,33 @@ export function GuideSetupSheet() {
     await check()
   }
   return (
-    <Sheet onClose={() => void guide.finishSetup()} width={500}>
-      <form className="sheet-body guide-setup" onSubmit={(e) => { e.preventDefault(); void connect() }}>
-        <div className="row gap12 center">
-          <span className="guide-avatar still"><GuideBird /></span>
-          <div className="col">
-            <div className="title2">{L('ガイドのツグミを呼ぶ準備')}</div>
-            <div className="secondary">{L('右下のツグミが、使い方の質問に答えたりデモを案内したりします。')}</div>
-          </div>
+    <form className="sheet-body guide-setup" onSubmit={(e) => { e.preventDefault(); void connect() }}>
+      <div className="row gap12 center">
+        <span className="guide-avatar still"><GuideBird /></span>
+        <div className="col">
+          <div className="title2">{L('ガイドのツグミを呼ぶ準備')}</div>
+          <div className="secondary">{L('右下のツグミが、使い方の質問に答えたりデモを案内したりします。')}</div>
         </div>
-        <div className="callout">{L('ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
-        <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
-          {(['anthropic', 'openai'] as const).map((p) => (
-            <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}
-              onClick={() => { setProvider(p); setMessage(undefined); setSaved(false) }}>{p === 'openai' ? 'OpenAI' : 'Anthropic'}</button>
-          ))}
-        </div>
-        <input type="password" className="field" value={key} autoFocus autoComplete="off" spellCheck={false}
-          placeholder={provider === 'openai' ? L('OpenAI の API キー') : L('Anthropic の API キー')} aria-label={L('API キー')}
-          onChange={(e) => setKey(e.target.value)} />
-        {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
-        <div className="caption secondary">{L('キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。')}</div>
-        <div className="row gap8">
-          <Button onClick={() => void guide.finishSetup()}>{L('スキップして始める')}</Button>
-          <span className="spacer" />
-          {saved && message && <Button disabled={working} onClick={() => void check()}>{L('再試行')}</Button>}
-          <Button kind="prominent" type="submit" disabled={working || !key.trim()}>{working ? L('確かめています…') : L('接続して始める')}</Button>
-        </div>
-      </form>
-    </Sheet>
+      </div>
+      <div className="callout">{L('ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
+      <ChatGPTSettings onboarding controller={chatGPT} onConnected={() => guide.finishChatGPTSetup()} />
+      <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
+        {(['anthropic', 'openai'] as const).map((p) => (
+          <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}
+            onClick={() => { setProvider(p); setMessage(undefined); setSaved(false) }}>{p === 'openai' ? 'OpenAI' : 'Anthropic'}</button>
+        ))}
+      </div>
+      <input type="password" className="field" value={key} autoFocus autoComplete="off" spellCheck={false}
+        placeholder={provider === 'openai' ? L('OpenAI の API キー') : L('Anthropic の API キー')} aria-label={L('API キー')}
+        onChange={(e) => setKey(e.target.value)} />
+      {message && <div className="caption guide-error selectable" role="alert"><Icon name="exclamationmark.triangle" /> {message}</div>}
+      <div className="caption secondary">{L('接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。')}</div>
+      <div className="row gap8">
+        <Button onClick={() => void guide.finishSetup()}>{L('スキップして始める')}</Button>
+        <span className="spacer" />
+        {saved && message && <Button disabled={working} onClick={() => void check()}>{L('再試行')}</Button>}
+        <Button kind="prominent" type="submit" disabled={working || chatGPT.state.signingIn || !key.trim()}>{working ? L('確かめています…') : L('接続して始める')}</Button>
+      </div>
+    </form>
   )
 }

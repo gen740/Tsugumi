@@ -46,20 +46,22 @@
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
 "0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。" = "0 means never. Use 0 to keep jobs running while this computer sleeps.";
 "0 秒" = "0 s";
-"1 にすると、ヘルパーは順番に動きます。" = "Set to 1 to run helpers sequentially.";
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
+"64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。" = "An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
 "API キー" = "API key";
 "API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
+"Agent から除外するパス" = "Paths excluded from the Agent";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
 "Agent がこの操作の承認を求めています" = "The Agent asks you to approve this operation";
 "Agent がアクセスの許可を求めています" = "The Agent is requesting access";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
+"Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。" = "Enter one path per line, relative to the project or absolute. Each path excludes the file and everything below it from the Agent. People can still see it.";
 "Agent が書きました" = "Written by the Agent";
 "Agent が確認なしに Card に与えてよい権限" = "Permissions the Agent may give Cards without asking";
 "Agent が編集" = "Edited by the Agent";
@@ -154,6 +156,8 @@
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
+"Nix store の内容を検査・修復しています（初回と VM イメージの更新後）" = "Checking and repairing Nix store contents (first boot and after a VM image update)";
+"Nix store の検査・修復が完了しました。" = "Nix store checking and repair completed.";
 "Nix を準備しています" = "Preparing Nix";
 "Nix 参照一覧" = "Nix reference list";
 "Nix 参照（記述どおり）" = "Nix references (as written)";
@@ -252,6 +256,7 @@
 "tsugumid の応答を待っています" = "Waiting for tsugumid to answer";
 "wire の再接続" = "Rebind wires";
 "worker の状態を残す" = "Keep the worker's state";
+"x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。" = "x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
 "⌥⌘K で、実行環境のコンソールを開けるよ" = "⌥⌘K opens the environment's console.";
@@ -307,6 +312,8 @@
 "このデモを開く" = "Open This Demo";
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
 "このビルドには既定の Nixpkgs が設定されていません。" = "This build has no default Nixpkgs pin.";
+"このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。" = "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.";
+"このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。" = "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトに根拠の記録がありません" = "This evidence is not available in this project";
@@ -315,6 +322,7 @@
 "このプロジェクトの tsugumid が起動中に終了しました" = "tsugumid exited during startup";
 "このプロジェクトの tsugumid を起動しています" = "Starting this project's tsugumid";
 "このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。" = "External execution requires a filesystem that reports the project folder’s creation time.";
+"このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。" = "This project's conversation records belong to another project identity. Restore the matching .tsugumi folder from a backup. To start new conversations, close the project, move agent.sqlite out of .tsugumi to preserve it, then reopen the project. Conversation records have not been deleted.";
 "このプロジェクトの実行履歴とビルドの登録を削除します。" = "Deletes this project's run history and build registrations.";
 "このプロジェクトの実行環境（VM の中）" = "This project's environment (in the VM)";
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";
@@ -322,6 +330,8 @@
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
 "このプロジェクトの過去の scratch" = "Past scratch in this project";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
+"このプロジェクトを信頼しますか？" = "Do you trust this project?";
+"このプロジェクトを信頼する" = "Trust this project";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
@@ -360,6 +370,7 @@
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
 "こんにちは、ツグミです。何をしてみますか？" = "Hello, I'm Tsugumi. What would you like to try?";
 "すべて" = "All";
+"すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。" = "Stops all project environments, checks store contents and repairs them from caches. Results and affected paths stay in the VM log.";
 "すべての入力が揃ったとき" = "When every input has arrived";
 "すべての実行" = "All runs";
 "すべての実行履歴を削除しますか？" = "Delete the whole run history?";
@@ -376,6 +387,7 @@
 "どの Draft を AI に実装させますか？ Card の形だけができていて、中身を AI が書きます。" = "Which Draft should the AI implement? Its Cards are only outlined; the AI writes what they do.";
 "どんな分野に興味がありますか？" = "Which field interests you?";
 "なし" = "None";
+"ほかのクライアントの処理も含め、実行・Agent・保存中の処理を停止し、実行環境を終了します。保存されていない変更は失われることがあります。" = "Stop runs, Agent turns and saves, including work from other clients, and shut down the execution environment. Unsaved changes may be lost.";
 "ほかのデモ" = "Other demos";
 "まず、動くデモを一緒に見てみますか？ デモは編集できるコピーとして開き、実際に実行しながら Card・接続・結果の見方をお見せします。" = "Shall we look at a working demo together first? It opens as an editable copy, and I'll show you Cards, wires and how to read the results while it actually runs.";
 "まだ出力はありません" = "No output yet";
@@ -426,7 +438,6 @@
 "キャッシュ接続を追加" = "Add Cache Connection";
 "キャンセル" = "Cancel";
 "キー" = "Key";
-"キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。" = "Without a key, everything in Tsugumi still works from the UI (meanwhile the guide only gives a fixed demo tour). Add a key later in Settings > API and it answers questions too.";
 "キーを保存" = "Save Key";
 "キーを保存できませんでした: %@" = "Could not save the key: %@";
 "キーを削除" = "Delete key";
@@ -519,7 +530,7 @@
 "ツグミ" = "Tsugumi";
 "ツグミが画面を飛び回って、デモや画面の使い方を案内します" = "Tsugumi flies about the screen and shows you demos and how things work";
 "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。" = "I'm Tsugumi. Ask me to plan, build or edit a workflow, or how to use the app.";
-"ツグミとチャットの Agent は、あなたの API キーで OpenAI か Anthropic のモデルを使います。どちらか一方のキーがあれば十分です。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and the chat's Agent use an OpenAI or Anthropic model with your API key. A key for either one is enough. It is kept only in this Mac's keychain, never in projects, conversation records or logs.";
+"ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only in this Mac’s Keychain, never in projects, conversation records or logs.";
 "ツグミに質問" = "Ask Tsugumi";
 "ツグミに返事" = "Reply to Tsugumi";
 "ツグミの吹き出し" = "Tsugumi's speech bubble";
@@ -585,6 +596,7 @@
 "ファイルを読んでいます" = "Reading files";
 "ファイルを選んでください" = "Choose a file";
 "ファイルアクセスを制限" = "Restrict file access";
+"ファイル転送: %@ (%llu/%llu bytes)" = "Transferring: %@ (%llu/%llu bytes)";
 "フィールドを読めません: %@" = "Cannot read a field: %@";
 "フォルダ" = "Folders";
 "フォルダが見つからないプロジェクト" = "Projects whose folder is gone";
@@ -660,6 +672,8 @@
 "ログを読んでいます" = "Reading the log";
 "ローカル fixture には検索がないため、オンでも使えません。" = "The local fixture has no search, so this does nothing with it.";
 "ローカル fixture（テスト用・通信なし）" = "Local fixture (tests, no network)";
+"ワーカーの grade" = "Worker grade";
+"ワーカーの条件式" = "Worker condition";
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
@@ -723,6 +737,7 @@
 "依存 package" = "Packages";
 "依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
 "依存パスを検索" = "Search dependencies";
+"依頼されたときの手分けの進め方" = "How to delegate when asked";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存した入力" = "Saved input";
@@ -753,6 +768,10 @@
 "保持したファイル: %@" = "Kept file: %@";
 "保持したファイルの内容がありません（scratch は保持履歴ではありません）。" = "The kept file content is missing (scratch is separate from retained history).";
 "保持する出力" = "Output to retain";
+"信頼しない" = "Don't trust";
+"信頼する" = "Trust";
+"信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。" = "Trusting allows this project’s Skills to apply automatically and override built-in Skills. You can still open and read an untrusted project and use its Skills explicitly by name.";
+"信頼するフォルダ" = "Trusted folders";
 "値" = "Value";
 "停止" = "Stop";
 "停止までの連続未受信回数" = "Consecutive missed heartbeats before stopping";
@@ -792,7 +811,9 @@
 "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。" = "Public key registered. Add this host's public key to authorized_keys, then verify the connection.";
 "共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。" = "Cleaning the shared Nix store deletes what no project has registered as a build result (no GC root). Registered Card builds and the compilers used for them stay. A project's “Clear build cache” only unregisters; the store is cleaned only here.";
 "共有 Nix store を掃除しますか？" = "Clean the shared Nix store?";
+"共有 Nix store を検査・修復しますか？" = "Check and repair the shared Nix store?";
 "共有 store を掃除…" = "Clean shared store…";
+"共有 store を検査・修復…" = "Check and repair shared store…";
 "内容" = "Content";
 "内容が不明なため、編集・名前変更・保存はできません。\n%@" = "Its contents are unknown, so it cannot be edited, renamed or saved.\n%@";
 "内容の変更" = "Change content";
@@ -855,6 +876,7 @@
 "削除できませんでした: %@" = "Could not delete: %@";
 "削除対象の合計" = "Total selected for deletion";
 "前へ" = "Previous";
+"前回の VM が正常に停止しなかったため、Nix store を検査・修復しています" = "Checking and repairing the Nix store after an unclean VM stop";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
 "動かす" = "Animate";
@@ -890,7 +912,6 @@
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
 "同じ環境です" = "Same environment";
-"同時に動かすヘルパーの数" = "Concurrent helpers";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -1114,6 +1135,7 @@
 "接続" = "Connection";
 "接続から生成されるファイルです（手で編集しません）" = "A file generated from the connections (not edited by hand)";
 "接続して始める" = "Connect and Start";
+"接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。" = "You can use all of Tsugumi through the UI without a connection (the guide gives fixed demo tours meanwhile). Add a key or sign in with ChatGPT under “API” in Settings later to ask questions too.";
 "接続するとターミナルが自動で開きます。" = "Terminals open automatically when the environment connects.";
 "接続を確かめられませんでした（%@）。キーを入れ直すか、ネットワークを確かめて再試行してください。" = "Could not confirm the connection (%@). Enter the key again, or check the network and try again.";
 "接続を確認して更新" = "Verify and Update";
@@ -1168,6 +1190,7 @@
 "書き込み" = "Write";
 "最大同時ジョブ数" = "Maximum concurrent jobs";
 "最大発火回数" = "Maximum activations";
+"最後のウインドウを閉じたら Tsugumi を終了する" = "Quit Tsugumi when the last window closes";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
 "最新を読み込む" = "Load Latest";
@@ -1195,6 +1218,7 @@
 "未選択" = "Not selected";
 "未開始" = "Not started";
 "末尾を追う" = "Follow";
+"条件から自動選択" = "Select by condition";
 "条件に合うデモはありません" = "No demo matches";
 "条件に合う実行はありません" = "No matching runs";
 "枝: %@" = "Branch: %@";
@@ -1204,6 +1228,7 @@
 "桃" = "Pink";
 "案内を表示" = "Showed guidance";
 "案内を表示しています" = "Showing guidance";
+"検査・修復" = "Check and repair";
 "検索" = "Search";
 "検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
@@ -1279,6 +1304,7 @@
 "終える" = "End";
 "終わりました" = "Finished";
 "終了" = "Ended";
+"終了して停止" = "Quit and Stop";
 "終了しました" = "Ended";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
@@ -1313,7 +1339,7 @@
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";
-"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。" = "The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.";
+"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。再起動すると実行中の処理は停止します。" = "The display language will change after a restart. New records written into the project already use the new language. Restarting stops ongoing work.";
 "表示言語を変えるには再起動が必要です" = "Restart required to change the display language";
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
@@ -1372,6 +1398,7 @@
 "送信（⌘Return）" = "Send (⌘Return)";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
+"進行中の処理を停止して Tsugumi を終了しますか？" = "Quit Tsugumi and stop ongoing work?";
 "進行中の実行を表示" = "Show Active Run";
 "進行中の実行を表示しています" = "Showing the active run";
 "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。" = "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.";

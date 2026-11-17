@@ -211,7 +211,13 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   auto resources = s.execution_resources ? R::CreateExecutionResources(b, s.execution_resources->cpu_millis,
                                                                      s.execution_resources->memory_bytes)
                                          : Off<R::ExecutionResources>();
+  auto transfer_name = b.CreateString(s.transfer_name);
+  auto transfer_direction = b.CreateString(s.transfer_direction);
   R::InvocationSummaryBuilder ib(b);
+  ib.add_transfer_name(transfer_name);
+  ib.add_transfer_direction(transfer_direction);
+  ib.add_transfer_done(s.transfer_done);
+  ib.add_transfer_total(s.transfer_total);
   ib.add_run_id(run);
   ib.add_card(card);
   ib.add_invocation(s.invocation);

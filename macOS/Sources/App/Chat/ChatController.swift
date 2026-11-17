@@ -27,6 +27,7 @@ struct Skill: Identifiable, Hashable {
   let source: String
   let sourceFolder: String
   let attachmentFolder: String
+  var always = false
   var scoped = false
   var scope: [String] = []
 }
@@ -43,7 +44,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
     if path == "builtin:demo" { return ChatController.demoSkill }
     let folder = s["source_folder"] as? String ?? ""
     let source = path.hasPrefix("builtin:") ? "Tsugumi" : folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
-    return Skill(name: s["name"] as? String ?? "", description: s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
+    return Skill(name: s["name"] as? String ?? "", description: path == "builtin:helpers" ? String(localized: "依頼されたときの手分けの進め方") : s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", always: s["always"] as? Bool ?? false, scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
   }
   let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
   return (skills, missing)
@@ -242,7 +243,10 @@ final class ChatController {
           return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
             updatedAt: Date(timeIntervalSince1970: (item["updatedAt"] as? Double ?? 0) / 1000), messages: item["messages"] as? Int ?? 0)
         }
-        if currentId.isEmpty { select(sessions.first?.id ?? UUID().uuidString.lowercased()) }
+        if currentId.isEmpty {
+          if let id = sessions.first?.id { select(id) }
+          else { newSession() }
+        }
       } catch { status = String(describing: error) }
     }
   }
@@ -346,8 +350,15 @@ final class ChatController {
   }
 
   func newSession() {
-    select(UUID().uuidString.lowercased())
-    refreshSessions()
+    Task {
+      do {
+        guard let project = try await RPCToolTransport(session: session).project() else { return }
+        let reply = try await CoreHostClient.shared.call("ConversationCreateRequest", ["project_id": project.id])
+        guard let conversation = reply["conversation"] as? Tsugumi_Agent_ConversationT else { return }
+        select(conversation.id)
+        refreshSessions()
+      } catch { status = String(describing: error) }
+    }
   }
 
   func delete(_ id: String) {
@@ -425,7 +436,7 @@ final class ChatController {
       await stopping?.value
       do {
         skills = try await loadSkillMetadata(conversationID: agent.id)
-        guard await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) }) else {
+        guard await attachSkillFolders(skills.filter { $0.always || Set(used.map(\.name)).contains($0.name) }) else {
           events(.error(status ?? String(describing: RPCError.disconnected)))
           return
         }
@@ -499,12 +510,12 @@ final class ChatController {
   /// Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved).
   func generateDrafts(scope: [String], cards: [CardKey]) {
     sendRequest(display: String(localized: "Draft \(cards.count) 枚から Card を生成します"),
-      prompt: "Implement the selected Draft Cards in scope \(scope): \(cards). Read their definitions after access is granted.")
+      prompt: AgentRequests.make("draftRequest", scope: scope, cards: cards))
   }
 
   func generateFromComments(scope: [String], cards: [CardKey]) {
     sendRequest(display: String(localized: "選択した Card のコメントに従って生成します"),
-      prompt: "Resolve the open comments on these Cards in scope \(scope): \(cards). Read their comments after access is granted. Skip every comment with finding=true; those are observations, not change requests.")
+      prompt: AgentRequests.make("commentRequest", scope: scope, cards: cards))
   }
 
   // MARK: - Card permissions
@@ -567,13 +578,13 @@ final class ChatController {
   }
 
   /// A window releases its UI subscriptions without cancelling core work.
-  func detach() {
+  @discardableResult func detach() -> Task<Void, Never> {
     opening?.cancel()
     opening = nil
     answer += 1
     let remote = agent
     agent = nil
-    Task {
+    return Task {
       await GuideController.shared.detach(from: session)
       await remote?.detach()
       // Both observers are cancelled before releasing a pending UI answer.
@@ -668,7 +679,10 @@ final class ChatController {
   private func showOnCanvas(tool: String, arguments: String, bird: AgentPresence? = nil) {
     let bird = bird ?? session.presence
     // What was written is not on the screen once it runs.
-    if tool == "run" { bird.stopShowingCode() }
+    if tool == "run" {
+      let now = Date()
+      for p in session.presences { p.running(now: now) }
+    }
     switch PresenceEvents.look(tool: tool, arguments: arguments) {
     case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
     case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }

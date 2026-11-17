@@ -28,7 +28,7 @@ export interface ChatContext {
   openPage: (project?: string) => void
 }
 
-type Handler = (b: any, url: URL) => unknown | Promise<unknown>
+type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 
 let ctx: ChatContext
 let core: CoreHost
@@ -40,6 +40,7 @@ export function chatStatus() {
 type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
 
 interface Settings {
+  trustedFolders: string[]
   skillFolders: { path: string; enabled: boolean }[]
   provider: ProviderId
   /** The Anthropic model, the OpenAI one and the ChatGPT plan's (each provider keeps its own). */
@@ -59,7 +60,6 @@ interface Settings {
   webSearch: boolean
   /** Hostd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
-  helperParallelism: number
   allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
@@ -71,9 +71,10 @@ interface Settings {
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
-  helperParallelism: 'agent.helperParallelism', allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
+  allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
+const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
@@ -83,7 +84,7 @@ const settings = (): Settings => snapshot
 async function loadSettings() {
   await core.provisionEnvironment()
   const next: any = {}
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
     const reply = await core.getSettings(profile)
     revisions[profile] = reply.revision
     const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
@@ -94,7 +95,7 @@ async function loadSettings() {
 }
 async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
   const patches = new Map<string, { key: string; value_json: string }[]>()
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
     const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
     if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
   }
@@ -235,13 +236,13 @@ async function guideState() {
 
 // ---- Skills ----------------------------------------------------------------------
 
-interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; scoped?: boolean; scope?: string[] }
+interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; always?: boolean; scoped?: boolean; scope?: string[] }
 interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
 async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
   const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
   return { ...result, skills: result.skills.map((s) => ({ ...s,
-    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.description,
+    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.path === 'builtin:helpers' ? L('依頼されたときの手分けの進め方') : s.description,
     source: s.path.startsWith('builtin:') ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
   })) }
 }
@@ -339,7 +340,7 @@ class ChatHost {
   }
 
   async attachSkillFolders(names: string[], conversationId: string) {
-    const skills = (await skillsFor(this.project, conversationId)).filter((s) => names.includes(s.name))
+    const skills = (await skillsFor(this.project, conversationId)).filter((s) => s.always || names.includes(s.name))
     const folders = new Set(skills.map((s) => s.attachment_folder).filter((s): s is string => !!s))
     if (folders.size) await this.attachFolders([...folders])
   }
@@ -362,7 +363,7 @@ class ChatHost {
 
   async search(text: string) { return core.user.call('ConversationSearchRequest', { text, project_id: await core.project(this.project) }) }
 
-  async externalCall(name: string, args: unknown) {
+  async externalCall(name: string, args: unknown, signal?: AbortSignal) {
     const project = await core.project(this.project)
     const id = `external-${project}`
     // A moved transcript needs fresh grants. The tool request asks hostd for
@@ -370,10 +371,10 @@ class ChatHost {
     await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
       if (!(error instanceof CoreHostError) || error.code !== 'permission_denied') throw error
     })
-    const op = randomUUID()
+    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id })).id
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
-        arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op })
+        arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op }, signal)
     } catch (error) {
       if (error instanceof CoreHostError && error.code === 'grant_required' && error.requestId) {
         await showExternalAccess(error.requestId, this.project)
@@ -407,9 +408,9 @@ async function showExternalAccess(requestId: string, fallback?: string) {
     event: { kind: 'permission', id: requestId, asked, groups: request.groups, from: 'Claude Code' } })
 }
 
-async function externalAPI(name: string, args: unknown, project?: string) {
+async function externalAPI(name: string, args: unknown, project?: string, signal?: AbortSignal) {
   try {
-    const result = await core.externalAPI(name, args)
+    const result = await core.externalAPI(name, args, signal)
     if (name === 'agent_access') {
       const value = JSON.parse(result.text)
       if (typeof value.id === 'string') await showExternalAccess(value.id, project)
@@ -445,7 +446,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
   core.observeHost((event) => {
-    if (event.type === 'SettingsChanged' && event.value.profile === settingsProfile()) c.broadcast({ type: 'settingsChanged' })
+    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) c.broadcast({ type: 'settingsChanged' })
   })
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
@@ -543,6 +544,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return Object.fromEntries((await skillMetadata(undefined, paths)).folders.map((f) => [f.path, f.status === 'ready']))
   },
   'POST /api/chat/sessions': (b) => chatFor(projectDir(b.path)).sessions(),
+  'POST /api/chat/new': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    const result = await core.user.call<{ conversation: { id: string } }>('ConversationCreateRequest', { project_id: project })
+    return { id: result.conversation.id }
+  },
   'POST /api/chat/conversation': async (b) => {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
@@ -638,9 +644,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (opened) ctx.openPage(project)
     return { project, shown, opened }
   },
-  'POST /api/agent/call': (b) => String(b.name).startsWith('agent_')
-    ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined)
-    : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments),
+  'POST /api/agent/call': (b, _url, signal) => String(b.name).startsWith('agent_')
+    ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined, signal)
+    : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments, signal),
   'POST /api/agent/access': () => core.user.call('AccessListRequest'),
   'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
@@ -693,8 +699,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
-  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL) => {
+  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL, signal?: AbortSignal) => {
     await loadSettings()
-    return handler(body, url)
+    signal?.throwIfAborted()
+    return handler(body, url, signal)
   }]))
 }

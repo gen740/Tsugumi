@@ -1,10 +1,12 @@
 #include "host/layout_service.hh"
+#include "host/layout_saving.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
 
+#include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/layout.hh"
 #include "host/layout_schema.hh"
@@ -26,13 +28,15 @@ auto decode_layout(const std::string& text) -> layout_schema::Layout {
 // Reject non-finite/unbounded geometry before sorting or converting to integer
 // grid constraints. The transport already validates all required
 // vectors/tables.
-auto measured(double v) -> double {
+auto measured(double v, const std::string& field) -> double {
   if (!std::isfinite(v) || std::abs(v) > 1e7)
-    throw LayoutFailure("layout geometry is out of range");
+    throw LayoutFailure(field +
+                        ": must be finite and within [-10000000, 10000000]");
   return v;
 }
-auto size(double v) -> double {
-  if (measured(v) < 0) throw LayoutFailure("layout size must be nonnegative");
+auto size(double v, const std::string& field) -> double {
+  if (measured(v, field) < 0)
+    throw LayoutFailure(field + ": must be nonnegative");
   return v;
 }
 auto scene_of(const R::LayoutScene& in) -> layout::Scene {
@@ -41,57 +45,80 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   if (flow != "topToBottom" && flow != "leftToRight")
     throw LayoutFailure("unknown layout flow");
   s.top_to_bottom = flow == "topToBottom";
-  s.grid = in.grid() == 0 ? 20 : measured(in.grid());
+  s.grid = in.grid() == 0 ? 20 : measured(in.grid(), "scene.grid");
   if (s.grid < 1) throw LayoutFailure("layout grid must be at least 1");
   s.snap = in.snap();
-  auto ports = [](const auto* ps) {
+  auto ports = [](const auto* ps, const std::string& field) {
     std::vector<layout::Port> out;
     std::set<std::string> names;
-    if (ps) for (const auto* p : *ps) {
-      if (!names.insert(p->name()->str()).second)
-        throw LayoutFailure("duplicate layout port");
-      out.push_back({p->name()->str(), measured(p->x()), measured(p->y())});
-    }
+    if (ps)
+      for (const auto* p : *ps) {
+        if (!names.insert(p->name()->str()).second)
+          throw LayoutFailure("duplicate layout port");
+        const auto at = field + "[" + std::to_string(out.size()) + "]";
+        out.push_back({p->name()->str(), measured(p->x(), at + ".x"),
+                       measured(p->y(), at + ".y")});
+      }
     return out;
   };
   std::set<std::string> ids;
-  if (in.cards()) for (const auto* c : *in.cards()) {
-    const auto id = c->id()->str();
-    if (id.empty() || id.find('\0') != std::string::npos ||
-        !ids.insert(id).second)
-      throw LayoutFailure("invalid or duplicate layout Card id");
-    s.cards.push_back({id, measured(c->x()), measured(c->y()), size(c->width()),
-                       size(c->height()), ports(c->inputs()),
-                       ports(c->outputs()), c->reorderable()});
-  }
-  if (in.wires()) for (const auto* w : *in.wires())
-    s.wires.push_back({w->from()->str(), w->from_port()->str(), w->to()->str(),
-                       w->to_port()->str()});
-  auto boxes = [](const auto* bs) {
+  if (in.cards())
+    for (const auto* c : *in.cards()) {
+      const auto id = c->id()->str();
+      if (id.empty() || id.find('\0') != std::string::npos ||
+          !ids.insert(id).second)
+        throw LayoutFailure("invalid or duplicate layout Card id");
+      const auto at = "scene.cards[" + std::to_string(s.cards.size()) + "]";
+      s.cards.push_back(
+          {id, measured(c->x(), at + ".x"), measured(c->y(), at + ".y"),
+           size(c->width(), at + ".width"), size(c->height(), at + ".height"),
+           ports(c->inputs(), at + ".inputs"),
+           ports(c->outputs(), at + ".outputs"), c->reorderable()});
+    }
+  if (in.wires())
+    for (const auto* w : *in.wires())
+      s.wires.push_back({w->from()->str(), w->from_port()->str(),
+                         w->to()->str(), w->to_port()->str()});
+  auto boxes = [](const auto* bs, const std::string& field) {
     std::vector<layout::Box> out;
-    if (bs) for (const auto* b : *bs)
-      out.push_back({b->id()->str(), measured(b->x()), measured(b->y()),
-                     size(b->width()), size(b->height())});
+    if (bs)
+      for (const auto* b : *bs) {
+        const auto at = field + "[" + std::to_string(out.size()) + "]";
+        out.push_back({b->id()->str(), measured(b->x(), at + ".x"),
+                       measured(b->y(), at + ".y"),
+                       size(b->width(), at + ".width"),
+                       size(b->height(), at + ".height")});
+      }
     return out;
   };
-  s.frames = boxes(in.frames());
-  s.notes = boxes(in.notes());
-  auto bar = [](const R::LayoutBar* b) {
+  s.frames = boxes(in.frames(), "scene.frames");
+  s.notes = boxes(in.notes(), "scene.notes");
+  auto bar = [](const R::LayoutBar* b, const std::string& field) {
     layout::Bar out;
     if (!b) return out;
-    if (b->ends()) for (const auto* e : *b->ends())
-      out.ends.push_back(
-          {e->name()->str(), e->card()->str(), e->port()->str()});
+    if (b->ends())
+      for (const auto* e : *b->ends())
+        out.ends.push_back(
+            {e->name()->str(), e->card()->str(), e->port()->str()});
     if (b->x().has_value() != b->y().has_value())
       throw LayoutFailure("layout bar needs both coordinates");
-    if (b->x()) out.at = layout::Point{measured(*b->x()), measured(*b->y())};
+    if (b->x())
+      out.at = layout::Point{measured(*b->x(), field + ".x"),
+                             measured(*b->y(), field + ".y")};
     return out;
   };
-  s.inputs = bar(in.inputs());
-  s.outputs = bar(in.outputs());
+  s.inputs = bar(in.inputs(), "scene.inputs");
+  s.outputs = bar(in.outputs(), "scene.outputs");
   return s;
 }
 }  // namespace
+
+auto MeasuredScene(const R::LayoutSceneT &scene) -> layout::Scene {
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(R::LayoutScene::Pack(builder, &scene));
+  return scene_of(
+      *flatbuffers::GetRoot<R::LayoutScene>(builder.GetBufferPointer()));
+}
 
 auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
   auto l = decode_layout(text);
@@ -285,13 +312,45 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
   return result;
 }
 
+auto DefaultDisplayGeometry(bool top_to_bottom) -> R::DisplayGeometryT {
+  R::DisplayGeometryT geometry;
+  geometry.anchor_x = top_to_bottom ? 1 : 0;
+  geometry.anchor_y = top_to_bottom ? 0 : 1;
+  geometry.x = top_to_bottom ? 40 : 0;
+  geometry.y = top_to_bottom ? 0 : 30;
+  geometry.width = 320;
+  geometry.height = 170;
+  return geometry;
+}
+
 auto LayoutHandles(R::RequestPayload type) -> bool {
-  return type == R::RequestPayload::LayoutArrangeRequest ||
-         type == R::RequestPayload::LayoutUntangleRequest ||
+  return type == R::RequestPayload::DisplayGeometryRequest ||
          type == R::RequestPayload::LayoutValidateRequest ||
+         type == R::RequestPayload::LayoutCompleteRequest ||
          type == R::RequestPayload::VersionCanvasRequest;
 }
 auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
+  if (req.value_as_DisplayGeometryRequest()) {
+    R::DisplayGeometriesT result;
+    result.top_to_bottom =
+        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(true));
+    result.left_to_right =
+        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(false));
+    return agent::wire::HostReply(id, std::move(result));
+  }
+  if (const auto *v = req.value_as_LayoutCompleteRequest()) {
+    const auto definitions = agent::json::Object(v->definitions_json()->str());
+    R::LayoutValidatedT result;
+    result.json = CompleteLayout(
+        v->project_json()->str(), v->layout_json()->str(),
+        [&](const std::string &path) -> std::optional<LayoutFile> {
+          const auto id = path.substr(12, path.size() - 23);
+          if (!definitions.contains(id))
+            return std::nullopt;
+          return LayoutFile{agent::json::Text(definitions, id), {}};
+        });
+    return agent::wire::HostReply(id, std::move(result));
+  }
   if (const auto* v = req.value_as_LayoutValidateRequest()) {
     std::set<std::string> removed;
     if (v->removed_cards())
@@ -302,34 +361,6 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
   }
   if (const auto* v = req.value_as_VersionCanvasRequest())
     return agent::wire::HostReply(id, VersionCanvas(*v));
-  const auto* a = req.value_as_LayoutArrangeRequest();
-  const auto* u = req.value_as_LayoutUntangleRequest();
-  const auto scene = scene_of(*(a ? a->scene() : u->scene()));
-  std::vector<std::string> around;
-  if (u && u->around())
-    for (const auto* card : *u->around()) around.push_back(card->str());
-  const auto proposal =
-      a ? layout::arrange(scene) : layout::untangle(scene, around);
-  R::LayoutProposalT result;
-  auto places = [](const auto& source, auto& destination) {
-    for (const auto& p : source) {
-      auto v = std::make_unique<R::LayoutPlaceT>();
-      v->id = p.id;
-      v->x = p.x;
-      v->y = p.y;
-      destination.push_back(std::move(v));
-    }
-  };
-  places(proposal.cards, result.cards);
-  places(proposal.frames, result.frames);
-  places(proposal.notes, result.notes);
-  for (const auto& order : proposal.port_orders) {
-    auto v = std::make_unique<R::LayoutPortOrderT>();
-    v->id = order.id;
-    v->inputs = order.inputs;
-    v->outputs = order.outputs;
-    result.port_orders.push_back(std::move(v));
-  }
-  return agent::wire::HostReply(id, std::move(result));
+  throw LayoutFailure("Unknown layout query");
 }
 }  // namespace tsugumi::host

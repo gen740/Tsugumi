@@ -10,10 +10,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def structural_schema(value):
+    if isinstance(value, dict):
+        return {key: structural_schema(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list):
+        return [structural_schema(item) for item in value]
+    return value
+
+
 def test_delegate_schema_matches_the_core_contract():
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
     fixture = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())
-    assert shared["delegateTool"]["inputSchema"] == fixture["delegateSchema"]
+    assert structural_schema(shared["delegateTool"]["inputSchema"]) == fixture["delegateSchema"]
     assert "helper" not in shared
 
 
@@ -59,19 +67,6 @@ def test_the_english_guide_script_is_the_japanese_one_translated():
     assert not problems, problems
 
 
-def test_draft_contract_has_portless_ends_and_atomic_explicit_rebinding():
-    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
-    request = json.loads((ROOT / "agent/Shared/agent.json").read_text())["draftRequest"]["text"]
-    schema = (ROOT / "protocol/tsugumi.fbs").read_text()
-    assert '{"card": "<id>", "port": ""}' in prompt
-    for text in [prompt, request, schema]:
-        assert "SetProject" in text
-        assert "incoming" in text and "outgoing" in text
-        assert "same" in text
-        assert "single" in text or "only one" in text or "exactly one" in text
-    assert "provisional ports" not in request
-
-
 def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
     for lang in ["ja", "en"]:
         for project in (ROOT / "demos" / lang).glob("*-draft/tsugumi.json"):
@@ -87,11 +82,28 @@ def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
                         assert wire[side]["port"] == "", (project, wire)
 
 
-def test_file_output_instructions_do_not_require_a_card_permission():
-    """Published instructions use declared File/Directory ports and an output path."""
-    for name in ("agent/Shared/system-prompt.md", "docs/CardGuide.md"):
-        source = " ".join((ROOT / name).read_text().split())
-        assert "filesystem" not in source, name
-        assert 'tsugumi: "file"' in source, name
-        assert 'tsugumi: "directory"' in source, name
-        assert "run.output_directory" in source, name
+def test_file_copy_schema():
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    tools = {tool["name"]: tool for tool in shared["hostTools"]}
+    copy = tools["project_copy"]
+    assert copy["mutating"]
+    assert set(copy["inputSchema"]["properties"]["source"]["enum"]) == {"attached", "card", "demo", "scratch"}
+    assert "maxItems" not in copy["inputSchema"]["properties"]["files"]
+    assert "bytes" not in copy["inputSchema"]["properties"]
+    assert "base_rev" in copy["inputSchema"]["required"]
+
+
+def test_run_wait_schema_is_shared_with_external_mcp():
+    shared = json.loads((ROOT / 'agent/Shared/agent.json').read_text())
+    wait = shared['runWait']
+    assert wait['schema']['type'] == 'integer' and wait['schema']['minimum'] == 0
+    fixtures = json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())
+    for tool in fixtures:
+        if tool['name'] in ('run', 'run_status'):
+            assert structural_schema(tool['inputSchema']['properties']['wait_seconds']) == structural_schema(wait['schema'])
+
+
+def test_always_sent_prompt_stays_small_and_its_reference_is_bundled():
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_bytes()
+    assert len(prompt) < 8_000
+    assert (ROOT / "demos/reference/cards.md").is_file()

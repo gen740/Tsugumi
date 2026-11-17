@@ -3,7 +3,6 @@
 // hovering a Card show.
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { parse } from '../src/shared/json'
 import * as R from '../src/gen/tsugumi/rpc'
 
 const page = globalThis as Record<string, unknown>
@@ -24,12 +23,7 @@ const resolved = (id: string, refs: Ref[] = []) => ({
 
 const session = new ProjectSession('/p', 'k', 'p')
 const project = '{"name":"t","canvas":{"cards":[{"id":"source"},{"id":"analysis"},{"id":"report"},{"id":"other"}],"connections":[]}}'
-session.project = parse(project)
-session.confirmedProject = parse(project)
-session.layout = parse('{}')
-session.confirmedLayout = parse('{}')
-session.rev = 1n
-const inner = session as unknown as { applyDelta(d: R.DocumentDeltaT): void; applyResolution(r: R.ResolvedCardT[], d: unknown[]): void }
+const inner = session as unknown as { applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
 const delta = (resolution: R.ResolvedCardT[]) => {
   const d = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n, resolution, diagnostics: [] })
   inner.applyDelta(d)
@@ -40,7 +34,7 @@ const shown = () => nixReferences(session).map(r => [r.source, r.target, r.expre
 
 // A saved default.nix arrives as the resolution of a document delta: the
 // overlay is what that resolution says, with nothing kept from before.
-inner.applyResolution(all({}), [])
+inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }), true)
 assert.deepEqual(shown(), [])
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
 assert.deepEqual(shown(), [['analysis', 'source', 'inputs.source.export', true]])

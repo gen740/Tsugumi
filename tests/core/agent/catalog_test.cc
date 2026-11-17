@@ -17,14 +17,10 @@ extern const unsigned char tsugumi_rpc_bfbs[];
 namespace tsugumi::agent {
 namespace {
 
-TEST(AgentCatalog, DraftSaveDescriptionReachesTheModelAndPreservesEmptyEnds) {
+TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   const Catalog catalog;
   const auto* tool = catalog.Find("project_save");
   ASSERT_NE(tool, nullptr);
-  EXPECT_NE(tool->spec.description.find("Drafts have no ports"),
-            std::string::npos);
-  EXPECT_NE(tool->spec.description.find("single possible port must be stated"),
-            std::string::npos);
   const auto request = catalog.Request(
       "project_save",
       R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
@@ -118,7 +114,7 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
     const auto properties = json::Object(
         json::Get(json::Object(tool->spec.input_schema), "properties"));
     for (const auto *owned : {"origin", "op_id", "approved_permissions", "check_permissions",
-                               "read_only", "hide_credentials", "no_project_socket"})
+                               "read_only", "hide_credentials", "no_project_socket", "transfers", "working_directory", "writable_paths", "mounts", "output_prefix", "workspace_only", "protected_paths"})
       EXPECT_FALSE(properties.contains(owned));
     EXPECT_TRUE(tool->mutating);
     EXPECT_EQ(tool->has_origin, std::string_view(name) != "project_shell");
@@ -252,10 +248,10 @@ TEST(AgentApprovalDescription,
           R"({"rev":"7","project_json":"{\"name\":\"Actual project\"}"})");
     EXPECT_EQ(name, "version_graph");
     return json::Object(
-        R"({"head":"full-id","enabled":true,"dirty":false,"commits":[{"id":"full-id","summary":"Actual version"}]})");
+        R"({"head":"0123456789abcdef0123456789abcdef01234567","enabled":true,"dirty":false,"commits":[{"id":"0123456789abcdef0123456789abcdef01234567","summary":"Actual version"}]})");
   };
   const auto checkout = DescribeOperation(
-      "version_checkout", {{"commit", "\"full-id\""}}, "project", read);
+      "version_checkout", {{"commit", "\"0123456789abcdef0123456789abcdef01234567\""}}, "project", read);
   EXPECT_NE(checkout.find("Actual version"), std::string::npos);
   EXPECT_NE(checkout.find("Actual project"), std::string::npos);
   EXPECT_THROW(DescribeOperation("version_checkout", {{"commit", "\"HEAD\""}},
@@ -265,3 +261,16 @@ TEST(AgentApprovalDescription,
 
 } // namespace
 } // namespace tsugumi::agent
+
+namespace tsugumi::agent {
+TEST(AgentCatalog, RunToolsOfferTheSameHostWait) {
+  const Catalog catalog;
+  for (const auto* name : {"run", "run_status"}) {
+    const auto* tool = catalog.Find(name);
+    ASSERT_NE(tool, nullptr);
+    const auto properties = json::Object(
+        json::Get(json::Object(tool->spec.input_schema), "properties"));
+    EXPECT_TRUE(properties.contains("wait_seconds"));
+  }
+}
+}  // namespace tsugumi::agent

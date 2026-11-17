@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "journal.hh"
+#include "tsugumi/workerd/invocation.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/peer_tls.hh"
@@ -235,6 +236,7 @@ class Daemon {
     c.systems = {system_};
     c.resource_limits = !config_.cgroup.empty();
     c.max_jobs = config_.max_jobs;
+    c.active_jobs = active_jobs_.load();
     c.worker_contract = kContract;
     return c;
   }
@@ -297,8 +299,19 @@ class Daemon {
                       "at least one page of memory");
         return reply(journal->submit(q.job_id, data, q.core_life_id).status());
       }
-      case R::RequestBody::StatusRequest:
-        return reply(journal->status(q.job_id).status());
+      case R::RequestBody::StatusRequest: {
+        auto status = journal->status(q.job_id).status();
+        if (status.state == R::JobState::Running) {
+          const auto bytes = fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
+          remote::TransferJson progress;
+          if (bytes && !schema::decode(*bytes, progress)) {
+            status.transfer_name = *progress.name;
+            status.transfer_done = *progress.done;
+            status.transfer_total = *progress.total;
+          }
+        }
+        return reply(std::move(status));
+      }
       case R::RequestBody::CancelRequest:
         return reply(
             journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint)
@@ -354,9 +367,8 @@ class Daemon {
             if (state.state == R::JobState::Cancelling &&
                 !cancelling_.contains(key))
               cancelling_[key] = now_ms();
-            if ((state.deadline && now_ms() > state.deadline + 15000) ||
-                (cancelling_.contains(key) &&
-                 now_ms() > cancelling_[key] + 15000))
+            if (cancelling_.contains(key) &&
+                now_ms() > cancelling_[key] + 15000)
               verified_kill(state);
             continue;
           }
@@ -382,6 +394,7 @@ class Daemon {
       return stdfs::last_write_time(a.first->job_path(a.second) / "spec.fb") <
              stdfs::last_write_time(b.first->job_path(b.second) / "spec.fb");
     });
+    active_jobs_.store(static_cast<uint32_t>(active + pending.size()));
     for (const auto& [p, job] : pending) {
       if (active >= config_.max_jobs || stopping) break;
       Fd lock(supervisor_lock(*p, job));
@@ -437,6 +450,7 @@ class Daemon {
   }
   Config config_;
   std::string server_, system_;
+  std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;
   std::map<std::string, uint64_t> cancelling_;
@@ -505,9 +519,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
       const auto current = journal.status(job);
       if (current.state == R::JobState::Cancelling)
         throw std::runtime_error("cancelled");
-      if (now_ms() >= current.deadline)
-        throw std::runtime_error("timed out after " +
-                                 std::to_string(spec->timeout_seconds) + " s");
       const auto done = ::waitpid(child, &status, WNOHANG);
       if (done == child) {
         child = -1;
@@ -525,9 +536,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
       throw std::runtime_error("worker failed: " + diagnostic);
     }
     result = journal.import_results(job);
-    if (now_ms() >= journal.status(job).deadline)
-      throw std::runtime_error("timed out after " +
-                               std::to_string(spec->timeout_seconds) + " s");
     journal.expire_core(job);
     outcome = R::JobState::Succeeded;
   } catch (const std::exception& e) {
@@ -569,7 +577,7 @@ auto unix_listener(const stdfs::path& path) -> int {
   ::chmod(path.c_str(), 0600);
   return fd;
 }
-auto tcp_listener(const Config& config) -> int {
+auto tcp_listener(Config& config) -> int {
   const bool v6 = config.host.find(':') != std::string::npos;
   int fd = ::socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   const int one = 1;
@@ -592,6 +600,12 @@ auto tcp_listener(const Config& config) -> int {
              v6 ? sizeof b : sizeof a) != 0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on TLS TCP");
+  sockaddr_storage bound{};
+  socklen_t size = sizeof bound;
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &size) != 0)
+    throw std::runtime_error("cannot read TLS listener port");
+  config.port = ntohs(v6 ? reinterpret_cast<sockaddr_in6*>(&bound)->sin6_port
+                         : reinterpret_cast<sockaddr_in*>(&bound)->sin_port);
   return fd;
 }
 auto run(Config config) -> int {
@@ -618,6 +632,9 @@ auto run(Config config) -> int {
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
+  fs::write_atomic(config.root / "worker.ready.json",
+                   "{\"port\":" + std::to_string(config.port) +
+                       ",\"pid\":" + std::to_string(::getpid()) + "}", 0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);
@@ -674,7 +691,7 @@ auto run(Config config) -> int {
 }  // namespace
 }  // namespace tsugumi::workerd
 
-auto main(int argc, char** argv) -> int {
+auto remote_workerd_main(int argc, char** argv) -> int {
   using namespace tsugumi::workerd;
   ::umask(0077);
   try {
@@ -709,7 +726,7 @@ auto main(int argc, char** argv) -> int {
         c.host = value;
       else if (option == "--port") {
         const auto n = std::stoul(value);
-        if (!n || n > 65535) throw std::runtime_error("invalid port");
+        if (n > 65535) throw std::runtime_error("invalid port");
         c.port = static_cast<uint16_t>(n);
       } else if (option == "--max-jobs") {
         const auto n = std::stoul(value);

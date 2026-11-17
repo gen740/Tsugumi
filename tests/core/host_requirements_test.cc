@@ -15,9 +15,9 @@ class HostRequirements : public ::testing::Test {
     fs::write_atomic(root / "tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
     fs::write_atomic(root / "definitions/a/_card.json",
-        R"({"hostFolders":[{"name":"data","path":"/data"}]})");
+        R"({"executionService":"local","hostFolders":[{"name":"data","path":"/data"}]})");
     fs::write_atomic(root / "definitions/unused/_card.json",
-        R"({"hostFolders":[{"name":"unused","path":"/unused","write":true}]})");
+        R"({"executionService":"local","hostFolders":[{"name":"unused","path":"/unused","write":true}]})");
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
 };
@@ -37,7 +37,7 @@ TEST_F(HostRequirements, DiskEditsDoNotChangeAcceptedRequirementsUntilReload) {
   Store store({root, ""});
   store.open();
   fs::write_atomic(root / "definitions/a/_card.json",
-      R"({"hostFolders":[{"name":"data","path":"/new","write":true}]})");
+      R"({"executionService":"local","hostFolders":[{"name":"data","path":"/new","write":true}]})");
   auto accepted = host_requirements(*store.current()->resolution);
   ASSERT_EQ(accepted.folders.size(), 1u);
   EXPECT_EQ(accepted.folders[0]->path, "/data");

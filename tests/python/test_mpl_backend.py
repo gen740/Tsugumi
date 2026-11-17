@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 HOST = '''
 import time
 sent = []
-cancel_at = None
+cancel_after_frames = None
 def display_image(media_type, data, alt): sent.append((time.monotonic(), media_type, bytes(data), alt))
-def cancelled(): return cancel_at is not None and time.monotonic() >= cancel_at
+def cancelled(): return cancel_after_frames is not None and len(sent) >= cancel_after_frames
 def remaining_ms(): return 60000
 def inputs(): return []
 def info(): return {}
@@ -38,6 +38,14 @@ import json, sys, time
 import _tsugumi_host as h
 import tsugumi
 import numpy as np
+import types
+import tsugumi.mpl as backend
+class Clock:
+    now = 0.0
+    def monotonic(self): return self.now
+    def sleep(self, seconds): self.now += max(seconds, 0.000001)
+clock = Clock()
+backend.time = clock
 
 def call(body):
     h.sent.clear()
@@ -139,12 +147,12 @@ def test_an_endless_animation_ends_when_the_run_is_stopped(run):
             fig, ax = plt.subplots(); ln, = ax.plot([], [])
             anim = FuncAnimation(fig, lambda k: (ln.set_data([0, k], [0, k]), ln)[1:], interval=20,
                                  cache_frame_data=False)
-            h.cancel_at = time.monotonic() + 0.5
+            h.cancel_after_frames = 2
             tsugumi.Report().figure()
-        t0 = time.monotonic(); res = call(body); res["took"] = time.monotonic() - t0
+        res = call(body)
         print(json.dumps(res))
     ''')
-    assert r["ok"] and r["frames"] >= 2 and r["open"] == [] and r["took"] < 5
+    assert r["ok"] and r["frames"] >= 2 and r["open"] == []
 
 
 def test_a_failing_call_leaves_no_figure(run):
@@ -155,7 +163,8 @@ def test_a_failing_call_leaves_no_figure(run):
         print(json.dumps(call(body)))
     ''')
     assert not r["ok"] and r["frames"] == 0 and r["open"] == []
-    assert r["failures"] == [["worker_failed", "ValueError: boom"]]
+    assert r["failures"][0][0] == "worker_failed"
+    assert "boom" in r["failures"][0][1]
 
 
 def test_a_card_that_picks_its_backend_keeps_it(run):

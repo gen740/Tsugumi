@@ -28,7 +28,8 @@ struct ProviderConfig {
   std::function<std::string(std::string_view)> access_token;
   std::string effort;
   uint32_t max_tokens = 16384;
-  uint32_t context_limit = 600000;
+  // Maximum input tokens, after reserving reply tokens and a safety margin.
+  uint32_t context_limit_tokens = 100000;
   uint32_t timeout_seconds = 600;
   bool web_search = false;
   bool fast = false;
@@ -117,14 +118,20 @@ class ProviderError final : public std::runtime_error {
 
 // Runs one HTTP streaming request on the caller's worker thread. The callback
 // is synchronous and may throw; no exception crosses a libcurl C callback.
-auto StreamReply(const ProviderConfig& config, std::string_view system,
-                 const std::vector<Message>& messages,
-                 const std::vector<ToolSpec>& tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent&)>& event)
+auto StreamReply(const ProviderConfig &config, std::string_view system,
+                 const std::vector<Message> &messages,
+                 const std::vector<ToolSpec> &tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent &)> &event,
+                 const std::function<std::string()> &allocate_call = {})
     -> ModelReply;
 
+struct ModelInfo {
+  std::string id;
+  std::string name;
+  uint32_t context_window_tokens = 0;
+};
 auto ListModels(const ProviderConfig& config, std::stop_token stop)
-    -> std::vector<std::pair<std::string, std::string>>;
+    -> std::vector<ModelInfo>;
 
 struct CredentialRefresh {
   std::string endpoint;

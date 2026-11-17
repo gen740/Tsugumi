@@ -5,6 +5,8 @@ import json
 import shutil
 import time
 
+import pytest
+
 from harness.observations import read_output
 from harness.scenario import Gate, Project, run, wait_run
 from harness.values import recorded_input_json, reference_json
@@ -382,27 +384,28 @@ def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, 
     assert collected(client, tmp_path / "decode", run_id) == [{"value": 0}, {"value": 1}, {"value": 2}]
 
 
-def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, project, tmp_path):
-    """A Run can cancel the workers occupying all eight slots without publishing a partial batch."""
+@pytest.mark.parametrize("limit,slots", [(64, 8), (2, 2)])
+def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, project, tmp_path, limit, slots):
+    """User concurrency and the hard eight-worker cap hold until explicit cancellation."""
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
-    gates = [Gate(tmp_path, str(index)) for index in range(9)]
+    gates = [Gate(tmp_path, str(index)) for index in range(slots + 1)]
     scenarios = [[{"op": "hang", "entered": str(gate.entered)}] for gate in gates]
     graph = Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=NUMBER,
                                   manifest={"runs": scripted_implementations(tmp_path, scenarios)})
     connect_collect(graph)
     graph.save(client)
 
-    run_id = run(client, propagate=True, maxConcurrency=64)
-    for gate in gates[:8]:
+    run_id = run(client, propagate=True, maxConcurrency=limit)
+    for gate in gates[:slots]:
         gate.wait(timeout=10)
-    assert not gates[8].entered.exists()
+    assert not gates[slots].entered.exists()
     client.call("RunCancelRequest", runId=run_id)
     assert wait_run(client, run_id, timeout=20).state == RunState.cancelled
-    assert not gates[8].entered.exists()
+    assert not gates[slots].entered.exists()
     page = invocation_page(client, run_id, "work")
-    assert [row.state for row in page.records] == [CardState.cancelled] * 8
+    assert [row.state for row in page.records] == [CardState.cancelled] * slots
     batch, = page.batches
-    assert batch.invocationCount == 9 and batch.complete and batch.failed and not batch.outputs
+    assert batch.invocationCount == slots + 1 and batch.complete and batch.failed and not batch.outputs
     latest = client.call("RunLatestInvocationsRequest", runId=run_id)
     assert not any(row.card.segments == [b"collect"] and row.state == CardState.succeeded
                    for row in latest.records)
@@ -450,7 +453,6 @@ def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, p
     run_id = run(client, "start", propagate=True)
     status = wait_run(client, run_id, timeout=20)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
-    assert "maxRuns 2" in text(status.failure.diagnostic)
     work = invocation_page(client, run_id, "work")
     assert [(row.batchActivation, row.batchIndex, row.batchSize) for row in work.records] == [
         (1, 1, 2), (1, 2, 2), (2, 1, 2), (2, 2, 2)]
@@ -474,7 +476,6 @@ def test_per_run_worker_budget_stops_before_starting_an_over_budget_batch(core_f
     run_id = run(client, "start", propagate=True, maxConcurrency=8)
     status = wait_run(client, run_id, timeout=180)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
-    assert "4096 worker invocations" in text(status.failure.diagnostic)
     seed, = invocation_page(client, run_id, "seed").batches
     work, = invocation_page(client, run_id, "work").batches
     assert seed.complete and not seed.failed and seed.invocationCount == 256

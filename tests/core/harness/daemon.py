@@ -18,6 +18,7 @@ BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
 DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "core/tsugumid"))
 MOCK_DAEMON = Path(os.environ.get("TSUGUMI_MOCK_DAEMON", BUILD / "tests/core/tsugumid-mock"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
+WORKERD = Path(os.environ.get("TSUGUMI_WORKERD", WORKER.parent / "tsugumi-workerd"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 
 # Adapter to existing crash points, not a contract asserted by test cases.
@@ -29,6 +30,7 @@ FAULTS = {
     "run_acceptance": "run_acceptance",
     "archive_after_main_move": "history_archive_after_main",
     "save_exception": "save_throws",
+    "transfer_gate": "transfer_gate",
 }
 
 
@@ -39,6 +41,14 @@ def write_project(root: Path) -> None:
         "canvas": {"cards": [], "connections": []},
     }))
     (root / "layout.json").write_text("{}")
+
+
+class StartupFailure(RuntimeError):
+    def __init__(self, returncode, record, diagnostics):
+        self.returncode = returncode
+        self.record = record
+        self.kind = record.get("kind")
+        super().__init__(f"daemon exited ({returncode}):\n{diagnostics}")
 
 
 class Daemon:
@@ -78,7 +88,7 @@ class Daemon:
                 "--run-scratch-dir", str(self.directory / "run-scratch"),
                 "--project", str(self.project), "--unix", self.unix,
                 "--listen", "127.0.0.1:0", "--control-dir", str(self.control),
-                "--worker", str(self.worker), "--sdk-dir", str(SDK),
+                "--worker", str(self.worker), "--workerd", str(WORKERD), "--sdk-dir", str(SDK),
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]
         args += self.args
         try:
@@ -87,7 +97,9 @@ class Daemon:
             end = time.monotonic() + timeout
             while time.monotonic() < end:
                 if self.proc.poll() is not None:
-                    raise RuntimeError(f"daemon exited ({self.proc.returncode}):\n{self.diagnostics()}")
+                    record_path = self.control / "server.startup-error.json"
+                    record = json.loads(record_path.read_text()) if record_path.exists() else {}
+                    raise StartupFailure(self.proc.returncode, record, self.diagnostics())
                 if ready.exists():
                     self.ready = json.loads(ready.read_text())
                     return self

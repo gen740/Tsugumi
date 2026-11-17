@@ -13,13 +13,14 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 46 requests.
+There are 48 requests.
 
 ## Connection
 
 | Request | Response | Description |
 | --- | --- | --- |
 | [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. `protocol` is the newest version the client speaks and `min_protocol` the oldest (default: protocol); the server answers with the newest version both speak (HelloResult.protocol), or protocol_mismatch. |
+| [`ProjectActivity`](#projectactivity) | ProjectActivity | Observe active runs and queued/running requests, across all connections. Does not stop work or restrict connections. |
 
 ### SessionHello
 
@@ -31,22 +32,26 @@ There are 46 requests.
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
 
+### ProjectActivity
+
+No fields.
+
 ## Projects and saving
 
 | Request | Response | Description |
 | --- | --- | --- |
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
-| [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`ProjectInspect`](#projectinspect) | ProjectSnapshot | Read current documents, definitions, sources and revision. |
 | [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
-| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
-| [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end, with any number in or out. Implementing one requires SetProject in this same save rebinding every incoming end to a real input and every outgoing end to a real output (and boundary endpoints in its project's tsugumi.json). Even a single possible port must be stated. Ends on remaining Drafts stay empty. A non-existent port on a non-Draft Card is validation_failed, naming the wire. |
-| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
+| [`CardId`](#cardid) | CardIdResult | Reserve a permanent unique Card id from stem; repeated calls reserve fresh ids. |
+| [`ProjectSave`](#projectsave) | SaveResult | Apply document changes atomically at base_rev. |
+| [`ProjectReload`](#projectreload) | SaveResult | Import external edits into the accepted document at base_rev. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
-| [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
-| [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
-| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Run a command in a staged Card source workspace; successful source edits save atomically. Attached folders are at attached/<SHA-256(path)[0:16]>; scratch/ persists. timeout_ms defaults to 10000 (1..30000). Returns exit status, bounded stdout/stderr and full-output paths. |
+| [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Clear this project's build cache. |
+| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Read cached build and scratch usage measurements. |
+| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Delete paths selected from the scratch usage report. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -83,9 +88,12 @@ No fields.
 | `base_rev` | `uint64` |  |  |
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
-| `changes` | `[DocumentChange]` | yes |  |
+| `changes` | `[DocumentChange]` |  |  |
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
+| `transfers` | `[SourceTransfer]` |  | Local file references; source bytes never travel through the RPC frame. |
+| `save_intent` | `string` |  | Opaque host intent for the existing op_id digest, before concrete expansion. A revision-conflicted attempt with an intent is retryable under the same id. |
+| `operation_data` | `[ubyte]` |  | Carried unchanged in SaveResult, including a replay of this operation id. The project core does not interpret host editing metadata. |
 
 ### ProjectReload
 
@@ -116,6 +124,13 @@ No fields.
 | `read_only` | `bool` |  | Make the filesystem read-only except private diagnostic scratch. |
 | `hide_credentials` | `bool` |  | Hide the control directory, home credentials and shared temporary files. |
 | `no_project_socket` | `bool` |  | Block Unix socket connections (except macOS name resolution). On macOS, also block local IP endpoints, session Mach services and outside signals. |
+| `working_directory` | `string` |  | Explicit workspace relative to the project root; absent uses the project. |
+| `writable_paths` | `[string]` |  | Writable subtrees relative to working_directory, with a read-only root. |
+| `mounts` | `[ShellMount]` |  | Read-only mounts at attached/<name>; native paths or VM chat shares. |
+| `output_prefix` | `string` |  | Persist full stdout/stderr below this project-relative prefix. |
+| `workspace_only` | `bool` |  | Hide the original project while exposing only the workspace. |
+| `protected_paths` | `[string]` |  | Read-only files inside writable subtrees (including reserved placeholders). |
+| `excluded_paths` | `[string]` |  | Host-selected absolute paths denied in this shell view, including mounts. |
 
 ### ProjectCacheClear
 
@@ -139,6 +154,7 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
+| `save_intent` | `string` |  |  |
 
 ## Files
 
@@ -146,7 +162,7 @@ No fields.
 | --- | --- | --- |
 | [`ProjectFileList`](#projectfilelist) | SourcePage | depth = 0 (0..8), include_directories = false, limit = 100. |
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
-| [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). |
+| [`ProjectFileRead`](#projectfileread) | FileContent | Read a file page; offset defaults to 0, limit_bytes to 262144 (max 1 MiB). |
 
 ### ProjectFileList
 
@@ -182,8 +198,9 @@ No fields.
 | --- | --- | --- |
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
-| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). |
-| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. To customize an approved package, save nixSources[].overrides = {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}. Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}} fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval. Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected. Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow the first time: it evaluates them, fetching what they need. |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead. |
+| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
+| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
 ### CardSDKPrepare
 
@@ -198,6 +215,15 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
+
+### InputTypes
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `output_port` | `string` |  |  |
+| `at_rev` | `uint64` |  |  |
+| `language` | `string` |  | SDK language for host rendering; opaque to the project core. |
 
 ### OutputTypes
 
@@ -218,10 +244,10 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`RunPlan`](#runplan) | RunPlanResult | propagate = true. |
-| [`Run`](#run) | RunAccepted | propagate = true, max_concurrency = 4 (1..64), nix_jobs = 1, nix_cores = 1. |
-| [`RunCancel`](#runcancel) | RunStatus | Idempotent. Unknown id is not_found. |
-| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the latest locally started run, else idle. partial_run marks debugging with saved inputs; uses_partial_result marks values derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies and run events, including runs with recorded values and retained artifacts. |
+| [`RunPlan`](#runplan) | RunPlanResult | Preview the Cards a run reaches; propagate defaults to true. |
+| [`Run`](#run) | RunAccepted | Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64), nix_jobs and nix_cores to 1. |
+| [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
+| [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. |
 
 ### RunPlan
 
@@ -262,15 +288,15 @@ No fields.
 | --- | --- | --- |
 | [`RunHistory`](#runhistory) | RunPage, newest accepted first |  |
 | [`RunInvocations`](#runinvocations) | InvocationPage, ascending invocation number |  |
-| [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Each Card's latest invocation of a run, for a client that opens the project after the run: it did not get RunCardChanged for them. |
-| [`RunRecord`](#runrecord) | RecordResult | invocation and follow_latest = true are exclusive. |
-| [`RunValueRead`](#runvalueread) | FileContent | offset = 0, limit_bytes = 1048576. |
-| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. Approvals must set restrict_to_run_ids and pass the exact run_ids shown to the person (an empty set deletes nothing). Without that flag, run_ids must be empty and the UI's all-runs or date scope applies. The separate flag distinguishes an empty selection from object APIs' default empty vectors. |
-| [`ArtifactList`](#artifactlist) | ArtifactPage | invocation requires card. |
-| [`ArtifactRead`](#artifactread) | FileContent | member only for Directory artifacts. |
-| [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
-| [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Recorded environments, in first-use order; no Nix evaluation. offset defaults to 0; limit defaults to 100 (maximum 500). |
-| [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Runtime closure, including the manifest, in store-path order. These are runtime references, not the full set of build-time dependencies. |
+| [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Read each Card's latest invocation in a run. |
+| [`RunRecord`](#runrecord) | RecordResult | Read a Card's invocation record; choose invocation or follow_latest=true. |
+| [`RunValueRead`](#runvalueread) | FileContent | Read a recorded port value page; offset defaults to 0. |
+| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
+| [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
+| [`ArtifactRead`](#artifactread) | FileContent | Read artifact bytes; member selects a file within a Directory artifact. |
+| [`LogRange`](#logrange) | LogSlice | Read run logs; invocation requires card. tail=true reads the end with offset=0. |
+| [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Read recorded environments in first-use order; no evaluation. |
+| [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Read a recorded runtime closure in store-path order, including its manifest. |
 | [`RunEnvironmentUses`](#runenvironmentuses) | EnvironmentUsePage | Recorded users of a shared environment, ordered by Card and invocation. |
 
 ### RunHistory
@@ -374,8 +400,8 @@ No fields.
 | `environment_id` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
 | `limit` | `uint32` |  |  |
-| `query` | `string` |  | Case-insensitive literal substring search. Offset and total refer to matching paths. |
-| `excluding_run_id` | `string` |  | If both are present, return paths absent from this other recorded environment. Difference and search run in the history database, with bounded result pages. |
+| `query` | `string` |  | Case-insensitive substring filter; offset and total count matches. |
+| `excluding_run_id` | `string` |  | Together with excluding_environment_id, exclude paths in that recorded environment. |
 | `excluding_environment_id` | `string` |  |  |
 
 ### RunEnvironmentUses
@@ -393,7 +419,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`ModuleRead`](#moduleread) | FileContent | Reads immutable module source in bounded pages. For a Wasm view, the core assembles the shared index.js template and local view.wasm. Only canonical /nix/store/<hash>-<name> directories with index.js qualify. |
+| [`ModuleRead`](#moduleread) | FileContent | Read immutable display-module source in pages. |
 
 ### ViewSetVisible
 
@@ -423,11 +449,11 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`VersionInit`](#versioninit) | VersionResult | Makes the project a git repository: a first commit of what is saved (a demo's history file becomes its versions). Nothing happens when it already is one. |
-| [`VersionMark`](#versionmark) | VersionResult | Names the current version: what is saved is committed (when it changed) and gets an annotated tag `name` with `message`. |
-| [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
+| [`VersionInit`](#versioninit) | VersionResult | Initialize git version history with the saved project. |
+| [`VersionMark`](#versionmark) | VersionResult | Commit saved changes and tag the version with name and message. |
+| [`VersionCheckout`](#versioncheckout) | SaveResult | Commit current changes and restore the project from commit. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
-| [`VersionCanvas`](#versioncanvas) | VersionCanvas: raw layout, definition kinds and connections of a version | The host service interprets these for a minimap. |
+| [`VersionCanvas`](#versioncanvas) | VersionCanvas | Read a version's layout, definition kinds and connections. |
 | [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 
 ### VersionInit
@@ -523,8 +549,10 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessRevokeRequest` | `grant_id: string` (required) |
 | `AccessListRequest` | `conversation_id: string` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
+| `ToolCallCancelRequest` | `request_id: ulong` |
+| `CallIdRequest` | `conversation_id: string` (required) |
 
-Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`.
+Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`.
 
 ### Host service
 
@@ -547,7 +575,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
 | `ExecutionServicesRequest` | None |
-| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `heartbeat_interval_seconds: uint`, `missed_heartbeats: uint` |
+| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `heartbeat_interval_seconds: uint`, `missed_heartbeats: uint`, `grade: ulong` |
 | `ExecutionServiceRemoveRequest` | `id: string` (required) |
 | `ExecutionProjectAuthorizeRequest` | `project_id: string` (required), `path: string` (required), `control_dir: string` (required), `guest: bool` |
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |
@@ -555,9 +583,9 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `RegisterFolderRequest` | `project_id: string` (required), `resource_id: string` (required), `folder: string` (required), `title: string` |
 | `AttachFoldersRequest` | `project: string` (required), `folders: [string]` |
 | `SkillsListRequest` | `project_path: string`, `folders: [string]`, `conversation_id: string` |
+| `ProjectTrustRequest` | `path: string` (required), `decision: ProjectTrustDecision` |
 | `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string`, `key_profile: string` |
 | `HostProjectDefaultsRequest` | None |
-| `HostProjectReadRequest` | `path: string` (required), `file_index: uint`, `offset: ulong` |
 | `HostProjectInfoRequest` | `path: string` (required) |
 | `HostProjectCreateRequest` | `parent: string` (required), `name: string` (required), `flow: string` |
 | `HostProjectDuplicateRequest` | `path: string` (required), `parent: string` (required), `name: string` (required) |
@@ -566,22 +594,21 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRecentListRequest` | None |
 | `HostRecentRememberRequest` | `path: string` (required) |
 | `HostRecentForgetRequest` | `paths: [string]` |
-| `LayoutArrangeRequest` | `scene: LayoutScene` (required) |
-| `LayoutUntangleRequest` | `scene: LayoutScene` (required), `around: [string]` |
 | `LayoutValidateRequest` | `json: string` (required), `removed_cards: [string]` |
 | `VersionCanvasRequest` | `layout_json: string` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
 | `FileFormatRequest` | `path: string` (required), `text: string` (required), `language: FormatLanguage` |
 | `HostVersionGraphRequest` | `project: string` (required), `language: string`, `limit: uint` |
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
-| `DocumentSubgraphRequest` | `project_json: string` (required), `cards: [string]`, `id: string` (required) |
-| `DocumentMergeRequest` | `base_json: string` (required), `ours_json: string` (required), `theirs_json: string` (required) |
-| `DocumentCopyRequest` | `state_json: string` (required), `paths: [string]`, `from: string` (required), `to: string` (required), `name: string` |
-| `DocumentConnectRequest` | `state_json: string` (required), `from_card: string` (required), `from_port: string` (required), `to_card: string` (required), `to_port: string` (required), `fork_id: string` |
-| `DocumentTemplateRequest` | `name: string` (required), `id: string` (required) |
 | `PermissionKindsRequest` | `language: string` |
+| `ProjectOperateRequest` | `project_id: string` (required), `op_id: string` (required), `body: ProjectOperationBody` |
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
+| `DisplayGeometryRequest` | None |
+| `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
+| `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
+| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
+| `HostActivityRequest` | None |
 
-Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.

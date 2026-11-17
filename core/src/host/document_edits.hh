@@ -23,7 +23,6 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
                       const std::string &to_port, const std::string &fork_id)
     -> Tsugumi::Host::DocumentConnectT;
 
-auto MergeDocuments(const std::string &base, const std::string &ours,
-                    const std::string &theirs) -> Tsugumi::Host::DocumentMergeT;
+auto DocumentsEqual(const std::string& a, const std::string& b) -> bool;
 
 } // namespace tsugumi::host

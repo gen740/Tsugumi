@@ -23,6 +23,8 @@ add_library(tsugumi_document STATIC
   src/types.cc
   src/document.cc
   src/graph.cc
+  src/worker_condition.cc
+  src/input_types.cc
   src/nix_refs.cc
   src/collect_type.cc
   src/host_requirements.cc)
@@ -46,7 +48,6 @@ add_library(tsugumi_core STATIC
   src/nix.cc
   src/run_scratch.cc
   src/cache_usage.cc
-  src/worker_condition.cc
   src/collect_value.cc
   src/execution_service.cc
   src/remote_job.cc
@@ -91,6 +92,7 @@ target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_BASH="${TSUGUMI_BASH}")
 
 add_executable(tsugumid src/main.cc)
+add_dependencies(tsugumid tsugumi-workerd)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Executables choose the evaluator implementation. Tests link their double
 # instead, without relying on a linker's archive extraction or symbol precedence.
@@ -106,7 +108,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
 # Host state and Agent execution live in the host service, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
-foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill)
+foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill helpers-skill)
   string(REPLACE "-" "_" symbol ${prompt})
   set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
   add_custom_command(OUTPUT ${output}
@@ -162,13 +164,16 @@ add_library(tsugumi_host_core STATIC
   src/agent/providers.cc
   src/agent/store.cc
   src/agent/runtime.cc
+  src/agent/context.cc
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/presentation.cc
   src/agent/save_policy.cc
   src/agent/helpers.cc
   src/agent/approvals.cc
+  src/agent/tools_files.cc
   src/agent/tools.cc
+  src/agent/tools_edit.cc
   src/agent/turns.cc
   src/host/access.cc
   src/host/state_format.cc
@@ -176,13 +181,18 @@ add_library(tsugumi_host_core STATIC
   src/host/store.cc
   src/host/credentials.cc
   src/host/demo_references.cc
+  src/host/agent_exclude.cc
   src/host/registry.cc
   src/host/attached_folder.cc
+  src/host/input_types.cc
   src/host/format.cc
   src/host/version_text.cc
   src/util/process.cc
   src/host/comments.cc
   src/host/save.cc
+  src/host/file_miss.cc
+  src/host/project_edit.cc
+  src/host/project_operations.cc
   src/host/document_edits.cc
   src/host/templates.cc
   ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
@@ -222,7 +232,7 @@ target_include_directories(tsugumi_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 set(TSUGUMI_HOST_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native host service")
 target_link_libraries(tsugumi_host_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
+  Threads::Threads tsugumi_document tsugumi_sdk_describe tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
 if(TSUGUMI_HOST_SQLITE_LIBRARY)
   target_link_libraries(tsugumi_host_core PRIVATE ${TSUGUMI_HOST_SQLITE_LIBRARY})
 else()
@@ -241,14 +251,15 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bf
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_sdk_describe tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
+  install(FILES ${PROJECT_SOURCE_DIR}/sdk/describe/input.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-sdk-describe)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(FILES ${PROJECT_SOURCE_DIR}/workerd/src/journal.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-workerd)
   install(DIRECTORY src/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-core
     FILES_MATCHING PATTERN "*.hh")
-  install(FILES src/main.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)
+  install(FILES src/main.cc ${PROJECT_SOURCE_DIR}/workerd/src/local_service.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)
   install(DIRECTORY ${TSUGUMI_GEN_DIR}/cpp/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${TSUGUMI_GEN_DIR}/python/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/python)
 endif()

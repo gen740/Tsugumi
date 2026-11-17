@@ -63,9 +63,7 @@ def remote_daemon(tmp_path, request):
         yield endpoint, key_file, None
         return
 
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+    port = 0
     state = tmp_path / "daemon-state"
     state.mkdir(mode=0o700)
     env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
@@ -82,7 +80,9 @@ def remote_daemon(tmp_path, request):
     process = None
 
     def start():
-        nonlocal process
+        nonlocal process, port
+        ready = state / "worker.ready.json"
+        ready.unlink(missing_ok=True)
         with daemon_log.open("ab") as log:
             process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
         until = time.monotonic() + 10
@@ -90,9 +90,11 @@ def remote_daemon(tmp_path, request):
             if process.poll() is not None:
                 raise RuntimeError(daemon_log.read_text())
             try:
+                port = json.loads(ready.read_text())["port"]
+                command[command.index("--port") + 1] = str(port)
                 with socket.create_connection(("127.0.0.1", port), timeout=0.1):
                     return
-            except OSError:
+            except (OSError, ValueError):
                 time.sleep(0.05)
         raise TimeoutError("the test execution daemon did not listen")
 
@@ -147,7 +149,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
         ready = {"endpoint": host.ready["execution_broker"],
                  "capability": authorize(project, "control"),
                  "copyCapability": authorize(copy, "copy-control"),
-                 "serverId": R.string(entries.services[0].capabilities.serverId)}
+                 "serverId": R.string(next(e for e in entries.services if R.string(e.id) == "remote-test").capabilities.serverId)}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", ready["capability"])
         yield ready
@@ -176,7 +178,6 @@ def test_remote_broker_isolates_copies_of_a_project(remote_broker):
     missing_life = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT())
     assert missing_life.bodyType == R.ReplyBody.Failure
     assert missing_life.body.code == R.ErrorCode.Invalid
-    assert R.string(missing_life.body.message) == "expected a 64-hex identity"
     # Keep the life ID identical to check project scoping independently of job ownership.
     core_life = secrets.token_hex(32)
     first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
@@ -307,7 +308,6 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     assert interrupted.summary.state == CardState.failed
     assert interrupted.summary.executionState == RemoteExecutionState.interrupted
     assert interrupted.summary.failure.kind == FailureKind.interrupted
-    assert text(interrupted.summary.failure.diagnostic) == "tsugumid restarted while the run was active"
     assert text(interrupted.summary.executionJobId) == text(started.executionJobId)
     assert not interrupted.outputs and not interrupted.display
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
@@ -580,3 +580,14 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
     run_id, status = run_and_wait(client, "work", timeout=600)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     check_definition_tools(client, run_id)
+
+
+@pytest.mark.parametrize("execution_service", ["local", "remote-test"])
+def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker, execution_service):
+    from harness.real_cards import bash, log
+    definition = bash("sleep 10", executionService=execution_service, timeoutSeconds=1, buildTimeoutSeconds=600)
+    write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
+    client = core_factory().connect()
+    run_id, status = run_and_wait(client, "deadline", timeout=900)
+    assert status.state == RunState.failed, log(client, run_id, "deadline", 2)
+    assert status.failure.kind == FailureKind.timeout

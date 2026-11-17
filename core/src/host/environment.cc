@@ -99,8 +99,21 @@ struct Environments::Impl {
   auto Shutdown() -> void {
     shutdown.request_stop();
     observer.request_stop();
-    if (observer.joinable()) observer.join();
+    // Close adapter calls before joining the observer: a guest status request
+    // may be stuck while shutdown/maintenance owns the guest control path.
     options.process->Shutdown();
+    if (observer.joinable()) observer.join();
+    if (!options.process->Guest()) {
+      std::vector<std::shared_ptr<Entry>> snapshot;
+      {
+        std::lock_guard lock(mutex);
+        for (const auto& [_, entry] : entries) snapshot.push_back(entry);
+      }
+      for (const auto& entry : snapshot) {
+        std::lock_guard entry_lock(entry->mutex);
+        try { Stop(*entry); } catch (const std::exception&) {}
+      }
+    }
   }
   auto EntryFor(const std::string& project) -> std::shared_ptr<Entry> {
     const auto path = std::filesystem::canonical(project);
@@ -139,7 +152,25 @@ struct Environments::Impl {
     }
     return entry;
   }
-  auto Notify(Entry& entry) -> void { changed(entry.state); }
+  auto Notify(Entry& entry) -> void {
+    entry.state.attached_roots.clear();
+    if (entry.state.phase == H::EnvironmentPhase::Ready) {
+      for (const auto& mount : entry.mounted) {
+        if (!mount.name.starts_with("chat-")) continue;
+        auto root = std::make_unique<H::AttachedRootT>();
+        root->host_path = mount.path;
+        root->execution_path = "/run/tsugumi/chat/" + mount.name.substr(5);
+        entry.state.attached_roots.push_back(std::move(root));
+      }
+      if (!options.process->Guest()) for (const auto& folder : entry.folders) {
+        auto root = std::make_unique<H::AttachedRootT>();
+        root->host_path = folder;
+        root->execution_path = folder;
+        entry.state.attached_roots.push_back(std::move(root));
+      }
+    }
+    changed(entry.state);
+  }
   auto Stage(const Entry& entry, const std::string& stage) -> void {
     H::EnvironmentProgressT event;
     event.project = entry.state.project;
@@ -209,11 +240,13 @@ struct Environments::Impl {
     entry.state.pid = 0;
   }
   auto Failed(Entry& entry, const std::string& message,
-              const EnvironmentFailure* failure = nullptr) -> void {
+              const EnvironmentFailure* failure = nullptr,
+              H::EnvironmentFailureCode code = H::EnvironmentFailureCode::LaunchFailed) -> void {
     RememberSecrets(entry);
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
+    entry.state.failure_code = code;
     entry.state.recovery =
         failure ? failure->recovery : "Check the log and retry.";
     entry.state.log = failure ? Redact(entry, failure->log) : LogTail(entry);
@@ -241,16 +274,17 @@ struct Environments::Impl {
     if (!entry.pid) return false;
     const auto status = options.process->Poll(entry.pid, entry.child);
     if (!status) return false;
-    if (entry.state.phase == H::EnvironmentPhase::Ready && *status >= 0 &&
-        ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
-         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM))) {
+    if (entry.state.phase == H::EnvironmentPhase::Ready &&
+        (*status >= 0 && ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
+         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM)))) {
       Revoke(entry);
       ClearEndpoint(entry);
       entry.state.phase = H::EnvironmentPhase::Stopped;
       entry.state.message.clear();
       Notify(entry);
     } else {
-      Failed(entry, "tsugumid exited. Retry to start it again.");
+      Failed(entry, "tsugumid exited. Retry to start it again.", nullptr,
+             H::EnvironmentFailureCode::ProcessExit);
     }
     entry.pid = 0;
     entry.child = false;
@@ -279,12 +313,27 @@ struct Environments::Impl {
       if (!handle || (entry.pid && entry.pid != *handle) ||
           !Alive(*handle, entry.child))
         return false;
+      if (options.process->Guest() && entry.mounted.empty()) {
+        // Restore actual shares after a hostd restart, never guess from paths
+        // currently present in either filesystem.
+        const auto saved = fs::read_file(
+            std::filesystem::path(entry.state.control_dir) / "mounted-folders.json");
+        if (!saved) return false;
+        std::vector<EnvironmentMount> mounted;
+        for (const auto& raw : json::Array(*saved)) {
+          const auto mount = json::Object(raw);
+          mounted.push_back({json::Text(mount, "name"), json::Text(mount, "path"),
+                             json::Bool(json::Get(mount, "read_only"))});
+        }
+        entry.mounted = std::move(mounted);
+      }
       entry.pid = *handle;
       ready.phase = H::EnvironmentPhase::Ready;
       ready.message.clear();
       ready.recovery.clear();
       ready.log.clear();
       ready.startup_error_json.clear();
+      ready.failure_code = H::EnvironmentFailureCode::None;
       entry.state = std::move(ready);
       return true;
     } catch (const std::exception&) {
@@ -378,11 +427,14 @@ struct Environments::Impl {
       throw std::runtime_error(
           "tsugumid is alive but its endpoint is "
           "unavailable; stop it before retrying");
+    if (options.prepare_project_identity)
+      options.prepare_project_identity(entry.state.project);
     options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
+    entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
     Stage(entry, "starting tsugumid");
     try {
@@ -439,6 +491,12 @@ struct Environments::Impl {
       }
       launch.log = control / "server.log";
       launch.authorization = Authorize(entry);
+      std::vector<std::string> mounted;
+      for (const auto& mount : launch.mounts)
+        mounted.push_back(json::Encode(json::Members{
+            {"name", json::Quote(mount.name)}, {"path", json::Quote(mount.path)},
+            {"read_only", mount.read_only ? "true" : "false"}}));
+      fs::write_atomic(control / "mounted-folders.json", json::Encode(mounted), 0600);
       // Recorded before the launch: a launch that fails after the process has
       // started (its reply was lost) leaves a process holding these mounts.
       entry.mounted = launch.mounts;
@@ -447,8 +505,7 @@ struct Environments::Impl {
       Stage(entry, "waiting for tsugumid to become ready");
       const auto deadline =
           std::chrono::steady_clock::now() + options.start_timeout;
-      while (!shutdown.stop_requested() &&
-             std::chrono::steady_clock::now() < deadline) {
+      while (!shutdown.stop_requested()) {
         if (CheckDeath(entry)) return;
         if (ReadReady(entry)) {
           auto accepted = options.process->Requirements(entry.state);
@@ -460,12 +517,15 @@ struct Environments::Impl {
           Notify(entry);
           return;
         }
+        if (std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(50ms);
       }
       Stop(entry);
       Failed(entry, shutdown.stop_requested()
                         ? "Environment start cancelled"
-                        : "tsugumid did not become ready within 60 seconds");
+                        : "tsugumid did not become ready within 60 seconds", nullptr,
+             shutdown.stop_requested() ? H::EnvironmentFailureCode::Cancelled
+                                       : H::EnvironmentFailureCode::ReadinessTimeout);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       Failed(entry, error.what(),
@@ -522,6 +582,7 @@ struct Environments::Impl {
     entry.state.recovery.clear();
     entry.state.log.clear();
     entry.state.startup_error_json.clear();
+    entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
   }
 };
@@ -533,6 +594,20 @@ Environments::Environments(EnvironmentOptions options,
                                    std::move(changed), std::move(progress))) {}
 Environments::~Environments() = default;
 auto Environments::Shutdown() -> void { impl_->Shutdown(); }
+auto Environments::Busy() -> bool {
+  std::vector<std::shared_ptr<Impl::Entry>> snapshot;
+  {
+    std::lock_guard lock(impl_->mutex);
+    for (const auto& [_, entry] : impl_->entries) snapshot.push_back(entry);
+  }
+  for (const auto& entry : snapshot) {
+    std::unique_lock lock(entry->mutex, std::try_to_lock);
+    if (!lock || entry->starting) return true;
+    if (entry->pid && !impl_->CheckDeath(*entry) &&
+        impl_->options.process->Busy(entry->state)) return true;
+  }
+  return false;
+}
 auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
   if (request.action != H::RuntimeAction::State)
@@ -563,7 +638,8 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     return result;
   }
   if (input.action == H::RuntimeAction::Shutdown ||
-      input.action == H::RuntimeAction::Reset) {
+      input.action == H::RuntimeAction::Reset ||
+      input.action == H::RuntimeAction::VerifyStore) {
     std::vector<std::shared_ptr<Impl::Entry>> entries;
     {
       std::lock_guard lock(impl_->mutex);
@@ -571,10 +647,31 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     }
     for (const auto& entry : entries) {
       std::lock_guard lock(entry->mutex);
-      impl_->Stop(*entry);
+      if (impl_->options.process->Guest() && input.action != H::RuntimeAction::VerifyStore)
+        impl_->Revoke(*entry);
+      else
+        impl_->Stop(*entry);
     }
   }
   auto result = impl_->options.process->Runtime(input);
+  if (impl_->options.process->Guest() &&
+      (input.action == H::RuntimeAction::Shutdown || input.action == H::RuntimeAction::Reset)) {
+    // vmd stops all projects concurrently under the VM's one deadline. Do not
+    // spend a separate stop deadline per project before asking it to power off.
+    std::vector<std::shared_ptr<Impl::Entry>> snapshot;
+    {
+      std::lock_guard lock(impl_->mutex);
+      for (const auto& [_, entry] : impl_->entries) snapshot.push_back(entry);
+    }
+    for (const auto& entry : snapshot) {
+      std::lock_guard entry_lock(entry->mutex);
+      entry->pid = 0;
+      entry->child = false;
+      impl_->ClearEndpoint(*entry);
+      entry->state.phase = H::EnvironmentPhase::Stopped;
+      impl_->Notify(*entry);
+    }
+  }
   DescribeVMReset(result);
   if (input.action == H::RuntimeAction::Reset) {
     for (const auto& entry :

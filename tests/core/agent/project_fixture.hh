@@ -23,17 +23,50 @@ class AgentProjectFixture : public AgentFixture {
     return Tool(conversation, name, arguments, id);
   }
 
+  auto Delegate(const std::string &conversation, const std::string &arguments,
+                const std::string &operation) -> Reply {
+    // This call runs all descendants and several isolated commands. The
+    // ordinary fixture's five-second RPC budget is for a single operation.
+    auto result =
+        external
+            ->Call(
+                [&](uint64_t id) {
+                  Builder b;
+                  const auto value = A::CreateToolCallRequest(
+                      b, b.CreateString(conversation),
+                      b.CreateString(project_id), b.CreateString("delegate"),
+                      b.CreateString(arguments), b.CreateString(operation));
+                  const auto request = A::CreateRequest(
+                      b, A::RequestPayload::ToolCallRequest, value.Union());
+                  A::FinishMessageBuffer(
+                      b, A::CreateMessage(b, id, A::Payload::Request,
+                                          request.Union()));
+                  return client::Bytes(b.GetBufferPointer(),
+                                       b.GetBufferPointer() + b.GetSize());
+                },
+                30s)
+            .get();
+    if (result.error)
+      throw std::runtime_error(result.error.message);
+    return {std::move(result.bytes)};
+  }
+
   auto TearDown() -> void override {
     AgentFixture::TearDown();
     project.Stop();
   }
 
-  auto StartProject(bool shell = false) -> void {
-    Write(
-        directory.path / "project/tsugumi.json",
-        R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-    Write(directory.path / "project/layout.json", "{}");
-    std::vector<std::string> args{TSUGUMI_PROJECT_BINARY,
+  auto StartProject(
+      bool shell = false,
+      const std::string &document =
+          R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})",
+      const std::string& layout = "{}")
+      -> void {
+    Write(directory.path / "project/tsugumi.json", document);
+    Write(directory.path / "project/layout.json", layout);
+    std::vector<std::string> args{"/usr/bin/env",
+                                  "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),
+                                  TSUGUMI_PROJECT_BINARY,
                                   "--scratch-dir", (directory.path / "scratch").string(),
                                   "--run-scratch-dir", (directory.path / "run-scratch").string(),
                                   "--project",
@@ -48,6 +81,8 @@ class AgentProjectFixture : public AgentFixture {
                                   TSUGUMI_WORKER_BINARY,
                                   "--sdk-dir",
                                   TSUGUMI_TEST_SDK};
+    if (!project_fault.empty())
+      args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1", "TSUGUMI_FAULT=" + project_fault});
     if (shell) args.push_back("--project-shell");
     project.Start(args, directory.path / "project.log");
     project_ready =
@@ -83,6 +118,7 @@ class AgentProjectFixture : public AgentFixture {
     StartProject();
   }
 
+  std::string project_fault;
   ChildProcess project;
   std::string project_ready;
 };

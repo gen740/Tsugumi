@@ -184,6 +184,8 @@ struct Project {
 };
 
 std::mutex mu;
+std::mutex lifecycle;
+std::atomic<bool> powering_off{false};
 std::condition_variable exited;
 std::map<std::string, Project> projects;
 std::map<pid_t, int> exit_status;  // children reaped by the reaper thread
@@ -369,10 +371,17 @@ std::vector<char*> cstrings(std::vector<std::string>& v) {
 
 // The shared store's cleanup: deletes what no GC root keeps (an app setting,
 // never a project's cache clearing). Runs as root against the local store.
-std::string collect_garbage() {
+std::string collect_garbage(bool verify = false) {
+  if (verify) {
+    std::lock_guard lock(mu);
+    for (const auto& [_, project] : projects)
+      if (project.running) return "error stop all projects before checking the store";
+  }
   int out[2];
   if (::pipe2(out, O_CLOEXEC) != 0) return "error pipe";
-  std::vector<std::string> argv = {opt.bash, "-c", "exec nix-store --gc"};
+  std::vector<std::string> argv = {opt.bash, "-c", verify
+      ? "exec /run/tsugumi/store-health check /persist $(cat /persist/store-health/boot-closure) maintenance"
+      : "exec nix-store --gc"};
   std::vector<std::string> env = {"PATH=" + opt.path};
   auto av = cstrings(argv);
   auto ev = cstrings(env);
@@ -380,6 +389,9 @@ std::string collect_garbage() {
   if (pid == 0) {
     ::dup2(out[1], 1);
     ::dup2(out[1], 2);
+    sigset_t empty;
+    sigemptyset(&empty);
+    ::sigprocmask(SIG_SETMASK, &empty, nullptr);
     ::execve(av[0], av.data(), ev.data());
     ::_exit(127);
   }
@@ -401,7 +413,14 @@ std::string collect_garbage() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  logf("store cleanup: %s", text.c_str());
+  logf("store %s: %s", verify ? "check/repair" : "cleanup", text.c_str());
+  if (verify) {
+    // Full diagnostics stay in check.log and on the VM console. Bound the RPC
+    // reply, retaining its last lines (failed paths and final result).
+    if (text.size() > 65536) text.erase(0, text.size() - 65536);
+    for (auto& ch : text) if (ch == '\n' || ch == '\r') ch = ' ';
+    return std::string(WIFEXITED(st) && WEXITSTATUS(st) == 0 ? "ok " : "error ") + text;
+  }
   if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) return "error nix-store --gc failed";
   // "N store paths deleted, X MiB freed"
   unsigned long long paths = 0;
@@ -434,6 +453,9 @@ int project_main(void* arg) {
   if (::chown("/tmp/home", a->uid, a->uid) != 0) die("chown /tmp/home");
   drop_to(a->uid);
   if (::chdir("/project") != 0) die("chdir /project");
+  sigset_t empty;
+  sigemptyset(&empty);
+  ::sigprocmask(SIG_SETMASK, &empty, nullptr);
   ::execve(a->av[0], a->av.data(), a->ev.data());
   die("exec tsugumid");
   return 127;
@@ -692,6 +714,8 @@ void reaper() {
     for (auto& [id, p] : projects) {
       if (p.pid == pid && p.running) {
         p.running = false;
+        write_file(cgroup_dir(id) + "/cgroup.kill", "1");
+        ::umount2(slot_dir(p.slot).c_str(), MNT_DETACH);
         logf("project %s exited (%s %d)", id.c_str(), WIFEXITED(st) ? "status" : "signal",
              WIFEXITED(st) ? WEXITSTATUS(st) : WTERMSIG(st));
       }
@@ -783,6 +807,9 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     if (slave > 2) ::close(slave);
     drop_to(uid);
     if (::chdir("/project") != 0) die("chdir /project");
+    sigset_t empty;
+    sigemptyset(&empty);
+    ::sigprocmask(SIG_SETMASK, &empty, nullptr);
     ::execve(av[0], av.data(), ev.data());
     die("exec bash");
   }
@@ -848,13 +875,32 @@ int listen_vsock(int port) {
 }
 
 void shutdown_vm() {
+  if (powering_off.exchange(true)) return;
   std::vector<std::string> ids;
   {
     std::lock_guard<std::mutex> l(mu);
     for (const auto& [id, p] : projects)
       if (p.running) ids.push_back(id);
   }
-  for (const auto& id : ids) stop_project(id);
+  std::vector<std::jthread> stops;
+  for (const auto& id : ids) stops.emplace_back([id] { stop_project(id); });
+  stops.clear();
+  logf("syncing and remounting persistent disks read-only");
+  // Run with the boot image's tools, independent of a cached vm-system.
+  // The reaper may collect this child; the marker is managed by the script.
+  const auto child = ::fork();
+  if (child == 0) {
+    ::execl("/run/tsugumi/store-health", "store-health", "poweroff", "/persist", nullptr);
+    ::_exit(127);
+  }
+  if (child > 0) {
+    std::unique_lock lock(mu);
+    exited.wait_for(lock, std::chrono::seconds(10), [&] { return exit_status.contains(child); });
+    if (auto it = exit_status.find(child); it != exit_status.end()) {
+      if (it->second != 0) logf("read-only remount failed; next boot will check the store");
+      exit_status.erase(it);
+    }
+  }
   logf("powering off");
   ::sync();
   ::reboot(RB_POWER_OFF);
@@ -862,6 +908,8 @@ void shutdown_vm() {
 
 void control(int conn) {
   auto w = split(read_line(conn));
+  std::unique_lock operation(lifecycle);
+  if (powering_off) { reply(conn, "error VM is shutting down"); ::close(conn); return; }
   std::string r;
   if (w.empty()) r = "error empty request";
   else if (w[0] == "ping") r = "ok";
@@ -871,8 +919,10 @@ void control(int conn) {
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
   else if (w[0] == "gc" && w.size() == 1) r = collect_garbage();
+  else if (w[0] == "verify-store" && w.size() == 1) r = collect_garbage(true);
   else if (w[0] == "histories" && w.size() == 1) r = histories();
   else if (w[0] == "shell" && w.size() == 4 && valid_id(w[1])) {
+    operation.unlock();
     shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
     ::close(conn);
     return;
@@ -978,6 +1028,10 @@ int main(int argc, char** argv) {
     return 2;
   }
   ::signal(SIGPIPE, SIG_IGN);
+  sigset_t stop_signals;
+  sigemptyset(&stop_signals);
+  for (const auto number : {SIGTERM, SIGINT, SIGHUP}) sigaddset(&stop_signals, number);
+  ::pthread_sigmask(SIG_BLOCK, &stop_signals, nullptr);
   fs::create_directories("/sys/fs/cgroup/tsugumi");
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
@@ -985,6 +1039,12 @@ int main(int argc, char** argv) {
   tsugumi::NixEvaluator::init_process();
   cache_usage = std::make_unique<tsugumi::CacheUsage>(kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);
   std::thread(reaper).detach();
+  std::thread([stop_signals]() mutable {
+    int number = 0;
+    sigwait(&stop_signals, &number);
+    std::unique_lock operation(lifecycle);
+    shutdown_vm();
+  }).detach();
   std::thread(serve, opt.rpc_port, rpc).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port, opt.rpc_port);
   // The host waits for this line on the console before connecting.

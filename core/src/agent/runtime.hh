@@ -1,12 +1,14 @@
 // A model/tool loop, with all effects mediated by the owning core service.
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <stop_token>
 #include <string>
 #include <vector>
 
+#include "agent/context.hh"
 #include "agent/provider.hh"
 
 namespace tsugumi::agent {
@@ -37,6 +39,8 @@ struct RuntimeEvent {
 };
 
 struct RuntimeHooks {
+  // Durable service-owned sequence, including across transcript compaction.
+  std::function<std::string()> allocate_call;
   std::function<ToolResult(const ToolCall&, std::stop_token)> execute_tool;
   std::function<void(const RuntimeEvent&)> event;
   // Called before a model request, including retries and compaction. Throws
@@ -64,14 +68,32 @@ struct RunResult {
   std::string error;
 };
 
+// Ephemeral baseline for the last normal model request in one conversation.
+// Restarts intentionally fall back to estimation, never cumulative UI usage.
+struct ContextUsage {
+  uint64_t input_tokens = 0;
+  size_t message_count = 0;
+  std::string prefix_hash;
+  std::string request_hash;
+  size_t omitted_before = 0;
+  size_t result_limit = kToolResultBytes;
+};
+
+auto EstimateTextTokens(std::string_view text) -> uint64_t;
+auto EstimateMessageTokens(const Message& message) -> uint64_t;
+
 class Runtime {
  public:
   explicit Runtime(RuntimeOptions options = {}) : options_(options) {}
   auto Run(const ProviderConfig& config, std::string_view system,
            std::vector<Message>& messages, const std::vector<ToolSpec>& tools,
-           std::stop_token stop, const RuntimeHooks& hooks) const -> RunResult;
-  auto Compact(const ProviderConfig& config, std::vector<Message>& messages,
-               std::stop_token stop, const RuntimeHooks& hooks) const -> void;
+           std::stop_token stop, const RuntimeHooks& hooks,
+           ContextUsage* context = nullptr) const -> RunResult;
+  auto Compact(const ProviderConfig& config, std::string_view system,
+               std::vector<Message>& messages,
+               const std::vector<ToolSpec>& tools, std::stop_token stop,
+               const RuntimeHooks& hooks, ContextUsage* context = nullptr) const
+      -> void;
 
  private:
   RuntimeOptions options_;

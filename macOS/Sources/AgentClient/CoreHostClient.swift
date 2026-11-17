@@ -22,8 +22,14 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
   public let code: String
   public let message: String
   public let requestID: String?
-  public var description: String { message }
-  public var errorDescription: String? { message }
+  public var description: String {
+    switch code {
+    case "stale_project": return String(localized: "このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。")
+    case "conversation_identity_mismatch": return String(localized: "このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。")
+    default: return message
+    }
+  }
+  public var errorDescription: String? { description }
 }
 
 /// A presentation snapshot of hostd's catalogs. Persistence and refresh policy
@@ -47,6 +53,31 @@ public final class ModelCatalogSnapshot: @unchecked Sendable {
   fileprivate func show(_ id: String, _ models: [(id: String, name: String)]) {
     lock.lock(); defer { lock.unlock() }
     catalogs[id] = models
+  }
+}
+
+// Read observers normally reconnect across host restarts. Once this process
+// starts an update/exit, none of its client actors may spawn the old host again.
+private final class HostProcessLifetime: @unchecked Sendable {
+  static let shared = HostProcessLifetime()
+  private let lock = NSLock()
+  private var ending = false
+  private var starting: Set<Int32> = []
+  private var signalled: Set<Int32> = []
+  var isEnding: Bool { lock.withLock { ending } }
+  func launched(_ pid: Int32) {
+    let stopping = lock.withLock { starting.insert(pid); return ending }
+    if stopping { requestStop(pid) }
+  }
+  func becameReady(_ pid: Int32) { _ = lock.withLock { starting.remove(pid) } }
+  func end() {
+    let pending = lock.withLock { ending = true; return starting }
+    for pid in pending { requestStop(pid) }
+  }
+  func requestStop(_ pid: Int32) {
+    // A second TERM forces hostd out. A launch completing during Quit must
+    // share the same single signal as stopResident, preserving guest shutdown.
+    if lock.withLock({ signalled.insert(pid).inserted }) { _ = kill(pid, SIGTERM) }
   }
 }
 
@@ -102,7 +133,28 @@ public actor CoreHostClient {
     return built
   }
 
-  private func ready() async throws -> [String: Any] {
+  /// Observe the resident service without starting one just to quit it.
+  public func activityBeforeQuit() async throws -> Bool {
+    guard FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("host.ready").path) else { return false }
+    let activity: Tsugumi_Host_HostActivityT = try await layoutCall(
+      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), timeout: .seconds(3), existingOnly: true)
+    return activity.busy
+  }
+
+  public func stopResident(timeout: Duration = .seconds(47)) async {
+    HostProcessLifetime.shared.end()
+    let file = stateDirectory.appendingPathComponent("host.ready")
+    guard let data = try? Data(contentsOf: file),
+          let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let pid = value["pid"] as? Int32, pid > 1 else { return }
+    HostProcessLifetime.shared.requestStop(pid)
+    let deadline = ContinuousClock.now + timeout
+    while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+  }
+
+  private func ready(existingOnly: Bool = false) async throws -> [String: Any] {
     let state = stateDirectory
     let file = state.appendingPathComponent("host.ready")
     func read() -> [String: Any]? {
@@ -113,6 +165,7 @@ public actor CoreHostClient {
       return object
     }
     if let existing = read() { return existing }
+    if existingOnly { throw RPCError.disconnected }
     let socketRoot = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/private/tmp"
     let directory = URL(fileURLWithPath: socketRoot, isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -135,6 +188,8 @@ public actor CoreHostClient {
     daemon.standardError = handle
     daemon.standardInput = FileHandle.nullDevice
     try daemon.run()
+    HostProcessLifetime.shared.launched(daemon.processIdentifier)
+    defer { HostProcessLifetime.shared.becameReady(daemon.processIdentifier) }
     try handle.close()
     let value = try await HostReadiness.wait(read: read, exitStatus: {
       daemon.isRunning ? nil : daemon.terminationStatus
@@ -147,17 +202,23 @@ public actor CoreHostClient {
     return value
   }
 
-  private func connect() async throws {
+  private func connect(existingOnly: Bool = false) async throws {
+    guard !HostProcessLifetime.shared.isEnding else { throw CancellationError() }
     if let opening { return try await opening.value }
     if !transports.isEmpty { return }
-    let task = Task { try await self.start() }
+    let task = Task { try await self.start(existingOnly: existingOnly) }
     opening = task
     do { try await task.value; opening = nil }
     catch { opening = nil; close(); throw error }
   }
 
-  private func start() async throws {
-    let ready = try await ready()
+  private func start(existingOnly: Bool = false) async throws {
+    let ready = try await ready(existingOnly: existingOnly)
+    // Quit may have started while the launched process was publishing readiness.
+    if HostProcessLifetime.shared.isEnding {
+      if let pid = ready["pid"] as? Int32, pid > 1 { HostProcessLifetime.shared.requestStop(pid) }
+      throw CancellationError()
+    }
     guard let agentSocket = ready["unix_socket"] as? String, let hostSocket = ready["host_socket"] as? String,
           let token = ready["user_token"] as? String else {
       throw CoreHostFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
@@ -206,7 +267,8 @@ public actor CoreHostClient {
     let data: Data
     do {
       data = try await withCheckedThrowingContinuation { continuation in
-        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+        let stoppingRuntime = method == "HostRuntimeRequest" && (fields["action"] as? Tsugumi_Host_RuntimeAction) == .shutdown
+        transport.call(frame, timeout: .seconds(stoppingRuntime ? 45 : ["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
       }
     } catch RPCError.disconnected {
       // The pending reply can fail before the close observer reaches this
@@ -223,8 +285,9 @@ public actor CoreHostClient {
   }
 
   /// Stateless presentation operations use the host contract, independently of a project socket.
-  public func layoutCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject) async throws -> T {
-    try await connect()
+  public func layoutCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject,
+                                          timeout: Duration = .seconds(120), existingOnly: Bool = false) async throws -> T {
+    try await connect(existingOnly: existingOnly)
     guard let transport = transports[true], nextID < UInt64.max else { throw RPCError.disconnected }
     nextID += 1
     let request = Tsugumi_Host_RequestT()
@@ -237,7 +300,7 @@ public actor CoreHostClient {
     let offset = Tsugumi_Host_Message.pack(&builder, obj: &object)
     Tsugumi_Host_Message.finish(&builder, end: offset)
     let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(builder.data, timeout: .seconds(120), continuation: continuation)
+      transport.call(builder.data, timeout: timeout, continuation: continuation)
     }
     var buffer = ByteBuffer(data: data)
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
@@ -247,6 +310,23 @@ public actor CoreHostClient {
     }
     guard let result = result as? T else { throw CoreHostFailure(code: "protocol", message: "Invalid layout reply", requestID: nil) }
     return result
+  }
+
+  public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {
+    let request = Tsugumi_Host_LayoutCompleteRequestT()
+    request.projectJson = project; request.layoutJson = layout
+    request.definitionsJson = String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
+    let result: Tsugumi_Host_LayoutValidatedT = try await layoutCall(.layoutcompleterequest, request)
+    return result.json
+  }
+
+  public func operateProject(_ request: Tsugumi_Host_ProjectOperateRequestT) async throws -> Tsugumi_RPC_SaveResultT {
+    let result: Tsugumi_Host_ProjectOperationResultT = try await layoutCall(.projectoperaterequest, request)
+    if let failure = result.reply.value?.value as? Tsugumi_Data_FailureT { throw RPCFailure(failure) }
+    guard let saved = result.reply.value?.value as? Tsugumi_RPC_SaveResultT else {
+      throw RPCError.protocolViolation("Missing operation result")
+    }
+    return saved
   }
 
   public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
@@ -299,50 +379,6 @@ public actor CoreHostClient {
   public func permissionKinds(language: String) async throws -> [Tsugumi_Service_PermissionKindT] {
     let result = try await call("PermissionKindsRequest", ["language": language])
     return result["kinds"] as? [Tsugumi_Service_PermissionKindT] ?? []
-  }
-
-  public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
-    let result = try await call("DocumentTemplateRequest", ["name": name, "id": id])
-    guard let definition = result["definitionJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
-    }
-    return (definition, (result["files"] as? [Tsugumi_Host_DocumentTemplateFileT] ?? []).map { ($0.path, $0.text) })
-  }
-
-  public func connectDocuments(state: String, from: (String, String), to: (String, String), forkId: String?) async throws -> (state: String, insertedId: String, needsFork: Bool) {
-    var fields: [String: Any] = ["state_json": state, "from_card": from.0, "from_port": from.1, "to_card": to.0, "to_port": to.1]
-    fields["fork_id"] = forkId
-    let result = try await call("DocumentConnectRequest", fields)
-    guard let state = result["stateJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
-    }
-    return (state, result["insertedId"] as? String ?? "", result["needsFork"] as? Bool ?? false)
-  }
-
-  public func copyDocuments(state: String, paths: [String], from: String, to: String, name: String?) async throws -> (edits: String, files: [(from: String, to: String)]) {
-    var fields: [String: Any] = ["state_json": state, "paths": paths, "from": from, "to": to]
-    fields["name"] = name
-    let result = try await call("DocumentCopyRequest", fields)
-    guard let edits = result["editsJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
-    }
-    return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
-  }
-
-  public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
-    let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
-    guard let merged = result["mergedJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
-    }
-    return (merged, result["conflicts"] as? [String] ?? [])
-  }
-
-  public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
-    let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
-    guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {
-      throw CoreHostFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
-    }
-    return (project, external, link)
   }
 
   public func modelSelection(_ purpose: String) async throws -> Tsugumi_Service_ProviderSelectionT {

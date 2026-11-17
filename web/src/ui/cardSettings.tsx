@@ -4,9 +4,10 @@
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import * as H from '../gen/tsugumi/host'
 import { api } from '../api'
 import { app } from '../model/app'
-import { cloneDef } from '../model/merge'
+import { cloneDef } from '../model/documentValues'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
@@ -14,7 +15,7 @@ import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../shared/json'
-import { D, RPCFailure, s, sOpt } from '../shared/rpc'
+import { D, RPCFailure, s, sOpt, sha256Hex } from '../shared/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor, EditorMarker } from './editor'
@@ -40,6 +41,8 @@ export class CardEditorModel extends Observable {
   texts = new Map<string, string>()
   removed = new Set<string>()
   created = new Set<string>()
+  renames = new Map<string, string>()
+  private renameDestinations = new Map<string, string | undefined>()
   message?: string
   applying = false
   readonly revisionEdit = new RevisionEdit()
@@ -160,6 +163,8 @@ export class CardEditorModel extends Observable {
     this.generation++
     this.removed = new Set()
     this.created = new Set()
+    this.renames = new Map()
+    this.renameDestinations = new Map()
     this.rebindings.clear()
     this.message = undefined
     this.conflicts = []
@@ -167,53 +172,9 @@ export class CardEditorModel extends Observable {
     this.changed()
   }
 
-  /** Takes in what changed elsewhere since the copy was taken. */
+  /** Untouched editors may reload; an open working copy is never locally merged. */
   async follow(whileApplying = false) {
-    if (this.applying && !whileApplying) return
-    const defNow = this.session.cardDefinition(this.cardKey), metaNow = this.session.cardMeta(this.cardKey)
-    const definition = clone(this.definition), meta = clone(this.meta), revision = this.session.rev
-    const pair = (d: J | undefined, m: J | undefined) => { const v = obj(); v.set('definition', d); v.set('meta', m); return v }
-    const found: string[] = []
-    let any = false
-    if (!jeq(defNow, this.baseDefinition) || !jeq(metaNow, this.baseMeta)) {
-      try {
-        const reply = await this.session.mergeValues(pair(this.baseDefinition, this.baseMeta), pair(definition, meta), pair(defNow, metaNow))
-        if (revision !== this.session.rev || !jeq(definition, this.definition) || !jeq(meta, this.meta) ||
-          !jeq(defNow, this.session.cardDefinition(this.cardKey)) || !jeq(metaNow, this.session.cardMeta(this.cardKey))) return
-        found.push(...reply.conflicts)
-        this.definition = get(reply.value, 'definition')
-        this.meta = get(reply.value, 'meta')
-        this.baseDefinition = clone(defNow)
-        this.baseMeta = clone(metaNow)
-        any = true
-      } catch (error) { this.revisionEdit.error = errorText(error); this.changed(); return }
-    }
-    for (const p of [...this.texts.keys()]) {
-      if (this.loads.get(p)?.state !== 'loaded' || this.created.has(p)) continue
-      const h = this.session.sources.get(p)?.hash
-      const base = this.baseHashes.get(p)
-      if (base === undefined || h === base) continue
-      if (this.isEdited(p)) {
-        found.push(p.slice(this.prefix.length))
-      } else {
-        // Not edited here: read the new content.
-        this.texts.delete(p)
-        this.baseTexts.delete(p)
-        this.baseHashes.delete(p)
-        this.loads.delete(p)
-        this.generation++
-        any = true
-      }
-    }
-    for (const p of new Set([...this.removed, ...this.created])) {
-      if (this.baseHashes.get(p) !== this.session.sources.get(p)?.hash) found.push(p.slice(this.prefix.length))
-    }
-    if (found.length) {
-      this.conflicts = [...new Set([...this.conflicts, ...found])].sort()
-      this.revisionEdit.conflict(this.session.rev)
-    }
-    this.revisionEdit.baseRev = this.session.rev
-    if (any || found.length) this.changed()
+    if ((!this.applying || whileApplying) && !this.unapplied) this.reload()
   }
 
   openSource(source: string, line: number) {
@@ -250,9 +211,10 @@ export class CardEditorModel extends Observable {
     if (have !== undefined) return have
     this.loads.set(p, { state: 'loading' })
     this.changed()
-    const hash = this.session.sources.get(p)?.hash
+    const source = this.renames.get(p) ?? p
+    const hash = this.session.sources.get(source)?.hash
     try {
-      const t = await this.session.sourceText(p)
+      const t = await this.session.sourceText(source)
       if (!this.texts.has(p)) {
         this.texts.set(p, t)
         this.baseTexts.set(p, t)
@@ -312,23 +274,32 @@ export class CardEditorModel extends Observable {
     this.changed()
   }
 
-  /** Renames by copying the content that was actually read; a file that
-   *  cannot be read is left as it is. */
+  /** Stage a guarded move; renaming never decodes the source bytes. */
   async rename(p: string, rel: string): Promise<boolean> {
-    let t: string
-    try {
-      t = await this.text(p)
-    } catch (e) {
-      this.message = L('読み込めないため名前を変更しませんでした: ') + errorText(e)
-      this.changed()
-      return false
-    }
-    this.removeFile(p)
-    this.createFile(rel, t)
+    const target = this.prefix + rel
+    if (target === p) return true
+    const origin = this.renames.get(p) ?? p
+    const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
+    const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
+    const fresh = this.created.has(p) && !this.renames.has(p)
+    this.created.delete(p); this.renames.delete(p); this.renameDestinations.delete(p)
+    this.texts.delete(p); this.baseTexts.delete(p); this.loads.delete(p)
+    if (!fresh) this.removed.add(origin)
+    if (target === origin) this.removed.delete(origin)
+    else { this.created.add(target); if (!fresh) this.renames.set(target, origin) }
+    if (fresh) this.created.add(target)
+    if (text !== undefined) this.texts.set(target, text)
+    if (base !== undefined) this.baseTexts.set(target, base)
+    if (load) this.loads.set(target, load)
+    if (hash) { this.baseHashes.set(target, hash); this.baseHashes.set(origin, hash) }
+    this.renameDestinations.set(target, this.session.sources.get(target)?.hash)
+    this.changed()
     return true
   }
 
   removeFile(p: string) {
+    this.renames.delete(p)
+    this.renameDestinations.delete(p)
     const hash = this.session.sources.get(p)?.hash
     if (hash && !this.baseHashes.has(p)) this.baseHashes.set(p, hash)
     if (this.created.has(p)) this.created.delete(p)
@@ -367,7 +338,6 @@ export class CardEditorModel extends Observable {
     }
     this.applying = true
     this.changed()
-    await this.follow(true)
     const ends = this.draftEnds
     if (ends.some(e => !this.rebindings.get(e.id)?.trim())) {
       this.message = L('各 wire の実ポート名を指定してください（ポート欄）。')
@@ -378,16 +348,32 @@ export class CardEditorModel extends Observable {
     const bindings = new Map(this.rebindings)
     const def = clone(this.definition), m = clone(this.meta), k = this.cardKey, prefix = this.prefix
     const sentTexts = new Map(this.texts), sentCreated = new Set(this.created)
-    const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p))
-    const gone = [...this.removed]
+    const moves = new Map(this.renames), destinations = new Map(this.renameDestinations)
+    const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p) && !moves.has(p))
+    const gone = [...this.removed].filter(p => !moves.has(p) && ![...moves.values()].includes(p))
     const bases = new Map(this.baseHashes)
-    const clashing = new Set(this.conflicts)
     const ok = await this.revisionEdit.apply(session, overwrite, (x) => {
-      const current = x.cardDefinitionDraft(k)
-      const d = current ?? { card: def ?? obj(), meta: m }
-      // A Card in Card has no settings of its own, but a _meta.json like any other.
-      const card = d.link === undefined && def !== undefined ? def : d.card
-      if (!current || !jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
+      const edits: H.ProjectEditT[] = []
+      if (def !== undefined) edits.push(x.jsonEdit(prefix + '_card.json', overwrite ? session.cardDefinition(k) : this.baseDefinition, def))
+      edits.push(x.jsonEdit(prefix + '_meta.json', overwrite ? session.cardMeta(k) : this.baseMeta, m))
+      for (const [to, from] of moves) {
+        const hash = overwrite ? session.sources.get(from)?.hash : bases.get(to)
+        if (!hash) throw new Error('Missing source hash: ' + from)
+        const destination = destinations.get(to)
+        edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFileMove,
+          new H.ProjectFileMoveT(from, hash, to, destination ?? null, !destination)))
+      }
+      for (const [p, text] of changedTexts) {
+        const hash = overwrite ? session.sources.get(moves.get(p) ?? p)?.hash : bases.get(p)
+        edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFilePut,
+          new H.ProjectFilePutT(p, hash ?? null, !hash, Array.from(new TextEncoder().encode(text)))))
+      }
+      for (const p of gone) {
+        const hash = overwrite ? session.sources.get(p)?.hash : bases.get(p)
+        if (!hash) throw new Error('Missing source hash: ' + p)
+        edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFileRemove, new H.ProjectFileRemoveT(p, hash)))
+      }
+      x.appendEdits(edits)
       const scope = path(k).slice(0, -1)
       if (ends.some(e => e.index !== undefined)) x.updateGraph(scope, g => {
         const conns = arr(g.get('connections')) ?? []
@@ -402,44 +388,41 @@ export class CardEditorModel extends Observable {
           if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
         }
       })
-      for (const [p, t] of changedTexts) {
-        x.putSource(p, t)
-        // Saved against the version this editor read (a file changed on both
-        // sides replaces the other version: the user chose so by applying).
-        const h = bases.get(p)
-        if (h && !clashing.has(p.slice(prefix.length))) x.sourceBases.set(p, h)
-      }
-      for (const p of gone) {
-        x.removeSource(p)
-        const h = bases.get(p)
-        if (h && !clashing.has(p.slice(prefix.length))) x.sourceBases.set(p, h)
-      }
+
     })
     if (!ok) { this.applying = false; this.changed(); return false }
     const laterDef = clone(this.definition), laterMeta = clone(this.meta)
+    const laterMoves = new Map(this.renames), laterDestinations = new Map(this.renameDestinations)
     const laterTexts = new Map(this.texts), laterRemoved = new Set(this.removed), laterCreated = new Set(this.created)
     const savedCurrent = this.revisionEdit.savedRev === session.rev
     // Reload the confirmed base, then put only edits made after Send back on it.
     this.reload(false)
-    this.definition = laterDef
-    this.meta = laterMeta
-    this.baseDefinition = def
-    this.baseMeta = m
+    if (!jeq(laterDef, def)) { this.definition = laterDef; this.baseDefinition = def }
+    if (!jeq(laterMeta, m)) { this.meta = laterMeta; this.baseMeta = m }
     for (const [p, t] of laterTexts) {
       const sent = sentTexts.get(p)
       if (savedCurrent || t !== sent) {
         this.texts.set(p, t)
         if (sent !== undefined) this.baseTexts.set(p, sent)
         this.loads.set(p, { state: 'loaded' })
-        const hash = savedCurrent ? session.sources.get(p)?.hash : bases.get(p)
+        const hash = sent !== undefined && changedTexts.some(([path]) => path === p) ? await sha256Hex(new TextEncoder().encode(sent)) : bases.get(p)
         if (hash) this.baseHashes.set(p, hash)
-        if (!savedCurrent && t !== sent) this.revisionEdit.conflict(session.rev)
       }
     }
-    this.removed = new Set([...laterRemoved].filter(p => !gone.includes(p)))
+    const savedOrigins = new Set(moves.values())
+    this.removed = new Set([...laterRemoved].filter(p => !gone.includes(p) && !savedOrigins.has(p)))
+    for (const [to, from] of laterMoves) {
+      if (moves.get(to) === from) continue
+      const savedFrom = [...moves].find(([, origin]) => origin === from)?.[0] ?? from
+      this.renames.set(to, savedFrom); this.renameDestinations.set(to, laterDestinations.get(to)); this.removed.add(savedFrom)
+      const hash = session.sources.get(savedFrom)?.hash ?? bases.get(to)
+      if (hash) this.baseHashes.set(to, hash)
+    }
+    for (const [to, from] of moves) {
+      if (![...laterMoves.values()].includes(from) && !laterCreated.has(to)) this.removed.add(to)
+    }
     this.created = new Set([...laterCreated].filter(p => !sentCreated.has(p)))
     for (const p of sentTexts.keys()) if (!laterTexts.has(p) && !gone.includes(p)) this.removed.add(p)
-    await this.follow(true)
     this.applying = false
     this.message = L('適用しました。')
     this.changed()
@@ -663,7 +646,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const params = arr(get(def, 'params')) ?? []
   const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
   const kind = model.kind
-  const serviceSetting = string('executionService', 'local')
+  const serviceSetting = string('executionService', 'auto')
   const serviceId = serviceSetting.value
   const service = session.executionServices.find((e) => s(e.id) === serviceId)
   const nativeSystem = s(service?.nativeSystem)
@@ -682,7 +665,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const resources = get(def, 'executionResources')
   const resource = (name: string, label: string, example: string) => (
     <Row label={label}>
-      <TextField value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+      <TextField name={name} value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
         onChange={(value) => {
           const text = value.trim()
           const next = isObj(resources) ? clone(resources) as JObj : obj()
@@ -753,18 +736,22 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
+              <Row label={L('ワーカーの条件式')} help={L('x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。')}>
+                <TextField value={str(get(get(def, 'workerCondition'), 'expression')) ?? ''} mono onChange={(value) => model.setSetting('workerCondition', value.trim() ? obj([['language', 'simple'], ['expression', value]]) : undefined)} />
+              </Row>
               {session.executionServices.length > 1 || !service && session.executionServices.length ? (
                 <Row label={L('実行サービス')}>
                   <Select {...serviceSetting} options={[
+                    { value: 'auto', label: L('条件から自動選択') },
                     ...session.executionServices.map((entry) => ({ value: s(entry.id), label: serviceLabel(entry), disabled: !entry.available })),
-                    ...(!service ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
+                    ...(!service && serviceId !== 'auto' ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
                   ]} />
                 </Row>
               ) : <Value label={L('実行サービス')} value={serviceLabel(service)} />}
               {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
                 <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
               )}
-              {serviceId !== 'local' && (!service || !service.available) && (
+              {serviceId !== 'local' && serviceId !== 'auto' && (!service || !service.available) && (
                 <Row><span className="caption">{L('選択した実行サービスに接続できません。')}</span></Row>
               )}
               <Row label={L('CPU アーキテクチャ')} help={L('選択した実行サービスで利用できる CPU アーキテクチャを選びます。')}>
@@ -788,8 +775,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
-                serviceId !== 'local' && bool(get(def, 'reuseWorker')) !== true)}
-              {serviceId !== 'local' && bool(get(def, 'reuseWorker')) === true && (
+                serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) !== true)}
+              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) === true && (
                 <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
               )}
               <Row label={L('ファイルアクセスを制限')}>
@@ -1185,9 +1172,12 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   const [editing, setEditing] = useState<{ id: string; text: string }>()
   const comments = session.comments(card)
   const open = comments.filter((c) => !c.resolved), resolved = comments.filter((c) => c.resolved)
-  const add = () => {
-    session.addComment(card, text)
-    setText('')
+  const add = async () => {
+    const submitted = text
+    try {
+      await session.addComment(card, submitted)
+      setText(current => current === submitted ? '' : current)
+    } catch (e) { session.cardEditFailed(e) }
   }
   const saveEdit = async (overwrite = false) => {
     if (!editing) return

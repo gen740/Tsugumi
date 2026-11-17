@@ -6,6 +6,7 @@
 #include <flatbuffers/flatbuffers.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <stop_token>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -57,6 +59,8 @@ struct RequestIn {
   std::shared_ptr<const std::string> frame;  // verified Message buffer
   const Tsugumi::RPC::Request* request() const;
   bool websocket = false;
+  std::shared_ptr<std::atomic<bool>> cancelled = {};
+  std::stop_token connection_stop = {};
 };
 
 class RequestSink {

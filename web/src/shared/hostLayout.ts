@@ -1,11 +1,14 @@
 // Stateless presentation operations implemented by tsugumi-hostd.
+import { Builder, ByteBuffer } from 'flatbuffers'
+import * as R from '../gen/tsugumi/rpc'
 import * as H from '../gen/tsugumi/host'
 import type { LayoutBar, LayoutBox, LayoutPort, LayoutProposal, LayoutScene } from '../model/layoutScene'
 import { api } from '../api'
 export { H }
 export const layoutHost = {
-  layoutArrange: (scene: LayoutScene) => api<LayoutProposal>('/api/layout/arrange', { scene }),
-  layoutUntangle: (scene: LayoutScene, around: string[]) => api<LayoutProposal>('/api/layout/untangle', { scene, around }),
+  complete: async (project: string, layout: string, definitions: Record<string, string>) =>
+    (await api<{ json: string }>('/api/layout/complete', { project_json: project, layout_json: layout, definitions_json: JSON.stringify(definitions) })).json,
+  displayGeometry: () => api<H.DisplayGeometriesT>('/api/layout/display-geometry', {}),
   validate: async (json: string, removedCards: string[] = []) => (await api<{ json: string }>('/api/layout/validate', { json, removedCards })).json,
   versionCanvas: (data: unknown) => api<H.VersionCanvasT>('/api/layout/version-canvas', data),
 }

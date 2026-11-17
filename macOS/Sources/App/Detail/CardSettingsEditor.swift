@@ -21,6 +21,8 @@ final class CardEditorModel {
   var texts: [String: String] = [:]     // loaded or edited source text
   var removed: Set<String> = []
   var created: Set<String> = []
+  var renames: [String: String] = [:]
+  private var renameDestinations: [String: String] = [:]
   var message: String?
   var applying = false
   let revisionEdit = RevisionEdit()
@@ -133,58 +135,17 @@ final class CardEditorModel {
     generation += 1
     removed = []
     created = []
+    renames = [:]
+    renameDestinations = [:]
     rebindings = [:]
     message = nil
     conflicts = []
     revisionEdit.reload(session.rev)
   }
 
-  /// Takes in what changed elsewhere since the copy was taken.
+  /// Untouched editors follow confirmed state; working copies are never merged locally.
   func follow(whileApplying: Bool = false) async {
-    guard !applying || whileApplying else { return }
-    let defNow = session.cardDefinition(cardKey), metaNow = session.cardMeta(cardKey)
-    let localDefinition = definition, localMeta = meta, revision = session.rev
-    func pair(_ d: JSONValue?, _ m: JSONValue?) -> JSONValue {
-      var fields: [(String, JSONValue)] = []
-      if let d { fields.append(("definition", d)) }
-      if let m { fields.append(("meta", m)) }
-      return .object(fields)
-    }
-    var found: [String] = []
-    if defNow != baseDefinition || metaNow != baseMeta {
-      do {
-        let reply = try await session.mergeValues(base: pair(baseDefinition, baseMeta), ours: pair(localDefinition, localMeta), theirs: pair(defNow, metaNow))
-        guard revision == session.rev, localDefinition == definition, localMeta == meta,
-              defNow == session.cardDefinition(cardKey), metaNow == session.cardMeta(cardKey) else { return }
-        found += reply.conflicts
-        definition = reply.value["definition"]
-        meta = reply.value["meta"]
-        baseDefinition = defNow
-        baseMeta = metaNow
-      } catch { revisionEdit.error = String(describing: error); return }
-    }
-    for p in Array(texts.keys) where loads[p] == .loaded && !created.contains(p) {
-      let h = session.sources[p]?.hash
-      guard let base = baseHashes[p], h != base else { continue }
-      if isEdited(p) {
-        found.append(String(p.dropFirst(prefix.count)))
-      } else {
-        // Not edited here: read the new content.
-        texts[p] = nil
-        baseTexts[p] = nil
-        baseHashes[p] = nil
-        loads[p] = nil
-        generation += 1
-      }
-    }
-    for p in removed.union(created) where baseHashes[p] != session.sources[p]?.hash {
-      found.append(String(p.dropFirst(prefix.count)))
-    }
-    if !found.isEmpty {
-      conflicts = Array(Set(conflicts + found)).sorted()
-      revisionEdit.conflict(session.rev)
-    }
-    revisionEdit.baseRev = session.rev
+    if (!applying || whileApplying) && !unapplied { reload() }
   }
 
   /// Whether a source file's content is known. A file that could not be read
@@ -232,9 +193,10 @@ final class CardEditorModel {
   func text(_ p: String) async throws -> String {
     if let t = texts[p] { return t }
     loads[p] = .loading
-    let hash = session.sources[p]?.hash
+    let source = renames[p] ?? p
+    let hash = session.sources[source]?.hash
     do {
-      let t = try await session.sourceText(p)
+      let t = try await session.sourceText(source)
       if texts[p] == nil {
         texts[p] = t
         baseTexts[p] = t
@@ -276,23 +238,30 @@ final class CardEditorModel {
     loads[p] = .loaded
   }
 
-  /// Renames by copying the content that was actually read; a file that
-  /// cannot be read is left as it is.
+  /// Stage a guarded move without decoding the source bytes.
   @discardableResult
   func rename(_ p: String, to rel: String) async -> Bool {
-    let t: String
-    do {
-      t = try await text(p)
-    } catch {
-      message = String(localized: "読み込めないため名前を変更しませんでした: ") + "\(error)"
-      return false
-    }
-    removeFile(p)
-    createFile(rel, text: t)
+    let target = prefix + rel
+    if target == p { return true }
+    let origin = renames[p] ?? p
+    let hash = baseHashes[p] ?? session.sources[origin]?.hash
+    let text = texts[p], base = baseTexts[p], load = loads[p]
+    let fresh = created.contains(p) && renames[p] == nil
+    created.remove(p); renames[p] = nil; renameDestinations[p] = nil
+    texts[p] = nil; baseTexts[p] = nil; loads[p] = nil
+    if !fresh { removed.insert(origin) }
+    if target == origin { removed.remove(origin) }
+    else { created.insert(target); if !fresh { renames[target] = origin } }
+    if fresh { created.insert(target) }
+    texts[target] = text; baseTexts[target] = base; loads[target] = load
+    baseHashes[target] = hash; baseHashes[origin] = hash
+    renameDestinations[target] = session.sources[target]?.hash
     return true
   }
 
   func removeFile(_ p: String) {
+    renames[p] = nil
+    renameDestinations[p] = nil
     if baseHashes[p] == nil, let hash = session.sources[p]?.hash { baseHashes[p] = hash }
     if created.contains(p) { created.remove(p) } else { removed.insert(p) }
     texts[p] = nil
@@ -314,7 +283,6 @@ final class CardEditorModel {
     }
     applying = true
     defer { applying = false }
-    await follow(whileApplying: true)
     let ends = draftEnds, bindings = rebindings
     guard !ends.contains(where: { bindings[$0.id]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true }) else {
       message = String(localized: "各 wire の実ポート名を指定してください（ポート欄）。")
@@ -322,20 +290,39 @@ final class CardEditorModel {
     }
     let def = definition, m = meta, k = cardKey
     let sentTexts = texts, sentCreated = created
-    let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
-    let gone = removed
+    let moves = renames, destinations = renameDestinations
+    let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) && moves[$0.key] == nil }
+    let gone = removed.subtracting(moves.keys).subtracting(moves.values)
     let bases = baseHashes
-    let clashing = Set(conflicts)
     let ok = await revisionEdit.apply(session, overwrite: overwrite) { s in
-      // A Card in Card has no settings of its own, but a _meta.json like any other.
-      let current = s.cardDefinitionDraft(k)
-      var d = current ?? DefinitionDraft(card: def ?? .object([]), meta: m)
-      let card = d.link == nil ? def ?? d.card : d.card
-      if current == nil || card != d.card || m != d.meta {
-        d.card = card
-        d.meta = m
-        s.setCardDefinition(k, d)
+      var edits: [Tsugumi_Host_ProjectEditT] = []
+      if let def { edits.append(s.jsonEdit(prefix + "_card.json", old: overwrite ? s.cardDefinition(k) : baseDefinition, new: def)) }
+      edits.append(s.jsonEdit(prefix + "_meta.json", old: overwrite ? s.cardMeta(k) : baseMeta, new: m))
+      for (to, from) in moves.sorted(by: { $0.key < $1.key }) {
+        let move = Tsugumi_Host_ProjectFileMoveT()
+        move.filePath = from; move.to = to
+        move.expectedHash = (overwrite ? s.sources[from]?.hash : bases[to]) ?? ""
+        move.expectedDestinationHash = destinations[to]; move.destinationMissing = move.expectedDestinationHash == nil
+        let edit = Tsugumi_Host_ProjectEditT()
+        edit.value = Tsugumi_Host_ProjectEditValueUnion(move, type: .projectfilemove)
+        edits.append(edit)
       }
+      for (p, text) in changedTexts {
+        let hash = overwrite ? s.sources[moves[p] ?? p]?.hash : bases[p]
+        let put = Tsugumi_Host_ProjectFilePutT()
+        put.filePath = p; put.expectedHash = hash; put.expectMissing = hash == nil; put.bytes = Array(text.utf8)
+        let edit = Tsugumi_Host_ProjectEditT()
+        edit.value = Tsugumi_Host_ProjectEditValueUnion(put, type: .projectfileput)
+        edits.append(edit)
+      }
+      for p in gone {
+        let remove = Tsugumi_Host_ProjectFileRemoveT()
+        remove.filePath = p; remove.expectedHash = (overwrite ? s.sources[p]?.hash : bases[p]) ?? ""
+        let edit = Tsugumi_Host_ProjectEditT()
+        edit.value = Tsugumi_Host_ProjectEditValueUnion(remove, type: .projectfileremove)
+        edits.append(edit)
+      }
+      s.appendEdits(edits)
       let scope = Array(path(k).dropLast())
       if ends.contains(where: { $0.index != nil }) {
         s.updateGraph(scope) { g in
@@ -353,41 +340,35 @@ final class CardEditorModel {
           }
         }
       }
-      for (p, t) in changedTexts {
-        s.putSource(p, t)
-        // Saved against the version this editor read (a file changed on both
-        // sides replaces the other version: the user chose so by applying).
-        if let h = bases[p], !clashing.contains(String(p.dropFirst(prefix.count))) { s.sourceBases[p] = h }
-      }
-      for p in gone {
-        s.removeSource(p)
-        if let h = bases[p], !clashing.contains(String(p.dropFirst(prefix.count))) { s.sourceBases[p] = h }
-      }
+
     }
     guard ok else { return false }
     message = String(localized: "適用しました。")
     let laterDef = definition, laterMeta = meta
+    let laterMoves = renames, laterDestinations = renameDestinations
     let laterTexts = texts, laterRemoved = removed, laterCreated = created
     let savedCurrent = revisionEdit.savedRev == session.rev
     reload()
-    definition = laterDef
-    meta = laterMeta
-    baseDefinition = def
-    baseMeta = m
+    if laterDef != def { definition = laterDef; baseDefinition = def }
+    if laterMeta != m { meta = laterMeta; baseMeta = m }
     for (p, t) in laterTexts {
       let sent = sentTexts[p]
       if savedCurrent || t != sent {
         texts[p] = t
         baseTexts[p] = sent
         loads[p] = .loaded
-        baseHashes[p] = savedCurrent ? session.sources[p]?.hash : bases[p]
-        if !savedCurrent && t != sent { revisionEdit.conflict(session.rev) }
+        baseHashes[p] = changedTexts[p] != nil ? sent.map { sha256Hex(Data($0.utf8)) } : bases[p]
       }
     }
-    removed = laterRemoved.subtracting(gone)
+    removed = laterRemoved.subtracting(gone).subtracting(moves.values)
+    for (to, from) in laterMoves where moves[to] != from {
+      let savedFrom = moves.first { $0.value == from }?.key ?? from
+      renames[to] = savedFrom; renameDestinations[to] = laterDestinations[to]; removed.insert(savedFrom)
+      baseHashes[to] = session.sources[savedFrom]?.hash ?? bases[to]
+    }
+    for (to, from) in moves where !laterMoves.values.contains(from) && !laterCreated.contains(to) { removed.insert(to) }
     created = laterCreated.subtracting(sentCreated)
     for p in sentTexts.keys where laterTexts[p] == nil && !gone.contains(p) { removed.insert(p) }
-    await follow(whileApplying: true)
     return true
   }
 }
@@ -590,7 +571,7 @@ private struct GeneralCategory: View {
   @State private var renameError: String?
 
   private var remote: Bool {
-    (model.definition?["executionService"]?.string ?? "local") != "local"
+    { let id = model.definition?["executionService"]?.string ?? "auto"; return id != "local" && id != "auto" }()
   }
 
   var body: some View {
@@ -705,7 +686,7 @@ private struct GeneralCategory: View {
 
   @ViewBuilder private var executionSettings: some View {
     let services = model.session.executionServices
-    let serviceSetting = string("executionService", fallback: "local")
+    let serviceSetting = string("executionService", fallback: "auto")
     let serviceId = serviceSetting.wrappedValue
     let service = services.first { $0.id == serviceId }
     let resourceLimits = serviceId != "local" && service?.resourceLimits == true
@@ -714,12 +695,22 @@ private struct GeneralCategory: View {
     let system = string("system", fallback: "")
     let selected = system.wrappedValue
 
-    if services.count > 1 || (service == nil && !services.isEmpty) {
+    TextField("ワーカーの条件式", text: Binding(
+      get: { model.definition?["workerCondition"]?["expression"]?.string ?? "" },
+      set: { value in
+        var condition = JSONValue.object([])
+        condition["language"] = .string("simple")
+        condition["expression"] = .string(value)
+        model.definition?["workerCondition"] = value.trimmingCharacters(in: .whitespaces).isEmpty ? nil : condition
+      }))
+      .help("x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。")
+    if !services.isEmpty {
       Picker("実行サービス", selection: serviceSetting) {
+        Text("条件から自動選択").tag("auto")
         ForEach(services, id: \.id) { entry in
           Text(verbatim: serviceLabel(entry)).tag(entry.id).disabled(!entry.available)
         }
-        if service == nil { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
+        if service == nil && serviceId != "auto" { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
       }
     } else {
       LabeledContent("実行サービス", value: service.map(serviceLabel) ?? String(localized: "情報なし"))
@@ -728,7 +719,7 @@ private struct GeneralCategory: View {
       Label("このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)
     }
-    if serviceId != "local" && service?.available != true {
+    if serviceId != "local" && serviceId != "auto" && service?.available != true {
       Label("選択した実行サービスに接続できません。", systemImage: "exclamationmark.triangle").font(.caption)
     }
     Picker("CPU アーキテクチャ", selection: system) {
@@ -1237,8 +1228,11 @@ private struct CommentsCategory: View {
   }
 
   private func add() {
-    session.addComment(card, text)
-    text = ""
+    let submitted = text
+    session.performCardEdit {
+      try await session.addComment(card, submitted)
+      if text == submitted { text = "" }
+    }
   }
 
   /// Who resolved it, what was done and which Cards changed.

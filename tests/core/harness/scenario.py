@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -12,6 +13,12 @@ from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 from .daemon import BUILD, ROOT
+
+# A mocked build has no pinned shell, so its Cards use the host's. NixOS and the
+# nixos/nix container have no /bin/bash and no tools in /usr/bin:/bin; there the
+# shell and the tools come from the PATH the tests run with.
+HOST_BASH = "/bin/bash" if os.access("/bin/bash", os.X_OK) else shutil.which("bash")
+HOST_PATH = "/usr/bin:/bin" if HOST_BASH == "/bin/bash" else os.environ["PATH"]
 
 ENDED = {RunState.succeeded, RunState.failed, RunState.cancelled}
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
@@ -62,7 +69,7 @@ class Project:
             files["default.nix"] = "{ pkgs, inputs, params }: { }"
             product = {**(plan or {}), **({"manifest": manifest} if manifest else {})}
             if "manifest" in product:
-                product["manifest"] = {"shell": "/bin/bash", "path": "/usr/bin:/bin", **product["manifest"]}
+                product["manifest"] = {"shell": HOST_BASH, "path": HOST_PATH, **product["manifest"]}
             files["mock-build.json"] = json.dumps(product)
         self.cards[name] = (definition, files)
         return self

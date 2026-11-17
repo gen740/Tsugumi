@@ -20,44 +20,50 @@ namespace {
 // The unprivileged identity for Card processes.
 constexpr uid_t kCardUid = 65534;
 
-class PreparedNativeExecution final : public PreparedExecution {
+class PreparedLocalExecution final : public PreparedExecution {
  public:
-  explicit PreparedNativeExecution(NativeExecutionService& service) : service_(service) {}
+  explicit PreparedLocalExecution(LocalExecutionService& service) : service_(service) {}
   auto execute(const ExecutionRequest& request) -> ExecutionResult override { return service_.run(request); }
 
  private:
-  NativeExecutionService& service_;
+  LocalExecutionService& service_;
 };
 
 }  // namespace
 
-NativeExecutionService::NativeExecutionService(Service& service, std::filesystem::path /*scratch_root*/)
-    : service_(service), workers_(service.run_scratch() / "workers") {}
+LocalExecutionService::LocalExecutionService(Service& service, std::filesystem::path /*scratch_root*/)
+    : service_(service), workers_(service.options().workerd_binary.empty()
+          ? service.options().worker_binary.parent_path() / "tsugumi-workerd"
+          : service.options().workerd_binary, service.run_scratch() / "workers") {}
 
-auto NativeExecutionService::clear() -> void { workers_.clear(false); }
+auto LocalExecutionService::clear() -> void { workers_.clear(); }
 
-auto NativeExecutionService::prepare(const Node& node, const std::filesystem::path& /*directory*/,
+auto LocalExecutionService::prepare(const Node& node, const std::filesystem::path& /*directory*/,
                                     BuildRequest& build) -> std::unique_ptr<PreparedExecution> {
+  if (node.settings.execution_resources)
+    throw Failed(FailureKind::unsupported, "local worker cannot enforce executionResources");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native, node.settings.system.empty() ? native_system() : node.settings.system};
   build.transport = &transport;
-  return std::make_unique<PreparedNativeExecution>(*this);
+  return std::make_unique<PreparedLocalExecution>(*this);
 }
 
-auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
+auto LocalExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
   private_disk_scratch(service_.run_scratch() / "workers");
   const Node& node = request.node;
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
 
-  s.environment_id = build.environment.id;
   s.build_cached = build.cached;
   s.emulator = build.emulator;
-  s.execution_service = node.settings.execution_service;
+  s.execution_service = kLocalExecutionService;
   // The environment and its invocation association must survive a crash
   // before the worker can execute any code, including a reused build.
   try {
-    request.start([&](sql::Db& db) { History::put_environment(db, s.run_id, build.environment); });
+    request.start([&](sql::Db &db) {
+      s.environment_id =
+          History::put_environment(db, s.run_id, build.environment);
+    });
   } catch (...) {
     s.environment_id.clear();
     s.execution_service.clear();
@@ -154,12 +160,20 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
       if (inputs[i].kind == PortKind::FlatBuffer) continue;
       const auto destination = std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
       std::filesystem::create_directories(destination);
-      inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
+      inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel,
+          [&](std::string_view name, uint64_t done, uint64_t total) {
+            if (request.transfer) request.transfer("copy", name, done, total);
+          });
     }
     return inputs;
   };
   invocation.validate = request.validate;
-  return workerd::run_invocation(workers_, lease, worker_card, key, reuse, invocation);
+  invocation.transfer = [&](const std::filesystem::path& name, uint64_t done, uint64_t total) {
+    if (request.transfer) request.transfer("copy", name.generic_string(), done, total);
+  };
+  return workerd::run_invocation([&](auto worker, bool keep, const auto& reason) {
+    workers_.release(std::move(worker), keep, reason);
+  }, lease, reuse, invocation);
 }
 
 }  // namespace tsugumi

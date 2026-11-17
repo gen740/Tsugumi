@@ -29,16 +29,15 @@ export class RevisionEdit extends Observable {
     this.changed()
   }
   async apply(session: ProjectSession, overwrite: boolean, change: (s: ProjectSession) => void): Promise<boolean> {
-    if (this.applying || (this.conflictRev !== undefined && !overwrite)) return false
-    const revision = overwrite ? this.conflictRev ?? this.baseRev : this.baseRev
+    if (this.applying) return false
     this.applying = true
     this.changed()
     try {
-      this.savedRev = await session.applyEdit(revision, change)
+      this.savedRev = await session.applyMutation(change)
       this.reload(this.savedRev ?? session.rev)
       return true
     } catch (e) {
-      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict)) {
+      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) {
         this.conflictRev = session.rev
         this.error = undefined
       } else this.error = errorText(e)
@@ -48,6 +47,17 @@ export class RevisionEdit extends Observable {
       this.changed()
     }
   }
+  async replaceDocuments(session: ProjectSession, documents: [string, import('../shared/json').J | undefined][]): Promise<boolean> {
+    if (this.applying) return false
+    this.applying = true; this.changed()
+    try {
+      this.savedRev = await session.replaceDocuments(this.baseRev, documents)
+      this.reload(this.savedRev)
+      return true
+    } catch (e) { this.error = errorText(e); return false }
+    finally { this.applying = false; this.changed() }
+  }
+
 }
 
 export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: RevisionEdit; text: () => string; overwrite: () => void; reload: () => void }) {
@@ -68,6 +78,7 @@ export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: Re
 /** The value and revision actually visible when an inline edit starts. */
 export class InlineParamEdit extends RevisionEdit {
   initial = ''
+  paramBase?: { parameter?: import('../shared/json').J }
   begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
   async commit(session: ProjectSession, text: string, overwrite: boolean, change: (s: ProjectSession) => void) {
     if (text === this.initial) return true

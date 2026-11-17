@@ -10,6 +10,13 @@ namespace tsugumi {
 
 namespace stdfs = std::filesystem;
 
+SourceFile::~SourceFile() {
+  if (!journaled) {
+    std::error_code ec;
+    stdfs::remove(path, ec);
+  }
+}
+
 std::string path_key(const CardPath& p) {
   std::string out;
   for (size_t i = 0; i < p.size(); ++i) {
@@ -286,7 +293,8 @@ auto execution_json(const std::string& text, const char* omitted) -> std::string
   if (auto error = schema::decode(text, object)) throw DocumentError("invalid_document", error->message);
   std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields;
   for (const auto& [key, value] : object.value())
-    if (key != omitted) fields.emplace_back(key, &value);
+    if (key != omitted && !(std::string_view(omitted) == "name" && key == "agentExclude"))
+      fields.emplace_back(key, &value);
   return execution_value(schema::capture(schema::object_text(fields)));
 }
 }  // namespace
@@ -379,9 +387,11 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
-      auto data = fs::read_file_or_throw(root / rel);
-      if (Document::is_card_meta_file(rel)) check_meta_json(data);
-      doc->sources[rel] = SourceEntry{crypto::sha256_hex(data), data.size()};
+      if (Document::is_card_meta_file(rel)) check_meta_json(fs::read_file_or_throw(root / rel));
+      crypto::Sha256 hash;
+      const auto size = fs::stream_beneath(root, rel, UINT64_MAX,
+                                          [&](std::string_view chunk) { hash.update(chunk); });
+      doc->sources[rel] = SourceEntry{hash.finish_hex(), size};
     }
   }
   check_structure(*doc);

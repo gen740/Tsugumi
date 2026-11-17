@@ -205,6 +205,7 @@ private struct GeneralSettings: View {
         }
         .fixedSize(horizontal: false, vertical: true)
       }
+      Toggle("最後のウインドウを閉じたら Tsugumi を終了する", isOn: $prefs.quitAfterLastWindowClosed)
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
         .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {
@@ -214,6 +215,7 @@ private struct GeneralSettings: View {
         ForEach(AppPreferences.Motion.allCases) { Text($0.label).tag($0) }
       }
       .help("Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。")
+      TrustedFoldersSettings()
       UpdateSettings()
     }
     .formStyle(.grouped)
@@ -562,7 +564,6 @@ private struct APISettings: View {
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @HostStorage("agent.fixturePort") private var port = 8765
   @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
-  @HostStorage("agent.helperParallelism") private var helperParallelism = 4
   @HostStorage("agent.allowUnscopedHelpers") private var allowUnscopedHelpers = false
 
   var body: some View {
@@ -601,11 +602,6 @@ private struct APISettings: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {
-        Picker("同時に動かすヘルパーの数", selection: $helperParallelism) {
-          ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }
-        }
-        Text("1 にすると、ヘルパーは順番に動きます。")
-          .font(.caption).foregroundStyle(.secondary)
         Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
       } header: {
         Text("ヘルパー")
@@ -778,6 +774,7 @@ private struct EnvironmentStorageSettings: View {
   @State private var confirmReset = false
   @State private var resetConfirmation = ""
   @State private var confirmCleanup = false
+  @State private var confirmVerify = false
 
   var body: some View {
     GroupBox("実行環境のデータ") {
@@ -791,6 +788,8 @@ private struct EnvironmentStorageSettings: View {
         Text("共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
+          Button("共有 store を検査・修復…") { confirmVerify = true }
+            .disabled(working)
           Button("共有 store を掃除…") { confirmCleanup = true }
             .disabled(working)
           Button("すべての実行環境を初期化…", role: .destructive) {
@@ -813,6 +812,12 @@ private struct EnvironmentStorageSettings: View {
       }
       .padding(6)
     }
+    .confirmationDialog("共有 Nix store を検査・修復しますか？", isPresented: $confirmVerify) {
+      Button("検査・修復") { verify() }
+      Button("キャンセル", role: .cancel) {}
+    } message: {
+      Text("すべてのプロジェクトの実行環境を停止し、store の内容を検査してキャッシュから修復します。結果と対象パスは VM のログに残ります。")
+    }
     .confirmationDialog("共有 Nix store を掃除しますか？", isPresented: $confirmCleanup) {
       Button("掃除") { cleanup() }
       Button("キャンセル", role: .cancel) {}
@@ -824,6 +829,19 @@ private struct EnvironmentStorageSettings: View {
       Button("キャンセル", role: .cancel) {}
     } message: {
       Text(verbatim: resetConfirmation)
+    }
+  }
+
+  private func verify() {
+    working = true
+    message = nil
+    Task {
+      do {
+        let details = try await model.environments.verifyStore()
+        failed = false
+        message = String(localized: "Nix store の検査・修復が完了しました。") + "\n" + details
+      } catch { failed = true; message = String(describing: error) }
+      working = false
     }
   }
 

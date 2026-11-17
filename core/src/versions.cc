@@ -76,6 +76,18 @@ std::string hex(const git_oid* id) {
   return buf;
 }
 
+auto resolve_commit(git_repository *repo, const std::string &name, git_oid &oid)
+    -> bool {
+  git_object *object = nullptr;
+  if (git_revparse_single(&object, repo, name.c_str()) != 0)
+    return false;
+  const bool commit = git_object_type(object) == GIT_OBJECT_COMMIT;
+  if (commit)
+    oid = *git_object_id(object);
+  git_object_free(object);
+  return commit;
+}
+
 bool open(Repo& r, const stdfs::path& root) {
   return git_repository_open_ext(r.out(), root.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0;
 }
@@ -462,7 +474,8 @@ void Versions::note_run(const std::string& commit, const VersionRunNote& run) {
   Repo r;
   if (!open(r, root_)) return;
   git_oid oid;
-  if (git_oid_fromstr(&oid, commit.c_str()) != 0) return;
+  if (!resolve_commit(r.get(), commit, oid))
+    return;
   std::string text;
   Note n;
   if (git_note_read(n.out(), r.get(), kNotesRef, &oid) == 0) text = git_note_message(n.get());
@@ -506,7 +519,8 @@ void Versions::checkout(const std::string& commit) {
   Repo r;
   if (!open(r, root_)) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
   git_oid oid;
-  if (git_oid_fromstr(&oid, commit.c_str()) != 0) throw Failed(FailureKind::invalid_request, "not a commit id: " + commit);
+  if (!resolve_commit(r.get(), commit, oid))
+    throw Failed(FailureKind::invalid_request, "not a commit id: " + commit);
   Object target;
   if (git_object_lookup(target.out(), r.get(), &oid, GIT_OBJECT_COMMIT) != 0)
     throw Failed(FailureKind::not_found, "no version " + commit);
@@ -620,7 +634,8 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
   VersionCanvasData out;
   Repo r;
   git_oid oid;
-  if (!open(r, root_) || git_oid_fromstr(&oid, commit.c_str()) != 0) throw Failed(FailureKind::not_found, "no version " + commit);
+  if (!open(r, root_) || !resolve_commit(r.get(), commit, oid))
+    throw Failed(FailureKind::not_found, "no version " + commit);
   Commit c;
   Tree tree;
   if (git_commit_lookup(c.out(), r.get(), &oid) != 0 || git_commit_tree(tree.out(), c.get()) != 0)
@@ -656,7 +671,7 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   git_oid oid;
-  if (!open(r, root_) || git_oid_fromstr(&oid, commit.c_str()) != 0)
+  if (!open(r, root_) || !resolve_commit(r.get(), commit, oid))
     throw Failed(FailureKind::not_found, "no version " + commit);
   Commit c;
   if (git_commit_lookup(c.out(), r.get(), &oid) != 0)

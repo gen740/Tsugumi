@@ -286,7 +286,8 @@ TEST_F(ConversationStoreFixture,
                       .Union();
                 });
   };
-  EXPECT_EQ(get().Code(), "busy");
+  // An unscoped lookup skips the locked project and reports it in the host log.
+  EXPECT_EQ(get().Code(), "not_found");
   EXPECT_EQ(create().Code(), "busy");
   EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
                    "SELECT count(*) FROM conversations"),
@@ -294,6 +295,83 @@ TEST_F(ConversationStoreFixture,
   StopAgent();
   EXPECT_EQ(JsonString(get().View(), "/conversation/id"), conversation);
   EXPECT_TRUE(create().Code().empty());
+}
+
+TEST_F(ConversationStoreFixture,
+       BrokenProjectDoesNotBlockCreatingListingOrSendingElsewhere) {
+  ModelServer model;
+  model.Queue(AnthropicText("HEALTHY_PROJECT_REPLY"));
+  Configure(model);
+  StartProject();
+  const auto existing = Conversation("existing-healthy");
+  Grant(existing);
+  StopAgent();
+  const auto broken = directory.path / "broken";
+  Write(broken / ".tsugumi/project-id", "broken");
+  std::filesystem::copy_file(directory.path / "project/.tsugumi/agent.sqlite",
+                             broken / ".tsugumi/agent.sqlite");
+  StartHost();
+  const auto register_project = [&](const std::string& id,
+                                    const std::filesystem::path& folder) {
+    return Call(
+        *host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
+          return H::CreateRegisterProjectRequest(
+                     b, b.CreateString(id), b.CreateString("unix:/unused"), 0,
+                     0, b.CreateString(folder.string()))
+              .Union();
+        });
+  };
+  ASSERT_TRUE(register_project("broken", broken).Code().empty());
+  const auto stale = directory.path / "stale";
+  Write(stale / ".tsugumi/project-id", "stale");
+  ASSERT_TRUE(register_project("stale", stale).Code().empty());
+  Write(stale / ".tsugumi/project-id", "replacement");
+  // The healthy database is initially unopened after the restart.
+  const auto conversation = Conversation("created-healthy");
+  ASSERT_EQ(conversation, "created-healthy");
+  EXPECT_NE(List(project_id).View().find(conversation), std::string::npos);
+  Grant(conversation);
+  ASSERT_TRUE(
+      Send(conversation, "Answer in the healthy project.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  EXPECT_NE(WaitUntilIdle(conversation).find("HEALTHY_PROJECT_REPLY"),
+            std::string::npos);
+  EXPECT_NE(List().View().find(conversation), std::string::npos);
+  const auto failure = List("broken");
+  ASSERT_EQ(failure.Code(), "conversation_identity_mismatch");
+  EXPECT_EQ(Scalar(broken / ".tsugumi/agent.sqlite",
+                   "SELECT count(*) FROM conversations"),
+            1);
+  EXPECT_EQ(List("stale").Code(), "stale_project");
+  const auto log = Read(directory.path / "host.log");
+  EXPECT_NE(log.find("broken"), std::string::npos);
+  EXPECT_NE(log.find("stale"), std::string::npos);
+}
+
+TEST_F(ConversationStoreFixture,
+       RecreatedProjectIdentitySupersedesItsOldRegistration) {
+  StartProject();
+  const auto old = project_id;
+  Conversation("old-record", true);
+  project.Stop();
+  const auto root = directory.path / "project";
+  std::filesystem::rename(root / ".tsugumi", root / "saved-state");
+  Write(root / ".tsugumi/project-id", "replacement-pending");
+  EXPECT_EQ(List(old).Code(), "stale_project");
+  std::filesystem::remove(root / ".tsugumi/project-id");
+  StartProject();
+  ASSERT_NE(project_id, old);
+  EXPECT_EQ(Conversation("new-record", true), "new-record");
+  EXPECT_NE(List(project_id).View().find("new-record"), std::string::npos);
+  EXPECT_EQ(Scalar(directory.path / "state/host.sqlite",
+                   "SELECT count(*) FROM project_paths"),
+            1);
+  EXPECT_EQ(Scalar(directory.path / "state/host.sqlite",
+                   "SELECT count(*) FROM projects"),
+            1);
+  EXPECT_EQ(Scalar(root / "saved-state/agent.sqlite",
+                   "SELECT count(*) FROM conversations"),
+            1);
 }
 
 TEST_F(ConversationStoreFixture,

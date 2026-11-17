@@ -22,7 +22,9 @@ extension ProjectSession {
     return AppPreferences.shared.flowDirection
   }
 
-  func setFlow(_ f: FlowDirection) { edit { $0.layout["flow"] = .string(f.rawValue) } }
+  func setFlow(_ f: FlowDirection) {
+    queueFields { [self] in [fieldEdit("layout.json", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
+  }
 
   /// Ports for drawing: resolved ports when available, else declared inputs.
   func ports(_ k: CardKey) -> (inputs: [String], outputs: [String]) {
@@ -236,7 +238,7 @@ extension ProjectSession {
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
-      result: state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
+      result: state?.transfer ?? state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: displays[k].map { markForRun($0.runId) } ?? (state != nil || batch != nil ? runMark(runStatus) : nil),

@@ -36,6 +36,7 @@ struct ChangeIn {
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
   std::vector<SourcePatchIn> patches;
+  std::shared_ptr<SourceFile> file;
 };
 
 // What changed in a committed transaction. Content comes from `doc`.
@@ -91,6 +92,9 @@ class Store {
   };
   Staged stage(const std::vector<ChangeIn>& changes, const std::string& op_id,
                const std::string& origin) const;
+  auto stage_file(const std::filesystem::path& root, const std::string& from,
+                  const std::optional<std::string>& expected_hash,
+                  const std::function<void()>& check_cancelled) const -> std::shared_ptr<SourceFile>;
   Staged stage_reload(const std::string& op_id, const std::string& origin) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
@@ -105,7 +109,8 @@ class Store {
   // `make_receipt` callback receives the delta (with final revision numbers)
   // and returns the OperationReceipt bytes. Publishes the new document.
   void commit(Staged& staged, const std::string& kind, const std::string& digest,
-              const std::function<std::string(const Delta*)>& make_receipt);
+              const std::function<std::string(const Delta*)>& make_receipt,
+              const std::function<void()>& check_cancelled = [] {});
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 

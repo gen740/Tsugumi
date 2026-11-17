@@ -1,4 +1,5 @@
 #include "worker_condition.hh"
+#include "worker_selection.hh"
 
 #include <gtest/gtest.h>
 
@@ -112,78 +113,78 @@ INSTANTIATE_TEST_SUITE_P(Table, WorkerConditionValue,
 struct ErrorExample {
   std::string_view expression;
   std::size_t position;
-  std::string_view message;
+  Code code;
 };
 constexpr auto kErrors = std::to_array<ErrorExample>({
-    {"", 0, "Expected expression"},
-    {" \t", 2, "Expected expression"},
-    {"x & 4", 0, "Condition must be boolean"},
-    {"  1", 2, "Condition must be boolean"},
-    {"x", 0, "Condition must be boolean"},
-    {"~x", 0, "Condition must be boolean"},
-    {"x >", 3, "Expected expression"},
-    {"x &&", 4, "Expected expression"},
-    {"()", 1, "Expected expression"},
-    {"(x == 1", 7, "Expected ')'"},
-    {"(x == 1 x)", 8, "Expected ')'"},
-    {"x == 1)", 6, "Unexpected token"},
-    {"x x", 2, "Unexpected token"},
-    {"x == 1 2", 7, "Unexpected token"},
-    {"x < 2 < 3", 6, "Expected integer operands"},
-    {"x == 2 != 3", 7, "Expected integer operands"},
-    {"x < 2 == 1", 6, "Expected integer operands"},
-    {"(x == 1) == (x == 2)", 9, "Expected integer operands"},
-    {"!x", 0, "Expected boolean operand"},
-    {"~(x == 0)", 0, "Expected integer operand"},
-    {"x && 1", 2, "Expected boolean operands"},
-    {"(x == 1) || 0", 9, "Expected boolean operands"},
-    {"(x == 1) & 1", 9, "Expected integer operands"},
-    {"1 | (x == 1)", 2, "Expected integer operands"},
-    {"1 ^ (x == 1)", 2, "Expected integer operands"},
-    {"x << (x == 1) == 0", 2, "Expected integer operands"},
-    {"(x == 1) >> 1 == 0", 9, "Expected integer operands"},
-    {"x << 64 == 0", 5, "Literal shift count must be less than 64"},
-    {"x >> 0x40 == 0", 5, "Literal shift count must be less than 64"},
-    {"x << (64) == 0", 6, "Literal shift count must be less than 64"},
+    {"", 0, Code::ExpressionExpected},
+    {" \t", 2, Code::ExpressionExpected},
+    {"x & 4", 0, Code::BooleanRequired},
+    {"  1", 2, Code::BooleanRequired},
+    {"x", 0, Code::BooleanRequired},
+    {"~x", 0, Code::BooleanRequired},
+    {"x >", 3, Code::ExpressionExpected},
+    {"x &&", 4, Code::ExpressionExpected},
+    {"()", 1, Code::ExpressionExpected},
+    {"(x == 1", 7, Code::CloseExpected},
+    {"(x == 1 x)", 8, Code::CloseExpected},
+    {"x == 1)", 6, Code::UnexpectedToken},
+    {"x x", 2, Code::UnexpectedToken},
+    {"x == 1 2", 7, Code::UnexpectedToken},
+    {"x < 2 < 3", 6, Code::IntegerOperand},
+    {"x == 2 != 3", 7, Code::IntegerOperand},
+    {"x < 2 == 1", 6, Code::IntegerOperand},
+    {"(x == 1) == (x == 2)", 9, Code::IntegerOperand},
+    {"!x", 0, Code::BooleanOperand},
+    {"~(x == 0)", 0, Code::IntegerOperand},
+    {"x && 1", 2, Code::BooleanOperand},
+    {"(x == 1) || 0", 9, Code::BooleanOperand},
+    {"(x == 1) & 1", 9, Code::IntegerOperand},
+    {"1 | (x == 1)", 2, Code::IntegerOperand},
+    {"1 ^ (x == 1)", 2, Code::IntegerOperand},
+    {"x << (x == 1) == 0", 2, Code::IntegerOperand},
+    {"(x == 1) >> 1 == 0", 9, Code::IntegerOperand},
+    {"x << 64 == 0", 5, Code::ShiftLimit},
+    {"x >> 0x40 == 0", 5, Code::ShiftLimit},
+    {"x << (64) == 0", 6, Code::ShiftLimit},
     {"x >> 18446744073709551615 == 0", 5,
-     "Literal shift count must be less than 64"},
-    {"x == 18446744073709551616", 5, "Integer literal exceeds uint64"},
-    {"x == 0x10000000000000000", 5, "Integer literal exceeds uint64"},
-    {"x == 0x", 5, "Invalid integer literal"},
-    {"x == 0xg", 5, "Invalid integer literal"},
-    {"x == 12a", 5, "Invalid integer literal"},
-    {"x == 1_000", 5, "Invalid integer literal"},
-    {"x == 0X10", 5, "Invalid integer literal"},
-    {"y == 0", 0, "Unexpected character"},
-    {"xx == 0", 0, "Unexpected character"},
-    {"x0 == 0", 0, "Unexpected character"},
-    {"true", 0, "Unexpected character"},
-    {"f(x)", 0, "Unexpected character"},
-    {"x == -1", 5, "Unexpected character"},
-    {"x == +1", 5, "Unexpected character"},
-    {"x + 1 == 2", 2, "Unexpected character"},
-    {"x == 1.0", 6, "Unexpected character"},
-    {"x == \"1\"", 5, "Unexpected character"},
-    {"x = 1", 2, "Unexpected character"},
-    {"x ** 2", 2, "Unexpected character"},
-    {"x == 0;", 6, "Unexpected character"},
-    {"x == 0 // comment", 7, "Unexpected character"},
-    {"x == 日本語", 5, "Unexpected character"},
+     Code::ShiftLimit},
+    {"x == 18446744073709551616", 5, Code::IntegerOverflow},
+    {"x == 0x10000000000000000", 5, Code::IntegerOverflow},
+    {"x == 0x", 5, Code::InvalidInteger},
+    {"x == 0xg", 5, Code::InvalidInteger},
+    {"x == 12a", 5, Code::InvalidInteger},
+    {"x == 1_000", 5, Code::InvalidInteger},
+    {"x == 0X10", 5, Code::InvalidInteger},
+    {"y == 0", 0, Code::UnexpectedCharacter},
+    {"xx == 0", 0, Code::UnexpectedCharacter},
+    {"x0 == 0", 0, Code::UnexpectedCharacter},
+    {"true", 0, Code::UnexpectedCharacter},
+    {"f(x)", 0, Code::UnexpectedCharacter},
+    {"x == -1", 5, Code::UnexpectedCharacter},
+    {"x == +1", 5, Code::UnexpectedCharacter},
+    {"x + 1 == 2", 2, Code::UnexpectedCharacter},
+    {"x == 1.0", 6, Code::UnexpectedCharacter},
+    {"x == \"1\"", 5, Code::UnexpectedCharacter},
+    {"x = 1", 2, Code::UnexpectedCharacter},
+    {"x ** 2", 2, Code::UnexpectedCharacter},
+    {"x == 0;", 6, Code::UnexpectedCharacter},
+    {"x == 0 // comment", 7, Code::UnexpectedCharacter},
+    {"x == 日本語", 5, Code::UnexpectedCharacter},
 });
 
 auto expect_error(std::string_view expression, std::size_t position,
-                  std::string_view message) -> void {
+                  Code code) -> void {
   auto result = compile({"simple", expression});
   ASSERT_TRUE(std::holds_alternative<Diagnostic>(result)) << expression;
   const auto& diagnostic = std::get<Diagnostic>(result);
   EXPECT_EQ(diagnostic.position, position) << expression;
-  EXPECT_EQ(diagnostic.message, message) << expression;
+  EXPECT_EQ(diagnostic.code, code) << expression;
 }
 
 class WorkerConditionError : public testing::TestWithParam<ErrorExample> {};
-TEST_P(WorkerConditionError, ReportsPositionAndMessage) {
+TEST_P(WorkerConditionError, ReportsPositionAndCode) {
   const auto& error = GetParam();
-  expect_error(error.expression, error.position, error.message);
+  expect_error(error.expression, error.position, error.code);
 }
 INSTANTIATE_TEST_SUITE_P(Table, WorkerConditionError,
                          testing::ValuesIn(kErrors));
@@ -193,8 +194,8 @@ TEST(WorkerCondition, DispatchesByLanguageWithoutFallback) {
     auto result = compile({language, "x == 0"});
     ASSERT_TRUE(std::holds_alternative<Diagnostic>(result));
     EXPECT_EQ(std::get<Diagnostic>(result).position, 0u);
-    EXPECT_EQ(std::get<Diagnostic>(result).message,
-              "Unknown condition language");
+    EXPECT_EQ(std::get<Diagnostic>(result).code,
+              Code::UnknownLanguage);
   }
 }
 
@@ -218,9 +219,9 @@ TEST(WorkerCondition, BoundsInputBytesIncludingWhitespaceAndNulls) {
   ASSERT_TRUE(std::holds_alternative<std::unique_ptr<const Condition>>(result));
   EXPECT_TRUE(std::get<std::unique_ptr<const Condition>>(result)->matches(0));
   text += ' ';
-  expect_error(text, 4096, "Condition exceeds 4096 bytes");
-  expect_error(std::string(4097, '0'), 4096, "Condition exceeds 4096 bytes");
-  expect_error(std::string("x == 0\0", 7), 6, "Unexpected character");
+  expect_error(text, 4096, Code::SizeLimit);
+  expect_error(std::string(4097, '0'), 4096, Code::SizeLimit);
+  expect_error(std::string("x == 0\0", 7), 6, Code::UnexpectedCharacter);
 }
 
 TEST(WorkerCondition, BoundsCombinedParenthesisAndUnaryNesting) {
@@ -233,16 +234,16 @@ TEST(WorkerCondition, BoundsCombinedParenthesisAndUnaryNesting) {
   };
   accepts(std::string(64, '(') + "x == 0" + std::string(64, ')'));
   expect_error(std::string(65, '(') + "x == 0" + std::string(65, ')'), 64,
-               "Nesting exceeds 64");
+               Code::NestingLimit);
   accepts(std::string(64, '~') + "x == 0");
-  expect_error(std::string(65, '~') + "x == 0", 64, "Nesting exceeds 64");
+  expect_error(std::string(65, '~') + "x == 0", 64, Code::NestingLimit);
   accepts(std::string(63, '!') + "(x != 0)");
-  expect_error(std::string(64, '!') + "(x != 0)", 64, "Nesting exceeds 64");
+  expect_error(std::string(64, '!') + "(x != 0)", 64, Code::NestingLimit);
   accepts(std::string(32, '(') + std::string(32, '~') + "x == 0" +
           std::string(32, ')'));
   expect_error(std::string(32, '(') + std::string(33, '~') + "x == 0" +
                    std::string(32, ')'),
-               64, "Nesting exceeds 64");
+               64, Code::NestingLimit);
 }
 
 TEST(WorkerCondition, LongFlatChainsDoNotConsumeNestingOrEvaluationStack) {
@@ -318,7 +319,8 @@ TEST(WorkerCondition, SeededTokenSequencesAndBytesNeverCrash) {
       ASSERT_NE(condition, nullptr);
       for (const auto x : {std::uint64_t{0}, std::uint64_t{63},
                            std::uint64_t{64}, kMax, random()}) {
-        EXPECT_EQ(condition->matches(x), condition->matches(x));
+        const volatile bool matched = condition->matches(x);
+        (void)matched;
       }
     }
   }
@@ -350,3 +352,51 @@ TEST(WorkerCondition, SeededValidProgramsAgreeWithUnsignedOperations) {
 
 }  // namespace
 }  // namespace tsugumi::worker_condition
+
+namespace tsugumi {
+TEST(WorkerSelection, LowestFreeGradeAndRegistrationOrder) {
+  std::array workers{WorkerCandidate{"first", 9, true},
+                     WorkerCandidate{"second", 3, true},
+                     WorkerCandidate{"third", 3, true},
+                     WorkerCandidate{"local", 0, false}};
+  EXPECT_EQ(select_worker(workers, nullptr).index, 1);
+  workers[1].free = false;
+  EXPECT_EQ(select_worker(workers, nullptr).index, 2);
+  workers[3].free = true;
+  EXPECT_EQ(select_worker(workers, nullptr).index, 3);
+}
+TEST(WorkerSelection, ConditionUsesAll64BitsAndSeparatesNoMatchFromBusy) {
+  auto compiled = worker_condition::compile({"simple", "x & 0x8000000000000000 != 0"});
+  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  std::array workers{WorkerCandidate{"local", 0, true},
+                     WorkerCandidate{"large", UINT64_MAX, false}};
+  auto result = select_worker(workers, condition.get());
+  EXPECT_TRUE(result.matches);
+  EXPECT_FALSE(result.index);
+  workers[1].free = true;
+  EXPECT_EQ(select_worker(workers, condition.get()).index, 1);
+  result = select_worker(std::span(workers).first(1), condition.get());
+  EXPECT_FALSE(result.matches);
+  EXPECT_FALSE(result.index);
+}
+TEST(WorkerSelection, ResidentWaitsForItsOwnWorker) {
+  std::array workers{WorkerCandidate{"cheap", 0, true},
+                     WorkerCandidate{"resident", 100, false}};
+  auto result = select_worker(workers, nullptr, "auto", "resident");
+  EXPECT_TRUE(result.matches);
+  EXPECT_FALSE(result.index);
+  workers[1].free = true;
+  EXPECT_EQ(select_worker(workers, nullptr, "auto", "resident").index, 1);
+}
+TEST(WorkerSelection, ChangedConditionDiscardsIneligibleResident) {
+  auto compiled = worker_condition::compile({"simple", "x >= 10"});
+  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  const std::array workers{WorkerCandidate{"local", 0, true},
+                           WorkerCandidate{"remote", 10, true}};
+  EXPECT_EQ(select_worker(workers, nullptr, "auto", "local").index, 0);
+  EXPECT_EQ(select_worker(workers, condition.get(), "auto", "local").index, 1);
+  EXPECT_FALSE(select_worker(std::span(workers).first(1), condition.get(), "auto", "local").matches);
+  EXPECT_EQ(select_worker(workers, condition.get(), "auto", "removed-worker").index, 1);
+  EXPECT_EQ(select_worker(workers, nullptr, "remote", "local").index, 1);
+}
+}  // namespace tsugumi

@@ -103,7 +103,7 @@ def select(paths=None):
             if system != "aarch64-linux":
                 supported.remove("vm")
             if system != "x86_64-linux":
-                supported.remove("remote-execution")
+                supported -= {"remote-execution", "web-contracts"}
         checks = {job: job in jobs and job in supported for job in sorted((CORE | WEB) - {"docs"})}
         checks["native"] = any(checks[job] for job in CORE)
         checks["web"] = checks["web-contracts"] or checks["adapters"]

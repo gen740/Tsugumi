@@ -80,7 +80,7 @@ openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
 tar -xOf "$openssl_source" "$openssl_license" > "$tree/licenses/openssl/LICENSE.txt"
 mkdir -p "$tree/licenses/swift-packages/flatbuffers"
 cp "$repo/macOS/.build/checkouts/flatbuffers/LICENSE"* "$tree/licenses/swift-packages/flatbuffers/"
-vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/tsugumi-vm}/releases/download/$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
+vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
 curl -fsSL "$vm_licenses" | tar -xz -C "$tree/licenses" || echo "warning: no licenses of the boot disk at $vm_licenses" >&2
 
 tar -czf "$dist/tsugumi-macos-arm64.tar.gz" -C "$dist/cli" tsugumi

@@ -40,10 +40,6 @@ struct ModelMenuTests {
     }
   }
 
-  private func settle(_ done: @escaping () -> Bool) async {
-    for _ in 0..<400 where !done() { try? await Task.sleep(for: .milliseconds(5)) }
-  }
-
   @Test func eachOpeningRequestsTheCoreCatalogAgain() async {
     let stub = Stub()
     let r = ModelListRefresher { id in
@@ -52,8 +48,12 @@ struct ModelMenuTests {
     }
     var finished: [String] = []
     for opening in 1...3 {
-      r.refresh(["anthropic", "chatgpt"]) { id, _ in finished.append(id) }
-      await settle { finished.count == opening * 2 }
+      await withCheckedContinuation { continuation in
+        r.refresh(["anthropic", "chatgpt"]) { id, _ in
+          finished.append(id)
+          if finished.count == opening * 2 { continuation.resume() }
+        }
+      }
     }
     #expect(stub.called("anthropic") == 3 && stub.called("chatgpt") == 3)
   }
@@ -65,8 +65,12 @@ struct ModelMenuTests {
       return []
     }
     var outcomes: [String: ModelListRefresher.Outcome] = [:]
-    r.refresh(["anthropic", "openai"]) { id, o in outcomes[id] = o }
-    await settle { outcomes.count == 2 }
+    await withCheckedContinuation { continuation in
+      r.refresh(["anthropic", "openai"]) { id, o in
+        outcomes[id] = o
+        if outcomes.count == 2 { continuation.resume() }
+      }
+    }
     #expect(outcomes == ["anthropic": .failed, "openai": .empty])
   }
 
@@ -79,15 +83,21 @@ struct ModelMenuTests {
       return [(id: "\(id)-new", name: id)]
     }
     var finished: [String] = []
-    r.refresh(["anthropic", "openai"]) { id, _ in finished.append(id) }
-    await settle { finished == ["anthropic"] }
+    var complete: CheckedContinuation<Void, Never>?
+    await withCheckedContinuation { continuation in
+      r.refresh(["anthropic", "openai"]) { id, _ in
+        finished.append(id)
+        if finished.count == 1 { continuation.resume() }
+        if finished.count == 3 { complete?.resume() }
+      }
+    }
     #expect(finished == ["anthropic"])
     // Opened again meanwhile: the fast one again, the slow one still on its way.
-    r.refresh(["anthropic", "openai"]) { id, _ in finished.append(id) }
-    await settle { finished == ["anthropic", "anthropic"] }
+    await withCheckedContinuation { continuation in
+      r.refresh(["anthropic", "openai"]) { id, _ in finished.append(id); continuation.resume() }
+    }
     #expect(stub.called("anthropic") == 2 && stub.called("openai") == 1)
-    gate.continuation.yield()
-    await settle { finished.count == 3 }
+    await withCheckedContinuation { complete = $0; gate.continuation.yield() }
     #expect(r.running.isEmpty)
   }
 
@@ -132,36 +142,30 @@ struct ModelMenuTests {
     let m = ModelMenu()
     let connections = [ChatPanel.Connection(id: "anthropic", name: "Anthropic API", models: ["claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-4-6"]),
                        ChatPanel.Connection(id: "chatgpt", name: "ChatGPT プラン", models: ["gpt-6.1-sol"])]
-    func titles() -> [String] { Array(m.menu.items.map(\.title).prefix { $0 != "Anthropic API" }).filter { !$0.isEmpty } }
-    func press(_ title: String) {
-      let item = m.menu.items.first { $0.title == title }!
+    func effortItems() -> [NSMenuItem] { m.menu.items.filter { ($0.representedObject as? [String])?.first == "effort" } }
+    func fastItem() -> NSMenuItem? { m.menu.items.first { ($0.representedObject as? [String]) == ["fast"] } }
+    func press(_ item: NSMenuItem?) {
+      guard let item else { Issue.record("Missing menu action"); return }
       _ = (item.target as? NSObject)?.perform(item.action, with: item)
     }
-
     m.setContents(connections: connections, provider: "anthropic", model: "claude-opus-5-5", names: [:])
-    #expect(titles() == ["Effort", "既定（medium）", "low", "medium", "high", "xhigh", "max", "Fast mode（料金は通常の 2 倍）"])
-    #expect(m.menu.item(withTitle: "既定（medium）")?.state == .on)
-
+    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ["", "low", "medium", "high", "xhigh", "max"])
+    #expect(effortItems().first?.state == .on)
     var effort: String?, fast: Bool?
-    m.onEffort = { effort = $0 }
-    m.onFast = { fast = $0 }
-    press("xhigh")
-    press("Fast mode（料金は通常の 2 倍）")
+    m.onEffort = { effort = $0 }; m.onFast = { fast = $0 }
+    press(effortItems().first { ($0.representedObject as? [String])?.last == "xhigh" })
+    press(fastItem())
     #expect(effort == "xhigh" && fast == true)
     m.setChoices(effort: "xhigh", fast: true)
-    #expect(m.menu.item(withTitle: "xhigh")?.state == .on && m.menu.item(withTitle: "Fast mode（料金は通常の 2 倍）")?.state == .on)
-    press("Fast mode（料金は通常の 2 倍）")
-    #expect(fast == false, "pressed again: off")
-
-    m.setChoices(effort: nil, fast: false)
+    #expect(effortItems().first { ($0.representedObject as? [String])?.last == "xhigh" }?.state == .on)
+    #expect(fastItem()?.state == .on)
+    press(fastItem()); #expect(fast == false)
     m.setCurrent(provider: "anthropic", model: "claude-sonnet-4-6")
-    #expect(titles() == ["Effort", "既定（high）", "low", "medium", "high", "max", "Fast mode: Claude Opus 5.5 でだけ選べます"])
-    #expect(m.menu.items.first { $0.title.hasPrefix("Fast mode") }?.isEnabled == false)
-
+    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ["", "low", "medium", "high", "max"])
+    #expect(fastItem()?.isEnabled == false)
     m.setCurrent(provider: "anthropic", model: "claude-haiku-4-5")
-    #expect(titles() == ["Effort", "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）", "Fast mode: Claude Opus 5.5 でだけ選べます"])
-
+    #expect(effortItems().isEmpty && fastItem()?.isEnabled == false)
     m.setCurrent(provider: "chatgpt", model: "gpt-6.1-sol")
-    #expect(titles().last == "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）")
+    #expect(fastItem()?.isEnabled == false)
   }
 }

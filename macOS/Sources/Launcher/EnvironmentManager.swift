@@ -10,6 +10,8 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
   case vmStore = "mounting the Nix store disk"
   case vmNix = "starting the Nix daemon"
   case vmNetwork = "configuring the network"
+  case vmCheckingStore = "checking the Nix store after an unclean stop"
+  case vmCheckingStoreUpgrade = "checking the Nix store contents"
   case vmSystem = "building Tsugumi in the VM"
   case vmSupervisor = "starting the supervisor"
   case startingDaemon = "starting tsugumid"
@@ -23,6 +25,8 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
     case .store: self = .vmStore
     case .nix: self = .vmNix
     case .network: self = .vmNetwork
+    case .checkingStore: self = .vmCheckingStore
+    case .checkingStoreUpgrade: self = .vmCheckingStoreUpgrade
     case .system: self = .vmSystem
     case .supervisor, .ready: self = .vmSupervisor
     }
@@ -154,6 +158,9 @@ public actor EnvironmentManager {
     return reply
   }
   public func runtimeCommand(_ command: String) async throws -> String { try await runtime(.command, command: command)["message"] as? String ?? "" }
+  public func verifyStore() async throws -> String {
+    try await runtime(.verifystore)["message"] as? String ?? ""
+  }
   public func cleanupStore() async throws -> (bytes: UInt64, paths: Int) {
     let reply = try await runtime(.cleanupstore)
     return (reply["bytes"] as? UInt64 ?? 0, Int(reply["paths"] as? UInt32 ?? 0))
@@ -169,6 +176,9 @@ public actor EnvironmentManager {
   }
   public func deleteVMData(id: String) async throws { _ = try await runtime(.deletehistory, key: id) }
   public func deleteData(_ project: ProjectIdentity) async throws { _ = try await runtime(.deleteenvironment, project: project.url.path) }
+  public func activityBeforeQuit() async throws -> Bool { try await client.activityBeforeQuit() }
+  public func shutdownForQuit() async { await client.stopResident(timeout: .seconds(2)) }
+  public func shutdownForUpdate() async { await client.stopResident() }
   public func shutdown() async { _ = try? await runtime(.shutdown) }
   public func resetConfirmation(english: Bool) async throws -> String {
     let reply = try await runtime()

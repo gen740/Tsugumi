@@ -14,6 +14,16 @@ extension ChatResumeTests {
       defer { try? FileManager.default.removeItem(at: other) }
       let blob = Data([0, 255, 128])
       try blob.write(to: other.appendingPathComponent("definitions/a/.asset.bin"))
+      let entered = AsyncStream<Void>.makeStream()
+      let release = AsyncStream<Void>.makeStream()
+      defer { release.continuation.finish(); entered.continuation.finish() }
+      let place = s.prepareLayout
+      s.prepareLayout = { project, layout, definitions in
+        let result = try await place(project, layout, definitions)
+        entered.continuation.yield(())
+        for await _ in release.stream { }
+        return result
+      }
       s.start()
       try await SyncTests.connected(s)
       func written(_ id: String) throws -> String? {
@@ -22,9 +32,28 @@ extension ChatResumeTests {
         return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
       }
 
+      // The editor captures its base before the open's derivation completes.
+      // Finish derivation deterministically before Apply: it cannot move that base.
+      for await _ in entered.stream { break }
+      let openedRev = s.rev
+      let projectBytes = try Data(contentsOf: dir.appendingPathComponent("tsugumi.json"))
+      let layoutBytes = try Data(contentsOf: dir.appendingPathComponent("layout.json"))
       let code = CardEditorModel(session: s, cardKey: "a")
       code.meta = .object([("description", .string("logs the value"))])
+      let second = try t.makeSession()
+      second.start()
+      try await SyncTests.connected(second)
+      release.continuation.finish()
+      await s.refreshDerivedLayout().value
+      await second.refreshDerivedLayout().value
+      #expect(s.rev == openedRev && second.rev == openedRev)
+      #expect(s.position("a") == second.position("a"))
+      #expect(!s.dirty && !second.dirty)
+      #expect(try Data(contentsOf: dir.appendingPathComponent("tsugumi.json")) == projectBytes)
+      #expect(try Data(contentsOf: dir.appendingPathComponent("layout.json")) == layoutBytes)
       #expect(await code.apply())
+      #expect(s.rev == openedRev + 1)
+      #expect(s.saveError == nil)
       #expect(try written("a") == "logs the value")
       #expect(s.nodeData("a").summary == "logs the value")
       #expect(s.cardDescription("a") == "logs the value")
@@ -43,4 +72,8 @@ extension ChatResumeTests {
       #expect(s.nodeData(k).summary == "the imported graph")
     }
   }
+}
+
+extension ChatResumeTests {
+
 }

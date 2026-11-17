@@ -49,6 +49,44 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->nodes.front().diags.empty());
   EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
 }
+TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
+  // A wire to an undeclared input of a code Card and an unknown param type: each
+  // message carries the fix (the inputs entry, the valid types) on one line.
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
+  fs::write_atomic(root / "definitions/b/_card.json",
+                   R"({"language":"python","params":[{"name":"x","type":"float","data":1}]})");
+  Store store({root, ""});
+  store.open();
+  const auto doc = store.current();
+  const auto* node = doc->resolution->find({"b"});
+  ASSERT_NE(node, nullptr);
+  bool port = false, param = false;
+  for (const auto& d : node->diags) {
+    port |= d.code == "unknown_port";
+    param |= d.code == "invalid_param";
+  }
+  EXPECT_TRUE(port);
+  EXPECT_TRUE(param);
+}
+TEST_F(OpaqueMetadata, AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
+  fs::write_atomic(root / "definitions/b/_card.json", R"({"language":"python"})");
+  Store store({root, ""});
+  store.open();
+  const auto* node = store.current()->resolution->find({"b"});
+  ASSERT_NE(node, nullptr);
+  bool port = false;
+  for (const auto& d : node->diags)
+    if (d.code == "unknown_port") {
+      port = true;
+      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos) << d.message;
+    }
+  EXPECT_TRUE(port);
+}
 TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   Store store({root, ""});
   store.open();
@@ -261,8 +299,7 @@ TEST_F(OpaqueMetadata,
     commit(store, {implementation});
     FAIL() << "Even the only input must be stated";
   } catch (const Failed& error) {
-    EXPECT_NE(std::string(error.what()).find("wire start.out -> plan."),
-              std::string::npos);
+    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
   EXPECT_EQ(store.current(), before);
   EXPECT_EQ(fs::read_file(root / "definitions/plan/_card.json"),
@@ -277,8 +314,7 @@ TEST_F(OpaqueMetadata,
     commit(store, {implementation, wiring});
     FAIL() << "The output must also be stated";
   } catch (const Failed& error) {
-    EXPECT_NE(std::string(error.what()).find("wire plan. -> next."),
-              std::string::npos);
+    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
   const auto output = wiring.json.find(R"("card":"plan","port":"")");
   wiring.json.replace(output, std::string(R"("card":"plan","port":"")").size(),
@@ -318,8 +354,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
     commit(store, {implementation});
     FAIL();
   } catch (const Failed& error) {
-    EXPECT_NE(std::string(error.what()).find("wire start.out -> outer.in"),
-              std::string::npos);
+    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
   EXPECT_EQ(store.current()->resolution->find({"outer", "plan"})->kind,
             Template::Draft);
@@ -347,8 +382,7 @@ TEST_F(OpaqueMetadata, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
     commit(store, {wiring});
     FAIL();
   } catch (const Failed& error) {
-    EXPECT_NE(std::string(error.what()).find("wire start.out -> plan.in"),
-              std::string::npos);
+    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
 }
 } // namespace

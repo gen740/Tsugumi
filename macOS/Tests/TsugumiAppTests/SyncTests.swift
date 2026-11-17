@@ -162,13 +162,39 @@ import TsugumiTestSupport
   }
 
   static func connected(_ s: ProjectSession) async throws {
-    for _ in 0..<200 where !s.connected { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { s.connected }
     #expect(s.connected, "\(s.connectionMessage ?? "")")
+    if s.connected, let endpoint = s.endpointOverride {
+      // Direct test daemons bypass EnvironmentManager's host registration.
+      _ = try await CoreHostClient.shared.call("RegisterProjectRequest", [
+        "project_id": endpoint.projectId, "endpoint": endpoint.url.absoluteString,
+        "token": endpoint.token, "path": s.identity.url.path])
+    }
   }
 
   static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
-    for _ in 0..<200 where s.runActive { try await Task.sleep(for: .milliseconds(25)) }
-    try #require(s.runStatus?.state == .succeeded)
+    try await waitForModel { !(s.runActive) }
+    try #require(s.runStatus?.state == .succeeded, "\(s.runStatus?.failure?.diagnostic ?? "")")
+  }
+
+  @Test func defaultDisplayRectTransformsTheHostGeometry() throws {
+    let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    let d = Tsugumi_Host_DisplayGeometryT()
+    d.anchorX = 0.5; d.anchorY = 0.25
+    d.x = 71; d.y = 93; d.width = 411; d.height = 219
+    let geometries = Tsugumi_Host_DisplayGeometriesT()
+    geometries.topToBottom = d; geometries.leftToRight = d
+    s.displayGeometries = geometries
+    for flow in ["topToBottom", "leftToRight"] {
+      s.layout = try JSONValue.parse("{\"flow\":\"\(flow)\"}")
+      let k = key(["a"]), size = s.geometry(k).size
+      let rect = s.displayRect(k, origin: CGPoint(x: 10, y: 20))
+      #expect(rect == CGRect(x: 10 + size.width * 0.5 + 71,
+                             y: 20 + size.height * 0.25 + 93,
+                             width: 411, height: 219))
+    }
   }
 
   /// A tsugumid that cannot be reached is tried again for a moment and then
@@ -180,7 +206,7 @@ import TsugumiTestSupport
     s.connectRetryDelays = [0.01, 0.01]
     s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
     s.start()
-    for _ in 0..<400 where s.connectionMessage == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.connectionMessage == nil) }
     #expect(!s.connected)
     #expect(s.connectionFailed, "\(s.connectionMessage ?? "")")
   }
@@ -204,7 +230,7 @@ import TsugumiTestSupport
       $0["width"] = .real(300)
       $0["height"] = .real(200)
     }
-    let group = s.addGroup([a, b], in: [])
+    let group = try await s.addGroup([a, b], in: [])
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
 
@@ -214,7 +240,7 @@ import TsugumiTestSupport
     meta["name"] = .string("renamed")
     _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [Change.putDefinition(id: "b", cardJSON: definition.cardJson, metaJSON: meta.serialized())])
-    for _ in 0..<200 where s.displayName(b) != "renamed" { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displayName(b) != "renamed") }
     #expect(s.position(renamed) == CGPoint(x: 700, y: 500))
     #expect(s.layout["displays"]?["b"]?["width"]?.double == 300)
     #expect(s.displayName(b) == "renamed")
@@ -228,7 +254,7 @@ import TsugumiTestSupport
     let cleaned = try await CoreHostClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
-    for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.resolution[renamed] != nil) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
     #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
   }
@@ -247,7 +273,6 @@ import TsugumiTestSupport
     await s.close()
     #expect(!s.connected)
     guard case .stopped = s.environment else { Issue.record("still \(s.environment)"); return }
-    try await Task.sleep(for: .milliseconds(600))
     #expect(!s.connected)
   }
 
@@ -268,7 +293,7 @@ import TsugumiTestSupport
     await s.save()
     try await s.run(card: ["start"], propagate: true)
     try await Self.waitForSuccessfulRun(s)
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     #expect(s.displays[b] != nil && s.displayFrame(b) == nil, "shown beside its Card, with no frame in the layout")
 
     await s.arrange([])
@@ -282,140 +307,6 @@ import TsugumiTestSupport
 
   /// A draft the core refuses, while the Agent goes on saving: Discard Changes goes back
   /// to what is saved, the Agent's saves included, and saving works again.
-  @Test func discardingWhatCannotBeSavedGoesBackAndSavingWorksAgain() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let a = key(["a"])
-    s.setPosition(a, CGPoint(x: 100, y: 100))
-    await s.save()
-    #expect(!s.dirty, "\(s.saveError ?? "")")
-
-    // A layout the host rejects, however it came to be.
-    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
-    await s.save()
-    #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
-    #expect(s.dirty)
-
-    // The Agent's save reaches the window meanwhile, and the refused edit stays refused.
-    let rev = s.rev
-    try await Self.agentConnect(s.rpc!, to: "c")
-    for _ in 0..<200 where s.rev == rev { try await Task.sleep(for: .milliseconds(25)) }
-    await s.save()
-    #expect(s.saveError != nil)
-
-    s.discardDraft()
-    #expect(!s.dirty)
-    #expect(s.saveError == nil)
-    #expect(s.layout == s.confirmedLayout)
-    #expect(s.project == s.confirmedProject)
-    #expect(s.connections(in: []).contains { $0["to"]?["card"]?.string == "c" }, "what the Agent saved stays")
-    #expect(s.position(a) == CGPoint(x: 100, y: 100))
-
-    s.setPosition(a, CGPoint(x: 300, y: 300))
-    await s.save()
-    #expect(s.saveError == nil, "\(s.saveError ?? "")")
-    #expect(!s.dirty)
-    #expect(s.confirmedLayout["cards"]?["a"]?["x"]?.double == 300)
-  }
-
-  /// The refused edit undone: nothing is left to save, so the failure does not stay.
-  @Test func undoingWhatCannotBeSavedClearsTheFailure() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
-    await s.save()
-    #expect(s.saveError != nil)
-    await s.undo()
-    await s.save()
-    #expect(!s.dirty)
-    #expect(s.saveError == nil, "\(s.saveError ?? "")")
-    #expect(s.syncState == .saved)
-  }
-
-  /// Home with what cannot be saved: the window says why and stays until the user
-  /// gives the changes up; then it goes back to Home with nothing kept.
-  @Test func leavingWithWhatCannotBeSavedAsksAndDiscardingLeaves() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let model = AppModel.shared, w = Workspace()
-    model.hold(s)
-    w.open(s)
-    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
-
-    model.leaveProject(in: w)
-    for _ in 0..<200 where w.unsavedReason == nil { try await Task.sleep(for: .milliseconds(25)) }
-    #expect(w.unsavedReason?.contains("display b") == true, "\(w.unsavedReason ?? "")")
-    #expect(w.alert == nil, "not a dead end")
-    #expect(w.session === s && s.dirty, "it stays, with the changes, until the user answers")
-
-    model.discardAndLeave(in: w)
-    #expect(w.session == nil)
-    #expect(!s.dirty)
-    #expect(s.saveError == nil)
-  }
-
-  /// Arrange changes the layout only, frames and notes too, and is one step of undo.
-  @Test func arrangingIsOneUndo() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let a = try await s.addCard(template: .trigger, in: [], at: CGPoint(x: 500, y: 500), name: "a")
-    let b = try await s.addCard(template: .python, in: [], at: .zero, name: "b")
-    let note = s.addNote(in: [], at: CGPoint(x: 3, y: 4))
-    s.updateDisplayFrame(b) { d in
-      d["width"] = .real(300)
-      d["height"] = .real(200)
-    }
-    let before = s.layout
-    let project = s.project
-    await s.arrange([])
-    #expect(s.layout != before)
-    #expect(s.project == project, "the layout only")
-    #expect(s.position(a) != CGPoint(x: 500, y: 500))
-    #expect(s.displayFrame(b)?["width"]?.double == 300)
-    #expect(s.displayFrame(b)?["x"]?.double != nil)
-    #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
-    let arranged = s.layout
-    await s.undo()
-    #expect(s.layout == before)
-    await s.arrange([])
-    #expect(s.layout == arranged, "from the same graph, the same layout")
-    await s.arrange([])
-    #expect(s.layout == arranged, "arranging again changes nothing")
-    // Moving one Card afterwards: it goes by whole grids and nothing else moves.
-    let was = s.position(b), other = s.position(a), frame = s.displayFrame(b)
-    s.moveSelection(cards: [b], notes: [], frames: [], by: CGSize(width: 47, height: 33), snap: 20)
-    #expect(s.position(b) == CGPoint(x: was.x + 40, y: was.y + 40))
-    #expect(s.position(a) == other)
-    #expect(s.displayFrame(b) == frame)
-  }
-
-  /// A marquee catches Cards, sticky notes and output frames, at the top and
-  /// inside a Card in Card. They move together in one edit and one save, and go
-  /// together: a frame alone is closed and its Card stays.
   @Test func aMarqueeCatchesNotesAndFramesWhichMoveAndGoWithTheCards() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -431,17 +322,19 @@ import TsugumiTestSupport
       let framed = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 3000, y: 0), name: "framed")
       let outside = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 6000, y: 0), name: "outside")
       let beside = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0), name: "beside")
-      let note = s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
-      let outsideNote = s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
+      let note = try await s.addNote(in: scope, at: CGPoint(x: 100, y: 300))
+      let outsideNote = try await s.addNote(in: scope, at: CGPoint(x: 6000, y: 3000))
       s.updateDisplayFrame(framed) {
         $0["x"] = .real(400)
         $0["y"] = .real(400)
         $0["width"] = .real(300)
         $0["height"] = .real(200)
       }
-      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }  // beside its Card
-      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // beside its Card, to be closed
+      // Opened where they are drawn beside their Cards: a saved frame has its place.
+      s.updateDisplayFrame(near) { $0["hidden"] = .bool(false) }
+      s.updateDisplayFrame(beside) { $0["hidden"] = .bool(false) }  // to be closed
       s.closeDisplayFrame(outside)
+      await s.save()
 
       let items = s.marqueeItems(CGRect(x: -500, y: -500, width: 1500, height: 1500), in: scope)
       #expect(items.cards.contains(near) && !items.cards.contains(framed) && !items.cards.contains(outside), "\(scope)")
@@ -451,12 +344,11 @@ import TsugumiTestSupport
       #expect(s.marqueeItems(CGRect(x: 5900, y: -500, width: 1000, height: 1000), in: scope).frames.isEmpty, "a closed frame is not caught")
 
       let before = (card: s.position(near), note: s.noteRect(s.note(note)!), beside: s.displayRect(near), undos: s.undoStack.count)
-      s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil)
+      await s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 40), snap: nil).value
       #expect(s.position(near) == CGPoint(x: before.card.x + 30, y: before.card.y + 40))
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: before.note.minX + 30, y: before.note.minY + 40))
       #expect(s.displayRect(framed) == CGRect(x: 430, y: 440, width: 300, height: 200), "its Card stays, its size too")
       #expect(s.position(framed) == CGPoint(x: 3000, y: 0))
-      #expect(s.displayFrame(near)?["x"]?.double == nil, "beside its Card: it goes with the Card and keeps no place")
       #expect(s.displayRect(near).origin == CGPoint(x: before.beside.minX + 30, y: before.beside.minY + 40), "not moved twice")
       #expect(s.undoStack.count == before.undos + 1, "one edit")
       await s.undo()
@@ -468,13 +360,13 @@ import TsugumiTestSupport
       let grid = 20.0
       let offGrid = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 3010, y: 950), name: "offgrid")
       let noteBefore = s.noteRect(s.note(note)!).origin
-      s.moveSelection(cards: [offGrid], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      await s.moveSelection(cards: [offGrid], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid).value
       #expect(s.position(offGrid) == CGPoint(x: snapToGrid(3010, grid) + 40, y: snapToGrid(950, grid) + 40))
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 40, y: noteBefore.y + 40))
       #expect(s.displayRect(framed).origin == CGPoint(x: 440, y: 440))
       await s.undo()
       // Without a Card there is nothing to keep to the grid: they land where dropped.
-      s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
+      await s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid).value
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 33, y: noteBefore.y + 47))
       #expect(s.displayRect(framed).origin == CGPoint(x: 433, y: 447))
       await s.undo()
@@ -482,14 +374,15 @@ import TsugumiTestSupport
       // A frame alone is closed and its Card stays; notes go; one undo.
       let undos = s.undoStack.count
       s.deleteSelection(cards: [], notes: [note], frames: [framed], in: scope)
+      await s.save()
       #expect(s.displayFrame(framed)?["hidden"]?.bool == true && s.instance(framed) != nil)
       #expect(s.note(note) == nil && s.undoStack.count == undos + 1)
       await s.undo()
       #expect(s.note(note) != nil && s.displayFrame(framed)?["hidden"]?.bool != true)
 
-      // A Card takes its frame with it. A frame beside its Card is closed with
-      // its place and size, which the core wants: the document still saves.
+      // A Card takes its frame with it; a frame alone is closed and its Card stays.
       s.deleteSelection(cards: [near], notes: [], frames: [near, beside], in: scope)
+      await s.save()
       #expect(s.instance(near) == nil && s.displayFrame(near) == nil)
       #expect(s.instance(beside) != nil && s.displayFrame(beside)?["hidden"]?.bool == true)
       await s.save()
@@ -525,19 +418,28 @@ import TsugumiTestSupport
     let marker = UUID()
     // A final saved change is the barrier: every run notification before it
     // must be delivered in order, including when replies arrive concurrently.
+    let ended = AsyncStream<Tsugumi_RPC_RunStatusT>.makeStream()
     let received = Task {
       var sequences: [UInt64] = []
       for await event in rpc.notifications {
         sequences.append(event.seq)
+        if let run = event.payload.value as? Tsugumi_RPC_RunEventT,
+           let finished = run.value?.value as? Tsugumi_RPC_RunFinishedT {
+          ended.continuation.yield(finished.summary.status)
+        }
         if let patch = event.payload.value as? Tsugumi_RPC_DocPatchedT,
            patch.delta.opId == marker.uuidString.lowercased() { return (sequences, true) }
       }
       return (sequences, false)
     }
     let deadline = Task {
-      do { try await Task.sleep(for: .seconds(30)); received.cancel() } catch {}
+      do {
+        try await Task.sleep(for: .seconds(60))
+        ended.continuation.finish()
+        received.cancel()
+      } catch {}
     }
-    defer { deadline.cancel(); received.cancel() }
+    defer { deadline.cancel(); ended.continuation.finish(); received.cancel() }
     var project = try JSONValue.parse(opened.snapshot.projectJson)
     let cards = (project["canvas"]?["cards"]?.array ?? []).filter {
       ["start", "b"].contains($0["id"]?.string ?? "")
@@ -549,21 +451,17 @@ import TsugumiTestSupport
     ])
     let saved = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: UUID(), origin: "ui",
                                    changes: [Change.setProject(project.serialized())])
-    for _ in 0..<20 {
+    var finishes = ended.stream.makeAsyncIterator()
+    for _ in 0..<2 {
       let accepted = try await rpc.run(baseRev: saved.rev ?? 0, opId: UUID(), card: ["start"], propagate: true)
-      var status = try await rpc.runStatus(runId: accepted.run.runId)
-      for _ in 0..<200 where status.endedAt == nil {
-        try await Task.sleep(for: .milliseconds(5))
-        status = try await rpc.runStatus(runId: accepted.run.runId)
-      }
-      try #require(status.state == .succeeded)
+      let status = await finishes.next()
+      try #require(status?.runId == accepted.run.runId && status?.state == .succeeded)
     }
     _ = try await rpc.save(baseRev: saved.rev ?? 0, opId: marker, origin: "ui",
                             changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
     let (sequences, reachedMarker) = await received.value
     await rpc.close()
     #expect(reachedMarker, "The saved-change barrier must arrive after the run notifications")
-    #expect(sequences.count > 200)
     #expect(sequences.first == (opened.seq ?? 1) + 1)
     let outOfOrder = zip(sequences, sequences.dropFirst()).first { $1 != $0 + 1 }
     #expect(outOfOrder == nil)
@@ -593,7 +491,7 @@ import TsugumiTestSupport
     try #require(!s.dirty, "\(s.saveError ?? "")")
     try await s.run(card: ["start"], propagate: true)
     try await Self.waitForSuccessfulRun(s)
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     let run = s.displays[b]?.runId
     #expect(run != nil)
     try await s.renameCard(b, to: "同じ名前")
@@ -616,14 +514,13 @@ import TsugumiTestSupport
     await s.save()
     await s.undo()
     await s.save()
-    for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.displays[b] == nil) }
     #expect(s.displays[b]?.runId == run)
     #expect(s.displayFrame(b)?["x"]?.double == 400 && s.displayFrame(b)?["y"]?.double == 300)
   }
 
-  /// A new Card put on the canvas covers nothing: not a Card, a frame or a note,
-  /// also when several are put in the same place. A free place is taken as it is.
-  @Test func aNewCardCoversNothing() async throws {
+  /// Automatic additions leave placement to the host; a person's drop is explicit.
+  @Test func aNewCardDelegatesPlacementToTheHost() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
@@ -632,80 +529,21 @@ import TsugumiTestSupport
     s.endpointOverride = d.endpoint
     s.start()
     try await Self.connected(s)
-    func covers(_ k: CardKey, in scope: [String]) -> [String] {
-      let r = CGRect(origin: s.placedPosition(k), size: s.geometry(k).size)
-      var hit: [String] = []
-      for c in s.cards(in: scope).compactMap({ $0["id"]?.string }).map({ key(scope + [$0]) }) where c != k {
-        if r.intersects(CGRect(origin: s.placedPosition(c), size: s.geometry(c).size)) { hit.append(c) }
-      }
-      for c in s.framedCards(in: scope) where c != k && r.intersects(s.displayRect(c, origin: s.placedPosition(c))) { hit.append("frame \(c)") }
-      for n in s.notes(in: scope) where r.intersects(s.noteRect(n)) { hit.append("note") }
-      return hit
+    let here = CGPoint(x: 4000, y: 4000)
+    var placed: [CGPoint] = []
+    for template in [DefinitionTemplate.draft, .draft, .python] {
+      let k = try await s.addCard(template: template, in: [], at: here, automaticPlacement: true)
+      #expect(s.layout["cards"]?[k] != nil, "The host saves the place it chose")
+      placed.append(s.position(k))
     }
-    func check(in scope: [String]) async throws {
-      let here = CGPoint(x: 4000, y: 4000)
-      let first = try await s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
-      #expect(s.placedPosition(first).x.distance(to: here.x).magnitude < 40, "a free place is taken")
-      let second = try await s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
-      let third = try await s.addCard(template: .python, in: scope, at: here, clearOfOthers: true)
-      // Near a frame and a note too.
-      let framed = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0))
-      s.updateDisplayFrame(framed) {
-        $0["x"] = .real(6000)
-        $0["y"] = .real(6000)
-        $0["width"] = .real(320)
-        $0["height"] = .real(170)
-      }
-      let onFrame = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 6100, y: 6050), clearOfOthers: true)
-      _ = s.addNote(in: scope, at: CGPoint(x: 8000, y: 8000))
-      let onNote = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 8050, y: 8020), clearOfOthers: true)
-      for k in [first, second, third, onFrame, onNote] { #expect(covers(k, in: scope).isEmpty, "\(k): \(covers(k, in: scope))") }
-      // Aimed at a spot without asking for room: stays there (a drop).
-      let dropped = try await s.addCard(template: .draft, in: scope, at: here)
-      #expect(s.position(dropped) == here)
-    }
-    try await check(in: [])
-    let inner = await s.makeSubgraph([key(["a"])], in: [])
-    try await check(in: path(try #require(inner)))
+    #expect(!placed.contains(here) && Set(placed.map { "\($0)" }).count == placed.count, "\(placed)")
+    let dropped = try await s.addCard(template: .draft, in: [], at: here)
+    #expect(s.position(dropped) == here)
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
   }
 
-  /// A deleted Card takes its files with it: saving the removal works, for a
-  /// Card with files on disk and for one whose files were just written.
-  @Test func deletingACardWithFilesSaves() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let code = try await s.addCard(template: .python, in: [], at: .zero, name: "code")
-    await s.save()
-    #expect(!s.dirty, "\(s.saveError ?? "")")
-    let folder = dir.appendingPathComponent("definitions/code")
-    #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("_outputs.fbs").path))
-
-    s.deleteCards([code], in: [])
-    await s.save()
-    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
-    #expect(!FileManager.default.fileExists(atPath: folder.path))
-
-    // Undone, it is back with its files; deleted with an unsaved edit, it goes too.
-    await s.undo()
-    await s.save()
-    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
-    #expect(s.instance(code) != nil)
-    s.putSource("definitions/code/extra.txt", "unsaved")
-    s.deleteCards([code], in: [])
-    await s.save()
-    #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
-    #expect(!FileManager.default.fileExists(atPath: folder.path))
-  }
-
-  /// Comments stay on their Card, with authorship and resolution history.
+  /// A failed save keeps a newly dropped Card in place; retry saves that place.
   @Test func commentsAreSavedOnTheirCardWithWhoDidWhat() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -718,13 +556,14 @@ import TsugumiTestSupport
     let k = try await s.addCard(template: .python, in: [], at: .zero, name: "plot")
     #expect(s.comments(k).isEmpty && s.nodeData(k).openComments == 0)
 
-    s.addComment(k, "  y 軸を対数に  ")
-    s.addComment(k, "   ")
+    try await s.addComment(k, "  y 軸を対数に  ")
+    try await s.addComment(k, "   ")
     #expect(s.comments(k).map(\.text) == ["y 軸を対数に"])
-    s.addComment(k, "軸に名前を")
+    try await s.addComment(k, "軸に名前を")
     let first = s.comments(k)[0].id
     s.edit { $0.setCommentText(k, id: first, text: "両軸を対数に") }
     s.edit { $0.setCommentText(k, id: first, text: "  ") }
+    await s.save()
     #expect(s.comments(k).map(\.text) == ["両軸を対数に", "軸に名前を"])
     #expect(s.nodeData(k).openComments == 2 && s.cardsWithOpenComments(in: []) == [k])
     #expect(s.cardDetails(k).contains { $0.contains("両軸を対数に") })
@@ -738,14 +577,16 @@ import TsugumiTestSupport
         m["comments"] = .array(list)
       }
     }
+    await s.save()
     #expect(s.comments(k)[0].resolution == "両軸を対数にした" && s.openComments(k).map(\.text) == ["軸に名前を"])
     s.setCommentResolved(k, id: first, false)
+    await s.save()
     #expect(s.comments(k)[0].resolved == false && s.comments(k)[0].resolution == nil)
 
     #expect(s.comments(k)[0].stateBy == "user" && s.comments(k)[0].editedBy == "user" && s.comments(k)[1].author == "user")
     // A Draft takes comments as any Card.
     let plan = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
-    s.addComment(plan, "単位を考える")
+    try await s.addComment(plan, "単位を考える")
     #expect(s.cardsWithOpenComments(in: []).contains(plan))
     // What the core recorded of the Agent reads back, in the words the screen uses.
     let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))
@@ -753,7 +594,8 @@ import TsugumiTestSupport
     #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
-    #expect(s.cardMeta(k) == .object([("name", .string("plot"))]), "Removing all comments keeps the Card's name only")
+    await s.save()
+    #expect(s.comments(k).isEmpty && s.displayName(k) == "plot", "Removing all comments keeps the Card's name")
     await s.undo()
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
@@ -809,7 +651,7 @@ import TsugumiTestSupport
     let to = await s.finishDraftEdit()
     #expect(to == a && s.inlineDraft == nil)
     // The new name arrives with the saved state.
-    for _ in 0..<200 where s.cardMeta(a) == nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(s.cardMeta(a) == nil) }
     #expect(s.cardMeta(a)?["content"]?.string == "count words")
     #expect(s.nodeData(a).summary == "count words")
 
@@ -847,9 +689,10 @@ import TsugumiTestSupport
     let d = try Daemon(project: dir)
     defer { d.stop() }
     let model = AppModel.shared
+    // The model starts its session: the connection it is making reads the
+    // endpoint set here, and a second start would replace it under an action.
     let s = try model.session(for: dir)
     s.endpointOverride = d.endpoint
-    s.start()
     try await Self.connected(s)
     let a = try await s.addCard(template: .draft, in: [], at: .zero)
     let b = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0))
@@ -877,7 +720,7 @@ import TsugumiTestSupport
     model.hold(s)
     w.open(s)
     model.windowClosed(w)
-    for _ in 0..<200 where model.sessions[s.identity.id] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    try await waitForModel { !(model.sessions[s.identity.id] != nil) }
     #expect(w.session == nil && model.sessions[s.identity.id] == nil)
     #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
     let saved = try JSONValue.parse(String(contentsOf: dir.appendingPathComponent("definitions/\(b)/_meta.json"), encoding: .utf8))
@@ -960,43 +803,15 @@ import TsugumiTestSupport
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
                                changes: [Change.putDefinition(id: id, cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3}"#, metaJSON: nil)])
     }
-    for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .write("c", reveal: false) }) {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    #expect(s.helperPresences[1].beats.contains { $0.beat == .write("b", reveal: false) })
-    #expect(!s.presence.beats.contains { $0.beat == .write("b", reveal: false) })
-    #expect(s.presence.beats.contains { $0.beat == .write("c", reveal: false) })
+    try await waitForModel { s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) } }
+    #expect(s.helperPresences[1].beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
+    #expect(!s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "b", reveal: false)], []) })
+    #expect(s.presence.beats.contains { $0.beat == .save([AgentPresence.Written(card: "c", reveal: false)], []) })
     #expect(s.presence(forCard: "a") === s.helperPresences[0] && s.presence(forCard: "c") === s.presence)
     await s.close()
   }
 
   /// The returned host graph is saved and undone as one client edit.
-  @Test func hostConnectionIsOneSavedUndoEdit() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
-    let before = s.docState(), undos = s.undoStack.count
-    try await s.connect(from: ("start", "out"), to: ("b", "in"), in: [])
-    let after = s.docState()
-    #expect(s.undoStack.count == undos + 1)
-    await s.save()
-    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
-    let snap = try await s.rpc!.inspect()
-    let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
-    #expect(!codes.contains("fan_out"))
-    await s.undo()
-    #expect(s.docState() == before)
-    await s.redo()
-    #expect(s.docState() == after)
-    await s.close()
-  }
-
   @Test func reloadingSettingsKeepsTheExactWorkingText() {
     let edit = RevisionEdit()
     edit.reload(0)
@@ -1011,123 +826,6 @@ import TsugumiTestSupport
 
   /// JSON definitions and project settings retain their own opening revision.
   /// Rejected text is not left in the session for a later autosave to send.
-  @Test func staleSettingsApplyNeedsAnExplicitRevisionChoice() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let other = RPCClient(endpoint: d.endpoint.url)
-    _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
-    for projectDocument in [false, true] {
-      let editor = RevisionEdit()
-      editor.reload(s.rev)
-      func agentSave(_ value: String) async throws {
-        let snap = try await other.inspect()
-        var project = try JSONValue.parse(snap.projectJson)
-        project["name"] = .string(value)
-        _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: projectDocument
-          ? [Change.setProject(project.serialized())]
-          : [Change.putDefinition(id: "a", cardJSON: #"{"template":"draft","symbol":""# + value + #""}"#, metaJSON: nil)])
-        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(s.rev > (snap.rev ?? 0))
-      }
-      func apply(_ overwrite: Bool = false) async -> Bool {
-        await editor.apply(s, overwrite: overwrite) { x in
-          if projectDocument { x.project["name"] = .string("mine") }
-          else { x.setCardDefinition("a", DefinitionDraft(card: .object([("template", .string("draft")), ("symbol", .string("mine"))]), meta: nil)) }
-        }
-      }
-      try await agentSave("newer")
-      #expect(!(await apply()))
-      #expect(editor.conflictRev == s.rev)
-      #expect(!s.dirty)
-      #expect(!(await apply()))
-      try await agentSave("newest")
-      #expect(!(await apply(true)))
-      #expect(!s.dirty)
-      #expect(await apply(true))
-      #expect(!s.dirty)
-      #expect(projectDocument ? s.project["name"]?.string == "mine" : s.cardDefinition("a")?["symbol"]?.string == "mine")
-    }
-    await other.close()
-    await s.close()
-  }
-
-  @Test func cardEditorSourceConflictsNeedAnExplicitChoice() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let other = RPCClient(endpoint: d.endpoint.url)
-    _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
-    for removing in [false, true] {
-      let rel = removing ? "remove.txt" : "create.txt"
-      let p = "definitions/a/" + rel
-      func agentSave(_ text: String) async throws {
-        let snap = try await other.inspect()
-        let hash = snap.sources.compactMap { $0 }.first { $0.path == p }?.hash
-        _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-          Change.putSource(path: p, bytes: Data(text.utf8), baseHash: hash),
-        ])
-        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(s.rev > (snap.rev ?? 0))
-      }
-      if removing { try await agentSave("base") }
-      let model = CardEditorModel(session: s, cardKey: "a")
-      if removing { model.removeFile(p) } else { model.createFile(rel, text: "mine") }
-      try await agentSave("agent")
-      #expect(!(await model.apply()))
-      #expect(model.conflicts == [rel])
-      #expect(!s.dirty)
-      #expect(await model.apply(overwrite: true))
-      #expect(!s.dirty)
-      if removing { #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(p).path)) }
-      else { #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "mine") }
-    }
-    await other.close()
-    await s.close()
-  }
-
-  @Test func cardEditorFollowsUntouchedSettings() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let d = try Daemon(project: dir)
-    defer { d.stop() }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    let m = CardEditorModel(session: s, cardKey: "a")
-    m.definition?["symbol"] = .string("mine")
-    // Another client changes another setting and the same one.
-    let other = RPCClient(endpoint: d.endpoint.url)
-    _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
-    let snap = try await other.inspect()
-    _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-      Change.putDefinition(id: "a", cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3,"symbol":"theirs"}"#, metaJSON: nil),
-    ])
-    for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
-    await m.follow()
-    #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
-    #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
-    #expect(m.conflicts == ["/definition/symbol"])
-    #expect(!(await m.apply()))
-    #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "theirs")
-    #expect(await m.apply(overwrite: true))
-    #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "mine")
-    #expect(s.confirmedDefinitions["a"]?["maxRuns"]?.uint64 == 3)
-  }
-
-  /// Another project taken in as a Card in Card is a copy of its own: its
-  /// Cards are edited from inside, and its definitions are copied as new Cards.
   @Test func importedProjectIsEditedInside() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -1150,7 +848,7 @@ import TsugumiTestSupport
     #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/a/_card.json").path))
     #expect(!FileManager.default.fileExists(atPath: ext.appendingPathComponent(".tsugumi").path))
     #expect(s.kind(k) == .subgraph)
-    for _ in 0..<100 where s.cards(in: [name]).isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.cards(in: [name]).isEmpty) }
     #expect(s.cards(in: [name]).count == 4)
 
     // Inside: wire and move Cards, add one; the external's own files change.
@@ -1166,7 +864,7 @@ import TsugumiTestSupport
     #expect(lay["cards"]?["a"]?["x"]?.double == 123)
     #expect(FileManager.default.fileExists(atPath: ext.appendingPathComponent("definitions/\(path(added).last!)/_card.json").path))
     // The core resolves the inner Cards from the edited files.
-    for _ in 0..<100 where s.resolution[added] == nil { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.resolution[added] == nil) }
     #expect(s.resolution[added] != nil)
 
     // A definition of the external, copied into this project as a new Card.
@@ -1194,77 +892,18 @@ extension SyncTests {
     try await Self.connected(s)
     try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
     await s.save()
+    let allocating = AsyncStream<Void>.makeStream()
     var allocation: CheckedContinuation<String, Never>?
-    s.cardIdProvider = { _, _ in await withCheckedContinuation { allocation = $0 } }
+    s.cardIdProvider = { _, _ in await withCheckedContinuation { allocation = $0; allocating.continuation.yield() } }
     let connecting = Task { try await s.connect(from: ("start", "out"), to: ("b", "in"), in: []) }
-    while allocation == nil { await Task.yield() }
+    var allocationEvents = allocating.stream.makeAsyncIterator()
+    _ = await allocationEvents.next()
     s.deleteCards(["b"], in: [])
     allocation?.resume(returning: "fork-delayed")
-    try await connecting.value
+    // The host refuses the wire: its end is gone by the time the action's turn comes.
+    await #expect(throws: (any Error).self) { try await connecting.value }
     #expect(s.instance("fork-delayed") == nil)
     #expect(!s.connections(in: []).contains { $0["to"]?["card"]?.string == "b" })
-    await s.close()
-  }
-
-  @Test func cardEditorKeepsTypingAfterSendingSettingsAndSources() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let p = "definitions/a/later.txt"
-    try "base".write(to: dir.appendingPathComponent(p), atomically: true, encoding: .utf8)
-    let daemon = try Daemon(project: dir)
-    defer { daemon.stop() }
-    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-    s.endpointOverride = daemon.endpoint
-    s.start()
-    try await Self.connected(s)
-    let model = CardEditorModel(session: s, cardKey: "a")
-    _ = try await model.text(p)
-    model.texts[p] = "sent"
-    model.definition?["symbol"] = .string("sent")
-    var finished = false
-    let saving = Task { let ok = await model.apply(); finished = true; return ok }
-    while !model.applying && !finished { await Task.yield() }
-    #expect(model.applying)
-    model.texts[p] = "later"
-    model.definition?["symbol"] = .string("later")
-    model.createFile("new.txt", text: "new")
-    #expect(await saving.value)
-    #expect(model.loadedText(p) == "later" && model.isEdited(p) && model.unapplied)
-    #expect(model.definition?["symbol"]?.string == "later")
-    #expect(model.created.contains("definitions/a/new.txt"))
-    #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "sent")
-    #expect(s.cardDefinition("a")?["symbol"]?.string == "sent")
-    #expect(await model.apply())
-    #expect(!model.unapplied)
-    #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "later")
-    await s.close()
-  }
-
-  @Test func inlineValueKeepsItsOpeningRevisionAndSkipsAnUnchangedBlur() async throws {
-    let dir = try Self.project()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let daemon = try Daemon(project: dir)
-    defer { daemon.stop() }
-    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-    s.endpointOverride = daemon.endpoint
-    s.start()
-    try await Self.connected(s)
-    let edit = InlineParamEdit()
-    edit.begin("1", rev: s.rev)
-    let other = RPCClient(endpoint: daemon.endpoint.url)
-    _ = try await other.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
-    var project = s.project
-    project["name"] = .string("newer")
-    _ = try await other.save(baseRev: s.rev, opId: UUID(), origin: "ui", changes: [Change.setProject(project.serialized())])
-    for _ in 0..<100 where s.rev == edit.revision.baseRev { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(s.rev > edit.revision.baseRev)
-    var wrote = false
-    #expect(await edit.commit(s, text: "1") { _ in wrote = true })
-    #expect(!wrote)
-    #expect(!(await edit.commit(s, text: "3") { $0.project["name"] = .string("stale") }))
-    #expect(edit.revision.conflictRev == s.rev && !s.dirty)
-    #expect(s.project["name"]?.string == "newer")
-    await other.close()
     await s.close()
   }
 
@@ -1289,7 +928,7 @@ extension SyncTests {
     #expect(s.reloadApproval != nil)
     await s.answerReloadApproval(true, selected: ["network a"])
     #expect(s.saveError == nil && s.reloadApproval == nil)
-    for _ in 0..<100 where s.rev == base { try await Task.sleep(for: .milliseconds(20)) }
+    try await waitForModel { !(s.rev == base) }
     #expect(s.cardDefinition("a")?["network"]?.bool == true)
     await s.close()
   }

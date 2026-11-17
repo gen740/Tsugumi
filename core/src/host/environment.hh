@@ -61,6 +61,7 @@ class EnvironmentProcess {
     return Verify(ready) ? std::optional<int64_t>(ready.pid) : std::nullopt;
   }
   virtual auto GuardStart(const std::string&) -> void {}
+  virtual auto Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool;
   virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
       -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
@@ -89,6 +90,8 @@ struct EnvironmentOptions {
   std::chrono::milliseconds start_timeout{60000};
   std::chrono::milliseconds stop_timeout{20000};
   std::shared_ptr<EnvironmentProcess> process;
+  std::function<void(const std::filesystem::path &)> prepare_project_identity =
+      {};
 };
 
 class Environments {
@@ -112,7 +115,8 @@ class Environments {
       -> Tsugumi::Host::HostRuntimeT;
   auto Terminal(const Tsugumi::Host::HostTerminalRequestT& request)
       -> Tsugumi::Host::HostTerminalT;
-  // Stops observation and pending starts; ready processes remain resident.
+  auto Busy() -> bool;
+  // Stops observation and pending starts, then shuts down owned runtimes.
   auto Shutdown() -> void;
 
  private:

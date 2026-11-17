@@ -13,7 +13,8 @@ const stat = (file: string) => {
 export function uninstall(args: string[]): number {
   try {
     if (args.some(a => a !== '--yes') || args.length > 1) {
-      throw new Error('Usage: tsugumi uninstall [--yes]')
+      console.error('Usage: tsugumi uninstall [--yes]')
+      return 64
     }
     const home = os.homedir()
     const local = path.join(home, '.local')

@@ -400,6 +400,12 @@ export class GuideController extends Observable {
     this.invite(connected)
   }
 
+  /** Called only after sign-in with plan permission and its welcome. */
+  async finishChatGPTSetup() {
+    await api('/api/settings', { provider: 'chatgpt' })
+    await this.finishSetup(true)
+  }
+
   /** A key the user just saved connected the guide: asked even after the
    *  scripted tour's offer was answered, since the guide now uses the model. */
   private invite(newly: boolean) {

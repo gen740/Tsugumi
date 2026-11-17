@@ -1,12 +1,9 @@
+import { ProjectTrustRequestT } from '../src/gen/tsugumi/host/project-trust-request'
+import * as R from '../src/gen/tsugumi/rpc'
 import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
 import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
 import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
-import { DocumentTemplateRequestT } from '../src/gen/tsugumi/host/document-template-request'
-import { DocumentConnectRequestT } from '../src/gen/tsugumi/host/document-connect-request'
-import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-request'
-import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
 import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
-import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import * as H from '../src/gen/tsugumi/host'
 import { sceneRequest } from '../src/shared/hostLayout'
 import { ModelSelectionRequestT } from '../src/gen/tsugumi/host/model-selection-request'
@@ -33,9 +30,17 @@ import { ExecutionServiceRemoveRequestT } from '../src/gen/tsugumi/host/executio
 import { ExecutionProjectAuthorizeRequestT } from '../src/gen/tsugumi/host/execution-project-authorize-request'
 import { ExecutionProjectRevokeRequestT } from '../src/gen/tsugumi/host/execution-project-revoke-request'
 import { DemoListRequestT as HDemoListRequest } from '../src/gen/tsugumi/host/demo-list-request'
+import { CallIdRequestT } from '../src/gen/tsugumi/agent/call-id-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../src/gen/tsugumi/host/host-project-defaults-request'
+function workerGrade(value: unknown): bigint {
+  if (typeof value !== 'string' || !/^(0x[0-9a-f]+|[0-9]+)$/i.test(value)) throw Error('Invalid worker grade')
+  const grade = BigInt(value)
+  if (grade > 0xffffffffffffffffn) throw Error('Invalid worker grade')
+  return grade
+}
+
 function heartbeatSetting(value: unknown, fallback: number, minimum: number): number {
   if (value === undefined) return fallback
   if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > 0xffffffff)
@@ -70,6 +75,7 @@ import { ConversationActionRequestT as AConversationActionRequest } from '../src
 import { ConversationCancelRequestT as AConversationCancelRequest } from '../src/gen/tsugumi/agent/conversation-cancel-request'
 import { EventsRequestT as AEventsRequest } from '../src/gen/tsugumi/agent/events-request'
 import { ToolCallRequestT as AToolCallRequest } from '../src/gen/tsugumi/agent/tool-call-request'
+import { ToolCallCancelRequestT as AToolCallCancelRequest } from '../src/gen/tsugumi/agent/tool-call-cancel-request'
 import { AccessRequestT as AAccessRequest } from '../src/gen/tsugumi/agent/access-request'
 import { AccessResolveRequestT as AAccessResolveRequest } from '../src/gen/tsugumi/agent/access-resolve-request'
 import { AccessRevokeRequestT as AAccessRevokeRequest } from '../src/gen/tsugumi/agent/access-revoke-request'
@@ -81,7 +87,6 @@ import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
 import { RegisterFolderRequestT as HRegisterFolderRequest } from '../src/gen/tsugumi/host/register-folder-request'
 import { ModelsListRequestT as HModelsListRequest } from '../src/gen/tsugumi/host/models-list-request'
-import { HostProjectReadRequestT } from '../src/gen/tsugumi/host/host-project-read-request'
 import { HostProjectInfoRequestT as HHostProjectInfoRequest } from '../src/gen/tsugumi/host/host-project-info-request'
 import { HostProjectCreateRequestT as HHostProjectCreateRequest } from '../src/gen/tsugumi/host/host-project-create-request'
 import { HostProjectDuplicateRequestT as HHostProjectDuplicateRequest } from '../src/gen/tsugumi/host/host-project-duplicate-request'
@@ -95,7 +100,7 @@ import { GuideAdvanceRequestT } from '../src/gen/tsugumi/host/guide-advance-requ
 import { GuideInputT } from '../src/gen/tsugumi/host/guide-input'
 
 export class CoreHostError extends Error {
-  constructor(readonly code: string, message: string, readonly requestId?: string) { super(message) }
+  constructor(readonly code: string, message: string, readonly requestId?: string, readonly path?: string) { super(message) }
 }
 
 function enumValue(e: any, value: unknown): number {
@@ -117,6 +122,7 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'ProjectOperateRequest': return H.ProjectOperateRequest.getRootAsProjectOperateRequest(new fb.ByteBuffer(new Uint8Array(v.bytes))).unpack()
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
     case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
@@ -124,13 +130,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
     case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
-    case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
-    case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
-    case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
-    case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
-    case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
-    case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
-    case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
+    case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
+    case 'LayoutCompleteRequest': return new H.LayoutCompleteRequestT(v.project_json, v.layout_json, v.definitions_json)
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
     case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
       v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
@@ -155,19 +156,20 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0))
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0), workerGrade(v.grade ?? '1'))
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
 
+    case 'IdentifierReserveRequest': return new H.IdentifierReserveRequestT(v.project_id, v.kind, v.scope, v.occupied)
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
+    case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
-    case 'HostProjectReadRequest': return new HostProjectReadRequestT(v.path, v.file_index ?? 0, BigInt(v.offset ?? 0))
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
     case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)
@@ -177,6 +179,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostRecentForgetRequest': return new HHostRecentForgetRequest(v.paths)
   }
   else switch (method) {
+    case 'CallIdRequest': return new CallIdRequestT(v.conversation_id)
     case 'ToolCatalogRequest': return new AToolCatalogRequest()
     case 'HelloRequest': return new AHelloRequest(v.token, v.client_id, v.protocol)
     case 'ConfigureRequest': return new AConfigureRequest(provider(v.provider), v.conversation_id)
@@ -190,6 +193,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
+    case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), enumValue(GrantScope, v.scope), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, (v.also_allow ?? []).map((value: unknown) => enumValue(Access, value)))
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
@@ -226,7 +230,7 @@ function view(value: any): any {
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
-    sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
+    trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
@@ -237,6 +241,7 @@ function view(value: any): any {
       continue
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
+    if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
     if (key === 'scope' && typeof v === 'number') { out[name] = GrantScope[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
@@ -256,6 +261,11 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.
+  if (host && reply.valueType === H.ReplyPayload.ProjectOperationResult) {
+    const builder = new fb.Builder()
+    builder.finish(reply.value.pack(builder))
+    return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
+  }
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,

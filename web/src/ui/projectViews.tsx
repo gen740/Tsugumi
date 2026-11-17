@@ -5,13 +5,14 @@ import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
-import { arr, bool, get, isObj, J, JObj, obj, parse, serialize, str } from '../shared/json'
+import { arr, bool, clone, get, isObj, J, JObj, obj, parse, serialize, str } from '../shared/json'
 import { R, s } from '../shared/rpc'
 import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import { L } from '../i18n'
+import { TrustedFoldersSettings } from './trustedFolders'
 import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 // ---- Card database -----------------------------------------------------------------
@@ -65,10 +66,9 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       return
     }
     setParseError(undefined)
-    if (!await revisionEdit.apply(session, overwrite, (x) => {
-      const d = x.cardDefinitionDraft(key([id]))
-      x.setCardDefinition(key([id]), { card: d?.link === undefined ? card : d.card, meta, link: d?.link })
-    })) return
+    if (!await revisionEdit.replaceDocuments(session, [
+      [`definitions/${id}/_card.json`, card], [`definitions/${id}/_meta.json`, meta],
+    ])) return
     setBase({ card: cardText, meta: metaText })
     setMessage(L('適用しました（revision {0}）。', session.rev))
   }
@@ -96,14 +96,14 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         {message && <div className="callout secondary selectable">{message}</div>}
         <div className="row gap8 center">
           <Button disabled={!session.isEditable || !isUnplaced} onClick={() => {
-            const k = session.placeDefinition(id, { x: 40, y: 40 })
-            setMessage(L('{0} を Workflow に配置しました（未保存）。', k))
+            session.placeDefinition(id, { x: 40, y: 40 })
+            setMessage(undefined)
           }}>{L('Canvas に配置')}</Button>
           <Button disabled={isUnplaced} help={L('Card の設定画面で開きます')}
             onClick={() => app.openWindow(session, { kind: 'card', card: key([id]), category: 'source' })}>{L('ソースを開く…')}</Button>
           <Button kind="destructive" disabled={!isUnplaced || !session.isEditable}
             help={isUnplaced ? L('定義とソースを削除') : L('Card を削除すると定義も削除されます')}
-            onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>{L('削除')}</Button>
+            onClick={() => { session.removeDefinition(id); setSelected(undefined) }}>{L('削除')}</Button>
           <span className="spacer" />
           <Button disabled={revisionEdit.applying} onClick={() => load()}>{L('再読込')}</Button>
           <Button kind="prominent" disabled={!unapplied || revisionEdit.applying || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
@@ -184,15 +184,13 @@ export function WorkflowSettingsView({ session, initial }: { session: ProjectSes
   )
 }
 
-const setProject = (x: ProjectSession, k: string, v: J) => {
-  if (!isObj(x.project)) x.project = obj()
-  ;(x.project as JObj).set(k, v)
-}
+const setProject = (x: ProjectSession, k: string, v: J) => x.setProjectField(k, v)
 
 /** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
 function NixSourceSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
   const baseRev = session.rev
+  const selectedProject = clone(session.project)
   const sources = arr(get(session.project, 'nixSources')) ?? []
   const [address, setAddress] = useState('')
   const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
@@ -217,7 +215,10 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   }
   const save = async (list: J[], overwrite = false) => {
     setPending(list)
-    if (await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'nixSources', list))) setPending(undefined)
+    const after = clone(selectedProject)
+    if (!isObj(after)) return
+    after.set('nixSources', list)
+    if (await revisionEdit.apply(session, overwrite, x => x.appendEdits([x.jsonEdit('tsugumi.json', selectedProject, after)]))) setPending(undefined)
   }
   const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
   const look = async () => {
@@ -274,29 +275,38 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
 }
 
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
+  const [selectedProject, setSelectedProject] = useState(() => clone(session.project))
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const savedPaths = (arr(get(session.project, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
   const [versionPaths, setVersionPaths] = useState(savedPaths)
+  const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? app.status?.agentExclude ?? []).map(x => typeof x === 'string' ? x : str(x) ?? '').join('\n')
+  const [agentExclude, setAgentExclude] = useState(() => excludeText(session.project))
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
-  const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '') || versionPaths !== savedPaths
+  const initialPaths = (arr(get(selectedProject, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
+  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject)
   const load = () => {
+    setSelectedProject(clone(session.project))
     setName(str(get(session.project, 'name')) ?? '')
     setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
     setVersionPaths(savedPaths)
+    setAgentExclude(excludeText(session.project))
     revisionEdit.reload(session.rev)
   }
   const save = async (overwrite = false) => {
     const paths = versionPaths.split(/\r?\n/).filter(x => x.length > 0)
-    if (!await revisionEdit.apply(session, overwrite, (x) => {
-      setProject(x, 'name', name)
-      setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
-      setProject(x, 'versionPaths', paths)
-    })) return
-    setPkgs(current => current === pkgs ? pkgs || 'tsugumi:default' : current)
+    const after = clone(selectedProject)
+    if (!isObj(after)) return
+    if (name !== (str(get(selectedProject, 'name')) ?? '')) after.set('name', name)
+    if (pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '')) after.set('pkgsPath', pkgs || 'tsugumi:default')
+    if (versionPaths !== initialPaths) after.set('versionPaths', paths)
+    if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
+    if (!await revisionEdit.apply(session, overwrite, x => x.appendEdits([x.jsonEdit('tsugumi.json', selectedProject, after)]))) return
+    setSelectedProject(after)
+    setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
     setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
     setMessage(L('保存しました。'))
   }
@@ -320,13 +330,20 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section footer={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
             <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
+          <Section footer={L('Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。')}>
+            <Row label={L('Agent から除外するパス')}><TextField value={agentExclude} onChange={setAgentExclude} multiline rows={5} style={{ width: 320 }} /></Row>
+          </Section>
+          <Section footer={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
+            <Row label={L('このプロジェクトを信頼する')}><Toggle checked={session.projectTrust === 1} disabled={!!session.trustedFolder} onChange={(trusted) => void session.setProjectTrust(trusted)} /></Row>
+          </Section>
+          <TrustedFoldersSettings />
           <NixSourceSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}`}
+      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}\nagentExclude:\n${agentExclude}`}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}

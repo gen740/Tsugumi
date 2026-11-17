@@ -173,12 +173,15 @@ final class ModelMenu: NSObject, NSMenuDelegate {
       let times = String(format: "%g", price)
       let item = NSMenuItem(title: String(localized: "Fast mode（料金は通常の \(times) 倍）"), action: #selector(toggledFast), keyEquivalent: "")
       item.target = self
+      item.representedObject = ["fast"]
       item.state = fast ? .on : .off
       items.append(item)
     } else {
-      items.append(unavailable(provider == "chatgpt" ? String(localized: "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）")
+      let disabledFast = unavailable(provider == "chatgpt" ? String(localized: "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）")
         : provider == "openai" ? String(localized: "Fast mode: このモデルでは選べません（公式の料金表で確かめたモデルだけ選べます）")
-        : String(localized: "Fast mode: Claude Opus 5.5 でだけ選べます")))
+        : String(localized: "Fast mode: Claude Opus 5.5 でだけ選べます"))
+      disabledFast.representedObject = ["fast"]
+      items.append(disabledFast)
     }
     return items
   }

@@ -3,28 +3,13 @@
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentProjectFixture, LayoutProposalsUseTheHostAndDoNotSaveTheProject) {
-  StartProject();
-  const auto conversation = Conversation("host-layout-proposal");
-  Grant(conversation);
-  const auto before = JsonString(Inspect(conversation).View(), "/text");
-  const auto reply = Tool(
-      conversation, "layout_arrange",
-      R"({"scene":{"flow":"topToBottom","cards":[],"wires":[],"frames":[],"notes":[]}})",
-      "arrange");
-  ASSERT_TRUE(reply.Code().empty()) << reply.View();
-  EXPECT_FALSE(JsonBool(reply.View(), "/isError"));
-  EXPECT_EQ(JsonString(JsonString(reply.View(), "/text"), "/reply"),
-            "LayoutProposal");
-  EXPECT_EQ(JsonString(Inspect(conversation).View(), "/text"), before);
-}
-
 TEST_F(AgentProjectFixture,
        HostLayoutRejectionReplaysWithoutLookingForACoreReceipt) {
   StartProject();
   const auto conversation = Conversation("host-layout-validation");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
   const auto before = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(before, "/value/rev");
   const auto arguments =
@@ -42,5 +27,5 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(retry.View(), "/text"), result);
   EXPECT_EQ(JsonString(Inspect(conversation).View(), "/text"), before);
 }
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

@@ -15,11 +15,11 @@
     ]
   },
   {
-    "href": "run:12345678-1234-1234-1234-123456789abc",
+    "href": "run:12",
     "kind": "run"
   },
   {
-    "href": "run:12345678-1234-1234-1234-123456789abc/outer/inner#2",
+    "href": "run:12/outer/inner#2",
     "kind": "run",
     "card": [
       "outer",
@@ -28,7 +28,7 @@
     "invocation": "2"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc/spectrum?invocation=2&stream=stderr&offset=128",
+    "href": "log:12/spectrum?invocation=2&stream=stderr&offset=128",
     "kind": "log",
     "card": [
       "spectrum"
@@ -37,12 +37,12 @@
     "offset": "128"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc?stream=journal",
+    "href": "log:12?stream=journal",
     "kind": "log",
     "offset": "0"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=opaque%3Aid&path=reports%2Fplot.png",
+    "href": "artifact:12?id=opaque%3Aid&path=reports%2Fplot.png",
     "kind": "artifact",
     "artifact": "opaque:id",
     "member": "reports/plot.png"
@@ -63,31 +63,31 @@
     "href": "run:missing"
   },
   {
-    "href": "run:12345678-1234-1234-1234-123456789abc#1"
+    "href": "run:12#1"
   },
   {
-    "href": "run:12345678-1234-1234-1234-123456789abc/spectrum#0"
+    "href": "run:12/spectrum#0"
   },
   {
-    "href": "run:12345678-1234-1234-1234-123456789abc/spectrum#18446744073709551616"
+    "href": "run:12/spectrum#18446744073709551616"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc?stream=unknown"
+    "href": "log:12?stream=unknown"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc?offset=-1"
+    "href": "log:12?offset=-1"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc?offset=1&offset=2"
+    "href": "log:12?offset=1&offset=2"
   },
   {
-    "href": "log:12345678-1234-1234-1234-123456789abc?invocation=1"
+    "href": "log:12?invocation=1"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=..%2Fsecret"
+    "href": "artifact:12?id=x&path=..%2Fsecret"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&project=other"
+    "href": "artifact:12?id=x&project=other"
   },
   {
     "href": "https://example.com"
@@ -96,31 +96,31 @@
     "href": "javascript:alert(1)"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a+b.txt",
+    "href": "artifact:12?id=x&path=a+b.txt",
     "kind": "artifact",
     "artifact": "x",
     "member": "a b.txt"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a%2Bb.txt",
+    "href": "artifact:12?id=x&path=a%2Bb.txt",
     "kind": "artifact",
     "artifact": "x",
     "member": "a+b.txt"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=a%20b.txt",
+    "href": "artifact:12?id=x&path=a%20b.txt",
     "kind": "artifact",
     "artifact": "x",
     "member": "a b.txt"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%2"
+    "href": "artifact:12?id=x&path=bad%2"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%FF"
+    "href": "artifact:12?id=x&path=bad%FF"
   },
   {
-    "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%C0%AF"
+    "href": "artifact:12?id=x&path=bad%C0%AF"
   },
   {
     "href": "card:outer/inner?file=src%2Fmain.py&lines=12-18",
@@ -162,5 +162,26 @@
   },
   {
     "href": "card:a?lines=1-2"
+  },
+  {
+    "href": "run:0"
+  },
+  {
+    "href": "run:01"
+  },
+  {
+    "href": "run:-1"
+  },
+  {
+    "href": "run:9223372036854775808"
+  },
+  {
+    "href": "run:12345678-1234-1234-1234-123456789abc"
+  },
+  {
+    "href": "artifact:12?id=12%2Florenz%2F1%2Fimage&path=plot.png",
+    "kind": "artifact",
+    "artifact": "12/lorenz/1/image",
+    "member": "plot.png"
   }
 ]

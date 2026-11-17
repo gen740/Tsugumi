@@ -17,7 +17,6 @@ import { L, language } from './i18n'
 import { CoreHostError } from './coreHost'
 import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
-import { importProject } from './projectImport'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -57,7 +56,7 @@ function update(): number {
   }
   const r = spawnSync('/bin/sh', ['-c', L('script="$(curl -fsSL "$1/install.sh")" || { echo "$1/install.sh を取得できませんでした。" >&2; exit 1; }\nprintf \'%s\\n\' "$script" | /bin/sh'), 'sh', base], { stdio: 'inherit' })
   if (r.status === 0) console.log(L('動いている tsugumi があれば、Ctrl-C で止めて起動し直すと新しい版で開きます。'))
-  return r.status ?? 1
+  return r.status === 1 ? 69 : r.status ?? 70
 }
 
 const chosenPort = opt('--port') ?? process.env.TSUGUMI_WEB_PORT
@@ -250,18 +249,16 @@ async function updateExecutionServices(method: string, body: unknown) {
   return result
 }
 
-type Handler = (b: any, url: URL) => unknown | Promise<unknown>
+type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
+  'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
-  'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),
-  'POST /api/document/template': (b) => hostRequest('DocumentTemplateRequest', b),
-  'POST /api/document/connect': (b) => hostRequest('DocumentConnectRequest', b),
-  'POST /api/document/copy': (b) => hostRequest('DocumentCopyRequest', b),
-  'POST /api/document/subgraph': (b) => hostRequest('DocumentSubgraphRequest', b),
-  'POST /api/layout/arrange': (b) => hostRequest('LayoutArrangeRequest', b),
-  'POST /api/layout/untangle': (b) => hostRequest('LayoutUntangleRequest', b),
+  'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
+  'POST /api/layout/display-geometry': () => hostRequest('DisplayGeometryRequest', {}),
+  'POST /api/layout/complete': (b) => hostRequest('LayoutCompleteRequest', b),
   'POST /api/layout/validate': (b) => hostRequest('LayoutValidateRequest', b),
   'POST /api/layout/version-canvas': (b) => hostRequest('VersionCanvasRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
@@ -279,6 +276,7 @@ const routes: Record<string, Handler> = {
     startBuild()
     return setupStatus()
   },
+  'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
     return { path: recent.path, key: projectKey(recent.path).key, name: recent.name }
@@ -338,10 +336,7 @@ const routes: Record<string, Handler> = {
     fs.mkdirSync(dir)
     return listDir(dir)
   },
-  'POST /api/import/project': (b) => {
-    if (typeof b.folder !== 'string') throw new HttpError(400, L('tsugumi.json のあるフォルダを選んでください。'))
-    return importProject(b.folder, hostRequest)
-  },
+
   'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path), b.cols, b.rows),
   'POST /api/terminal/input': (b) => {
     terminal(b.id).proc.write(String(b.data ?? ''))
@@ -471,12 +466,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.method !== 'GET' && req.headers['x-tsugumi'] !== '1') return send(res, 403, { error: 'missing X-Tsugumi header' })
     const h = routes[`${req.method} ${url.pathname}`]
     if (!h) return send(res, 404, { error: 'not found' })
+    const controller = new AbortController()
+    const disconnected = () => { if (!res.writableEnded) controller.abort() }
+    res.once('close', disconnected)
     try {
-      send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url))
+      send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url, controller.signal))
     } catch (e) {
       send(res, e instanceof HttpError ? e.status : e instanceof CoreHostError ? 400 : 500,
         e instanceof CoreHostError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
-    }
+    } finally { res.off('close', disconnected) }
     return
   }
   let file = path.normalize(path.join(publicDir, decodeURIComponent(url.pathname)))

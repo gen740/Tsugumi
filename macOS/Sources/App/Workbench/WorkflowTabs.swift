@@ -54,6 +54,12 @@ struct WorkflowTabs: View {
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
+    .alert("このプロジェクトを信頼しますか？", isPresented: Binding(get: { session.projectTrust == 0 }, set: { _ in })) {
+      Button("信頼する") { Task { await session.setProjectTrust(true) } }
+      Button("信頼しない", role: .cancel) { Task { await session.setProjectTrust(false) } }
+    } message: {
+      Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。")
+    }
     .sheet(item: Binding(get: { model.chat(for: session).permissionPrompt }, set: { _ in })) { prompt in
       PermissionPromptView(prompt: prompt) { allow, always, selected in
         model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, always: always, selected: selected)
@@ -241,6 +247,8 @@ enum EnvironmentOverlay {
     case .vmBoot?: return String(localized: "VM を起動しています")
     case .vmStore?: return String(localized: "Nix store の保存領域を開いています（初回は初期化）")
     case .vmNix?: return String(localized: "Nix を準備しています")
+    case .vmCheckingStore?: return String(localized: "前回の VM が正常に停止しなかったため、Nix store を検査・修復しています")
+    case .vmCheckingStoreUpgrade?: return String(localized: "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）")
     case .vmNetwork?: return String(localized: "ネットワークを設定しています")
     case .vmSystem?: return String(localized: "VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）")
     case .vmSupervisor?: return String(localized: "実行環境の管理プロセスを起動しています")

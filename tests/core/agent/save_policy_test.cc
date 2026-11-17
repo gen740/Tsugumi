@@ -5,6 +5,8 @@
 #include "agent/save_policy.hh"
 #include "util/crypto.hh"
 #include <git2.h>
+#include "host/failure.hh"
+
 #include <gtest/gtest.h>
 
 namespace tsugumi::host {
@@ -103,6 +105,20 @@ TEST_F(AgentSavePolicy, DecimalStringRevisionsAreCheckedBeforePolicy) {
                          return Read(method, args);
                        }),
       SaveRevisionConflict);
+}
+TEST_F(AgentSavePolicy, MissingDraftContextNamesTheCardAndMetadataField) {
+  try {
+    Prepare({Implement()});
+    FAIL() << "implementing a described Draft requires context";
+  } catch (const Failure &failure) {
+    EXPECT_EQ(failure.code, "validation_failed");
+    const std::string diagnostic = failure.what();
+    EXPECT_NE(diagnostic.find("plan"), std::string::npos);
+    EXPECT_NE(diagnostic.find("_meta.json"), std::string::npos);
+    EXPECT_NE(diagnostic.find("context"), std::string::npos);
+    EXPECT_NE(diagnostic.find("description"), std::string::npos);
+    EXPECT_EQ(diagnostic.find('\n'), std::string::npos);
+  }
 }
 TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyFieldsAreFilled) {
   EXPECT_THROW(Prepare({Implement()}), std::runtime_error);

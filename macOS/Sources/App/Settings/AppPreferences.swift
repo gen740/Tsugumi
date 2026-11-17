@@ -175,6 +175,7 @@ final class AppPreferences {
       if languageRestart.select(language) { LanguageRestartNotice.update(languageRestart) }
     }
   }
+  var quitAfterLastWindowClosed: Bool { didSet { d.set(quitAfterLastWindowClosed, forKey: "app.quitAfterLastWindowClosed") } }
   var maxConcurrency: Int { didSet { d.set(maxConcurrency, forKey: "run.maxConcurrency") } }
   var sendKey: SendKey { didSet { d.set(sendKey.rawValue, forKey: "chat.sendKey") } }
   var theme: Theme { didSet { d.set(theme.rawValue, forKey: "app.theme"); applyTheme() } }
@@ -208,6 +209,7 @@ final class AppPreferences {
     let selectedLanguage = Language(rawValue: CorePreferences.shared.string(forKey: "app.language") ?? d.stringArray(forKey: "AppleLanguages")?.first ?? "") ?? .ja
     language = selectedLanguage
     languageRestart = LanguageRestart(running: selectedLanguage)
+    quitAfterLastWindowClosed = d.bool(forKey: "app.quitAfterLastWindowClosed")
     maxConcurrency = d.object(forKey: "run.maxConcurrency") as? Int ?? 4
     sendKey = SendKey(rawValue: d.string(forKey: "chat.sendKey") ?? "") ?? .returnKey
     theme = Theme(rawValue: d.string(forKey: "app.theme") ?? "") ?? .system

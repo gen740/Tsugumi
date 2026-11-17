@@ -474,10 +474,13 @@ struct GraphCanvas: View {
   /// Where Cards and wires are, for the Agent's presence on this canvas.
   private func presenceGeometry(_ routed: [RoutedWire]) -> PresenceGeometry {
     let shown = Set(cardKeys)
+    // This layer is moved by CanvasPanHost. Its own transform must stay at
+    // the camera of the layout pass, including while TimelineView ticks.
+    let base = cam
     return PresenceGeometry(card: { k in shown.contains(k) ? outlineRect(k) : nil },
                             wire: { w in routed.first { $0.thread == w }?.path },
                             dotted: { w in session.isDraftWire(from: w.from, to: w.to) },
-                            screen: { screen($0) }, zoom: camera.zoom,
+                            camera: base,
                             obstacles: { cardKeys.map(cardRect) + outputKeys.map(frameRect) })
   }
 
@@ -699,7 +702,10 @@ struct GraphCanvas: View {
       selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
       CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
-                   onParamBegin: { session.rev },
+                   onParamBegin: { edit, name in
+                     edit.paramBase = InlineParamEdit.ParamBase(parameter: session.cardDefinition(k)?["params"]?.array?.first { $0["name"]?.string == name })
+                     return session.rev
+                   },
                    onParamCommit: data.kind.editsValueOnCanvas ? { name, text, edit, overwrite in await commitParam(k, name, text, edit, overwrite: overwrite) } : nil,
                    paramsEditable: session.isEditable,
                    onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), true) } },
@@ -930,7 +936,7 @@ struct GraphCanvas: View {
        let gid = g["id"]?.string {
       session.ungroup(gid)
     } else {
-      _ = session.addGroup(tab.selection, in: tab.scope)
+      session.performCardEdit { _ = try await session.addGroup(tab.selection, in: tab.scope) }
     }
   }
 
@@ -938,7 +944,7 @@ struct GraphCanvas: View {
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
     session.performCardEdit {
-      let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), clearOfOthers: true)
+      let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), automaticPlacement: true)
       tab.selection = [k]
       writeDraft(k)
     }
@@ -1243,7 +1249,7 @@ struct GraphCanvas: View {
     let type = session.kind(k) == .switchCard && name == "value" ? "bool"
       : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
     guard let type else { return false }
-    return await edit.commit(session, text: text, overwrite: overwrite) { $0.updateParam(k, name, parseParam(text, type)) }
+    return await edit.commit(session, text: text, overwrite: overwrite) { $0.updateParam(k, name, parseParam(text, type), initial: overwrite ? nil : edit.paramBase) }
   }
 
   private func deleteSelection() {
@@ -1263,7 +1269,7 @@ struct GraphCanvas: View {
 
   private func groupSelection() {
     guard !tab.selection.isEmpty else { return }
-    editingGroup = session.addGroup(tab.selection, in: tab.scope)
+    session.performCardEdit { editingGroup = try await session.addGroup(tab.selection, in: tab.scope) }
   }
 
   /// A built-in Card (from the + button or the canvas menu); a Draft is
@@ -1271,7 +1277,7 @@ struct GraphCanvas: View {
   func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
     guard session.isEditable else { return }
     session.performCardEdit {
-      let k = try await session.addCard(template: t, in: tab.scope, at: w, clearOfOthers: true)
+      let k = try await session.addCard(template: t, in: tab.scope, at: w, automaticPlacement: true)
       tab.selection = [k]
       if t == .draft { writeDraft(k) }
     }
@@ -1279,7 +1285,7 @@ struct GraphCanvas: View {
 
   private func addNote(at w: CGPoint? = nil) {
     let center = w ?? world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
-    editingNote = session.addNote(in: tab.scope, at: center)
+    session.performCardEdit { editingNote = try await session.addNote(in: tab.scope, at: center) }
   }
 
   // MARK: - Camera
@@ -1533,6 +1539,7 @@ struct BuiltinCardItems: View {
 
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
+  static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
   static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .collect]
 
   var body: some View {
@@ -1545,7 +1552,7 @@ struct BuiltinCardItems: View {
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Menu("可視化（図を描く Card）") {
-      ForEach([DefinitionTemplate.matplotlib, .plotly, .altair], id: \.self) { t in
+      ForEach(Self.visualizations, id: \.self) { t in
         Button(t.label) { add(t) }
       }
     }

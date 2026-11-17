@@ -1,6 +1,6 @@
 /** Project-local evidence addresses. Never accept hosts, project paths or arbitrary query fields. */
 export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const runNumber = /^[1-9][0-9]{0,18}$/
 const uint = (v: string | null): bigint | undefined => v !== null && /^(0|[1-9][0-9]*)$/.test(v) && BigInt(v) <= 18446744073709551615n ? BigInt(v) : undefined
 export const isEvidence = (href: string) => /^(card|run|log|artifact):/i.test(href)
 export function parseEvidence(href: string): Evidence | undefined {
@@ -23,7 +23,7 @@ export function parseEvidence(href: string): Evidence | undefined {
     return { kind, card: parts, file, lineStart, lineEnd }
   }
   const run = parts.shift()!
-  if (!uuid.test(run)) return
+  if (!runNumber.test(run) || BigInt(run) > 9223372036854775807n) return
   if (parts.length && !card(parts)) return
   if (kind === 'run') {
     if (query !== undefined || fragment !== undefined && (!parts.length || !uint(fragment))) return

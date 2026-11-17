@@ -1,7 +1,6 @@
 #include "host/document_edits.hh"
 
 #include <algorithm>
-#include <iomanip>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -56,185 +55,6 @@ auto Canonical(const std::string &raw) -> std::string {
     return json::Encode(values);
   }
   return text.starts_with('"') ? json::Quote(json::String(text)) : text;
-}
-using Value = std::optional<std::string>;
-auto Equal(const Value &a, const Value &b) -> bool {
-  return a && b ? Canonical(*a) == Canonical(*b) : a == b;
-}
-auto OrderedMembers(const std::string &raw)
-    -> std::vector<std::pair<std::string, std::string>> {
-  schema::v::Mapping<schema::v::String, schema::Json> value;
-  if (auto error = schema::decode(raw, value))
-    throw std::runtime_error(error->message);
-  std::vector<std::pair<std::string, std::string>> result;
-  for (const auto &[key, v] : value.value())
-    result.emplace_back(key, schema::text(v));
-  return result;
-}
-auto Member(const json::Members &fields, const std::string &key) -> Value {
-  const auto it = fields.find(key);
-  return it == fields.end() ? Value{} : Value{it->second};
-}
-auto Path(const std::string &parent, const std::string &key) -> std::string {
-  std::string escaped;
-  for (char c : key)
-    escaped += c == '~' ? "~0" : c == '/' ? "~1" : std::string(1, c);
-  return parent + "/" + escaped;
-}
-// Layout conflicts keep local placement. Project and definition conflicts
-// use the existing explicit choice, including conflicts in metadata.
-auto Conflict(const std::string &path, std::vector<std::string> &conflicts)
-    -> void {
-  if (path == "/layout" || path.starts_with("/layout/"))
-    return;
-  if (path.starts_with("/externals/")) {
-    const auto end = path.find('/', std::string("/externals/").size());
-    if (end != std::string::npos && (path.substr(end) == "/layout" ||
-                                     path.substr(end).starts_with("/layout/")))
-      return;
-  }
-  conflicts.push_back(path.empty() ? "/" : path);
-}
-auto Records(const std::vector<std::string> &values,
-             const std::string &identity, json::Members &records,
-             std::vector<std::string> &order) -> bool {
-  for (const auto &v : values) {
-    if (!v.starts_with('{'))
-      return false;
-    const auto fields = json::Object(v);
-    const auto id = Member(fields, identity);
-    if (!id || !id->starts_with('"'))
-      return false;
-    const auto key = json::Quote(json::String(*id));
-    if (records.contains(key))
-      return false;
-    records[key] = v;
-    order.push_back(key);
-  }
-  return true;
-}
-auto Merge(const Value &base, const Value &ours, const Value &theirs,
-           const std::string &field, const std::string &path,
-           std::vector<std::string> &conflicts) -> Value {
-  if (Equal(ours, base))
-    return theirs;
-  if (Equal(theirs, base) || Equal(theirs, ours))
-    return ours;
-  if (base && ours && theirs && base->starts_with('{') &&
-      ours->starts_with('{') && theirs->starts_with('{')) {
-    const auto b = json::Object(*base), o = json::Object(*ours),
-               t = json::Object(*theirs);
-    auto order = OrderedMembers(*theirs);
-    for (const auto &entry : OrderedMembers(*ours))
-      if (!t.contains(entry.first))
-        order.push_back(entry);
-    std::string out = "{";
-    for (const auto &[key, ignored] : order) {
-      (void)ignored;
-      const auto value = Merge(Member(b, key), Member(o, key), Member(t, key),
-                               key, Path(path, key), conflicts);
-      if (!value)
-        continue;
-      if (out.size() > 1)
-        out += ',';
-      out += json::Quote(key) + ':' + *value;
-    }
-    return out + '}';
-  }
-  if (base && ours && theirs && base->starts_with('[') &&
-      ours->starts_with('[') && theirs->starts_with('[')) {
-    const auto b = json::Array(*base), o = json::Array(*ours),
-               t = json::Array(*theirs);
-    const std::string identity = field == "params" || field == "inputs" ||
-                                         field == "hostFolders" ||
-                                         field == "nixSources"
-                                     ? "name"
-                                     : "id";
-    json::Members bm, om, tm;
-    std::vector<std::string> bi, oi, ti;
-    if (Records(b, identity, bm, bi) && Records(o, identity, om, oi) &&
-        Records(t, identity, tm, ti)) {
-      auto order = oi == bi ? ti : oi;
-      for (const auto &id : oi == bi ? oi : ti)
-        if (std::ranges::find(order, id) == order.end())
-          order.push_back(id);
-      const auto shared = [&](const auto &ids) {
-        std::vector<std::string> result;
-        for (const auto &id : ids)
-          if (bm.contains(id) && om.contains(id) && tm.contains(id))
-            result.push_back(id);
-        return result;
-      };
-      if (shared(oi) != shared(bi) && shared(ti) != shared(bi) &&
-          shared(oi) != shared(ti))
-        Conflict(path, conflicts);
-      std::vector<std::string> out;
-      for (const auto &id : order) {
-        const auto value = Merge(Member(bm, id), Member(om, id), Member(tm, id),
-                                 "", Path(path, json::String(id)), conflicts);
-        if (value)
-          out.push_back(*value);
-      }
-      return json::Encode(out);
-    }
-    const auto has = [](const auto &list, const auto &value) {
-      return std::ranges::any_of(
-          list, [&](const auto &item) { return Equal(item, value); });
-    };
-    const auto strings = [](const auto &list) {
-      return std::ranges::all_of(
-          list, [](const auto &v) { return v.starts_with('"'); });
-    };
-    if (field == "connections" ||
-        (field == "cards" && strings(b) && strings(o) && strings(t))) {
-      // Replacements of the same input are competing edits, not two new
-      // independent wires. The caller must resolve them before saving.
-      std::set<std::string> competing_inputs;
-      if (field == "connections") {
-        const auto inputs = [](const auto &wires) {
-          json::Members result;
-          for (const auto &w : wires) {
-            const auto fields = json::Object(w);
-            const auto to = Canonical(json::Get(fields, "to"));
-            result[to] += Canonical(w);
-          }
-          return result;
-        };
-        const auto bw = inputs(b), ow = inputs(o), tw = inputs(t);
-        auto keys = ow;
-        keys.insert(tw.begin(), tw.end());
-        for (const auto &[key, ignored] : keys) {
-          (void)ignored;
-          const auto bv = Member(bw, key), ov = Member(ow, key),
-                     tv = Member(tw, key);
-          if (ov != bv && tv != bv && ov != tv) {
-            Conflict(path, conflicts);
-            competing_inputs.insert(key);
-          }
-        }
-      }
-      std::vector<std::string> out;
-      for (const auto &v : t)
-        if (!has(b, v) || has(o, v))
-          out.push_back(v);
-      for (const auto &v : o)
-        if (!has(b, v) && !has(out, v))
-          out.push_back(v);
-      if (!competing_inputs.empty()) {
-        std::erase_if(out, [&](const auto &w) {
-          return competing_inputs.contains(
-              Canonical(json::Get(json::Object(w), "to")));
-        });
-        for (const auto &w : o)
-          if (competing_inputs.contains(
-                  Canonical(json::Get(json::Object(w), "to"))))
-            out.push_back(w);
-      }
-      return json::Encode(out);
-    }
-  }
-  Conflict(path, conflicts);
-  return ours;
 }
 } // namespace
 
@@ -383,9 +203,10 @@ auto CopyDocuments(const std::string &state,
         json::Quote(name.empty() ? json::Text(meta, "name", id) : name);
     if (meta.contains("comments")) {
       auto comments = json::Array(meta.at("comments"));
+      uint64_t comment_id = 0;
       for (auto &raw : comments) {
         auto comment = json::Object(raw);
-        comment["id"] = json::Quote(crypto::uuid4());
+        comment["id"] = json::Quote(std::to_string(++comment_id));
         raw = json::Encode(comment);
       }
       meta["comments"] = json::Encode(comments);
@@ -529,33 +350,6 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
       fork["card"] = json::Encode(fork_card);
       fork["meta"] = R"({"name":"fork"})";
       definitions[fork_id] = json::Encode(fork);
-      auto layout = json::Object(json::Get(scope, "layout", "{}"));
-      auto places = json::Object(json::Get(layout, "cards", "{}"));
-      const auto position = [&](const std::string &id,
-                                const std::string &axis) {
-        return std::stod(
-            json::Get(json::Object(json::Get(places, id, "{}")), axis, "0"));
-      };
-      const auto first = json::Text(
-          json::Object(json::Get(json::Object(taken[0]), "to")), "card");
-      json::Members point;
-      for (const auto *axis : {"x", "y"}) {
-        std::ostringstream number;
-        number << std::setprecision(17)
-               << (position(from_card, axis) + position(first, axis)) / 2;
-        point[axis] = number.str();
-      }
-      std::erase_if(places, [&](const auto &entry) {
-        return entry.first == fork_id || entry.first.starts_with(fork_id + "/");
-      });
-      places[fork_id] = json::Encode(point);
-      layout["cards"] = json::Encode(places);
-      if (layout.contains("displays")) {
-        auto displays = json::Object(layout.at("displays"));
-        displays.erase(fork_id);
-        layout["displays"] = json::Encode(displays);
-      }
-      scope["layout"] = json::Encode(layout);
       std::erase_if(wires, [&](const auto &w) {
         return std::ranges::find(taken, w) != taken.end();
       });
@@ -585,17 +379,8 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
   return result;
 }
 
-auto MergeDocuments(const std::string &base, const std::string &ours,
-                    const std::string &theirs)
-    -> Tsugumi::Host::DocumentMergeT {
-  Tsugumi::Host::DocumentMergeT result;
-  result.merged_json = *Merge(
-      schema::text(schema::capture(base)), schema::text(schema::capture(ours)),
-      schema::text(schema::capture(theirs)), "", "", result.conflicts);
-  std::ranges::sort(result.conflicts);
-  result.conflicts.erase(
-      std::unique(result.conflicts.begin(), result.conflicts.end()),
-      result.conflicts.end());
-  return result;
+auto DocumentsEqual(const std::string& a, const std::string& b) -> bool {
+  return Canonical(a) == Canonical(b);
 }
+
 } // namespace tsugumi::host

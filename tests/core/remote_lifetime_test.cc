@@ -84,7 +84,7 @@ class JournalBroker : public testing::Test {
   }
   auto WaitForProbes(size_t count) -> bool {
     std::unique_lock lock(mutex_);
-    return changed_.wait_for(lock, 10s, [&] { return probes_ >= count; });
+    return changed_.wait_for(lock, 60s, [&] { return probes_ >= count; });
   }
   auto Submit(RemoteJobClient& client, const std::string& job, uint32_t missed = 1) -> std::string {
     std::istringstream input("input");
@@ -143,10 +143,9 @@ class JournalBroker : public testing::Test {
         const auto& q = *broker->request;
         R::MessageT response;
         if (q.body.AsProbeRequest()) {
-          // A normal probe can arrive beyond the interval: model transport
-          // delay as well as the real sender's 100 ms scheduling granularity.
-          std::this_thread::sleep_for(150ms);
-          journal->touch_core(q.core_life_id);
+          // Advance lease time explicitly; machine load cannot expire it.
+          lease_time_ += 1150;
+          journal->touch_core(q.core_life_id, lease_time_);
           R::CapabilitiesT caps;
           caps.server_id = server;
           caps.instance_id = journal->instance();
@@ -200,6 +199,7 @@ class JournalBroker : public testing::Test {
   std::mutex mutex_;
   std::condition_variable changed_;
   size_t probes_ = 0;
+  uint64_t lease_time_ = W::now_ms();
   std::unique_ptr<ScopedEnvironment> endpoint, capability;
 };
 

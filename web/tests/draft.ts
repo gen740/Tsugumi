@@ -19,17 +19,7 @@ const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
-  s.scheduleSave = () => {} // no tsugumid here
   s.connected = true
-  s.client = { save: async (base: bigint, op: string, origin: string, changes: R.DocumentChangeT[]) => {
-    const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: base, rev: base + 1n, executionRev: 0n, opId: op, origin })
-    for (const change of changes) {
-      if (change.valueType === R.DocumentChangeValue.SetProject) delta.projectJson = (change.value as R.SetProjectT).json
-      if (change.valueType === R.DocumentChangeValue.SetLayout) delta.layoutJson = (change.value as R.SetLayoutT).json
-      if (change.valueType === R.DocumentChangeValue.PutDefinition) delta.definitionsUpsert.push(Object.assign(new R.DefinitionT(), change.value))
-    }
-    return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta })
-  } } as never
   return s
 }
 const wires = (s: Session) => s.connections([]).map((c) =>
@@ -73,6 +63,7 @@ const ports = (s: Session, k: string) => {
   s.disconnect(c, false, [])
   assert.deepEqual(ports(s, b), [[], []])
   s.deleteCards(new Set([e]), [])
+  await s.save()
   assert.deepEqual(ports(s, d), [[], []])
 
   // Declared names do not create Draft ports.
@@ -84,8 +75,8 @@ const ports = (s: Session, k: string) => {
 {
   const s = session()
   const a = await s.addCard('draft', [], { x: 0, y: 0 })
-  await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
-  s.startDraftEdit(a)
+  await s.save()
+  await s.startDraftEdit(a)
   s.setDraftEdit({ content: 'count words' })
   const open = new CardGeometry(s.nodeData(a), 'topToBottom')
   assert.equal(open.draftRow, CardGeometry.draftEditRow, 'the Card opens up while it is written')
@@ -99,8 +90,8 @@ const ports = (s: Session, k: string) => {
   assert.ok(s.nodeData(a).untitled)
   const plain = new CardGeometry(s.nodeData(a), 'topToBottom')
   assert.equal(plain.headerRow, CardGeometry.untitledTop)
-  await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
-  s.startDraftEdit(a)
+  await s.save()
+  await s.startDraftEdit(a)
   assert.equal(s.inlineDraft?.name, '', 'the name field is empty, not the made-up id')
   assert.equal(s.draftNameProblem(a, ''), undefined)
   assert.equal(await s.finishDraftEdit(), undefined)
@@ -109,8 +100,8 @@ const ports = (s: Session, k: string) => {
   // A name the Card cannot take is reported and not kept.
   assert.match(s.cardNameProblem(a, ' ') ?? '', /名前/)
   assert.equal(s.cardNameProblem(a, 'draft'), undefined)
-  await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
-  s.startDraftEdit(a)
+  await s.save()
+  await s.startDraftEdit(a)
   s.setDraftEdit({ name: 'a'.repeat(4097) })
   assert.equal(await s.finishDraftEdit(), undefined)
   assert.match(s.notice ?? '', /名前/)
@@ -140,6 +131,7 @@ const ports = (s: Session, k: string) => {
   assert.equal((two.port(NEW_PORT, false).y + two.port(NEW_PORT, false).y) / 2, two.height / 2)
   assert.equal(empty.height, wired.height, 'wires do not change the size of a Draft')
   s.setCollapsed([b], true)
+  await s.save()
   assert.equal(new CardGeometry(offGrid(b), 'topToBottom').newPort(true), undefined)
 }
 console.log('draft behavior: passed')

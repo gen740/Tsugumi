@@ -58,13 +58,13 @@ auto Versions::Note(const RequestIn& request, bool human,
   Human(human);
   const auto* p = r->value_as_VersionNoteRequest();
   const auto project = p->project_id()->str();
-  // The project service resolves only full SHA-1 object IDs, not refs or
-  // abbreviations. Canonical hex therefore identifies the resolved object
-  // for both the gate and every subsequent project RPC.
-  const auto commit = FoldAscii(p->commit()->str());
-  if (commit.size() != 40 ||
-      commit.find_first_not_of("0123456789abcdef") != std::string::npos)
-    throw Failure("invalid_request", "Use a full version object ID");
+  const auto spelling = FoldAscii(p->commit()->str());
+  if (spelling.size() < 7 || spelling.size() > 40 ||
+      spelling.find_first_not_of("0123456789abcdef") != std::string::npos)
+    throw Failure("invalid_request",
+                  "Use a Git version object ID or unambiguous abbreviation");
+  const auto root = registry.Root(project);
+  const auto commit = host::ResolveVersion(root, spelling);
   const auto profile = p->profile()->str();
   const auto anthropic_keys = Text(p->anthropic_key_profile()),
              openai_keys = Text(p->openai_key_profile());
@@ -81,9 +81,8 @@ auto Versions::Note(const RequestIn& request, bool human,
   }
   lock.unlock();
   std::lock_guard note_lock(*gate);
-  const auto root = registry.Root(project);
   const auto call = [&](const std::string& name, const std::string& args) {
-    const auto reply = json::Object(tools->ProjectCall(project, name, args));
+    const auto reply = json::Object(tools->UnfilteredProjectCall(project, name, args, {}));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
     if (json::Text(reply, "reply") == "Failure")
       throw Failure("unavailable", json::Text(value, "message"));

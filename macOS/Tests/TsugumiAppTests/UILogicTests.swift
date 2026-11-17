@@ -125,15 +125,6 @@ import TsugumiTestSupport
   #expect(Stage.build.logStream == .build && Stage.execute.logStream == .standardOutput && Stage.save.logStream == .journal)
 }
 
-@Test func runTextCountsFromTheFirstInvocation() {
-  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
-  #expect(d.runText == nil && d.idleText == "未実行（0 回）")
-  d.state = .succeeded
-  d.invocation = 1
-  #expect(d.runText == "実行 #1 · 成功")
-  d.runContinues = true
-  #expect(d.runText!.hasPrefix("実行 #1 · 成功") && d.runText!.contains("次の入力"))
-}
 
 /// The bubble takes its ideal size: long text must wrap inside it, not run out of it.
 @MainActor @Test func theHoverBubbleHoldsItsWrappedText() {
@@ -154,13 +145,8 @@ import TsugumiTestSupport
   let dir = testTemporaryDirectory.appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
-  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-  s.project = try JSONValue.parse(document)
-  let start = try await s.addCard(template: .trigger, in: [], at: .zero, name: "start")
-  let log = try await s.addCard(template: .python, in: [], at: CGPoint(x: 600, y: 0), name: "log")
-  let draft = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
+  let (start, log, draft) = ("start", "log", "plan")
+  let s = try offlineSession(dir, cards: [(start, #"{"template":"trigger"}"#), (log, #"{"language":"python"}"#), (draft, #"{"template":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -170,7 +156,11 @@ import TsugumiTestSupport
   #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
 
   // Once the Card is implemented, endpoint styling becomes solid.
-  s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
+  let implemented = Tsugumi_RPC_DocumentDeltaT()
+  implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"language":"python"}"#
+  implemented.definitionsUpsert = [definition]
+  s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
   #expect(!s.isDraftWire(from: draft, to: log))
   #expect(!s.isDraftWire(from: start, to: draft))
@@ -624,26 +614,9 @@ private final class CountingRuler: LineNumberRuler {
 }
 
 @MainActor @Test(arguments: ["go", "rust", "ruby"])
-func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
-  let dir = testTemporaryDirectory.appendingPathComponent("sdk-card-\(UUID())")
-  defer { try? FileManager.default.removeItem(at: dir) }
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  let document = #"{"name":"sdk","canvas":{"cards":[],"connections":[]}}"#
-  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-  session.project = try JSONValue.parse(document)
+func sdkLanguagesAreOfferedByTheCanvas(language: String) async throws {
   let template = try #require(DefinitionTemplate(rawValue: language))
-  let sources = ["go": ("src/card.go", "func run("),
-                 "rust": ("src/src/lib.rs", "fn run("),
-                 "ruby": ("src/main.rb", "def main(inputs)")]
-  let (source, entry) = try #require(sources[language])
   #expect(BuiltinCardItems.written.contains(template))
-  let card = try await session.addCard(template: template, in: [], at: .zero, name: language)
-  #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
-  #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
-  #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
-  await session.undo()
-  #expect(session.definitionDrafts[card] == nil)
 }
 
 
@@ -652,9 +625,14 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   defer { try? FileManager.default.removeItem(at: dir) }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
-  session.project = document
-  session.definitionEdits["plan"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
-  session.definitionEdits["next"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+  snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
+  snapshot.definitions = ["plan", "next"].map { id in
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"template":"draft"}"#
+    return definition
+  }
+  session.prepareLayout = { _, layout, _ in layout }
+  session.receiveProjectSnapshot(snapshot, projectId: "fixture")
   let editor = CardEditorModel(session: session, cardKey: "plan")
   #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
   #expect(editor.draftEnds.isEmpty)

@@ -1,4 +1,5 @@
 #include "service.hh"
+#include "input_types.hh"
 #include "host_requirements.hh"
 
 #include <unistd.h>
@@ -11,6 +12,7 @@
 #include <set>
 
 #include "execution_service.hh"
+#include "worker_selection.hh"
 #include "remote_execution_service.hh"
 #include "nix.hh"
 #include "cache_usage.hh"
@@ -155,6 +157,8 @@ void digest_table(const reflection::Schema& s, const reflection::Object& obj,
 }  // namespace
 
 std::string request_digest(const R::Request* req) {
+  if (const auto* save = req->value_as_ProjectSaveRequest(); save && save->save_intent())
+    return crypto::sha256_hex("save-intent\n" + save->save_intent()->str());
   const auto* schema = reflection::GetSchema(tsugumi_rpc_bfbs);
   const char* name = R::EnumNameRequestPayload(req->value_type());
   std::string full = std::string("Tsugumi.RPC.") + name;
@@ -236,7 +240,7 @@ void Service::open() {
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
                                                                  : opts_.run_scratch_dir);
-  execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
+  execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
@@ -259,7 +263,8 @@ auto Service::file_roots() const -> std::vector<stdfs::path> {
 }
 
 auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
-                              const std::atomic<bool>& stop) -> Value {
+                              const std::atomic<bool>& stop,
+                              const std::function<void(std::string_view, uint64_t, uint64_t)>& progress) -> Value {
   if (value.kind == PortKind::FlatBuffer) return value;
   const auto source = path_value(value);
   if (!source) throw Failed(FailureKind::output_invalid, "file value has no path");
@@ -272,7 +277,13 @@ auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
     const auto destination = directory / rel.filename();
     const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
       check();
-      fs::copy_beneath(root, from, to, [&](std::string_view) { check(); });
+      const auto total = stdfs::file_size(root / from);
+      uint64_t done = 0;
+      if (progress) progress(from.generic_string(), 0, total);
+      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
+        check(); done += chunk.size();
+        if (progress) progress(from.generic_string(), done, total);
+      });
     };
     if (value.kind == PortKind::File) copy(rel, destination);
     else {
@@ -296,13 +307,106 @@ auto Service::execution_service(const std::string& id) -> ExecutionService& {
   return *remote_execution_;
 }
 
+namespace {
+class SelectedExecution final : public PreparedExecution {
+ public:
+  SelectedExecution(std::unique_ptr<PreparedExecution> execution, std::function<void()> release)
+      : execution_(std::move(execution)), release_(std::move(release)) {}
+  ~SelectedExecution() override { release_(); }
+  auto stage(const std::atomic<bool>& cancel) -> void override { execution_->stage(cancel); }
+  auto execute(const ExecutionRequest& request) -> ExecutionResult override { return execution_->execute(request); }
+ private:
+  std::unique_ptr<PreparedExecution> execution_;
+  std::function<void()> release_;
+};
+}
+
+auto Service::prepare_execution(const Node& node, const stdfs::path& directory, BuildRequest& build)
+    -> std::unique_ptr<PreparedExecution> {
+  auto targets = remote_targets();
+  const auto card = path_key(node.path);
+  std::unique_lock lock(worker_selection_mutex_);
+  if (!node.settings.reuse_worker) resident_targets_.erase(card);
+  std::string selected;
+  for (;;) {
+    std::vector<WorkerCandidate> candidates;
+    for (const auto& target : targets) {
+      const auto capacity = target.id == "local" ? opts_.env_cpus : target.max_jobs;
+      candidates.push_back({target.id, target.grade,
+          target.available && (!capacity || worker_slots_[target.id] < capacity)});
+    }
+    const auto resident = resident_targets_.find(card);
+    const auto resident_id = resident == resident_targets_.end() ? std::string{} : resident->second;
+    for (;;) {
+      const auto choice = select_worker(candidates, node.settings.worker_condition.get(),
+          node.settings.execution_service, resident_id);
+      if (!choice.matches) throw Failed(FailureKind::invalid_request, "no registered worker satisfies workerCondition");
+      if (!choice.index) break;
+      const auto target = targets[*choice.index];
+      if (target.id != "local") {
+        lock.unlock();
+        RemoteProbe live;
+        try {
+          live = remote_jobs_.probe(target.id, target.server_id, target.heartbeat_interval_seconds);
+        } catch (...) { lock.lock(); throw; }
+        lock.lock();
+        if (live.max_jobs && (live.active_jobs >= live.max_jobs || worker_slots_[target.id] >= live.max_jobs)) {
+          candidates[*choice.index].free = false;
+          continue;
+        }
+      }
+      selected = target.id;
+      break;
+    }
+    if (!selected.empty()) break;
+    if (build.cancel && build.cancel->load()) throw Failed(FailureKind::cancelled, "worker selection cancelled");
+    worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    lock.unlock();
+    targets = remote_targets();
+    lock.lock();
+  }
+  ++worker_slots_[selected];
+  lock.unlock();
+  auto release = [this, selected] {
+    std::lock_guard guard(worker_selection_mutex_);
+    --worker_slots_[selected];
+    worker_selection_cv_.notify_all();
+  };
+  try {
+    Node chosen = node;
+    chosen.settings.execution_service = selected;
+    auto execution = execution_service(selected).prepare(chosen, directory, build);
+    if (node.settings.reuse_worker) {
+      std::lock_guard guard(worker_selection_mutex_);
+      resident_targets_[card] = selected;
+    }
+    return std::make_unique<SelectedExecution>(std::move(execution), release);
+  } catch (...) { release(); throw; }
+}
+
 auto Service::remote_execution() -> RemoteExecutionService& { return *remote_execution_; }
 
 auto Service::remote_targets() const -> std::vector<RemoteTarget> {
   try {
-    return remote_jobs_.catalog();
+    auto targets = remote_jobs_.catalog();
+    auto local = std::ranges::find(targets, kLocalExecutionService, &RemoteTarget::id);
+    if (local == targets.end()) {
+      RemoteTarget target;
+      target.id = kLocalExecutionService;
+      targets.insert(targets.begin(), std::move(target));
+      local = targets.begin();
+    }
+    local->available = true;
+    local->native_system = native_system();
+    local->systems = NixRunner::execution_systems();
+    return targets;
   } catch (const std::exception&) {
-    return {};
+    RemoteTarget local;
+    local.id = kLocalExecutionService;
+    local.available = true;
+    local.native_system = native_system();
+    local.systems = NixRunner::execution_systems();
+    return {std::move(local)};
   }
 }
 
@@ -312,13 +416,29 @@ auto Service::start_remote_cleanup() -> void {
 
 auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag> {
   const auto& settings = node.settings;
-  if (settings.execution_service == kLocalExecutionService) return std::nullopt;
-  const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+  if (node.kind != Template::Code) return std::nullopt;
   const auto error = [&](std::string message) -> Diag {
     return {true, "invalid_setting", std::move(message), node.path, {}, {}};
   };
-  if (target == targets.end() || !target->available)
+  const auto unavailable = [&](const RemoteTarget& target) {
+    return error(target.unavailable_reason.empty()
+        ? "execution service " + target.id + " is not available"
+        : target.unavailable_reason);
+  };
+  if (settings.execution_service == "auto") {
+    const RemoteTarget* blocked = nullptr;
+    for (const auto& target : targets) {
+      if (settings.worker_condition && !settings.worker_condition->matches(target.grade)) continue;
+      if (target.available) return std::nullopt;
+      if (!blocked) blocked = &target;
+    }
+    if (blocked) return unavailable(*blocked);
+    return Diag{true, "invalid_setting", "no registered worker satisfies workerCondition", node.path, {}, {}};
+  }
+  const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+  if (target == targets.end() || (settings.worker_condition && !settings.worker_condition->matches(target->grade)))
     return error("execution service " + settings.execution_service + " is not available");
+  if (!target->available) return unavailable(*target);
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
   // or checking resources.
@@ -328,8 +448,10 @@ auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTar
 void Service::shutdown() {
   remote_jobs_.stop();
   {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
+    // Accepted saves drain with the mutation lane. Only a peer disconnect
+    // cancels its save; stopping the service must not discard accepted edits.
     for (const auto& [key, cancelled] : shell_cancellations_) cancelled->store(true);
   }
   if (shell_lane_) shell_lane_->stop();
@@ -397,9 +519,9 @@ void Service::export_now() {
 
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
-      "SessionHello", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "SessionHello", "ProjectActivity", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "InputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -453,8 +575,10 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 
 void Service::disconnected(ConnId conn) {
   {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     for (const auto& [key, cancelled] : shell_cancellations_)
+      if (key.first == conn) cancelled->store(true);
+    for (const auto& [key, cancelled] : save_cancellations_)
       if (key.first == conn) cancelled->store(true);
   }
   std::lock_guard<std::mutex> l(subs_mu_);
@@ -462,7 +586,19 @@ void Service::disconnected(ConnId conn) {
 }
 
 void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)) {
+  const auto key = std::make_pair(req.conn, req.request_id);
+  if (fn == &Service::save) {
+    req.cancelled = std::make_shared<std::atomic<bool>>(false);
+    std::lock_guard lock(cancellations_mu_);
+    save_cancellations_[key] = req.cancelled;
+  }
   bool ok = lane.submit([this, req, fn](bool expired) mutable {
+    auto cleanup = [this, &req](void*) {
+      if (!req.cancelled) return;
+      std::lock_guard lock(cancellations_mu_);
+      save_cancellations_.erase({req.conn, req.request_id});
+    };
+    std::unique_ptr<void, decltype(cleanup)> guard(this, cleanup);
     if (expired) return fail(req, FailureData::make(FailureKind::timeout, "the request waited longer than 30 s and was not executed"));
     try {
       (this->*fn)(req);
@@ -473,7 +609,13 @@ void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)
       fail(req, FailureData::make(FailureKind::internal_error, e.what()));
     }
   });
-  if (!ok) fail(req, FailureData::make(FailureKind::busy, "the request queue is full"));
+  if (!ok) {
+    if (req.cancelled) {
+      std::lock_guard lock(cancellations_mu_);
+      save_cancellations_.erase(key);
+    }
+    fail(req, FailureData::make(FailureKind::busy, "the request queue is full"));
+  }
 }
 
 void Service::dispatch(RequestIn req) {
@@ -481,6 +623,13 @@ void Service::dispatch(RequestIn req) {
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
   switch (req.request()->value_type()) {
+    case P::ProjectActivityRequest: {
+      // Observe outside the lanes so this query cannot count itself as work.
+      flatbuffers::FlatBufferBuilder b;
+      auto value = R::CreateProjectActivity(b, busy());
+      reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectActivity, value.Union()));
+      return;
+    }
     case P::ProjectHostRequirementsRequest: return on_lane(r, std::move(req), &Service::project_host_requirements);
     case P::ProjectOpenRequest: return on_lane(m, std::move(req), &Service::open_project);
     case P::CardIdRequest: return on_lane(m, std::move(req), &Service::card_id);
@@ -505,6 +654,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileListRequest: return on_lane(r, std::move(req), &Service::file_list);
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
+    case P::InputTypesRequest: return on_lane(r, std::move(req), &Service::input_types);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
@@ -571,7 +721,8 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
 
 bool Service::replay_or_join(RequestIn& req, const std::string& op_id, const std::string& kind,
                              const std::string& digest) {
-  if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
   if (kind == "shell") {
     // A running shell has a durable uncertainty receipt. In this process,
     // duplicate callers wait for its final result instead of reading that marker.
@@ -681,6 +832,11 @@ std::optional<Service::ViewRecord> Service::load_view(const std::string& view_id
   return std::nullopt;
 }
 
+auto Service::busy() -> bool {
+  return !mutation_lane_->idle() || !read_pool_->idle() || !shell_lane_->idle() ||
+         scheduler_->active_status().has_value();
+}
+
 RunStatusData Service::current_run_status() {
   if (auto s = scheduler_->active_status()) return *s;
   auto last = history_->read([](sql::Db& db) { return History::latest_run(db); });
@@ -704,14 +860,11 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
   auto lj = b.CreateString(doc.layout_json);
-  auto local = R::CreateExecutionService(b, b.CreateString(kLocalExecutionService),
-                                         b.CreateString(native_system()),
-                                         b.CreateVectorOfStrings(NixRunner::execution_systems()));
-  std::vector<flatbuffers::Offset<R::ExecutionService>> services{local};
+  std::vector<flatbuffers::Offset<R::ExecutionService>> services;
   for (const auto& target : targets)
     services.push_back(R::CreateExecutionService(b, b.CreateString(target.id), b.CreateString(target.native_system),
-        b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::remote_daemon, target.available,
-        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt));
+        b.CreateVectorOfStrings(target.systems), target.id == "local" ? R::ExecutionServiceKind::local : R::ExecutionServiceKind::remote_daemon, target.available,
+        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt, target.grade));
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::String> view;
   flatbuffers::Offset<flatbuffers::String> vid;
@@ -799,14 +952,18 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base,
+                                             const flatbuffers::Vector<uint8_t>* operation_data = nullptr) {
   flatbuffers::Offset<R::DocumentDelta> delta;
   if (d) delta = delta_offset(b, *d);
+  const auto metadata = operation_data ? b.CreateVector(operation_data->data(), operation_data->size())
+                                       : flatbuffers::Offset<flatbuffers::Vector<uint8_t>>{};
   R::SaveResultBuilder sb(b);
   if (d) sb.add_delta(delta);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
+  if (operation_data) sb.add_operation_data(metadata);
   return sb.Finish();
 }
 
@@ -934,7 +1091,8 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
 
 void require_mutation(std::optional<uint64_t> base_rev, const flatbuffers::String* op_id) {
   if (!base_rev) throw Failed(FailureKind::invalid_request, "base_rev is required");
-  if (!crypto::is_uuid(op_id->str())) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id->str()))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
 }
 
 auto RequireApprovedPermissions(
@@ -971,6 +1129,11 @@ void Service::save(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "save", digest)) return;
   try {
+    auto check_cancelled = [&] {
+      if (req.cancelled && req.cancelled->load())
+        throw Failed(FailureKind::cancelled, "the save was cancelled before committing");
+    };
+    check_cancelled();
     require_mutation(r->base_rev(), r->op_id());
     auto changes = decode_changes(r->changes());
     auto base = store_->current();
@@ -978,6 +1141,22 @@ void Service::save(RequestIn& req) {
       FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
       f.current_rev = base->rev;
       throw Failed(f);
+    }
+    if (r->transfers()) for (const auto* transfer : *r->transfers()) {
+      ChangeIn change{};
+      change.kind = ChangeIn::Kind::PutSource;
+      change.path = transfer->path()->str();
+      if (transfer->base_hash()) change.base_hash = transfer->base_hash()->str();
+      auto root = transfer->source_root() ? std::filesystem::path(transfer->source_root()->str()) : opts_.root;
+      if (!root.is_absolute()) throw Failed(FailureKind::invalid_path, "transfer root must be absolute");
+      std::optional<std::string> expected;
+      if (transfer->expected_hash()) expected = transfer->expected_hash()->str();
+      try {
+        change.file = store_->stage_file(root, transfer->from()->str(), expected, check_cancelled);
+      } catch (const fs::Error& error) {
+        throw Failed(FailureKind::invalid_path, error.what());
+      }
+      changes.push_back(std::move(change));
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
     if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");
@@ -995,16 +1174,21 @@ void Service::save(RequestIn& req) {
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
+      auto sr = save_result(b, d, *base, r->operation_data());
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
-    });
+    }, check_cancelled);
     if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
   } catch (const Failed& f) {
-    store_failure_receipt(op_id, "save", digest, f.failure);
+    // A host operation re-reads and re-applies after a failed CAS. No write
+    // happened, so keep this same op id available for its next save attempt.
+    if (r->save_intent() && f.failure.kind == FailureKind::revision_conflict)
+      finish_op(op_id, failure_receipt(op_id, f.failure));
+    else
+      store_failure_receipt(op_id, "save", digest, f.failure);
     throw;
   } catch (const std::exception& e) {
     // Any other error ends the operation too (retryable under the same id).
@@ -1093,7 +1277,8 @@ void Service::version_init(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    if (!crypto::is_operation_id(op_id))
+      throw Failed(FailureKind::invalid_request, "invalid op_id");
     auto commit = versions_->init();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
@@ -1115,7 +1300,8 @@ void Service::version_mark(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+    if (!crypto::is_operation_id(op_id))
+      throw Failed(FailureKind::invalid_request, "invalid op_id");
     if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
     auto commit = versions_->mark(r->name()->str(), r->message() ? r->message()->str() : "");
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
@@ -1283,9 +1469,9 @@ void Service::scratch_delete(RequestIn& req) {
     for (const auto* item : *r->paths()) {
       if (!item) throw Failed(FailureKind::invalid_request, "scratch folder is missing");
       const auto path = item->str();
-      if (!(path.starts_with("runs/") && crypto::is_uuid(path.substr(5))))
+      if (!(path.starts_with("runs/") && crypto::is_run_id(path.substr(5))))
         throw Failed(FailureKind::invalid_request, "invalid scratch folder");
-      // A case-insensitive host filesystem must protect UUID case variants too.
+      // Canonical decimal names have no case aliases.
       if (std::ranges::equal(path, protected_path, [](unsigned char a, unsigned char b) {
             return std::tolower(a) == std::tolower(b);
           }))
@@ -1352,13 +1538,15 @@ void Service::history_delete(RequestIn& req) {
     uint64_t files = 0;
     auto ids = history_->delete_runs(runs_copy(), r->ended_before(), run_ids);
     for (const auto& id : ids)
-      if (crypto::is_uuid(id)) remove_run_scratch(run_scratch_ / "runs" / id);
+      if (crypto::is_run_id(id))
+        remove_run_scratch(run_scratch_ / "runs" / id);
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files += scratch_before > scratch_after ? scratch_before - scratch_after : 0;
     refresh_cache_usage();
     // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
-      if (!crypto::is_uuid(id)) continue;  // a run id from a copy names no folder of ours
+      if (!crypto::is_run_id(id))
+        continue; // a run id from a copy names no folder of ours
       auto dir = store_->state_dir() / "runs" / id;
       std::error_code ec;
       if (!stdfs::is_directory(dir, ec)) continue;
@@ -1458,10 +1646,16 @@ void Service::validate(RequestIn& req) {
 void Service::operation_get(RequestIn& req) {
   const auto* r = req.request()->value_as_OperationGetRequest();
   std::string op_id = r->op_id()->str();
-  if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
+  if (!crypto::is_operation_id(op_id))
+    throw Failed(FailureKind::invalid_request, "invalid op_id");
   std::optional<std::string> bytes;
   bool shell_receipt = false;
-  if (auto rc = store_->receipt(op_id)) bytes = rc->bytes;
+  if (auto rc = store_->receipt(op_id)) {
+    if (r->save_intent() && (rc->kind != "save" || rc->digest !=
+        crypto::sha256_hex("save-intent\n" + r->save_intent()->str())))
+      throw Failed(FailureKind::operation_conflict, "op_id was already used for a different request");
+    bytes = rc->bytes;
+  }
   if (!bytes) {
     auto row = history_->read([&](sql::Db& db) { return History::receipt(db, op_id); });
     if (row) {
@@ -1676,6 +1870,36 @@ void Service::nix_source_resolve(RequestIn& req) {
   auto hash = b.CreateString(info.nar_hash);
   auto res = R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved, res.Union()));
+}
+
+void Service::input_types(RequestIn& req) {
+  const auto* request = req.request()->value_as_InputTypesRequest();
+  auto doc = store_->current();
+  check_at_rev(request->at_rev(), *doc);
+  const auto card = wire::card_arg(request->card());
+  const auto& graph = *doc->resolution;
+  const auto* node = graph.find(card);
+  if (!node) throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
+  FBB b;
+  std::vector<flatbuffers::Offset<R::InputType>> inputs;
+  auto add = [&](const std::string& name, const Node* source,
+                 const std::string& port, const types::PortType* type) {
+    inputs.push_back(R::CreateInputType(b, b.CreateString(name),
+        source ? wire::path(b, source->path) : flatbuffers::Offset<D::CardPath>(),
+        source ? b.CreateString(port) : flatbuffers::Offset<flatbuffers::String>(),
+        type ? wire::port(b, *type) : flatbuffers::Offset<D::Port>()));
+  };
+  try {
+    const std::optional<std::string> output = request->output_port()
+        ? std::optional{request->output_port()->str()} : std::nullopt;
+    for (const auto& end : tsugumi::input_types(graph, card, output))
+      add(end.port, end.source, end.source_port, end.type);
+  } catch (const DocumentError& error) {
+    throw Failed(FailureKind::not_found, error.what());
+  }
+  auto result = R::CreateInputTypesResult(b, doc->rev,
+      b.CreateString(node->settings.language), b.CreateVector(inputs));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InputTypesResult, result.Union()));
 }
 
 void Service::output_types(RequestIn& req) {

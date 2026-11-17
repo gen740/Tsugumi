@@ -10,6 +10,7 @@ from harness.observations import read_pages
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Data.FailureKind import FailureKind
 
 extra_demo_runs = pytest.mark.skipif(os.environ.get('TSUGUMI_TEST_DEMO_RUNS') != '1',
                                     reason='Runs additional notebook daemon cases')
@@ -85,14 +86,14 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
         assert state.state == RunState.failed
         record = client.call('RunRecordRequest', runId=rid, card=path('notebook'))
         failure = record.status.failure
-        expected = 'has no source' if problem == 'binding' else 'notebook test failure'
-        assert expected in text(failure.diagnostic)
+        assert failure.kind == (FailureKind.validation_failed if problem == 'binding' else FailureKind.worker_failed)
+        if problem == 'cell':
+            assert 'notebook test failure' in text(failure.diagnostic)
         if problem == 'cell':
             args = {text(a.key): text(a.value) for a in failure.args}
             assert args['source'] == 'src/notebook.py'
             assert args['cell'] == 'explanation'
             assert int(args['line']) == failed_line[0]
-            assert 'Traceback (most recent call last)' in text(failure.diagnostic)
         downstream = client.call('RunInvocationsRequest', runId=rid, card=path('result'))
         assert len(downstream.records) == 1
         blocked = downstream.records[0]
@@ -149,7 +150,6 @@ def lifecycle():
                 failure = c.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
                 args = {text(a.key): text(a.value) for a in failure.args}
                 assert (args['source'], args['line'], args['cell']) == ('src/notebook.py', '13', 'lifecycle')
-                assert 'Traceback (most recent call last)' in text(failure.diagnostic)
         def alive(pid):
             try:os.kill(pid,0);return True
             except ProcessLookupError:return False

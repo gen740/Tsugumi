@@ -7,7 +7,6 @@ for (const engine of ['rmarkdown', 'quarto']) {
   const session = cardIds(new ProjectSession('/report-test', 'report-test', 'report-test'))
   session.project = parse('{"name":"report-test","canvas":{"cards":[],"connections":[]}}')
   session.layout = parse('{}')
-  session.scheduleSave = () => {}
   const template = `report_${engine}` as DefinitionTemplate
   const card = await session.addCard(template, [], { x: 0, y: 0 })
   const definition = session.cardDefinition(card)

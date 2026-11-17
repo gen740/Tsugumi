@@ -149,7 +149,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
               help={L('ダブルクリックまたは Canvas へドラッグして配置')} onAdd={() => place(id)}
               menu={[
                 { label: L('Canvas に配置'), action: () => place(id), disabled: !session.isEditable },
-                { label: L('削除'), destructive: true, disabled: !session.isEditable, action: () => session.edit((x) => x.removeDefinition(id)) },
+                { label: L('削除'), destructive: true, disabled: !session.isEditable, action: () => session.removeDefinition(id) },
               ]} />
           ))}
         </div>

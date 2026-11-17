@@ -7,6 +7,7 @@ from harness.scenario import Project
 from projects import card, run_and_wait, write
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Data.FailureKind import FailureKind
 
 
 def test_more_than_32_residents_keep_their_state(core_factory, tmp_path):
@@ -122,7 +123,8 @@ def test_missing_required_output_discards_resident_state(core_factory, tmp_path)
         assert st.state == RunState.failed, log(c, run_id, "resident", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("resident")).records
         assert inv.failure.kind == FailureKind.output_invalid
-        assert "required output out is missing" in text(inv.failure.diagnostic)
+        assert inv.failure.kind == FailureKind.output_invalid
+        assert {text(a.key): text(a.value) for a in inv.failure.args}["port"] == "out"
         assert not inv.workerReused
 
 

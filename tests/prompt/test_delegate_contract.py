@@ -1,4 +1,4 @@
-"""Offline regressions for delegate instructions; no model or socket is needed."""
+"""Delegate schemas and executable example arguments; no model or socket is needed."""
 import json
 from pathlib import Path
 import unittest
@@ -7,41 +7,41 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class DelegateContractTests(unittest.TestCase):
-    def test_prompt_example_uses_only_supported_task_arguments(self):
-        prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
-        example = next(line.strip().removeprefix("delegate ") for line in prompt.splitlines()
-                       if line.strip().startswith("delegate {"))
-        arguments = json.JSONDecoder().raw_decode(example)[0]
-        schema = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())["delegateSchema"]
-        self.assertEqual(set(arguments), set(schema["required"]))
-        task_schema = schema["properties"]["tasks"]["items"]
-        for task in arguments["tasks"]:
-            # The example shows the scope sets, which are optional in the schema
-            # (omitting both is the unscoped form a person has to enable).
-            self.assertLessEqual(set(task_schema["required"]), set(task))
-            self.assertLessEqual({"read_cards", "write_cards"}, set(task))
-            self.assertLessEqual(set(task), set(task_schema["properties"]))
+def structural_schema(value):
+    if isinstance(value, dict):
+        return {key: structural_schema(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list):
+        return [structural_schema(item) for item in value]
+    return value
 
-    def test_delegate_texts_do_not_promise_legacy_host_behaviors(self):
-        shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
-        prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
-        docs = (ROOT / "docs/features.md").read_text()
-        # These were promises of routing, automatic reads/retries or write enforcement.
-        for text in (prompt, json.dumps(shared["delegateTool"]), docs):
-            for stale in ('"runs"', '`runs`', '"together"', '"each"',
-                          "never tsugumi.json", "app waits and sends it again",
-                          "app sends it again", "read at the start, its Cards",
-                          "delegate needs 2 to 8", "takes 2 to 8 tasks"):
-                with self.subTest(stale=stale):
-                    self.assertNotIn(stale, text)
-        # A helper's read and write sets are enforced by the core now.
-        for stale in ("Helpers may read the whole project", "not an enforced write boundary"):
-            with self.subTest(stale=stale):
-                self.assertNotIn(stale, prompt)
-        self.assertIn('"read_cards"', prompt)
-        self.assertIn('"write_cards"', prompt)
-        self.assertIn("The core does not retry these failures for helpers", prompt)
+
+class DelegateContractTests(unittest.TestCase):
+    def test_helpers_skill_example_uses_only_supported_task_arguments(self):
+        prompt = (ROOT / "agent/Shared/helpers-skill.md").read_text()
+        schema = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())["delegateSchema"]
+        for line in prompt.splitlines():
+            if not line.strip().startswith("delegate {"):
+                continue
+            arguments = json.JSONDecoder().raw_decode(line.strip().removeprefix("delegate "))[0]
+            self.assertLessEqual(set(schema["required"]), set(arguments))
+            self.assertLessEqual(set(arguments), set(schema["properties"]))
+            task_schema = schema["properties"]["tasks"]["items"]
+            for task in arguments["tasks"]:
+                self.assertLessEqual(set(task_schema["required"]), set(task))
+                self.assertLessEqual(set(task), set(task_schema["properties"]))
+
+    def test_capability_contract_replaces_the_parallelism_setting(self):
+        shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())["delegateTool"]
+        fixture = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())["delegateSchema"]
+        self.assertEqual(structural_schema(shared["inputSchema"]), fixture)
+        tasks = fixture["properties"]["tasks"]
+        self.assertEqual(tasks["minItems"], 1)
+        self.assertNotIn("maxItems", tasks)
+        task = tasks["items"]
+        self.assertEqual(set(task["required"]), {"name", "instruction"})
+        for capability in ("depth", "count"):
+            self.assertEqual(task["properties"][capability],
+                             {"type": "integer", "minimum": 0})
 
 
 if __name__ == "__main__":

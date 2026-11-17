@@ -11,3 +11,5 @@ install(DIRECTORY rust/ DESTINATION share/tsugumi/sdk/rust)
 install(DIRECTORY go/ DESTINATION share/tsugumi/sdk/go)
 install(FILES src/python_main.c src/go_host.c src/rust_host.c src/r_main.c src/julia_main.c src/native_host.h src/card_runtime.cc src/ruby_main.c src/json_face.cc DESTINATION share/tsugumi/sdk/src)
 install(DIRECTORY codegen/ DESTINATION share/tsugumi/sdk/codegen)
+
+add_subdirectory(describe)

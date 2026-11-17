@@ -5,7 +5,6 @@ sniffing. Needs node and a built web/dist (npm run build)."""
 
 from __future__ import annotations
 
-import base64
 import http.client
 import json
 import os
@@ -155,10 +154,7 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
     assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
     # The last page detaches its views while core remains available.
     assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": False}
-    for _ in range(50):
-        if [e for e in pages[2].events if e.get("type") == "projectClosed"]:
-            break
-        time.sleep(0.1)
+    pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
     assert {"type": "projectClosed", "project": real} in pages[2].events
     after = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
@@ -185,20 +181,6 @@ def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(we
     assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
 
 
-def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):
-    from conftest import write_project
-
-    _, port, key = web
-    cookie = page_cookie(port, key)
-    other = tmp_path / "other"
-    write_project(other)
-    blob = bytes(range(256))
-    (other / "blob.bin").write_bytes(blob)
-    r = post(port, cookie, "/api/import/project", {"folder": str(other)})
-    assert base64.b64decode(r["files"]["blob.bin"]) == blob
-    assert json.loads(base64.b64decode(r["files"]["tsugumi.json"]))["name"] == "test"
-
-
 def test_the_page_is_told_whether_host_folders_can_be_used(web):
     _, port, key = web
     r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
@@ -222,11 +204,10 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
         return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
 
     def until(text: str):
-        for _ in range(100):
-            if text in printed():
-                return
-            time.sleep(0.1)
-        raise AssertionError(f"no {text!r} in {printed()!r}")
+        try:
+            page.wait(lambda: text in printed())
+        except AssertionError:
+            pytest.fail(repr(printed()))
 
     def send(data: str):
         post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
@@ -242,20 +223,17 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
 ''')
     until("now=30 100")
     # A key: ⌃C stops what runs, not the shell.
-    send('''sleep 100
+    send(r'''sh -c 'trap "printf \"\000INTERRUPTED\000\"; exit 0" INT; printf "\000WAITING\000"; read line'
 ''')
-    time.sleep(0.3)
+    until('\0WAITING\0')
     send("\x03")
+    # Wait for signal handling before sending input that the TTY could flush.
+    until('\0INTERRUPTED\0')
     send('''echo after-interrupt-$((1 + 1))
 ''')
     until("after-interrupt-2")
     post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
-    for _ in range(100):
-        if [e for e in list(page.events) if e.get("type") == "terminal-exit" and e["id"] == t["id"]]:
-            break
-        time.sleep(0.1)
-    else:
-        raise AssertionError("the terminal did not end")
+    page.wait(lambda: any(e.get("type") == "terminal-exit" and e["id"] == t["id"] for e in page.events))
 
 
 def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tmp_path):

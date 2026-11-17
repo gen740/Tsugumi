@@ -2,12 +2,19 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <utility>
 
 #include "../agent_fixture_server.hh"
 #include "agent/helpers.hh"
-#include "agent/wire.hh"
 #include "agent/presentation.hh"
+#include "agent/providers.hh"
+#include "agent/tools.hh"
+#include "agent/turns.hh"
+#include "agent/wire.hh"
+#include "host/access.hh"
+#include "host/demo_references.hh"
 #include "host/failure.hh"
+#include "host/settings.hh"
 #include "host/store.hh"
 
 namespace tsugumi::test {
@@ -41,7 +48,7 @@ struct ConversationStoreTest : testing::Test {
   }
   auto Register(const std::string& project) -> std::filesystem::path {
     const auto root = directory.path / project;
-    std::filesystem::create_directories(root);
+    Write(root / ".tsugumi/project-id", project);
     Tsugumi::Host::EnvironmentStateT ready;
     ready.project_id = project;
     ready.project = root.string();
@@ -60,6 +67,130 @@ struct ConversationStoreTest : testing::Test {
     });
   }
 };
+TEST_F(ConversationStoreTest,
+       NestedDelegateRecoversChildCompletedBeforeParentCheckpoint) {
+  namespace H = Tsugumi::Host;
+  Create("nested");
+  ModelServer model;
+  host::Settings settings(
+      directory.path, [](const auto &, const auto &) {},
+      [](const auto &, auto) { return ""; }, [](const auto &) { return true; },
+      nullptr, host::Settings::KeyStorage::Host);
+  H::ProviderSetRequestT provider;
+  provider.profile = "desktop";
+  provider.id = "fixture";
+  provider.provider = std::make_unique<H::ProviderInputT>();
+  provider.provider->endpoint = model.URL();
+  provider.provider->model = "fixture";
+  H::RequestT request;
+  request.value.Set(std::move(provider));
+  WithRequest(request, [&](const auto &value) { settings.Handle(value, 1); });
+  agent::Providers providers(gate, home.db, settings);
+  providers.Configure(
+      "nested",
+      R"({"profile":"desktop","provider_id":"fixture","model":"fixture"})");
+  bool stopping = false;
+  std::stop_source shutdown;
+  std::condition_variable_any changed;
+  host::Access access(
+      gate, home.db, registry, *store, stopping,
+      {[](const auto &, const auto &) {}, [](const auto &, const auto &) {}});
+  agent::Turns::Dependencies turn_dependencies;
+  turn_dependencies.scrub = [](std::string text) { return text; };
+  turn_dependencies.event = [](const auto &, const auto &) {};
+  agent::Turns turns(gate, home.db, *store, providers, settings, shutdown,
+                     stopping, changed, access, std::move(turn_dependencies));
+  host::DemoReferences demos(directory.path / "demos");
+  std::unique_ptr<agent::Helpers> helpers;
+  bool interrupt = true;
+  size_t children_started = 0;
+  agent::Tools::Dependencies dependencies;
+  dependencies.scrub = [](std::string text) { return text; };
+  dependencies.event = [](const auto &, const auto &) {};
+  dependencies.helper_result = agent::Helpers::HelperResult;
+  dependencies.run_helper = [&](const auto &conversation, const auto &call,
+                                size_t task, const auto &spec,
+                                std::stop_token stop,
+                                const auto &authorization) {
+    ++children_started;
+    const auto result =
+        helpers->RunHelper(conversation, call, task, spec, stop, authorization);
+    // Inject the interruption at the exact durability boundary: the real
+    // child's result is committed, but ExecuteTool has not returned it to the
+    // parent's Runtime, so no tool_result can have been checkpointed there.
+    if (std::exchange(interrupt, false))
+      throw agent::Cancelled();
+    return result;
+  };
+  agent::Tools tools(gate, home.db, *store, providers, settings, demos, turns,
+                     shutdown, access, std::move(dependencies));
+  helpers = std::make_unique<agent::Helpers>(
+      gate, *store, providers, settings, tools, turns, access,
+      agent::Helpers::Dependencies{[](std::string text) { return text; },
+                                   [](const auto &, const auto &) {}});
+  const auto parent = agent::json::Object(
+      R"({"read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1})");
+  const auto boundary = [&] {
+    auto result = std::make_shared<agent::HelperScope>(parent);
+    result->identity = "parent-scope:";
+    return result;
+  };
+  const std::string task =
+      R"({"tasks":[{"name":"child","instruction":"Return the evidence.","read_cards":[],"write_cards":[],"run_cards":[]}]})";
+  model.Queue(AnthropicTool("nested-child", "delegate", task));
+  model.Queue(AnthropicText("RECOVERED_CHILD_EVIDENCE"));
+  auto messages = agent::ParseMessages(
+      R"([{"role":"user","content":[{"type":"text","text":"Delegate and return the evidence."}]}])");
+  auto config = providers.ForConversation("nested");
+  const auto first =
+      agent::Runtime().Run(config, "system", messages, tools.Specs(), {},
+                           tools.Hooks("nested", true, boundary()));
+  EXPECT_EQ(first.outcome, agent::RunOutcome::Cancelled);
+  EXPECT_EQ(children_started, 1u);
+  const auto saved = store->GetConversation("nested").messages;
+  EXPECT_EQ(saved.find("tool_result"), std::string::npos);
+  auto child = home.db.prepare(
+      "SELECT state,result,parent_call FROM helpers WHERE conversation='nested'");
+  ASSERT_TRUE(child.step());
+  EXPECT_EQ(child.text(0), "completed");
+  EXPECT_NE(child.text(1).find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
+  const auto child_call = child.text(2);
+  // Reopen the store and reconstruct the boundary as on a host restart.
+  helpers.reset();
+  Open();
+  tools.conversations = store.get();
+  access.conversations = store.get();
+  turns.conversations = store.get();
+  helpers = std::make_unique<agent::Helpers>(
+      gate, *store, providers, settings, tools, turns, access,
+      agent::Helpers::Dependencies{[](std::string text) { return text; },
+                                    [](const auto&, const auto&) {}});
+  messages = agent::ParseMessages(store->GetConversation("nested").messages);
+  model.Queue(AnthropicTool("over-budget", "delegate", task));
+  model.Queue(AnthropicText("Parent recovered and retained its count."));
+  const auto retried =
+      agent::Runtime().Run(config, "system", messages, tools.Specs(), {},
+                           tools.Hooks("nested", true, boundary()));
+  EXPECT_EQ(retried.outcome, agent::RunOutcome::Finished);
+  EXPECT_EQ(children_started, 1u);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  EXPECT_NE(requests[2].find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
+  EXPECT_NE(requests[3].find("lifetime child count exhausted"),
+            std::string::npos);
+  auto count = home.db.prepare(
+      "SELECT SUM(count) FROM helper_delegations WHERE conversation='nested'");
+  ASSERT_TRUE(count.step());
+  EXPECT_EQ(count.u64(0), 1u);
+  const auto reconciler =
+      tools.Hooks("nested", true, boundary()).reconcile_tool;
+  const auto conflict = reconciler(
+      {child_call, "delegate",
+       R"({"tasks":[{"name":"different","instruction":"Changed.","read_cards":[],"write_cards":[],"run_cards":[]}]})"});
+  ASSERT_TRUE(conflict);
+  EXPECT_TRUE(conflict->is_error);
+}
+
 TEST_F(ConversationStoreTest,
        ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome) {
   std::lock_guard lock(gate.mutex);
@@ -149,6 +280,112 @@ TEST_F(ConversationStoreTest,
   EXPECT_THROW(store->OwnConversation("owned", false), host::Failure);
 }
 TEST_F(ConversationStoreTest,
+       EqualCountAndGrowingReplacementsArchiveEveryOriginal) {
+  Create("conversation");
+  agent::ContentBlock first;
+  first.text = "original request";
+  agent::ContentBlock result;
+  result.type = "tool_result";
+  result.id = "call";
+  result.text = "FULL_RESULT_BEFORE_SHORTENING";
+  std::vector<agent::Message> messages{
+      {"user", {first}, {}, {}, agent::ProviderAPI::AnthropicMessages},
+      {"user", {result}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  store->SaveMessages("conversation", messages);
+  messages.back().content[0].text = "shortened";
+  store->SaveMessages("conversation", messages);  // Same message count.
+  auto summary = messages.front();
+  summary.content[0].text = "summary";
+  summary.context_summary = true;
+  messages.front() = summary;
+  first.text = "next request";
+  messages.push_back(
+      {"user", {first}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  store->SaveMessages("conversation", messages);  // Count increased.
+  const auto human =
+      store->ConversationJson(store->GetConversation("conversation"));
+  EXPECT_NE(human.find("FULL_RESULT_BEFORE_SHORTENING"), std::string::npos);
+  EXPECT_NE(human.find("original request"), std::string::npos);
+  auto archives =
+      home.db.prepare("SELECT messages FROM archives ORDER BY rowid");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(agent::ParseMessages(archives.text(0)).at(0).content[0].text,
+            "FULL_RESULT_BEFORE_SHORTENING");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(agent::ParseMessages(archives.text(0)).at(0).content[0].text,
+            "original request");
+  EXPECT_FALSE(archives.step());
+}
+
+TEST_F(ConversationStoreTest,
+       RepeatedAssistantAnswersKeepTheExactVisibleOrder) {
+  Create("repeated");
+  std::vector<agent::Message> original;
+  for (int i = 0; i < 4; ++i) {
+    agent::ContentBlock user;
+    user.text = "hello " + std::to_string(i);
+    agent::ContentBlock answer;
+    answer.text = "the same assistant answer";
+    original.push_back(
+        {"user", {user}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+    original.push_back(
+        {"assistant", {answer}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  }
+  store->SaveMessages("repeated", original);
+  agent::ContentBlock summary;
+  summary.text = "internal handoff";
+  std::vector<agent::Message> compacted{
+      {"user", {summary}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  compacted.front().context_summary = true;
+  compacted.insert(compacted.end(), original.begin() + 4, original.end());
+  store->SaveMessages("repeated", compacted);
+  std::vector<agent::Message> visible;
+  auto archived = home.db.prepare(
+      "SELECT messages FROM archives WHERE conversation='repeated' ORDER BY "
+      "rowid");
+  while (archived.step()) {
+    const auto messages = agent::ParseMessages(archived.text(0));
+    visible.insert(visible.end(), messages.begin(), messages.end());
+  }
+  for (const auto& message :
+       agent::ParseMessages(store->GetConversation("repeated").messages))
+    if (!message.context_summary) visible.push_back(message);
+  EXPECT_EQ(agent::SerializeMessages(visible),
+            agent::SerializeMessages(original));
+  EXPECT_EQ(visible.size(), 8u);
+}
+
+TEST_F(ConversationStoreTest, AppendingToolBlocksDoesNotDuplicateHistory) {
+  Create("conversation");
+  agent::ContentBlock block;
+  block.type = "tool_result";
+  block.id = "one";
+  block.text = "first result";
+  std::vector<agent::Message> messages{
+      {"user", {block}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  store->SaveMessages("conversation", messages);
+  block.id = "two";
+  messages.back().content.push_back(block);
+  store->SaveMessages("conversation", messages);
+  store->SaveMessages("conversation", messages);
+  auto archives = home.db.prepare("SELECT count(*) FROM archives");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(archives.i64(0), 0);
+  // A failed replacement cannot erase the original or leave a partial archive.
+  home.db.exec(
+      "CREATE TRIGGER fail_save BEFORE UPDATE ON conversations BEGIN "
+      "SELECT RAISE(ABORT,'fixture'); END");
+  EXPECT_THROW(store->SaveMessages("conversation", {}), std::exception);
+  EXPECT_EQ(
+      agent::ParseMessages(store->GetConversation("conversation").messages)
+          .size(),
+      1u);
+  auto count = home.db.prepare("SELECT count(*) FROM archives");
+  ASSERT_TRUE(count.step());
+  EXPECT_EQ(count.i64(0), 0);
+}
+
+TEST_F(ConversationStoreTest,
        KnownConversationsRemainReadableWhileAnotherProjectIsLocked) {
   std::lock_guard lock(gate.mutex);
   Register("known");
@@ -161,17 +398,26 @@ TEST_F(ConversationStoreTest,
   Open();
   ASSERT_NE(store->ProjectDatabase("known"), nullptr);
   EXPECT_EQ(store->GetConversation("conversation").project, "known");
-  EXPECT_THROW(store->Databases(), host::Failure);
+  EXPECT_EQ(store->Databases().size(), 2u);
+  EXPECT_EQ(Create("new", "known").project, "known");
+  EXPECT_EQ(Create("home-new").project, "");
 }
 TEST_F(ConversationStoreTest,
        ProjectStateLinksAndForeignConversationIdentitiesStayRejected) {
   std::lock_guard lock(gate.mutex);
   const auto root = Register("project");
   const auto outside = directory.path / "outside";
-  std::filesystem::create_directories(outside);
+  Write(outside / "project-id", "project");
+  std::filesystem::remove_all(root / ".tsugumi");
   std::filesystem::create_directory_symlink(outside, root / ".tsugumi");
-  EXPECT_THROW(store->ProjectDatabase("project", true), host::Failure);
+  try {
+    store->ProjectDatabase("project", true);
+    FAIL() << "A linked state folder was accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "invalid_request");
+  }
   std::filesystem::remove(root / ".tsugumi");
+  Write(root / ".tsugumi/project-id", "project");
   Create("conversation", "project");
   store.reset();
   home.db.exec("INSERT INTO project_paths VALUES('foreign','" + root.string() +
@@ -181,9 +427,81 @@ TEST_F(ConversationStoreTest,
     store->ProjectDatabase("foreign");
     FAIL() << "A foreign project's conversation database was accepted";
   } catch (const host::Failure& error) {
-    EXPECT_EQ(error.code, "conflict");
+    EXPECT_EQ(error.code, "stale_project");
   }
 }
+TEST_F(ConversationStoreTest,
+       ForeignRecordsAreReportedOnlyForTheirProjectAndNeverRecovered) {
+  Register("broken");
+  Register("healthy");
+  Create("foreign", "broken");
+  auto& broken = store->ConversationDatabase("foreign");
+  broken.exec(
+      "UPDATE conversations SET project='old-identity';"
+      "INSERT INTO turns VALUES('foreign','turn','digest','running',0,'{}')");
+  store.reset();
+  Open();
+  // A scoped creation must not even try to open the broken database.
+  EXPECT_EQ(Create("new", "healthy").project, "healthy");
+  EXPECT_FALSE(store->OpenedPath("broken"));
+  A::ConversationListRequestT list;
+  list.project_id = "healthy";
+  EXPECT_EQ(
+      WithRequest(
+          list, [&](const auto& request) { return store->List(request, true); })
+          .conversations.size(),
+      1u);
+  Open();
+  home.db.exec("DELETE FROM conversation_locations WHERE conversation='new'");
+  EXPECT_EQ(store->GetConversation("new").project, "healthy");
+  EXPECT_EQ(store->Databases().size(), 2u);
+  list.project_id = "broken";
+  try {
+    WithRequest(
+        list, [&](const auto& request) { return store->List(request, true); });
+    FAIL() << "Foreign records were accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "conversation_identity_mismatch");
+  }
+  sql::Db untouched((directory.path / "broken/.tsugumi/agent.sqlite").string());
+  auto state =
+      untouched.prepare("SELECT state FROM turns WHERE conversation='foreign'");
+  ASSERT_TRUE(state.step());
+  EXPECT_EQ(state.text(0), "running");
+}
+
+TEST_F(ConversationStoreTest,
+       RoutingSurvivesRestartWithoutOpeningOtherProjects) {
+  Register("first");
+  Register("second");
+  Create("fixed-id", "first");
+  Open();
+  EXPECT_THROW(Create("fixed-id", "second"), host::Failure);
+  EXPECT_FALSE(store->OpenedPath("first"));
+  EXPECT_FALSE(store->OpenedPath("second"));
+  EXPECT_EQ(store->GetConversation("fixed-id").project, "first");
+  EXPECT_FALSE(store->OpenedPath("second"));
+}
+
+TEST_F(ConversationStoreTest, RecreatedFolderReplacesEvenAnOpenedIdentity) {
+  const auto root = Register("old");
+  Create("old-record", "old");
+  // Reproduce replacing .tsugumi while the host still holds its old handle.
+  std::filesystem::rename(root / ".tsugumi", root / "saved-state");
+  Write(root / ".tsugumi/project-id", "new");
+  EXPECT_THROW(store->ProjectDatabase("old"), host::Failure);
+  Tsugumi::Host::EnvironmentStateT ready;
+  ready.project = root.string();
+  ready.project_id = "new";
+  ready.key = "new";
+  ready.endpoint = "unix:/new";
+  registry.RegisterReady(ready);
+  EXPECT_EQ(registry.Locations(), std::vector<std::string>{"new"});
+  EXPECT_THROW(registry.Lookup("old"), host::Failure);
+  EXPECT_EQ(Create("new-record", "new").project, "new");
+  EXPECT_TRUE(std::filesystem::exists(root / "saved-state/agent.sqlite"));
+}
+
 TEST_F(ConversationStoreTest,
        DeletionCommitsHostRevocationBeforeProjectDeletion) {
   std::lock_guard lock(gate.mutex);
@@ -265,6 +583,70 @@ TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
   ASSERT_FALSE(conversation.rows[0]->children[1]->links.empty());
   EXPECT_EQ(conversation.rows[0]->children[1]->links[0]->url, "card:a");
 }
+TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
+  for (const auto& name :
+       {"project_file_read", "run", "project_save", "project_shell"}) {
+    const auto arguments = agent::json::Encode(agent::json::Members{
+        {"path", agent::json::Quote("definitions/share/_outputs.fbs")}});
+    const auto raw = agent::json::Encode(agent::json::Members{
+        {"reply", "\"Failure\""},
+        {"value",
+         R"({"kind":"not_found","args":[{"key":"path","value":"definitions/share/_outputs.fbs"}],"diagnostic":"DIAGNOSTIC_SENTINEL\nsecond line","current_rev":null})"}});
+    A::ConversationT conversation;
+    auto call = std::make_unique<A::ModelMessageT>();
+    call->role = "assistant";
+    call->content_json =
+        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
+            agent::json::Members{{"type", "\"tool_use\""},
+                                 {"id", "\"bad\""},
+                                 {"name", agent::json::Quote(name)},
+                                 {"input", agent::json::Quote(arguments)}})});
+    conversation.archive.push_back(std::move(call));
+    auto result = std::make_unique<A::ModelMessageT>();
+    result->role = "user";
+    result->content_json =
+        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
+            agent::json::Members{{"type", "\"tool_result\""},
+                                 {"tool_use_id", "\"bad\""},
+                                 {"is_error", "true"},
+                                 {"content", agent::json::Quote(raw)}})});
+    conversation.messages.push_back(std::move(result));
+    const auto rows = agent::Presentation(conversation);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]->kind, "step");
+    EXPECT_EQ(rows[0]->failed, 1u);
+    ASSERT_EQ(rows[0]->children.size(), 1u);
+    const auto& row = *rows[0]->children[0];
+    EXPECT_EQ(row.kind, "tool");
+    EXPECT_EQ(row.name, name);
+    EXPECT_EQ(row.state, "failed");
+    EXPECT_TRUE(row.archived);
+    EXPECT_EQ(row.arguments, arguments);
+    EXPECT_EQ(row.result, raw);
+    for (const auto* summary : {&row.summary_ja, &row.summary_en}) {
+      EXPECT_NE(summary->find(name), std::string::npos);
+      EXPECT_NE(summary->find("definitions/share/_outputs.fbs"),
+                std::string::npos);
+      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL"), std::string::npos);
+      EXPECT_EQ(summary->find('\n'), std::string::npos);
+      EXPECT_EQ(summary->find("\"reply\""), std::string::npos);
+    }
+    EXPECT_EQ(JsonString(row.result, "/value/kind"), "not_found");
+    EXPECT_EQ(JsonString(row.result, "/value/args/0/key"), "path");
+  }
+}
+
+TEST(AgentPresentation, PlainToolErrorsKeepTheirDiagnosticInTheSummary) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"PLAIN_DIAGNOSTIC"}]}]})");
+  const auto& row = *conversation.rows[0]->children[0];
+  EXPECT_EQ(row.state, "failed");
+  EXPECT_EQ(row.result, "PLAIN_DIAGNOSTIC");
+  EXPECT_NE(row.summary_en.find("PLAIN_DIAGNOSTIC"), std::string::npos);
+  EXPECT_NE(row.summary_ja.find("PLAIN_DIAGNOSTIC"), std::string::npos);
+}
+
 TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveNames) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"user","display":"$review","content":[{"type":"text","text":"internal"}]},
@@ -292,7 +674,7 @@ TEST(AgentPresentation, TasksOfADelegateThatEndedInAnErrorAreNotLeftQueued) {
       R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"many","name":"delegate","input":"{\"tasks\":[)" +
       tasks + R"(]}"}]},
-    {"role":"user","content":[{"type":"tool_result","tool_use_id":"many","is_error":true,"content":"Provide between one and eight tasks"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"many","is_error":true,"content":"Supply read_cards, write_cards and run_cards"}]},
     {"role":"assistant","content":[{"type":"text","text":"Refused."}]}]})");
   ASSERT_EQ(refused.rows.size(), 2u);
   const auto& step = *refused.rows[0];
@@ -369,14 +751,18 @@ TEST(AgentPresentation, AHelpersCompactedOperationsStayInItsSteps) {
   ASSERT_EQ(displaced.size(), 2u);
   EXPECT_EQ(displaced[0].role, "assistant");
   EXPECT_EQ(displaced[1].content[0].type, "tool_result");
-  // An ordinary save after a compaction displaces nothing, even a shorter one.
+  // Appending after compaction displaces nothing. A shorter replacement still
+  // archives every removed original, even when it is not a compaction suffix.
   auto longer = after;
   longer.push_back(message("assistant", "text"));
   EXPECT_TRUE(agent::Helpers::Displaced(after, longer).empty());
   EXPECT_TRUE(agent::Helpers::Displaced(after, after).empty());
-  EXPECT_TRUE(agent::Helpers::Displaced(
-                  before, {before.begin(), before.begin() + 4})
-                  .empty());
+  const auto shortened = agent::Helpers::Displaced(
+      before, {before.begin(), before.begin() + 4});
+  ASSERT_EQ(shortened.size(), 3u);
+  EXPECT_EQ(shortened[0].content[0].type, "tool_result");
+  EXPECT_EQ(shortened[1].content[0].type, "tool_use");
+  EXPECT_EQ(shortened[2].content[0].type, "tool_result");
 }
 TEST(AgentPresentation, AnotherTargetOrNewUserTurnDoesNotHideFailure) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
@@ -430,8 +816,8 @@ TEST(AgentPresentation, ResultsKeepTheirCallIdsAcrossTheArchiveBoundary) {
 TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvocation) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":[\"outer\",\"a\"]}}"}]},
-    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"11111111-1111-4111-8111-111111111111\"}}}"}]},
-    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"11111111-1111-4111-8111-111111111111\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"12\"}}}"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"12\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
   ASSERT_EQ(conversation.rows.size(), 1u);
   const auto& calls = conversation.rows[0]->children;
   ASSERT_EQ(calls.size(), 2u);
@@ -439,8 +825,11 @@ TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvoc
   for (const auto& link : calls[0]->links) run_links.push_back(link->url);
   for (const auto& link : calls[1]->links) log_links.push_back(link->url);
   EXPECT_NE(std::find(run_links.begin(), run_links.end(), "card:outer/a"), run_links.end());
-  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:11111111-1111-4111-8111-111111111111"), run_links.end());
-  EXPECT_NE(std::find(log_links.begin(), log_links.end(), "log:11111111-1111-4111-8111-111111111111/outer/a?invocation=2&stream=stderr&offset=16"), log_links.end());
+  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:12"),
+            run_links.end());
+  EXPECT_NE(std::find(log_links.begin(), log_links.end(),
+                      "log:12/outer/a?invocation=2&stream=stderr&offset=16"),
+            log_links.end());
 }
 TEST(AgentPresentation, InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSnapshot) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[

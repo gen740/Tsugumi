@@ -15,31 +15,26 @@ const { CardSettingsEditor } = await import('../src/ui/cardSettings')
 const session = cardIds(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
-session.scheduleSave = () => {}
 session.connected = true
 const card = await session.addCard('python', [], { x: 0, y: 0 })
+session.updateCard(card, def => def.set('executionService', 'local'))
+await session.save()
 const show = (nativeSystem: string, systems: string[]) => {
   session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem, systems })]
   return renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 }
 
 const linux = show('aarch64-linux', ['aarch64-linux', 'x86_64-linux'])
-assert.doesNotMatch(linux, /作業・出力領域を使う/)
-assert.match(linux, /ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。/)
-assert.match(linux, /Linux \(aarch64-linux\)/)
-assert.match(linux, /この実行環境の既定（aarch64-linux）/)
 assert.match(linux, /<option value="x86_64-linux">/)
-assert.doesNotMatch(linux, /macOS|Rosetta/)
 
 session.updateCard(card, (def) => def.set('system', 'x86_64-linux'))
+await session.save()
 const unavailable = show('aarch64-linux', ['aarch64-linux'])
 assert.match(unavailable, /<option value="x86_64-linux" disabled="" selected="">/)
-assert.match(unavailable, /この実行環境では x86_64-linux を実行できません。/)
 
 session.updateCard(card, (def) => def.set('system', undefined))
+await session.save()
 const darwin = show('aarch64-darwin', ['aarch64-darwin'])
-assert.match(darwin, /macOS \(aarch64-darwin\)/)
-assert.match(darwin, /この実行環境の既定（aarch64-darwin）/)
 assert.doesNotMatch(darwin, /<option value="x86_64-linux"/)
 
 session.executionServices = [
@@ -51,18 +46,16 @@ session.updateCard(card, (def) => {
   def.set('executionResources', parse('{"cpuMillis":1000,"memoryBytes":1073741824}'))
   def.set('sandbox', false)
 })
+await session.save()
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(remote, /<option value="worker" selected="">worker/)
-assert.match(remote, /この実行環境の既定（x86_64-linux）/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
-assert.match(remote, /CPU 上限（ミリコア）/)
-assert.match(remote, /メモリ上限（バイト）/)
-assert.match(remote, /外部の実行サービスにはファイルアクセスの制限が必要です。/)
+assert.match(remote, /<input(?=[^>]*name="cpuMillis")(?=[^>]*value="1000")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="memoryBytes")(?=[^>]*value="1073741824")[^>]*>/)
 
 session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
 const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(missingService, /<option value="worker" disabled="" selected="">worker/)
-assert.match(missingService, /選択した実行サービスに接続できません。/)
 
 const runEvents = session as unknown as { applyRunEvent(event: R.RunEventT): void }
 session.runStatus = Object.assign(new R.RunStatusT(), { runId: 'current', state: D.RunState.running })

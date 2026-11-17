@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Observation
 
 /// A static view of an HTML artifact member. Any Card can save one, including a Card the
 /// Agent wrote, so the document is untrusted: its scripts do not run, nothing is loaded
@@ -118,14 +119,16 @@ struct ArtifactHTMLPreview: NSViewRepresentable {
     context.coordinator.display(in: view)
   }
 
-  final class Coordinator: NSObject, WKNavigationDelegate {
+  @Observable final class Coordinator: NSObject, WKNavigationDelegate {
     enum State { case preparing, ready, plainText }
 
+    var loaded = false
     var html: String?
     var state = State.preparing
 
     func display(in view: WKWebView) {
       guard let html else { return }
+      loaded = false
       switch state {
       case .preparing:
         break
@@ -136,6 +139,8 @@ struct ArtifactHTMLPreview: NSViewRepresentable {
         view.loadHTMLString(ArtifactHTMLPreview.document("<!doctype html><pre>" + escaped + "</pre>"), baseURL: nil)
       }
     }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded = true }
 
     /// Only the load of the document itself is a navigation; links, forms and redirects are not followed.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

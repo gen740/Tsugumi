@@ -6,7 +6,7 @@ import { CoreHost } from '../server/coreHost'
 // Standalone Web uses one profile; desktop Web shares connection settings but
 // retains its own skill folders. Both must patch only what the screen edited.
 const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
-const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'app.language': 'ja', 'agent.helperParallelism': 4, 'agent.allowUnscopedHelpers': false }
+const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'agent.trustedFolders': [], 'app.language': 'ja', 'agent.allowUnscopedHelpers': false }
 try {
   for (const desktop of [false, true]) {
     const profiles = new Map<string, { revision: number; values: Record<string, unknown> }>()
@@ -36,11 +36,12 @@ try {
     } as ChatContext)
     const url = new URL('http://fixture')
     const connection = desktop ? 'desktop' : 'web:/settings-test'
-    const revision = { [connection]: 0, 'web:/settings-test': 0 }
-    const result: any = await routes['POST /api/settings']({ revision, model: 'new', helperParallelism: 1, allowUnscopedHelpers: true, skillFolders: [{ path: '/skills', enabled: true }] }, url)
-    assert.equal(writes.length, desktop ? 2 : 1)
+    const revision = { [connection]: 0, 'web:/settings-test': 0, desktop: 0 }
+    const result: any = await routes['POST /api/settings']({ revision, model: 'new', allowUnscopedHelpers: true, skillFolders: [{ path: '/skills', enabled: true }], trustedFolders: ['/trials'] }, url)
+    assert.equal(writes.length, 2)
+    assert.deepEqual(state('desktop').values['agent.trustedFolders'], ['/trials'])
+    assert.deepEqual(result.trustedFolders, ['/trials'])
     assert.equal(state(connection).values['agent.model'], 'new')
-    assert.equal(state(connection).values['agent.helperParallelism'], 1)
     assert.equal(state(connection).values['agent.allowUnscopedHelpers'], true)
     assert.deepEqual(state('web:/settings-test').values['agent.skillFolders'], [{ path: '/skills', enabled: true }])
     if (desktop) assert.deepEqual(state('desktop').values['agent.skillFolders'], [])
@@ -53,3 +54,20 @@ try {
   CoreHost.prototype.provisionEnvironment = original.environment
 }
 console.log('Host settings: profile sharing, combined patches and stale revisions passed')
+
+// An editor may carry an older list than another settings panel. Preserve its
+// explicit revision so hostd can reject it instead of resurrecting removed roots.
+{
+  const { api } = await import('../src/api')
+  const originalFetch = globalThis.fetch
+  const requests: any[] = []
+  globalThis.fetch = (async (_url, init) => {
+    if (init?.body) requests.push(JSON.parse(String(init.body)))
+    return new Response(JSON.stringify({ revision: { desktop: 9 } }))
+  }) as typeof fetch
+  try {
+    await api('/api/settings')
+    await api('/api/settings', { trustedFolders: ['/stale'], revision: { desktop: 3 } })
+    assert.deepEqual(requests[0].revision, { desktop: 3 })
+  } finally { globalThis.fetch = originalFetch }
+}

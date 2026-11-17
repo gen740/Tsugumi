@@ -38,18 +38,18 @@ import TsugumiRPC
   let document = MarkdownDocument.make("""
   > [Card](card:spectrum)
 
-  - [Run](run:12345678-1234-1234-1234-123456789abc)
+  - [Run](run:12)
 
   `[ignored](card:code)`
   """)
-  #expect(EvidenceMarkup.links(document.blocks) == ["card:spectrum", "run:12345678-1234-1234-1234-123456789abc"])
+  #expect(EvidenceMarkup.links(document.blocks) == ["card:spectrum", "run:12"])
 }
 
 @Test func evidenceDecodesTheCitedDisplayWithoutUsingTheLiveResult() throws {
   let text = Tsugumi_Data_DisplayTextT()
   text.text = "recorded photons: 157471"
   let recorded = Tsugumi_Data_DisplayT()
-  recorded.runId = "ff54ac39-ffe0-4357-a04a-cd55ed374ba9"
+  recorded.runId = "12"
   recorded.invocation = 1
   recorded.revision = 7
   recorded.value = Tsugumi_Data_DisplayValueUnion(text, type: .displaytext)

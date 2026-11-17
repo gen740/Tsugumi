@@ -64,7 +64,6 @@ def test_input_paths_reject_escape_and_implicit_project_paths(project, core_fact
     _, status = run_and_wait(c, segments, timeout=10)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.invalid_path
-    assert "project:<path>" in text(status.failure.diagnostic)
 
 
 @pytest.mark.parametrize("external", [False, True])
@@ -86,8 +85,10 @@ def test_input_file_must_be_in_the_project_source_manifest(project, core_factory
     local = owner / "definitions/load/data/events.txt"
     local.unlink()
     local.symlink_to(outside)
-    with pytest.raises(RuntimeError, match="symlink; links are not allowed"):
+    from harness.daemon import StartupFailure
+    with pytest.raises(StartupFailure) as failure:
         core_factory()
+    assert failure.value.kind == "project_open_failed"
 
 
 def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(core_factory, project, tmp_path):

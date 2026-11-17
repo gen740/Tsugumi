@@ -107,8 +107,9 @@ auto main(int argc, char** argv) -> int {
   pthread_sigmask(SIG_BLOCK, &signals, nullptr);
   signal(SIGPIPE, SIG_IGN);
   Daemon daemon;
-  daemon.project =
-      tsugumi::crypto::sha256_hex(std::filesystem::canonical(project).string());
+  daemon.project = fs::read_file(project / ".tsugumi/project-id")
+                       .value_or(tsugumi::crypto::short_id());
+  fs::write_atomic(project / ".tsugumi/project-id", daemon.project, 0600);
   tsugumi::ServerOptions options;
   options.unix_path = unix_socket;
   options.tcp_host = "127.0.0.1";

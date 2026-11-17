@@ -42,13 +42,17 @@ public actor ChatGPTAuth {
   public static func shared(endpoints: ChatGPTEndpoints = .openAI, store: String = "ChatGPT") -> ChatGPTAuth {
     ChatGPTAuth(endpoints: endpoints, profile: store == "ChatGPT" ? "desktop" : store)
   }
-  private init(endpoints: ChatGPTEndpoints, profile: String) { self.endpoints = endpoints; self.profile = profile }
+  private let call: (String, [String: Any]) async throws -> [String: Any]
+  init(endpoints: ChatGPTEndpoints, profile: String,
+       call: @escaping (String, [String: Any]) async throws -> [String: Any] = { try await CoreHostClient.shared.call($0, $1) }) {
+    self.endpoints = endpoints; self.profile = profile; self.call = call
+  }
   private func request(_ action: String? = nil, client: String? = nil, attempt: String? = nil) async throws -> [String: Any] {
     var fields: [String: Any] = ["profile": profile]
     if let action { fields["action"] = action }
     if let client { fields["client_id"] = client }
     if let attempt { fields["attempt_id"] = attempt }
-    let reply = try await CoreHostClient.shared.call(action == nil ? "SignInStatusRequest" : "SignInActionRequest", fields)
+    let reply = try await call(action == nil ? "SignInStatusRequest" : "SignInActionRequest", fields)
     return reply
   }
   private func infos(_ value: [String: Any]) -> [ChatGPTAccountInfo] {
@@ -56,6 +60,17 @@ public actor ChatGPTAuth {
       ChatGPTAccountInfo(clientId: a["clientId"] as? String ?? "", email: a["email"] as? String,
         signedIn: a["signedIn"] as? Bool ?? false, planEnabled: a["planEnabled"] as? Bool ?? false, active: a["active"] as? Bool ?? false)
     }
+  }
+  public struct Status: Sendable {
+    public var accounts: [ChatGPTAccountInfo]
+    public var result: SignInResult?
+  }
+  public func status() async -> Status {
+    let value = (try? await request()) ?? [:]
+    let accounts = infos(value)
+    let result = (value["state"] as? String == "complete")
+      ? accounts.first(where: \.active).map { SignInResult(account: $0, welcome: value["welcome"] as? String == $0.clientId) } : nil
+    return Status(accounts: accounts, result: result)
   }
   public func accounts() async -> [ChatGPTAccountInfo] { infos((try? await request()) ?? [:]) }
   public func accountsWithoutAsking() async -> [ChatGPTAccountInfo]? { guard let v = try? await request() else { return nil }; return infos(v) }
@@ -66,14 +81,17 @@ public actor ChatGPTAuth {
   public func signIn(clientId: String? = nil, consent: Bool = false, open: @Sendable (URL) async throws -> Void) async throws -> SignInResult {
     var fields: [String: Any] = ["profile": profile, "issuer": endpoints.issuer, "resource": endpoints.resource, "consent": consent]
     if let clientId { fields["client_id"] = clientId }
-    let reply = try await CoreHostClient.shared.call("SignInBeginRequest", fields)
+    let reply = try await call("SignInBeginRequest", fields)
     guard let attempt = reply["attempt_id"] as? String,
           let text = reply["url"] as? String, let url = URL(string: text) else { throw ChatGPTError.failed("Invalid sign-in reply") }
     do {
+      // Begin can finish after the sheet was dismissed or quit was requested.
+      try Task.checkCancellation()
       try await open(url)
       while true {
         try Task.checkCancellation()
         let status = try await request(attempt: attempt)
+        try Task.checkCancellation()
         switch status["state"] as? String {
         case "complete":
           guard let account = infos(status).first(where: { $0.active }) else { throw ChatGPTError.failed("No active account") }
@@ -84,7 +102,8 @@ public actor ChatGPTAuth {
         }
       }
     } catch {
-      _ = try? await request("cancel", attempt: attempt)
+      // Send from an uncancelled task, and keep the attempt alive until its reply.
+      _ = try? await Task { try await self.request("cancel", attempt: attempt) }.value
       throw error
     }
   }

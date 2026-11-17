@@ -332,9 +332,12 @@ auto JsonUInt(std::string_view json, std::string_view pointer) -> uint64_t {
   return value.value();
 }
 
-auto AnthropicText(std::string_view text) -> std::string {
+auto AnthropicText(std::string_view text, uint64_t input_tokens)
+    -> std::string {
   return Event(
-             R"({"type":"message_start","message":{"usage":{"input_tokens":12}}})") +
+             "{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_"
+             "tokens\":" +
+             std::to_string(input_tokens) + "}}}") +
          Event(
              R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
          Event(
@@ -363,6 +366,14 @@ auto AnthropicTool(std::string_view id, std::string_view name,
          Event(
              R"({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":8}})") +
          Event(R"({"type":"message_stop"})");
+}
+
+auto AnthropicFamilyTool(std::string_view id, std::string_view family,
+                         std::string_view action, std::string_view arguments)
+    -> std::string {
+  return AnthropicTool(id, "tools", "{\"family\":" + Quote(family) +
+      ",\"action\":" + Quote(action) + ",\"arguments\":" +
+      std::string(arguments) + "}");
 }
 
 auto ResponsesText(std::string_view text) -> std::string {

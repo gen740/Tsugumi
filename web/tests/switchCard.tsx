@@ -9,8 +9,9 @@ import { CardNodeView } from '../src/ui/cardNode'
 const session = cardIds(new ProjectSession('/switch-test', 'switch-test', 'switch-test'))
 session.project = parse('{"name":"switch-test","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
-let saves = 0
-session.scheduleSave = () => { saves++ }
+let operations = 0
+const operate = session.operateProject
+session.operateProject = async request => { operations++; return operate(request) }
 const card = await session.addCard('switch', [], { x: 0, y: 0 }, 'calibrate')
 assert.ok(TEMPLATES.some(t => t.id === 'switch'))
 assert.equal(definitionKind(session.cardDefinition(card)), 'switch')
@@ -18,10 +19,11 @@ assert.equal(session.sourcePaths.length, 0, 'A built-in Switch needs no schema o
 assert.deepEqual(session.portData(card), { inputs: [], outputs: [{ name: 'value', typeName: 'tsugumi.builtin.Condition', note: undefined }] })
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 
-const before = saves
+const before = operations
 session.setParam(card, 'value', true)
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
-assert.ok(saves > before, 'Toggling schedules the normal project save')
+assert.equal(operations, before + 1, 'Toggling submits one operation')
 const saved = parse(serialize(session.cardDefinition(card)!))
 assert.equal(get((get(saved, 'params') as any[])[0], 'data'), true, 'The saved value is a boolean')
 await session.undo()
@@ -51,14 +53,16 @@ for (const flow of ['leftToRight', 'topToBottom'] as const) {
 
 // Minimal definitions use the built-in default; the first click writes it.
 session.updateCard(card, c => c.set('params', undefined))
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'false')
 session.setParam(card, 'value', true)
+await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 await session.undo()
-assert.equal(get(session.cardDefinition(card), 'params'), undefined)
+assert.deepEqual(get(session.cardDefinition(card), 'params') ?? [], [])
 assert.equal(session.inlineParams(card)[0].value, 'false')
 
-console.log('Switch Card: template, save/undo, typed ports and accessible rendering passed')
+console.log('Switch Card: template, operation/undo, typed ports and accessible rendering passed')
 
 // Routing ports shrink with the body. At 20%, the old 16px target covered the
 // start's title and the branch's centre, stealing a body drag to start a wire.

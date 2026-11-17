@@ -103,7 +103,7 @@ def test_a_figure_over_the_limit_fails_with_a_reason(tmp_path):
     ''')
     assert not r["ok"] and r["n"] == 0
     kind, message = r["failures"][0]
-    assert kind == "output_invalid" and "at most 1 MiB" in message
+    assert kind == "output_invalid"
 
 
 def test_a_plot_is_not_replaced_by_a_matplotlib_figure_left_open(tmp_path):

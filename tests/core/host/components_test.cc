@@ -23,9 +23,9 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   EXPECT_EQ(journal.text(0), "wal");
   for (const auto* table :
        {"projects", "folders", "access_requests", "grants", "providers",
-        "save_preparations", "access_prompt_items", "operation_approvals",
-        "credentials", "environment_projects", "project_paths",
-        "skill_catalogs", "model_lists"}) {
+        "access_prompt_items", "operation_approvals", "credentials",
+        "environment_projects", "project_paths", "skill_catalogs",
+        "conversation_locations", "model_lists"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -44,12 +44,6 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
     ASSERT_TRUE(query.step());
     EXPECT_EQ(query.i64(0), 0) << table;
   }
-}
-TEST(HostComponents, StateGateRetainsRecursiveLocking) {
-  host::StateGate gate;
-  std::lock_guard outer(gate.mutex);
-  std::unique_lock inner(gate.mutex, std::try_to_lock);
-  EXPECT_TRUE(inner.owns_lock());
 }
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
@@ -84,7 +78,13 @@ TEST(HostComponents, DemoReferencesKeepTheConfiguredRootAndReadLimit) {
   TemporaryDirectory directory;
   Write(directory.path / "example.md", "reference");
   host::DemoReferences demos(directory.path);
-  EXPECT_EQ(demos.List(), R"(["example.md"])");
+  EXPECT_EQ(demos.ListFiles(), R"(["example.md"])");
+  Write(
+      directory.path / "ja/index.json",
+      R"({"demos":[{"path":"sample","title":"Sample","description":"One line"}]})");
+  EXPECT_EQ(
+      demos.List(),
+      R"([{"description":"One line","name":"Sample","path":"ja/sample"}])");
   EXPECT_EQ(demos.Read("example.md"), "reference");
   EXPECT_THROW(demos.Read("../example.md"), host::Failure);
   EXPECT_THROW(demos.Read("/example.md"), host::Failure);
@@ -128,8 +128,8 @@ TEST(HostComponents,
   TemporaryDirectory directory;
   const auto root = directory.path / "project";
   const auto other = directory.path / "other";
-  std::filesystem::create_directories(root);
-  std::filesystem::create_directories(other);
+  Write(root / ".tsugumi/project-id", "project");
+  Write(other / ".tsugumi/project-id", "other");
   host::HostStore store(directory.path);
   host::StateGate gate;
   host::ProjectRegistry registry(
@@ -145,7 +145,16 @@ TEST(HostComponents,
   ready.endpoint = "ws://localhost:1/rpc";
   ready.unix_socket = "/tmp/project.sock";
   ready.token = "capability";
+  auto attached = std::make_unique<Tsugumi::Host::AttachedRootT>();
+  attached->host_path = "/etc";
+  attached->execution_path = (directory.path / "mounted-mac-etc").string();
+  const auto mounted = attached->execution_path;
+  ready.attached_roots.push_back(std::move(attached));
   registry.RegisterReady(ready);
+  EXPECT_EQ(registry.AttachedRoot("project", "/etc"), mounted);
+  host::ProjectRegistry restored(gate, store.db, {});
+  EXPECT_EQ(restored.AttachedRoot("project", "/etc"), mounted);
+  EXPECT_THROW(registry.AttachedRoot("project", "/unmounted"), host::Failure);
   EXPECT_EQ(registry.Lookup("project").endpoint, "unix:/tmp/project.sock");
   EXPECT_EQ(registry.Lookup("project").token, "capability");
   EXPECT_EQ(registry.Root("project"), root);
@@ -168,14 +177,55 @@ TEST(HostComponents,
   ASSERT_TRUE(location.step());
   EXPECT_EQ(location.text(0), root.string());
 }
+TEST(HostComponents, RegistryReplacesCanonicalPathAndRejectsLateOldIdentity) {
+  namespace H = Tsugumi::Host;
+  TemporaryDirectory directory;
+  const auto root = directory.path / "project";
+  Write(root / ".tsugumi/project-id", "old");
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::ProjectRegistry registry(gate, store.db, [](const auto&) {
+    return std::optional<std::filesystem::path>{};
+  });
+  const auto register_project = [&](const std::string& id,
+                                    const std::filesystem::path& path) {
+    H::RegisterProjectRequestT request;
+    request.project_id = id;
+    request.endpoint = "unix:/project";
+    request.path = path.string();
+    flatbuffers::FlatBufferBuilder builder;
+    builder.Finish(H::RegisterProjectRequest::Pack(builder, &request));
+    registry.RegisterProject(*flatbuffers::GetRoot<H::RegisterProjectRequest>(
+        builder.GetBufferPointer()));
+  };
+  register_project("old", root);
+  Write(root / ".tsugumi/project-id", "new");
+  // Read-time validation marks persisted registrations stale before a new
+  // registration arrives, including after restarting the registry.
+  host::ProjectRegistry restored(gate, store.db, {});
+  try {
+    restored.Lookup("old");
+    FAIL() << "Stale registration was accepted";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "stale_project");
+  }
+  const auto alias = directory.path / "alias";
+  std::filesystem::create_directory_symlink(root, alias);
+  register_project("new", alias);
+  EXPECT_EQ(restored.Locations(), std::vector<std::string>{"new"});
+  EXPECT_EQ(restored.Root("new"), std::filesystem::canonical(root));
+  EXPECT_THROW(register_project("old", root), host::Failure);
+  EXPECT_EQ(restored.Locations(), std::vector<std::string>{"new"});
+}
+
 TEST(HostComponents,
      RegistryKeepsProjectAndFolderIdentitiesBoundToTheirLocations) {
   namespace H = Tsugumi::Host;
   TemporaryDirectory directory;
   const auto root = directory.path / "project";
   const auto other = directory.path / "other";
-  std::filesystem::create_directories(root);
-  std::filesystem::create_directories(other);
+  Write(root / ".tsugumi/project-id", "project");
+  Write(other / ".tsugumi/project-id", "other");
   host::HostStore store(directory.path);
   host::StateGate gate;
   std::optional<std::filesystem::path> opened;

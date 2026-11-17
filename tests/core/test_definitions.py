@@ -91,15 +91,14 @@ def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_facto
 
 
 def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
-    """The core reserves salted ids, including before any definitions are saved."""
-    import re
+    """The core reserves short ids, including before any definitions are saved."""
     root = tmp_path / "p"
     builtin_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
     ids = [text(c.call("CardIdRequest", stem="aggregate").id) for _ in range(80)]
     assert len(set(ids)) == len(ids)
-    assert all(re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", x) for x in ids)
+    assert ids == ["aggregate", *[f"aggregate-{i}" for i in range(2, 81)]]
     snap = c.call("ProjectInspectRequest")
     doc = json.loads(text(snap.projectJson))
     doc["canvas"]["cards"] += [{"id": x} for x in ids[:2]]
@@ -113,7 +112,7 @@ def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
     c = d.connect()
     assert text(c.call("CardIdRequest", stem="aggregate").id) not in ids
     nested = text(c.call("CardIdRequest", stem="aggregate", projectPath="externals/new/").id)
-    assert re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", nested)
+    assert nested == "aggregate"
     for bad in ("../", "externals/../", "definitions/a/", "externals/new"):
         with pytest.raises(RpcFailure):
             c.call("CardIdRequest", stem="aggregate", projectPath=bad)

@@ -95,12 +95,10 @@ enum PresenceEvents {
     }
     for id in touchedSources where cards.contains(id) && out[id] == nil { out[id] = false }
     let ordered = out.keys.sorted { (order($0), $0) < (order($1), $1) }
-    let revealed = Set(out.filter { $0.value }.keys)
     let before = Set(connectionsBefore)
-    // New wires, and the wires out of a Card just written out (they are
-    // threaded again from it).
+    // Only connections actually added by this save get a connection cue.
     var wires: [Connection] = []
-    for c in connectionsAfter where !before.contains(c) || revealed.contains(c.from) {
+    for c in connectionsAfter where !before.contains(c) {
       if !wires.contains(c) { wires.append(c) }
     }
     wires.sort { (order($0.from), $0.from, order($0.to)) < (order($1.from), $1.from, order($1.to)) }

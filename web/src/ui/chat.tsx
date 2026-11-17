@@ -312,7 +312,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
-      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => session.addComment(key(f.target.card!), f.text, true)}>{L('指摘をコメントに残す')}</Button></div>)}</div>
+      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => { void session.addComment(key(f.target.card!), f.text, true).catch(e => session.cardEditFailed(e)) }}>{L('指摘をコメントに残す')}</Button></div>)}</div>
   }
 }
 
@@ -624,7 +624,7 @@ function accessDuration(name: string): string { return name === 'Server' ? L('�
 function taskState(state: string): string {
   return state === 'queued' ? L('待機中') : state === 'running' ? L('作業中') : state === 'completed' ? L('終わりました') : state === 'interrupted' ? L('止めました') : L('失敗')
 }
-function StructuredRow({ row, session, tab }: { row: ChatRow; session: ProjectSession; tab?: WorkflowTab }) {
+export function StructuredRow({ row, session, tab }: { row: ChatRow; session: ProjectSession; tab?: WorkflowTab }) {
   const en = language() === 'en'
   const grouped = row.kind === 'step' || row.kind === 'helper'
   const tool: ChatItem = { presentation: row, id: row.id, role: 'tool', text: row.arguments + (row.result ? '\n→ ' + row.result : ''), tool: { name: row.name, ok: row.state === 'running' ? undefined : row.state === 'completed' } }
@@ -637,7 +637,7 @@ function StructuredRow({ row, session, tab }: { row: ChatRow; session: ProjectSe
         {row.instruction && <details><summary className="caption">{L('指示の全文')}</summary><div className="selectable wrap-pre caption">{row.instruction}</div></details>}
       </div></details>
       {row.kind === 'helper' && <><div className="caption secondary">{en ? row.scopeEn : row.scopeJa}</div>{row.text && <ChatMarkdown text={row.text} />}</>}
-      {row.children.filter(c => c.kind === 'tool' && c.state === 'failed').map(c => <div key={c.id} className="caption selectable wrap-pre" style={{ color: 'var(--red)' }}>{c.name}: {c.result}</div>)}
+      {row.children.filter(c => c.kind === 'tool' && c.state === 'failed').map(c => <div key={c.id} className="caption selectable wrap-pre" style={{ color: 'var(--red)' }}>{en ? c.summaryEn : c.summaryJa}</div>)}
     </> : row.kind === 'tool' ? <><ToolRow item={tool} session={session} tab={tab} />{row.state === 'recovered' && <div className="caption secondary">{L('再試行で成功')}</div>}</> : <ChatMarkdown text={row.text} />}
     {!!row.links.length && <Markdown text={row.links.map(l => `[${l.title}](${l.url})`).join(' · ')} renderLink={evidenceLink} />}
   </div>

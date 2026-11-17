@@ -17,7 +17,7 @@ globalThis.fetch = (async (url, init) => {
   return { ok: true, json: async () => value } as Response
 }) as typeof fetch
 const { ChatController } = await import('../src/model/chat')
-const chat = new ChatController({ dir: '/scope-test', displayPath: (p: string[]) => p.join('/') } as never, { status: { chatAvailable: true } } as never)
+const chat = new ChatController({ subscribe: () => () => {}, dir: '/scope-test', displayPath: (p: string[]) => p.join('/') } as never, { status: { chatAvailable: true } } as never)
 try {
   await flush()
   chat.send('$review', ['outer/a', 'b'], 'review')

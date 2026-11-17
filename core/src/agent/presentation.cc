@@ -72,6 +72,86 @@ auto CardReference(std::string_view raw) -> std::string {
   }
   return path;
 }
+auto OneLine(std::string text) -> std::string {
+  for (auto& c : text)
+    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+  return text;
+}
+auto FailureSummary(A::ChatRowT& row) -> void {
+  if (row.kind != "tool" || row.state != "failed") return;
+  const auto envelope = ObjectOrEmpty(row.result);
+  const auto failure = json::Text(envelope, "reply") == "Failure"
+                           ? ObjectOrEmpty(json::Get(envelope, "value"))
+                           : envelope;
+  auto kind = json::Text(failure, "kind", json::Text(failure, "code"));
+  std::ranges::replace(kind, '_', ' ');
+  auto diagnostic =
+      json::Text(failure, "diagnostic",
+                 json::Text(failure, "message", json::Text(failure, "error")));
+  if (diagnostic.empty() && envelope.empty()) diagnostic = row.result;
+  auto args = ObjectOrEmpty(row.arguments);
+  // Typed failure arguments can identify a target absent from the call.
+  try {
+    for (const auto& raw : json::Array(json::Get(failure, "args", "[]"))) {
+      const auto arg = ObjectOrEmpty(raw);
+      args.try_emplace(json::Text(arg, "key"), json::Get(arg, "value"));
+    }
+  } catch (const std::exception&) {
+  }
+  std::string target;
+  for (const auto* key : {"path", "card", "cards", "run_id", "run", "query",
+                          "command", "folder", "url"}) {
+    const auto value = json::Get(args, key);
+    target = CardReference(value);
+    if (!target.empty()) break;
+    if (value.starts_with('[')) {
+      try {
+        std::vector<std::string> names;
+        for (const auto& item : json::Array(value)) {
+          if (names.size() == 3) break;
+          if (const auto name = CardReference(item); !name.empty())
+            names.push_back(name);
+        }
+        target = Join(names);
+      } catch (const std::exception&) {
+      }
+      if (!target.empty()) break;
+    }
+  }
+  if (target.empty()) {
+    for (const auto* key : {"changes", "files", "edits", "tasks"}) {
+      std::vector<std::string> names;
+      try {
+        for (const auto& raw : json::Array(json::Get(args, key, "[]"))) {
+          auto item = ObjectOrEmpty(raw);
+          if (item.contains("value"))
+            item = ObjectOrEmpty(json::Get(item, "value"));
+          for (const auto* field :
+               {"path", "file_path", "card", "id", "to", "name"}) {
+            if (auto name = CardReference(json::Get(item, field));
+                !name.empty()) {
+              names.push_back(name);
+              break;
+            }
+          }
+          if (names.size() == 3) break;
+        }
+      } catch (const std::exception&) {
+      }
+      if (!names.empty()) {
+        target = Join(names);
+        break;
+      }
+    }
+  }
+  const auto subject =
+      row.name + (target.empty() ? "" : " · " + OneLine(target));
+  const auto detail = diagnostic.empty() ? "" : ": " + OneLine(diagnostic);
+  row.summary_ja =
+      subject + " · 失敗" + (kind.empty() ? "" : "（" + kind + "）") + detail;
+  row.summary_en =
+      subject + " · failed" + (kind.empty() ? "" : " (" + kind + ")") + detail;
+}
 auto Number(std::string_view raw) -> uint64_t {
   return json::UInt(raw, json::UInt(json::String(raw)));
 }
@@ -250,6 +330,14 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
                json::Bool(json::Get(block, "is_error")))
         failed_calls.insert(json::Text(block, "tool_use_id"));
     }
+  std::set<std::string> nested_calls;
+  for (const auto& parent : conversation.helpers) {
+    const auto scope =
+        parent->call_id + "." + std::to_string(parent->task) + ".";
+    for (const auto& child : conversation.helpers)
+      if (child->call_id.starts_with(scope))
+        nested_calls.insert(child->call_id);
+  }
   const auto taskRow = [&](const A::HelperT& task) {
     auto row = std::make_unique<A::ChatRowT>();
     const auto spec = ObjectOrEmpty(task.spec_json);
@@ -264,11 +352,9 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
     // The first message is the internal instruction, shown separately.
     for (size_t i = 1; i < task.messages.size(); ++i)
       trace.push_back(task.messages[i].get());
-    row->children = BuildRows(
-        trace, 0, conversation,
-        crypto::sha256_hex(task.call_id + ":" + std::to_string(task.task)) +
-            ":",
-        true);
+    row->children =
+        BuildRows(trace, 0, conversation,
+                  task.call_id + "." + std::to_string(task.task) + ".", true);
     for (auto it = row->children.rbegin(); it != row->children.rend(); ++it)
       if ((*it)->kind == "text" && (*it)->role == "assistant") {
         row->text = (*it)->text;
@@ -281,7 +367,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
     }
     if (row->text.empty())
       row->text = task.state == "completed"
-                      ? json::Text(ObjectOrEmpty(task.result_json), "excerpt")
+                      ? json::Text(ObjectOrEmpty(task.result_json), "report")
                       : "";
     for (const auto& child : row->children) row->failed += child->failed;
     if (row->state == "failed" && !row->failed) row->failed = 1;
@@ -299,7 +385,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
   };
   if (!helper)
     for (const auto& task : conversation.helpers)
-      if (task->anchor == 0 && !model_calls.contains(task->call_id)) {
+      if (task->anchor == 0 && !model_calls.contains(task->call_id) &&
+          !nested_calls.contains(task->call_id)) {
         rows.push_back(taskRow(*task));
         placed.insert({task->call_id, task->task});
       }
@@ -388,7 +475,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
                                                 : "completed";
         children.push_back(std::move(a));
       }
-      if (!helper) {
+      {
+        const auto parent_call = prefix.empty() ? call : prefix + call;
         std::map<uint32_t, const A::HelperT*> tasks;
         std::vector<std::unique_ptr<A::HelperT>> queued;
         // A delegate that ended in an error starts no further task. One
@@ -396,7 +484,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
         // stopped before reaching the rest.
         const bool started = std::ranges::any_of(
             conversation.helpers,
-            [&](const auto& task) { return task->call_id == call; });
+            [&](const auto& task) { return task->call_id == parent_call; });
         if (calls[call]->name == "delegate") {
           const auto args = ObjectOrEmpty(calls[call]->arguments);
           try {
@@ -407,7 +495,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
               if (!json::Text(spec, "name").empty() &&
                   !json::Text(spec, "instruction").empty()) {
                 auto task = std::make_unique<A::HelperT>();
-                task->call_id = call;
+                task->call_id = parent_call;
                 task->task = index;
                 task->spec_json = raw;
                 task->state = !failed_calls.contains(call) ? "queued"
@@ -422,7 +510,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
           }
         }
         for (const auto& task : conversation.helpers)
-          if (task->call_id == call) tasks[task->task] = task.get();
+          if (task->call_id == parent_call) tasks[task->task] = task.get();
         for (const auto& [index, task] : tasks) {
           try {
             children.push_back(taskRow(*task));
@@ -449,7 +537,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
             !placed.contains({task->call_id, task->task})) {
           // A direct Skill helper has no delegate call; its anchor is the user
           // message.
-          if (!model_calls.contains(task->call_id)) {
+          if (!model_calls.contains(task->call_id) &&
+              !nested_calls.contains(task->call_id)) {
             rows.push_back(taskRow(*task));
             placed.insert({task->call_id, task->task});
           }
@@ -498,6 +587,10 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
       }
       rows.push_back(std::move(step));
     }
+  }
+  for (auto& row : rows) {
+    FailureSummary(*row);
+    for (auto& child : row->children) FailureSummary(*child);
   }
   Recover(rows);
   Summarize(rows);

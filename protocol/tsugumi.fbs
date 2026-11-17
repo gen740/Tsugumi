@@ -104,6 +104,7 @@ table ExecutionService {
   resource_limits:bool (id: 5);
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
+  grade:uint64 (id: 7);
 }
 
 table ProjectSnapshot {
@@ -151,8 +152,7 @@ table PutDefinition {
   meta_json:string (id: 2);
   /// A Card in Card: _link.json instead of _card.json. Empty: none.
   link_json:string (id: 3);
-  /// Keep _meta.json as it is (meta_json omitted): change settings without
-  /// writing the intent text again.
+  /// Preserve existing _meta.json when meta_json is omitted.
   keep_meta:bool = false (id: 4);
 }
 table RemoveDefinition { id:string (id: 0, required); }
@@ -209,6 +209,8 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
+  /// Opaque metadata supplied by the host for this accepted save.
+  operation_data:[ubyte] (id: 4);
 }
 
 table ProjectCacheClearResult {
@@ -279,13 +281,10 @@ table ProjectOpenRequest { view_id:string (id: 0); }
 /// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
 table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 
-/// -> ProjectSnapshot. No subscription, build or reload.
+/// -> ProjectSnapshot. Read current documents, definitions, sources and revision.
 table ProjectInspectRequest {}
 
-/// -> CardIdResult. Reserves a permanent identifier for a new Card without
-/// changing the document revision. Supply a caller-derived stem (1..123 ASCII
-/// identifier characters); use the returned id in the canvas, paths and wires.
-/// Each call reserves a fresh id; save the definition and canvas with project_save.
+/// -> CardIdResult. Reserve a permanent unique Card id from stem; repeated calls reserve fresh ids.
 table CardIdRequest {
   stem:string (id: 0, required);
   /// Project-relative directory: empty for the root, or externals/<id>/,
@@ -296,28 +295,41 @@ table CardIdResult {
   id:string (id: 0, required);
 }
 
-/// -> SaveResult. Apply all changes in one transaction at base_rev.
-/// Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end,
-/// with any number in or out. Implementing one requires SetProject in this same
-/// save rebinding every incoming end to a real input and every outgoing end to a
-/// real output (and boundary endpoints in its project's tsugumi.json). Even a
-/// single possible port must be stated. Ends on remaining Drafts stay empty.
-/// A non-existent port on a non-Draft Card is validation_failed, naming the wire.
+// Core streams a local file into a private durable file, hashes it and applies
+// it through the normal save. The host chooses roots and authorizes access.
+table SourceTransfer {
+  path:string (required);
+  from:string (required);
+  base_hash:string;
+  /// Absent means the project root. Otherwise an absolute host-selected root.
+  source_root:string;
+  /// Confirmed source hash, when copying from another Card.
+  expected_hash:string;
+}
+
+/// -> SaveResult. Apply document changes atomically at base_rev.
 table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
-  changes:[DocumentChange] (id: 3, required);
+  changes:[DocumentChange] (id: 3);
   /// Permission widenings explicitly approved by the caller, as named by
   /// approval_required.
   approved_permissions:[string] (id: 4);
   /// Compare the proposed permissions with the accepted document and reject
   /// every widening absent from approved_permissions, regardless of origin.
   check_permissions:bool (id: 5);
+  /// Local file references; source bytes never travel through the RPC frame.
+  transfers:[SourceTransfer] (id: 6);
+  /// Opaque host intent for the existing op_id digest, before concrete expansion.
+  /// A revision-conflicted attempt with an intent is retryable under the same id.
+  save_intent:string (id: 7);
+  /// Carried unchanged in SaveResult, including a replay of this operation id.
+  /// The project core does not interpret host editing metadata.
+  operation_data:[ubyte] (id: 8);
 }
 
-/// -> SaveResult. Takes external edits of the allowed area into the document.
-/// Permission comparison is selected explicitly, independently of origin.
+/// -> SaveResult. Import external edits into the accepted document at base_rev.
 table ProjectReloadRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -341,11 +353,10 @@ table ProjectValidateRequest {
   changes:[DocumentChange] (id: 3);
 }
 
-/// -> ProjectCacheClearResult. Only while no run or SDK job is active.
+/// -> ProjectCacheClearResult. Clear this project's build cache.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
-/// -> RunScratchDeleteResult. Deletes only the listed scratch folders from the
-/// usage report. Refuses active runs, pending remote results and the latest run.
+/// -> RunScratchDeleteResult. Delete paths selected from the scratch usage report.
 table RunScratchDeleteRequest {
   op_id:string (id: 0, required);
   paths:[string] (id: 1, required);
@@ -357,7 +368,7 @@ table RunScratchDeleteResult {
   freed_bytes:uint64 (id: 2);
 }
 table RunScratchUsage {
-  /// Relative scratch folder: runs/<run UUID> or recovery.
+  /// Relative scratch folder: runs/<project run number> or recovery.
   path:string (id: 0, required);
   /// Measured bytes; use only when size_unknown is false.
   bytes:uint64 (id: 1);
@@ -365,7 +376,7 @@ table RunScratchUsage {
   size_unknown:bool (id: 2);
 }
 
-/// Cached shared-store measurement; never triggers a store traversal on the RPC lane.
+/// -> ProjectCacheUsageResult. Read cached build and scratch usage measurements.
 table ProjectCacheUsageRequest {}
 
 table ProjectCacheUsage {
@@ -397,24 +408,10 @@ table ProjectCacheUsageResult {
   protected_run:string (id: 9);
 }
 
-/// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
-/// its current commit and hash, and the packages it has for this system.
-/// To customize an approved package, save nixSources[].overrides =
-/// {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}.
-/// Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}}
-/// fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval.
-/// Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected.
-/// Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow
-/// the first time: it evaluates them, fetching what they need.
+/// -> NixSourceResolved. Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use.
 table NixSourceResolveRequest { ref:string (id: 0, required); }
 
-/// -> RunHistoryDeleteResult. Deletes finished runs (all, or those that ended
-/// before ended_before, Unix ms) with their records, values, logs and files,
-/// here and in the project's copy. Only while no run is active.
-/// Approvals must set restrict_to_run_ids and pass the exact run_ids shown to
-/// the person (an empty set deletes nothing). Without that flag, run_ids must
-/// be empty and the UI's all-runs or date scope applies. The separate flag
-/// distinguishes an empty selection from object APIs' default empty vectors.
+/// -> RunHistoryDeleteResult. Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs.
 table RunHistoryDeleteRequest {
   op_id:string (id: 0, required);
   ended_before:int64 = null (id: 1);
@@ -422,16 +419,13 @@ table RunHistoryDeleteRequest {
   restrict_to_run_ids:bool = false (id: 3);
 }
 
-/// -> VersionResult. Makes the project a git repository: a first commit of
-/// what is saved (a demo's history file becomes its versions). Nothing
-/// happens when it already is one.
+/// -> VersionResult. Initialize git version history with the saved project.
 table VersionInitRequest {
   op_id:string (id: 0, required);
   origin:string (id: 1, required);
 }
 
-/// -> VersionResult. Names the current version: what is saved is committed
-/// (when it changed) and gets an annotated tag `name` with `message`.
+/// -> VersionResult. Commit saved changes and tag the version with name and message.
 table VersionMarkRequest {
   op_id:string (id: 0, required);
   origin:string (id: 1, required);
@@ -439,9 +433,7 @@ table VersionMarkRequest {
   message:string (id: 3);
 }
 
-/// -> SaveResult. Starts from a version: what is saved now is committed, then
-/// the project's files become those of `commit` and the document is read
-/// again (like ProjectReload). Only while no run is active.
+/// -> SaveResult. Commit current changes and restore the project from commit.
 table VersionCheckoutRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -452,8 +444,7 @@ table VersionCheckoutRequest {
 /// -> VersionGraph, newest first.
 table VersionGraphRequest { limit:uint32 = null (id: 0); }
 
-/// -> VersionCanvas: raw layout, definition kinds and connections of a version.
-/// The host service interprets these for a minimap.
+/// -> VersionCanvas. Read a version's layout, definition kinds and connections.
 table VersionCanvasRequest { commit:string (id: 0, required); }
 
 /// -> VersionNote. Neutral facts, cached in refs/notes/tsugumi-record.
@@ -462,7 +453,7 @@ table VersionNoteRequest {
 }
 
 /// -> OperationResult.
-table OperationGetRequest { op_id:string (id: 0, required); }
+table OperationGetRequest { op_id:string (id: 0, required); save_intent:string (id: 1); }
 
 /// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
 table ProjectFileListRequest {
@@ -482,7 +473,7 @@ table ProjectFileStatRequest {
   at_rev:uint64 = null (id: 1);
 }
 
-/// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
+/// -> FileContent. Read a file page; offset defaults to 0, limit_bytes to 262144 (max 1 MiB).
 table ProjectFileReadRequest {
   path:string (id: 0, required);
   /// Omitted: the latest revision.
@@ -492,10 +483,29 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-/// -> OutputTypesResult. Compiles an _outputs.fbs text (nothing is saved):
-/// its reflection schema (bfbs), from which a client lists the types. With
-/// port and type_name, also the text with that port's type and kind set
-/// (File / Directory: the tsugumi attribute).
+/// -> InputTypesResult. Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead.
+table InputTypesRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  output_port:string (id: 1);
+  at_rev:uint64 = null (id: 2);
+  /// SDK language for host rendering; opaque to the project core.
+  language:string (id: 3);
+}
+
+table InputType {
+  port:string (id: 0, required);
+  source_card:Tsugumi.Data.CardPath (id: 1);
+  source_port:string (id: 2);
+  type:Tsugumi.Data.Port (id: 3);
+}
+
+table InputTypesResult {
+  rev:uint64 = null (id: 0);
+  language:string (id: 1);
+  inputs:[InputType] (id: 2);
+}
+
+/// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text.
 table OutputTypesRequest {
   text:string (id: 0, required);
   port:string (id: 1);
@@ -513,15 +523,14 @@ table CardSDKPrepareRequest {
 /// -> CardSDKPrepareResult or Failure.
 table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
-/// -> RunPlanResult. propagate = true.
+/// -> RunPlanResult. Preview the Cards a run reaches; propagate defaults to true.
 table RunPlanRequest {
   at_rev:uint64 = null (id: 0);
   card:Tsugumi.Data.CardPath (id: 1, required);
   propagate:bool = null (id: 2);
 }
 
-/// -> RunAccepted. propagate = true, max_concurrency = 4 (1..64),
-/// nix_jobs = 1, nix_cores = 1.
+/// -> RunAccepted. Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64), nix_jobs and nix_cores to 1.
 table RunRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
@@ -533,22 +542,15 @@ table RunRequest {
   nix_cores:uint32 = null (id: 7);
 }
 
-/// -> RunStatus. Idempotent. Unknown id is not_found.
+/// -> RunStatus. Cancel run_id.
 table RunCancelRequest { run_id:string (id: 0, required); }
 
-/// -> RunStatus. Omitted run_id: the active run, else the latest locally started run, else idle.
-/// partial_run marks debugging with saved inputs; uses_partial_result marks values
-/// derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies
-/// and run events, including runs with recorded values and retained artifacts.
+/// -> RunStatus. Read run_id; omitted selects the active run, then the latest locally started run, then idle.
 table RunStatusRequest { run_id:string (id: 0); }
 
-/// -> ProjectShellResult. Runs in the project VM as the project user, with the
-/// project directory as cwd. Available only when the isolated project launcher enables it.
-/// timeout_ms defaults to 10000 and must be between 1 and 30000. Each output
-/// stream is capped at 262144 bytes. Disconnecting cancels the process group.
-/// An operation ID is never executed twice, even after an interrupted daemon.
-/// Isolation is selected explicitly and applied independently of origin.
-/// A requested isolation mechanism that is unavailable fails closed.
+table ShellMount { path:string (required); name:string (required); project_relative:bool; writable:bool; }
+
+/// -> ProjectShellResult. Run a command in a staged Card source workspace; successful source edits save atomically. Attached folders are at attached/<SHA-256(path)[0:16]>; scratch/ persists. timeout_ms defaults to 10000 (1..30000). Returns exit status, bounded stdout/stderr and full-output paths.
 table ProjectShellRequest {
   op_id:string (id: 0, required);
   command:string (id: 1, required);
@@ -560,6 +562,20 @@ table ProjectShellRequest {
   /// Block Unix socket connections (except macOS name resolution). On macOS,
   /// also block local IP endpoints, session Mach services and outside signals.
   no_project_socket:bool (id: 5);
+  /// Explicit workspace relative to the project root; absent uses the project.
+  working_directory:string (id: 6);
+  /// Writable subtrees relative to working_directory, with a read-only root.
+  writable_paths:[string] (id: 7);
+  /// Read-only mounts at attached/<name>; native paths or VM chat shares.
+  mounts:[ShellMount] (id: 8);
+  /// Persist full stdout/stderr below this project-relative prefix.
+  output_prefix:string (id: 9);
+  /// Hide the original project while exposing only the workspace.
+  workspace_only:bool (id: 10);
+  /// Read-only files inside writable subtrees (including reserved placeholders).
+  protected_paths:[string] (id: 11);
+  /// Host-selected absolute paths denied in this shell view, including mounts.
+  excluded_paths:[string] (id: 12);
 }
 
 table ProjectShellResult {
@@ -571,6 +587,9 @@ table ProjectShellResult {
   timed_out:bool (id: 5);
   stdout_truncated:bool (id: 6);
   stderr_truncated:bool (id: 7);
+  stdout_size:uint64 (id: 8);
+  stderr_size:uint64 (id: 9);
+  output_prefix:string (id: 10);
 }
 
 /// -> RunPage, newest accepted first.
@@ -589,29 +608,25 @@ table RunInvocationsRequest {
   limit:uint32 = null (id: 3);
 }
 
-/// -> InvocationPage. Each Card's latest invocation of a run, for a client that
-/// opens the project after the run: it did not get RunCardChanged for them.
+/// -> InvocationPage. Read each Card's latest invocation in a run.
 table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
 
-/// -> BuildEnvironmentPage. Recorded environments, in first-use order; no Nix evaluation.
-/// offset defaults to 0; limit defaults to 100 (maximum 500).
+/// -> BuildEnvironmentPage. Read recorded environments in first-use order; no evaluation.
 table RunEnvironmentsRequest {
   run_id:string (id: 0, required);
   offset:uint64 = null (id: 1);
   limit:uint32 = null (id: 2);
 }
 
-/// -> EnvironmentPathPage. Runtime closure, including the manifest, in store-path order.
-/// These are runtime references, not the full set of build-time dependencies.
+/// -> EnvironmentPathPage. Read a recorded runtime closure in store-path order, including its manifest.
 table RunEnvironmentPathsRequest {
   run_id:string (id: 0, required);
   environment_id:string (id: 1, required);
   offset:uint64 = null (id: 2);
   limit:uint32 = null (id: 3);
-  /// Case-insensitive literal substring search. Offset and total refer to matching paths.
+  /// Case-insensitive substring filter; offset and total count matches.
   query:string (id: 4);
-  /// If both are present, return paths absent from this other recorded environment.
-  /// Difference and search run in the history database, with bounded result pages.
+  /// Together with excluding_environment_id, exclude paths in that recorded environment.
   excluding_run_id:string (id: 5);
   excluding_environment_id:string (id: 6);
 }
@@ -656,7 +671,7 @@ table EnvironmentPathPage {
   next_offset:uint64 = null (id: 2);
 }
 
-/// -> RecordResult. invocation and follow_latest = true are exclusive.
+/// -> RecordResult. Read a Card's invocation record; choose invocation or follow_latest=true.
 table RunRecordRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);
@@ -664,7 +679,7 @@ table RunRecordRequest {
   follow_latest:bool = null (id: 3);
 }
 
-/// -> FileContent. offset = 0, limit_bytes = 1048576.
+/// -> FileContent. Read a recorded port value page; offset defaults to 0.
 table RunValueReadRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);
@@ -675,7 +690,7 @@ table RunValueReadRequest {
   limit_bytes:uint32 = null (id: 6);
 }
 
-/// -> ArtifactPage. invocation requires card.
+/// -> ArtifactPage. List run artifacts; invocation requires card.
 table ArtifactListRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -684,7 +699,7 @@ table ArtifactListRequest {
   limit:uint32 = null (id: 4);
 }
 
-/// -> FileContent. member only for Directory artifacts.
+/// -> FileContent. Read artifact bytes; member selects a file within a Directory artifact.
 table ArtifactReadRequest {
   artifact_id:string (id: 0, required);
   member:string (id: 1);
@@ -692,8 +707,7 @@ table ArtifactReadRequest {
   limit_bytes:uint32 = null (id: 3);
 }
 
-/// -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is
-/// rejected. invocation requires card.
+/// -> LogSlice. Read run logs; invocation requires card. tail=true reads the end with offset=0.
 table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -718,14 +732,17 @@ table ViewSaveRequest {
   view_json:string (id: 2, required);
 }
 
-/// -> FileContent. Reads immutable module source in bounded pages. For a Wasm
-/// view, the core assembles the shared index.js template and local view.wasm.
-/// Only canonical /nix/store/<hash>-<name> directories with index.js qualify.
+/// -> FileContent. Read immutable display-module source in pages.
 table ModuleReadRequest {
   module:string (id: 0, required);
   offset:uint64 = null (id: 1);
   limit_bytes:uint32 = null (id: 2);
 }
+
+/// -> ProjectActivity. Observe active runs and queued/running requests, across
+/// all connections. Does not stop work or restrict connections.
+table ProjectActivityRequest {}
+table ProjectActivity { busy:bool; }
 
 union RequestPayload {
   SessionHelloRequest = 1,
@@ -774,6 +791,8 @@ union RequestPayload {
   VersionNoteRequest = 51,
   RunEnvironmentUsesRequest = 52,
   ProjectHostRequirementsRequest = 53,
+  InputTypesRequest = 54,
+  ProjectActivityRequest = 55,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -966,6 +985,10 @@ table InvocationSummary {
   batch_index:uint32 = null (id: 23);
   batch_size:uint32 = null (id: 24);
   implementation_index:uint32 = null (id: 25);
+  transfer_name:string (id: 26);
+  transfer_direction:string (id: 27);
+  transfer_done:uint64 (id: 28);
+  transfer_total:uint64 (id: 29);
 }
 
 table StageTime {
@@ -1114,6 +1137,8 @@ union ReplyPayload {
   VersionNote = 39,
   EnvironmentUsePage = 40,
   ProjectHostRequirements = 41,
+  InputTypesResult = 42,
+  ProjectActivity = 43,
 }
 
 // ---- Notifications -----------------------------------------------------------

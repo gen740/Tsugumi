@@ -13,7 +13,7 @@ Put the latest version from [GitHub Releases](https://github.com/gen740/Tsugumi/
 Open `Tsugumi.dmg` and drag it to `Applications`, or install with this command:
 
 ```bash
-curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
+curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open -g /Applications/Tsugumi.app
 ```
 
 Releases are signed ad hoc (with the virtualization entitlement needed to run the VM), without a Developer ID signature or Apple's notarisation. An app taken out of a zip downloaded in a browser is stopped by Gatekeeper, so fetch it with `curl` as above, or remove the quarantine attribute after taking it out:
@@ -22,7 +22,7 @@ Releases are signed ad hoc (with the virtualization entitlement needed to run th
 xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 ```
 
-From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. To use the Agent, set the model provider and API key under "API" in the settings, or choose the ChatGPT plan and sign in with "Continue with ChatGPT". The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
+From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The ChatGPT button is text only because permission to redistribute the logo in an open-source repository could not be established. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
 
 ### Automatic updates
 
@@ -78,7 +78,7 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 
 - Nix (with flakes enabled)
 - Xcode or the Command Line Tools
-- Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/tsugumi-vm)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
+- Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
 
 Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
 
@@ -106,7 +106,7 @@ cmake -S . -B build -G Ninja && ninja -C build
 
 On Linux, the same CMake build also produces the remote listener `build/workerd/tsugumi-workerd`. The packaged listener is available as `nix build .#workerd`; see [Remote execution](RemoteExecution.md) for installation and registration.
 
-The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
+The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
 
 ```bash
 macOS/Container/build-image.sh --vm

@@ -21,6 +21,7 @@ defaults:
   run:
     shell: bash
 env:
+  TSUGUMI_PYTEST_WORKERS: auto
   CORE_TEST_ENV: ${{ github.workspace }}/build-ci/bin/tsugumi-test-env
 
 jobs:
@@ -80,12 +81,8 @@ jobs:
       - name: Allow user namespaces for bubblewrap
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Pinned public-key TLS handshakes
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_peer_tls_tests"'
-      - name: Public Agent RPC scenarios
-        run: |
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests"
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
+      - name: Host rules and public Agent transports
+        run: bash tests/ci/run-suite.sh agent '${{ inputs.system }}'
 
   rpc:
     name: Core and CLI RPC
@@ -108,20 +105,8 @@ jobs:
       - name: Allow user namespaces for bubblewrap
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: CLI RPC
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"'
-      - name: Remote result manifests
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"'
-      - name: Project RPC with external doubles
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" -n auto --dist load --durations=40 tests/core'
-      - name: Remote worker protocol and journal
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"'
-      - name: Card invocation contracts
-        run: |
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_native_contract_tests"
-          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_execution_service_tests"
-      - name: Worker staging cleanup
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_worker_staging_tests"'
+      - name: Core, CLI, worker and evaluation checks
+        run: bash tests/ci/run-suite.sh core '${{ inputs.system }}'
 
   host:
     name: Worker and host isolation
@@ -176,7 +161,7 @@ jobs:
 
   web-contracts:
     name: Web types and behavior
-    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks)['web-contracts'] }}
+    if: ${{ inputs.system == 'x86_64-linux' && fromJSON(inputs.checks)['web-contracts'] }}
     needs: web
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
@@ -226,7 +211,7 @@ jobs:
       - name: Adapter behavior
         env:
           TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/web/dist
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/python/test_claude_code_plugin.py tests/python/test_web_server.py tests/python/test_cli.py'
+        run: bash tests/ci/run-suite.sh adapters '${{ inputs.system }}'
 
   sdk:
     name: SDK, examples, demos and system behavior
@@ -254,20 +239,8 @@ jobs:
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
           "$CORE_TEST_ENV" "$path/bin/python3" -c 'import matplotlib, plotly, altair'
-      - name: SDK and system checks
-        run: |
-          "$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q -m "not static" -n auto --dist loadfile --durations=40 tests/python \
-            --ignore=tests/python/test_sdk_examples.py \
-            --ignore=tests/python/test_csharp_sdk.py \
-            --ignore=tests/python/test_claude_code_plugin.py \
-            --ignore=tests/python/test_web_server.py \
-            --ignore=tests/python/test_cli.py
-      - name: C# Cards in the host sandbox
-        env:
-          TSUGUMI_TEST_HOST_SANDBOX: "1"
-        run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_csharp_sdk.py'
-      - name: Runnable SDK examples
-        run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_sdk_examples.py'
+      - name: SDK libraries, native runtimes, sandbox and examples
+        run: bash tests/ci/run-suite.sh sdk '${{ inputs.system }}' '${{ steps.sdk-python.outputs.python }}'
 
   swift:
     name: Swift adapters and application

@@ -1,3 +1,4 @@
+import { ProjectTrust } from '../src/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../src/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../src/gen/tsugumi/host/settings'
 import { SignInStatus } from '../src/gen/tsugumi/host/sign-in-status'
@@ -25,6 +26,8 @@ import { SequencedEventT } from '../src/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../src/gen/tsugumi/agent/event'
 import { FailureT } from '../src/gen/tsugumi/service/failure'
 import { Message as HostMessage } from '../src/gen/tsugumi/host/message'
+import { hostProjectErrorText } from '../server/hostProjects'
+import { setLanguage } from '../server/i18n'
 
 const high = (1n << 64n) - 2n
 const sent = Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ConversationSendRequest', {
@@ -195,60 +198,6 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
 }
 console.log('Host formatting and version presentation adapters: passed')
 
-// Pure document edits and the permission catalog use typed Host requests.
-{
-  const { DocumentSubgraphRequestT } = await import('../src/gen/tsugumi/host/document-subgraph-request')
-  const { PermissionKindsRequestT } = await import('../src/gen/tsugumi/host/permission-kinds-request')
-  const bytes = encodeRequest('DocumentSubgraphRequest', { project_json: '{"canvas":{}}', cards: ['a'], id: 'sub' }, high, true)
-  const message = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
-  const value = (message.payload as any).value as InstanceType<typeof DocumentSubgraphRequestT>
-  assert.ok(value instanceof DocumentSubgraphRequestT)
-  assert.equal(value.projectJson, '{"canvas":{}}')
-  assert.deepEqual(value.cards, ['a'])
-  assert.equal(value.id, 'sub')
-  const catalog = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('PermissionKindsRequest', { language: 'en' }, 9n, true))).unpack()
-  assert.ok((catalog.payload as any).value instanceof PermissionKindsRequestT)
-  assert.equal((catalog.payload as any).value.language, 'en')
-}
-
-{
-  const { DocumentMergeRequestT } = await import('../src/gen/tsugumi/host/document-merge-request')
-  const { DocumentMerge } = await import('../src/gen/tsugumi/host/document-merge')
-  const frame = encodeRequest('DocumentMergeRequest', { base_json: '{}', ours_json: '{"n":2}', theirs_json: '{}' }, 1n, true)
-  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack().payload as any
-  assert.ok(request.value instanceof DocumentMergeRequestT)
-  assert.equal(request.value.oursJson, '{"n":2}')
-  const b = new fb.Builder()
-  const json = b.createString('{}')
-  const result = DocumentMerge.createDocumentMerge(b, json, 0)
-  const reply = HostReply.createReply(b, HostReplyPayload.DocumentMerge, result)
-  const message = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
-  b.finish(message, 'TSH1')
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.conflicts, [])
-}
-
-// Every new operation uses the Host envelope, including omitted file vectors.
-{
-  const { DocumentCopyRequestT } = await import('../src/gen/tsugumi/host/document-copy-request')
-  const { DocumentCopy } = await import('../src/gen/tsugumi/host/document-copy')
-  const copy = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentCopyRequest', { state_json: '{}', from: 'externals/a/', to: 'externals/b/' }, high, true))).unpack().payload as any
-  assert.ok(copy.value instanceof DocumentCopyRequestT)
-  assert.deepEqual(copy.value.paths, [])
-  assert.equal(copy.value.to, 'externals/b/')
-  const b = new fb.Builder(), json = b.createString('{}')
-  const value = DocumentCopy.createDocumentCopy(b, json, 0)
-  const reply = HostReply.createReply(b, HostReplyPayload.DocumentCopy, value)
-  const root = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
-  b.finish(root, 'TSH1')
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.files, [])
-  const connect = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentConnectRequest', { state_json: '{}', from_card: 'a', from_port: '+', to_card: 'b', to_port: 'in' }, 2n, true))).unpack().payload as any
-  assert.equal(connect.value.fromPort, '+')
-  assert.equal(connect.value.forkId, null)
-  const template = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentTemplateRequest', { name: 'python', id: 'new-card' }, 3n, true))).unpack().payload as any
-  assert.equal(template.value.name, 'python')
-  assert.equal(template.value.id, 'new-card')
-}
-
 // Flatc goldens are shared with Swift and C++ so union renumbering cannot
 // silently send a moved Host method to the external Agent listener.
 const fs = await import('node:fs')
@@ -272,10 +221,10 @@ for (const c of serviceVectors.replies) {
 }
 const agentSchema = new BFBS(new Uint8Array(fs.readFileSync(path.join(process.argv[2], 'web/src/gen/agent.bfbs'))))
 const agentRequests = agentSchema.enums.find(e => e.name === 'Tsugumi.Agent.RequestPayload')!.values
-  .filter(v => v.value && v.unionType && v.name !== 'HelloRequest').map(v => v.name)
+  .filter(v => v.value && v.unionType && !['HelloRequest', 'ToolCallCancelRequest', 'CallIdRequest'].includes(v.name)).map(v => v.name)
 assert.deepEqual(agentRequests, serviceVectors.agentRequests)
 const externalCatalog = new ToolCatalog(agentSchema, agentRequests, 'Tsugumi.Agent')
-for (const method of ['demo_list', 'demo_read', 'version_note']) assert.equal(externalCatalog.tool(method), undefined)
+for (const method of ['demo_list', 'demo_read', 'version_note', 'call_id']) assert.equal(externalCatalog.tool(method), undefined)
 for (const method of ['tool_call', 'access', 'conversation_summarize']) assert.ok(externalCatalog.tool(method))
 console.log('Separate Host/Agent contracts: shared goldens, routes and external MCP catalog passed')
 
@@ -332,3 +281,23 @@ const { ExecutionServicesT } = await import('../src/gen/tsugumi/host/execution-s
   assert.equal(state.services[0].heartbeatIntervalSeconds, 2)
   assert.equal(state.services[0].missedHeartbeats, 3)
 }
+
+// Match the native adapter: inherited trust identifies the host registration.
+{
+  const b = new fb.Builder()
+  const folder = b.createString('/trials')
+  const value = ProjectTrust.createProjectTrust(b, 1, folder)
+  const reply = HostReply.createReply(b, HostReplyPayload.ProjectTrust, value)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value, { decision: 1, trusted_folder: '/trials' })
+}
+
+// A project's conversation failure keeps a recovery action in both languages.
+for (const language of ['ja', 'en'] as const) {
+  setLanguage(language)
+  const text = hostProjectErrorText('conversation_identity_mismatch')
+  assert.ok(text.includes('agent.sqlite') && text.includes('.tsugumi'))
+  assert.notEqual(text, hostProjectErrorText('unknown'))
+  assert.notEqual(hostProjectErrorText('stale_project'), hostProjectErrorText('unknown'))
+}
+setLanguage('ja')

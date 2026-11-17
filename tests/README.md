@@ -55,7 +55,7 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](
 
 Prose and `README.md` run the documentation build/tests; `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Web, SDK, shared UI and demos run Web/player checks and documentation; demos also run SDK, Guide RPC and Swift tests. Native core/worker changes run runtime consumers on both Linux architectures and macOS; client changes also run Web/player checks. Swift changes run Mac tests; CLI/plugin changes run adapter tests (CLI also selects Mac tests). Build prerequisites follow each selected job. Site tooling also runs Swift help tests.
 
-`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts still run their full suites. Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
+`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
 | Location | Coverage |
 | --- | --- |
@@ -69,7 +69,7 @@ Prose and `README.md` run the documentation build/tests; `docs/features.md` also
 
 The build generates C++/Python/Swift/TypeScript bindings and BFBS with `flatc`; these stay in build outputs and are not committed.
 
-Web gesture, source retention, template and undo tests call the same pure host document edit implementation through `tsugumi_document_edit_driver`. The Nix Web check compiles that small driver directly. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
+Web gesture, source editing, template and undo fixtures call the production host operation executor through `tsugumi_document_edit_driver`, with a controllable in-memory core transport. The Nix Web check builds only that driver against the installed production host archives. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
 
 CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web checks run on Linux; Swift and Seatbelt checks run on macOS. Real remote execution using `tsugumi-workerd` runs on x86_64 Linux through `tests/ci-remote-worker.sh`. The socket-free thought scheduler test is part of `tsugumi_host_settings_tests` in the Agent RPC job.
 
@@ -91,7 +91,7 @@ The VM support directory and its store are disposable and removed at session end
 
 `tests/core/agent/environment_rpc_test.cc` exercises Host environment requests against hostd and an external fake `tsugumid` with authenticated project RPC. It covers readiness/registration, concurrent starts and aliases, process death and retry, resident-process adoption, explicit history recovery, folder withdrawal, stop and broker capability revocation. `environment_adapter_test.cc` supplies a narrow helper double to the same lifecycle service. The RPC scenarios use Unix sockets; the helper-double scenarios run without sockets. Neither launches a VM or invokes Nix. Build `tsugumi_agent_rpc_tests` and `tsugumi_host_settings_tests`; run them with `--gtest_filter='EnvironmentFixture.*'` and `--gtest_filter='EnvironmentAdapterTest.*'`, respectively. The CLI start/origins/failure scenarios in `tests/python/test_cli.py` run the Web host through hostd against `vm_helper_double.py`, a private FlatBuffers adapter with a native project daemon. `test_web_server.py` verifies environment residency and stop/restart through the same Host requests. `web/tests/environmentHost.ts` and Swift `ServiceWireTests` check request encoding, events and omitted vectors without sockets. Mount selection and folder withdrawal are tested with the C++ helper double; Swift keeps no second mount-selection implementation.
 
-`tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Its text guard rejects numbers except catalog names and suggested parameter values, and regression patterns from removed result claims in both languages; it does not prove every natural-language statement true. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `macOS/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
+`tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Text is evaluated with real models rather than phrase assertions. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `macOS/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
 
 Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`) and settings validation in `tsugumi_host_settings_tests --gtest_filter='HostSettingsStore.VersionNotes*'`. `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request, core model selection, concurrent windows, persistence across restart, mode switching, failure/retry and empty diffs (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`). Those RPC scenarios need Unix sockets and a local model fixture. `web/tests/versions.ts` checks the presentation request, settings, retries and late responses without a browser.
 
@@ -113,3 +113,76 @@ Raise the number and record the new digest when changing those definitions.
 or missing numbers, preservation of existing databases and concurrent creation.
 Native readiness/Home tests and `web/tests/hostReadiness.ts` check that a format
 refusal reaches the person with the folder path and recovery instructions.
+
+Scripted Mac trials can register a trusted root before the first project opens:
+
+```sh
+TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials macOS/tools/run-ui.sh dist/Tsugumi.app /absolute/trial.script /absolute/output /absolute/trials/project
+```
+
+Like the script's `setting` command, this registers a host setting, which remains until removed in Settings. Supply `TSUGUMI_HOST_STATE` to select an isolated host for a trial when needed. A direct scripted launch can use: `open -g -n --env TSUGUMI_UI_SCRIPT=/absolute/trial.script --env TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials --env TSUGUMI_HOST_STATE=/absolute/output/host-core dist/Tsugumi.app`. The trust input is ignored without a readable UI script and is never read from a project. Scripts and smoke runs leave the app in the background, including when an existing project window is selected.
+
+## Execution ownership and timing
+
+Actions and `ci-local.sh` use [ci/run-suite.sh](ci/run-suite.sh) for the same
+command lists, gtest filters and pytest marker expressions. The canonical CI
+owner of shared rules is **x86_64 Linux**. ARM Linux and macOS retain native
+transport/client smokes and filesystem, process, worker, ABI and sandbox tests.
+The exact shared Python files/cases and package smokes are listed in
+[conftest.py](conftest.py), under `shared_rules`, `sdk_pure` and `package_smoke`.
+Unlisted cases keep running on their existing platforms; selection never assumes
+that a newly added test is platform neutral.
+
+| Checks | Full owner | Further targets |
+| --- | --- | --- |
+| Host document/layout/validation/policy and context rules | x86_64 Linux | Explicit negative gtest filter; wire/auth, filesystem/privacy and OS adapters remain |
+| Project document/schema/graph/definition/version matrices | x86_64 Linux | `not environment and not shared_rules`; Unix/WebSocket save smoke and process/filesystem scenarios remain |
+| Web type and behavior corpus | x86_64 Linux | Web/Wasm package build and packaged server/CLI smoke on ARM Linux |
+| CLI/plugin/Web adapter corpus | x86_64 Linux | `package_smoke`: authenticated packaged server, Wasm policy, resident CLI startup |
+| Python SDK pure libraries | x86_64 Linux | `not sdk_pure or package_smoke`; native plot/notebook import/render and child cleanup remain |
+| SDK ABI/language runtimes, C# sandbox, runnable examples | Both Linux targets | Full native coverage |
+| Swift and Seatbelt | macOS | Full native coverage |
+| Real remote execution | x86_64 Linux | Separate worker admission/protocol and core-to-worker execution suites |
+
+The canonical Agent suite also runs `tsugumi_input_types_tests` for resolver and
+Host input descriptions. `ProjectEditDiagnostics.*`, `HelperScope.*` and
+`FileMiss.*` stay with the shared Host rules; `ToolArguments.*` retains its
+local model transport on every native target. Edit refusal and operation-ID
+checks stay in `tsugumi_host_settings_tests`, and public edit/read-miss scenarios
+stay in `tsugumi_agent_rpc_tests`. Short-identifier tests link the Host and core
+in `tsugumi_host_settings_tests`, including native filesystem/history checks.
+Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
+(`large`, `sparse`, `shrink-stream`, `shrink-sparse`). The SDK suite discovers
+`tests/python/test_input_types.py`; core pytest discovers
+`tests/core/test_short_identifiers.py`.
+
+`tsugumi_worker_condition_tests` runs with the canonical core suite;
+`tsugumi_definition_evaluation_tests` runs on every native target because it
+validates embedded Nix dependencies and filesystem invalidation.
+
+The local Linux pass represents the canonical full Linux job even on an ARM
+Mac (`TSUGUMI_FULL_RULES=1`); its Mac pass omits shared rules. It runs the same
+C# sandbox step and separate SDK example step as Actions, rather than collecting
+these in the parallel SDK invocation. It also runs the real remote worker suite
+on the available local Linux architecture (`TSUGUMI_LOCAL_REMOTE=0` explicitly
+omits that separate integration job). `ci-local.sh agent` runs all Host rules
+and public Agent transports on the local target. Local Nix builds use four cores
+and one build job; local pytest uses two workers by default. Actions preserves
+its automatic worker count through `TSUGUMI_PYTEST_WORKERS=auto`; the variable
+can select a different local count without changing test ownership.
+
+Use events, explicit gates or virtual time for test transitions. A watchdog
+bounds a missing event; it is not a throughput assertion. Web background-tab,
+renderer timeout and thumbnail idle/linger tests use virtual timers. Swift model
+waits subscribe to Observation rather than exhausting a fixed number of ticks.
+Real process/socket startup polls wait for an actual readiness record and retain
+watchdogs. Deliberate performance checks are opt-in:
+
+- `TSUGUMI_WIRE_BENCH=1 npm --prefix web test` runs [bench/wire-frames.ts](bench/wire-frames.ts).
+- `TSUGUMI_HEARTBEAT_BENCH=1 build-ci/bin/tsugumi-test-env python3 -m pytest -q tests/core/test_remote_recovery.py -k registered_heartbeat` enables [bench/heartbeat.py](bench/heartbeat.py).
+
+The complete 340-case layout golden oracle remains in
+`HostLayout.EveryGoldenRequestReturnsACorrelatedProposal`. Clients retain rich
+wire specimens and their own proposal application, undo, staleness and retry
+behavior. The core keeps one opaque-layout byte round trip; Host validation
+keeps all invalid-layout vectors.

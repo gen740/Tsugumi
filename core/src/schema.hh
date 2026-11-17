@@ -92,6 +92,8 @@ struct Project {
   Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
   // Additional literal project-relative files or folders kept in versions.
   Opt<"versionPaths", v::Array<v::String>> version_paths;
+  // Host policy, carried without affecting execution.
+  Opt<"agentExclude", v::Array<v::String>> agent_exclude;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
@@ -127,6 +129,11 @@ struct ExecutionResourcesJson {
   Opt<"memoryBytes", v::Uint64> memory_bytes;
 };
 
+struct WorkerConditionJson {
+  t::String<"language"> language;
+  t::String<"expression"> expression;
+};
+
 struct CardDefinition {
   Opt<"symbol", v::String> symbol;
   Opt<"language", v::String> language;
@@ -146,6 +153,7 @@ struct CardDefinition {
   Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
   Opt<"executionService", v::String> execution_service;
+  Opt<"workerCondition", Obj<WorkerConditionJson>> worker_condition;
   Opt<"executionResources", Obj<ExecutionResourcesJson>> execution_resources;
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
@@ -170,6 +178,8 @@ struct JournalFile {
   t::String<"p"> path;
   t::Bool<"delete"> remove;
   t::String<"c"> content_b64;
+  t::String<"blob"> blob;
+  t::String<"hash"> hash;
 };
 
 struct JournalRecord {
@@ -398,6 +408,15 @@ struct DecodeError {
 namespace detail {
 std::optional<DecodeError> validate(std::string_view text, hosq::json::GenericDom<>& dom);
 std::string describe(const hosq::Error& e);
+auto encoding_failure(std::string_view type, std::string_view partial,
+                      const hosq::Error& error) -> std::string;
+
+template <class S>
+constexpr auto type_name() -> std::string_view {
+  constexpr std::string_view signature = __PRETTY_FUNCTION__;
+  constexpr auto begin = signature.find("S = ") + 4;
+  return signature.substr(begin, signature.find_first_of(";]", begin) - begin);
+}
 }  // namespace detail
 
 // Strict decode of a complete JSON document into schema S.
@@ -422,7 +441,9 @@ template <class S>
 std::string encode(const S& value) {
   std::string out;
   hosq::json::CompactWriter<> w{out};
-  if (!hosq::encode_into(value, w)) throw std::runtime_error("JSON encoding failed");
+  if (!hosq::encode_into(value, w))
+    throw std::runtime_error(detail::encoding_failure(
+        detail::type_name<S>(), out, w.error()));
   return out;
 }
 

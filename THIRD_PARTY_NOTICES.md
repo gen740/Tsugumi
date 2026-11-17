@@ -7,7 +7,7 @@ the [hosq](https://github.com/CLI20-dev/hosq) library.
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](macOS/tools/bundle-licenses.sh)).
 The corresponding source of the VM's boot disk is in that disk's release of
-[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm); see
+[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`); see
 [Licenses and distribution](docs/LicenseAudit.md). Lock files and build recipes
 are authoritative when dependencies change.
 
@@ -135,7 +135,7 @@ simply an unchanged nixpkgs kernel.
 
 The boot closure contains GPL / LGPL software as well as permissively
 licensed dependencies. `licenses.tar.gz` in the disk's release of
-[gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), which the app also
+[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`), which the app also
 carries in `licenses/vm-boot/`, lists what the image really contains, with each
 package's license as nixpkgs declares it, its sources and patches, the license
 files of those sources and the kernel's configuration. The corresponding source

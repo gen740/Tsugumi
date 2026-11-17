@@ -55,7 +55,8 @@ std::optional<hosq::json::GenericDom<>> text_value(const std::string &s) {
 // stamp.
 std::string stamped(const std::string &text, const std::string &card,
                     const std::vector<Comment> &before,
-                    const std::vector<std::string> &changed) {
+                    const std::vector<std::string> &changed,
+                    const ReserveComment &reserve) {
   Object root;
   if (schema::decode(schema::capture(text), root))
     return text;
@@ -67,13 +68,20 @@ std::string stamped(const std::string &text, const std::string &card,
     schema::v::Array<Object> list;
     if (schema::decode(value, list) || list.value().size() != now.size())
       return text;
-    std::set<std::string> ids;
+    std::set<std::string> ids, reserved;
+    for (const auto &c : now)
+      reserved.insert(c.id);
+    uint64_t next_id = 0;
     for (size_t i = 0; i < now.size(); ++i) {
       auto &c = now[i];
       auto &field = list.value()[i];
       std::string id = c.id;
       if (id.empty() || !ids.insert(id).second) {
-        id = crypto::uuid4();
+        do {
+          id = reserve ? reserve(card, {reserved.begin(), reserved.end()})
+                       : std::to_string(++next_id);
+        } while (reserved.contains(id));
+        reserved.insert(id);
         ids.insert(id);
       }
       const Comment *was = id == c.id ? find(before, card, c.id) : nullptr;
@@ -260,9 +268,10 @@ auto record_json(const std::vector<Change> &changes) -> std::string {
 
 auto version(const std::filesystem::path &root, const std::string &id)
     -> std::vector<Change> {
-  if (id.size() != 40 ||
+  if (id.size() < 7 || id.size() > 40 ||
       id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-    throw std::runtime_error("Use a full version object ID");
+    throw std::runtime_error(
+        "Use a Git version object ID or unambiguous abbreviation");
   git_libgit2_init();
   struct Repository {
     git_repository *value = nullptr;
@@ -275,12 +284,12 @@ auto version(const std::filesystem::path &root, const std::string &id)
                               GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr))
     throw std::runtime_error("Project has no version repository");
   git_oid oid;
-  git_oid_fromstr(&oid, id.c_str());
+  git_oid_fromstrn(&oid, id.c_str(), id.size());
   struct Commit {
     git_commit *value = nullptr;
     ~Commit() { git_commit_free(value); }
   } commit, parent;
-  if (git_commit_lookup(&commit.value, repo.value, &oid))
+  if (git_commit_lookup_prefix(&commit.value, repo.value, &oid, id.size()))
     throw std::runtime_error("Version not found");
   struct Tree {
     git_tree *value = nullptr;

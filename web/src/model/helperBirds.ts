@@ -1,12 +1,12 @@
 // The helpers of a delegate call on the canvas, a bird each (the Mac app's
 // AgentPresence, PresenceColor and ProjectSession's helperPresences): each comes
-// to the Cards it works on, one short scene after another, says what it does and
+// to the Cards it works on, the latest short scene, says what it does and
 // goes a little while after it ended. Times in seconds.
 import { workScene } from './guide'
 import { L } from '../i18n'
 
-/** Lengths of the scenes: unhurried, so that the bird glides. */
-export const BIRD_TIMING = { scene: 1.6, flight: 1, maxBacklog: 5, linger: 8, fadeIn: 0.5, fadeOut: 1.6, doneLine: 3 }
+/** A short step, always superseded by newer work. */
+export const BIRD_TIMING = { scene: 0.24, flight: 0.24, linger: 8, fadeIn: 0.5, fadeOut: 1.6, doneLine: 3 }
 
 /** Starts and stops without a jolt. */
 export function rise(x: number): number {
@@ -30,6 +30,15 @@ export const bubbleRise = (z: number) => 54 * Math.min(1.3, Math.max(0.8, z))
 
 /** Where a helper's bird stands on a Card (its top edge, world units). */
 export const perchOf = (r: { x: number; y: number }): Pt => ({ x: r.x + 26 + BIRD.feetToCenter.x, y: r.y + BIRD.feetToCenter.y })
+
+/** The main bird over a Card's DOM rectangle. The rectangle already includes
+ *  the camera transform: apply only local world offsets at the current zoom. */
+export function canvasBirdBox(rect: Pt, zoom: number) {
+  const center = perchOf({ x: 0, y: 0 })
+  const width = 680 * BIRD.scale * zoom, height = 470 * BIRD.scale * zoom
+  return { left: rect.x + center.x * zoom - width * (370 / 680),
+    top: rect.y + center.y * zoom - height * (210 / 470), width, height, flip: false, zoom }
+}
 
 /** How far above the Card's top edge a helper's bird and its bubble reach (points). */
 export const helperClear = (zoom: number) => -BIRD.feetToCenter.y * zoom + bubbleRise(zoom * BIRD.helperScale)
@@ -81,27 +90,33 @@ export class HelperBird {
     this.appearedAt = now
   }
 
-  /** The next scene; one that only reads is left out when the bird is far behind. */
-  visit(card: string, line: string, now: number, keep = false) {
-    const last = this.scenes[this.scenes.length - 1]
-    const lastEnd = last ? last.start + BIRD_TIMING.scene : now
-    const start = this.animateWork() ? Math.max(now, lastEnd) : now
-    if (!keep && last?.card === card && lastEnd > now - 0.5) return // already there
-    if (!keep && start - now > BIRD_TIMING.maxBacklog) return
-    this.scenes.push({ card, line, start, received: now })
+  /** New work replaces the one scene, including a flight still in progress. */
+  visit(card: string, line: string, now: number, immediate = false) {
+    this.activity = undefined
+    this.scenes = [{ card, line, start: now, received: now }]
+    if (immediate) this.flight = { card, at: now }
+  }
+
+  running(now: number) {
+    const card = this.scenes.at(-1)?.card
+    this.flight = card ? { card, at: now } : undefined
+    this.doing(L('実行しています'), now)
   }
 
   /** What it does between scenes (looking things up, checking, waiting). */
   doing(text: string | undefined, now: number) {
-    if (this.working && text) this.activity = { text, at: now }
+    if (this.working && text) {
+      const card = this.scenes.at(-1)?.card
+      this.flight = card ? { card, at: now } : undefined
+      this.activity = { text, at: now }
+    }
   }
 
   ended(outcome: BirdOutcome, now: number) {
     if (!this.working) return
     this.working = false
     this.outcome = outcome
-    const last = this.scenes[this.scenes.length - 1]
-    this.endedAt = this.animateWork() ? Math.max(now, last ? last.start + BIRD_TIMING.scene : now) : now
+    this.endedAt = now
   }
 
   private scene(now: number): Scene | undefined {
@@ -140,19 +155,20 @@ export class HelperBird {
     const file = this.writer()?.at(now)
     if (file) return { text: L('{0} を書いています', file.card), since: this.flight?.at ?? now }
     const s = this.scene(now)
-    if (s && s.start + BIRD_TIMING.scene > now) return { text: s.line, since: s.start }
+    if (this.working && s && s.start + BIRD_TIMING.scene > now && (!this.activity || s.start > this.activity.at)) return { text: s.line, since: s.start }
     if (this.working) {
       if (this.activity && this.activity.at >= (s?.start ?? -Infinity)) return { text: this.activity.text, since: this.activity.at }
       if (s) return { text: s.line, since: s.start }
       return { text: L('考えています'), since: this.appearedAt ?? now }
     }
-    const doneAt = Math.max(s ? s.start + BIRD_TIMING.scene : 0, this.endedAt ?? 0)
+    const doneAt = this.endedAt ?? 0
     return now - doneAt < BIRD_TIMING.doneLine ? { text: OUTCOME_LINE[this.outcome], since: doneAt, done: true } : undefined
   }
 
   /** Where it is at `now` (world units), given where it stands on a Card
    *  (undefined: that Card is not in the scope shown). Still: at each place at once. */
   place(now: number, perch: (card: string) => Pt | undefined, still = false): BirdPlace | undefined {
+    still ||= !this.working
     // A new Card has no place until it is saved: the bird stays by its last one.
     const file = this.writer()?.at(now)?.card
     const card = file && perch(file) ? file : this.scene(now)?.card
@@ -161,6 +177,7 @@ export class HelperBird {
       const from = this.flight && !still ? this.point(now, perch) : undefined
       this.flight = { card, from, at: now }
     }
+    if (still && this.flight) this.flight.from = undefined
     const p = this.point(now, perch)
     if (!p) return undefined
     const ahead = this.point(now + 0.15, perch) ?? p
@@ -171,7 +188,7 @@ export class HelperBird {
   trail(now: number, perch: (card: string) => Pt | undefined): Pt[] {
     const out: Pt[] = []
     for (let k = 0; k <= 18; k++) {
-      const p = this.point(now - 0.045 * k, perch)
+      const p = this.point(now - Math.min(0.045, BIRD_TIMING.flight / 18) * k, perch)
       if (p) out.push(p)
     }
     return out
@@ -236,6 +253,10 @@ export class HelperTeam {
         b.ended(e.message === 'cancelled' ? 'stopped' : 'failed', now)
         break
     }
+  }
+
+  running(now: number) {
+    for (const bird of this.birds) bird.running(now)
   }
 
   /** The main Agent's turn ended: no helper is at work any more, whatever reached the page. */

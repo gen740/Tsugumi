@@ -1,8 +1,11 @@
 #include "agent/tools.hh"
 
 #include <algorithm>
+#include <condition_variable>
 #include <future>
 
+#include "host/input_types.hh"
+#include "agent/context.hh"
 #include "agent/providers.hh"
 #include "agent/save_policy.hh"
 #include "agent/tool_images.hh"
@@ -14,7 +17,9 @@
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/file_miss.hh"
 #include "host/format.hh"
+#include "host/identifiers.hh"
 #include "host/layout_saving.hh"
 #include "host/layout_service.hh"
 #include "host/save.hh"
@@ -46,6 +51,7 @@ auto LayoutToolFailure(const std::string& kind, const std::string& message)
 auto ToolOutput(std::string_view raw, bool error,
                 std::vector<std::string> resources) -> ToolResult {
   auto split = SplitToolImages(raw);
+  split.text = host::AgentReferences(split.text);
   return {std::move(split.text), error, std::move(split.images),
           std::move(resources)};
 }
@@ -69,82 +75,23 @@ Tools::Tools(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       dependencies(std::move(dependencies)) {}
 
 auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
-  std::vector<ToolSpec> specs;
-  for (const auto& tool : catalog.tools())
-    if (!guide || (!tool.mutating && tool.spec.name != "run_cancel" &&
-                   tool.spec.name != "view_save"))
-      specs.push_back(tool.spec);
-  specs.push_back(
-      {"document_template",
-       "Get the initial definition and all source files for a new Card "
-       "from the host's ui/templates catalog. name is the template id and id "
-       "is the new Card "
-       "identifier. Save definition_json and the returned files under "
-       "definitions/<id>/, "
-       "together with the canvas instance, in one project_save. This tool "
-       "writes nothing.",
-       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
-  specs.push_back(
-      {"document_connect",
-       "Prepare a scope's connection edit, replacing an input wire and "
-       "inserting or extending a fork when needed. state_json contains "
-       "project, layout and "
-       "definitions. Draft wire ends use an empty port (UI '+' gestures attach "
-       "to the Card); "
-       "they accept any number of wires without adding ports or forks. "
-       "If needs_fork is true, obtain a new Card id and repeat with fork_id. "
-       "Otherwise save "
-       "the returned state_json together with project_save. This tool writes "
-       "nothing.",
-       R"({"type":"object","properties":{"state_json":{"type":"string"},"from_card":{"type":"string"},"from_port":{"type":"string"},"to_card":{"type":"string"},"to_port":{"type":"string"},"fork_id":{"type":"string"}},"required":["state_json","from_card","from_port","to_card","to_port"],"additionalProperties":false})"});
-  specs.push_back(
-      {"document_copy",
-       "Prepare a definition or external copy from the current document state. "
-       "from and to are project-relative folders ending in /. paths lists "
-       "current source files. "
-       "Returns edits_json (definition folders and external documents) and "
-       "file mappings. "
-       "Read and keep every mapped source byte before applying any change, "
-       "then save the "
-       "documents and bytes together with project_save. This tool writes "
-       "nothing.",
-       R"({"type":"object","properties":{"state_json":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"from":{"type":"string"},"to":{"type":"string"},"name":{"type":"string"}},"required":["state_json","paths","from","to"],"additionalProperties":false})"});
-  specs.push_back(
-      {"document_merge",
-       "Prepare a three-way merge of unsaved document states. "
-       "Returns merged_json and conflict paths; show conflicts to the person "
-       "before saving their choice with project_save. This tool writes "
-       "nothing.",
-       R"({"type":"object","properties":{"base_json":{"type":"string"},"ours_json":{"type":"string"},"theirs_json":{"type":"string"}},"required":["base_json","ours_json","theirs_json"],"additionalProperties":false})"});
-  specs.push_back(
-      {"document_make_subgraph",
-       "Prepare a Card in Card edit from the current affected tsugumi.json. "
-       "Returns project_json, external_json and link_json; move the selected "
-       "definition folders and their external folders unchanged under "
-       "externals/<id>/, then save all changes together with project_save. "
-       "This tool writes nothing.",
-       R"({"type":"object","properties":{"project_json":{"type":"string"},"cards":{"type":"array","items":{"type":"string"}},"id":{"type":"string"}},"required":["project_json","cards","id"],"additionalProperties":false})"});
-  specs.push_back(
-      {"demo_list", "List bundled read-only demo references",
-       R"({"type":"object","properties":{},"additionalProperties":false})"});
-  specs.push_back(
-      {"demo_read", "Read a bundled demo reference",
-       R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
-  specs.push_back(
-      {"guide_show", "Show guidance in connected user interfaces",
-       R"({"type":"object","properties":{"say":{"type":"string"},"highlight":{"type":"string"},"open":{"type":"string"},"actions":{"type":"array"},"choices":{"type":"array","items":{"type":"string"}}}})"});
-  if (!guide) {
-    const auto definition =
-        json::Object(json::Get(catalog.shared(), "delegateTool", "{}"));
-    specs.push_back({"delegate", json::Text(definition, "description"),
-                     json::Get(definition, "inputSchema", "{}")});
-  }
-  return specs;
+  return catalog.ModelSpecs(guide ? ModelRole::Guide : ModelRole::Main);
+}
+
+auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
+  if (call.name != "tools") return call;
+  catalog.ValidateArguments(call.name, call.arguments);
+  const auto args = json::Object(call.arguments);
+  const auto action = json::Text(args, "action");
+  if (action.empty()) return call;
+  return {call.id, catalog.FamilyTool(json::Text(args, "family"), action, role),
+          json::Get(args, "arguments", "{}")};
 }
 
 // Read the exact revision being saved; never clean up a newer client's layout.
 auto Tools::PrepareLayoutSave(const std::string& project,
-                              const std::string& args, std::stop_token stop)
+                              const std::string& args, std::stop_token stop,
+                              const host::LayoutWrite& may_write)
     -> std::string {
   struct StaleRevision {};
   std::optional<json::Members> snapshot;
@@ -154,7 +101,7 @@ auto Tools::PrepareLayoutSave(const std::string& project,
   auto read = [&](const std::string& path) -> std::optional<host::LayoutFile> {
     if (!snapshot) {
       const auto response =
-          json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+          json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
       snapshot = json::Object(json::Get(response, "value", "{}"));
       const auto revision = json::Get(*snapshot, "rev");
       if (json::String(expected, expected) != json::String(revision, revision))
@@ -166,6 +113,16 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     if (path == "layout.json")
       return host::LayoutFile{json::Text(*snapshot, "layout_json", "{}"),
                               std::nullopt};
+    for (const auto& raw :
+         json::Array(json::Get(*snapshot, "definitions", "[]"))) {
+      const auto definition = json::Object(raw);
+      if (path ==
+          "definitions/" + json::Text(definition, "id") + "/_card.json") {
+        const auto text = json::Text(definition, "card_json");
+        return text.empty() ? std::nullopt
+                            : std::optional<host::LayoutFile>{{text, {}}};
+      }
+    }
     std::string hash;
     for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
       const auto source = json::Object(raw);
@@ -183,8 +140,13 @@ auto Tools::PrepareLayoutSave(const std::string& project,
                                      {"offset", std::to_string(offset)},
                                      {"limit_bytes", "1048576"}}),
           stop));
-      if (json::Text(response, "reply") == "Failure")
-        throw Failure("conflict", "Layout source changed while preparing save");
+      if (json::Text(response, "reply") == "Failure") {
+        const auto failure = json::Object(json::Get(response, "value", "{}"));
+        if (json::Text(failure, "kind") == "revision_conflict")
+          throw StaleRevision{};
+        throw Failure(json::Text(failure, "kind"),
+                      json::Text(failure, "diagnostic"));
+      }
       const auto chunk = json::Object(json::Get(response, "value", "{}"));
       const auto bytes = json::Get(chunk, "bytes");
       if (!bytes.empty() && bytes.front() == '"')
@@ -208,16 +170,186 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     return host::LayoutFile{std::move(text), hash};
   };
   try {
-    return host::PrepareLayoutSave(args, read);
+    (void)read("tsugumi.json");
+    std::vector<std::string> documents{"tsugumi.json"};
+    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
+      const auto path = json::Text(json::Object(raw), "path");
+      if (host::IsExternalDocument(path, "tsugumi.json"))
+        documents.push_back(path);
+    }
+    return host::PrepareLayoutSave(args, read, documents, may_write);
   } catch (const StaleRevision&) {
     return args;
   }  // Let the core issue its normal CAS receipt.
 }
 
+auto Tools::OperateProject(const std::string& project,
+                           const H::ProjectOperateRequestT& operation,
+                           const host::OperationContext& context,
+                           std::stop_token stop) -> host::OperationReply {
+  std::lock_guard saving(save_mutex);
+  auto resolved_context = context;
+  resolved_context.demo = [&](const auto& name) {
+    const auto folder = demo_references.Project(name);
+    if (context.origin == "agent") Exclusions(project, stop).Check(folder);
+    return folder;
+  };
+  return operations.Execute(project, operation, resolved_context,
+                            [&](const auto& method, const auto& arguments) {
+                              host::OperationReply reply;
+                              reply.json = RawProjectCall(
+                                  project, method, json::Encode(arguments),
+                                  stop, &reply.wire);
+                              return reply;
+                            });
+}
+
+auto Tools::SaveProject(const std::string& project, json::Members original,
+                        std::stop_token stop,
+                        const std::function<void(const host::SaveBase&)>& check,
+                        const host::LayoutWrite& may_write) -> std::string {
+  std::lock_guard save_lock(save_mutex);
+  auto read = [&](const auto& method, const auto& query) {
+    const auto reply = json::Object(
+        RawProjectCall(project, method, json::Encode(query), stop));
+    const auto value = json::Object(json::Get(reply, "value", "{}"));
+    if (json::Text(reply, "reply") == "Failure")
+      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+    return value;
+  };
+  try {
+    // A whole-document save keeps its original revision and input. Never merge
+    // or issue another operation id when another writer has moved the document.
+    const auto latest = host::InspectForSave(read);
+    if (json::String(json::Get(original, "base_rev"),
+                     json::Get(original, "base_rev")) !=
+        json::Text(latest.snapshot, "rev"))
+      return LayoutToolFailure("revision_conflict",
+                               "The project changed; read the project again "
+                               "and re-apply your input.");
+    Exclusions(project, stop).CheckSave(original, latest.base);
+    if (check) check(latest.base);
+    original.erase("save_intent");
+    auto prepared = PrepareAgentSave(
+        original, read, [&](const auto &card, const auto &occupied) {
+          std::lock_guard lock(mutex);
+          return host::ReserveOrdinal(
+              db, "annotation:" + project + ":comment:" + card, "", occupied);
+        });
+    prepared.arguments = json::Object(PrepareLayoutSave(
+        project, json::Encode(prepared.arguments), stop, may_write));
+    Exclusions(project, stop).CheckSave(prepared.arguments, latest.base);
+    host::RestrictAgentRequest("project_save", prepared.arguments);
+    auto result = json::Object(RawProjectCall(
+        project, "project_save", json::Encode(prepared.arguments), stop));
+    if (json::Text(result, "reply") == "SaveResult") {
+      auto value = json::Object(json::Get(result, "value"));
+      value["comments"] = prepared.comments;
+      result["value"] = json::Encode(value);
+    } else if (json::Text(json::Object(json::Get(result, "value", "{}")),
+                          "kind") == "revision_conflict") {
+      return LayoutToolFailure("revision_conflict",
+                               "The project changed; read the project again "
+                               "and re-apply your input.");
+    }
+    return json::Encode(result);
+  } catch (const SaveRevisionConflict&) {
+    return LayoutToolFailure(
+        "revision_conflict",
+        "The project changed; read the project again and re-apply your input.");
+  } catch (const host::LayoutFailure& e) {
+    return LayoutToolFailure("invalid_document", e.what());
+  } catch (const Cancelled&) {
+    throw;
+  } catch (const Failure& e) {
+    // Policy validation failed before sending a save to the core. Keep that
+    // refusal as a terminal receipt so replay cannot become outcome_unknown.
+    if (e.code == "validation_failed")
+      return LayoutToolFailure(e.code, e.what());
+    throw;
+  } catch (const std::exception& e) {
+    return LayoutToolFailure("validation_failed", e.what());
+  }
+}
+
+auto Tools::InputTypesQuery(const std::string& project, json::Members args,
+                            std::stop_token stop) -> H::InputTypesT {
+  std::optional<std::string> language;
+  if (args.contains("language")) {
+    language = json::Text(args, "language");
+    args.erase("language");
+  }
+  std::string bytes;
+  const auto envelope = RawProjectCall(project, "input_types", json::Encode(args), stop, &bytes);
+  const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+  if (!reply->value_as_InputTypesResult()) {
+    const auto value = json::Object(json::Get(json::Object(envelope), "value", "{}"));
+    throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+  }
+  return host::InputTypes(*reply->value_as_InputTypesResult(), language);
+}
+
+auto Tools::Exclusions(const std::string& project, std::stop_token stop) -> host::AgentExclude {
+  if (project.empty()) return host::AgentExclude(std::filesystem::current_path(), "{}");
+  const auto reply = json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
+  const auto value = json::Object(json::Get(reply, "value", "{}"));
+  if (json::Text(reply, "reply") == "Failure")
+    throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+  std::lock_guard lock(mutex);
+  return host::AgentExclude(registry.Root(project), json::Text(value, "project_json", "{}"));
+}
+
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
+                        const std::string& arguments, std::stop_token stop) -> std::string {
+  const auto policy = Exclusions(project, stop);
+  const auto args = json::Object(arguments);
+  policy.CheckRequest(name, args);
+  if (name == "project_inspect") policy.Check("tsugumi.json");
+  if (name == "run") {
+    json::Members plan;
+    for (const auto* key : {"card", "propagate"})
+      if (args.contains(key)) plan[key] = args.at(key);
+    if (args.contains("base_rev")) plan["at_rev"] = args.at("base_rev");
+    const auto full_plan = RawProjectCall(project, "run_plan", json::Encode(plan), stop);
+    policy.CheckContent(full_plan);
+  }
+  auto result = UnfilteredProjectCall(project, name, arguments, stop);
+  const auto file_path = json::Text(args, "path");
+  const bool project_document = file_path == "tsugumi.json" || host::IsExternalDocument(file_path, "tsugumi.json");
+  const bool layout_document = file_path == "layout.json" || host::IsExternalDocument(file_path, "layout.json");
+  if (name == "project_file_read" && (project_document || layout_document)) {
+    // A projected document is a complete page. Guards retain the original hash.
+    auto envelope = json::Object(result);
+    if (json::Text(envelope, "reply") == "FileContent") {
+      if (json::UInt(json::Get(args, "offset", "0")) != 0)
+        throw Failure("invalid_request", "Read the project document in one page");
+      auto value = json::Object(json::Get(envelope, "value", "{}"));
+      if (!json::Bool(json::Get(value, "eof")))
+        throw Failure("invalid_request", "Read the project document in one page");
+      const auto path = json::Text(args, "path");
+      const auto text = path.ends_with("tsugumi.json")
+          ? policy.ProjectText(json::Text(value, "bytes"), path.substr(0, path.size() - 12))
+          : json::Text(json::Object(policy.Filter(json::Encode(json::Members{{"layout_json", json::Get(value, "bytes")}}))), "layout_json");
+      value["bytes"] = json::Quote(text);
+      value["size_bytes"] = value["next_offset"] = json::Quote(std::to_string(text.size()));
+      envelope["value"] = json::Encode(value);
+      result = json::Encode(envelope);
+    }
+  }
+  return policy.Filter(result);
+}
+
+auto Tools::UnfilteredProjectCall(const std::string& project, const std::string& name,
                         const std::string& arguments, std::stop_token stop)
     -> std::string {
   auto args = json::Object(arguments);
+  if (name == "input_types")
+    return catalog.HostReply(wire::HostReply(1, InputTypesQuery(project, std::move(args), stop)));
+  if (name == "project_save") {
+    if (args.contains("transfers") && !json::Array(args.at("transfers")).empty())
+      throw Failure("permission_denied", "Use project_copy for file transfers");
+    return SaveProject(project, std::move(args), stop);
+  }
   if (name == "project_file_format") {
     H::FileFormatRequestT request;
     request.path = json::Text(args, "path");
@@ -252,59 +384,62 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
     args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
     args.erase("name");
   }
-  if (name == "project_save") {
-    const auto operation = json::Text(args, "op_id");
-    std::optional<AgentSave> prepared;
-    {
-      std::lock_guard lock(mutex);
-      auto saved = db.prepare(
-          "SELECT arguments,comments FROM save_preparations WHERE operation=?");
-      saved.bind(1, operation);
-      if (saved.step())
-        prepared = AgentSave{json::Object(saved.text(0)), saved.text(1)};
-    }
-    if (!prepared) {
-      try {
-        prepared =
-            PrepareAgentSave(args, [&](const auto& method, const auto& query) {
-              const auto reply = json::Object(
-                  RawProjectCall(project, method, json::Encode(query), stop));
-              const auto value = json::Object(json::Get(reply, "value", "{}"));
-              if (json::Text(reply, "reply") == "Failure")
-                throw Failure(json::Text(value, "kind"),
-                              json::Text(value, "message"));
-              return value;
-            });
-      } catch (const Failure&) {
-        throw;
-      } catch (const SaveRevisionConflict& error) {
-        return json::Encode(json::Members{
-            {"reply", json::Quote("Failure")},
-            {"value", json::Encode(json::Members{
-                          {"kind", json::Quote("revision_conflict")},
-                          {"message", json::Quote(error.what())}})}});
-      } catch (const std::exception& error) {
-        return json::Encode(json::Members{
-            {"reply", json::Quote("Failure")},
-            {"value", json::Encode(json::Members{
-                          {"kind", json::Quote("validation_failed")},
-                          {"message", json::Quote(error.what())}})}});
-      }
-      std::lock_guard lock(mutex);
-      auto saved =
-          db.prepare("INSERT OR REPLACE INTO save_preparations VALUES(?,?,?)");
-      saved.bind(1, operation)
-          .bind(2, json::Encode(prepared->arguments))
-          .bind(3, prepared->comments)
-          .run();
-    }
-    if (args.contains("approved_permissions"))
-      prepared->arguments["approved_permissions"] =
-          args.at("approved_permissions");
-    args = std::move(prepared->arguments);
-  }
   host::RestrictAgentRequest(name, args);
+  if (name == "project_inspect") {
+    const auto inspection =
+        host::InspectForSave([&](const auto& method, const auto& query) {
+          const auto reply = json::Object(
+              RawProjectCall(project, method, json::Encode(query), stop));
+          const auto value = json::Object(json::Get(reply, "value", "{}"));
+          if (json::Text(reply, "reply") == "Failure")
+            throw Failure(json::Text(value, "kind"),
+                          json::Text(value, "diagnostic"));
+          return value;
+        });
+    return json::Encode(
+        json::Members{{"reply", json::Quote("ProjectSnapshot")},
+                      {"value", json::Encode(inspection.snapshot)}});
+  }
   auto result = RawProjectCall(project, name, json::Encode(args), stop);
+  if (name == "project_file_read" || name == "project_file_list" ||
+      name == "project_file_stat") {
+    auto envelope = json::Object(result);
+    auto failure = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(envelope, "reply") == "Failure" &&
+        json::Text(failure, "kind") == "not_found") {
+      // This is advice from the host, not execution semantics in the core.
+      // A failed inspection must not replace the original typed file failure.
+      try {
+        const auto read = [&](const std::string& method,
+                              const json::Members& query) {
+          const auto reply = json::Object(
+              RawProjectCall(project, method, json::Encode(query), stop));
+          const auto value = json::Object(json::Get(reply, "value", "{}"));
+          if (json::Text(reply, "reply") == "Failure")
+            throw Failure(json::Text(value, "kind"),
+                          json::Text(value, "diagnostic"));
+          return value;
+        };
+        const auto snapshot = read("project_inspect", {});
+        const auto number = [](const std::string& raw) {
+          return json::UInt(json::String(raw, raw));
+        };
+        if (!args.contains("at_rev") ||
+            number(args.at("at_rev")) == number(json::Get(snapshot, "rev"))) {
+          const auto supplement =
+              host::DescribeFileMiss(json::Text(args, "path"), snapshot, read);
+          if (!supplement.empty()) {
+            failure["diagnostic"] = json::Quote(
+                json::Text(failure, "diagnostic") + "; " + supplement);
+            envelope["value"] = json::Encode(failure);
+            result = json::Encode(envelope);
+          }
+        }
+      } catch (const std::exception&) {
+        if (stop.stop_requested()) throw Cancelled();
+      }
+    }
+  }
   if (name == "version_graph") {
     auto envelope = json::Object(result);
     if (json::Text(envelope, "reply") == "VersionGraph") {
@@ -334,24 +469,23 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
   return result;
 }
 
-auto Tools::AnnotateSave(const std::string& operation,
-                         const std::string& result) -> std::string {
-  auto envelope = json::Object(result);
-  if (json::Text(envelope, "reply") != "SaveResult") return result;
-  std::lock_guard lock(mutex);
-  auto saved =
-      db.prepare("SELECT comments FROM save_preparations WHERE operation=?");
-  saved.bind(1, operation);
-  if (!saved.step()) return result;
-  auto value = json::Object(json::Get(envelope, "value", "{}"));
-  value["comments"] = saved.text(0);
-  envelope["value"] = json::Encode(value);
-  return json::Encode(envelope);
-}
-
 auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                            const std::string& arguments, std::stop_token stop,
                            std::string* raw) -> std::string {
+  auto prepared = arguments;
+  uint64_t wait_seconds = 0;
+  if (name == "run" || name == "run_status") {
+    auto fields = json::Object(prepared);
+    if (fields.contains("wait_seconds")) {
+      wait_seconds = json::UInt(fields.at("wait_seconds"), UINT64_MAX);
+      if (wait_seconds == UINT64_MAX)
+        throw Failure("invalid_request",
+                      "wait_seconds must be a nonnegative integer");
+      wait_seconds = std::min<uint64_t>(wait_seconds, 300);
+      fields.erase("wait_seconds");
+      prepared = json::Encode(fields);
+    }
+  }
   Project endpoint;
   {
     std::lock_guard lock(mutex);
@@ -359,11 +493,46 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   }
   client::Options transport_options;
   transport_options.endpoint = endpoint.endpoint;
+  // This state belongs to this connection, never to the host's request lock.
+  // Subscribe before querying/starting so a fast completion cannot be missed.
+  struct RunWait {
+    std::mutex mutex;
+    std::condition_variable_any changed;
+    std::map<std::string, std::unique_ptr<R::RunStatusT>> ended;
+    bool closed = false;
+  };
+  std::shared_ptr<RunWait> waiting;
   client::Connection connection(transport_options);
+  if (wait_seconds) {
+    waiting = std::make_shared<RunWait>();
+    connection.OnClosed([waiting](client::Error) {
+      std::lock_guard lock(waiting->mutex);
+      waiting->closed = true;
+      waiting->changed.notify_all();
+    });
+    connection.OnEvent([waiting](client::Bytes bytes) {
+      const auto* note = R::GetMessage(bytes.data())->payload_as_Notification();
+      const auto* event = note ? note->value_as_RunEvent() : nullptr;
+      if (!event) return;
+      const R::RunStatus* status = nullptr;
+      if (const auto* changed = event->value_as_RunStatusChanged())
+        status = changed->status();
+      else if (const auto* finished = event->value_as_RunFinished())
+        status = finished->summary()->status();
+      if (!status || !status->ended_at()) return;
+      std::lock_guard lock(waiting->mutex);
+      waiting->ended[event->run_id()->str()].reset(status->UnPack());
+      waiting->changed.notify_all();
+    });
+  }
   std::stop_callback cancelled(stop, [&connection] { connection.Close(); });
   if (stop.stop_requested()) throw Cancelled();
-  if (auto error = connection.Start().get())
+  // Cancelling closes the connection, also while it is still being set up:
+  // that is a cancelled call, not an unreachable project.
+  if (auto error = connection.Start().get()) {
+    if (stop.stop_requested()) throw Cancelled();
     throw Failure("unavailable", error.message);
+  }
   auto hello =
       connection
           .Call([&](uint64_t id) {
@@ -379,18 +548,37 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                                  b.GetBufferPointer() + b.GetSize());
           })
           .get();
+  if (stop.stop_requested()) throw Cancelled();
   if (hello.error) throw Failure("unavailable", hello.error.message);
   const auto* reply = R::GetMessage(hello.bytes.data())->payload_as_Reply();
   if (!reply || reply->value_type() != R::ReplyPayload::HelloResult)
     throw Failure("unauthenticated", "Project rejected the Agent host");
-  auto prepared = arguments;
-  if (name == "project_save" || (name == "project_validate" &&
-                                 json::Object(arguments).contains("changes"))) {
+  auto query = [&](const std::string& tool, const std::string& args) {
+    auto response = connection
+                        .Call([&](uint64_t id) {
+                          auto bytes = EncodeProjectRequest(tool, args, id);
+                          return client::Bytes(bytes.begin(), bytes.end());
+                        })
+                        .get();
+    if (stop.stop_requested()) throw Cancelled();
+    if (response.error)
+      throw Failure("unavailable", "Project connection lost while waiting: " +
+                                       response.error.message);
+    return response;
+  };
+  if (wait_seconds) {
+    const auto opened = query("project_open", "{}");
+    const auto* response =
+        R::GetMessage(opened.bytes.data())->payload_as_Reply();
+    if (!response || !response->value_as_OpenResult())
+      throw Failure("unavailable",
+                    "Could not subscribe to project run changes");
+  }
+  if (name == "project_validate" &&
+      json::Object(arguments).contains("changes")) {
     try {
       prepared = PrepareLayoutSave(project, arguments, stop);
     } catch (const host::LayoutFailure& error) {
-      // A host schema rejection is a completed tool result, so retrying the
-      // same call does not look for a core mutation that was never sent.
       return LayoutToolFailure("invalid_document", error.what());
     }
   }
@@ -405,8 +593,72 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   if (raw)
     raw->assign(reinterpret_cast<const char*>(result.bytes.data()),
                 result.bytes.size());
-  return catalog.Reply({reinterpret_cast<const char*>(result.bytes.data()),
-                        result.bytes.size()});
+  auto output =
+      catalog.Reply({reinterpret_cast<const char*>(result.bytes.data()),
+                     result.bytes.size()});
+  if (!wait_seconds) return output;
+  auto envelope = json::Object(output);
+  if (json::Text(envelope, "reply") == "Failure") return output;
+  auto value = json::Object(json::Get(envelope, "value", "{}"));
+  auto status =
+      name == "run" ? json::Object(json::Get(value, "run", "{}")) : value;
+  const auto run_id = json::Text(status, "run_id");
+  auto active = [&] {
+    const auto state = json::Text(status, "state");
+    return state == "queued" || state == "preparing" || state == "running" ||
+           state == "cancelling";
+  };
+  std::string reason = run_id.empty() ? "idle" : "ended";
+  if (active()) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(wait_seconds);
+    std::unique_lock lock(waiting->mutex);
+    waiting->changed.wait_until(lock, stop, deadline, [&] {
+      return waiting->closed || waiting->ended.contains(run_id);
+    });
+    if (stop.stop_requested()) throw Cancelled();
+    const auto found = waiting->ended.find(run_id);
+    if (found != waiting->ended.end()) {
+      flatbuffers::FlatBufferBuilder b;
+      auto reply =
+          R::CreateReply(b, R::ReplyPayload::RunStatus,
+                         R::RunStatus::Pack(b, found->second.get()).Union());
+      R::FinishMessageBuffer(
+          b, R::CreateMessage(b, 1, R::Payload::Reply, reply.Union()));
+      status = json::Object(
+          json::Get(json::Object(catalog.Reply(
+                        {reinterpret_cast<const char*>(b.GetBufferPointer()),
+                         b.GetSize()})),
+                    "value"));
+    } else {
+      if (waiting->closed)
+        throw Failure("unavailable",
+                      "Project connection lost while waiting for the run; the "
+                      "core may have stopped or restarted");
+      lock.unlock();
+      // One read at the deadline supplies the current intermediate state.
+      const auto current =
+          query("run_status",
+                json::Encode(json::Members{{"run_id", json::Quote(run_id)}}));
+      const auto current_output =
+          catalog.Reply({reinterpret_cast<const char*>(current.bytes.data()),
+                         current.bytes.size()});
+      const auto current_envelope = json::Object(current_output);
+      if (json::Text(current_envelope, "reply") == "Failure")
+        return current_output;
+      status = json::Object(json::Get(current_envelope, "value"));
+      reason = active() ? "timeout" : "ended";
+    }
+  }
+  if (name == "run") {
+    value["run"] = json::Encode(status);
+    envelope["value"] = json::Encode(value);
+  } else {
+    envelope["value"] = json::Encode(status);
+  }
+  envelope["still_running"] = active() ? "true" : "false";
+  envelope["wait_reason"] = json::Quote(reason);
+  return json::Encode(envelope);
 }
 
 auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
@@ -421,7 +673,8 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   auto cache = std::make_shared<std::map<std::string, std::string>>();
   return [this, project, conversation, stop, revision, authorization,
           cache](const std::string& path) {
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Read, true, stop,
+    access_service.Require(project, conversation,
+                           Tsugumi::Service::Access::Read, true, stop,
                            "Read helper Card context", authorization);
     if (const auto found = cache->find(path); found != cache->end())
       return found->second;
@@ -434,6 +687,10 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
           ProjectCall(project, "project_file_read", json::Encode(args), stop));
       if (json::Text(reply, "reply") != "FileContent") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
+        if (json::Text(failure, "kind") == "revision_conflict")
+          throw Failure("revision_conflict",
+                        "The project changed; read the project again and "
+                        "re-apply your input.");
         if (json::Text(reply, "reply") == "Failure" &&
             json::Text(failure, "kind") == "not_found") {
           cache->emplace(path, "");
@@ -462,38 +719,65 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   };
 }
 
-auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
+auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
                          ToolResult result, const HelperScope::Reader& read)
     -> ToolResult {
-  if (!scope.scoped()) return result;
+  const auto call =
+      ResolveCall(requested_call,
+                  scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
+  if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
-    if (catalog.Find(call.name)) {
-      const auto envelope = json::Object(result.text);
-      const auto failure = json::Object(json::Get(envelope, "value", "{}"));
-      json::Members safe;
-      for (const auto* key : {"kind", "current_rev", "retry_after_ms"})
-        if (failure.contains(key)) safe[key] = failure.at(key);
-      safe["diagnostic"] = json::Quote(
-          "Card-scoped operation failed. Reinspect on revision_conflict; "
-          "otherwise ask the parent to inspect the full failure in this "
-          "tool's saved receipt.");
-      result.text = json::Encode(json::Members{
-          {"reply", json::Quote("Failure")}, {"value", json::Encode(safe)}});
-    }
+    if (catalog.Find(call.name))
+      result.text = scope.FailureResult(result.text, read);
     return result;
   }
   scope.Completed(call.name, json::Object(call.arguments), result.text, read);
   if (call.name == "project_inspect")
     result.text = scope.Inspect(result.text, read);
-  else if (catalog.Find(call.name))
+  else if (call.name == "project_save" || call.name == "project_edit" ||
+           call.name == "project_connect" ||
+           call.name == "project_make_subgraph" ||
+           call.name == "project_layout")
+    result.text = scope.SaveResult(result.text, read);
+  else if (call.name == "project_file_read") {
+    const auto args = json::Object(call.arguments);
+    const auto path = json::Text(args, "path");
+    if (path == "tsugumi.json" || path.ends_with("/tsugumi.json")) {
+      auto reply = json::Object(result.text);
+      auto value = json::Object(json::Get(reply, "value", "{}"));
+      // The projection is one complete document, never a slice of a full one.
+      if (json::UInt(json::Get(args, "offset", "0")) != 0 ||
+          !json::Bool(json::Get(value, "eof")))
+        throw Failure("invalid_request",
+                      "Read the scoped project document in one request");
+      const auto projected = scope.Graph(json::Text(value, "bytes"),
+                                         scope.ProjectPrefix(path, read));
+      value["bytes"] = json::Quote(projected);
+      value["next_offset"] = json::Quote(std::to_string(projected.size()));
+      reply["value"] = json::Encode(value);
+      result.text = json::Encode(reply);
+    } else
+      scope.CheckResult(result.text, read);
+  } else if (catalog.Find(call.name) && call.name != "project_copy" &&
+             call.name != "project_shell")
     scope.CheckResult(result.text, read);
   return result;
 }
 
+auto Tools::RequireHelperPermission(const std::string& conversation,
+                                    const HelperScope& boundary) -> void {
+  if (!boundary.scoped() &&
+      !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
+    throw Failure("permission_denied",
+                  "Unscoped helpers are disabled; ask the parent for "
+                  "explicit read_cards, write_cards and run_cards");
+}
+
 auto Tools::ExecuteTool(const std::string& conversation,
                         const std::string& requested_project,
-                        const ToolCall& call, bool wait, std::stop_token stop,
-                        bool helper, HelperScope* boundary) -> ToolResult {
+                        const ToolCall& requested_call, bool wait,
+                        std::stop_token stop, bool helper,
+                        HelperScope* boundary) -> ToolResult {
   Conversation c;
   {
     std::lock_guard lock(mutex);
@@ -501,7 +785,108 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   const auto project =
       requested_project.empty() ? c.project : requested_project;
+  const auto role = c.role == "guide"                ? ModelRole::Guide
+                    : boundary && boundary->scoped() ? ModelRole::ScopedHelper
+                    : helper                         ? ModelRole::Helper
+                                                     : ModelRole::Main;
+  const auto call = ResolveCall(requested_call, role);
+  if (c.role == "guide" && call.name != "tools" &&
+      !catalog.Allows(call.name, role))
+    throw Failure("permission_denied", "Tool unavailable for the guide role");
+  catalog.ValidateArguments(call.name, call.arguments);
   auto args = json::Object(call.arguments);
+  if (call.name == "tools") {
+    const auto family = json::Text(args, "family");
+    std::vector<std::string> specs;
+    for (const auto& spec : catalog.FamilySpecs(family, role))
+      specs.push_back(json::Encode(
+          json::Members{{"action", json::Quote(spec.name)},
+                        {"description", json::Quote(spec.description)},
+                        {"input_schema", spec.input_schema}}));
+    return {json::Encode(specs), false, {}, {}};
+  }
+  if (call.name == "tool_result_read") {
+    std::lock_guard lock(mutex);
+    const auto wanted = json::Text(args, "call_id");
+    std::vector<Message> saved;
+    if (helper) {
+      // A helper can reread only its own already-filtered transcript. Raw
+      // project receipts contain fields outside a helper's Card boundary.
+      auto q = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT parent_call,task,messages,archive FROM "
+                       "helpers WHERE conversation=?");
+      q.bind(1, conversation);
+      while (q.step()) {
+        const auto scope = q.text(0) + "." + std::to_string(q.i64(1)) + ".";
+        if (!call.id.starts_with(scope)) continue;
+        saved = ParseMessages(q.text(2));
+        if (!q.text(3).empty()) {
+          const auto trace = ParseMessages(q.text(3));
+          saved.insert(saved.end(), trace.begin(), trace.end());
+        }
+        break;
+      }
+    } else {
+      saved = ParseMessages(c.messages);
+      auto q = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT messages FROM archives WHERE "
+                       "conversation=? ORDER BY rowid DESC");
+      q.bind(1, conversation);
+      while (q.step()) {
+        const auto trace = ParseMessages(q.text(0));
+        saved.insert(saved.end(), trace.begin(), trace.end());
+      }
+    }
+    for (const auto& message : saved) {
+      for (const auto& block : message.content) {
+        if (block.type != "tool_result" || block.id != wanted) continue;
+        access_service.AuthorizeContext(conversation, {message});
+        const auto offset = json::UInt(json::Get(args, "offset"),
+                                       json::UInt(json::Text(args, "offset")));
+        if (offset > block.text.size())
+          throw Failure("invalid_request", "Result offset exceeds total_bytes");
+        const auto limit = std::clamp(
+            json::UInt(json::Get(args, "limit_bytes"), kResultPageBytes),
+            uint64_t{1}, uint64_t{kResultPageBytes});
+        auto begin = static_cast<size_t>(offset);
+        // Offsets refer to original UTF-8 bytes. Include a crossing character
+        // on this page rather than returning invalid JSON text.
+        while (begin && begin < block.text.size() &&
+               (static_cast<unsigned char>(block.text[begin]) & 0xc0) == 0x80)
+          --begin;
+        auto end =
+            std::min(block.text.size(), begin + static_cast<size_t>(limit));
+        while (end < block.text.size() &&
+               (static_cast<unsigned char>(block.text[end]) & 0xc0) == 0x80)
+          ++end;
+        return {
+            json::Encode(json::Members{
+                {"call_id", json::Quote(wanted)},
+                {"offset", json::Quote(std::to_string(begin))},
+                {"next_offset", json::Quote(std::to_string(end))},
+                {"total_bytes", json::Quote(std::to_string(block.text.size()))},
+                {"eof", end == block.text.size() ? "true" : "false"},
+                {"text", json::Quote(block.text.substr(begin, end - begin))}}),
+            false,
+            {},
+            block.resource_ids};
+      }
+    }
+    throw Failure("not_found", "No saved tool result with this call_id");
+  }
+  // Model-facing defaults belong to the host. UI/core paging is unchanged.
+  if (call.name == "run_value_read" || call.name == "artifact_read" ||
+      call.name == "log_range" || call.name == "module_read") {
+    if (!args.contains("limit_bytes"))
+      args["limit_bytes"] = std::to_string(kResultPageBytes);
+  }
+  if (call.name == "run_history" || call.name == "run_invocations" ||
+      call.name == "artifact_list" || call.name == "run_environments" ||
+      call.name == "run_environment_paths") {
+    if (!args.contains("limit")) args["limit"] = "8";
+  }
   if (call.name == "document_template") {
     const auto edit =
         host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
@@ -517,69 +902,14 @@ auto Tools::ExecuteTool(const std::string& conversation,
             {},
             {}};
   }
-  if (call.name == "document_connect") {
-    const auto edit = host::ConnectDocuments(
-        json::Text(args, "state_json"), json::Text(args, "from_card"),
-        json::Text(args, "from_port"), json::Text(args, "to_card"),
-        json::Text(args, "to_port"), json::Text(args, "fork_id"));
-    return {json::Encode(json::Members{
-                {"state_json", json::Quote(edit.state_json)},
-                {"inserted_id", json::Quote(edit.inserted_id)},
-                {"needs_fork", edit.needs_fork ? "true" : "false"}}),
-            false,
-            {},
-            {}};
+  if (call.name == "demo_list" || call.name == "demo_read") {
+    const auto policy = Exclusions(project, stop);
+    return {call.name == "demo_list" ? demo_references.List(&policy)
+             : demo_references.Read(json::Text(args, "path"), &policy), false, {}, {}};
   }
-  if (call.name == "document_copy") {
-    std::vector<std::string> paths;
-    for (const auto& path : json::Array(json::Get(args, "paths", "[]")))
-      paths.push_back(json::String(path));
-    const auto edit = host::CopyDocuments(
-        json::Text(args, "state_json"), paths, json::Text(args, "from"),
-        json::Text(args, "to"), json::Text(args, "name"));
-    std::vector<std::string> files;
-    for (const auto& file : edit.files)
-      files.push_back(json::Encode(json::Members{
-          {"from", json::Quote(file->from)}, {"to", json::Quote(file->to)}}));
-    return {
-        json::Encode(json::Members{{"edits_json", json::Quote(edit.edits_json)},
-                                   {"files", json::Encode(files)}}),
-        false,
-        {},
-        {}};
-  }
-  if (call.name == "document_merge") {
-    const auto edit = host::MergeDocuments(json::Text(args, "base_json"),
-                                           json::Text(args, "ours_json"),
-                                           json::Text(args, "theirs_json"));
-    std::vector<std::string> conflicts;
-    for (const auto& path : edit.conflicts)
-      conflicts.push_back(json::Quote(path));
-    return {json::Encode(
-                json::Members{{"merged_json", json::Quote(edit.merged_json)},
-                              {"conflicts", json::Encode(conflicts)}}),
-            false,
-            {},
-            {}};
-  }
-  if (call.name == "document_make_subgraph") {
-    std::vector<std::string> cards;
-    for (const auto& card : json::Array(json::Get(args, "cards", "[]")))
-      cards.push_back(json::String(card));
-    const auto edit = host::MakeSubgraph(json::Text(args, "project_json"),
-                                         cards, json::Text(args, "id"));
-    return {json::Encode(json::Members{
-                {"project_json", json::Quote(edit.project_json)},
-                {"external_json", json::Quote(edit.external_json)},
-                {"link_json", json::Quote(edit.link_json)}}),
-            false,
-            {},
-            {}};
-  }
-  if (call.name == "demo_list") return {demo_references.List(), false, {}, {}};
-  if (call.name == "demo_read")
-    return {demo_references.Read(json::Text(args, "path")), false, {}, {}};
   if (call.name == "guide_show") {
+    if (c.role != "guide" || helper)
+      throw Failure("permission_denied", "Only the guide can show guidance");
     dependencies.event(
         conversation,
         json::Encode(json::Members{{"kind", json::Quote("toolStarted")},
@@ -589,18 +919,18 @@ auto Tools::ExecuteTool(const std::string& conversation,
     return {"Guidance sent to connected interfaces", false, {}, {}};
   }
   if (call.name == "delegate") {
-    if (helper || c.role == "guide")
-      return {"Helpers cannot delegate", true, {}, {}};
+    if (c.role == "guide") return {"Guide cannot delegate", true, {}, {}};
+    if (boundary) RequireHelperPermission(conversation, *boundary);
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
-    if (tasks.empty() || tasks.size() > 8)
-      return {"Provide between one and eight tasks", true, {}, {}};
+    if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
     const auto policy =
-        host_settings->HelperPolicy(providers->Profile(conversation));
+        host_settings->AllowUnscopedHelpers(providers->Profile(conversation));
     std::set<std::string> names;
     for (const auto& task : tasks) {
       const auto spec = json::Object(task);
       try {
-        HelperScope::Validate(spec, policy.second);
+        HelperScope::Validate(spec, policy);
+        if (boundary) boundary->CheckChild(spec);
       } catch (const std::exception& error) {
         throw Failure("invalid_request", error.what());
       }
@@ -612,21 +942,57 @@ auto Tools::ExecuteTool(const std::string& conversation,
             "invalid_request",
             "Each helper needs a unique name and a nonempty instruction");
     }
-    std::vector<std::string> results(tasks.size());
-    for (size_t offset = 0; offset < tasks.size(); offset += policy.first) {
-      if (stop.stop_requested()) throw Cancelled();
-      std::vector<std::future<std::string>> pending;
-      for (size_t i = offset; i < std::min(tasks.size(), offset + policy.first);
-           ++i)
-        pending.push_back(std::async(
-            std::launch::async,
-            [this, conversation, id = call.id, i, task = tasks[i], stop] {
-              return dependencies.run_helper(conversation, id, i, task, stop,
-                                             {});
-            }));
-      for (size_t i = 0; i < pending.size(); ++i)
-        results[offset + i] = pending[i].get();
+    if (boundary) {
+      std::lock_guard lock(mutex);
+      auto& database = conversations->ConversationDatabase(conversation);
+      sql::Transaction transaction(database);
+      auto previous = database.prepare(
+          "SELECT digest FROM helper_delegations WHERE "
+          "conversation=? AND parent=? AND call=?");
+      previous.bind(1, conversation)
+          .bind(2, boundary->identity)
+          .bind(3, call.id);
+      const auto digest = crypto::sha256_hex(call.arguments);
+      if (previous.step()) {
+        if (previous.text(0) != digest)
+          throw Failure("conflict",
+                        "Delegation ID reused with different tasks");
+      } else {
+        auto used = database.prepare(
+            "SELECT COALESCE(SUM(count),0) FROM helper_delegations WHERE "
+            "conversation=? AND parent=?");
+        used.bind(1, conversation).bind(2, boundary->identity);
+        used.step();
+        const auto total = used.u64(0);
+        if (total > boundary->count() ||
+            tasks.size() > boundary->count() - total)
+          throw Failure("permission_denied",
+                        "Helper lifetime child count exhausted");
+        auto reserve = database.prepare(
+            "INSERT INTO helper_delegations VALUES(?,?,?,?,?)");
+        reserve.bind(1, conversation)
+            .bind(2, boundary->identity)
+            .bind(3, call.id)
+            .bind(4, static_cast<uint64_t>(tasks.size()))
+            .bind(5, digest)
+            .run();
+      }
+      transaction.commit();
     }
+    std::vector<std::future<std::string>> pending;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+      if (stop.stop_requested()) throw Cancelled();
+      pending.push_back(std::async(
+          std::launch::async,
+          [this, conversation, id = call.id, i, task = tasks[i], stop,
+           authorization =
+               boundary ? boundary->authorization() : std::string{}] {
+            return dependencies.run_helper(conversation, id, i, task, stop,
+                                           authorization);
+          }));
+    }
+    std::vector<std::string> results;
+    for (auto& future : pending) results.push_back(future.get());
     std::lock_guard lock(mutex);
     return {json::Encode(results),
             false,
@@ -640,14 +1006,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
                   "Select a project before using project tools");
   const auto authorization =
       boundary ? boundary->authorization() : std::string{};
-  access_service.Require(project, conversation, Tsugumi::Service::Access::Read, wait, stop,
-                         "Read project content", authorization);
+  access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
+                         wait, stop, "Read project content", authorization);
   if (boundary) {
-    if (!boundary->scoped() &&
-        !host_settings->HelperPolicy(providers->Profile(conversation)).second)
-      throw Failure("permission_denied",
-                    "Unscoped helpers are disabled; ask the parent for "
-                    "explicit read_cards, write_cards and run_cards");
+    RequireHelperPermission(conversation, *boundary);
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
@@ -656,7 +1018,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
         const auto snapshot =
-            json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+            json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
         revision =
             json::Get(json::Object(json::Get(snapshot, "value", "{}")), "rev");
       }
@@ -666,7 +1028,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
     // the parent changes a container link in between, the project rejects
     // the stale at_rev/base_rev instead of reading a different Card.
     const auto read = HelperReader(conversation, stop, revision, authorization);
-    boundary->Check(call.name, args, read);
+    if (call.name != "project_edit" && call.name != "project_connect" &&
+        call.name != "project_make_subgraph" && call.name != "project_layout")
+      boundary->Check(call.name, args, read);
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
                                call.name == "card_s_d_k_prepare")) {
       json::Members plan{{"card", json::Get(args, "card")}};
@@ -691,23 +1055,39 @@ auto Tools::ExecuteTool(const std::string& conversation,
   const bool changes_project =
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
-  if (changes_project)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Write, wait, stop,
+  if (changes_project || call.name == "project_shell")
+    access_service.Require(project, conversation,
+                           Tsugumi::Service::Access::Write, wait, stop,
                            "Change project content", authorization);
   if (execution)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Run, wait, stop,
-                           "Execute or cancel project work", authorization);
+    access_service.Require(project, conversation, Tsugumi::Service::Access::Run,
+                           wait, stop, "Execute or cancel project work",
+                           authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
-  if (call.name == "project_shell")
-    access_service.Require(
-        project, conversation, Tsugumi::Service::Access::Shell, wait, stop,
-        "Execute shell commands as the project user inside its VM. "
-        "Commands diagnose and read; project files are read-only. Command: " +
-            json::Text(args, "command"),
-        {});
+  if (call.name == "project_shell") {
+    const bool english =
+        host_settings->Language(providers->Profile(conversation)) == "en";
+    const std::string reason =
+        english
+            ? "Execute shell commands as the project user in its environment. "
+              "Commands can change writable Card source files through a "
+              "validated save. "
+              "Attached folders and structural documents are read-only. "
+              "Command: "
+            : "プロジェクトの実行環境でシェルコマンドを実行します。"
+              "書き込みが許可された Card "
+              "のソースを編集し、検証して保存できます。"
+              "添付フォルダと構造文書は読み取り専用です。コマンド: ";
+    access_service.Require(project, conversation,
+                           Tsugumi::Service::Access::Shell, wait, stop,
+                           reason + json::Text(args, "command"), {});
+  }
   std::string folder_resource;
-  if (call.name == "attached_folder_read") {
+  if (call.name == "attached_folder_read" ||
+      (call.name == "project_copy" &&
+       json::Text(args, "source") == "attached")) {
+    Exclusions(project, stop).Check(json::Text(args, "folder"));
     {
       std::lock_guard lock(mutex);
       auto folder =
@@ -718,12 +1098,15 @@ auto Tools::ExecuteTool(const std::string& conversation,
                       "The user has not registered this attached folder");
       folder_resource = folder.text(0);
     }
-    access_service.Require(folder_resource, conversation, Tsugumi::Service::Access::Read, wait,
-                           stop, "Read the user-selected attached folder", {});
+    access_service.Require(folder_resource, conversation,
+                           Tsugumi::Service::Access::Read, wait, stop,
+                           "Read the user-selected attached folder", {});
   }
   for (const auto* field :
        {"origin", "approved_permissions", "check_permissions", "read_only",
-        "hide_credentials", "no_project_socket"})
+        "hide_credentials", "no_project_socket", "transfers",
+        "working_directory", "writable_paths", "mounts", "protected_paths",
+        "workspace_only", "output_prefix", "excluded_paths"})
     args.erase(field);
   if (call.name == "run_history_delete") {
     args.erase("run_ids");
@@ -732,10 +1115,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (spec->mutating) args.erase("op_id");
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
                                          json::Encode(args));
-  const auto op = crypto::sha256_hex(conversation + ":" + call.id);
-  auto op_id = op.substr(0, 8) + "-" + op.substr(8, 4) + "-4" +
-               op.substr(13, 3) + "-8" + op.substr(17, 3) + "-" +
-               op.substr(20, 12);
+  auto op_id = conversation + "-" + call.id;
   if (spec->mutating) {
     if (spec->has_origin) args["origin"] = json::Quote("agent");
     args["op_id"] = json::Quote(op_id);
@@ -810,10 +1190,53 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .bind(5, op_id)
         .run();
   }
+  // Keep the original scoped request across permission approval. Expansion and
+  // binding checks are identical on the initial send, resend and CAS retries.
+  auto project_call = [&]() {
+    if (!boundary || !boundary->scoped() || call.name != "project_save")
+      return ProjectCall(
+          project,
+          (call.name == "project_copy" || call.name == "project_shell")
+              ? "project_save"
+              : call.name,
+          json::Encode(args), stop);
+    try {
+      const auto before = HelperReader(
+          conversation, stop, json::Get(args, "base_rev"), authorization);
+      const auto expanded = boundary->ExpandSave(args, before);
+      const auto roots = boundary->LayoutWriteCards(before);
+      const host::LayoutWrite may_write = [roots](const auto& path,
+                                                  const auto& id) {
+        const auto prefix = path.substr(0, path.size() - 11);
+        if (!id.empty()) return roots.contains(prefix + "definitions/" + id);
+        return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
+          return root.substr(0, root.rfind("definitions/")) == prefix;
+        });
+      };
+      return SaveProject(
+          project, expanded, stop,
+          [&](const host::SaveBase& latest) {
+            boundary->CheckBindings(before, [&](const std::string& path) {
+              const auto found = latest.files.find(path);
+              return found == latest.files.end() ? std::string{}
+                                                 : found->second;
+            });
+          },
+          may_write);
+    } catch (const Failure& failure) {
+      if (failure.code != "revision_conflict") throw;
+      return LayoutToolFailure("revision_conflict", failure.what());
+    }
+  };
   // An interrupted mutation can only be resolved by its durable receipt.
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
-  if (interrupted && spec->mutating) {
+  std::vector<std::string> file_resources;
+  if (call.name == "project_edit" || call.name == "project_connect" ||
+      call.name == "project_make_subgraph" || call.name == "project_layout") {
+    result = EditProjectTool(conversation, project, call, args, op_id, boundary,
+                             interrupted, stop);
+  } else if (interrupted && spec->mutating) {
     result = ProjectCall(
         project, "operation_get",
         json::Encode(json::Members{{"op_id", json::Quote(op_id)}}), stop);
@@ -825,14 +1248,39 @@ auto Tools::ExecuteTool(const std::string& conversation,
     result = json::Encode(
         json::Members{{"reply", json::Get(receipt, "result_type")},
                       {"value", json::Get(receipt, "result", "{}")}});
+    if (call.name == "run" && args.contains("wait_seconds") &&
+        json::Get(args, "wait_seconds") != "0") {
+      auto accepted = json::Object(result);
+      auto value = json::Object(json::Get(accepted, "value", "{}"));
+      const auto status = json::Object(json::Get(value, "run", "{}"));
+      const auto waited = json::Object(
+          ProjectCall(project, "run_status",
+                      json::Encode(json::Members{
+                          {"run_id", json::Get(status, "run_id")},
+                          {"wait_seconds", json::Get(args, "wait_seconds")}}),
+                      stop));
+      if (json::Text(waited, "reply") == "Failure") {
+        result = json::Encode(waited);
+      } else {
+        value["run"] = json::Get(waited, "value");
+        accepted["value"] = json::Encode(value);
+        for (const auto* field : {"still_running", "wait_reason"})
+          accepted[field] = json::Get(waited, field);
+        result = json::Encode(accepted);
+      }
+    }
   } else {
     if (stop.stop_requested()) throw Cancelled();
     if (call.name == "version_graph")
       args["language"] = json::Quote(
           host_settings->Language(providers->Profile(conversation)));
-    if (call.name == "attached_folder_read") {
+    if (call.name == "project_copy" || call.name == "project_shell") {
+      result = FileOperation(conversation, project, call.name, args, op_id,
+                             boundary, stop, file_resources);
+    } else if (call.name == "attached_folder_read") {
       try {
-        result = host::ReadAttachedFolder(json::Text(args, "folder"), args);
+        const auto policy = Exclusions(project, stop);
+        result = host::ReadAttachedFolder(json::Text(args, "folder"), args, &policy);
       } catch (const host::FolderReadFailure& error) {
         throw Failure(error.code, error.what());
       }
@@ -845,9 +1293,22 @@ auto Tools::ExecuteTool(const std::string& conversation,
         result = LayoutToolFailure("invalid_request", error.what());
       }
     } else {
-      result = ProjectCall(project, call.name, json::Encode(args), stop);
+      result = project_call();
     }
   }
+  if (call.name == "project_file_read") {
+    auto page = json::Object(result);
+    if (json::Text(page, "reply") == "FileContent") {
+      auto value = json::Object(json::Get(page, "value", "{}"));
+      value["hint"] = json::Quote(
+          "Use project_copy to move files without reading them, or "
+          "project_shell to examine large files. Reads default to "
+          "256 KiB; maximum 1 MiB.");
+      page["value"] = json::Encode(value);
+      result = json::Encode(page);
+    }
+  }
+  result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";
   if (error) {
@@ -872,23 +1333,54 @@ auto Tools::ExecuteTool(const std::string& conversation,
       dependencies.approve_operation(project, conversation, call, digest, args,
                                      wait, stop, permissions);
       args["approved_permissions"] = json::Encode(permissions);
-      op_id = crypto::uuid4();
-      args["op_id"] = json::Quote(op_id);
-      {
-        std::lock_guard lock(mutex);
-        sql::Transaction tx(conversations->ConversationDatabase(conversation));
-        auto receipt = conversations->ConversationDatabase(conversation)
-                           .prepare(
-                               "UPDATE receipts SET operation=? WHERE "
-                               "conversation=? AND id=?");
-        receipt.bind(1, op_id).bind(2, conversation).bind(3, call.id).run();
-        tx.commit();
+      if (call.name == "project_copy" && json::Text(args, "source") == "demo") {
+        result = FileOperation(conversation, project, call.name, args, op_id, boundary, stop, file_resources);
+      } else if (call.name == "project_edit" || call.name == "project_connect" ||
+          call.name == "project_make_subgraph" ||
+          call.name == "project_layout") {
+        result = EditProjectTool(conversation, project, call, args, op_id,
+                                 boundary, false, stop);
+      } else {
+        op_id += "-approved";
+        args["op_id"] = json::Quote(op_id);
+        {
+          std::lock_guard lock(mutex);
+          sql::Transaction tx(
+              conversations->ConversationDatabase(conversation));
+          auto receipt = conversations->ConversationDatabase(conversation)
+                             .prepare(
+                                 "UPDATE receipts SET operation=? WHERE "
+                                 "conversation=? AND id=?");
+          receipt.bind(1, op_id).bind(2, conversation).bind(3, call.id).run();
+          tx.commit();
+        }
+        result = project_call();
       }
-      result = ProjectCall(project, call.name, json::Encode(args), stop);
       error = json::Text(json::Object(result), "reply") == "Failure";
     }
   }
-  if (call.name == "project_save") result = AnnotateSave(op_id, result);
+  if (call.name == "project_copy" || call.name == "project_shell") {
+    // This also applies to receipt recovery. File operations expose only
+    // their own source changes, never another Card's resolution/diagnostics.
+    auto envelope = json::Object(result);
+    auto value = json::Object(json::Get(envelope, "value", "{}"));
+    auto compact_save = [](json::Members save) {
+      if (save.contains("delta")) {
+        auto delta = json::Object(save.at("delta"));
+        delta.erase("resolution");
+        delta.erase("diagnostics");
+        save["delta"] = json::Encode(delta);
+      }
+      return save;
+    };
+    if (json::Text(envelope, "reply") == "SaveResult")
+      value = compact_save(value);
+    if (value.contains("save"))
+      value["save"] =
+          json::Encode(compact_save(json::Object(value.at("save"))));
+    envelope["value"] = json::Encode(value);
+    result = json::Encode(envelope);
+  }
   if (boundary && boundary->scoped() && call.name == "card_id" && !error) {
     // Keep creation provenance with this helper's existing durable receipt,
     // rather than relying on a tool call remaining in compacted messages.
@@ -909,6 +1401,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
             Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Access was revoked while the operation was running");
+    for (const auto& resource : file_resources)
+      if (!access_service.HasGrant(resource, conversation,
+                                   Tsugumi::Service::Access::Read))
+        throw Failure("permission_denied",
+                      "Folder access was revoked during the operation");
     conversations->RememberResource(
         conversation, authorization.empty() ? project : authorization);
     if (!folder_resource.empty()) {
@@ -938,12 +1435,31 @@ auto Tools::ExecuteTool(const std::string& conversation,
   std::vector<std::string> resources{authorization.empty() ? project
                                                            : authorization};
   if (!folder_resource.empty()) resources.push_back(folder_resource);
+  resources.insert(resources.end(), file_resources.begin(),
+                   file_resources.end());
   return ToolOutput(result, error, std::move(resources));
+}
+
+auto Tools::AllocateCall(const std::string &conversation,
+                         const std::string &scope) -> std::string {
+  std::lock_guard lock(mutex);
+  auto &store = conversations->ConversationDatabase(conversation);
+  auto q =
+      store.prepare("INSERT INTO call_counters VALUES(?,?,1) ON "
+                    "CONFLICT(conversation,scope) DO UPDATE SET value=value+1 "
+                    "WHERE value<9223372036854775807 RETURNING value");
+  q.bind(1, conversation).bind(2, scope);
+  if (!q.step())
+    throw Failure("persistence_failed", "Cannot allocate a tool call");
+  return std::to_string(q.i64(0));
 }
 
 auto Tools::Hooks(const std::string& id, bool helper,
                   std::shared_ptr<HelperScope> boundary) -> RuntimeHooks {
   RuntimeHooks hooks;
+  hooks.allocate_call = [this, id, boundary] {
+    return AllocateCall(id, boundary ? boundary->identity : "");
+  };
   hooks.authorize_context = [this, id](const auto& messages) {
     access_service.AuthorizeContext(id, messages);
   };
@@ -968,6 +1484,11 @@ auto Tools::Hooks(const std::string& id, bool helper,
                       : result;
     } catch (const Cancelled&) {
       throw;
+    } catch (const Failure& error) {
+      // Host invariant failures terminate the turn; the model cannot repair
+      // them by changing its arguments or retrying the operation.
+      if (error.code == "internal_error") throw;
+      return ToolResult{LayoutToolFailure(error.code, error.what()), true, {}, {}};
     } catch (const std::exception& error) {
       return ToolResult{error.what(), true, {}, {}};
     }
@@ -991,8 +1512,15 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                        {"index", std::to_string(e.index)}}));
   };
   hooks.reconcile_tool =
-      [this, id, boundary](const ToolCall& call) -> std::optional<ToolResult> {
+      [this, id, helper,
+       boundary](const ToolCall& requested_call) -> std::optional<ToolResult> {
     std::lock_guard lock(mutex);
+    const auto role = conversations->GetConversation(id).role == "guide"
+                          ? ModelRole::Guide
+                      : boundary && boundary->scoped() ? ModelRole::ScopedHelper
+                      : helper                         ? ModelRole::Helper
+                                                       : ModelRole::Main;
+    const auto call = ResolveCall(requested_call, role);
     if (call.name == "delegate") {
       conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
@@ -1048,9 +1576,34 @@ auto Tools::Hooks(const std::string& id, bool helper,
   if (boundary) {
     const auto reconcile = hooks.reconcile_tool;
     hooks.reconcile_tool =
-        [this, id, boundary,
-         reconcile](const ToolCall& call) -> std::optional<ToolResult> {
+        [this, id, boundary, reconcile](
+            const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
+        RequireHelperPermission(id, *boundary);
+        const auto call = ResolveCall(
+            requested_call,
+            boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
+        if (call.name == "tools") return std::nullopt;
+        if (call.name == "delegate") {
+          // Delegate has no core receipt and is not a project tool. Match its
+          // lifetime reservation before returning saved children; do not charge
+          // the capability again or launch work during reconciliation.
+          const auto tasks = json::Array(
+              json::Get(json::Object(call.arguments), "tasks", "[]"));
+          for (const auto& task : tasks)
+            boundary->CheckChild(json::Object(task));
+          std::lock_guard lock(mutex);
+          auto reserved = conversations->ConversationDatabase(id).prepare(
+              "SELECT digest,count FROM helper_delegations WHERE "
+              "conversation=? AND parent=? AND call=?");
+          reserved.bind(1, id).bind(2, boundary->identity).bind(3, call.id);
+          if (!reserved.step()) return std::nullopt;
+          if (reserved.text(0) != crypto::sha256_hex(call.arguments) ||
+              reserved.u64(1) != tasks.size())
+            throw Failure("conflict",
+                          "Delegation ID reused with different tasks");
+          return reconcile(call);
+        }
         const auto read = HelperReader(id, shutdown.get_token(), {},
                                        boundary->authorization());
         boundary->Check(call.name, json::Object(call.arguments), read);
@@ -1080,6 +1633,14 @@ auto Tools::Handle(const RequestIn& request, bool human,
     -> std::string {
   const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
   switch (r->value_type()) {
+  case A::RequestPayload::CallIdRequest: {
+    const auto conversation =
+        r->value_as_CallIdRequest()->conversation_id()->str();
+    conversations->OwnConversation(conversation, human);
+    A::CallIdT result;
+    result.id = AllocateCall(conversation);
+    return wire::AgentReply(request.request_id, std::move(result));
+  }
     case A::RequestPayload::ToolCatalogRequest: {
       A::ToolCatalogT result;
       for (const auto& spec : Specs()) {
@@ -1099,30 +1660,53 @@ auto Tools::Handle(const RequestIn& request, bool human,
       const auto id = p->conversation_id()->str(),
                  project = Text(p->project_id());
       conversations->OwnConversation(id, human);
-      const ToolCall call{p->op_id()->str(), p->name()->str(),
-                          p->arguments_json()->str()};
+      const auto call = ResolveCall(
+          {p->op_id()->str(), p->name()->str(), p->arguments_json()->str()},
+          conversations->GetConversation(id).role == "guide" ? ModelRole::Guide
+                                                             : ModelRole::Main);
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
-      if (call.name == "project_shell") {
-        if (shell_calls.contains(shell_key))
-          throw Failure("busy", "This shell tool call is already running");
+      if (call.name == "project_shell" || call.name == "project_copy" ||
+          call.name == "run_status" || call.name == "run") {
+        if (file_calls.contains(shell_key))
+          throw Failure("busy", "This tool call is already running");
         shell_stop = std::make_shared<std::stop_source>();
-        shell_calls.emplace(
-            shell_key,
-            ShellCall{project.empty()
-                          ? conversations->GetConversation(id).project
-                          : project,
-                      shell_stop});
+        file_calls.emplace(
+            shell_key, FileCall{project.empty()
+                                    ? conversations->GetConversation(id).project
+                                    : project,
+                                shell_stop});
       }
       lock.unlock();
       // External plugins use the same conversation cancellation and visible
-      // tool history as model-issued shell calls.
+      // tool history as model-issued calls.
       auto execute = [&]() -> ToolResult {
         if (!shell_stop)
           return ExecuteTool(id, project, call, false, shutdown.get_token());
+        struct Registration {
+          Tools& tools;
+          std::pair<std::string, std::string> key;
+          std::shared_ptr<std::stop_source> stop;
+          ~Registration() {
+            std::lock_guard guard(tools.mutex);
+            const auto found = tools.file_calls.find(key);
+            if (found != tools.file_calls.end() && found->second.stop == stop)
+              tools.file_calls.erase(found);
+          }
+        } registration{*this, shell_key, shell_stop};
         std::stop_callback stop(shutdown.get_token(),
                                 [shell_stop] { shell_stop->request_stop(); });
+        std::stop_callback disconnected(request.connection_stop, [shell_stop] {
+          shell_stop->request_stop();
+        });
+        if (shell_stop->stop_requested()) throw Cancelled();
         auto event = [&](const char* kind, const std::string& text, bool ok) {
+          std::lock_guard guard(mutex);
+          const auto found = file_calls.find(shell_key);
+          // Deletion stops and unregisters calls under this same lock. Never
+          // record their late events in a new conversation reusing the ID.
+          if (found == file_calls.end() || found->second.stop != shell_stop)
+            return;
           dependencies.event(id, json::Encode(json::Members{
                                      {"kind", json::Quote(kind)},
                                      {"id", json::Quote(call.id)},
@@ -1137,13 +1721,9 @@ auto Tools::Handle(const RequestIn& request, bool human,
           auto result =
               ExecuteTool(id, project, call, false, shell_stop->get_token());
           event("toolFinished", result.text, !result.is_error);
-          std::lock_guard guard(mutex);
-          shell_calls.erase(shell_key);
           return result;
         } catch (const std::exception& error) {
           event("toolFinished", error.what(), false);
-          std::lock_guard guard(mutex);
-          shell_calls.erase(shell_key);
           throw;
         }
       };
