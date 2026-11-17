@@ -945,12 +945,15 @@ struct ModelStream {
       reply.stop_reason = type == "response.incomplete" ? "max_tokens"
                           : calls.empty()               ? "end_turn"
                                                         : "tool_use";
-      // The terminal response is authoritative, including encrypted reasoning.
-      terminal_output = json["/response/output"].exists();
+      // A non-empty terminal output is authoritative, including encrypted
+      // reasoning. ChatGPT ends its streams with an empty one: then the
+      // streamed items are the response.
+      const auto terminal_items = Items(json, "/response/output");
+      terminal_output = !terminal_items.empty();
       if (terminal_output) {
         output.clear();
         uint32_t i = 0;
-        for (const auto& item : Items(json, "/response/output")) {
+        for (const auto& item : terminal_items) {
           RecordItem(i, item, "terminal");
           output[i++] = schema::text(item);
         }

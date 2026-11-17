@@ -135,10 +135,11 @@ TEST_F(ToolArguments, NullableErrorCodeKeepsTheActualReason) {
               std::string::npos);
   }
 }
-TEST_F(ToolArguments, MissingTerminalCallLogsOnlyStreamMetadata) {
+TEST_F(ToolArguments, EmptyTerminalOutputKeepsTheStreamedCall) {
+  // ChatGPT ends its streams with an empty terminal output.
   config.api = agent::ProviderAPI::OpenAIResponses;
   config.auth = agent::ProviderAuth::ApiKey;
-  config.credential = "API_KEY_SENTINEL";
+  config.credential = "key";
   const auto event = [](const std::string &json) {
     return "data: " + json + "\n\n";
   };
@@ -146,33 +147,25 @@ TEST_F(ToolArguments, MissingTerminalCallLogsOnlyStreamMetadata) {
       event(
           R"({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"inspect","namespace":"tsugumi","call_id":"call-one","arguments":""}})") +
       event(
-          R"({"type":"response.function_call_arguments.delta","output_index":0,"delta":"ARGUMENT_SENTINEL"})") +
+          R"({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"})") +
       event(
-          R"({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":"inspect","namespace":"tsugumi","call_id":"call-one","arguments":"ARGUMENT_SENTINEL"}})") +
+          R"({"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"})") +
       event(
-          R"({"type":"response.output_text.delta","output_index":1,"delta":"OUTPUT_SENTINEL"})") +
+          R"({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":"inspect","namespace":"tsugumi","call_id":"call-one","arguments":"{}"}})") +
       event(R"({"type":"response.completed","response":{"output":[]}})"));
   agent::ContentBlock question;
-  question.text = "MESSAGE_SENTINEL";
+  question.text = "question";
   messages.push_back(
       {"user", {question}, {}, {}, agent::ProviderAPI::OpenAIResponses});
-  testing::internal::CaptureStderr();
-  EXPECT_THROW(
-      agent::StreamReply(config, "INSTRUCTION_SENTINEL", messages, {}, {}, {}),
-      agent::ProviderError);
-  const auto log = testing::internal::GetCapturedStderr();
-  for (const auto *field :
-       {"Model call failed api=responses auth=api_key", "http_status=200",
-        "curl_code=0", "response.output_item.added", "response.completed",
-        "\"streamed_calls\":1", "\"completed_calls\":0",
-        "\"terminal_output\":true", "\"terminal_output_length\":0",
-        "\"namespace\":\"tsugumi\"", "call-one", "inspect"})
-    EXPECT_NE(log.find(field), std::string::npos) << field << " in " << log;
-  for (const auto *secret :
-       {"API_KEY_SENTINEL", "ARGUMENT_SENTINEL", "OUTPUT_SENTINEL",
-        "MESSAGE_SENTINEL", "INSTRUCTION_SENTINEL"})
-    EXPECT_EQ(log.find(secret), std::string::npos) << log;
-  EXPECT_EQ(std::count(log.begin(), log.end(), '\n'), 1);
+  const auto reply = agent::StreamReply(config, "system", messages, {}, {}, {});
+  EXPECT_EQ(reply.stop_reason, "tool_use");
+  const auto call = std::find_if(
+      reply.message.content.begin(), reply.message.content.end(),
+      [](const auto &block) { return block.type == "tool_use"; });
+  ASSERT_NE(call, reply.message.content.end());
+  EXPECT_EQ(call->id, "call-one");
+  EXPECT_EQ(call->name, "inspect");
+  EXPECT_EQ(call->input, "{}");
 }
 TEST_F(ToolArguments, MalformedToolArgumentsReportReceivedBytesAndOutputLimit) {
   config.max_tokens = 4321;
