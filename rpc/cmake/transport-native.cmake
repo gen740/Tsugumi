@@ -1,8 +1,12 @@
 set(TSUGUMI_CLIENT_CURL_LIBRARY "" CACHE FILEPATH "Explicit native libcurl (for the macOS system TLS backend)")
 if(TSUGUMI_CLIENT_CURL_LIBRARY)
-  add_library(CURL::libcurl UNKNOWN IMPORTED GLOBAL)
+  # The core's dependencies may already have found libcurl: point that target
+  # at the explicit library instead of defining a second one.
+  if(NOT TARGET CURL::libcurl)
+    add_library(CURL::libcurl UNKNOWN IMPORTED GLOBAL)
+  endif()
   set_target_properties(CURL::libcurl PROPERTIES IMPORTED_LOCATION "${TSUGUMI_CLIENT_CURL_LIBRARY}")
-else()
+elseif(NOT TARGET CURL::libcurl)
   find_package(CURL REQUIRED)
 endif()
 find_package(Threads REQUIRED)
