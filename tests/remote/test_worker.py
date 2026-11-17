@@ -245,7 +245,10 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
         assert state(jobs[1]) == R.JobState.Queued
         peer.restart()
         assert state(jobs[0]) == R.JobState.Running and state(jobs[1]) == R.JobState.Queued
-        wait(jobs[2], R.JobState.Failed)
+        # The timeout is the Card call's budget: waiting for a slot longer than
+        # it does not fail a job.
+        time.sleep(1.5)
+        assert state(jobs[2]) == R.JobState.Queued
         if end == "cancel":
             peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
             wait(jobs[0], R.JobState.Cancelled)

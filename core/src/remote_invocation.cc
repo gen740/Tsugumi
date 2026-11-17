@@ -81,12 +81,11 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 }
 
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-                             const std::string& instance, const std::string& job_id, const std::string& project_id,
+                             const std::string& instance, const std::string& job_id,
                              const std::vector<stdfs::path>& file_roots, const std::string& archive_digest,
                              const ExecutionRequest& request,
                              uint32_t heartbeat_interval_seconds, uint32_t missed_heartbeats) -> std::string {
   remote::InvocationJson invocation;
-  *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
   *invocation.implementation_index = request.build.implementation_index;
   auto& files = *invocation.files;

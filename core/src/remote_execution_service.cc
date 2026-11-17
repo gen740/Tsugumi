@@ -113,7 +113,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   const auto archive_digest = stage_remote_archive(client_, target_, server_id_, instance_, s.execution_job_id, archive_, request.cancel, [&](uint64_t done, uint64_t total) {
     if (request.transfer) request.transfer("upload", "Nix", done, total);
   });
-  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, s.execution_job_id, service_.project_id(), service_.file_roots(),
+  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, s.execution_job_id, service_.file_roots(),
                                       archive_digest, request,
                                       heartbeat_interval_seconds_, missed_heartbeats_);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
