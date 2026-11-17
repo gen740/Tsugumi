@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 FILES = {
     '_card.json': json.dumps({'language': 'csharp', 'inputs': [{'name': 'in'}],
                              'params': [{'name': 'message', 'type': 'string', 'data': 'Hello from C#'}]}, indent=2) + '''
