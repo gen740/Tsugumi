@@ -37,7 +37,7 @@ ATTRS = {
     "xgcc": "gcc-unwrapped",
 }
 # Written in this repository (vm-boot.nix): no source of their own to fetch.
-OWN = {"group", "hosts", "nix.conf", "nsswitch.conf", "passwd", "tsugumi-udhcpc", "tsugumi-vm-etc", "tsugumi-vm-init"}
+OWN = {"group", "hosts", "nix.conf", "nsswitch.conf", "passwd", "tsugumi-store-health", "tsugumi-udhcpc", "tsugumi-vm-etc", "tsugumi-vm-init"}
 # Their source carries no license file, only a notice pointing at this text.
 TEXT_FROM = {"nss-cacert": ("publicsuffix-list", "LICENSE")}  # both MPL-2.0
 
