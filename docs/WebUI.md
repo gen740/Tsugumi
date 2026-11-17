@@ -86,7 +86,7 @@ The command and the [Claude Code plugin](claude-code.md) discover the host throu
 | `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | Project daemon, worker and SDK locations (defaults under `build/` and `sdk/`) |
 | `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` / `TSUGUMI_AGENT_SCHEMA` | Host service binary, state directory and generated `agent.bfbs` schema; defaults are selected by `web/server/coreHost.ts` |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
-| `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_VM_SOURCE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the boot disk, the source and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
+| `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the guest archive directory and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
 | `TSUGUMI_WEB_DATA` | Web host data folder and profile identity (default on macOS: `~/Library/Application Support/Tsugumi/web`) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Web-process API keys provisioned to hostd in memory; take precedence over saved keys |
 | `TSUGUMI_CHATGPT_ISSUER` / `TSUGUMI_CHATGPT_API` | Where ChatGPT sign-in and plan requests go (for tests; by default `https://auth.openai.com` and `https://api.openai.com`) |

@@ -6,8 +6,8 @@ the [hosq](https://github.com/CLI20-dev/hosq) library.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](macOS/tools/bundle-licenses.sh)).
-The corresponding source of the VM's boot disk is in that disk's release of
-[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`); see
+The corresponding source of the guest image is attached to the app's release on
+[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases); see
 [Licenses and distribution](docs/LicenseAudit.md). Lock files and build recipes
 are authoritative when dependencies change.
 
@@ -107,9 +107,9 @@ TypeScript and type declarations are build-time dependencies.
 
 ## Core daemon and execution environment
 
-The shipped macOS app contains Tsugumi source and a **boot VM image**.
-`macOS/Container/vm-system.nix` builds the daemon and project tools in the
-user's VM on first boot. These are different distribution boundaries.
+The shipped macOS app contains a **release-built guest image**, including the
+daemon, worker and project tools from `macOS/Container/vm-system.nix`. First boot
+registers this closure and starts it; it does not compile Tsugumi.
 
 | Component used by core | License / source |
 | --- | --- |
@@ -124,7 +124,7 @@ The core's full runtime closure also includes transitive libraries; this
 table is not a closure-wide license manifest. Package versions and recipes
 are fixed by [flake.lock](flake.lock) and [nix/core.nix](nix/core.nix).
 
-### Boot image redistributed with the app
+### Guest image redistributed with the app
 
 [`vm-boot.nix`](macOS/Container/vm-boot.nix) includes Nix, CA certificates,
 Bash, coreutils, findutils, util-linux, e2fsprogs, BusyBox, gawk, and their
@@ -133,18 +133,25 @@ runtime closure. [`kernel.nix`](macOS/Container/kernel.nix) builds Linux
 [that of Kata Containers 3.17.0](macOS/Container/kernel/SOURCES.md). This is not
 simply an unchanged nixpkgs kernel.
 
-The boot closure contains GPL / LGPL software as well as permissively
-licensed dependencies. `licenses.tar.gz` in the disk's release of
-[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`), which the app also
-carries in `licenses/vm-boot/`, lists what the image really contains, with each
-package's license as nixpkgs declares it, its sources and patches, the license
-files of those sources and the kernel's configuration. The corresponding source
-is `sources.tar.gz` in the same release. See
-[how it is provided](docs/LicenseAudit.md#how-the-vms-corresponding-source-is-provided).
+The complete guest closure contains GPL / LGPL software as well as permissively
+licensed dependencies, including Tsugumi, bubblewrap, tini, shell tools and the
+formatters referenced by the native runtime. `vm-licenses.tar.gz` in the app's
+release lists the actual image outputs and kernel, package license declarations,
+sources and patches, full license texts and the embedded kernel configuration.
+The app and CLI carry it expanded in `licenses/vm-guest/`. The same release's
+`vm-sources.tar.gz` (or numbered parts) contains the entire recursive build
+source closure, including local filesets, hosq, pinned flake inputs and build
+recipes. See [how it is provided](docs/LicenseAudit.md#how-the-vms-corresponding-source-is-provided).
 See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
 and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
 
 ### Downloaded / built after installation
+
+Card compilers, Python and scientific libraries are obtained for each Card
+definition through Nix. Explicit qemu mode still realizes qemu-user on demand;
+Rosetta is supplied by macOS. These are separate from the default image closure.
+
+## Downloaded / built after installation
 
 The VM system additionally obtains tsugumid, bubblewrap, tini, shell tools
 and formatters (astyle, Ruff, nixfmt, shfmt) through Nix. Card compilers,

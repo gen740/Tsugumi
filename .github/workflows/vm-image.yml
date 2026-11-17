@@ -1,0 +1,63 @@
+name: Release-built guest image
+on:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: false
+    outputs:
+      identity:
+        value: ${{ jobs.image.outputs.identity }}
+      artifact:
+        value: ${{ jobs.image.outputs.artifact }}
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    outputs:
+      identity: ${{ steps.definition.outputs.identity }}
+      artifact: vm-${{ steps.definition.outputs.identity }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - id: definition
+        name: Evaluate the complete guest definition
+        run: |
+          stage="$RUNNER_TEMP/tsugumi-guest-source"
+          python3 macOS/tools/vm-snapshot.py "$GITHUB_WORKSPACE" "$stage"
+          echo "GUEST_BUILD_ROOT=$stage" >> "$GITHUB_ENV"
+          identity=$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")
+          echo "identity=${identity##*/}" >> "$GITHUB_OUTPUT"
+      - name: Build the image and tests from the production archives
+        run: |
+          nix build -L "path:$GUEST_BUILD_ROOT#packages.aarch64-linux.vm" -o build-vm
+          nix build -L "path:$GUEST_BUILD_ROOT#packages.aarch64-linux.ci-core" -o build-ci
+      - name: Guest runtime and lifetime contracts
+        run: |
+          build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_vm_lifetime_tests
+          build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests --gtest_filter='VMResetPolicy.*'
+          nix shell --inputs-from . nixpkgs#python3Packages.pytest -c python3 tests/run-isolated.py pytest -q tests/python/test_vm_store_health.py tests/python/test_vm_artifact.py
+          runtime=$(nix build --no-link --print-out-paths "path:$GUEST_BUILD_ROOT#tsugumid")
+          test -x "$runtime/bin/tsugumid"
+          test -x "$runtime/bin/tsugumi-vmd"
+          test -x "$runtime/bin/tsugumi-worker"
+      - name: Inventory and corresponding sources of the whole closure
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c python3 "$GUEST_BUILD_ROOT/macOS/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
+          python3 macOS/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-${{ steps.definition.outputs.identity }}
+          path: dist/tsugumi-vm/*
+          if-no-files-found: error

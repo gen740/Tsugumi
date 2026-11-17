@@ -250,7 +250,6 @@ enum EnvironmentOverlay {
     case .vmCheckingStore?: return String(localized: "前回の VM が正常に停止しなかったため、Nix store を検査・修復しています")
     case .vmCheckingStoreUpgrade?: return String(localized: "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）")
     case .vmNetwork?: return String(localized: "ネットワークを設定しています")
-    case .vmSystem?: return String(localized: "VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）")
     case .vmSupervisor?: return String(localized: "実行環境の管理プロセスを起動しています")
     case .startingDaemon?: return String(localized: "このプロジェクトの tsugumid を起動しています")
     case .connecting?: return String(localized: "tsugumid の応答を待っています")

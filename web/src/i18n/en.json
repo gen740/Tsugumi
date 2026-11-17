@@ -181,7 +181,6 @@
  "Tsugumi の実行環境を準備します": "Preparing Tsugumi's runtime",
  "Tsugumi は動いています（http://127.0.0.1:{0}/）。ブラウザでページを開きました。": "Tsugumi is running (http://127.0.0.1:{0}/). The page has been opened in the browser.",
  "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。": "Usage limit reached: review your plan or this app's limit in ChatGPT settings.",
- "VM の中で Tsugumi を組み立てています（初回と更新後のみ。数分かかることがあります）": "Assembling Tsugumi in the VM (only the first time and after updates; this can take a few minutes)",
  "VM を起動しています": "Booting the VM",
  "VM イメージを展開しています": "Unpacking the VM image",
  "Vega-Lite のグラフ": "Vega-Lite chart",

@@ -15,13 +15,12 @@ const STAGES: Record<string, string> = {
   'checking the Nix store contents': L('Nix store の内容を検査・修復しています（初回と VM イメージの更新後）'),
   'starting the Nix daemon': L('Nix を準備しています'),
   'configuring the network': L('ネットワークを設定しています'),
-  'building Tsugumi in the VM': L('VM の中で Tsugumi を組み立てています（初回と更新後のみ。数分かかることがあります）'),
   'starting the supervisor': L('実行環境の管理プロセスを起動しています'),
   'starting tsugumid': L('このプロジェクトの tsugumid を起動しています'),
   'waiting for tsugumid to become ready': L('tsugumid の応答を待っています'),
 }
 
-export interface VMHostOptions { host: string; image: string; source: string; support: string }
+export interface VMHostOptions { host: string; image: string; support: string }
 export interface VMTerminal {
   cols: number; rows: number; write(data: string): void; resize(cols: number, rows: number): void; kill(): void;
   onData(fn: (data: string) => void): void; onExit(fn: (event: { exitCode: number }) => void): void;
@@ -81,7 +80,7 @@ export class EnvironmentManager implements Environments {
   constructor(readonly bins: Binaries, readonly support: string, private origins: () => string[],
     private request: Request, private observeHost: Observe, readonly vm?: VMHostOptions) {
     this.hostArguments = vm
-      ? ['--vmhost', vm.host, '--vm-support', vm.support, '--vm-image', vm.image, '--vm-source', vm.source]
+      ? ['--vmhost', vm.host, '--vm-support', vm.support, '--vm-image', vm.image]
       : ['--tsugumid', bins.tsugumid, '--worker', bins.worker, '--sdk-dir', bins.sdkDir,
          '--environment-dir', path.join(support, 'env')]
   }

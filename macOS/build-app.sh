@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the bundled
-# demos, the shared VM's boot disk (macOS/Container/vm-boot.nix) and the source
-# the VM builds Tsugumi from on its first boot (macOS/Container/vm-source.txt).
+# demos and the release-built guest archive.
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
@@ -38,7 +37,8 @@ version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
 vm="$dist/tsugumi-vm"
-[ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
+[ "$channel" != release ] || export TSUGUMI_VM_ARTIFACT_ONLY=1
+"$repo/macOS/Container/build-image.sh" --vm
 
 # The native host service and RPC client are shared by both UI frontends.
 "$repo/macOS/tools/build-host.sh"
@@ -94,25 +94,11 @@ find "$player/player-data/assets" -type f ! -name '*.json' -exec cp {} "$thumbs/
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/macOS/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/macOS/Resources/ja.lproj" "$repo/macOS/Resources/en.lproj" "$app/Contents/Resources/"
-# The shared VM: copied to the support folder on first start (APFS clone).
-cp -R "$vm" "$app/Contents/Resources/tsugumi-vm"
-# Tsugumi's source: the VM builds Tsugumi from it (vm-system.nix).
-src="$app/Contents/Resources/tsugumi-source"
-mkdir -p "$src"
-grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
-  [ -n "$entry" ] || continue
-  mkdir -p "$src/$(dirname "$entry")"
-  cp -R "$repo/$entry" "$src/$entry"
-done
-# The licenses of all of the above, and the boot disk's from its release
-# (publish-vm.sh, with its source). A release needs them; a disk not published
-# yet can still be tried in a dev build.
+# The app carries one guest payload; the helper extracts it in private support.
+mkdir -p "$app/Contents/Resources/tsugumi-vm"
+cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$app/Contents/Resources/tsugumi-vm/"
 "$repo/macOS/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
-vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
-if ! curl -fsSL "$vm_licenses" | tar -xz -C "$app/Contents/Resources/licenses"; then
-  [ "$channel" != release ] || { echo "no licenses at $vm_licenses: run macOS/tools/publish-vm.sh" >&2; exit 1; }
-  echo "warning: no licenses of the boot disk at $vm_licenses" >&2
-fi
+tar -xzf "$vm/vm-licenses.tar.gz" -C "$app/Contents/Resources/licenses"
 # App icon: generated from docs/assets/tsugumi-icon.svg by tools/make_icon.swift.
 cp "$repo/macOS/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST

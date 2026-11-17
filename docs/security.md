@@ -43,7 +43,7 @@ There are four boundaries, from the innermost outwards.
 
 | Device | Contents | Writable |
 | --- | --- | --- |
-| rootfs | An erofs image bundled with the app (Linux kernel 6.12.115 and Nix, `macOS/Container/vm-boot.nix`). Tsugumi itself is built by Nix inside the VM from the bundled source (`macOS/Container/vm-system.nix`; dependencies fetched from cache.nixos.org with their signatures verified) | Read-only (the shared source is read-only too) |
+| rootfs | A release-built erofs image bundled in the guest archive (Linux kernel 6.12.115, Nix, Tsugumi, the worker and project tools; `macOS/Container/vm-boot.nix` and `vm-system.nix`). First boot starts the prebuilt supervisor | Read-only |
 | Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
 | Run-history disk | `~/Library/Application Support/Tsugumi/vm/history.img` (all projects' run histories, one directory per project) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |

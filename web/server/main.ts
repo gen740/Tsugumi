@@ -83,7 +83,7 @@ let origins: string[] = []
 // The Mac's tsugumi command (cli/tsugumi): the desktop app's shared VM and settings.
 const vm: VMHostOptions | undefined = process.env.TSUGUMI_VMHOST ? {
   host: process.env.TSUGUMI_VMHOST, image: process.env.TSUGUMI_VM_IMAGE!,
-  source: process.env.TSUGUMI_VM_SOURCE!, support: process.env.TSUGUMI_SUPPORT_DIR!,
+  support: process.env.TSUGUMI_SUPPORT_DIR!,
 } : undefined
 const desktop = !!vm
 const envs = new EnvironmentManager(bins, support, () => origins,
@@ -175,7 +175,7 @@ function stopTerminal(t: Terminal) {
 let building: { log: string; running: boolean; code?: number } | undefined
 
 function setupStatus() {
-  // In the VM, Tsugumi is built there on its first boot: nothing to do on this host.
+  // The guest already contains the release-built runtime.
   if (vm) {
     const ok = { path: vm.host, ok: true }
     return { tsugumid: ok, worker: ok, sdk: ok, nix: { ok: true }, repo, building: null }

@@ -1,13 +1,12 @@
 import Darwin
 import Foundation
+import CryptoKit
 // (its configuration types are not Sendable; they are handed to the VM queue only)
 @preconcurrency import Virtualization
 import TsugumiAgentClient
 
 /// The shared VM's boot disk (macOS/Container/vm-boot.nix: kernel and a
-/// small root file system with Nix) and Tsugumi's source, from which the VM
-/// builds Tsugumi itself on its first boot (vm-system.nix). From the app
-/// bundle, or dist/tsugumi-vm and the repository when run from the source tree.
+/// release-built root file system with Nix, Tsugumi and project tools).
 /// How the VM runs x86_64-linux binaries (Cards with "system": "x86_64-linux"):
 /// with Rosetta when it is installed on this Mac, with qemu only when
 /// TSUGUMI_VM_X86=qemu asks for it. The guest's supervisor (vm-system.nix)
@@ -119,7 +118,7 @@ public final class ConsoleLog: @unchecked Sendable {
 public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
   /// Steps of starting the VM; the guest reports the later ones on the console.
   public enum Stage: String, Sendable, CaseIterable {
-    case image, disk, boot, store, nix, network, checkingStore, checkingStoreUpgrade, system, supervisor, ready
+    case image, disk, boot, store, nix, network, checkingStore, checkingStoreUpgrade, supervisor, ready
   }
 
   public enum State: Sendable, Equatable {
@@ -264,8 +263,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       throw error
     }
     // A guest that never reports in (kernel or console trouble) fails the
-    // start. Once it does, it reports its own failures: building Tsugumi on
-    // the first boot takes as long as the downloads take.
+    // start. Once it does, store verification reports its own progress/failures.
     let watchdog = Task { [weak self] in
       try await Task.sleep(for: .seconds(240))
       guard let self, case .starting(let stage) = self.state, [.image, .disk, .boot].contains(stage) else { return }
@@ -304,46 +302,52 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     }
   }
 
-  /// The bundled files, copied (APFS clone) next to the store so an app
-  /// update never pulls them away from a running VM. The source is copied
-  /// on every start (it is small); the VM rebuilds Tsugumi only when its
-  /// content changed.
-  private func installImage(_ image: VMImage) throws -> VMImage {
-    let dest = directory.appendingPathComponent("image", isDirectory: true)
+  private struct BootFiles {
+    let kernel: URL
+    let rootfs: URL
+  }
+
+  /// Extract next to the store so app replacement cannot remove a running VM's files.
+  private func installImage(_ image: VMImage) throws -> BootFiles {
     let fm = FileManager.default
+    let dest = directory.appendingPathComponent("image", isDirectory: true)
     let stamp = dest.appendingPathComponent("vm-version")
-    let have = try? String(contentsOf: stamp, encoding: .utf8)
-    if have != image.version || image.version == "dev" || Self.files(in: dest) == nil {
-      console.note("installing the VM image \(image.version)")
-      try? fm.removeItem(at: dest)
-      try fm.createDirectory(at: dest, withIntermediateDirectories: true)
-      for (src, name) in zip([image.kernel, image.rootfs], VMImage.files) {
-        try copy(src, dest.appendingPathComponent(name), name)
+    let have = (try? String(contentsOf: stamp, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let files = ["vmlinux", "rootfs.erofs"].map { dest.appendingPathComponent($0) }
+    if have != image.version || !completeImage(dest, image: image) {
+      guard try checksum(image.archive) == image.sha256 else {
+        throw LauncherError.startFailed(reason: "VM image checksum mismatch", log: image.archive.path)
       }
-      try image.version.write(to: stamp, atomically: true, encoding: .utf8)
+      let stage = directory.appendingPathComponent("image-\(UUID().uuidString)", isDirectory: true)
+      try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+      defer { try? fm.removeItem(at: stage) }
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+      process.arguments = ["-xzf", image.archive.path, "-C", stage.path, "vmlinux", "rootfs.erofs", "vm-version"]
+      try process.run()
+      process.waitUntilExit()
+      let version = (try? String(contentsOf: stage.appendingPathComponent("vm-version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard process.terminationStatus == 0, version == image.version,
+            completeImage(stage, image: image) else {
+        throw LauncherError.imageMissing
+      }
+      if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+      try fm.moveItem(at: stage, to: dest)
     }
-    let source = directory.appendingPathComponent("source", isDirectory: true)
-    try? fm.removeItem(at: source)
-    try fm.createDirectory(at: source, withIntermediateDirectories: true)
-    let entries = try image.sourceEntries ?? fm.contentsOfDirectory(atPath: image.source.path)
-    for entry in entries {
-      let to = source.appendingPathComponent(entry)
-      try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try copy(image.source.appendingPathComponent(entry), to, entry)
-    }
-    guard let installed = VMImage(directory: dest, source: source) else { throw LauncherError.imageMissing }
-    return installed
+    return BootFiles(kernel: files[0], rootfs: files[1])
   }
 
-  private static func files(in dir: URL) -> [URL]? {
-    let urls = VMImage.files.map { dir.appendingPathComponent($0) }
-    return urls.allSatisfy { FileManager.default.fileExists(atPath: $0.path) } ? urls : nil
+  private func checksum(_ url: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hash = SHA256()
+    while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty { hash.update(data: data) }
+    return hash.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
-  /// A file or folder (cloned where APFS can).
-  private func copy(_ from: URL, _ to: URL, _ name: String) throws {
-    do { try FileManager.default.copyItem(at: from, to: to) } catch {
-      throw LauncherError.startFailed(reason: "cannot copy \(name) into \(to.deletingLastPathComponent().path)", log: "\(error)")
+  private func completeImage(_ directory: URL, image: VMImage) -> Bool {
+    image.checksums.allSatisfy { name, expected in
+      (try? checksum(directory.appendingPathComponent(name))) == expected
     }
   }
 
@@ -359,7 +363,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     try h.close()
   }
 
-  private func configuration(files: VMImage, resources: VMResources) throws -> VZVirtualMachineConfiguration {
+  private func configuration(files: BootFiles, resources: VMResources) throws -> VZVirtualMachineConfiguration {
     let c = VZVirtualMachineConfiguration()
     let boot = VZLinuxBootLoader(kernelURL: files.kernel)
     let x86 = X86Emulation.chosen
@@ -382,8 +386,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     net.macAddress = macAddress()
     c.networkDevices = [net]
     lock.withLock { slots.removeAll() }
-    let source = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-source")
-    source.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: files.source, readOnly: true))
     let cacheDirectory = directory.appendingPathComponent("binary-cache-config", isDirectory: true)
     if let problem = try BinaryCaches.prepare(support: directory.deletingLastPathComponent(), destination: cacheDirectory) {
       console.note(problem)
@@ -394,7 +396,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       let fs = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-\(i)")
       fs.share = VZMultipleDirectoryShare(directories: [:])
       return fs
-    } + [source, caches] + (x86 == .rosetta ? [try rosettaShare()] : [])
+    } + [caches] + (x86 == .rosetta ? [try rosettaShare()] : [])
     c.socketDevices = [VZVirtioSocketDeviceConfiguration()]
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]

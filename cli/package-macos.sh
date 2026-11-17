@@ -2,8 +2,7 @@
 # Builds dist/tsugumi-macos-arm64.tar.gz and its checksum, what cli/install.sh
 # installs on a Mac: the server of web/ with Node.js, hostd and OpenSSL,
 # tsugumi-vmhost, the shared
-# VM's boot disk and the source the VM builds Tsugumi from (the same two as the
-# app: dist/tsugumi-vm, macOS/Container/vm-source.txt).
+# release-built guest archive (the same payload as the app).
 #
 #   cli/package-macos.sh
 #
@@ -16,7 +15,7 @@ tree="$dist/cli/tsugumi"
 source "$repo/cli/node-version.env"
 
 vm="$dist/tsugumi-vm"
-[ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
+"$repo/macOS/Container/build-image.sh" --vm
 
 # The Web UI, built from the pinned packages.
 nix develop "$repo" -c bash -c "cd '$repo/web' && npm ci --ignore-scripts && npm run gen && npm run build"
@@ -60,17 +59,11 @@ find "$tree/web/dist" -name '*.map' -delete
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 
-cp -R "$vm" "$tree/vm"
-src="$tree/vm-source"
-mkdir -p "$src"
-grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
-  [ -n "$entry" ] || continue
-  mkdir -p "$src/$(dirname "$entry")"
-  cp -R "$repo/$entry" "$src/$entry"
-done
+mkdir -p "$tree/vm"
+cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$tree/vm/"
 
 # Licenses: ours, the packages bundled into the server and the page, FlatBuffers
-# in tsugumi-vmhost, OpenSSL, and the boot disk's (from its release, publish-vm.sh).
+# in tsugumi-vmhost, OpenSSL, and the complete guest closure.
 cp "$repo/LICENSE" "$repo/THIRD_PARTY_NOTICES.md" "$tree/licenses/"
 nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" --all "$tree/licenses/npm"
 mkdir -p "$tree/licenses/openssl"
@@ -80,8 +73,7 @@ openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
 tar -xOf "$openssl_source" "$openssl_license" > "$tree/licenses/openssl/LICENSE.txt"
 mkdir -p "$tree/licenses/swift-packages/flatbuffers"
 cp "$repo/macOS/.build/checkouts/flatbuffers/LICENSE"* "$tree/licenses/swift-packages/flatbuffers/"
-vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
-curl -fsSL "$vm_licenses" | tar -xz -C "$tree/licenses" || echo "warning: no licenses of the boot disk at $vm_licenses" >&2
+tar -xzf "$vm/vm-licenses.tar.gz" -C "$tree/licenses"
 
 tar -czf "$dist/tsugumi-macos-arm64.tar.gz" -C "$dist/cli" tsugumi
 (cd "$dist" && shasum -a 256 tsugumi-macos-arm64.tar.gz > tsugumi-macos-arm64.tar.gz.sha256)

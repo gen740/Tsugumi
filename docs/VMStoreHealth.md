@@ -75,10 +75,11 @@ TSUGUMI_VM_BUILD=1 macOS/Container/build-image.sh --vm
 TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh
 ```
 
-The first command writes `dist/tsugumi-vm`; the second bundles it and the changed
-Tsugumi source. `SharedVM.installImage` replaces the copied boot image when its
-`vm-version` changes, retaining `store.img` and `history.img`. The guest rebuilds
-vm-system from the bundled source hash. For a development session that still
+The first command writes the verified artifact set to `dist/tsugumi-vm`; the
+second bundles its single guest archive and manifest. `SharedVM.installImage`
+extracts the kernel/rootfs in private support when the manifest identity changes
+or extracted contents are incomplete, retaining `store.img` and `history.img`.
+The image already contains vm-system; the guest starts it after store checks. For a development session that still
 runs the **old** helper, use the existing runtime Shutdown (or vmctl `quit`)
 first; do not kill that old helper directly. Then end its host service and
 launch the rebuilt app in the background. The new image's missing health version

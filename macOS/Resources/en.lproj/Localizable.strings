@@ -208,7 +208,6 @@
 "Tsugumi を知る のページが見つかりません" = "The \"Learn about Tsugumi\" page was not found";
 "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。" = "Usage limit reached: review your plan or this app's limit in ChatGPT settings.";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
-"VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）" = "Building Tsugumi inside the VM (first start and after an update only; a minute or two)";
 "VM を起動しています" = "Booting the VM";
 "VM イメージ %@" = "VM image %@";
 "VM イメージを展開しています" = "Unpacking the VM image";

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Writes the corresponding source of the VM's boot disk as one archive, from
-the folder vm-inventory.py wrote: every package's sources and fetched patches,
-nixpkgs at the pinned revision (the recipes and the patches it keeps itself), and
-the part of this repository that builds the disk. publish-vm.sh uploads it.
+"""Archive the exact source/derivation closure recorded by vm-inventory.py.
 
-    macOS/tools/vm-source-bundle.py <inventory folder> <file.tar.gz>
-
-The source paths come from cache.nixos.org through the Nix store; nothing is built.
+The store export contains derivations, every inputSrc (including local filesets,
+flake inputs and nixpkgs patches), and every fixed-output build input. It contains
+no ordinary compiler/runtime outputs. Rebuilding needs Nix and a Linux builder,
+but no checkout or upstream source download.
 """
 import json
 import subprocess
@@ -15,80 +13,100 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-# What `nix build .#packages.aarch64-linux.vm-boot` reads of this repository.
-BUILD_FILES = ["flake.nix", "flake.lock", "VERSION", "LICENSE", "THIRD_PARTY_NOTICES.md", "nix", "macOS/Container"]
 GITHUB_ASSET_LIMIT = 2 * 2**30
+# Leave space for gzip/tar overhead; only sources may be split.
+CHUNK_SIZE = 1900 * 2**20
 
 
-def run(*cmd):
-    return subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True, cwd=REPO).stdout
+def source_paths(graph):
+    paths = set(graph)
+    for drv in graph.values():
+        paths.update(drv["inputs"].get("srcs", []))
+        if any("hash" in output or "method" in output for output in drv["outputs"].values()):
+            paths.update(output["path"] for output in drv["outputs"].values())
+    return sorted(p if p.startswith("/nix/store/") else f"/nix/store/{p}" for p in paths)
 
 
-def readme(inventory):
-    return f"""# Corresponding source of Tsugumi's VM boot disk
-
-Boot disk: `{inventory['vm_version']}`
-nixpkgs: `{inventory['nixpkgs']}`
-
-- `sources/`: each package's sources and fetched patches, under their Nix store
-  names. `vm-boot/inventory.json` says which belong to which package, with their
-  hashes and upstream URLs.
-- `nixpkgs/`: nixpkgs at that revision: how each package is configured, built and
-  installed, and the patches it keeps in its own tree.
-- `tsugumi/`: the part of Tsugumi that builds the disk. The kernel is
-  `macOS/Container/kernel.nix` with `macOS/Container/kernel/base-6.12.28.config`.
-- `vm-boot/`: the list of the disk's packages, their license files and the kernel's
-  configuration as built.
-
-To build the disk (aarch64-linux, or `macOS/Container/build-image.sh --vm` on a Mac):
-
-    cd tsugumi
-    nix --extra-experimental-features 'nix-command flakes' build \\
-      --override-input nixpkgs path:../nixpkgs "path:.#packages.aarch64-linux.vm-boot"
-
-The result's store name is the boot disk's name above.
-"""
-
-
-def add(tar, path, name):
-    def clean(info):
-        info.uid = info.gid = 0
-        info.uname = info.gname = ""
-        return info
-    tar.add(path, arcname=name, filter=clean)
+def split_archive(path, limit=GITHUB_ASSET_LIMIT, chunk_size=CHUNK_SIZE):
+    if path.stat().st_size < limit:
+        return [path]
+    chunks = []
+    with path.open("rb") as stream:
+        while stream.tell() < path.stat().st_size:
+            chunk = path.with_name(f"{path.name}.part{len(chunks):03d}")
+            with chunk.open("wb") as target:
+                remaining = chunk_size
+                while remaining and (data := stream.read(min(remaining, 1024 * 1024))):
+                    target.write(data)
+                    remaining -= len(data)
+            chunks.append(chunk)
+    path.unlink()
+    return chunks
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    vm_boot, out = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-    inventory = json.loads((vm_boot / "inventory.json").read_text())
-    top = f"tsugumi-vm-source-{inventory['vm_version'].split('-')[0]}"
-    sources = sorted({s["store_path"] for p in inventory["packages"] for s in p["sources"]})
-    store = [f"/nix/store/{s}" for s in sources]
-    subprocess.run(["nix-store", "--realise", *store], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    nixpkgs = run("nix", "eval", "--impure", "--raw", "--expr",
-                  f'(builtins.getFlake "github:NixOS/nixpkgs/{inventory["nixpkgs"]}").outPath')
+    inventory_dir, out = map(Path, sys.argv[1:])
+    inventory = json.loads((inventory_dir / "inventory.json").read_text())
+    graph = json.loads((inventory_dir / "derivations.json").read_text())
+    fixed = [p if p.startswith("/nix/store/") else f"/nix/store/{p}" for p, drv in graph.items()
+             if any("hash" in output or "method" in output for output in drv["outputs"].values())]
+    # Build-time source fetchers are part of the source closure too, even when
+    # their packages are absent from the runtime image.
+    subprocess.run(["nix-store", "--realise", *fixed], check=True, stdout=subprocess.DEVNULL)
+    paths = source_paths(graph)
+    # flake archive records the actual staged checkout and all pinned flake inputs.
+    paths += inventory["flake_sources"]
+    paths = sorted(set(subprocess.check_output(["nix-store", "-qR", *paths], text=True).split()))
+    if not set(inventory["source_paths"]).issubset(paths):
+        raise RuntimeError("source closure does not cover the inventory")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with (root / "sources.nar").open("wb") as stream:
+            subprocess.run(["nix-store", "--export", *paths], stdout=stream, check=True)
+        (root / "README.md").write_text(f"""# Corresponding source of the Tsugumi guest
 
-    with tarfile.open(out, "w:gz", compresslevel=6) as tar, tempfile.TemporaryDirectory() as tmp:
-        text = Path(tmp) / "README.md"
-        text.write_text(readme(inventory))
-        add(tar, text, f"{top}/README.md")
-        add(tar, vm_boot, f"{top}/vm-boot")
-        add(tar, nixpkgs, f"{top}/nixpkgs")
-        for path in store:
-            add(tar, path, f"{top}/sources/{Path(path).name}")
-        archive = Path(tmp) / "tsugumi.tar"
-        subprocess.run(["git", "-C", str(REPO), "archive", "--prefix", f"{top}/tsugumi/", "-o", str(archive), "HEAD", *BUILD_FILES], check=True)
-        with tarfile.open(archive) as own:
-            for member in own.getmembers():
-                tar.addfile(member, own.extractfile(member) if member.isfile() else None)
+Image identity: `{inventory['vm_version']}`
+Nixpkgs: `{inventory['nixpkgs']}`
 
-    size = out.stat().st_size
-    if size >= GITHUB_ASSET_LIMIT:
-        sys.exit(f"{out}: {size} bytes is over what a GitHub release asset may be")
-    print(f"{out}: {size / 2**20:.0f} MiB, {len(sources)} sources")
+`licenses/` records every runtime output plus the kernel. `source-paths.json`
+records the complete build source closure, including Tsugumi's filtered native
+source, hosq, flake inputs, fetched patches, nixpkgs recipes/configuration and
+all recursive derivations. `sources.nar` is a Nix store export of those paths.
+The staged checkout is `{inventory['flake_sources'][0]}`; it includes local
+changes when this is a development build. It is the source Nix evaluated,
+not an archive of HEAD labeled as a dirty build.
+
+On aarch64-linux with Nix (or a configured builder), extract this archive, then:
+
+    nix-store --import < sources.nar
+    nix-store --realise {inventory['image_derivation']}
+
+The result contains `tsugumi-vm.tar.gz` (kernel, rootfs and version). The image derivation, every
+source input and fixed-output dependency are included; ordinary build outputs
+such as compilers are rebuilt or substituted. To evaluate the flake again,
+use the exported checkout and the input paths in `flake-archive.json` with
+`nix build --override-input <name> path:<exported-input> <checkout>#vm`.
+No original checkout or unrecorded source input is required.
+
+If the release has numbered parts, reassemble before extraction:
+
+    cat vm-sources.tar.gz.part* > vm-sources.tar.gz
+    tar -xzf vm-sources.tar.gz
+
+Verify the parts against the release's SHA256SUMS before reassembly. Retain
+these sources for as long as the corresponding released binaries are offered.
+""")
+        (root / "source-paths.json").write_text(json.dumps(paths, indent=2) + "\n")
+        with tarfile.open(out, "w:gz") as tar:
+            def clean(info):
+                info.uid = info.gid = info.mtime = 0
+                info.uname = info.gname = ""
+                return info
+            for item in root.iterdir():
+                tar.add(item, arcname=item.name, filter=clean)
+            tar.add(inventory_dir, arcname="licenses", filter=clean)
+    print(f"{out}: {out.stat().st_size} bytes, {len(paths)} source/derivation paths")
+    split_archive(out)
 
 
 if __name__ == "__main__":

@@ -724,7 +724,6 @@ EN = {
 "ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ": "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.",
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ": "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.",
 "クリックで次のヒント": "Click for the next tip",
-"VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）": "Building Tsugumi inside the VM (first start and after an update only; a minute or two)",
 'Tsugumi の実行環境のイメージが見つかりません。': 'The Tsugumi environment image is not available.',
 '別の Tsugumi の処理がこの実行環境を起動または停止しています。': 'Another Tsugumi process is starting or stopping this environment.',
 'このプロジェクトの tsugumid が起動中に終了しました': 'tsugumid exited during startup',

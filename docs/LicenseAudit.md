@@ -4,7 +4,7 @@
 
 ## Bundling license texts
 
-[macOS/tools/bundle-licenses.sh](../macOS/tools/bundle-licenses.sh) copies license texts from the sources used for the build into `Contents/Resources/licenses/`. Missing required files stop the build. Keep license files in the source list supplied to the VM, [vm-source.txt](../macOS/Container/vm-source.txt).
+[macOS/tools/bundle-licenses.sh](../macOS/tools/bundle-licenses.sh) copies license texts from the sources used for the build into `Contents/Resources/licenses/`. Missing required files stop the build.
 
 - The native host Agent bundles OpenSSL 3's `libssl` and `libcrypto`; copy `LICENSE.txt` from the same nixpkgs OpenSSL source into `licenses/openssl/`. `build-host.sh` rewrites their loader paths before the app signs them.
 - The native host Agent links libgit2 statically ([nix/libgit2-local.nix](../nix/libgit2-local.nix)), with the zlib, PCRE2, llhttp and xdiff sources it contains; copy `COPYING` from the same source into `licenses/libgit2/`.
@@ -15,11 +15,39 @@
 
 ## How the VM's corresponding source is provided
 
-[macOS/tools/publish-vm.sh](../macOS/tools/publish-vm.sh) publishes `sources.tar.gz` and `licenses.tar.gz` alongside the boot disk on [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`). The app's `licenses/vm-boot/README.md` points to that release. Release builds require a published boot disk and its license archive.
+The app release contains `tsugumi-vm.tar.gz`, `vm-manifest.json`, `SHA256SUMS`,
+`vm-licenses.tar.gz` and `vm-sources.tar.gz` (or numbered source parts). The
+[image workflow](../.github/workflows/vm-image.yml) builds them on aarch64-linux
+at the same immutable revision as the app. Mac packaging consumes that run's
+artifact; it never fetches a separately published boot disk. Both the app and
+CLI include the expanded inventory and license texts under `licenses/vm-guest/`.
 
-[vm-inventory.py](../macOS/tools/vm-inventory.py) derives the package inventory from the image's `/store-paths` and derivation graph. [vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) uses that inventory to collect package sources, fetched patches, pinned nixpkgs definitions, and Tsugumi's image assembly files and build instructions. Package license names come from nixpkgs declarations.
+[vm-inventory.py](../macOS/tools/vm-inventory.py) reads the actual image's
+`/store-paths`, assigns outputs to their derivations, adds the separately shipped
+kernel and records local scripts, Tsugumi and the embedded hosq input explicitly.
+Unknown output owners, absent license declarations/texts or kernel configuration
+stop artifact generation. Nixpkgs license declarations are metadata, not a
+file-by-file audit.
 
-Keep the corresponding source available while distributing the binaries. Before deleting a VM release, check which app releases depend on it. The kernel's source and configuration are described in [kernel/SOURCES.md](../macOS/Container/kernel/SOURCES.md).
+[vm-source-bundle.py](../macOS/tools/vm-source-bundle.py) exports the complete
+recursive derivation/source closure: local native filesets, all pinned flake
+inputs, fetched sources and patches, nixpkgs-resident patches/configuration,
+and the staged Tsugumi checkout. Dirty development builds archive the source
+Nix actually evaluated. No manually maintained runtime source list is involved.
+The archive includes `sources.nar`, `source-paths.json`, the inventory and rebuild
+instructions. In a fresh aarch64-linux Nix store, extract it, run
+`nix-store --import < sources.nar`, then `nix-store --realise <image_derivation>`
+from `licenses/inventory.json`. Compilers and other ordinary build outputs can
+be rebuilt or substituted; all source inputs are in the export. No original
+checkout is needed. Verify source-part checksums, then reassemble with
+`cat vm-sources.tar.gz.part* > vm-sources.tar.gz` if the source asset exceeded
+the release's per-asset limit. The image itself remains one payload.
+
+Keep these release assets available while distributing the binaries. Historic
+VM releases and their sources are retained. The kernel's provenance is in
+[kernel/SOURCES.md](../macOS/Container/kernel/SOURCES.md). Full source-rebuild
+and actual VM checks must be performed on their corresponding Linux/Mac hosts;
+a successful metadata check alone does not establish those results.
 
 ## Web bundles
 

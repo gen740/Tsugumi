@@ -11,7 +11,6 @@ def test_every_part_takes_the_version_from_one_file():
     assert re.fullmatch(r"\d+\.\d+\.\d+", version)
     assert 'file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TSUGUMI_VERSION' in (ROOT / "CMakeLists.txt").read_text()
     assert "version = lib.fileContents ../VERSION;" in (ROOT / "nix/core.nix").read_text()
-    assert "VERSION" in (ROOT / "macOS/Container/vm-source.txt").read_text().split()
     assert "VERSION" in (ROOT / "macOS/build-app.sh").read_text()
 
 
@@ -69,17 +68,20 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
     assert "CredentialTokenRequest" not in host
 
 
-def test_the_vm_gets_every_source_the_core_package_reads():
-    """The VM builds the core from the paths in vm-source.txt; a path nix/core.nix
-    reads that is not among them fails only on a real first boot."""
-    import re
-    shared = (ROOT / "macOS/Container/vm-source.txt").read_text().split()
-    shared = [entry for entry in shared if not entry.startswith("#")]
-    read = set(re.findall(r"\.\./([A-Za-z0-9_./-]+)", (ROOT / "nix/core.nix").read_text()))
-    read.discard(".")  # `root = ../.` is the base the paths are relative to
-    missing = sorted(path for path in read
-                     if not any(path == entry or path.startswith(entry + "/") for entry in shared))
-    assert not missing, f"add to macOS/Container/vm-source.txt: {missing}"
+def test_guest_boot_uses_the_shipped_runtime_without_source_or_compilation():
+    boot = (ROOT / "macOS/Container/vm-boot.nix").read_text()
+    assert re.search(r"runtime = \[.*?\bvm-system\b.*?\];", boot, re.S)
+    assert "exec ${vm-system}/tini -- ${vm-system}/supervisor" in boot
+    assert "nix build" not in boot
+    assert 'tsugumi-source' not in boot
+    assert not (ROOT / "macOS/Container/vm-source.txt").exists()
+    assert not (ROOT / "macOS/tools/publish-vm.sh").exists()
+    for file in ["macOS/build-app.sh", "cli/package-macos.sh"]:
+        script = (ROOT / file).read_text()
+        assert '"$repo/macOS/Container/build-image.sh" --vm' in script
+        assert '"$vm/tsugumi-vm.tar.gz"' in script
+        assert '"$vm/vm-licenses.tar.gz"' in script
+        assert 'releases/download/vm-' not in script
 
 
 def test_the_core_test_package_gets_every_fixture_its_build_installs():
