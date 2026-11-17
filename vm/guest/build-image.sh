@@ -57,7 +57,7 @@ builders = $TSUGUMI_VM_NIX_BUILDERS"
   fi
   image="$(nix build --no-link --print-out-paths -L ${build_args[@]+"${build_args[@]}"} "path:$stage#packages.aarch64-linux.$attr")"
   if [ "$attr" = vm ]; then
-    nix shell --inputs-from "$stage" nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c \
+    nix shell --inputs-from "$stage" nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils nixpkgs#libarchive -c \
       python3 "$stage/vm/guest/tools/vm-artifact.py" build "$image" "$out" --revision "$revision"
   elif [ "$attr" = kernel ]; then cp "$image/vmlinux" "$out/tsugumi-kernel"; fi
 else
@@ -76,7 +76,11 @@ else
       set -e
       exec > /out/log 2>&1
       # Use the flake-pinned Nix for both derivation JSON and source export.
-      nix shell --inputs-from /src nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c sh /src/vm/guest/build-in-container.sh
+      # The builder image enables no experimental features.
+      export NIX_CONFIG="experimental-features = nix-command flakes
+fsync-store-paths = true
+fsync-metadata = true"
+      nix shell --inputs-from /src nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils nixpkgs#libarchive -c sh /src/vm/guest/build-in-container.sh
       sync -f /cache
       touch /out/done
     ' >/dev/null

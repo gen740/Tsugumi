@@ -27,10 +27,7 @@ def verify(directory, identity, revision=None):
         raise ValueError("VM artifact definition mismatch")
     if revision is not None and manifest["revision"] != revision:
         raise ValueError("VM artifact revision mismatch")
-    required = {PAYLOAD, "vm-licenses.tar.gz"}
-    if not required.issubset(manifest["files"]) or not any(
-        name == "vm-sources.tar.gz" or name.startswith("vm-sources.tar.gz.part") for name in manifest["files"]
-    ):
+    if set(manifest["files"]) != {PAYLOAD, "vm-licenses.tar.gz"}:
         raise ValueError("incomplete VM redistribution artifact")
     for name, checksum in manifest["files"].items():
         if Path(name).name != name or digest(directory / name) != checksum:
@@ -62,14 +59,13 @@ def build(args):
             tar.extractall(stage, members=[tar.getmember(n) for n in ["vmlinux", "rootfs.erofs", "vm-version"]])
         identity = (stage / "vm-version").read_text().strip()
         inventory = stage / "vm-guest"
-        subprocess.run(["python3", str(REPO / "vm/guest/tools/vm-inventory.py"), str(stage), identity, str(inventory)], check=True)
-        subprocess.run(["python3", str(REPO / "vm/guest/tools/vm-source-bundle.py"), str(inventory), str(destination / "vm-sources.tar.gz")], check=True)
+        subprocess.run(["python3", str(REPO / "vm/guest/tools/vm-inventory.py"), str(stage), identity, str(inventory),
+                        args.revision], check=True)
         with tarfile.open(destination / "vm-licenses.tar.gz", "w:gz") as tar:
             tar.add(inventory, arcname="vm-guest")
         manifest = {"identity": identity, "system": "aarch64-linux", "revision": args.revision,
                     "members": {name: digest(stage / name) for name in ["vmlinux", "rootfs.erofs", "vm-version"]},
-                    "files": {path.name: digest(path) for path in sorted(destination.iterdir())
-                              if path.name in {PAYLOAD, "vm-licenses.tar.gz", "vm-sources.tar.gz"} or path.name.startswith("vm-sources.tar.gz.part")}}
+                    "files": {name: digest(destination / name) for name in [PAYLOAD, "vm-licenses.tar.gz"]}}
         (destination / "vm-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     files = [destination / name for name in manifest["files"]] + [destination / "vm-manifest.json"]
     (destination / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in sorted(files)))

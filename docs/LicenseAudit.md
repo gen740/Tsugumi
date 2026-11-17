@@ -13,41 +13,37 @@
 - SwiftMath's MIT license covers its code, not its fonts. The app ships Latin Modern Math with the GUST Font License and its complete upstream package.
 - The documentation site uses Yusei Magic, with its [SIL OFL text](site/assets/YuseiMagic-OFL.txt). The app's bundled documentation must include that text too.
 
-## How the VM's corresponding source is provided
+## The guest image
 
-The app release contains `tsugumi-vm.tar.gz`, `vm-manifest.json`, `SHA256SUMS`,
-`vm-licenses.tar.gz` and `vm-sources.tar.gz` (or numbered source parts). The
-[image workflow](../.github/workflows/vm-image.yml) builds them on aarch64-linux
-at the same immutable revision as the app. Mac packaging consumes that run's
-artifact; it never fetches a separately published boot disk. Both the app and
-CLI include the expanded inventory and license texts under `licenses/vm-guest/`.
+The app release contains `tsugumi-vm.tar.gz`, `vm-manifest.json`, `SHA256SUMS`
+and `vm-licenses.tar.gz`. The [image workflow](../.github/workflows/vm-image.yml)
+builds them on aarch64-linux at the same immutable revision as the app. Mac
+packaging consumes that run's artifact; it never fetches a separately published
+boot disk. Both the app and CLI include the expanded inventory and license texts
+under `licenses/vm-guest/`.
 
 [vm-inventory.py](../vm/guest/tools/vm-inventory.py) reads the actual image's
-`/store-paths`, assigns outputs to their derivations, adds the separately shipped
-kernel and records local scripts, Tsugumi and the embedded hosq input explicitly.
-Unknown output owners, absent license declarations/texts or kernel configuration
-stop artifact generation. Nixpkgs license declarations are metadata, not a
-file-by-file audit.
+`/store-paths`, assigns outputs to their derivations and adds the separately
+shipped kernel. For every third-party package it records the license nixpkgs'
+`meta.license` declares, the license files of its source and the upstream source
+URLs and hashes. An output whose owner cannot be found, a package without a
+declared license or without a license text in its source, or a kernel without
+its embedded configuration stops artifact generation. Nixpkgs license
+declarations are metadata, not a file-by-file audit.
 
-[vm-source-bundle.py](../vm/guest/tools/vm-source-bundle.py) exports the complete
-recursive derivation/source closure: local native filesets, all pinned flake
-inputs, fetched sources and patches, nixpkgs-resident patches/configuration,
-and the staged Tsugumi checkout. Dirty development builds archive the source
-Nix actually evaluated. No manually maintained runtime source list is involved.
-The archive includes `sources.nar`, `source-paths.json`, the inventory and rebuild
-instructions. In a fresh aarch64-linux Nix store, extract it, run
-`nix-store --import < sources.nar`, then `nix-store --realise <image_derivation>`
-from `licenses/inventory.json`. Compilers and other ordinary build outputs can
-be rebuilt or substituted; all source inputs are in the export. No original
-checkout is needed. Verify source-part checksums, then reassemble with
-`cat vm-sources.tar.gz.part* > vm-sources.tar.gz` if the source asset exceeded
-the release's per-asset limit. The image itself remains one payload.
+Tsugumi's own outputs (tsugumid with the worker and the SDK, and the scripts
+and files `vm-boot.nix` and `vm-system.nix` write) are one fixed entry: MIT,
+the source being this repository at the release tag. GitHub's source archive of
+the tag is that source. FlatBuffers' runtime headers, compiled into tsugumid,
+keep their Apache-2.0 text.
 
-Keep these release assets available while distributing the binaries. Historic
-VM releases and their sources are retained. The kernel's provenance is in
-[kernel/SOURCES.md](../vm/guest/kernel/SOURCES.md). Full source-rebuild
-and actual VM checks must be performed on their corresponding Linux/Mac hosts;
-a successful metadata check alone does not establish those results.
+No source archive of the dependencies is made, mirrored or attached: the
+inventory points to their upstream sources, and the recipes are nixpkgs at the
+revision in `flake.lock`, `flake.nix` and `vm/guest/` at the tag. The kernel's
+base configuration is [kernel/base-6.12.28.config](../vm/guest/kernel/base-6.12.28.config)
+with the changes [kernel.nix](../vm/guest/kernel.nix) applies; the resulting
+configuration is `kernel-config` in the inventory. Its provenance is in
+[kernel/SOURCES.md](../vm/guest/kernel/SOURCES.md).
 
 ## Web bundles
 
@@ -57,4 +53,4 @@ The `tsugumi` CLI packages the Web UI. `cli/package-macos.sh` collects its npm l
 
 ## Updating dependencies
 
-Update [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) with dependency changes. Review transitive dependencies and font licenses, regenerate the VM inventory and source bundle when changing the boot disk, and inspect the license directory in the distribution before publishing.
+Update [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) with dependency changes. Review transitive dependencies and font licenses, regenerate the VM inventory when changing the boot disk, and inspect the license directory in the distribution before publishing.

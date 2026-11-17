@@ -1,13 +1,11 @@
 # Third-party notices
 
 Tsugumi's own code is under the [MIT License](LICENSE). Existing libraries,
-copied code, fonts and external data retain their own licenses, including
-the [hosq](https://github.com/CLI20-dev/hosq) library.
+copied code, fonts and external data retain their own licenses.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](ui/macos/tools/bundle-licenses.sh)).
-The corresponding source of the guest image is attached to the app's release on
-[gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases); see
+For the guest image's packages and where their sources are, see
 [Licenses and distribution](docs/LicenseAudit.md). Lock files and build recipes
 are authoritative when dependencies change.
 
@@ -113,7 +111,6 @@ registers this closure and starts it; it does not compile Tsugumi.
 
 | Component used by core | License / source |
 | --- | --- |
-| hosq, `1eb894224b0feffbb5b81d075d3e2c76160f99a1` | [MIT](https://github.com/CLI20-dev/hosq/blob/1eb894224b0feffbb5b81d075d3e2c76160f99a1/LICENSE); pre-existing author library, included as headers |
 | Nix libraries (`nix-expr`, `nix-store`, `nix-fetchers`, `nix-flake`, `nix-util`) | LGPL-2.1-or-later; dynamically linked by the Nix build |
 | Boehm–Demers–Weiser GC | Its MIT-style license; transitive Nix dependency |
 | FlatBuffers | Apache-2.0 |
@@ -137,29 +134,16 @@ The complete guest closure contains GPL / LGPL software as well as permissively
 licensed dependencies, including Tsugumi, bubblewrap, tini, shell tools and the
 formatters referenced by the native runtime. `vm-licenses.tar.gz` in the app's
 release lists the actual image outputs and kernel, package license declarations,
-sources and patches, full license texts and the embedded kernel configuration.
-The app and CLI carry it expanded in `licenses/vm-guest/`. The same release's
-`vm-sources.tar.gz` (or numbered parts) contains the entire recursive build
-source closure, including local filesets, hosq, pinned flake inputs and build
-recipes. See [how it is provided](docs/LicenseAudit.md#how-the-vms-corresponding-source-is-provided).
-See [GPLv2 §3](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#section3)
-and [LGPLv2.1 §§4–6](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html).
+upstream source URLs and patches, full license texts and the embedded kernel
+configuration. The app and CLI carry it expanded in `licenses/vm-guest/`.
+Tsugumi's own outputs in the image are MIT; their source is this repository at
+the release tag. See [Licenses and distribution](docs/LicenseAudit.md#the-guest-image).
 
 ### Downloaded / built after installation
 
 Card compilers, Python and scientific libraries are obtained for each Card
 definition through Nix. Explicit qemu mode still realizes qemu-user on demand;
 Rosetta is supplied by macOS. These are separate from the default image closure.
-
-## Downloaded / built after installation
-
-The VM system additionally obtains tsugumid, bubblewrap, tini, shell tools
-and formatters (astyle, Ruff, nixfmt, shfmt) through Nix. Card compilers,
-Python and scientific libraries are obtained for each Card environment.
-These are not all preinstalled in the distributed boot image. If a release
-starts bundling their binaries or a populated Nix store, its redistribution
-inventory and obligations must expand accordingly. The same applies when
-distributing a standalone daemon or a different container image.
 
 ## Documentation site
 

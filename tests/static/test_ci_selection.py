@@ -82,7 +82,7 @@ def test_native_changes_cover_all_platform_runtime_consumers():
 
 
 @pytest.mark.parametrize("path", [
-    "vm/guest/tools/vm-inventory.py", "vm/guest/tools/vm-source-bundle.py",
+    "vm/guest/tools/vm-inventory.py",
     "vm/guest/tools/vm-artifact.py", "vm/guest/tools/vm-download.py", "vm/guest/tools/vm-snapshot.py",
     "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
 ])

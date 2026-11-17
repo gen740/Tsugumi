@@ -50,11 +50,11 @@ jobs:
           test -x "$runtime/bin/tsugumid"
           test -x "$runtime/bin/tsugumi-vmd"
           test -x "$runtime/bin/tsugumi-worker"
-      - name: Inventory and corresponding sources of the whole closure
+      - name: Inventory and license texts of the image
         env:
           REVISION: ${{ inputs.revision }}
         run: |
-          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
+          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils nixpkgs#libarchive -c python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
           python3 vm/guest/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
       - uses: actions/upload-artifact@v4
         with:
