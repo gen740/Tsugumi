@@ -1489,8 +1489,9 @@ struct ScrollCatcher: NSViewRepresentable {
       super.init(frame: .zero)
       monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] e in
         guard let self, e.keyCode == 49, self.window?.isKeyWindow == true else { return e }  // space
-        // Space is text in an editor or a field: leave it alone there.
-        if self.window?.firstResponder is NSText { return e }
+        // Space is text wherever text is typed (an editor, a field, the
+        // terminal): leave it alone there.
+        if self.window?.firstResponder is NSTextInputClient { return e }
         if e.type == .keyDown {
           if !self.spaceHeld { self.spaceHeld = true; NSCursor.openHand.push() }
         } else if self.spaceHeld {
