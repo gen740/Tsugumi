@@ -14,7 +14,6 @@ struct FileJson {
 };
 
 struct InvocationJson {
-  schema::t::String<"project_id"> project_id;
   schema::t::String<"call_sha256"> call_sha256;
   schema::t::String<"archive_sha256"> archive_sha256;
   schema::t::Array<"files", schema::Obj<FileJson>> files;

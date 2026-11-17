@@ -172,8 +172,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
     return blobs / digest;
   };
   remote::InvocationJson invocation;
-  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit), invocation) ||
-      !crypto::is_uuid(*invocation.project_id))
+  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit), invocation))
     throw std::runtime_error("invalid remote invocation manifest");
   int64_t last_progress = 0;
   const auto progress = [&](const stdfs::path& name, uint64_t done, uint64_t total) {

@@ -100,6 +100,11 @@ auto RemoteWorkerStore::realise(
   nix::settings.getLocalSettings().fsyncMetadata = true;
   nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;
   nix::settings.getLocalSettings().sandboxFallback = false;
+  // This process is the only user of its namespace. For a root supervisor Nix
+  // would otherwise give the store to the host's build-users-group, which is
+  // not mapped here, and require setgroups, which the namespace denies.
+  nix::settings.getLocalSettings().buildUsersGroup = "";
+  nix::settings.getLocalSettings().requireDropSupplementaryGroups = false;
   auto store = nix::openStore("local", {{"root", store_root.string()}});
   const auto drv = store->parseStorePath(derivation.path);
   const auto out = store->parseStorePath(derivation.output);
