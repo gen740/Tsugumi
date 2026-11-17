@@ -21,6 +21,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {

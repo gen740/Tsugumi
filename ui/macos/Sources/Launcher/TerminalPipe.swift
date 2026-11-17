@@ -45,3 +45,23 @@ final class TerminalPipe: @unchecked Sendable {
     }
   }
 }
+
+/// A write to the pipe whose peer went away fails (EPIPE) instead of killing
+/// the app with SIGPIPE.
+private func noSigPipe(_ fd: Int32) {
+  var one: Int32 = 1
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+}
+
+private struct TerminalWriteFailed: Error {}
+
+private func writeAll(_ fd: Int32, _ data: Data) throws {
+  try data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+    var off = 0
+    while off < buf.count {
+      let n = write(fd, buf.baseAddress! + off, buf.count - off)
+      if n <= 0 { throw TerminalWriteFailed() }
+      off += n
+    }
+  }
+}
