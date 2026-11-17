@@ -5,17 +5,9 @@
   entry ? "index.js",
   name ? "tsugumi-view",
   minify ? true,
-  licenseDirs ? [ ],
 }:
 pkgs.runCommand name { nativeBuildInputs = [ pkgs.esbuild ]; } ''
   mkdir -p $out
-  ${pkgs.lib.optionalString (licenseDirs != [ ]) ''
-    mkdir -p $out/licenses
-    ${
-      pkgs.lib.concatMapStrings (dir: ''
-        cp -R ${dir} $out/licenses/${baseNameOf dir}
-      '') licenseDirs
-    }  ''}
   esbuild ${src}/${entry} --bundle --format=esm --platform=browser --target=es2022 \
     --loader:.umd=text --loader:.wasm=binary --loader:.png=dataurl --loader:.jpg=dataurl --loader:.svg=dataurl \
     ${pkgs.lib.optionalString minify "--minify"} --outfile=$out/index.js

@@ -31,16 +31,10 @@ in
     src = source;
     entry = "plotly.js";
     name = "tsugumi-view-plotly";
-    licenseDirs = [ ../views/third-party/plotly.js-dist-min ];
   };
   vega-lite = bundle {
     src = source;
     entry = "vega-lite.js";
     name = "tsugumi-view-vega-lite";
-    licenseDirs = [
-      ../views/third-party/vega
-      ../views/third-party/vega-lite
-      ../views/third-party/vega-embed
-    ];
   };
 }
