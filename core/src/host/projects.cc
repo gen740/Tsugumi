@@ -47,8 +47,7 @@ auto Info(const f::path& folder) -> std::string {
   if (!f::is_regular_file(folder / "tsugumi.json"))
     throw ProjectFailure("invalid_project",
                          "Choose a folder containing tsugumi.json");
-  const auto project =
-      json::Object(fs::read_file_or_throw(folder / "tsugumi.json"));
+  const auto project = json::Object(fs::read_beneath(folder, "tsugumi.json"));
   auto name = json::Text(project, "name");
   if (name.empty()) name = folder.filename().string();
   return json::Encode(
@@ -149,20 +148,31 @@ auto Populate(const f::path &destination, Write write) -> std::string {
 }
 }  // namespace
 
-auto ReadProjectFiles(const std::string &path)
+auto ReadProjectFiles(const std::string &path,
+                      const std::function<void(const std::string &)> &authorize)
     -> std::map<std::string, std::string> {
-  const auto root = f::canonical(Path(path));
+  const auto root = authorize ? Path(path) : f::canonical(Path(path));
+  if (authorize) {
+    authorize(root.string());
+    authorize((root / "tsugumi.json").string());
+  }
   Info(root);
   std::map<std::string, std::string> files;
   uint64_t total = 0;
   constexpr uint64_t kLimit = 64 << 20;
   WalkProject(
-      root, {}, [](const auto &) {},
+      root, {},
+      [&](const auto &rel) {
+        if (authorize)
+          authorize((root / rel).string());
+      },
       [&](const auto &file, const auto &rel) {
+        if (authorize)
+          authorize(file.string());
         if (f::file_size(file) > kLimit - total || files.size() >= 65536)
           throw ProjectFailure("project_too_large",
                                "The project exceeds the import limit");
-        auto bytes = fs::read_file_or_throw(file);
+        auto bytes = fs::read_beneath(root, rel);
         if (bytes.size() > kLimit - total)
           throw ProjectFailure("project_too_large",
                                "The project exceeds the import limit");

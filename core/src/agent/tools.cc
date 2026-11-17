@@ -1342,11 +1342,15 @@ auto Tools::ExecuteTool(const std::string& conversation,
       dependencies.approve_operation(project, conversation, call, digest, args,
                                      wait, stop, permissions);
       args["approved_permissions"] = json::Encode(permissions);
-      if (call.name == "project_copy" && json::Text(args, "source") == "demo") {
+      if (call.name == "project_copy" &&
+          (json::Text(args, "source") == "demo" ||
+           (json::Text(args, "source") == "attached" &&
+            (args.contains("card") || args.contains("id"))))) {
         result = FileOperation(conversation, project, call.name, args, op_id, boundary, stop, file_resources);
-      } else if (call.name == "project_edit" || call.name == "project_connect" ||
-          call.name == "project_make_subgraph" ||
-          call.name == "project_layout") {
+      } else if (call.name == "project_edit" ||
+                 call.name == "project_connect" ||
+                 call.name == "project_make_subgraph" ||
+                 call.name == "project_layout") {
         result = EditProjectTool(conversation, project, call, args, op_id,
                                  boundary, false, stop);
       } else {

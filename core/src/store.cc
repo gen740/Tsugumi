@@ -85,21 +85,41 @@ auto Store::stage_file(const stdfs::path& root, const std::string& from,
   file->path = directory / crypto::uuid4();
   crypto::Sha256 hash;
   bool entered = false;
-  file->size = fs::copy_beneath(root, from, file->path, [&](std::string_view chunk) {
-    check_cancelled();
-    if (opts_.fault == "transfer_gate" && !entered) {
-      entered = true;
-      fs::write_atomic(state_dir() / "transfer.started", "ready");
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-      while (!stdfs::exists(state_dir() / "transfer.release")) {
-        check_cancelled();
-        if (std::chrono::steady_clock::now() >= deadline)
-          throw std::runtime_error("transfer fault gate was not released");
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-      }
-    }
-    hash.update(chunk);
-  });
+  try {
+    file->size =
+        fs::copy_beneath(root, from, file->path, [&](std::string_view chunk) {
+          check_cancelled();
+          if (opts_.fault == "transfer_gate" && !entered) {
+            entered = true;
+            fs::write_atomic(state_dir() / "transfer.started", "ready");
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (!stdfs::exists(state_dir() / "transfer.release")) {
+              check_cancelled();
+              if (std::chrono::steady_clock::now() >= deadline)
+                throw std::runtime_error(
+                    "transfer fault gate was not released");
+              std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+          }
+          hash.update(chunk);
+        });
+  } catch (const fs::NotRegularFile& error) {
+    throw Failed(
+        FailureKind::invalid_path,
+        std::string(error.what()) +
+            (error.folder
+                 ? "; list its files or copy the whole Card with card + id"
+                 : "; choose a regular file to copy"));
+  } catch (const fs::Error& error) {
+    auto message = std::string(error.what());
+    const auto full_path = (root / from).string();
+    if (const auto at = message.find(full_path); at != std::string::npos)
+      message.replace(at, full_path.size(), from);
+    if (const auto at = message.find(root.string()); at != std::string::npos)
+      message.replace(at, root.string().size(), "source root");
+    throw Failed(FailureKind::invalid_path, message);
+  }
   file->hash = hash.finish_hex();
   if (expected_hash && *expected_hash != file->hash)
     throw Failed(FailureKind::external_change, from + " differs from the confirmed document; Reload before retrying");

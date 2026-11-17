@@ -82,6 +82,21 @@ auto encoding_failure(std::string_view type, std::string_view partial,
 }
 
 std::string describe(const hosq::Error& e) {
+  if (e.code == hosq::ErrorCode::unknown_member && !e.path.empty() &&
+      e.path.back().has_name) {
+    v::String member;
+    member.value() = e.path.back().name;
+    std::string parent;
+    for (size_t i = 0; i + 1 < e.path.size(); ++i) {
+      const auto &segment = e.path[i];
+      if (segment.has_name)
+        parent += (parent.empty() ? "" : ".") + segment.name;
+      else
+        parent += "[" + std::to_string(segment.index) + "]";
+    }
+    return (parent.empty() ? "" : parent + ": ") + "unknown setting " +
+           encode(member) + " (not in this version): remove it";
+  }
   std::string msg(e.detail);
   if (msg.empty()) msg = "invalid value";
   std::string path;
@@ -90,6 +105,8 @@ std::string describe(const hosq::Error& e) {
     else path += "[" + std::to_string(seg.index) + "]";
   }
   if (!path.empty()) msg = path.substr(path[0] == '.' ? 1 : 0) + ": " + msg;
+  if (e.code == hosq::ErrorCode::type_mismatch && !path.empty())
+    msg += "; correct this setting's value";
   return msg;
 }
 

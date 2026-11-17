@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -14,7 +15,9 @@ namespace tsugumi::host {
 
 // Exact bytes, with the same exclusions and bounds as project
 // duplication/import.
-auto ReadProjectFiles(const std::string &path)
+auto ReadProjectFiles(
+    const std::string &path,
+    const std::function<void(const std::string &)> &authorize = {})
     -> std::map<std::string, std::string>;
 
 // Presentation metadata only; a missing/unreadable manifest falls back to the

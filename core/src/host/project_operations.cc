@@ -505,7 +505,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';
     empty(destination);
-    for (const auto &[path, bytes] : ReadProjectFiles(imported->path))
+    for (const auto& [path, bytes] :
+         ReadProjectFiles(imported->path, authorize))
       put(destination + path, bytes);
     link(imported->id,
          std::filesystem::path(imported->path).filename().string());
@@ -527,24 +528,28 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           is_external ? prefix + "externals/" + item->id + '/' : to;
       auto source_state = state;
       auto source_paths = std::vector<std::string>(paths.begin(), paths.end());
-      std::map<std::string, std::string> demo_files;
-      std::filesystem::path demo_root;
+      std::map<std::string, std::string> imported_files;
+      std::filesystem::path source_root;
       auto from = item->from;
-      if (!item->demo.empty()) {
-        if (!demo || copy->copy_connections || !valid_id(item->from))
-          throw Failure("invalid_request", "Choose a demo and a Card id");
-        demo_root = demo(item->demo);
-        const auto files = ReadProjectFiles(demo_root.string());
-        demo_files = files;
+      const bool imported = !item->demo.empty() || !item->folder.empty();
+      if (imported) {
+        if ((!item->demo.empty() && (!demo || !item->folder.empty())) ||
+            copy->copy_connections || !valid_id(item->from))
+          throw Failure("invalid_request",
+                        "Choose a source project and a Card id");
+        source_root = item->demo.empty() ? std::filesystem::path(item->folder)
+                                         : demo(item->demo);
+        imported_files = ReadProjectFiles(
+            source_root.string(), item->folder.empty() ? nullptr : authorize);
         source_paths.clear();
-        for (const auto& [path, bytes] : files) {
+        for (const auto &[path, bytes] : imported_files) {
           (void)bytes;
           source_paths.push_back(path);
         }
-        source_state = document_state(files);
+        source_state = document_state(imported_files);
         from = "definitions/" + item->from + '/';
       }
-      const auto& source_files = item->demo.empty() ? base.files : demo_files;
+      const auto &source_files = imported ? imported_files : base.files;
       if (!source_files.contains(from + "_card.json") &&
           !source_files.contains(from + "_link.json") && !is_external)
         throw Failure("not_found", "Card not found");
@@ -556,7 +561,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       for (const auto& path : source_paths)
         for (const auto& dir : closure)
           if (path.starts_with(dir) && authorize)
-            authorize(item->demo.empty() ? path : (demo_root / path).string());
+            authorize(imported ? (source_root / path).string() : path);
       const auto patch = CopyDocuments(source_state, source_paths, from, destination, item->name);
       const auto values = json::Object(patch.edits_json);
       for (const auto &[dir, raw] :
@@ -568,7 +573,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
         external(dir, raw);
       }
       for (const auto &file : patch.files)
-        put(file->to, item->demo.empty() ? required(file->from) : demo_files.at(file->from));
+        put(file->to,
+            imported ? imported_files.at(file->from) : required(file->from));
       if (is_external)
         link(item->id, item->name.empty() ? item->id : item->name);
       double x = item->x, y = item->y;

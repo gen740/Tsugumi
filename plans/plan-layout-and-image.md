@@ -263,3 +263,7 @@ Search all tracked/hidden text and constructed paths: slash literals, split path
 | D5 / conflicting commit constraints | Approve B1+B2 as one buildable checkpoint with two review commits; if every individual commit must build, squash them and review the rename artifact separately. |
 
 Old Q1 is settled: one PR. Old Q3 does not require a new owner decision: current explicit-stop behavior stays; type the existing graph/note RPC facts without adding an auto-start or read-only core lifecycle. Q6 is settled: include #293 in A, one image payload, existing x86 behavior. Q7 is superseded by landed atomic operations and workerd local-slot ownership. Q8 needs no owner decision: no missing Development.md reconstruction and no empty future implementations. No compatibility or retention decision is reopened.
+
+## Owner's direction (2026-11-17, replaces the A/B/C phasing above)
+
+The goal is the separation of responsibilities; the directory layout is how the separation is made certain. So the work is NOT split into "split at existing paths", "pure move" and "enforce" phases. Each responsibility is separated and placed in its final directory in the same step, with its build manifest, and enforced as soon as it stands on its own. When the work shows a better structure than this plan, shift to it and record the change and the reason here. The destination ledger and split ledger above remain the starting map, not a contract.
