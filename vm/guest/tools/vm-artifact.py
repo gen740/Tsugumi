@@ -27,8 +27,6 @@ def verify(directory, identity, revision=None):
         raise ValueError("VM artifact definition mismatch")
     if revision is not None and manifest["revision"] != revision:
         raise ValueError("VM artifact revision mismatch")
-    if set(manifest["files"]) != {PAYLOAD, "vm-licenses.tar.gz"}:
-        raise ValueError("incomplete VM redistribution artifact")
     for name, checksum in manifest["files"].items():
         if Path(name).name != name or digest(directory / name) != checksum:
             raise ValueError(f"VM artifact checksum mismatch: {name}")

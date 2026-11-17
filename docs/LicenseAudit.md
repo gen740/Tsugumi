@@ -15,35 +15,9 @@
 
 ## The guest image
 
-The app release contains `tsugumi-vm.tar.gz`, `vm-manifest.json`, `SHA256SUMS`
-and `vm-licenses.tar.gz`. The [image workflow](../.github/workflows/vm-image.yml)
-builds them on aarch64-linux at the same immutable revision as the app. Mac
-packaging consumes that run's artifact; it never fetches a separately published
-boot disk. Both the app and CLI include the expanded inventory and license texts
-under `licenses/vm-guest/`.
-
-[vm-inventory.py](../vm/guest/tools/vm-inventory.py) reads the actual image's
-`/store-paths`, assigns outputs to their derivations and adds the separately
-shipped kernel. For every third-party package it records the license nixpkgs'
-`meta.license` declares, the license files of its source and the upstream source
-URLs and hashes. An output whose owner cannot be found, a package without a
-declared license or without a license text in its source, or a kernel without
-its embedded configuration stops artifact generation. Nixpkgs license
-declarations are metadata, not a file-by-file audit.
-
-Tsugumi's own outputs (tsugumid with the worker and the SDK, and the scripts
-and files `vm-boot.nix` and `vm-system.nix` write) are one fixed entry: MIT,
-the source being this repository at the release tag. GitHub's source archive of
-the tag is that source. FlatBuffers' runtime headers, compiled into tsugumid,
-keep their Apache-2.0 text.
-
-No source archive of the dependencies is made, mirrored or attached: the
-inventory points to their upstream sources, and the recipes are nixpkgs at the
-revision in `flake.lock`, `flake.nix` and `vm/guest/` at the tag. The kernel's
-base configuration is [kernel/base-6.12.28.config](../vm/guest/kernel/base-6.12.28.config)
-with the changes [kernel.nix](../vm/guest/kernel.nix) applies; the resulting
-configuration is `kernel-config` in the inventory. Its provenance is in
-[kernel/SOURCES.md](../vm/guest/kernel/SOURCES.md).
+The release carries the VM image and Tsugumi's own source through GitHub's tag archive; unmodified OSS refers to upstream sources, without source archives, mirrors, storage or repacking by Tsugumi.
+`vm-licenses.tar.gz`, also expanded into the app and CLI's `licenses/vm-guest/`, lists runtime package names, versions and nixpkgs SPDX license identifiers (or missing metadata), with one text per identifier, Tsugumi's fixed MIT notice including hosq, and the kernel configuration.
+Required license and copyright notices are retained.
 
 ## Web bundles
 

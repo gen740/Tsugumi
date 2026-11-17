@@ -5,7 +5,7 @@ copied code, fonts and external data retain their own licenses.
 
 The app carries these notices and the full license texts in
 `Contents/Resources/licenses/` ([bundle-licenses.sh](ui/macos/tools/bundle-licenses.sh)).
-For the guest image's packages and where their sources are, see
+For the guest image's package notices, see
 [Licenses and distribution](docs/LicenseAudit.md). Lock files and build recipes
 are authoritative when dependencies change.
 
@@ -121,23 +121,11 @@ The core's full runtime closure also includes transitive libraries; this
 table is not a closure-wide license manifest. Package versions and recipes
 are fixed by [flake.lock](flake.lock) and [nix/core.nix](nix/core.nix).
 
-### Guest image redistributed with the app
+### Guest image
 
-[`vm-boot.nix`](vm/guest/vm-boot.nix) includes Nix, CA certificates,
-Bash, coreutils, findutils, util-linux, e2fsprogs, BusyBox, gawk, and their
-runtime closure. [`kernel.nix`](vm/guest/kernel.nix) builds Linux
-6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from
-[that of Kata Containers 3.17.0](vm/guest/kernel/SOURCES.md). This is not
-simply an unchanged nixpkgs kernel.
-
-The complete guest closure contains GPL / LGPL software as well as permissively
-licensed dependencies, including Tsugumi, bubblewrap, tini, shell tools and the
-formatters referenced by the native runtime. `vm-licenses.tar.gz` in the app's
-release lists the actual image outputs and kernel, package license declarations,
-upstream source URLs and patches, full license texts and the embedded kernel
-configuration. The app and CLI carry it expanded in `licenses/vm-guest/`.
-Tsugumi's own outputs in the image are MIT; their source is this repository at
-the release tag. See [Licenses and distribution](docs/LicenseAudit.md#the-guest-image).
+The release carries the VM image and Tsugumi's own source through GitHub's tag archive; unmodified OSS refers to upstream sources, without source archives, mirrors, storage or repacking by Tsugumi.
+`vm-licenses.tar.gz`, also expanded into the app and CLI's `licenses/vm-guest/`, lists runtime package names, versions and nixpkgs SPDX license identifiers (or missing metadata), with one text per identifier, Tsugumi's fixed MIT notice including hosq, and the kernel configuration.
+Required license and copyright notices are retained.
 
 ### Downloaded / built after installation
 

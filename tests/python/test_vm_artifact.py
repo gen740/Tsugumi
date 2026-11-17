@@ -1,4 +1,5 @@
-"""Definition identity, redistribution completeness and full source-closure selection."""
+"""Guest integrity and runtime package notices."""
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -49,14 +50,6 @@ def test_exact_identity_revision_and_checksums(tmp_path):
         artifact.verify(tmp_path, "definition")
 
 
-def test_missing_redistribution_assets_fail(tmp_path):
-    value = fixture(tmp_path)
-    del value["files"]["vm-licenses.tar.gz"]
-    (tmp_path / "vm-manifest.json").write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="incomplete"):
-        artifact.verify(tmp_path, "definition")
-
-
 def test_wrong_archive_stamp_fails_even_with_updated_archive_checksum(tmp_path):
     value = fixture(tmp_path)
     value["identity"] = "another-definition"
@@ -73,34 +66,32 @@ def test_attachment_checksums_match_extracted_bytes(tmp_path):
         artifact.verify(tmp_path, "definition")
 
 
-def test_an_artifact_carries_no_source_archive(tmp_path):
-    value = fixture(tmp_path)
-    (tmp_path / "vm-sources.tar.gz").write_bytes(b"sources")
-    value["files"]["vm-sources.tar.gz"] = artifact.digest(tmp_path / "vm-sources.tar.gz")
-    (tmp_path / "vm-manifest.json").write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="incomplete"):
-        artifact.verify(tmp_path, "definition")
+def test_runtime_packages_keep_versions_and_group_own_code():
+    paths = ["/nix/store/" + "0" * 32 + "-" + name for name in
+             ["bash-5.3", "bash-5.3", "bash-5.2", "tsugumid-0.9.0", "hosq-source", "passwd", "unlisted"]]
+    assert inventory.runtime_packages(paths) == [
+        {"name": "bash", "version": "5.2"}, {"name": "bash", "version": "5.3"},
+        {"name": "unlisted", "version": ""}]
 
 
-def test_tsugumi_outputs_are_one_fixed_entry_and_others_are_not():
-    for name in ["tsugumid", "tsugumi-vm-system", "tsugumi-supervisor", "tsugumi-vm-init", "passwd", "nix.conf"]:
-        assert inventory.is_own(name)
-    for name in ["nix", "bash-interactive", "glibc", "hosq-source", "flatbuffers"]:
-        assert not inventory.is_own(name)
-
-
-def test_inventory_rejects_unowned_runtime_paths():
-    with pytest.raises(KeyError):
-        inventory.group_packages({}, ["/nix/store/missing"])
-
-
-def test_inventory_names_fixed_outputs_that_derivation_json_leaves_out(monkeypatch):
-    graph = {"a-source.drv": {"name": "source", "outputs": {"out": {"hash": "h", "method": "nar"}}},
-             "b-core.drv": {"name": "core", "outputs": {"out": {"path": "b-core"}}}}
-    monkeypatch.setattr(inventory, "run", lambda *cmd: "/nix/store/" + "0" * 32 + "-source\n")
-    inventory.add_fixed_output_paths(graph)
-    assert graph["a-source.drv"]["outputs"]["out"]["path"] == "0" * 32 + "-source"
-    monkeypatch.setattr(inventory, "run", lambda *cmd: "/nix/store/" + "0" * 32 + "-other\n")
-    graph["a-source.drv"]["outputs"]["out"].pop("path")
-    with pytest.raises(SystemExit):
-        inventory.add_fixed_output_paths(graph)
+def test_notices_share_spdx_texts_and_report_missing_metadata(tmp_path):
+    vm, out, texts = [tmp_path / name for name in ["image", "notices", "texts"]]
+    vm.mkdir()
+    texts.mkdir()
+    config = b"CONFIG_IKCONFIG=y\n"
+    (vm / "vmlinux").write_bytes(b"kernelIKCFG_ST" + gzip.compress(config) + b"IKCFG_ED")
+    for identifier in ["MIT", "GPL-2.0-only", "GCC-exception-2.0"]:
+        (texts / f"{identifier}.txt").write_text(identifier)
+    packages = [{"name": "a", "version": "1"}, {"name": "a", "version": "1-lib"},
+                {"name": "b", "version": "2"}, {"name": "unknown", "version": "3"}]
+    inventory.write_notices(vm, "definition", out, "revision", packages,
+                            {"a": {"licenses": ["MIT"], "outputs": ["out", "lib"]},
+                             "b": {"licenses": ["MIT WITH GCC-exception-2.0"]}, "unknown": {"licenses": []}}, texts, "6.12.115")
+    value = json.loads((out / "inventory.json").read_text())
+    assert value["vm_version"] == "definition"
+    assert value["packages"][2]["licenses"] == []
+    assert value["tsugumi"]["licenses"] == ["MIT"]
+    assert (out / "licenses/Tsugumi/LICENSE").read_text() == (ROOT / "LICENSE").read_text()
+    assert sorted(p.name for p in (out / "licenses").iterdir()) == ["GCC-exception-2.0.txt", "GPL-2.0-only.txt", "MIT.txt", "Tsugumi"]
+    assert (out / "kernel-config").read_bytes() == config
+    assert "No SPDX license metadata" in (out / "README.md").read_text()

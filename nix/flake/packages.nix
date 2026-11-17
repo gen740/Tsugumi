@@ -20,7 +20,10 @@ in
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
-      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix { tsugumid = core; };
+      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix {
+        # Formatting runs on the host; guest binaries need no formatter paths.
+        tsugumid = core.override { withFormatters = false; };
+      };
       vm-boot = pkgs.callPackage ../../vm/guest/vm-boot.nix { inherit kernel vm-system; };
     in
     {
