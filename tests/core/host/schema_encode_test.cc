@@ -2,16 +2,10 @@
 
 #include <limits>
 
-<<<<<<< HEAD
-#include "util/json.hh"
-||||||| abb6f15b
-#include "schema.hh"
-=======
 #include "../agent_fixture_server.hh"
 #include "document.hh"
-#include "schema.hh"
 #include "util/fs.hh"
->>>>>>> claude/attached-card-copy
+#include "util/json.hh"
 
 namespace tsugumi::schema {
 namespace {

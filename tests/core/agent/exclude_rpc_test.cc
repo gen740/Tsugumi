@@ -2,14 +2,8 @@
 
 #include <map>
 
-<<<<<<< HEAD
 #include "util/json_object.hh"
-||||||| abb6f15b
-#include "agent/json.hh"
-=======
-#include "agent/json.hh"
 #include "project_fixture.hh"
->>>>>>> claude/attached-card-copy
 #include "util/crypto.hh"
 
 namespace tsugumi::test {
