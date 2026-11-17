@@ -127,7 +127,10 @@ let
   managed = pkgs.stdenv.mkDerivation {
     name = "${name}-managed";
     src = prepared;
-    nativeBuildInputs = [ dotnet ];
+    nativeBuildInputs = [
+      dotnet
+      pkgs.python3
+    ];
     DOTNET_CLI_TELEMETRY_OPTOUT = "1";
     DOTNET_NOLOGO = "1";
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
@@ -148,7 +151,10 @@ let
     buildPhase = ''
       runHook preBuild
       dotnet publish Card.csproj --no-restore --configuration Release \
-        -p:Deterministic=true -p:ContinuousIntegrationBuild=true --output $out
+        -p:Deterministic=true -p:ContinuousIntegrationBuild=true \
+        -p:DebugType=None -p:DebugSymbols=false -p:GenerateDocumentationFile=false \
+        -p:PublishReferencesDocumentationFiles=false --output $out
+      python3 ${sdkRoot}/codegen/trim_packages.py $out
       runHook postBuild
     '';
     dontInstall = true;

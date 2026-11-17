@@ -105,8 +105,6 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
             assert binary.startswith(b"\0asm\1\0\0\0")
             assert base64.b64encode(binary) in code
             assert code.endswith(template.read_bytes())
-            assert int((output / "size-bytes").read_text()) == len(binary)
-            assert int((template.parent / "size-bytes").read_text()) == template.stat().st_size
             assert len(binary) < 32768
         else:
             assert len(code) < 10000

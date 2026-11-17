@@ -20,7 +20,14 @@ with tempfile.TemporaryDirectory(prefix='tsugumi-cargo-') as tmp:
     generated = copy / 'tsugumi'
     (generated / 'src').mkdir(parents=True)
     shutil.copyfile(sdk / 'Cargo.toml', generated / 'Cargo.toml')
-    shutil.copytree(args.flatbuffers_source.resolve() / 'rust/flatbuffers', generated / 'flatbuffers')
+    runtime = args.flatbuffers_source.resolve() / 'rust/flatbuffers'
+    target = generated / 'flatbuffers'
+    shutil.copytree(runtime / 'src', target / 'src')
+    shutil.copyfile(runtime / 'build.rs', target / 'build.rs')
+    metadata = {'authors', 'license', 'description', 'homepage', 'repository', 'keywords', 'categories'}
+    (target / 'Cargo.toml').write_text(''.join(
+        line for line in (runtime / 'Cargo.toml').read_text().splitlines(keepends=True)
+        if line.split('=', 1)[0].strip() not in metadata))
     # Cargo resolves the SDK's dependencies without compiling its generated face.
     (generated / 'src/lib.rs').write_text('')
     subprocess.run(['cargo', 'generate-lockfile', *(['--offline'] if args.offline else [])], cwd=copy, check=True)

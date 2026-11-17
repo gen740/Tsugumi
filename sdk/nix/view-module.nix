@@ -10,5 +10,5 @@ pkgs.runCommand name { nativeBuildInputs = [ pkgs.esbuild ]; } ''
   mkdir -p $out
   esbuild ${src}/${entry} --bundle --format=esm --platform=browser --target=es2022 \
     --loader:.umd=text --loader:.wasm=binary --loader:.png=dataurl --loader:.jpg=dataurl --loader:.svg=dataurl \
-    ${pkgs.lib.optionalString minify "--minify"} --outfile=$out/index.js
+    ${pkgs.lib.optionalString minify "--minify"} --legal-comments=none --outfile=$out/index.js
 ''

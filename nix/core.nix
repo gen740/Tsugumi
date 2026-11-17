@@ -58,7 +58,6 @@ clangStdenv.mkDerivation {
       ../client/include
       ../client/src
       ../sdk
-      ../third-party/emscripten
       (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
       # Documentation tooling does not affect the native runtime.
       ../protocol/CMakeLists.txt

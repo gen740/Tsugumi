@@ -4,7 +4,7 @@ install(FILES ${PROJECT_SOURCE_DIR}/util/src/json.cc ${PROJECT_SOURCE_DIR}/util/
 install(FILES ${PROJECT_SOURCE_DIR}/util/include/tsugumi/util/json.hh ${PROJECT_SOURCE_DIR}/util/include/tsugumi/util/text.hh DESTINATION share/tsugumi/sdk/worker/util/include/tsugumi/util)
 install(FILES ${TSUGUMI_PROTOCOL_DIR}/worker.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs
   ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs DESTINATION share/tsugumi/sdk/worker/protocol)
-install(DIRECTORY ${HOSQ_INCLUDE_DIR}/hosq DESTINATION share/tsugumi/sdk/worker/include)
-install(FILES ${PROJECT_SOURCE_DIR}/third-party/emscripten/LICENSE DESTINATION share/tsugumi/third-party/emscripten)
+install(DIRECTORY ${HOSQ_INCLUDE_DIR}/hosq DESTINATION share/tsugumi/sdk/worker/include
+  FILES_MATCHING PATTERN "*.h" PATTERN "*.hh")
 
 install(FILES include/tsugumi/workerd/frame.hh include/tsugumi/workerd/display.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/workerd)

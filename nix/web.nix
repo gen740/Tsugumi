@@ -51,7 +51,6 @@ buildNpmPackage {
       ../protocol/tsugumi_enums.fbs
       ../protocol/data.fbs
       ../demos
-      ../sdk
       ../flake.lock
       ../VERSION
       ../docs/site/player/build.mjs
@@ -84,10 +83,9 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     share=$out/share/tsugumi
-    mkdir -p $share/ui/web $share/agent $testSupport
+    mkdir -p $share/ui/web $testSupport
     cp -R ui/web/dist $share/ui/web/dist
     cp -R demos flake.lock VERSION $share/
-    cp -R sdk $share/sdk
     # Checks reuse installation and generated bindings, without putting the
     # development tools in the distributed Web output's runtime closure.
     cp -R ui/web/node_modules $testSupport/node_modules

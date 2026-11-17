@@ -9,6 +9,8 @@
 # tsugumi-vmhost is signed ad-hoc with the virtualization entitlement, unless
 # TSUGUMI_CODESIGN_IDENTITY names a certificate.
 set -euo pipefail
+# Runtime files carry no Finder resource forks or AppleDouble sidecars.
+export COPYFILE_DISABLE=1
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$repo/dist"
 tree="$dist/cli/tsugumi"
@@ -48,14 +50,18 @@ cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 
 for library in "$tree/Frameworks/"*.dylib; do
+  /usr/bin/strip -S "$library"
   codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$library"
 done
+for binary in "$tree/bin/"*; do
+  /usr/bin/strip -S "$binary"
+done
+codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/node"
 codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-hostd"
 codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
 # The server finds these from ui/web/dist/server.js, as in the repository.
 cp -R "$repo/ui/web/dist" "$tree/ui/web/dist"
-find "$tree/ui/web/dist" -name '*.map' -delete
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 

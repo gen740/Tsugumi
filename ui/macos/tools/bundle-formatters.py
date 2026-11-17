@@ -32,6 +32,7 @@ def bundle(source, name):
                         '@loader_path/' + library.name, str(target)], check=True)
     if source.suffix == '.dylib':
         subprocess.run(['/usr/bin/install_name_tool', '-id', '@loader_path/' + target.name, str(target)], check=True)
+    subprocess.run(['/usr/bin/strip', '-S', str(target)], check=True)
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(target)], check=True)
     return target
 

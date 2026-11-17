@@ -45,8 +45,7 @@ let
           -o runtime.js
         cp ${source}/index.js index.js
         esbuild index.js --bundle --format=esm --platform=browser --target=es2022 \
-          --minify --outfile=$out/index.js
-        wc -c < $out/index.js > $out/size-bytes
+          --minify --legal-comments=none --outfile=$out/index.js
       '';
 in
 {
@@ -76,6 +75,5 @@ in
         -sEXPORTED_FUNCTIONS='["_tsugumi_view_initialise","_tsugumi_view_update","_tsugumi_view_resize","_tsugumi_view_dispose"]' \
         -o $out/view.wasm
       ln -s ${template}/index.js $out/index.js
-      wc -c < $out/view.wasm > $out/size-bytes
     '';
 }
