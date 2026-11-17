@@ -2,10 +2,60 @@
 
 #include <limits>
 
+#include "../agent_fixture_server.hh"
+#include "document.hh"
 #include "schema.hh"
+#include "util/fs.hh"
 
 namespace tsugumi::schema {
 namespace {
+TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
+  test::TemporaryDirectory directory;
+  fs::write_atomic(
+      directory.path / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  const auto file = directory.path / "definitions/x/_card.json";
+  std::filesystem::create_directories(file.parent_path());
+  for (const auto *member : {"filesystem", "unrecognizedSetting"}) {
+    fs::write_atomic(file, "{\"template\":\"draft\",\"" + std::string(member) +
+                               "\":true}");
+    try {
+      load_from_disk(directory.path);
+      FAIL() << "Unknown settings must be rejected";
+    } catch (const DocumentError &error) {
+      EXPECT_EQ(error.code, "invalid_document");
+      ASSERT_TRUE(error.args.contains("path")) << error.what();
+      EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
+      const std::string message = error.what();
+      EXPECT_NE(message.find("definitions/x/_card.json"), std::string::npos);
+      EXPECT_NE(message.find('"' + std::string(member) + '"'),
+                std::string::npos);
+      EXPECT_NE(message.find("remove"), std::string::npos);
+    }
+  }
+}
+
+TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {
+  for (const auto &[text, member] :
+       {std::pair{R"({"params":[{"unrecognized":true}]})", "unrecognized"},
+        std::pair{R"({"sandbox":"yes"})", "sandbox"}}) {
+    try {
+      parse_card_json("x", text);
+      FAIL() << "Invalid settings must be rejected";
+    } catch (const DocumentError &error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find("definitions/x/_card.json"), std::string::npos);
+      EXPECT_NE(message.find(member), std::string::npos);
+      if (std::string(member) == "unrecognized")
+        EXPECT_NE(message.find("params[0]"), std::string::npos);
+      else {
+        EXPECT_EQ(message.find("unknown setting"), std::string::npos);
+        EXPECT_NE(message.find("correct"), std::string::npos);
+      }
+    }
+  }
+}
+
 struct Coordinate {
   t::String<"id"> id;
   t::Array<"position", Number> position;

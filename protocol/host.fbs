@@ -201,7 +201,7 @@ table ProjectConnect {
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
 // Source paths name a definition or an external folder in the current project.
 // The host copies its complete document/source closure and places the new Card.
-table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; }
+table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; folder:string; }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
 table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }

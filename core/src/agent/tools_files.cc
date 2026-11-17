@@ -39,7 +39,8 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
   for (const auto& part : std::filesystem::path(path))
     if (part == ".tsugumi" || part == ".git") return false;
   const auto file = path.substr(root.size() + 1);
-  if (file == "_card.json" || file == "_meta.json" || file == "_link.json")
+  if (file.empty() || file == "_card.json" || file == "_meta.json" ||
+      file == "_link.json")
     return false;
   return !shell || !kProtected.contains(file);
 }
@@ -184,20 +185,28 @@ auto Tools::FileOperation(const std::string& conversation,
     std::lock_guard lock(mutex);
     root = registry.Root(project);
   }
-  if (name == "project_copy" && json::Text(args, "source") == "demo") {
+  const bool attached_card =
+      json::Text(args, "source") == "attached" && args.contains("card");
+  if (name == "project_copy" &&
+      (json::Text(args, "source") == "demo" || attached_card)) {
     H::ProjectOperateRequestT request;
     request.project_id = project;
     request.op_id = operation;
     H::ProjectCopyT copy;
     copy.project_path = json::Text(args, "project_path");
     auto item = std::make_unique<H::ProjectCopyItemT>();
-    item->demo = json::Text(args, "demo");
+    if (attached_card)
+      item->folder = json::Text(args, "folder");
+    else
+      item->demo = json::Text(args, "demo");
     item->from = json::Text(args, "card");
     item->id = json::Text(args, "id");
     item->name = json::Text(args, "name");
     item->x = std::stod(json::Get(args, "x", "0"));
     item->y = std::stod(json::Get(args, "y", "0"));
-    if (item->demo.empty()) throw Failure("invalid_request", "demo is required");
+    if (attached_card ? item->folder.empty() : item->demo.empty())
+      throw Failure("invalid_request",
+                    attached_card ? "folder is required" : "demo is required");
     copy.items.push_back(std::move(item));
     request.body.Set(std::move(copy));
     host::OperationContext context;
@@ -213,6 +222,17 @@ auto Tools::FileOperation(const std::string& conversation,
         for (const auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
           if (!access_service.HasGrant(resource, conversation, access))
             throw Failure("permission_denied", "Project access was revoked before saving");
+        if (attached_card) {
+          auto folder =
+              db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
+          folder.bind(1, project).bind(2, json::Text(args, "folder"));
+          if (!folder.step() ||
+              !access_service.HasGrant(folder.text(0), conversation,
+                                       Tsugumi::Service::Access::Read))
+            throw Failure(
+                "permission_denied",
+                "Attached-folder Read grant was revoked before saving");
+        }
       }
       if (args.contains("approved_permissions")) plan["approved_permissions"] = args.at("approved_permissions");
       if (boundary && boundary->scoped())
@@ -268,8 +288,11 @@ auto Tools::FileOperation(const std::string& conversation,
                    const std::string& expected_hash = "") {
     check_cancelled();
     if (!SourcePath(path))
-      throw Failure("permission_denied",
-                    "Destination must be a Card source file: " + path);
+      throw Failure(
+          "permission_denied",
+          "Files go into an existing Card's sources (definitions/<id>/<file>); "
+          "copy a whole Card with card + id: " +
+              path);
     const auto card = CardRoot(path);
     if (!hashes.contains(card + "/_card.json") &&
         !hashes.contains(card + "/_link.json"))
@@ -298,8 +321,11 @@ auto Tools::FileOperation(const std::string& conversation,
       if (!destinations.insert(to).second)
         throw Failure("invalid_request", "Duplicate destination: " + to);
       if (!SourcePath(to))
-        throw Failure("permission_denied",
-                      "Destination must be a Card source: " + to);
+        throw Failure(
+            "permission_denied",
+            "Files go into an existing Card's sources "
+            "(definitions/<id>/<file>); copy a whole Card with card + id: " +
+                to);
       check(to, true);
       if (source == "attached") {
         const auto folder = json::Text(args, "folder");

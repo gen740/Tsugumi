@@ -8,6 +8,43 @@ namespace {
 namespace j = agent::json;
 class AgentExclusionRPC : public AgentProjectFixture {
 protected:
+  auto Attach(const std::string &conversation,
+              const std::filesystem::path &folder) -> void {
+    ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
+                     [&](Builder &b) {
+                       return H::CreateRegisterFolderRequest(
+                                  b, b.CreateString(project_id),
+                                  b.CreateString("folder:copy"),
+                                  b.CreateString(folder.string()))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+    const auto pending =
+        Tool(conversation, "attached_folder_read",
+             j::Encode(j::Members{{"folder", Quote(folder.string())}}));
+    ASSERT_EQ(pending.Code(), "grant_required");
+    ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                     [&](Builder &b) {
+                       return A::CreateAccessResolveRequest(
+                                  b, b.CreateString(pending.RequestId()), true)
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+  }
+  auto CopyAttached(const std::string &conversation,
+                    const std::filesystem::path &folder) -> Reply {
+    return Tool(conversation, "project_copy",
+                j::Encode(j::Members{{"source", Quote("attached")},
+                                     {"folder", Quote(folder.string())},
+                                     {"card", Quote("sub")},
+                                     {"id", Quote("copied")},
+                                     {"name", Quote("Copied Card")},
+                                     {"x", "120"},
+                                     {"y", "240"},
+                                     {"base_rev", Quote("0")}}));
+  }
   auto Error(const Reply &reply) -> std::string {
     if (!reply.Code().empty())
       return reply.Code();
@@ -15,6 +52,10 @@ protected:
     if (!raw.starts_with('{'))
       return {};
     return j::Text(j::Object(j::Get(j::Object(raw), "value", "{}")), "kind");
+  }
+  auto Diagnostic(const Reply& reply) -> std::string {
+    return reply.Code().empty() ? JsonString(reply.View(), "/text")
+                                : reply.Failure()->message()->str();
   }
   auto Open(const std::vector<std::string> &excluded, bool shell = false)
       -> std::string {
@@ -39,6 +80,116 @@ protected:
     return conversation;
   }
 };
+TEST_F(AgentExclusionRPC,
+       AttachedCardCopyIncludesNestedExternalsAndBinarySources) {
+  const auto folder = directory.path / "attached";
+  const std::string project =
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+  const std::string binary("\0\xff\x80\n", 4);
+  Write(folder / "tsugumi.json", project);
+  Write(folder / "definitions/sub/_link.json", R"({"external":"inner"})");
+  Write(folder / "definitions/sub/_meta.json",
+        R"({"name":"Original","description":"Keep this"})");
+  Write(folder / "externals/inner/tsugumi.json", project);
+  Write(folder / "externals/inner/definitions/next/_link.json",
+        R"({"external":"deep"})");
+  Write(folder / "externals/inner/externals/deep/tsugumi.json", project);
+  const auto definition =
+      "externals/inner/externals/deep/definitions/data/_card.json";
+  Write(folder / definition, R"({"template":"draft"})");
+  const auto source =
+      "externals/inner/externals/deep/definitions/data/src/raw.bin";
+  Write(folder / source, binary);
+  const auto c = Open({".git"});
+  const auto args = j::Encode(j::Members{{"source", Quote("attached")},
+                                         {"folder", Quote(folder.string())},
+                                         {"card", Quote("sub")},
+                                         {"id", Quote("copied")},
+                                         {"base_rev", Quote("0")}});
+  EXPECT_EQ(Error(Tool(c, "project_copy", args)), "permission_denied");
+  Attach(c, folder);
+  const auto copied = CopyAttached(c, folder);
+  ASSERT_EQ(Error(copied), "") << copied.View();
+  const auto destination = directory.path / "project";
+  EXPECT_EQ(
+      Read(destination /
+           "externals/copied/externals/deep/definitions/data/src/raw.bin"),
+      binary);
+  EXPECT_EQ(Read(destination /
+                 "externals/copied/externals/deep/definitions/data/_card.json"),
+            Read(folder / definition));
+  EXPECT_EQ(
+      j::Text(j::Object(Read(destination / "definitions/copied/_link.json")),
+              "external"),
+      "copied");
+  const auto meta =
+      j::Object(Read(destination / "definitions/copied/_meta.json"));
+  EXPECT_EQ(j::Text(meta, "name"), "Copied Card");
+  EXPECT_EQ(j::Text(meta, "description"), "Keep this");
+  const auto position = j::Object(
+      j::Object(j::Object(Read(destination / "layout.json")).at("cards"))
+          .at("copied"));
+  EXPECT_DOUBLE_EQ(std::stod(position.at("x")), 120);
+  EXPECT_DOUBLE_EQ(std::stod(position.at("y")), 240);
+  EXPECT_EQ(Read(folder / source), binary);
+  EXPECT_EQ(Read(folder / "definitions/sub/_meta.json"),
+            R"({"name":"Original","description":"Keep this"})");
+}
+
+TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
+  const auto folder = directory.path / "attached";
+  Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
+  Write(folder / "definitions/sub/_link.json", R"({"external":"inner"})");
+  Write(folder / "externals/inner/tsugumi.json",
+        R"({"canvas":{"cards":[],"connections":[]}})");
+  Write(folder / "externals/inner/definitions/data/_card.json",
+        R"({"template":"draft"})");
+  const auto secret = folder / "externals/inner/definitions/data/src/raw.bin";
+  Write(secret, "EXCLUDED_ATTACHMENT");
+  const auto c = Open({secret.string()});
+  Attach(c, folder);
+  const auto result = CopyAttached(c, folder);
+  EXPECT_EQ(Error(result), "not_found") << Diagnostic(result);
+  EXPECT_EQ(Diagnostic(result).find("EXCLUDED_ATTACHMENT"), std::string::npos);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/definitions/copied"));
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/externals/copied"));
+}
+
+TEST_F(AgentExclusionRPC, AttachedCardCopyExplainsWhenFolderIsNotAProject) {
+  const auto folder = directory.path / "attached";
+  Write(folder / "note.txt", "An ordinary attached folder");
+  const auto c = Open({".git"});
+  Attach(c, folder);
+  const auto result = CopyAttached(c, folder);
+  EXPECT_EQ(Error(result), "invalid_project") << Diagnostic(result);
+  EXPECT_NE(Diagnostic(result).find("tsugumi.json"), std::string::npos);
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/definitions/copied"));
+}
+
+TEST_F(AgentExclusionRPC,
+       AttachedFileCopyKeepsTypedRefusalsForNonSourceDestinations) {
+  const auto folder = directory.path / "attached";
+  Write(folder / "note.txt", "Attached source bytes");
+  const auto c = Open({".git"});
+  Attach(c, folder);
+  for (const auto *to : {"definitions", "definitions/public/",
+                         "definitions/public/_card.json"}) {
+    const auto result =
+        Tool(c, "project_copy",
+             j::Encode(j::Members{
+                 {"source", Quote("attached")},
+                 {"folder", Quote(folder.string())},
+                 {"base_rev", Quote("0")},
+                 {"files",
+                  j::Encode(std::vector<std::string>{j::Encode(j::Members{
+                      {"from", Quote("note.txt")}, {"to", Quote(to)}})})}}));
+    EXPECT_EQ(Error(result), "permission_denied") << Diagnostic(result);
+  }
+}
+
 TEST_F(AgentExclusionRPC, FileReadListWriteAndPolicyChangesAreEnforcedByHost) {
   const auto c = Open({"definitions/hidden", ".git"});
   const auto listed =
