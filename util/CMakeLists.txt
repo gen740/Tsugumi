@@ -4,7 +4,7 @@ target_link_libraries(tsugumi_json PUBLIC hosq tsugumi_util)
 
 add_library(tsugumi_util STATIC src/text.cc src/crypto.cc src/fs.cc src/log.cc src/process.cc src/sqlite.cc)
 target_include_directories(tsugumi_util PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tsugumi_util PUBLIC Threads::Threads PRIVATE tsugumi_sqlite)
+target_link_libraries(tsugumi_util PUBLIC Threads::Threads PRIVATE native_sqlite)
 if(NOT APPLE)
   target_link_libraries(tsugumi_util PRIVATE PkgConfig::CRYPTO)
 endif()
