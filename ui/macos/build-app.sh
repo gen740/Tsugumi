@@ -74,10 +74,12 @@ for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle"
 [ -f "$math_fonts/latinmodern-math.otf" ]
 find "$math_fonts" -type f ! -name 'latinmodern-math.*' -delete
-cp "$repo/ui/macos/Resources/Fonts/latin-modern-math/"* "$math_fonts/"
+cp "$repo/ui/macos/Resources/Fonts/latin-modern-math/latinmodern-math.otf" "$math_fonts/"
 licenses="$app/Contents/Resources/licenses"
 mkdir -p "$licenses"
 cp -R "$repo/ui/macos/third-party/". "$repo/third-party/". "$licenses/"
+mkdir -p "$licenses/latin-modern-math"
+cp "$repo/ui/macos/Resources/Fonts/latin-modern-math/GUST-FONT-LICENSE.txt" "$licenses/latin-modern-math/"
 for grammar in TreeSitterNix TreeSitterPython TreeSitterJuliaScanner; do
   mkdir -p "$licenses/$grammar"
   cp "$repo/ui/macos/Sources/Grammars/$grammar/LICENSE" "$licenses/$grammar/"
@@ -144,10 +146,14 @@ if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then
   identity="$TSUGUMI_CODESIGN_IDENTITY"
 fi
 for library in "$app/Contents/Frameworks/"*.dylib; do
+  /usr/bin/strip -S "$library"
   codesign --force --sign "$identity" "$library" >/dev/null
 done
 for tool in "$app/Contents/Resources/formatters/"*; do
   codesign --force --sign "$identity" "$tool" >/dev/null
+done
+for binary in "$app/Contents/MacOS/"*; do
+  /usr/bin/strip -S "$binary"
 done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-hostd" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null

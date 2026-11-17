@@ -17,6 +17,7 @@ runCommand "tsugumi-web-checks"
       fileset = lib.fileset.unions [
         ../ui/web/scripts/test.mjs
         ../ui/web/tests
+        ../sdk/views
         ../tests/bench/wire-frames.ts
         ../tests/fixtures
         ../hostd/agent/Shared/system-prompt.md

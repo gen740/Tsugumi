@@ -13,6 +13,7 @@ if (!fs.existsSync(gen)) {
   console.error('shared/gen is missing: run `nix develop --command npm run gen` first')
   process.exit(1)
 }
+if (!watch) fs.rmSync(out, { recursive: true, force: true })
 fs.mkdirSync(path.join(out, 'public'), { recursive: true })
 fs.cpSync(path.join(root, 'third-party'), path.join(out, 'licenses'), { recursive: true })
 for (const component of ['flatbuffers', 'emscripten']) {
@@ -53,14 +54,14 @@ const server = {
   // The host server, and the Claude Code plugin's MCP server (plugins/tsugumi).
   entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts') },
   outdir: out,
-  bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
+  bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: watch, legalComments: 'none', loader: { '.md': 'text' },
   // A native module: loaded from node_modules when a terminal opens.
   logLevel: 'info',
 }
 const client = {
   entryPoints: { app: path.join(root, 'src', 'main.tsx') },
   outdir: path.join(out, 'public'),
-  metafile: true, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', sourcemap: true, minify: !watch,
+  metafile: true, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', sourcemap: watch, legalComments: 'none', minify: !watch,
   loader: { '.css': 'css' }, jsx: 'automatic', logLevel: 'info',
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
 }
