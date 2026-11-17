@@ -88,7 +88,9 @@ TEST_F(NativeContract, ValidOutputAndOmittedOptionalCompletes) {
 TEST_F(NativeContract, RequiredOutputFailsAtTheSdkCompletionCallback) {
   EXPECT_NE(finish_outputs_impl(nullptr), 0);
   ASSERT_TRUE(call.failure);
-  EXPECT_NE(call.failure->message.find("required output first"), std::string::npos);
+  ASSERT_EQ(call.failure->args.size(), 1u);
+  EXPECT_EQ(call.failure->args[0].first, "port");
+  EXPECT_EQ(call.failure->args[0].second, "first");
 }
 TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   fail_at_impl(nullptr, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");

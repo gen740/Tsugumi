@@ -239,6 +239,8 @@ void validate_required_outputs(Call& call) {
           return output.first == port->name()->string_view();
         })) {
       record_failure(D::FailureKind::output_invalid, "required output " + port->name()->str() + " is missing");
+      // The same argument as core's own check of the result gives.
+      if (call.failure) call.failure->args = {{"port", port->name()->str()}};
       return;
     }
   }

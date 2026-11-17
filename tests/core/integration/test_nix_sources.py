@@ -210,7 +210,7 @@ def test_an_address_is_looked_up_for_the_settings(core_factory, tmp_path):
     for wrong in ("nixpkgs", "path:/etc", "file:///etc"):
         with pytest.raises(RpcFailure) as failure:
             c.call("NixSourceResolveRequest", ref=wrong)
-        assert failure.value.kind == "invalid_document"
+        assert failure.value.kind == "validation_failed"
     after = c.call("ProjectInspectRequest")
     assert after.rev == before.rev and text(after.projectJson) == text(before.projectJson)
 
