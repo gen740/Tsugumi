@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
 import * as H from '../shared/gen/tsugumi/host'
 import { D, R, RPCFailure } from '../src/wire/rpc'
-import { arr, get, num, numText, parse, serialize } from '../shared/json'
+import { arr, get, J, num, numText, obj, parse, serialize } from '../shared/json'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -56,9 +56,9 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
     if (old !== 2) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
     return saved(s, request)
   }
-  assert.equal(await edit.commit(s, '3', false, x => x.updateParam('a', 'value', num(3), edit.paramBase)), false)
+  assert.equal(await edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', false))), false)
   assert.equal(edit.conflictRev, 1n, edit.error)
-  assert.equal(await edit.commit(s, '3', true, x => x.updateParam('a', 'value', num(3))), true)
+  assert.equal(await edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', true))), true)
   assert.deepEqual(guards, [1, 2])
 
   const draft = session()
@@ -158,9 +158,150 @@ for (const echoFirst of [false, true]) {
 for (const kind of [D.FailureKind.value_conflict, D.FailureKind.source_changed]) {
   const s = session(), edit = new RevisionEdit()
   s.operateProject = async () => { throw new RPCFailure({ kind }) }
-  assert.equal(await edit.apply(s, false, x => x.setProjectField('name', 'mine')), false)
+  assert.equal(await edit.apply(s, x => x.setProjectField('name', 'mine')), false)
   assert.equal(edit.conflictRev, s.rev)
   assert.equal(edit.error, undefined)
   assert.equal(edit.applying, false)
 }
+
+// Canvas parameters and inline Drafts retain the conflict-time guard across a third delta.
+for (const draft of [false, true]) {
+  const s = session(), edit = new InlineParamEdit()
+  edit.begin('1', s.rev)
+  edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
+  if (draft) { await s.startDraftEdit('a'); s.inlineDraft.content = 'mine' }
+  const fields = (n: number) => ({ definitionsUpsert: [new R.DefinitionT('a',
+    `{"template":"input","params":[{"name":"value","type":"int","data":${n}}]}`,
+    JSON.stringify({ content: String(n), description: 'unrelated' }))] })
+  const publish = (n: number) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(n) }))
+  publish(2)
+  let actual = 2
+  const guards: string[] = []
+  s.operateProject = async (request: H.ProjectOperateRequestT) => {
+    const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT | H.ProjectJSONEditT
+    const before = parse(String(field.oldValue!.json))
+    const guard = draft ? String(get(before, 'content')) : numText(before)!
+    guards.push(guard)
+    if (guard !== String(actual)) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
+    if (draft) assert.equal(get(parse(String(field.newValue!.json)), 'description'), 'unrelated')
+    return saved(s, request, inverse('inline'), draft ? { definitionsUpsert: [new R.DefinitionT('a', serialize(s.cardDefinition('a')), '{"content":"mine","description":"unrelated"}')] } : fields(3))
+  }
+  const save = async (overwrite: boolean) => {
+    if (draft) { await s.finishDraftEdit(overwrite); return !s.inlineDraft }
+    return edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', overwrite)))
+  }
+  assert.equal(await save(false), false)
+  actual = 4; publish(actual)
+  assert.equal(await save(true), false)
+  assert.equal(guards.at(-1), '2')
+  assert.equal(await save(true), true)
+  assert.equal(guards.at(-1), '4')
+  assert.equal(draft ? get(s.cardMeta('a'), 'content') : numText(get(arr(get(s.cardDefinition('a'), 'params'))![0], 'data')), draft ? 'mine' : '3')
+}
+
+// Each entity editor uses the same field working-copy path as its UI closure.
+// A third delta after the notice must fail, then the newly shown value can be overwritten.
+for (const kind of ['note', 'group', 'name', 'comment'] as const) {
+  for (const third of [false, true]) {
+    const s = session(), edit = new InlineParamEdit()
+    const file = kind === 'note' || kind === 'group' ? 'layout.json' : 'definitions/a/_meta.json'
+    const field = kind === 'note' ? 'notes' : kind === 'group' ? 'groups' : 'comments'
+    const selector = kind === 'name' ? ['name'] : [field, obj([['id', 'item']])]
+    const value = (text: string): J => kind === 'name' ? text : obj([['id', 'item'], [kind === 'group' ? 'name' : 'text', text]])
+    const document = (text: string) => kind === 'name' ? obj([['name', text]]) : obj([[field, [value(text)]]])
+    const fields = (text: string) => file === 'layout.json' ? { layoutJson: serialize(document(text)) }
+      : { definitionsUpsert: [new R.DefinitionT('a', serialize(s.cardDefinition('a')), serialize(document(text)))] }
+    const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
+      baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(text),
+    }))
+    publish('before')
+    edit.beginField('before', s, file, selector, value('before'))
+    publish('agent')
+    let actual = 'agent', wanted = 'mine'
+    const guards: string[] = []
+    s.operateProject = async (request: H.ProjectOperateRequestT) => {
+      const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
+      const before = String(field.oldValue!.json)
+      guards.push(before)
+      if (before !== serialize(value(actual))) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
+      assert.equal(field.newValue!.json, serialize(value(wanted)), kind)
+      return saved(s, request, inverse('entity'), fields(wanted))
+    }
+    const save = (overwrite: boolean) => edit.commitField(s, wanted, overwrite, () => value(wanted))
+    assert.equal(await save(false), false, kind)
+    if (third) {
+      actual = 'third'; publish(actual)
+      assert.equal(await save(true), false, kind + ': third writer must be refused')
+      assert.equal(guards.at(-1), serialize(value('agent')))
+    }
+    assert.equal(await save(true), true, kind + ': overwrite must save')
+    assert.equal(guards.at(-1), serialize(value(actual)))
+    assert.equal(file === 'layout.json' ? serialize(s.layout) : serialize(s.cardMeta('a')), serialize(document('mine')))
+    if (kind === 'name') {
+      actual = 'mine'; wanted = 'again'
+      assert.equal(await save(false), true, 'the next edit uses the value just saved')
+      assert.equal(guards.at(-1), serialize(value('mine')))
+    }
+  }
+}
+
+// Card settings include both JSON and source guards. Both are frozen at conflict time.
+const { CardEditorModel } = await import('../src/ui/cardSettings')
+for (const source of [false, true]) {
+  for (const third of [false, true]) {
+    const s = session(), file = 'definitions/a/main.py'
+    s.sources.set(file, { hash: 'before', size: 1n })
+    const editor = new CardEditorModel(s, 'a')
+    if (source) { s.client.readFile = async () => new TextEncoder().encode('before'); await editor.text(file); editor.setText(file, 'mine') }
+    else editor.setSetting('symbol', 'mine')
+    const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
+      baseRev: s.rev, rev: s.rev + 1n, origin: 'agent',
+      definitionsUpsert: [new R.DefinitionT('a', serialize(obj([['template', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
+      sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: text, sizeBytes: 1n })],
+    }))
+    publish('agent')
+    let actual = 'agent'
+    const guards: string[] = []
+    s.operateProject = async (request: H.ProjectOperateRequestT) => {
+      const edits = (request.body as H.ProjectEditsT).edits
+      const put = edits.find(e => e.valueType === H.ProjectEditValue.ProjectFilePut)?.value as H.ProjectFilePutT | undefined
+      const card = edits.find(e => (e.value as H.ProjectJSONEditT).filePath === 'definitions/a/_card.json')!.value as H.ProjectJSONEditT
+      const guard = source ? String(put!.expectedHash) : String(get(parse(String(card.oldValue!.json)), 'symbol') ?? 'before')
+      guards.push(guard)
+      if (guard !== actual) throw new RPCFailure({ kind: source ? D.FailureKind.source_changed : D.FailureKind.value_conflict })
+      if (source) assert.equal(new TextDecoder().decode(new Uint8Array(put!.bytes)), 'mine')
+      else assert.equal(get(parse(String(card.newValue!.json)), 'symbol'), 'mine')
+      return saved(s, request, inverse('settings'), { definitionsUpsert: [new R.DefinitionT('a', String(card.newValue!.json), serialize(s.cardMeta('a')))],
+        sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: 'mine', sizeBytes: 4n })] })
+    }
+    assert.equal(await editor.apply(), false)
+    if (third) { actual = 'third'; publish(actual); assert.equal(await editor.apply(true), false); assert.equal(guards.at(-1), 'agent') }
+    assert.equal(await editor.apply(true), true, editor.revisionEdit.error ?? `settings source=${source} third=${third}`)
+    assert.equal(guards.at(-1), actual)
+    assert.equal(source ? s.sources.get(file).hash : get(s.cardDefinition('a'), 'symbol'), 'mine')
+  }
+}
+
+// Raw definitions replace whole documents using the revision shown by the notice.
+for (const third of [false, true]) {
+  const s = session(), edit = new RevisionEdit()
+  edit.reload(s.rev)
+  const publish = () => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent' }))
+  publish()
+  const revisions: bigint[] = []
+  s.operateProject = async (request: H.ProjectOperateRequestT) => {
+    const body = request.body as H.ProjectReplaceDocumentsT
+    revisions.push(body.expectedRev)
+    if (body.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
+    return saved(s, request, inverse('raw'), { definitionsUpsert: [new R.DefinitionT('a', '{"template":"draft"}', '{"content":"mine"}')] })
+  }
+  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"template":"draft"}')], ['definitions/a/_meta.json', parse('{"content":"mine"}')]], overwrite)
+  assert.equal(await save(false), false)
+  assert.equal(edit.conflictRev, 1n)
+  assert.equal(edit.error, undefined)
+  if (third) { publish(); assert.equal(await save(true), false); assert.equal(revisions.at(-1), 1n) }
+  assert.equal(await save(true), true)
+  assert.equal(get(s.cardMeta('a'), 'content'), 'mine')
+}
+
 console.log('reviewOperations: passed')

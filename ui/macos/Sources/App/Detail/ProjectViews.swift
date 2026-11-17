@@ -126,7 +126,7 @@ struct CardDatabaseView: View {
       let card = try JSONValue.parse(sentCard)
       let meta = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(sentMeta)
       parseError = nil
-      guard await revisionEdit.replaceDocuments(session, [
+      guard await revisionEdit.replaceDocuments(session, overwrite: overwrite, [
         ("definitions/\(id)/_card.json", card), ("definitions/\(id)/_meta.json", meta),
       ]) else { return }
       guard selected == id else { return }
@@ -189,7 +189,9 @@ private struct NixSourceSettings: View {
 
   private func save(_ list: [JSONValue], overwrite: Bool = false) async {
     pending = list
-    if await revisionEdit.apply(session, overwrite: overwrite, { $0.setProjectField("nixSources", .array(list)) }) {
+    let before = revisionEdit.jsonBase("tsugumi.json", initial: session.project, overwrite: overwrite)
+    var after = before ?? .object([]); after["nixSources"] = .array(list)
+    if await revisionEdit.apply(session, { $0.appendEdits([$0.jsonEdit("tsugumi.json", old: before, new: after)]) }) {
       pending = nil
     }
   }
@@ -353,14 +355,15 @@ private struct GeneralProjectSettings: View {
   private func save(overwrite: Bool = false) async {
     let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths, sentExclude = agentExclude
     let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
-    var after = selectedProject
+    let before = revisionEdit.jsonBase("tsugumi.json", initial: selectedProject, overwrite: overwrite)
+    var after = before ?? .object([])
     if sentName != (selectedProject["name"]?.string ?? "") { after["name"] = .string(sentName) }
     if sentPkgs != (selectedProject["pkgsPath"]?.string ?? "") { after["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs) }
     let originalPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
     if sentPaths != originalPaths { after["versionPaths"] = .array(paths.map { .string($0) }) }
     if sentExclude != excludeText(selectedProject) { after["agentExclude"] = .array(sentExclude.components(separatedBy: .newlines).filter { !$0.isEmpty }.map { .string($0) }) }
-    if await revisionEdit.apply(session, overwrite: overwrite, { s in
-      s.appendEdits([s.jsonEdit("tsugumi.json", old: selectedProject, new: after)])
+    if await revisionEdit.apply(session, { s in
+      s.appendEdits([s.jsonEdit("tsugumi.json", old: before, new: after)])
     }) {
       selectedProject = after
       if pkgs == sentPkgs { pkgs = after["pkgsPath"]?.string ?? "" }
@@ -411,7 +414,9 @@ private struct RunHistorySettings: View {
   }
 
   private func saveHistorySetting(overwrite: Bool = false) async {
-    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.setProjectField("saveRunHistory", .bool(pendingSaving)) }
+    let before = revisionEdit.jsonBase("tsugumi.json", initial: session.project, overwrite: overwrite)
+    var after = before ?? .object([]); after["saveRunHistory"] = .bool(pendingSaving)
+    _ = await revisionEdit.apply(session) { $0.appendEdits([$0.jsonEdit("tsugumi.json", old: before, new: after)]) }
   }
 
   var body: some View {

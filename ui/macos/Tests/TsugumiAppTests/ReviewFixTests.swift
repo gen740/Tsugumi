@@ -128,8 +128,11 @@ extension SyncTests {
       try await save("newer", "newer")
       _ = await session.finishDraftEdit()
       #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
-      // Overwriting replaces the value now saved; the field left alone keeps the newest.
+      // Overwriting is guarded by the value shown at the conflict: a third
+      // writer's change is refused again, and the next overwrite replaces it.
       try await save("newest", "newest")
+      _ = await session.finishDraftEdit(overwrite: true)
+      #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
       _ = await session.finishDraftEdit(overwrite: true)
       #expect(session.inlineDraft == nil && !session.dirty)
       #expect(session.cardMeta("a")?[field]?.string == "mine")

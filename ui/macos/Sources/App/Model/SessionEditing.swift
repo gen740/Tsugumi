@@ -317,14 +317,13 @@ extension ProjectSession {
     let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
     let name = trimmed.isEmpty ? "draft" : trimmed
     if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
-    let before = overwrite ? cardMeta(e.card) : e.initialMeta
+    guard let dir = definitionDir(e.card) else { return nil }
+    let before = e.revision.jsonBase(dir + "_meta.json", initial: e.initialMeta, overwrite: overwrite)
     var after = before ?? .object([])
     if contentChanged { after["content"] = e.content.isEmpty ? nil : .string(e.content) }
     if nameChanged { after["name"] = .string(name) }
-    let ok = await e.revision.apply(self, overwrite: overwrite) { s in
-      if let dir = s.definitionDir(e.card) {
-        s.appendEdits([s.jsonEdit(dir + "_meta.json", old: before, new: after)])
-      }
+    let ok = await e.revision.apply(self) { s in
+      s.appendEdits([s.jsonEdit(dir + "_meta.json", old: before, new: after)])
     }
     if ok, inlineDraft?.revision === e.revision {
       if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
@@ -471,7 +470,7 @@ extension ProjectSession {
   }
 
   /// The scope whose layout holds a note or group (ids are unique).
-  private func scopeHolding(_ field: String, _ id: String) -> [String]? {
+  func scopeHolding(_ field: String, _ id: String) -> [String]? {
     func has(_ l: JSONValue) -> Bool { (l[field]?.array ?? []).contains { $0["id"]?.string == id } }
     if has(layout) { return [] }
     var queue: [[String]] = childScopes(of: [])
@@ -503,15 +502,6 @@ extension ProjectSession {
     }
   }
 
-  func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
-    guard let sc = scopeHolding("notes", id) else { return }
-    updateLayout(of: sc) { l in
-      guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
-      fn(&notes[i])
-      l["notes"] = .array(notes)
-    }
-  }
-
   func removeNote(_ id: String) {
     queueFields { [self] in
       guard let scope = scopeHolding("notes", id), let prefix = projectPrefix(scope), let before = note(id) else {
@@ -527,14 +517,6 @@ extension ProjectSession {
 
   func groups(in scope: [String]) -> [JSONValue] {
     (layout(of: scope)["groups"]?.array ?? []).filter { ($0["scope"]?.string ?? "") == "" }
-  }
-
-  func updateGroups(in scope: [String], _ fn: (inout [JSONValue]) -> Void) {
-    updateLayout(of: scope) { l in
-      var groups = l["groups"]?.array ?? []
-      fn(&groups)
-      l["groups"] = groups.isEmpty ? nil : .array(groups)
-    }
   }
 
   func addGroup(_ keys: Set<CardKey>, in scope: [String], name: String = String(localized: "グループ")) async throws -> String {

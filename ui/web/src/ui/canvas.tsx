@@ -262,7 +262,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
       : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
     if (!type) return false
-    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type), overwrite ? undefined : edit.paramBase))
+    return edit.commit(session, text, x => x.updateParam(k, name, parseParam(text, type), edit.parameterBase(session, k, name, overwrite)))
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
@@ -1200,20 +1200,22 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
   const [height, setHeight] = useState(dbl(get(init, 'height')) ?? 120)
   const [fontSize, setFontSize] = useState(dbl(get(init, 'fontSize')) ?? 13)
   const value = () => JSON.stringify([text, color, width, height, fontSize])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.begin(value(), session.rev); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], init); return e })
   const reload = () => {
     const n = session.note(noteId)
     const t = str(get(n, 'text')) ?? '', c = str(get(n, 'color')) ?? 'yellow', w = dbl(get(n, 'width')) ?? 240, h = dbl(get(n, 'height')) ?? 120, f = dbl(get(n, 'fontSize')) ?? 13
     setText(t); setColor(c); setWidth(w); setHeight(h); setFontSize(f)
-    edit.begin(JSON.stringify([t, c, w, h, f]), session.rev)
+    edit.beginField(JSON.stringify([t, c, w, h, f]), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], n)
   }
-  const apply = (overwrite = false) => edit.commit(session, value(), overwrite, x => x.changeNote(noteId, (n) => {
+  const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, n => {
+    if (!(n instanceof JObj)) return n
     n.set('text', text)
     n.set('color', color)
     n.set('width', real(width))
     n.set('height', real(height))
     n.set('fontSize', fontSize === 13 ? undefined : real(fontSize))
-  }))
+    return n
+  })
   return (
     <EditorSheet title={L('付箋を編集')} width={560} onClose={onClose} onApply={() => apply()}>
       <RevisionEditNotice edit={edit} text={value} overwrite={() => void apply(true).then(ok => { if (ok) onClose() })} reload={reload} />
@@ -1251,7 +1253,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
     return n
   }
   const value = () => JSON.stringify([name, color, [...members].sort(), [...outputs].sort()])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.begin(value(), session.rev); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], init); return e })
   const reload = () => {
     const g = session.groups(scope).find(g => str(g.get('id')) === groupId)
     const n = str(g?.get('name')) ?? '', c = str(g?.get('color')) ?? 'blue'
@@ -1260,11 +1262,10 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
       const c = str(get(o, 'card')), p = str(get(o, 'port')); return c && p ? [`${c}\t${p}`] : []
     }))
     setName(n); setColor(c); setMembers(m); setOutputs(o)
-    edit.begin(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session.rev)
+    edit.beginField(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], g)
   }
-  const apply = (overwrite = false) => edit.commit(session, value(), overwrite, x => x.updateGroups(scope, groups => {
-    const g = groups.find(g => str(get(g, 'id')) === groupId)
-    if (!(g instanceof JObj)) return
+  const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, g => {
+    if (!(g instanceof JObj)) return g
     g.set('name', name)
     g.set('color', color)
     g.set('cards', [...members].sort())
@@ -1273,7 +1274,8 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
       return c && p && members.has(c) ? [obj([['card', c], ['port', p]])] : []
     })
     g.set('outputs', outs.length ? outs : undefined)
-  }))
+    return g
+  })
   return (
     <EditorSheet title={L('グループを編集')} width={600} onClose={onClose} onApply={() => apply()}>
       <RevisionEditNotice edit={edit} text={value} overwrite={() => void apply(true).then(ok => { if (ok) onClose() })} reload={reload} />

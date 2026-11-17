@@ -351,24 +351,24 @@ export class CardEditorModel extends Observable {
     const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p) && !moves.has(p))
     const gone = [...this.removed].filter(p => !moves.has(p) && ![...moves.values()].includes(p))
     const bases = new Map(this.baseHashes)
-    const ok = await this.revisionEdit.apply(session, overwrite, (x) => {
+    const ok = await this.revisionEdit.apply(session, (x) => {
       const edits: H.ProjectEditT[] = []
-      if (def !== undefined) edits.push(x.jsonEdit(prefix + '_card.json', overwrite ? session.cardDefinition(k) : this.baseDefinition, def))
-      edits.push(x.jsonEdit(prefix + '_meta.json', overwrite ? session.cardMeta(k) : this.baseMeta, m))
+      if (def !== undefined) edits.push(x.jsonEdit(prefix + '_card.json', this.revisionEdit.jsonBase(prefix + '_card.json', this.baseDefinition, overwrite), def))
+      edits.push(x.jsonEdit(prefix + '_meta.json', this.revisionEdit.jsonBase(prefix + '_meta.json', this.baseMeta, overwrite), m))
       for (const [to, from] of moves) {
-        const hash = overwrite ? session.sources.get(from)?.hash : bases.get(to)
+        const hash = this.revisionEdit.hashBase(from, bases.get(to), overwrite)
         if (!hash) throw new Error('Missing source hash: ' + from)
-        const destination = destinations.get(to)
+        const destination = this.revisionEdit.hashBase(to, destinations.get(to), overwrite)
         edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFileMove,
           new H.ProjectFileMoveT(from, hash, to, destination ?? null, !destination)))
       }
       for (const [p, text] of changedTexts) {
-        const hash = overwrite ? session.sources.get(moves.get(p) ?? p)?.hash : bases.get(p)
+        const hash = this.revisionEdit.hashBase(moves.get(p) ?? p, bases.get(p), overwrite)
         edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFilePut,
           new H.ProjectFilePutT(p, hash ?? null, !hash, Array.from(new TextEncoder().encode(text)))))
       }
       for (const p of gone) {
-        const hash = overwrite ? session.sources.get(p)?.hash : bases.get(p)
+        const hash = this.revisionEdit.hashBase(p, bases.get(p), overwrite)
         if (!hash) throw new Error('Missing source hash: ' + p)
         edits.push(new H.ProjectEditT(H.ProjectEditValue.ProjectFileRemove, new H.ProjectFileRemoveT(p, hash)))
       }
@@ -580,7 +580,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const session = model.session
   const def = model.definition
   const [name, setName] = useState(() => session.displayName(model.cardKey))
-  const [nameEdit] = useState(() => { const e = new InlineParamEdit(); e.begin(session.displayName(model.cardKey), session.rev); return e })
+  const [nameEdit] = useState(() => { const e = new InlineParamEdit(); e.beginField(session.displayName(model.cardKey), session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')); return e })
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string>()
   // This tsugumid runs on this host: without the sandbox a Card is a process
@@ -590,7 +590,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const previousName = useRef(currentName)
   useEffect(() => {
     const before = previousName.current
-    if (name === before) { setName(currentName); nameEdit.begin(currentName, session.rev) }
+    if (name === before) { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }
     previousName.current = currentName
   }, [currentName])
 
@@ -602,7 +602,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
     try {
       const problem = session.cardNameProblem(model.cardKey, nw)
       if (problem) throw new Error(problem)
-      await nameEdit.commit(session, nw, overwrite, x => x.updateMeta(model.cardKey, m => m.set('name', nw)))
+      await nameEdit.commitField(session, nw, overwrite, () => nw)
     } catch (e) {
       setRenameError(e instanceof RPCFailure ? e.diagnostic ?? errorText(e) : errorText(e))
     }
@@ -686,7 +686,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
             {renaming && <Spinner small />}
           </div>
         </Row>
-        <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.begin(currentName, session.rev) }} />
+        <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }} />
       {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && kind !== 'switch' && (
@@ -1164,7 +1164,6 @@ function CommentRecord({ comment: c }: { comment: CardComment }) {
  *  (during a run, when the run ends, as other edits): it says nothing about how it runs. */
 function CommentsCategory({ session, card }: { session: ProjectSession; card: CardKey }) {
   useObserve(session)
-  const baseRev = session.rev
   const [text, setText] = useState('')
   const [revisionEdit] = useState(() => new InlineParamEdit())
   useObserve(revisionEdit)
@@ -1178,10 +1177,17 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
       setText(current => current === submitted ? '' : current)
     } catch (e) { session.cardEditFailed(e) }
   }
+  const beginCommentEdit = (id: string, text: string) => {
+    const value = arr(get(session.cardMeta(card), 'comments'))?.find(c => str(get(c, 'id')) === id)
+    revisionEdit.beginField(text, session, (session.definitionDir(card) ?? '') + '_meta.json', ['comments', obj([['id', id]])], value)
+  }
   const saveEdit = async (overwrite = false) => {
     if (!editing) return
     const copy = editing
-    if (await revisionEdit.commit(session, copy.text, overwrite, (x) => x.setCommentText(card, copy.id, copy.text))) setEditing(undefined)
+    if (await revisionEdit.commitField(session, copy.text, overwrite, value => {
+      if (isObj(value) && copy.text.trim()) { value.set('text', copy.text.trim()); value.set('editedBy', 'user') }
+      return value
+    })) setEditing(undefined)
   }
   const submitting = (run: () => void) => (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
@@ -1212,7 +1218,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
             </div>
           )}
           <div className="row end gap6">
-            <Button small disabled={!session.connected} onClick={() => { revisionEdit.begin(c.text, baseRev); setEditing({ id: c.id, text: c.text }) }}>{L('編集')}</Button>
+            <Button small disabled={!session.connected} onClick={() => { beginCommentEdit(c.id, c.text); setEditing({ id: c.id, text: c.text }) }}>{L('編集')}</Button>
             {c.resolved
               ? <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, false)}>{L('開き直す')}</Button>
               : <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, true)}>{L('解決')}</Button>}
@@ -1232,7 +1238,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
       <RevisionEditNotice edit={revisionEdit} text={() => editing?.text ?? ''} overwrite={() => void saveEdit(true)} reload={() => {
         const current = comments.find((c) => c.id === editing?.id)
         setEditing(current ? { id: current.id, text: current.text } : undefined)
-        revisionEdit.begin(current?.text ?? '', session.rev)
+        beginCommentEdit(editing?.id ?? '', current?.text ?? '')
       }} />
       {editing && !comments.some((c) => c.id === editing.id) && row({ ...editing, resolved: false, cards: [] })}
       {open.map(row)}

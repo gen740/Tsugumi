@@ -1,3 +1,4 @@
+import { arr, clone, get, J, jeq, JObj, str } from '../../shared/json'
 import { L } from '../i18n'
 import { Observable, useObserve } from '../model/observable'
 import { errorText, ProjectSession } from '../model/session'
@@ -12,10 +13,43 @@ export class RevisionEdit extends Observable {
   error?: string
   applying = false
   savedRev?: bigint
+  private conflictDocuments = new Map<string, J | undefined>()
+  private conflictHashes = new Map<string, string>()
+
+  /** Freeze comparison values when the conflict is shown, not on retry. */
+  private recordConflict(session: ProjectSession) {
+    this.conflictRev = session.rev
+    this.conflictDocuments = new Map([['tsugumi.json', clone(session.project)], ['layout.json', clone(session.layout)]])
+    const definitions = (prefix: string, values: ProjectSession['definitionDrafts']) => {
+      for (const [id, d] of values) {
+        const dir = `${prefix}definitions/${id}/`
+        if (d.link === undefined) this.conflictDocuments.set(dir + '_card.json', clone(d.card))
+        this.conflictDocuments.set(dir + '_meta.json', clone(d.meta))
+        this.conflictDocuments.set(dir + '_link.json', clone(d.link))
+      }
+    }
+    definitions('', session.definitionDrafts)
+    for (const [prefix, external] of session.externals) {
+      this.conflictDocuments.set(prefix + 'tsugumi.json', clone(external.project))
+      this.conflictDocuments.set(prefix + 'layout.json', clone(external.layout))
+      definitions(prefix, external.definitions)
+    }
+    this.conflictHashes = new Map([...session.sources].map(([file, source]) => [file, source.hash]))
+    this.error = undefined
+  }
+
+  jsonBase(file: string, initial: J | undefined, overwrite: boolean): J | undefined {
+    return clone(overwrite ? this.conflictDocuments.get(file) : initial)
+  }
+  hashBase(file: string, initial: string | undefined, overwrite: boolean): string | undefined {
+    return overwrite ? this.conflictHashes.get(file) : initial
+  }
 
   reload(rev: bigint) {
     this.baseRev = rev
     this.conflictRev = undefined
+    this.conflictDocuments.clear()
+    this.conflictHashes.clear()
     this.error = undefined
     this.changed()
   }
@@ -28,7 +62,7 @@ export class RevisionEdit extends Observable {
     this.conflictRev ??= rev
     this.changed()
   }
-  async apply(session: ProjectSession, overwrite: boolean, change: (s: ProjectSession) => void): Promise<boolean> {
+  async apply(session: ProjectSession, change: (s: ProjectSession) => void): Promise<boolean> {
     if (this.applying) return false
     this.applying = true
     this.changed()
@@ -38,8 +72,7 @@ export class RevisionEdit extends Observable {
       return true
     } catch (e) {
       if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) {
-        this.conflictRev = session.rev
-        this.error = undefined
+        this.recordConflict(session)
       } else this.error = errorText(e)
       return false
     } finally {
@@ -47,14 +80,18 @@ export class RevisionEdit extends Observable {
       this.changed()
     }
   }
-  async replaceDocuments(session: ProjectSession, documents: [string, import('../../shared/json').J | undefined][]): Promise<boolean> {
+  async replaceDocuments(session: ProjectSession, documents: [string, J | undefined][], overwrite = false): Promise<boolean> {
     if (this.applying) return false
     this.applying = true; this.changed()
     try {
-      this.savedRev = await session.replaceDocuments(this.baseRev, documents)
+      this.savedRev = await session.replaceDocuments(overwrite ? this.conflictRev ?? this.baseRev : this.baseRev, documents)
       this.reload(this.savedRev)
       return true
-    } catch (e) { this.error = errorText(e); return false }
+    } catch (e) {
+      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) this.recordConflict(session)
+      else this.error = errorText(e)
+      return false
+    }
     finally { this.applying = false; this.changed() }
   }
 
@@ -78,11 +115,38 @@ export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: Re
 /** The value and revision actually visible when an inline edit starts. */
 export class InlineParamEdit extends RevisionEdit {
   initial = ''
-  paramBase?: { parameter?: import('../../shared/json').J }
+  paramBase?: { parameter?: J }
+  private fieldBase?: { file: string; selector: (string | JObj)[]; value?: J }
+  beginField(text: string, session: ProjectSession, file: string, selector: (string | JObj)[], value: J | undefined) {
+    this.begin(text, session.rev)
+    this.fieldBase = { file, selector, value: clone(value) }
+  }
+  async commitField(session: ProjectSession, text: string, overwrite: boolean, change: (value: J | undefined) => J | undefined) {
+    const base = this.fieldBase
+    if (!base) return false
+    let before = clone(base.value)
+    if (overwrite) {
+      before = this.jsonBase(base.file, undefined, true)
+      for (const step of base.selector) {
+        if (typeof step === 'string') before = get(before, step)
+        else before = arr(before)?.find(item => step.entries().every(([k, v]) => jeq(get(item, k), v)))
+      }
+    }
+    const after = change(clone(before === undefined ? base.value : before))
+    const ok = await this.commit(session, text, s => s.appendEdits([s.fieldEdit(base.file, base.selector, before, after)]))
+    if (ok && this.fieldBase === base) this.fieldBase = { ...base, value: clone(after) }
+    return ok
+  }
+  parameterBase(session: ProjectSession, card: string, name: string, overwrite: boolean) {
+    if (!overwrite) return this.paramBase
+    const dir = session.definitionDir(card)
+    const definition = this.jsonBase(dir + '_card.json', undefined, true)
+    return { parameter: arr(get(definition, 'params'))?.find(p => str(get(p, 'name')) === name) }
+  }
   begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
-  async commit(session: ProjectSession, text: string, overwrite: boolean, change: (s: ProjectSession) => void) {
+  async commit(session: ProjectSession, text: string, change: (s: ProjectSession) => void) {
     if (text === this.initial) return true
-    const ok = await this.apply(session, overwrite, change)
+    const ok = await this.apply(session, change)
     if (ok) this.initial = text
     return ok
   }

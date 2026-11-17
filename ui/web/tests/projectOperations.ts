@@ -229,7 +229,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   assert.equal(requests.length, 1, 'an unchanged gesture has no operation')
   const form = new RevisionEdit()
   form.reload(0n) // A form has no global stale-revision gate.
-  assert.equal(await form.apply(s, false, x => x.setProjectField('name', 'form')), true)
+  assert.equal(await form.apply(s, x => x.setProjectField('name', 'form')), true)
   assert.equal(requests.length, 2)
   await s.replaceDocuments(0n, [['tsugumi.json', parse('{"name":"raw"}')]])
   assert.equal(requests[2].bodyType, H.ProjectOperationBody.ProjectReplaceDocuments)

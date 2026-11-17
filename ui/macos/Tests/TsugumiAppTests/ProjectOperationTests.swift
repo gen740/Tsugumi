@@ -177,7 +177,7 @@ import TsugumiTestSupport
     }
     #expect(await edit.commit(session, text: "3", { $0.updateParam("a", "value", .number("3"), initial: edit.paramBase) }) == false)
     #expect(edit.revision.conflictRev == 1 && edit.revision.error == nil)
-    #expect(await edit.commit(session, text: "3", overwrite: true, { $0.updateParam("a", "value", .number("3")) }))
+    #expect(await edit.commit(session, text: "3", { $0.updateParam("a", "value", .number("3"), initial: edit.parameterBase(session, "a", "value", overwrite: true)) }))
     #expect(oldValues == [.number("1"), .number("2")])
     var draftBases: [String] = []
     session.operateProject = { request in
@@ -308,4 +308,205 @@ import TsugumiTestSupport
     }
   }
 
+}
+
+extension ProjectOperationTests {
+  @Test(arguments: [false, true])
+  func entityEditorsOverwriteTheShownConflict(third: Bool) async throws {
+    for kind in ["note", "group", "name", "comment"] {
+      let (s, dir) = try session()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let edit = InlineParamEdit()
+      let isLayout = kind == "note" || kind == "group"
+      let file = isLayout ? "layout.json" : "definitions/a/_meta.json"
+      let field = kind == "note" ? "notes" : kind == "group" ? "groups" : "comments"
+      let selector: [JSONValue] = kind == "name" ? [.string("name")] : [.string(field), .object([("id", .string("item"))])]
+      func value(_ text: String) -> JSONValue {
+        kind == "name" ? .string(text) : .object([("id", .string("item")), (kind == "group" ? "name" : "text", .string(text))])
+      }
+      func document(_ text: String) -> JSONValue {
+        kind == "name" ? .object([("name", .string(text))]) : .object([(field, .array([value(text)]))])
+      }
+      func changed(_ text: String, _ id: String) -> Tsugumi_RPC_DocumentDeltaT {
+        let d = delta(s.rev, id, "old"); d.projectJson = nil
+        if isLayout { d.layoutJson = document(text).serialized() }
+        else {
+          let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft"}"#; def.metaJson = document(text).serialized()
+          d.definitionsUpsert = [def]
+        }
+        return d
+      }
+      s.applyDelta(changed("before", "initial"))
+      edit.beginField("before", session: s, file: file, selector: selector, value: value("before"))
+      s.applyDelta(changed("agent", "agent"))
+      var actual = "agent", wanted = "mine", guards: [JSONValue] = []
+      s.operateProject = { request in
+        let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+        let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
+        let before = try JSONValue.parse(try #require(field.oldValue.json))
+        guards.append(before)
+        if before != value(actual) { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
+        let written = try JSONValue.parse(try #require(field.newValue.json))
+        #expect(written == value(wanted))
+        return self.result(changed(wanted, request.opId))
+      }
+      func save(_ overwrite: Bool) async -> Bool {
+        await edit.commitField(s, text: wanted, overwrite: overwrite) { $0 = value(wanted) }
+      }
+      #expect(await save(false) == false)
+      if third {
+        actual = "third"; s.applyDelta(changed(actual, "third"))
+        #expect(await save(true) == false)
+        #expect(guards.last == value("agent"))
+      }
+      #expect(await save(true))
+      #expect(guards.last == value(actual))
+      #expect((isLayout ? s.layout : s.cardMeta("a")) == document("mine"))
+      if kind == "name" {
+        actual = "mine"; wanted = "again"
+        #expect(await save(false))
+        #expect(guards.last == value("mine"))
+      }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func cardSettingsOverwriteTheShownConflict(third: Bool) async throws {
+    for source in [false, true] {
+      let (s, dir) = try session()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+      snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
+      let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"template":"draft","symbol":"before"}"#
+      let file = "definitions/a/data.bin"
+      let info = Tsugumi_RPC_SourceInfoT(); info.path = file; info.hash = "before"; info.sizeBytes = 1
+      snapshot.definitions = [definition]; snapshot.sources = [info]
+      s.receiveProjectSnapshot(snapshot, projectId: "p")
+      let editor = CardEditorModel(session: s, cardKey: "a")
+      if source { #expect(await editor.rename(file, to: "renamed.bin")) }
+      else { editor.definition?["symbol"] = .string("mine") }
+      func changed(_ text: String, _ id: String) -> Tsugumi_RPC_DocumentDeltaT {
+        let d = delta(s.rev, id, "old"); d.projectJson = nil
+        let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft","symbol":"\#(text)"}"#
+        let info = Tsugumi_RPC_SourceInfoT(); info.path = file; info.hash = text; info.sizeBytes = 1
+        d.definitionsUpsert = [def]; d.sourcesUpsert = [info]
+        return d
+      }
+      s.applyDelta(changed("agent", "agent"))
+      var actual = "agent", guards: [String] = []
+      s.operateProject = { request in
+        let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+        let json = try #require(body.edits.compactMap { $0?.value?.value as? Tsugumi_Host_ProjectJSONEditT }.first { $0.filePath.hasSuffix("_card.json") })
+        let move = body.edits.compactMap { $0?.value?.value as? Tsugumi_Host_ProjectFileMoveT }.first
+        let before = try JSONValue.parse(try #require(json.oldValue.json))
+        let guardValue: String
+        if source { guardValue = try #require(move?.expectedHash) } else { guardValue = try #require(before["symbol"]?.string) }
+        guards.append(guardValue)
+        if guardValue != actual { throw RPCFailure(kind: source ? .sourceChanged : .valueConflict, diagnostic: "") }
+        if source { #expect(move?.to == "definitions/a/renamed.bin") }
+        else {
+          let written = try JSONValue.parse(try #require(json.newValue.json))
+          #expect(written["symbol"]?.string == "mine")
+        }
+        return self.result(changed("mine", request.opId))
+      }
+      #expect(await editor.apply() == false)
+      if third {
+        actual = "third"; s.applyDelta(changed(actual, "third"))
+        #expect(await editor.apply(overwrite: true) == false)
+        #expect(guards.last == "agent")
+      }
+      #expect(await editor.apply(overwrite: true))
+      #expect(guards.last == actual)
+      #expect(s.cardDefinition("a")?["symbol"]?.string == "mine")
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func rawDefinitionOverwriteUsesTheShownRevision(third: Bool) async throws {
+    let (s, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let edit = RevisionEdit(); edit.reload(s.rev)
+    s.applyDelta(delta(0, "agent", "agent"))
+    var revisions: [UInt64] = []
+    s.operateProject = { request in
+      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectReplaceDocumentsT)
+      revisions.append(body.expectedRev)
+      if body.expectedRev != s.rev { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
+      #expect(body.documents.first??.path == "definitions/a/_card.json")
+      let d = self.delta(s.rev, request.opId, "saved")
+      let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft"}"#
+      d.definitionsUpsert = [def]
+      return self.result(d)
+    }
+    func save(_ overwrite: Bool) async -> Bool {
+      await edit.replaceDocuments(s, overwrite: overwrite, [("definitions/a/_card.json", .object([("template", .string("draft"))]))])
+    }
+    #expect(await save(false) == false)
+    #expect(edit.conflictRev == 1 && edit.error == nil)
+    if third {
+      s.applyDelta(delta(s.rev, "third", "third"))
+      #expect(await save(true) == false)
+      #expect(revisions.last == 1)
+    }
+    #expect(await save(true))
+    #expect(s.cardDefinition("a")?["template"]?.string == "draft")
+  }
+}
+
+extension ProjectOperationTests {
+  @Test func inlineOverwriteRefusesAThirdWriter() async throws {
+    for draft in [false, true] {
+      let (s, dir) = try session()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      func changed(_ n: Int, _ id: String) -> Tsugumi_RPC_DocumentDeltaT {
+        let d = delta(s.rev, id, "old")
+        d.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
+        let def = Tsugumi_RPC_DefinitionT(); def.id = "a"
+        def.cardJson = #"{"template":"input","params":[{"name":"value","type":"int","data":\#(n)}]}"#
+        def.metaJson = #"{"content":"\#(n)","description":"unrelated"}"#
+        d.definitionsUpsert = [def]
+        return d
+      }
+      s.applyDelta(changed(1, "initial"))
+      let edit = InlineParamEdit(); edit.begin("1", rev: s.rev)
+      edit.paramBase = .init(parameter: s.cardDefinition("a")?["params"]?.array?.first)
+      if draft { await s.startDraftEdit("a"); s.inlineDraft?.content = "mine" }
+      s.applyDelta(changed(2, "agent"))
+      var actual = 2, guards: [String] = []
+      s.operateProject = { request in
+        let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+        let guardValue: String
+        if draft {
+          let json = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
+          let before = try JSONValue.parse(try #require(json.oldValue.json))
+          guardValue = try #require(before["content"]?.string)
+          let written = try JSONValue.parse(try #require(json.newValue.json))
+          #expect(written["description"]?.string == "unrelated")
+        } else {
+          let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
+          guard case .number(let n) = try JSONValue.parse(try #require(field.oldValue.json)) else { throw RPCFailure(kind: .invalidRequest, diagnostic: "") }
+          guardValue = n
+        }
+        guards.append(guardValue)
+        if guardValue != String(actual) { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
+        let d = changed(3, request.opId)
+        if draft { d.definitionsUpsert[0]?.metaJson = #"{"content":"mine","description":"unrelated"}"# }
+        return self.result(d)
+      }
+      func save(_ overwrite: Bool) async -> Bool {
+        if draft { _ = await s.finishDraftEdit(overwrite: overwrite); return s.inlineDraft == nil }
+        return await edit.commit(s, text: "3") {
+          $0.updateParam("a", "value", .number("3"), initial: edit.parameterBase(s, "a", "value", overwrite: overwrite))
+        }
+      }
+      #expect(await save(false) == false)
+      actual = 4; s.applyDelta(changed(actual, "third"))
+      #expect(await save(true) == false)
+      #expect(guards.last == "2")
+      #expect(await save(true))
+      #expect(guards.last == "4")
+      #expect(draft ? s.cardMeta("a")?["content"]?.string == "mine" : s.cardDefinition("a")?["params"]?.array?.first?["data"] == .number("3"))
+    }
+  }
 }

@@ -294,21 +294,21 @@ final class CardEditorModel {
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) && moves[$0.key] == nil }
     let gone = removed.subtracting(moves.keys).subtracting(moves.values)
     let bases = baseHashes
-    let ok = await revisionEdit.apply(session, overwrite: overwrite) { s in
+    let ok = await revisionEdit.apply(session) { s in
       var edits: [Tsugumi_Host_ProjectEditT] = []
-      if let def { edits.append(s.jsonEdit(prefix + "_card.json", old: overwrite ? s.cardDefinition(k) : baseDefinition, new: def)) }
-      edits.append(s.jsonEdit(prefix + "_meta.json", old: overwrite ? s.cardMeta(k) : baseMeta, new: m))
+      if let def { edits.append(s.jsonEdit(prefix + "_card.json", old: revisionEdit.jsonBase(prefix + "_card.json", initial: baseDefinition, overwrite: overwrite), new: def)) }
+      edits.append(s.jsonEdit(prefix + "_meta.json", old: revisionEdit.jsonBase(prefix + "_meta.json", initial: baseMeta, overwrite: overwrite), new: m))
       for (to, from) in moves.sorted(by: { $0.key < $1.key }) {
         let move = Tsugumi_Host_ProjectFileMoveT()
         move.filePath = from; move.to = to
-        move.expectedHash = (overwrite ? s.sources[from]?.hash : bases[to]) ?? ""
-        move.expectedDestinationHash = destinations[to]; move.destinationMissing = move.expectedDestinationHash == nil
+        move.expectedHash = revisionEdit.hashBase(from, initial: bases[to], overwrite: overwrite) ?? ""
+        move.expectedDestinationHash = revisionEdit.hashBase(to, initial: destinations[to], overwrite: overwrite); move.destinationMissing = move.expectedDestinationHash == nil
         let edit = Tsugumi_Host_ProjectEditT()
         edit.value = Tsugumi_Host_ProjectEditValueUnion(move, type: .projectfilemove)
         edits.append(edit)
       }
       for (p, text) in changedTexts {
-        let hash = overwrite ? s.sources[moves[p] ?? p]?.hash : bases[p]
+        let hash = revisionEdit.hashBase(moves[p] ?? p, initial: bases[p], overwrite: overwrite)
         let put = Tsugumi_Host_ProjectFilePutT()
         put.filePath = p; put.expectedHash = hash; put.expectMissing = hash == nil; put.bytes = Array(text.utf8)
         let edit = Tsugumi_Host_ProjectEditT()
@@ -317,7 +317,7 @@ final class CardEditorModel {
       }
       for p in gone {
         let remove = Tsugumi_Host_ProjectFileRemoveT()
-        remove.filePath = p; remove.expectedHash = (overwrite ? s.sources[p]?.hash : bases[p]) ?? ""
+        remove.filePath = p; remove.expectedHash = revisionEdit.hashBase(p, initial: bases[p], overwrite: overwrite) ?? ""
         let edit = Tsugumi_Host_ProjectEditT()
         edit.value = Tsugumi_Host_ProjectEditValueUnion(remove, type: .projectfileremove)
         edits.append(edit)
@@ -588,7 +588,7 @@ private struct GeneralCategory: View {
         .help("表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。")
         RevisionEditNotice(edit: nameEdit.revision, text: { name }, overwrite: { rename(overwrite: true) }, reload: {
           name = model.session.displayName(model.cardKey)
-          nameEdit.begin(name, rev: model.session.rev)
+          beginNameEdit(name)
         })
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
@@ -677,10 +677,10 @@ private struct GeneralCategory: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
-    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
+    .onAppear { name = model.session.displayName(model.cardKey); beginNameEdit(name) }
+    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey); beginNameEdit(name) }
     .onChange(of: model.session.displayName(model.cardKey)) { before, current in
-      if name == before { name = current; nameEdit.begin(name, rev: model.session.rev) }
+      if name == before { name = current; beginNameEdit(name) }
     }
   }
 
@@ -776,6 +776,11 @@ private struct GeneralCategory: View {
       }), prompt: Text(example))
   }
 
+  private func beginNameEdit(_ name: String) {
+    nameEdit.beginField(name, session: model.session, file: (model.session.definitionDir(model.cardKey) ?? "") + "_meta.json",
+                        selector: [.string("name")], value: model.session.cardMeta(model.cardKey)?["name"])
+  }
+
   private func rename(overwrite: Bool = false) {
     let new = name.trimmingCharacters(in: .whitespaces)
     guard new != model.session.displayName(model.cardKey) else { return }
@@ -784,9 +789,7 @@ private struct GeneralCategory: View {
     Task {
       do {
         if let problem = model.session.cardNameProblem(model.cardKey, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
-        _ = await nameEdit.commit(model.session, text: new, overwrite: overwrite) { s in
-          s.updateMeta(model.cardKey) { $0["name"] = .string(new) }
-        }
+        _ = await nameEdit.commitField(model.session, text: new, overwrite: overwrite) { $0 = .string(new) }
       } catch {
         renameError = "\(error)"
       }
@@ -1204,7 +1207,7 @@ private struct CommentsCategory: View {
         RevisionEditNotice(edit: revisionEdit.revision, text: { editing?.text ?? "" },
                            overwrite: { Task { await saveEdit(overwrite: true) } }, reload: {
                              editing = comments.first { $0.id == editing?.id }
-                             revisionEdit.begin(editing?.text ?? "", rev: session.rev)
+                             beginCommentEdit(editing?.id ?? "", editing?.text ?? "")
                            })
         if let editing, !comments.contains(where: { $0.id == editing.id }) { row(editing) }
         ForEach(comments.filter { !$0.resolved }) { row($0) }
@@ -1220,9 +1223,20 @@ private struct CommentsCategory: View {
     }
   }
 
+  private func beginCommentEdit(_ id: String, _ text: String) {
+    let value = session.cardMeta(card)?["comments"]?.array?.first { $0["id"]?.string == id }
+    revisionEdit.beginField(text, session: session, file: (session.definitionDir(card) ?? "") + "_meta.json",
+                           selector: [.string("comments"), .object([("id", .string(id))])], value: value)
+  }
+
   private func saveEdit(overwrite: Bool = false) async {
     guard let copy = editing else { return }
-    if await revisionEdit.commit(session, text: copy.text, overwrite: overwrite, { $0.setCommentText(card, id: copy.id, text: copy.text) }) {
+    if await revisionEdit.commitField(session, text: copy.text, overwrite: overwrite, { value in
+      let text = copy.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { return }
+      value?["text"] = .string(text)
+      value?["editedBy"] = .string("user")
+    }) {
       editing = nil
     }
   }
@@ -1261,7 +1275,6 @@ private struct CommentsCategory: View {
   }
 
   @ViewBuilder private func row(_ c: CardComment) -> some View {
-    let baseRev = session.rev
     VStack(alignment: .leading, spacing: 6) {
       if editing?.id == c.id {
         TextField("", text: Binding(get: { editing?.text ?? "" }, set: { editing?.text = $0 }), axis: .vertical)
@@ -1281,7 +1294,7 @@ private struct CommentsCategory: View {
         }
         HStack {
           Spacer()
-          Button("編集") { revisionEdit.begin(c.text, rev: baseRev); editing = c }
+          Button("編集") { beginCommentEdit(c.id, c.text); editing = c }
           if c.resolved {
             Button("開き直す") { session.setCommentResolved(card, id: c.id, false) }
           } else {

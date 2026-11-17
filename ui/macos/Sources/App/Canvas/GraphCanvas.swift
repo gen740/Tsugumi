@@ -1249,7 +1249,7 @@ struct GraphCanvas: View {
     let type = session.kind(k) == .switchCard && name == "value" ? "bool"
       : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
     guard let type else { return false }
-    return await edit.commit(session, text: text, overwrite: overwrite) { $0.updateParam(k, name, parseParam(text, type), initial: overwrite ? nil : edit.paramBase) }
+    return await edit.commit(session, text: text) { $0.updateParam(k, name, parseParam(text, type), initial: edit.parameterBase(session, k, name, overwrite: overwrite)) }
   }
 
   private func deleteSelection() {

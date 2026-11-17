@@ -68,7 +68,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     setParseError(undefined)
     if (!await revisionEdit.replaceDocuments(session, [
       [`definitions/${id}/_card.json`, card], [`definitions/${id}/_meta.json`, meta],
-    ])) return
+    ], overwrite)) return
     setBase({ card: cardText, meta: metaText })
     setMessage(L('適用しました（revision {0}）。', session.rev))
   }
@@ -184,8 +184,6 @@ export function WorkflowSettingsView({ session, initial }: { session: ProjectSes
   )
 }
 
-const setProject = (x: ProjectSession, k: string, v: J) => x.setProjectField(k, v)
-
 /** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
 function NixSourceSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
@@ -215,10 +213,11 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   }
   const save = async (list: J[], overwrite = false) => {
     setPending(list)
-    const after = clone(selectedProject)
+    const before = revisionEdit.jsonBase('tsugumi.json', selectedProject, overwrite)
+    const after = clone(before)
     if (!isObj(after)) return
     after.set('nixSources', list)
-    if (await revisionEdit.apply(session, overwrite, x => x.appendEdits([x.jsonEdit('tsugumi.json', selectedProject, after)]))) setPending(undefined)
+    if (await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) setPending(undefined)
   }
   const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
   const look = async () => {
@@ -298,13 +297,14 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   }
   const save = async (overwrite = false) => {
     const paths = versionPaths.split(/\r?\n/).filter(x => x.length > 0)
-    const after = clone(selectedProject)
+    const before = revisionEdit.jsonBase('tsugumi.json', selectedProject, overwrite)
+    const after = clone(before)
     if (!isObj(after)) return
     if (name !== (str(get(selectedProject, 'name')) ?? '')) after.set('name', name)
     if (pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '')) after.set('pkgsPath', pkgs || 'tsugumi:default')
     if (versionPaths !== initialPaths) after.set('versionPaths', paths)
     if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
-    if (!await revisionEdit.apply(session, overwrite, x => x.appendEdits([x.jsonEdit('tsugumi.json', selectedProject, after)]))) return
+    if (!await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) return
     setSelectedProject(after)
     setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
     setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
@@ -391,7 +391,11 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   const setSaving = async (on: boolean, overwrite = false) => {
     if (!overwrite) revisionEdit.reload(baseRev)
     setPendingSaving(on)
-    await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'saveRunHistory', on))
+    const before = revisionEdit.jsonBase('tsugumi.json', session.project, overwrite)
+    const after = clone(before)
+    if (!isObj(after)) return
+    after.set('saveRunHistory', on)
+    await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))
   }
   const del = async () => {
     setWorking(true)

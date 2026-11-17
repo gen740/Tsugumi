@@ -1845,15 +1845,14 @@ export class ProjectSession extends Observable {
     const name = e.name.trim() || 'draft'
     const problem = nameChanged ? this.cardNameProblem(e.card, name) : undefined
     if (problem) { this.notice = problem; e.revision.error = problem; e.revision.changed(); this.changed(); return undefined }
-    const before = overwrite ? this.cardMeta(e.card) : e.initialMeta
+    const dir = this.definitionDir(e.card)
+    if (!dir) return undefined
+    const before = e.revision.jsonBase(dir + '_meta.json', e.initialMeta, overwrite)
     const after = clone(before) ?? obj()
     if (!isObj(after)) return undefined
     if (contentChanged) after.set('content', e.content || undefined)
     if (nameChanged) after.set('name', name)
-    const ok = await e.revision.apply(this, overwrite, x => {
-      const dir = x.definitionDir(e.card)
-      if (dir) x.appendEdits([x.jsonEdit(dir + '_meta.json', before, after)])
-    })
+    const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + '_meta.json', before, after)]))
     if (ok && this.inlineDraft?.revision === e.revision) {
       if (this.inlineDraft.name === e.name && this.inlineDraft.content === e.content) this.inlineDraft = undefined
       else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content, initialMeta: clone(after) }
@@ -1976,7 +1975,7 @@ export class ProjectSession extends Observable {
   }
 
   /** The scope whose layout holds a note or group (ids are unique). */
-  private scopeHolding(field: string, id: string): string[] | undefined {
+  scopeHolding(field: string, id: string): string[] | undefined {
     const has = (l: J) => (arr(get(l, field)) ?? []).some((x) => str(get(x, 'id')) === id)
     if (has(this.layout)) return []
     const queue = this.childScopes([])
@@ -2010,19 +2009,6 @@ export class ProjectSession extends Observable {
     }).catch(e => this.cardEditFailed(e))
   }
 
-  /** A step of an edit: see updateNote. */
-  changeNote(id: string, fn: (n: JObj) => void) {
-    const sc = this.scopeHolding('notes', id)
-    if (!sc) return
-    this.updateLayout(sc, (l) => {
-      const notes = (arr(l.get('notes')) ?? []).map((n) => clone(n))
-      const n = notes.find((n) => str(get(n, 'id')) === id)
-      if (!isObj(n)) return
-      fn(n)
-      l.set('notes', notes)
-    })
-  }
-
   removeNote(id: string) {
     const scope = this.scopeHolding('notes', id), before = this.note(id)
     if (scope && before) void this.operateLayoutEntity(scope, 'notes', id, before, undefined).catch(e => this.cardEditFailed(e))
@@ -2030,14 +2016,6 @@ export class ProjectSession extends Observable {
 
   groups(scope: string[]): JObj[] {
     return (arr(get(this.layoutOf(scope), 'groups')) ?? []).filter((g): g is JObj => isObj(g) && (str(g.get('scope')) ?? '') === '')
-  }
-
-  updateGroups(scope: string[], fn: (groups: J[]) => void) {
-    this.updateLayout(scope, (l) => {
-      const groups = (arr(l.get('groups')) ?? []).map((g) => clone(g))
-      fn(groups)
-      l.set('groups', groups.length ? groups : undefined)
-    })
   }
 
   async addGroup(keys: Set<CardKey>, scope: string[], name = L('グループ')): Promise<string> {

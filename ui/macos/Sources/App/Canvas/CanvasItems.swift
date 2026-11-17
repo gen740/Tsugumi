@@ -489,20 +489,19 @@ struct NoteEditor: View {
     width = n?["width"]?.double ?? 240
     height = n?["height"]?.double ?? 120
     fontSize = n?["fontSize"]?.double ?? 13
-    edit.begin(value, rev: session.rev)
+    let file = (session.projectPrefix(session.scopeHolding("notes", noteId) ?? []) ?? "") + "layout.json"
+    edit.beginField(value, session: session, file: file, selector: [.string("notes"), .object([("id", .string(noteId))])], value: n)
   }
 
   private var value: String { JSONValue.array([.string(text), .string(color), .real(width), .real(height), .real(fontSize)]).serialized() }
   private func apply(overwrite: Bool = false) {
     Task {
-      let ok = await edit.commit(session, text: value, overwrite: overwrite) { s in
-        s.changeNote(noteId) { n in
-          n["text"] = .string(text)
-          n["color"] = .string(color)
-          n["width"] = .real(width)
-          n["height"] = .real(height)
-          n["fontSize"] = fontSize == 13 ? nil : .real(fontSize)
-        }
+      let ok = await edit.commitField(session, text: value, overwrite: overwrite) { n in
+        n?["text"] = .string(text)
+        n?["color"] = .string(color)
+        n?["width"] = .real(width)
+        n?["height"] = .real(height)
+        n?["fontSize"] = fontSize == 13 ? nil : .real(fontSize)
       }
       if ok { dismiss() }
     }
@@ -576,27 +575,23 @@ struct GroupEditor: View {
       guard let c = o["card"]?.string, let p = o["port"]?.string else { return nil }
       return "\(c)\t\(p)"
     })
-    edit.begin(value, rev: session.rev)
+    let file = (session.projectPrefix(scope) ?? "") + "layout.json"
+    edit.beginField(value, session: session, file: file, selector: [.string("groups"), .object([("id", .string(groupId))])], value: g)
   }
 
   private var value: String { JSONValue.array([.string(name), .string(color), .array(members.sorted().map { .string($0) }), .array(outputs.sorted().map { .string($0) })]).serialized() }
   private func apply(overwrite: Bool = false) {
     Task {
-      let ok = await edit.commit(session, text: value, overwrite: overwrite) { s in
-        s.updateGroups(in: scope) { groups in
-          guard let i = groups.firstIndex(where: { $0["id"]?.string == groupId }) else { return }
-          var g = groups[i]
-          g["name"] = .string(name)
-          g["color"] = .string(color)
-          g["cards"] = .array(members.sorted().map { .string($0) })
-          let outs: [JSONValue] = outputs.sorted().compactMap { t in
-            let parts = t.split(separator: "\t").map(String.init)
-            guard parts.count == 2, members.contains(parts[0]) else { return nil }
-            return .object([("card", .string(parts[0])), ("port", .string(parts[1]))])
-          }
-          g["outputs"] = outs.isEmpty ? nil : .array(outs)
-          groups[i] = g
+      let ok = await edit.commitField(session, text: value, overwrite: overwrite) { g in
+        g?["name"] = .string(name)
+        g?["color"] = .string(color)
+        g?["cards"] = .array(members.sorted().map { .string($0) })
+        let outs: [JSONValue] = outputs.sorted().compactMap { t in
+          let parts = t.split(separator: "\t").map(String.init)
+          guard parts.count == 2, members.contains(parts[0]) else { return nil }
+          return .object([("card", .string(parts[0])), ("port", .string(parts[1]))])
         }
+        g?["outputs"] = outs.isEmpty ? nil : .array(outs)
       }
       if ok { dismiss() }
     }
