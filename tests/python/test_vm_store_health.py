@@ -1,12 +1,15 @@
 """Guest boot decision and durable marker contract, without Nix or a VM."""
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "vm/guest/store-health.sh"
+# A Nix build or container may have no /bin/cat.
+REAL_CAT = shutil.which("cat") or "/bin/cat"
 
 
 def guest(tmp_path, monkeypatch):
@@ -21,7 +24,7 @@ def guest(tmp_path, monkeypatch):
                   'case "$3" in /history-disk) [ "$3" != "${BUSY_MOUNT:-}" ] ;; '
                   '*) echo "mount: target is busy" >&2; exit 32 ;; esac'),
         # Never signal a real daemon on the machine running this test.
-        "cat": 'case "$1" in /proc/*/comm) exit 1 ;; esac; exec /bin/cat "$@"',
+        "cat": 'case "$1" in /proc/*/comm) exit 1 ;; esac; exec ' + REAL_CAT + ' "$@"',
     }
     for name, code in commands.items():
         file = tools / name

@@ -373,8 +373,8 @@ import TsugumiRPC
       let content = try #require(JSONSerialization.jsonObject(with: Data((user.contentJson ?? "[]").utf8)) as? [[String: Any]])
       let text = content.compactMap { $0["text"] as? String }.joined()
       for path in paths { #expect(text.contains(path)) }
-      let attached = content.flatMap { $0["resource_ids"] as? [String] ?? [] }
-      for resource in resources { #expect(attached.contains(resource)) }
+      let sentResources = content.flatMap { $0["resource_ids"] as? [String] ?? [] }
+      for resource in resources { #expect(sentResources.contains(resource)) }
       #expect(try await read(paths[0], "") == "nested/\n")
       #expect(try await read(paths[0], "nested/note.txt") == "first folder")
       #expect(try await read(paths[1], "nested/note.txt") == "second folder")
