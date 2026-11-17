@@ -60,7 +60,6 @@ import { ProviderInputT } from '../shared/gen/tsugumi/host/provider-input'
 import { SkillsListRequestT as HSkillsListRequest } from '../shared/gen/tsugumi/host/skills-list-request'
 import { Action } from '../shared/gen/tsugumi/agent/action'
 import { Access } from '../shared/gen/tsugumi/service/access'
-import { GrantScope } from '../shared/gen/tsugumi/service/grant-scope'
 import { HelloRequestT as AHelloRequest } from '../shared/gen/tsugumi/service/hello-request'
 import { ConfigureRequestT as AConfigureRequest } from '../shared/gen/tsugumi/agent/configure-request'
 import { ConversationCreateRequestT as AConversationCreateRequest } from '../shared/gen/tsugumi/agent/conversation-create-request'
@@ -146,6 +145,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [], v.archive_incompatible_history)
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
+    case 'ProjectPermissionsRequest': return new H.ProjectPermissionsRequestT()
+    case 'ProjectPermissionSetRequest': return new H.ProjectPermissionSetRequestT(v.project_id, v.resource_id, enumValue(Access, v.access), v.allow === true)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
     case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral, v.source)
@@ -192,7 +193,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
     case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
-    case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), enumValue(GrantScope, v.scope), v.reason)
+    case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, (v.also_allow ?? []).map((value: unknown) => enumValue(Access, value)))
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
@@ -227,7 +228,7 @@ function view(value: any): any {
   }
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
-  const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
+  const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id',
     trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
@@ -241,7 +242,6 @@ function view(value: any): any {
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
     if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
-    if (key === 'scope' && typeof v === 'number') { out[name] = GrantScope[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
   }
   return out
@@ -268,6 +268,7 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,
     error: new CoreHostError(value.code, value.message, reply.value.requestId ?? undefined) }
+  if (host && reply.valueType === H.ReplyPayload.ProjectPermissionList) return { id: message.requestId, value }
   let result = value
   // Vector result tables keep the public API's array shape.
   for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools', 'services']) {

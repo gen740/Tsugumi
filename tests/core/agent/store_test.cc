@@ -503,12 +503,12 @@ TEST_F(ConversationStoreTest, RecreatedFolderReplacesEvenAnOpenedIdentity) {
 }
 
 TEST_F(ConversationStoreTest,
-       DeletionCommitsHostRevocationBeforeProjectDeletion) {
+       DeletionPreservesProjectGrantsAndRemovesConversationProviders) {
   std::lock_guard lock(gate.mutex);
   Register("project");
   Create("conversation", "project");
   home.db.exec(
-      "INSERT INTO grants VALUES('grant','project','conversation',0,1);"
+      "INSERT INTO grants VALUES('grant','project',0,1);"
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
@@ -516,9 +516,8 @@ TEST_F(ConversationStoreTest,
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
   EXPECT_THROW(store->Delete("conversation"), sql::Error);
-  auto grant =
-      home.db.prepare("SELECT 1 FROM grants WHERE conversation='conversation'");
-  EXPECT_FALSE(grant.step());
+  auto grant = home.db.prepare("SELECT 1 FROM grants WHERE project='project'");
+  EXPECT_TRUE(grant.step());
   auto provider = home.db.prepare(
       "SELECT 1 FROM providers WHERE conversation='conversation'");
   EXPECT_FALSE(provider.step());
@@ -847,14 +846,13 @@ TEST(AgentPresentation, ProviderSearchSourcesStayReadableAndKeepTheirExactUrls) 
   ASSERT_EQ(conversation.rows[0]->children.size(), 1u);
   EXPECT_EQ(conversation.rows[0]->children[0]->result, "Paper — https://example.test/paper");
 }
-TEST(AgentPresentation, AccessGroupsKeepRawChoicesAndDifferentDurations) {
+TEST(AgentPresentation, AccessGroupsKeepProjectChoicesAndRequiredOperation) {
   const std::vector<std::string> asked{
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","scope":"Conversation","needed_now":true})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","scope":"Conversation","needed_now":false})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","scope":"Conversation","needed_now":false})"};
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","needed_now":true})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","needed_now":false})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","needed_now":false})"};
   auto groups = agent::AccessGroups(asked);
   ASSERT_EQ(groups.size(), 1u);
-  EXPECT_EQ(groups[0]->scope, "Conversation");
   ASSERT_EQ(groups[0]->lines.size(), 3u);
   EXPECT_EQ(groups[0]->lines[0]->request, asked[0]);
   EXPECT_TRUE(groups[0]->lines[0]->needed_now);
@@ -862,11 +860,10 @@ TEST(AgentPresentation, AccessGroupsKeepRawChoicesAndDifferentDurations) {
   EXPECT_FALSE(groups[0]->lines[2]->needed_now);
   auto mixed = asked;
   mixed.push_back(
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell","scope":"Server"})");
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell"})");
   groups = agent::AccessGroups(mixed);
   ASSERT_EQ(groups.size(), 1u);
-  EXPECT_TRUE(groups[0]->scope.empty());
-  EXPECT_EQ(groups[0]->lines[3]->scope, "Server");
+  EXPECT_EQ(groups[0]->lines[3]->operation, "Shell");
 }
 TEST_F(ConversationStoreTest,
        LiveProjectionKeepsStreamingTextAcrossCheckpointsAndRestore) {

@@ -29,6 +29,7 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
     <>
       <Section title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
         {!onboarding && <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}</span></Row>}
+        {st.connectionMessage && <Row><span className="caption selectable">{st.connectionMessage}</span></Row>}
         {!onboarding && active && <Row label={L('使用中のアカウント')}><span className="selectable">{active.email ?? active.clientId}</span></Row>}
         {active?.signedIn && !active.planEnabled && (
           <Row><span className="caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')}</span></Row>

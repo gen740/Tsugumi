@@ -26,9 +26,6 @@ auto View(T value) -> std::string {
 inline auto View(Tsugumi::Service::Access v) -> std::string {
   return Quote(Tsugumi::Service::EnumNameAccess(v));
 }
-inline auto View(Tsugumi::Service::GrantScope v) -> std::string {
-  return Quote(Tsugumi::Service::EnumNameGrantScope(v));
-}
 inline auto
 Object(std::initializer_list<std::pair<std::string, std::string>> fields)
     -> std::string {
@@ -281,7 +278,6 @@ inline auto View(const A::AccessEntry *value) -> std::string {
                  {"project_id", View(value->project_id())},
                  {"conversation_id", View(value->conversation_id())},
                  {"access", View(value->access())},
-                 {"scope", View(value->scope())},
                  {"reason", View(value->reason())},
                  {"state", View(value->state())}});
 }
@@ -290,7 +286,6 @@ inline auto View(const A::Grant *value) -> std::string {
     return "null";
   return Object({{"id", View(value->id())},
                  {"project_id", View(value->project_id())},
-                 {"conversation_id", View(value->conversation_id())},
                  {"access", View(value->access())},
                  {"active", View(value->active())}});
 }

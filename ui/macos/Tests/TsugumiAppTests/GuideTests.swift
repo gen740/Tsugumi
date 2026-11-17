@@ -107,3 +107,25 @@ import TsugumiRPC
   #expect(stage.perch?.spot.zoom == 0.39)
   window.contentView = nil
 }
+
+/// Failed status reads are retried once and preserve the last known connection.
+@MainActor @Test(.hostService) func guideAvailabilityRecoversWithoutPolling() async {
+  var reads = 0
+  var failures = 1
+  let guide = GuideController(availability: {
+    reads += 1
+    if failures > 0 {
+      failures -= 1
+      throw URLError(.cannotConnectToHost)
+    }
+    return (true, nil)
+  }, observeHost: false)
+  #expect(await guide.checkAvailability())
+  #expect(guide.connected)
+  #expect(reads == 2)
+  failures = 2
+  let before = reads
+  #expect(!(await guide.checkAvailability()))
+  #expect(reads - before == 2)
+  #expect(guide.connected)
+}

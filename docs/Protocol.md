@@ -514,7 +514,7 @@ The `value` inside a `RunEvent` has one of these types.
 
 ## Host and Agent service contracts
 
-Both services include [service_common.fbs](../protocol/service_common.fbs): Hello, Failure, Acknowledgement, ProviderSelection, Access, GrantScope, PermissionKind, Usage and TextResult have one definition. Secret ProviderInput belongs only to Host.
+Both services include [service_common.fbs](../protocol/service_common.fbs): Hello, Failure, Acknowledgement, ProviderSelection, Access, PermissionKind, Usage and TextResult have one definition. Secret ProviderInput belongs only to Host.
 
 Agent keeps conversations, turns, tools and conversation access prompts. Host keeps shared operations, including reference demos and version notes; model use does not decide the contract. External Agents read demos through ToolCall (demo_list/demo_read), not direct Host RPC.
 
@@ -537,7 +537,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `EventsRequest` | `conversation_id: string` (required), `after_seq: ulong`, `limit: uint` |
 | `ToolCatalogRequest` | None |
 | `ToolCallRequest` | `conversation_id: string` (required), `project_id: string`, `name: string` (required), `arguments_json: string` (required), `op_id: string` (required) |
-| `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `scope: Tsugumi.Service.GrantScope`, `reason: string` |
+| `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
 | `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `also_allow: [Tsugumi.Service.Access]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
 | `AccessListRequest` | `conversation_id: string` |
@@ -554,6 +554,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | Request | Fields |
 | --- | --- |
 | `VersionCommentsRequest` | `project: string` (required), `commit: string` (required) |
+| `ProjectPermissionsRequest` | None |
+| `ProjectPermissionSetRequest` | `project_id: string` (required), `resource_id: string` (required), `access: Tsugumi.Service.Access`, `allow: bool` |
 | `BinaryCachesGetRequest` | None |
 | `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
@@ -606,4 +608,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.

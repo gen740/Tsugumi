@@ -553,17 +553,15 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   if (is_running(id))
     throw Failure("busy", "Cancel the conversation before deleting it");
   auto& store = ConversationDatabase(id);
-  // Revoke host capabilities first: interruption must never leave grants
-  // for a deleted ID that a new conversation could reuse.
+  // Remove conversation prompts; project grants outlive conversations.
   {
     sql::Transaction tx(db);
     auto prompts = db.prepare(
         "DELETE FROM access_prompt_items WHERE request IN "
         "(SELECT id FROM access_requests WHERE conversation=?)");
     prompts.bind(1, id).run();
-    for (const auto* table :
-         {"providers", "skill_catalogs", "operation_approvals",
-          "access_requests", "grants"}) {
+    for (const auto* table : {"providers", "skill_catalogs",
+                              "operation_approvals", "access_requests"}) {
       auto q = db.prepare(std::string("DELETE FROM ") + table +
                           " WHERE conversation=?");
       q.bind(1, id).run();

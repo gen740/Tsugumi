@@ -8,8 +8,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("host-layout-validation");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto before = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(before, "/value/rev");
   const auto arguments =

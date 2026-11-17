@@ -88,7 +88,6 @@ auto Approvals::ApproveOperation(
       // grant. The call ID prevents coalescing identical but independent acts.
       request = access_service.RequestAccess(
           project, conversation, Tsugumi::Service::Access::CardPermissions,
-          Tsugumi::Service::GrantScope::Conversation,
           preview + "\nCall: " + json::Quote(call.id), true);
       auto put =
           db.prepare("INSERT INTO operation_approvals VALUES(?,?,?,?,?)");

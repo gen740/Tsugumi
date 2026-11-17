@@ -111,8 +111,14 @@ struct Service::State {
         },
         [this](const std::string& id) { return credentials.Forget(id); },
         nullptr, host::Settings::kKeyStorage,
-        [this] {
-          return host::Models::StoredChatGPTModels(options.state_dir);
+        [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
+        [this](const std::string& profile) {
+          requests.submit([this, profile](bool) {
+            std::lock_guard lock(mutex);
+            H::ProviderChangedT event;
+            event.profile = profile;
+            events->Publish(wire::HostEvent(std::move(event)));
+          });
         });
     providers = std::make_unique<Providers>(state_gate, db, *host_settings);
     conversations = std::make_unique<ConversationStore>(
@@ -631,6 +637,11 @@ struct Service::State {
       H::BinaryCachesT result;
       result.caches_json = host::LoadBinaryCaches(support);
       return wire::HostReply(request.request_id, std::move(result));
+    }
+    if (r->value_type() == H::RequestPayload::ProjectPermissionsRequest ||
+        r->value_type() == H::RequestPayload::ProjectPermissionSetRequest) {
+      Human(human);
+      return access->HandleHost(*r, request.request_id);
     }
     if (host::Settings::Handles(r->value_type())) {
       Human(human);

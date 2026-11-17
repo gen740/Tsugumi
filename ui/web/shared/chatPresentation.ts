@@ -7,6 +7,6 @@ export interface ChatRow {
   links: { title: string; url: string }[]; children: ChatRow[]
 }
 export interface AccessGroup {
-  title: string; path: string; displayPath: string; scope: string
-  lines: { request: string; operation: string; scope: string; neededNow: boolean }[]
+  title: string; path: string; displayPath: string
+  lines: { request: string; operation: string; neededNow: boolean }[]
 }

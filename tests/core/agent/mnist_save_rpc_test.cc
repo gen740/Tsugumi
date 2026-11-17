@@ -27,8 +27,7 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
                std::get<1>(GetParam()) ? "{}" : Read(root / "layout.json"));
   const auto conversation = Conversation("mnist-generate-cards");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));

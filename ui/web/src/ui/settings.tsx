@@ -533,6 +533,7 @@ function APISettings() {
       <KeySection id="anthropic" s={s} reload={reload} update={update} />
       <KeySection id="openai" s={s} reload={reload} update={update} />
       <ChatGPTSettings onConnected={() => refreshChats(true)} onChanged={() => refreshChats()} model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
+      <ProjectPermissionSettings />
       <Section title={L('Agent が確認なしに Card に与えてよい権限')}>
         {permissionCatalog.kinds.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
@@ -658,4 +659,38 @@ function ConnectionSettings() {
       </div>
     </div>
   )
+}
+
+interface ProjectPermission { resource_id: string; title: string; path: string; access: string; allowed: boolean }
+interface PermissionProject { project_id: string; title: string; path: string; permissions: ProjectPermission[] }
+interface ProjectPermissionList { projects: PermissionProject[] }
+const permissionLabel = (access: string) => ({ Read: L('内容の読み取り'), Write: L('内容の変更'), Run: L('Card の実行'), Shell: L('シェルコマンドの実行') })[access] ?? access
+
+export function ProjectPermissionSettings() {
+  const [projects, setProjects] = useState<PermissionProject[]>([])
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const request = async (project?: PermissionProject, permission?: ProjectPermission, allow?: boolean) => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const result = await api<ProjectPermissionList>(project ? '/api/project-permissions/set' : '/api/project-permissions', project && permission
+        ? { project_id: project.project_id, resource_id: permission.resource_id, access: permission.access, allow } : {})
+      setProjects(result.projects ?? [])
+    } catch (e) { setError(errorText(e)) }
+    finally { setBusy(false) }
+  }
+  useEffect(() => { void request() }, [])
+  return <Section title={L('Agent のプロジェクト権限')}>
+    <Row><span className="caption secondary">{L('プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。')}</span></Row>
+    {projects.map(project => <div key={project.project_id}>
+      <Row label={project.title || project.path || project.project_id}><span className="caption secondary selectable">{project.path}</span></Row>
+      {project.permissions.map(permission => <Row key={`${permission.resource_id}:${permission.access}`}
+        label={permission.resource_id === project.project_id ? permissionLabel(permission.access) : `${L('添付フォルダ')} · ${permission.title || permission.path} · ${permissionLabel(permission.access)}`}>
+        <Toggle checked={permission.allowed} disabled={busy} onChange={allow => void request(project, permission, allow)} />
+      </Row>)}
+    </div>)}
+    {error && <Row><span className="error">{error}</span></Row>}
+    <Row><Button disabled={busy} onClick={() => void request()}>{L('更新')}</Button></Row>
+  </Section>
 }

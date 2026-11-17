@@ -74,13 +74,15 @@ public actor ChatGPTAuth {
   public struct Status: Sendable {
     public var accounts: [ChatGPTAccountInfo]
     public var result: SignInResult?
+    public var message: String? = nil
   }
   public func status() async -> Status {
     let value = (try? await request()) ?? [:]
     let accounts = infos(value)
     let result = (value["state"] as? String == "complete")
       ? accounts.first(where: \.active).map { SignInResult(account: $0, welcome: value["welcome"] as? String == $0.clientId) } : nil
-    return Status(accounts: accounts, result: result)
+    return Status(accounts: accounts, result: result, message: value["message"] as? String == "Sign in to ChatGPT again"
+      ? String(localized: "ChatGPT にもう一度サインインしてください。") : nil)
   }
   public func accounts() async -> [ChatGPTAccountInfo] { infos((try? await request()) ?? [:]) }
   public func accountsWithoutAsking() async -> [ChatGPTAccountInfo]? { guard let v = try? await request() else { return nil }; return infos(v) }

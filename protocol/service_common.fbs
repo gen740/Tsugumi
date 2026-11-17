@@ -11,7 +11,6 @@ table ProviderSelection { profile:string (required); provider_id:string; account
 
 enum Access:ubyte { Read, Write, Run, CardPermissions, Shell, HelperScope }
 
-enum GrantScope:ubyte { Conversation, Server }
 
 table Usage { input_tokens:ulong; output_tokens:ulong; cache_read_tokens:ulong; cache_write_tokens:ulong; }
 

@@ -1,4 +1,9 @@
 {
+  "添付フォルダ": "Attached folder",
+  "設定を開く": "Open Settings",
+  "Agent のプロジェクト権限": "Agent project permissions",
+  "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。": "Applies to every conversation and helper in the project until revoked.",
+  "プロジェクト全体・取り消すまで": "Entire project \u00b7 until revoked",
  "このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。": "This folder's project identity changed or was removed. Close and reopen this project to register its current identity. Conversation records have not been deleted.",
  "このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。": "This project's conversation records belong to another project identity. Restore the matching .tsugumi folder from a backup. To start new conversations, close the project, move agent.sqlite out of .tsugumi to preserve it, then reopen the project. Conversation records have not been deleted.",
  "会話を読み込んでいます…": "Loading conversation…",
@@ -1386,8 +1391,6 @@
  "Card の実行": "Run Cards",
  "Card の権限の変更": "Change Card permissions",
  "シェルコマンドの実行": "Run shell commands",
- "取り消すまで": "Until revoked",
- "この会話の間": "For this conversation",
  "Card の識別子を予約しています": "Reserving a Card identifier",
  "Card の識別子を予約": "Reserved a Card identifier",
  "出力を一覧しています": "Listing outputs",

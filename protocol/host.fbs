@@ -17,6 +17,15 @@ table BinaryCachesGetRequest {}
 table BinaryCachesPutRequest { caches_json:string (required); }
 table BinaryCaches { caches_json:string (required); }
 
+// Project grants are human-owned and shared by every conversation/helper.
+// The host lists editable permissions, including attached folders, and validates edits.
+table ProjectPermissionsRequest {}
+table ProjectPermissionSetRequest { project_id:string (required); resource_id:string (required); access:Tsugumi.Service.Access; allow:bool; }
+table ProjectPermission { resource_id:string (required); title:string; path:string; access:Tsugumi.Service.Access; allowed:bool; }
+table ProjectPermissions { project_id:string (required); title:string; path:string; permissions:[ProjectPermission]; }
+table ProjectPermissionList { projects:[ProjectPermissions]; }
+table ProviderChanged { profile:string (required); }
+
 table Setting { key:string (required); value_json:string (required); }
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
@@ -102,7 +111,7 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   reset_kept_files:[string]; reset_discarded_files:[string];
 }
 table SettingsChanged { profile:string (required); revision:ulong; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -484,7 +493,7 @@ table IdentifierReserveRequest { project_id:string (required); kind:string (requ
 table Identifier { id:string (required); }
 
 union RequestPayload {
-  VersionCommentsRequest,
+  VersionCommentsRequest, ProjectPermissionsRequest, ProjectPermissionSetRequest,
   BinaryCachesGetRequest, BinaryCachesPutRequest, GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ProjectTrustRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
@@ -498,7 +507,7 @@ union RequestPayload {
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
-  ProjectOperationResult,
+  ProjectOperationResult, ProjectPermissionList,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   BinaryCaches, GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,

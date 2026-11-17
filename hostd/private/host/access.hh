@@ -30,26 +30,27 @@ struct Access {
                 Tsugumi::Service::Access access) -> bool;
   auto AccessDescription(const std::string& resource,
                          Tsugumi::Service::Access access,
-                         Tsugumi::Service::GrantScope scope,
                          const std::string& reason, bool needed = true)
       -> std::string;
   auto AccessDescriptions(const std::string& id, const std::string& project,
                           Tsugumi::Service::Access needed,
-                          Tsugumi::Service::GrantScope scope,
                           const std::string& reason)
       -> std::vector<std::string>;
   auto RequestAccess(const std::string& project,
                      const std::string& conversation,
-                     Tsugumi::Service::Access access,
-                     Tsugumi::Service::GrantScope scope,
-                     const std::string& reason, bool per_call = false,
-                     bool combine = false) -> std::string;
+                     Tsugumi::Service::Access access, const std::string& reason,
+                     bool per_call = false, bool combine = false)
+      -> std::string;
   auto Require(const std::string& project, const std::string& conversation,
                Tsugumi::Service::Access access, bool wait, std::stop_token stop,
                const std::string& reason, const std::string& authorization = {})
       -> void;
   auto AuthorizeContext(const std::string& id,
                         const std::vector<agent::Message>& messages) -> void;
+  auto HandleHost(const Tsugumi::Host::Request& request, uint64_t id)
+      -> std::string;
+  auto Revoke(const std::string& resource, Tsugumi::Service::Access access)
+      -> void;
   // The authenticated dispatch path holds the shared state gate.
   auto Handle(const RequestIn& request, bool human) -> std::string;
 

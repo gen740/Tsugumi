@@ -274,7 +274,7 @@ Helper usage adds to the conversation’s usage. A shortened delegate result say
 
 Conversation reads and event observation never start a turn. The core persists the operation in flight; interrupted conversations expose that operation and wait for an explicit **Resume** request or a new message. Tool receipt reconciliation remains the boundary against replaying an interrupted operation.
 
-A Skill with front matter `scope: [read]`, `scope: [read, run]` or another inline list of `read`, `write`, `run` starts directly as a scoped helper. Choose it from a Card's **Run Skill** menu, or use `$name` in chat with selected Card references. One access prompt shows the Skill source and exact Card sets before the helper starts. No main Agent delegation is involved and this approval grants no conversation-wide project access. `always: true` cannot be combined with `scope`: automatic application has no selected Cards and cannot enforce a helper boundary. The Skill catalog reports this as an invalid declaration with its reason. A missing or invalid declaration cannot start a scoped helper; runtime instructions cannot add access. Run cancellation is limited to this helper's own runs, whose entire execution plan was checked against its run set.
+A Skill with front matter `scope: [read]`, `scope: [read, run]` or another inline list of `read`, `write`, `run` starts directly as a scoped helper. Choose it from a Card's **Run Skill** menu, or use `$name` in chat with selected Card references. One access prompt shows the Skill source and exact Card sets before the helper starts. No main Agent delegation is involved and this approval grants no project access. `always: true` cannot be combined with `scope`: automatic application has no selected Cards and cannot enforce a helper boundary. The Skill catalog reports this as an invalid declaration with its reason. A missing or invalid declaration cannot start a scoped helper; runtime instructions cannot add access. Run cancellation is limited to this helper's own runs, whose entire execution plan was checked against its run set.
 
 The bundled `$review` reads permissions alongside their apparent uses, sources of nondeterminism, resident-worker state and the build/run boundary. `$rerun-compare` reads and reruns selected Cards under the same conditions, comparing output content using the existing run comparison rules; incomplete retained data remains unknown. They contain natural-language instructions, with Japanese and English text, rather than language-specific analysers. Findings cite `card:outer/step?file=src%2Fmain.py&lines=12-18`, which opens those source lines, and state whether they were only read or run and observed. Keep individual findings with **Keep finding as comment**; those comments carry `finding: true` and are excluded from generation requests. Nothing rechecks, resolves or deletes them automatically. Each helper's trace remains expandable in the conversation after reconnecting.
 
@@ -324,3 +324,13 @@ contained in the parent’s corresponding sets. The main Agent has no such cap.
 The host records consumption across retries and checkpoints. Unscoped helpers
 still require the separate permission setting. Nested tasks appear under their
 parent in the host-authored conversation presentation.
+
+### Agent project permissions
+
+Agent read, write, run and shell grants apply to the project across all conversations
+and helpers until revoked. Attached-folder read grants belong to that project too.
+Settings → API → Agent project permissions lists every registered project and its
+current grants; each permission can be granted or revoked there. The host validates
+and stores these decisions. Opening or deleting a conversation does not change them.
+Individual operation approvals and a helper's assigned Card scope remain separate.
+Old host state is not migrated before v1.0; grant access again for each project.

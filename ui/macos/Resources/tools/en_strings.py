@@ -31,6 +31,10 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    "Agent のプロジェクト権限": "Agent project permissions",
+    "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。": "Applies to every conversation and helper in the project until revoked.",
+    "プロジェクト全体・取り消すまで": "Entire project \u00b7 until revoked",
+
 'ChatGPT にもう一度サインインしてください。': "Sign in to ChatGPT again",
 'このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。': "ChatGPT plan usage is not allowed for this account. Allow plan use or choose an API key connection.",
 "vm/guest/build-image.sh で作り直すか、アプリを入れ直してください。": "Rebuild it with vm/guest/build-image.sh, or reinstall the app.",
@@ -87,8 +91,6 @@ EN = {
 'Card の権限の変更': 'Change Card permissions',
 'シェルコマンドの実行': 'Run shell commands',
 'アクセス': 'Access',
-'取り消すまで': 'Until revoked',
-'この会話の間': 'For this conversation',
 'Card の識別子を予約しています': 'Reserving a Card identifier',
 'Card の識別子を予約': 'Reserved a Card identifier',
 '出力を一覧しています': 'Listing outputs',

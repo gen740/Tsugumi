@@ -68,6 +68,7 @@
 "Agent が自分の判断で Web を検索する" = "Let the Agent search the web on its own";
 "Agent が解決" = "Resolved by the Agent";
 "Agent が開き直しました" = "Reopened by the Agent";
+"Agent のプロジェクト権限" = "Agent project permissions";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の作業をアニメーションで表示" = "Animate the Agent’s work";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
@@ -335,7 +336,6 @@
 "このホスト（設定は hostd、API キーは macOS Keychain）" = "This host (settings in hostd; API keys in the macOS Keychain)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
-"この会話の間" = "For this conversation";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
 "この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
@@ -610,6 +610,7 @@
 "プロジェクト" = "Project";
 "プロジェクトが大きすぎます（64 MB まで）。" = "The project is too large (up to 64 MB).";
 "プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。" = "Runs in the project's .tsugumi/runs.sqlite are read again the next time it opens.";
+"プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。" = "Applies to every conversation and helper in the project until revoked.";
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
 "プロジェクトの実行環境" = "Project execution environment";
@@ -629,6 +630,7 @@
 "プロジェクトを開く…" = "Open Project…";
 "プロジェクトを開くと実行環境が起動し、その記録がここに表示されます。" = "When a project opens, the environment starts and its log appears here.";
 "プロジェクトを開けません" = "Cannot open the project";
+"プロジェクト全体・取り消すまで" = "Entire project · until revoked";
 "プロジェクト名" = "Project name";
 "ヘルパー" = "Helpers";
 "ページ" = "Page";
@@ -878,7 +880,6 @@
 "収集" = "Collect";
 "取り消し確認中" = "Waiting for cancellation";
 "取り消す" = "Undo";
-"取り消すまで" = "Until revoked";
 "取り込む" = "Import";
 "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。" = "Choose a Tsugumi project to import (a folder with tsugumi.json). It is copied into externals and does not follow the original folder.";
 "取り込めませんでした" = "Could not import";

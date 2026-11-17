@@ -145,7 +145,7 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(Scalar(host_db, "SELECT count(*) FROM access_prompt_items"), 0);
   EXPECT_NE(Get(home).View().find("HOME_RECORD"), std::string::npos);
   EXPECT_EQ(Conversation("project-record"), conversation);
-  EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
 }
 
 TEST_F(ConversationStoreFixture,

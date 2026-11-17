@@ -286,13 +286,12 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto Grant(const std::string& conversation,
-             Tsugumi::Service::GrantScope scope = Tsugumi::Service::GrantScope::Conversation,
              Tsugumi::Service::Access access = Tsugumi::Service::Access::Read) -> std::string {
     auto ask =
         Call(*external, A::RequestPayload::AccessRequest, [&](Builder& b) {
           return A::CreateAccessRequest(
                      b, b.CreateString(project_id),
-                     b.CreateString(conversation), access, scope,
+                     b.CreateString(conversation), access,
                      b.CreateString("Read this project for the requested work"))
               .Union();
         });

@@ -121,12 +121,11 @@ export function PermissionRequests({ asked, groups = [], selected, onSelect }: {
           }).join('\n')}</pre></li>}
           {!operation && groups.map((g, i) => <li key={i} style={{ display: 'block' }}>
             <strong>{g.title}</strong>
-            <div className="caption secondary" title={g.path}>{g.displayPath}{g.scope && <> · <span style={{ fontWeight: g.scope === 'Server' ? 700 : undefined }}>{accessDuration(g.scope)}</span></>}</div>
+            <div className="caption secondary" title={g.path}>{g.displayPath} · {L('プロジェクト全体・取り消すまで')}</div>
             {g.lines.map(line => <label key={line.request} style={{ display: 'flex', alignItems: 'baseline', gap: 8, whiteSpace: 'normal', marginTop: 6 }}>
               {onSelect && <input type="checkbox" checked={selected?.includes(line.request) ?? false} onChange={e => onSelect(line.request, e.target.checked)} />}
               <span>{accessOperation(line.operation)}</span>
               {line.neededNow && <span className="secondary caption">{L('今の操作に必要')}</span>}
-              {!g.scope && <span className="caption" style={{ fontWeight: line.scope === 'Server' ? 700 : undefined }}>{accessDuration(line.scope)}</span>}
             </label>)}
           </li>)}
           {!operation && access.filter(r => !groups.some(g => g.lines.some(l => l.request === r))).map(r => <li key={r}>
@@ -620,7 +619,6 @@ function accessOperation(name: string): string {
   return name === 'Read' ? L('内容の読み取り') : name === 'Write' ? L('内容の変更') : name === 'Run' ? L('Card の実行')
     : name === 'CardPermissions' ? L('Card の権限の変更') : name === 'Shell' ? L('シェルコマンドの実行') : name
 }
-function accessDuration(name: string): string { return name === 'Server' ? L('取り消すまで') : L('この会話の間') }
 function taskState(state: string): string {
   return state === 'queued' ? L('待機中') : state === 'running' ? L('作業中') : state === 'completed' ? L('終わりました') : state === 'interrupted' ? L('止めました') : L('失敗')
 }

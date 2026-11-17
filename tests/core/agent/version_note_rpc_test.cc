@@ -16,8 +16,8 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   Configure(model, "anthropic");
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Read);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto initialized = ApprovedTool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
   const auto result = JsonString(initialized.View(), "/text");
@@ -71,8 +71,8 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
 TEST_F(AgentProjectFixture, HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Read);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(ApprovedTool(conversation, "version_init", "{}").Code().empty());
   for (const auto& [language, expected] : std::vector<std::pair<std::string, std::string>>{
       {"en", "Create the project"}, {"ja", "プロジェクトを作成"}}) {
@@ -96,8 +96,8 @@ TEST_F(AgentProjectFixture, VersionNoteFailureCanBeRetriedAndEmptyDiffNeverCalls
   Configure(model);
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-note-retry");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Read);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto initialized = ApprovedTool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
   auto commit = JsonString(JsonString(initialized.View(), "/text"), "/value/commit");

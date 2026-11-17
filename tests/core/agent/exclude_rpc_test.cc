@@ -92,7 +92,7 @@ protected:
     const auto conversation = Conversation("exclusion");
     for (const auto access :
          {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-      Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+      Grant(conversation, access);
     return conversation;
   }
 };
@@ -504,7 +504,7 @@ TEST_F(AgentExclusionRPC,
   const auto c = Open({".git", "definitions/hidden", demo.string()}, true);
   for (const auto access :
        {Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(c, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(c, access);
   // Attaching their common ancestor is the route most likely to bypass a
   // workspace-only allowlist. The explicit deny must survive this mount.
   const auto attached = directory.path;

@@ -8,6 +8,7 @@ export interface ChatGPTState {
   signingIn: boolean
   outcome: { ok: boolean; message: string; welcome?: string } | null
   usageURL: string
+  connectionMessage?: string
 }
 
 /** The loopback callback belongs to the server's machine (docs/security.md).

@@ -19,6 +19,7 @@ globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => { interva
 globalThis.fetch = (async (url, init) => {
   let value: unknown = {}
   if (url === '/api/chat/sessions') value = [{ id: 's', title: 'Chat', updatedAt: 0, messages: 0 }]
+  if (url === '/api/guide') value = { available: true, busy: false, conversation: null }
   if (url === '/api/skills') value = []
   if (url === '/api/chat/conversation') {
     reads++

@@ -5,14 +5,14 @@ import TsugumiRPC
 
 @MainActor struct ChatPresentationTests {
   @Test func accessGroupsKeepTheHostTargetAndExactChoiceIdentity() throws {
-    let value = ["title": "Collatz", "path": "/work/copy-b", "access": "Read", "scope": "Conversation", "needed_now": true] as [String: Any]
+    let value = ["title": "Collatz", "path": "/work/copy-b", "access": "Read", "needed_now": true] as [String: Any]
     let data = try JSONSerialization.data(withJSONObject: value)
     let request = "project_access " + String(decoding: data, as: UTF8.self)
-    let line = Tsugumi_Agent_AccessLineT(); line.request = request; line.operation = "Read"; line.scope = "Conversation"; line.neededNow = true
-    let group = Tsugumi_Agent_AccessGroupT(); group.title = "Collatz"; group.path = "/work/copy-b"; group.displayPath = "/work/copy-b"; group.scope = "Conversation"; group.lines = [line]
+    let line = Tsugumi_Agent_AccessLineT(); line.request = request; line.operation = "Read"; line.neededNow = true
+    let group = Tsugumi_Agent_AccessGroupT(); group.title = "Collatz"; group.path = "/work/copy-b"; group.displayPath = "/work/copy-b"; group.lines = [line]
     let prompt = ChatController.PermissionPrompt(raw: [request], groups: [group]) { _ in }
     #expect(prompt.groups.count == 1 && prompt.groups[0].title == "Collatz")
-    #expect(prompt.groups[0].path == "/work/copy-b" && prompt.groups[0].scope == "Conversation")
+    #expect(prompt.groups[0].path == "/work/copy-b")
     #expect(prompt.groups[0].lines[0]?.request == request)
     #expect(prompt.defaultSelection == [request])
   }

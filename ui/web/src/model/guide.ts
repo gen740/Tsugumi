@@ -280,7 +280,7 @@ export class GuideController extends Observable {
       if (e.type === 'guide' && !this.contextSession) this.handle(e.event)
       if (e.type === 'agentWork' && e.project === this.contextSession?.dir) this.externalWork(String(e.from ?? 'Claude Code'), e.event)
       if (e.type === 'guideChanged' && e.origin !== this.origin) void this.syncGuide()
-      if (e.type === 'reconnected') void this.refresh()
+      if (['reconnected', 'providerChanged', 'settingsChanged'].includes(e.type)) void this.refresh(true)
     })
   }
 
@@ -313,19 +313,50 @@ export class GuideController extends Observable {
   }
 
   /** Reads the guide's state (after Settings or the first start changed the key). */
-  async refresh() {
-    try {
-      const r = await api<{ available: boolean; setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null; busy: boolean; conversation: { archive: Message[]; messages: Message[] } | null }>('/api/guide', {})
-      const wasOffered = this.offersDemo
-      this.available = true
-      this.connected = r.available
-      this.progress(r as unknown as GuideState)
-      this.busy = r.busy
-      this.loaded = true
-      if (r.conversation && !this.busy) this.load([...r.conversation.archive, ...r.conversation.messages])
-      void wasOffered
-    } catch {}
-    this.changed()
+  private refreshing?: Promise<boolean>
+  private connectionMessage?: string
+  private availabilityRevision = 0
+  async refresh(fresh = false): Promise<boolean> {
+    if (this.refreshing && !fresh) return this.refreshing
+    const pending = this.readAvailability(++this.availabilityRevision)
+    this.refreshing = pending
+    try { return await pending }
+    finally { if (this.refreshing === pending) this.refreshing = undefined }
+  }
+
+  private async readAvailability(revision: number): Promise<boolean> {
+    // Retry a failed read once; reconnects and questions trigger later reads.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await api<{ available: boolean; connectionMessage?: string; setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null; busy: boolean; conversation: { archive: Message[]; messages: Message[] } | null }>('/api/guide', {})
+        if (revision !== this.availabilityRevision) return false
+        this.available = true
+        this.connected = r.available
+        this.connectionMessage = r.connectionMessage
+        this.progress(r as unknown as GuideState)
+        this.busy = r.busy
+        this.loaded = true
+        if (r.conversation && !this.busy) this.load([...r.conversation.archive, ...r.conversation.messages])
+        this.changed()
+        return true
+      } catch (e) {
+        if (revision !== this.availabilityRevision) return false
+        if (attempt === 1) {
+          this.available = true
+          this.status = L('うまく答えられませんでした: {0}', (e as Error).message)
+          this.changed()
+        }
+      }
+    }
+    return false
+  }
+
+  private async availabilityForAnswer(): Promise<boolean> {
+    const checking = this.refresh(true)
+    const revision = this.availabilityRevision
+    if (await checking) return true
+    // Provisioning a key can emit a newer provider status while this read waits.
+    return revision !== this.availabilityRevision ? this.refresh() : false
   }
 
   private origin = Math.random().toString(36)
@@ -386,7 +417,7 @@ export class GuideController extends Observable {
    *  the guide usable, the page asks whether to see the demo. */
   async connectionSaved() {
     const before = this.connected
-    await this.refresh()
+    await this.refresh(true)
     this.invite(!before)
   }
 
@@ -459,11 +490,14 @@ export class GuideController extends Observable {
 
   /** What the user is interested in (the first question on Home): the guide
    *  picks a demo for it and flies to it in the demo list. */
-  answerInterest(q: string) {
+  async answerInterest(q: string) {
     if (!q.trim()) return
     this.answerDemoOffer()
     this.demosRequested = true
-    if (this.scripted) return this.advance({ kind: 'interest', text: q.trim() }, q.trim())
+    if (this.scripted) {
+      if (!await this.availabilityForAnswer()) return
+      if (!this.connected) return this.advance({ kind: 'interest', text: q.trim() }, q.trim())
+    }
     this.ask(q)
   }
 
@@ -471,7 +505,7 @@ export class GuideController extends Observable {
   ask(q: string, session?: ProjectSession) {
     const t = q.trim()
     if (!this.available || this.busy || !t) return
-    if (this.scripted) return this.answerScripted(t)
+    if (this.scripted) return this.answerScripted(t, undefined, () => this.ask(t, session))
     this.readSession = session
     this.items.push({ id: ++this.n, role: 'user', text: t })
     void this.send(t, session)
@@ -583,6 +617,7 @@ export class GuideController extends Observable {
         this.queued = []
         this.failed = e.message !== 'cancelled'
         this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message))
+        if (e.message !== 'cancelled') void this.refresh(true)
         break
       default:
         return
@@ -739,7 +774,19 @@ export class GuideController extends Observable {
     void this.advance({ kind: 'action_finished', text: action, project })
   }
 
-  answerScripted(t: string, chat?: ChatController) {
+  async answerScripted(t: string, chat?: ChatController, whenConnected?: () => void) {
+    if (!await this.availabilityForAnswer()) return
+    if (this.connected) {
+      if (whenConnected) whenConnected()
+      else if (chat) chat.send(t)
+      else this.ask(t, this.contextSession)
+      return
+    }
+    if (this.connectionMessage) {
+      this.answer({ text: this.connectionMessage, show: { say: this.connectionMessage, choices: [],
+        actions: [{ kind: 'open_settings', label: L('設定を開く') }] } }, t, chat)
+      return
+    }
     const session = chat?.session
     return this.advance({ kind: 'message', text: t, expected_step: this.step,
       project: session?.dir, title: session?.scopeName([]), connected: session?.connected,

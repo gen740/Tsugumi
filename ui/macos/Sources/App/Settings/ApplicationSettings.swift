@@ -588,6 +588,7 @@ private struct APISettings: View {
       APIKeySection(id: "anthropic", config: .anthropic, model: $anthropicModel)
       APIKeySection(id: "openai", config: .openAI, model: $openAIModel)
       ChatGPTSettings()
+      ProjectPermissionSettings()
       Section {
         ForEach(CardPermission.allCases) { k in
           Toggle(isOn: Binding(get: { prefs.allowedPermissions.contains(k.rawValue) },
@@ -958,5 +959,85 @@ private struct VMHistorySettings: View {
       working = false
       load()
     }
+  }
+}
+
+/// The host supplies the project list and editable grants, including attached folders.
+private struct ProjectPermissionSettings: View {
+  @State private var projects: [PermissionProject] = []
+  @State private var error: String?
+  @State private var busy = false
+
+  private struct PermissionProject: Identifiable {
+    let id: String
+    let title: String
+    let path: String
+    let permissions: [Permission]
+  }
+  private struct Permission: Identifiable {
+    let resource: String
+    let title: String
+    let path: String
+    let access: String
+    let allowed: Bool
+    var id: String { resource + ":" + access }
+    var label: String {
+      switch access {
+      case "Read": return String(localized: "内容の読み取り")
+      case "Write": return String(localized: "内容の変更")
+      case "Run": return String(localized: "Card の実行")
+      case "Shell": return String(localized: "シェルコマンドの実行")
+      default: return access
+      }
+    }
+  }
+  var body: some View {
+    Section {
+      ForEach(projects) { project in
+        VStack(alignment: .leading) {
+          Text(project.title.isEmpty ? project.path : project.title).font(.headline)
+          Text(project.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+          ForEach(project.permissions) { permission in
+            Toggle(isOn: Binding(get: { permission.allowed }, set: { allow in
+              Task { await request(project: project, permission: permission, allow: allow) }
+            })) {
+              if permission.resource == project.id { Text(permission.label) }
+              else {
+                VStack(alignment: .leading) {
+                  Text("添付フォルダ · \(permission.title) · \(permission.label)")
+                  Text(permission.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+              }
+            }.disabled(busy)
+          }
+        }
+      }
+      if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+      Button("更新") { Task { await request() } }.disabled(busy)
+    } header: {
+      Text("Agent のプロジェクト権限")
+    } footer: {
+      Text("プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。")
+    }
+    .task { await request() }
+  }
+  @MainActor private func request(project: PermissionProject? = nil, permission: Permission? = nil, allow: Bool = false) async {
+    busy = true
+    error = nil
+    defer { busy = false }
+    do {
+      var fields: [String: Any] = [:]
+      if let project, let permission {
+        fields = ["project_id": project.id, "resource_id": permission.resource, "access": permission.access, "allow": allow]
+      }
+      let value = try await CoreHostClient.shared.call(project == nil ? "ProjectPermissionsRequest" : "ProjectPermissionSetRequest", fields)
+      projects = (value["projects"] as? [[String: Any]] ?? []).map { p in
+        PermissionProject(id: p["project_id"] as? String ?? "", title: p["title"] as? String ?? "", path: p["path"] as? String ?? "",
+          permissions: (p["permissions"] as? [[String: Any]] ?? []).map { v in
+            Permission(resource: v["resource_id"] as? String ?? "", title: v["title"] as? String ?? "", path: v["path"] as? String ?? "",
+              access: v["access"] as? String ?? "", allowed: v["allowed"] as? Bool ?? false)
+          })
+      }
+    } catch { self.error = error.localizedDescription }
   }
 }

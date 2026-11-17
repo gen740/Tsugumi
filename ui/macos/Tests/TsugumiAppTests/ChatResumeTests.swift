@@ -342,7 +342,7 @@ import TsugumiRPC
       }
       func grant(_ resource: String) async throws -> String {
         let request = try await CoreHostClient.shared.call("AccessRequest", ["project_id": resource,
-          "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Fixture-selected folder"])
+          "conversation_id": t.conversationID, "access": "Read", "reason": "Fixture-selected folder"])
         let id = try #require(request["id"] as? String)
         _ = try await CoreHostClient.shared.call("AccessResolveRequest", ["request_id": id, "allow": true])
         return id
@@ -494,7 +494,7 @@ import TsugumiRPC
       try await t.send("Only copy A")
       let project = try #require(t.session.endpointOverride)
       _ = try await CoreHostClient.shared.call("AccessRequest", ["project_id": project.projectId,
-        "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Read project content"])
+        "conversation_id": t.conversationID, "access": "Read", "reason": "Read project content"])
       let copied = t.directory.appendingPathComponent("copy-b")
       // A distinct project copies definitions, without the original project's conversation store.
       try FileManager.default.createDirectory(at: copied, withIntermediateDirectories: true)

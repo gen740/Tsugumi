@@ -283,9 +283,10 @@ struct Settings::State {
   std::map<std::string, std::string> latest;
   KeyStorage storage;
   Models models;
+  std::function<void(const std::string&)> provider_changed;
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
-        Models model_list)
+        Models model_list, std::function<void(const std::string&)> changed)
       : directory(dir),
         db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
@@ -293,7 +294,8 @@ struct Settings::State {
         token(std::move(t)),
         forget(std::move(f)),
         storage(key_storage),
-        models(std::move(model_list)) {
+        models(std::move(model_list)),
+        provider_changed(std::move(changed)) {
     ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
     db.exec(
         "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
@@ -344,8 +346,13 @@ struct Settings::State {
   }
   auto SaveAccount(const std::string& profile, const std::string& id,
                    const j::Members& value) -> void {
+    const auto encoded = j::Encode(value);
+    auto old = db.prepare("SELECT json FROM accounts WHERE profile=? AND id=?");
+    old.bind(1, profile).bind(2, id);
+    if (old.step() && old.text(0) == encoded) return;
     auto q = db.prepare("INSERT OR REPLACE INTO accounts VALUES(?,?,?)");
-    q.bind(1, profile).bind(2, id).bind(3, j::Encode(value)).run();
+    q.bind(1, profile).bind(2, id).bind(3, encoded).run();
+    if (provider_changed) provider_changed(profile);
   }
   auto MemoryKey(const std::string& profile, const std::string& id)
       -> std::pair<std::string, std::string> {
@@ -429,6 +436,11 @@ struct Settings::State {
       a->signed_in = j::Bool(j::Get(v, "signed_in"));
       a->plan_enabled = j::Bool(j::Get(v, "plan_enabled"));
       a->active = j::Bool(j::Get(v, "active"));
+      if (a->active && !a->signed_in) {
+        if (out.state == "idle" || out.state == "complete")
+          out.state = "needs_sign_in";
+        out.message = "Sign in to ChatGPT again";
+      }
       out.accounts.push_back(std::move(a));
     }
     return out;
@@ -645,10 +657,11 @@ struct Settings::State {
 };
 Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
                    std::unique_ptr<SecretStore> store, KeyStorage storage,
-                   Models models)
-    : state_(std::make_unique<State>(d, std::move(i), std::move(t),
-                                     std::move(f), std::move(store), storage,
-                                     std::move(models))) {}
+                   Models models,
+                   std::function<void(const std::string&)> provider_changed)
+    : state_(std::make_unique<State>(
+          d, std::move(i), std::move(t), std::move(f), std::move(store),
+          storage, std::move(models), std::move(provider_changed))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
   switch (type) {
@@ -824,6 +837,13 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           if (source != "env" && source != "keychain" && source != "memory")
             throw std::runtime_error("Unknown platform key source");
           const auto memory_key = key + ":" + source;
+          const auto old = s.ephemeral.find(memory_key);
+          const bool changed =
+              p.remove() ? old != s.ephemeral.end()
+                         : old == s.ephemeral.end() ||
+                               old->second != Text(p.provider()
+                                                       ? p.provider()->api_key()
+                                                       : nullptr);
           if (p.remove()) {
             s.ephemeral.erase(memory_key);
           } else {
@@ -833,9 +853,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   "Ephemeral provisioning accepts only a key");
             s.ephemeral[memory_key] = p.provider()->api_key()->str();
           }
+          if (changed && s.provider_changed) s.provider_changed(profile);
           return agent::wire::HostReply(id,
                                         s.ProviderStatus(profile, provider));
         }
+        const auto before = s.ProviderStatus(profile, provider);
         if (p.remove()) {
           s.secrets->Erase(key);
           auto q =
@@ -866,7 +888,13 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               s.db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?,?)");
           q.bind(1, profile).bind(2, provider).bind(3, j::Encode(value)).run();
         }
-        return agent::wire::HostReply(id, s.ProviderStatus(profile, provider));
+        const auto after = s.ProviderStatus(profile, provider);
+        if (s.provider_changed && (before.configured != after.configured ||
+                                   before.message != after.message ||
+                                   before.endpoint != after.endpoint ||
+                                   before.source != after.source))
+          s.provider_changed(profile);
+        return agent::wire::HostReply(id, after);
       }
       case H::RequestPayload::ProviderStatusRequest: {
         const auto& p = *request.value_as_ProviderStatusRequest();

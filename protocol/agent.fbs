@@ -41,7 +41,7 @@ table ToolCallRequest { conversation_id:string (required); project_id:string; na
 // Cancels only this connection's in-flight ToolCallRequest, including a queued
 // call. It interrupts the call's wait, not the project run it may have started.
 table ToolCallCancelRequest { request_id:ulong; }
-table AccessRequest { project_id:string (required); conversation_id:string; access:Tsugumi.Service.Access; scope:Tsugumi.Service.GrantScope; reason:string; }
+table AccessRequest { project_id:string (required); conversation_id:string; access:Tsugumi.Service.Access; reason:string; }
 // Resolving/revoking grants requires the human principal, including over Unix.
 // allow answers the access needed now; also_allow explicitly opts into other listed accesses.
 table AccessResolveRequest { request_id:string (required); allow:bool; also_allow:[Tsugumi.Service.Access]; }
@@ -70,8 +70,8 @@ table ChatRow {
   instruction:string; failed:uint; recovered:uint;
   links:[ChatLink]; children:[ChatRow];
 }
-table AccessLine { request:string; operation:string; scope:string; needed_now:bool; }
-table AccessGroup { title:string; path:string; display_path:string; scope:string; lines:[AccessLine]; }
+table AccessLine { request:string; operation:string; needed_now:bool; }
+table AccessGroup { title:string; path:string; display_path:string; lines:[AccessLine]; }
 table Conversation {
   id:string (required); title:string; updated_at:long;
   messages:[ModelMessage]; archive:[ModelMessage]; summary:string;
@@ -102,8 +102,8 @@ table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
 table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; scope:Tsugumi.Service.GrantScope; reason:string; state:string; asked:[string]; groups:[AccessGroup]; }
-table Grant { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; active:bool; }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; reason:string; state:string; asked:[string]; groups:[AccessGroup]; }
+table Grant { id:string; project_id:string; access:Tsugumi.Service.Access; active:bool; }
 table AccessList { requests:[AccessEntry]; grants:[Grant]; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,

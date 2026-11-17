@@ -24,7 +24,7 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("missing-inputs");
   for (const auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto revision = JsonString(
       JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
   auto run = [&](const std::string& card, const std::string& id) {
@@ -57,7 +57,7 @@ protected:
     for (auto access :
          {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
           Tsugumi::Service::Access::Run})
-      Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+      Grant(conversation, access);
     const auto inspected = Inspect(conversation).View();
     const auto rev = JsonString(JsonString(inspected, "/text"), "/value/rev");
     const auto saved = Tool(conversation, "project_save",

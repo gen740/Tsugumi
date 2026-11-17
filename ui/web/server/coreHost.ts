@@ -83,6 +83,7 @@ class Connection {
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token,
       client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}`, protocol: 1 })
+    if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
   }
 
   private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {

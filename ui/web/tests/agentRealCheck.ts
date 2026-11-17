@@ -22,9 +22,9 @@ const original = { settings: CoreHost.prototype.getSettings, environment: CoreHo
   project: CoreHost.prototype.project, folder: CoreHost.prototype.projectFolder }
 let model = 'gpt-6.1-sol'
 let busy = false
-const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', scope: 'Conversation', reason: 'Read project content', needed_now: true })
-const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', scope: 'Conversation', needed_now: false })
-const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', scope: 'Conversation', needed_now: false })
+const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
+const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', needed_now: false })
+const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', needed_now: false })
 let pendingAsked = [asked, write, run]
 const calls: { method: string; fields: any }[] = []
 const events: any[] = []
@@ -104,15 +104,15 @@ try {
 const tools = [...AGENT.requests, ...AGENT.approvalRequests].map(name => name.replace(/Request$/, '').replace(/[A-Z]/g, (c, index) => (index ? '_' : '') + c.toLowerCase()))
 for (const lang of ['ja', 'en'] as const) {
   const choices = [asked, write, run]
-  const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], scope: 'Conversation', lines: choices.map(request => {
+  const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], lines: choices.map(request => {
     const fields = JSON.parse(request.slice('project_access '.length))
-    return { request, operation: fields.access, scope: fields.scope, neededNow: fields.needed_now }
+    return { request, operation: fields.access, neededNow: fields.needed_now }
   }) }]
   const markup = renderToStaticMarkup(createElement(PermissionRequests, { asked: choices, groups }))
   assert.equal((markup.match(/Collatz/g) ?? []).length, 1, 'The target is drawn once for all operations')
   assert.ok(markup.includes('内容の読み取り') && markup.includes('内容の変更') && markup.includes('Card の実行'))
   assert.equal((markup.match(/今の操作に必要/g) ?? []).length, 1)
-  assert.equal((markup.match(/この会話の間/g) ?? []).length, 1)
+  assert.equal((markup.match(/プロジェクト全体・取り消すまで/g) ?? []).length, 1)
   for (const name of [...tools, 'demo_list', 'demo_read', 'operation_approval', 'guide_show', 'delegate', 'web_search']) {
     const label = toolStep(name, '{}')
     assert.ok(!label.running.includes(name) && !label.done.includes(name), `${lang}: missing label for ${name}`)

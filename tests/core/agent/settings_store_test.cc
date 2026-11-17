@@ -30,6 +30,37 @@ class MemorySecrets final : public host::SecretStore {
   }
   auto Erase(const std::string& id) -> void override { values.erase(id); }
 };
+TEST(HostSettingsStore,
+     ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {
+  TemporaryDirectory directory;
+  std::vector<std::string> changed;
+  host::Settings service(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::make_unique<MemorySecrets>(), host::Settings::KeyStorage::Host, {},
+      [&](const auto& profile) { changed.push_back(profile); });
+  const auto put = [&](bool remove) {
+    H::ProviderSetRequestT value;
+    value.profile = "desktop";
+    value.id = "anthropic";
+    value.ephemeral = true;
+    value.remove = remove;
+    value.provider = std::make_unique<H::ProviderInputT>();
+    value.provider->api_key = "FIXTURE_KEY";
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder b;
+    b.Finish(H::Request::Pack(b, &request));
+    return service.Handle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+  };
+  put(false);
+  EXPECT_EQ(changed, std::vector<std::string>{"desktop"});
+  put(false);
+  EXPECT_EQ(changed.size(), 1u);
+  put(true);
+  EXPECT_EQ(changed, (std::vector<std::string>{"desktop", "desktop"}));
+}
 TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
   TemporaryDirectory directory;
   const auto make = [&] {

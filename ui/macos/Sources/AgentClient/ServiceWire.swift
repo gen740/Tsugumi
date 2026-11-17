@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "BinaryCachesGetRequest", "BinaryCachesPutRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "BinaryCachesGetRequest", "BinaryCachesPutRequest", "ProjectPermissionsRequest", "ProjectPermissionSetRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -122,6 +122,15 @@ enum ServiceWire {
         let v = Tsugumi_Host_BinaryCachesPutRequestT()
         v.cachesJson = fields["caches_json"] as? String ?? "[]"
         return (Tsugumi_Host_RequestPayload.binarycachesputrequest.rawValue, v)
+      case "ProjectPermissionsRequest":
+        return (Tsugumi_Host_RequestPayload.projectpermissionsrequest.rawValue, Tsugumi_Host_ProjectPermissionsRequestT())
+      case "ProjectPermissionSetRequest":
+        let v = Tsugumi_Host_ProjectPermissionSetRequestT()
+        v.projectId = fields["project_id"] as? String ?? ""
+        v.resourceId = fields["resource_id"] as? String ?? ""
+        v.access = ["Read": Tsugumi_Service_Access.read, "Write": .write, "Run": .run, "Shell": .shell][fields["access"] as? String ?? ""] ?? .read
+        v.allow = fields["allow"] as? Bool ?? false
+        return (Tsugumi_Host_RequestPayload.projectpermissionsetrequest.rawValue, v)
       case "SettingsGetRequest":
         let v = Tsugumi_Host_SettingsGetRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
@@ -369,7 +378,6 @@ enum ServiceWire {
         v.projectId = fields["project_id"] as? String ?? ""
         v.conversationId = fields["conversation_id"] as? String
         v.access = Tsugumi_Service_Access(rawValue: (fields["access"] as? NSNumber)?.uint8Value ?? (["Read": UInt8(0), "Write": UInt8(1), "Run": UInt8(2), "CardPermissions": UInt8(3), "Shell": UInt8(4)][fields["access"] as? String ?? ""] ?? 0)) ?? .read
-        v.scope = Tsugumi_Service_GrantScope(rawValue: (fields["scope"] as? NSNumber)?.uint8Value ?? (["Conversation": UInt8(0), "Server": UInt8(1)][fields["scope"] as? String ?? ""] ?? 0)) ?? .conversation
         v.reason = fields["reason"] as? String
         return (Tsugumi_Agent_RequestPayload.accessrequest.rawValue, v)
       case "AccessResolveRequest":
@@ -456,6 +464,7 @@ enum ServiceWire {
     case is Tsugumi_Host_EnvironmentStateT: return ["type": "EnvironmentState", "value": try view(value)]
     case is Tsugumi_Host_HostRuntimeT: return ["type": "HostRuntime", "value": try view(value)]
     case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
+    case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
     default: throw RPCError.disconnected
     }
@@ -673,7 +682,6 @@ enum ServiceWire {
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
       out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
-      out["scope"] = ["Conversation", "Server"][Int(v.scope.rawValue)]
       out["reason"] = v.reason
       out["state"] = v.state
       return out
@@ -681,7 +689,6 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["id"] = v.id
       out["project_id"] = v.projectId
-      out["conversation_id"] = v.conversationId
       out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
       out["active"] = v.active
       return out
@@ -738,6 +745,14 @@ enum ServiceWire {
       out["value_json"] = v.valueJson
       return out
     case let v as Tsugumi_Host_BinaryCachesT: return ["caches_json": v.cachesJson]
+    case let v as Tsugumi_Host_ProjectPermissionListT:
+      return ["projects": try v.projects.compactMap { try $0.map { try view($0) } }]
+    case let v as Tsugumi_Host_ProjectPermissionsT:
+      return ["project_id": v.projectId, "title": v.title ?? "", "path": v.path ?? "",
+        "permissions": try v.permissions.compactMap { try $0.map { try view($0) } }]
+    case let v as Tsugumi_Host_ProjectPermissionT:
+      return ["resource_id": v.resourceId, "title": v.title ?? "", "path": v.path ?? "",
+        "access": ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)], "allowed": v.allowed]
     case let v as Tsugumi_Host_SettingsT:
       var out: [String: Any] = [:]
       out["revision"] = v.revision

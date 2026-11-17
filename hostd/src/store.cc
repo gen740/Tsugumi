@@ -20,10 +20,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "UNIQUE(project,path));"
       "CREATE TABLE IF NOT EXISTS access_requests(id TEXT PRIMARY KEY, "
       "project TEXT NOT NULL, conversation TEXT NOT NULL, access INTEGER NOT "
-      "NULL, scope INTEGER NOT NULL, reason TEXT NOT NULL, state TEXT NOT "
+      "NULL, reason TEXT NOT NULL, state TEXT NOT "
       "NULL);"
       "CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY, project TEXT "
-      "NOT NULL, conversation TEXT NOT NULL, access INTEGER NOT NULL, active "
+      "NOT NULL, access INTEGER NOT NULL, active "
       "INTEGER NOT NULL);"
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");

@@ -211,7 +211,23 @@ final class GuideController {
   @ObservationIgnored private var observed: String?
   @ObservationIgnored private var highlightTask: Task<Void, Never>?
 
-  private init() {
+  @ObservationIgnored private let availability: () async throws -> (usable: Bool, message: String?)
+  @ObservationIgnored private var availabilityTask: Task<Bool, Never>?
+  @ObservationIgnored private var availabilityRevision = 0
+  @ObservationIgnored private var connectionMessage: String?
+
+  init(availability: @escaping () async throws -> (usable: Bool, message: String?) = {
+    try await CoreHostClient.shared.availability(await AgentSettings.guide())
+  }, observeHost: Bool = true) {
+    self.availability = availability
+    if observeHost {
+      Task { [weak self] in
+        _ = await CoreHostClient.shared.observeHost { [weak self] event in
+          guard ["Connected", "ProviderChanged", "SettingsChanged"].contains(event["type"] as? String ?? "") else { return }
+          Task { @MainActor [weak self] in self?.refreshAvailability(fresh: true) }
+        }
+      }
+    }
     refreshAvailability()
   }
 
@@ -220,9 +236,48 @@ final class GuideController {
   /// Reads whether the chosen provider can be used: a key (Anthropic, OpenAI),
   /// a signed-in ChatGPT plan, or the local fixture (after Settings or the
   /// first start changed it). One already there answers the first start's question.
-  func refreshAvailability() {
-    let config = AgentSettings.current()
-    Task { apply((try? await CoreHostClient.shared.usable(config)) ?? false) }
+  func refreshAvailability(fresh: Bool = false) {
+    Task { await checkAvailability(fresh: fresh) }
+  }
+
+  @discardableResult
+  func checkAvailability(fresh: Bool = false) async -> Bool {
+    if let task = availabilityTask, !fresh { return await task.value }
+    availabilityRevision += 1
+    let revision = availabilityRevision
+    let task = Task { () -> Bool in
+      // A failed RPC is not a provider status. Retry once, then wait for a
+      // reconnect or the person's next question rather than polling.
+      for attempt in 0..<2 {
+        do {
+          let result = try await availability()
+          guard revision == availabilityRevision else { return false }
+          connectionMessage = result.message == "Sign in to ChatGPT again"
+            ? String(localized: "ChatGPT にもう一度サインインしてください。") : nil
+          apply(result.usable)
+          return true
+        } catch {
+          guard revision == availabilityRevision else { return false }
+          if attempt == 1 {
+            available = true
+            status = String(localized: "うまく答えられませんでした: \(String(describing: error))")
+          }
+        }
+      }
+      return false
+    }
+    availabilityTask = task
+    let result = await task.value
+    if revision == availabilityRevision { availabilityTask = nil }
+    return result
+  }
+
+  private func availabilityForAnswer() async -> Bool {
+    let revision = availabilityRevision + 1
+    if await checkAvailability(fresh: true) { return true }
+    // Provisioning a key can emit a newer provider status while this read waits.
+    if revision != availabilityRevision { return await checkAvailability() }
+    return false
   }
 
   private func apply(_ usable: Bool) {
@@ -242,7 +297,7 @@ final class GuideController {
   /// guide usable, the main window in front asks whether to see the demo.
   func connectionSaved() {
     inviteOnConnect = !connected
-    refreshAvailability()
+    refreshAvailability(fresh: true)
   }
 
   /// The first start was answered: with a key that connected (the main window
@@ -429,7 +484,11 @@ final class GuideController {
     answerDemoOffer()
     demosRequested = true
     if scripted {
-      advance(["kind": "interest", "text": text], asked: text)
+      Task {
+        guard await availabilityForAnswer() else { return }
+        if connected { answerInterest(text) }
+        else { advance(["kind": "interest", "text": text], asked: text) }
+      }
       return
     }
     ask(text, screen: .demos, session: nil, tab: nil, note: "[Interest] The user answered what interests them; pick a demo for it.")
@@ -440,7 +499,7 @@ final class GuideController {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard available, !busy, !text.isEmpty else { return }
     if scripted {
-      answerScripted(text, chat: nil)
+      answerScripted(text, chat: nil) { self.ask(text, screen: screen, session: session, tab: tab, note: note) }
       return
     }
     guard let agent = makeAgent() else { return }
@@ -561,6 +620,7 @@ final class GuideController {
       queued = []
       failed = s != "cancelled"
       status = s == "cancelled" ? String(localized: "回答を止めました。") : String(localized: "うまく答えられませんでした: \(ChatGPTError.localizedMessage(s))")
+      if s != "cancelled" { refreshAvailability(fresh: true) }
     }
   }
 
@@ -706,7 +766,24 @@ final class GuideController {
     advance(event)
   }
 
-  func answerScripted(_ text: String, chat: ChatController?) {
+  func answerScripted(_ text: String, chat: ChatController?, whenConnected: (() -> Void)? = nil) {
+    Task {
+      guard await availabilityForAnswer() else { return }
+      if connected {
+        if let whenConnected { whenConnected() }
+        else if let chat { chat.send(text) }
+        else { ask(text, screen: contextScreen, session: contextSession, tab: contextTab) }
+        return
+      }
+      if let message = connectionMessage {
+        present(message, shown: GuideShow(say: message, actions: [GuideAction(kind: .openSettings, label: String(localized: "設定を開く"))]), asked: text, chat: chat)
+        return
+      }
+      answerFromScript(text, chat: chat)
+    }
+  }
+
+  private func answerFromScript(_ text: String, chat: ChatController?) {
     var event: [String: Any] = ["kind": "message", "text": text, "expected_step": guideStep]
     if let s = chat?.session {
       event["project"] = s.identity.url.path; event["title"] = s.scopeName([])

@@ -174,7 +174,9 @@ async function providerInfo() {
 
 /** The ChatGPT accounts and the sign-in for the settings page (never a token). */
 async function chatGPTState() {
-  return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
+  const status = await core.user.call<{ message?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
+  return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL,
+    connectionMessage: status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined }
 }
 
 // ---- The guide -----------------------------------------------------------------
@@ -214,23 +216,25 @@ async function guideProvider(): Promise<ProviderConfig> { return purposeProvider
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
  *  signed-in ChatGPT plan, or the local fixture. */
-async function guideAvailable(): Promise<boolean> {
-  const p = await provider()
+async function guideAvailability(): Promise<{ configured: boolean; message?: string }> {
+  const p = await guideProvider()
   const selected = await core.provider(p)
-  const status = await core.user.call<{ configured: boolean }>('ProviderStatusRequest', {
+  const status = await core.user.call<{ configured: boolean; message?: string }>('ProviderStatusRequest', {
     profile: p.auth === 'chatgpt' ? selected.account_profile ?? selected.profile : selected.profile,
     id: selected.provider_id, key_profile: selected.key_profile,
   })
-  return status.configured
+  return status
 }
 
 // The relay fixes the guide session to this Web host; tabs never own progress.
 const guideSession = () => `web:${ctx.support}`
 async function guideState() {
-  const available = await guideAvailable()
+  const status = await guideAvailability()
+  const available = status.configured
+  const connectionMessage = status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined
   const progress = await core.user.call('GuideAdvanceRequest', { session_id: guideSession(), language: settings().language,
     event: { kind: 'connection', connected: available } })
-  return { available, ...progress }
+  return { available, connectionMessage, ...progress }
 }
 
 // ---- Skills ----------------------------------------------------------------------
@@ -445,6 +449,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
   core.observeHost((event) => {
+    if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
+    if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
     if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) c.broadcast({ type: 'settingsChanged' })
   })
   const projectDir = c.projectDir
@@ -646,6 +652,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/agent/call': (b, _url, signal) => String(b.name).startsWith('agent_')
     ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined, signal)
     : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments, signal),
+  'POST /api/project-permissions': () => core.user.call('ProjectPermissionsRequest'),
+  'POST /api/project-permissions/set': (b) => core.user.call('ProjectPermissionSetRequest', { project_id: String(b.project_id), resource_id: String(b.resource_id), access: b.access, allow: b.allow === true }),
   'POST /api/agent/access': () => core.user.call('AccessListRequest'),
   'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
@@ -672,7 +680,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return guideState()
   },
   'POST /api/guide/send': async (b) => {
-    if (!(await guideAvailable())) throw ctx.httpError(409, L('ガイドに使える API キーがありません。'))
+    const status = await guideAvailability()
+    if (!status.configured) throw ctx.httpError(409, status.message === 'Sign in to ChatGPT again'
+      ? L('ChatGPT にもう一度サインインしてください。') : L('ガイドに使える API キーがありません。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     const a = await guide()
     if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))

@@ -633,17 +633,8 @@ auto AccessGroups(const std::vector<std::string>& asked)
     auto line = std::make_unique<A::AccessLineT>();
     line->request = request;
     line->operation = json::Text(value, "access");
-    line->scope = json::Text(value, "scope");
     line->needed_now = json::Bool(json::Get(value, "needed_now", "true"));
     (*group)->lines.push_back(std::move(line));
-  }
-  for (auto& group : groups) {
-    group->scope = group->lines.front()->scope;
-    for (const auto& line : group->lines)
-      if (line->scope != group->scope) {
-        group->scope.clear();
-        break;
-      }
   }
   return groups;
 }

@@ -52,15 +52,15 @@ auto Access::HasGrant(const std::string& project,
     return access == Tsugumi::Service::Access::Read && approval.step();
   }
   auto q = db.prepare(
-      "SELECT 1 FROM grants WHERE project=? AND (conversation='' "
-      "OR conversation=?) AND access=? AND active=1 LIMIT 1");
-  q.bind(1, project).bind(2, conversation).bind(3, static_cast<int>(access));
+      "SELECT 1 FROM grants WHERE project=? AND access=? AND active=1 LIMIT 1");
+  q.bind(1, project).bind(2, static_cast<int>(access));
   return q.step();
 }
 
-auto Access::AccessDescription(const std::string& resource, Tsugumi::Service::Access access,
-                               Tsugumi::Service::GrantScope scope, const std::string& reason,
-                               bool needed) -> std::string {
+auto Access::AccessDescription(const std::string& resource,
+                               Tsugumi::Service::Access access,
+                               const std::string& reason, bool needed)
+    -> std::string {
   if (reason.starts_with("operation_approval\n") ||
       reason.starts_with("helper_scope\n"))
     return "project_access " + reason;
@@ -84,32 +84,32 @@ auto Access::AccessDescription(const std::string& resource, Tsugumi::Service::Ac
              json::Members{{"title", json::Quote(title)},
                            {"path", json::Quote(path)},
                            {"access", json::Quote(Tsugumi::Service::EnumNameAccess(access))},
-                           {"scope", json::Quote(Tsugumi::Service::EnumNameGrantScope(scope))},
                            {"reason", json::Quote(reason)},
                            {"needed_now", needed ? "true" : "false"}});
 }
 
 auto Access::AccessDescriptions(const std::string& id,
-                                const std::string& project, Tsugumi::Service::Access needed,
-                                Tsugumi::Service::GrantScope scope, const std::string& reason)
+                                const std::string& project,
+                                Tsugumi::Service::Access needed,
+                                const std::string& reason)
     -> std::vector<std::string> {
-  std::vector<std::string> asked{
-      AccessDescription(project, needed, scope, reason)};
+  std::vector<std::string> asked{AccessDescription(project, needed, reason)};
   auto items = db.prepare(
       "SELECT access FROM access_prompt_items WHERE request=? ORDER BY access");
   items.bind(1, id);
   while (items.step()) {
     const auto access = static_cast<Tsugumi::Service::Access>(items.i64(0));
     if (access != needed)
-      asked.push_back(AccessDescription(project, access, scope, reason, false));
+      asked.push_back(AccessDescription(project, access, reason, false));
   }
   return asked;
 }
 
 auto Access::RequestAccess(const std::string& project,
-                           const std::string& conversation, Tsugumi::Service::Access access,
-                           Tsugumi::Service::GrantScope scope, const std::string& reason,
-                           bool per_call, bool combine) -> std::string {
+                           const std::string& conversation,
+                           Tsugumi::Service::Access access,
+                           const std::string& reason, bool per_call,
+                           bool combine) -> std::string {
   if (!per_call && (access == Tsugumi::Service::Access::HelperScope ||
                     reason.find("operation_approval\n") != std::string::npos ||
                     reason.find("helper_scope\n") != std::string::npos))
@@ -121,29 +121,27 @@ auto Access::RequestAccess(const std::string& project,
   registry.Lookup(folder.step() ? folder.text(0) : project);
   auto old = db.prepare(
       "SELECT id FROM access_requests WHERE project=? AND conversation=? AND "
-      "access=? AND scope=? AND (state='pending' OR (access=? AND "
+      "access=? AND (state='pending' OR (access=? AND "
       "state='allowed')) AND "
       "((?=1 AND reason=?) OR (?=0 AND id NOT IN (SELECT request FROM "
       "operation_approvals)))");
   old.bind(1, project)
       .bind(2, conversation)
       .bind(3, static_cast<int>(access))
-      .bind(4, static_cast<int>(scope))
-      .bind(5, static_cast<int>(Tsugumi::Service::Access::HelperScope))
-      .bind(6, per_call ? 1 : 0)
-      .bind(7, reason)
-      .bind(8, per_call ? 1 : 0);
+      .bind(4, static_cast<int>(Tsugumi::Service::Access::HelperScope))
+      .bind(5, per_call ? 1 : 0)
+      .bind(6, reason)
+      .bind(7, per_call ? 1 : 0);
   if (old.step()) return old.text(0);
   sql::Transaction tx(db);
   const auto id = crypto::uuid4();
   auto q =
-      db.prepare("INSERT INTO access_requests VALUES(?,?,?,?,?,?, 'pending')");
+      db.prepare("INSERT INTO access_requests VALUES(?,?,?,?,?, 'pending')");
   q.bind(1, id)
       .bind(2, project)
       .bind(3, conversation)
       .bind(4, static_cast<int>(access))
-      .bind(5, static_cast<int>(scope))
-      .bind(6, reason)
+      .bind(5, reason)
       .run();
   // Only ordinary project access is bundled. Folder access, shell access and
   // per-operation approvals retain their own, narrower questions.
@@ -154,15 +152,13 @@ auto Access::RequestAccess(const std::string& project,
       auto asked = db.prepare(
           "SELECT 1 FROM access_requests r JOIN access_prompt_items i ON "
           "i.request=r.id "
-          "WHERE r.project=? AND r.conversation=? AND i.access=? "
+          "WHERE r.project=? AND i.access=? "
           "UNION ALL SELECT 1 FROM access_requests WHERE project=? AND "
-          "conversation=? AND access=?");
+          "access=?");
       asked.bind(1, project)
-          .bind(2, conversation)
-          .bind(3, static_cast<int>(candidate))
-          .bind(4, project)
-          .bind(5, conversation)
-          .bind(6, static_cast<int>(candidate));
+          .bind(2, static_cast<int>(candidate))
+          .bind(3, project)
+          .bind(4, static_cast<int>(candidate));
       if (candidate != access &&
           (HasGrant(project, conversation, candidate) || asked.step()))
         continue;
@@ -172,7 +168,7 @@ auto Access::RequestAccess(const std::string& project,
   }
   std::vector<std::string> asked;
   for (const auto& description :
-       AccessDescriptions(id, project, access, scope, reason))
+       AccessDescriptions(id, project, access, reason))
     asked.push_back(json::Quote(description));
   tx.commit();
   dependencies.event(conversation, json::Encode(json::Members{
@@ -195,8 +191,7 @@ auto Access::Require(const std::string& project,
   }
   if (HasGrant(project, conversation, access)) return;
   const auto id =
-      RequestAccess(project, conversation, access, Tsugumi::Service::GrantScope::Conversation,
-                    reason, false, true);
+      RequestAccess(project, conversation, access, reason, false, true);
   if (!wait)
     throw Failure("grant_required", "Explicit user permission is required", id);
   while (!HasGrant(project, conversation, access)) {
@@ -221,22 +216,101 @@ auto Access::AuthorizeContext(const std::string& id,
                         "was revoked; clear it before continuing");
 }
 
+auto Access::Revoke(const std::string& resource, S::Access access) -> void {
+  auto q =
+      db.prepare("UPDATE grants SET active=0 WHERE project=? AND access=?");
+  q.bind(1, resource).bind(2, static_cast<int>(access)).run();
+  if (access == S::Access::Read || access == S::Access::Write ||
+      access == S::Access::Run || access == S::Access::Shell) {
+    auto owner = db.prepare("SELECT project FROM folders WHERE id=?");
+    owner.bind(1, resource);
+    dependencies.cancel(owner.step() ? owner.text(0) : resource, "");
+  }
+  changed.notify_all();
+}
+
+auto Access::HandleHost(const Tsugumi::Host::Request& request, uint64_t id)
+    -> std::string {
+  namespace H = Tsugumi::Host;
+  if (const auto* edit = request.value_as_ProjectPermissionSetRequest()) {
+    const auto project = edit->project_id()->str();
+    const auto resource = edit->resource_id()->str();
+    auto known = db.prepare("SELECT 1 FROM projects WHERE id=?");
+    known.bind(1, project);
+    if (!known.step()) throw Failure("not_found", "Project not found");
+    if (resource != project) {
+      auto folder =
+          db.prepare("SELECT 1 FROM folders WHERE id=? AND project=?");
+      folder.bind(1, resource).bind(2, project);
+      if (!folder.step())
+        throw Failure("not_found", "Attached folder not found");
+      if (edit->access() != S::Access::Read)
+        throw Failure("invalid_request",
+                      "Attached folders allow read access only");
+    } else if (edit->access() != S::Access::Read &&
+               edit->access() != S::Access::Write &&
+               edit->access() != S::Access::Run &&
+               edit->access() != S::Access::Shell) {
+      throw Failure("invalid_request",
+                    "This access requires an operation approval");
+    }
+    if (!edit->allow()) {
+      Revoke(resource, edit->access());
+    } else if (!HasGrant(resource, "", edit->access())) {
+      auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
+      grant.bind(1, crypto::uuid4())
+          .bind(2, resource)
+          .bind(3, static_cast<int>(edit->access()))
+          .run();
+      changed.notify_all();
+    }
+  }
+  H::ProjectPermissionListT result;
+  auto projects = db.prepare(
+      "SELECT id,title,coalesce((SELECT path FROM "
+      "project_paths WHERE id=projects.id),'') "
+      "FROM projects ORDER BY title,id");
+  while (projects.step()) {
+    auto project = std::make_unique<H::ProjectPermissionsT>();
+    project->project_id = projects.text(0);
+    project->title = projects.text(1);
+    project->path = projects.text(2);
+    const auto add = [&](const std::string& resource, const std::string& title,
+                         const std::string& path, S::Access access) {
+      auto permission = std::make_unique<H::ProjectPermissionT>();
+      permission->resource_id = resource;
+      permission->title = title;
+      permission->path = path;
+      permission->access = access;
+      permission->allowed = HasGrant(resource, "", access);
+      project->permissions.push_back(std::move(permission));
+    };
+    for (const auto access :
+         {S::Access::Read, S::Access::Write, S::Access::Run, S::Access::Shell})
+      add(project->project_id, project->title, project->path, access);
+    auto folders = db.prepare(
+        "SELECT id,title,path FROM folders WHERE project=? ORDER BY path");
+    folders.bind(1, project->project_id);
+    while (folders.step())
+      add(folders.text(0), folders.text(1), folders.text(2), S::Access::Read);
+    result.projects.push_back(std::move(project));
+  }
+  return wire::HostReply(id, std::move(result));
+}
+
 auto Access::Handle(const RequestIn& request, bool human) -> std::string {
   const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
   switch (r->value_type()) {
     case A::RequestPayload::AccessRequest: {
       auto p = r->value_as_AccessRequest();
-      if (p->access() > Tsugumi::Service::Access::MAX || p->scope() > Tsugumi::Service::GrantScope::MAX)
-        throw Failure("invalid_request", "Invalid permission scope");
+      if (p->access() > Tsugumi::Service::Access::MAX)
+        throw Failure("invalid_request", "Invalid permission access");
       const auto conversation = Text(p->conversation_id());
-      if (p->scope() == Tsugumi::Service::GrantScope::Conversation && conversation.empty())
-        throw Failure("invalid_request",
-                      "A conversation-scoped grant needs a conversation");
       if (!conversation.empty()) conversations->GetConversation(conversation);
       if (!conversation.empty())
         conversations->OwnConversation(conversation, human);
       const auto id = RequestAccess(p->project_id()->str(), conversation,
-                                    p->access(), p->scope(), Text(p->reason()));
+                                    p->access(), Text(p->reason()));
       A::AccessResultT result;
       result.id = id;
       return wire::AgentReply(request.request_id, std::move(result));
@@ -245,11 +319,11 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       Human(human);
       auto p = r->value_as_AccessResolveRequest();
       auto q = db.prepare(
-          "SELECT project,conversation,access,scope,state FROM "
+          "SELECT project,conversation,access,state FROM "
           "access_requests WHERE id=?");
       q.bind(1, p->request_id()->str());
       if (!q.step()) throw Failure("not_found", "Access request not found");
-      if (q.text(4) != "pending")
+      if (q.text(3) != "pending")
         throw Failure("conflict", "Access request was already answered");
       sql::Transaction tx(db);
       auto operation =
@@ -260,11 +334,10 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
           static_cast<Tsugumi::Service::Access>(q.i64(2)) == Tsugumi::Service::Access::HelperScope;
       if (p->allow() && !per_call &&
           static_cast<Tsugumi::Service::Access>(q.i64(2)) != Tsugumi::Service::Access::HelperScope) {
-        auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
+        auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
         grant.bind(1, p->request_id()->str())
             .bind(2, q.text(0))
-            .bind(3, q.i64(3) == 1 ? "" : q.text(1))
-            .bind(4, q.i64(2))
+            .bind(3, q.i64(2))
             .run();
       }
       std::set<Tsugumi::Service::Access> offered;
@@ -283,11 +356,10 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         std::set<Tsugumi::Service::Access> allowed(p->also_allow()->begin(),
                                     p->also_allow()->end());
         for (const auto access : allowed) {
-          auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
+          auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
           grant.bind(1, crypto::uuid4())
               .bind(2, q.text(0))
-              .bind(3, q.i64(3) == 1 ? "" : q.text(1))
-              .bind(4, static_cast<int>(access))
+              .bind(3, static_cast<int>(access))
               .run();
         }
       }
@@ -313,20 +385,10 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       const auto grant_id =
           r->value_as_AccessRevokeRequest()->grant_id()->str();
       auto grant = db.prepare(
-          "SELECT project,conversation,access FROM grants WHERE id=? AND "
-          "active=1");
+          "SELECT project,access FROM grants WHERE id=? AND active=1");
       grant.bind(1, grant_id);
-      if (grant.step()) {
-        const auto project = grant.text(0), conversation = grant.text(1);
-        const auto access = static_cast<Tsugumi::Service::Access>(grant.i64(2));
-        if (access == Tsugumi::Service::Access::Shell || access == Tsugumi::Service::Access::Read ||
-            access == Tsugumi::Service::Access::Write || access == Tsugumi::Service::Access::Run) {
-          dependencies.cancel(project, conversation);
-        }
-      }
-      auto q = db.prepare("UPDATE grants SET active=0 WHERE id=?");
-      q.bind(1, grant_id).run();
-      changed.notify_all();
+      if (grant.step())
+        Revoke(grant.text(0), static_cast<S::Access>(grant.i64(1)));
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
     case A::RequestPayload::AccessListRequest: {
@@ -340,7 +402,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       }
       A::AccessListT result;
       auto q = db.prepare(
-          "SELECT id,project,conversation,access,scope,reason,state "
+          "SELECT id,project,conversation,access,reason,state "
           "FROM access_requests WHERE (?='' OR conversation=?) "
           "ORDER BY rowid DESC LIMIT 500");
       q.bind(1, id).bind(2, id);
@@ -350,26 +412,26 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         entry->project_id = q.text(1);
         entry->conversation_id = q.text(2);
         entry->access = static_cast<Tsugumi::Service::Access>(q.i64(3));
-        entry->scope = static_cast<Tsugumi::Service::GrantScope>(q.i64(4));
-        entry->reason = q.text(5);
-        entry->state = q.text(6);
-        entry->asked =
-            AccessDescriptions(entry->id, entry->project_id, entry->access,
-                               entry->scope, entry->reason);
+        entry->reason = q.text(4);
+        entry->state = q.text(5);
+        entry->asked = AccessDescriptions(entry->id, entry->project_id,
+                                          entry->access, entry->reason);
         entry->groups = agent::AccessGroups(entry->asked);
         result.requests.push_back(std::move(entry));
       }
       auto g = db.prepare(
-          "SELECT id,project,conversation,access,active FROM grants "
-          "WHERE (?='' OR conversation='' OR conversation=?)");
-      g.bind(1, id).bind(2, id);
+          "SELECT id,project,access,active FROM grants "
+          "WHERE (?='' OR project=(SELECT project FROM conversation_locations "
+          "WHERE conversation=?) OR project IN (SELECT id FROM folders WHERE "
+          "project=(SELECT project FROM conversation_locations WHERE "
+          "conversation=?)))");
+      g.bind(1, id).bind(2, id).bind(3, id);
       while (g.step()) {
         auto grant = std::make_unique<A::GrantT>();
         grant->id = g.text(0);
         grant->project_id = g.text(1);
-        grant->conversation_id = g.text(2);
-        grant->access = static_cast<Tsugumi::Service::Access>(g.i64(3));
-        grant->active = g.i64(4) != 0;
+        grant->access = static_cast<Tsugumi::Service::Access>(g.i64(2));
+        grant->active = g.i64(3) != 0;
         result.grants.push_back(std::move(grant));
       }
       return wire::AgentReply(request.request_id, std::move(result));

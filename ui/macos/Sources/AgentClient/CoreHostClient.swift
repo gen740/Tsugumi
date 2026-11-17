@@ -236,6 +236,7 @@ public actor CoreHostClient {
       try await transport.start()
       _ = try await exchange("HelloRequest", ["token": token, "client_id": "macos-\(UUID().uuidString)", "protocol": 1], host: host)
     }
+    for handler in hostObservers.values { handler(["type": "Connected"]) }
   }
 
   private func close() {
@@ -383,12 +384,16 @@ public actor CoreHostClient {
   }
 
   public func usable(_ config: ProviderConfig) async throws -> Bool {
+    try await availability(config).usable
+  }
+
+  public func availability(_ config: ProviderConfig) async throws -> (usable: Bool, message: String?) {
     let selected = try await provider(config, asking: false)
     let reply = try await call("ProviderStatusRequest", ["profile": "desktop", "id": config.connection,
       "key_profile": selected.keyProfile ?? ""])
     let usable = reply["configured"] as? Bool ?? false
     ModelCatalogSnapshot.shared.showAvailability(config.connection, usable)
-    return usable
+    return (usable, reply["message"] as? String)
   }
 
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {

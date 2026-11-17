@@ -29,9 +29,6 @@ private func accessOperation(_ name: String) -> String {
   default: return name
   }
 }
-private func accessDuration(_ name: String) -> String {
-  name == "Server" ? String(localized: "取り消すまで") : String(localized: "この会話の間")
-}
 
 /// Shows core-owned access requests and approvals for a single operation.
 struct PermissionPromptView: View {
@@ -69,9 +66,7 @@ struct PermissionPromptView: View {
             Text(group.title ?? "").font(.callout.weight(.semibold))
             HStack(alignment: .firstTextBaseline) {
               Text(group.displayPath ?? "").help(group.path ?? "").textSelection(.enabled)
-              if let scope = group.scope, !scope.isEmpty {
-                Text(accessDuration(scope)).fontWeight(scope == "Server" ? .bold : .regular)
-              }
+              Text("プロジェクト全体・取り消すまで").fontWeight(.bold)
             }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach(Array(group.lines.compactMap { $0 }.enumerated()), id: \.offset) { _, line in
               let request = line.request ?? ""
@@ -81,9 +76,6 @@ struct PermissionPromptView: View {
                 HStack(alignment: .firstTextBaseline) {
                   Text(accessOperation(line.operation ?? "")).fixedSize(horizontal: false, vertical: true)
                   if line.neededNow { Text("今の操作に必要").font(.caption).foregroundStyle(.secondary) }
-                  if (group.scope ?? "").isEmpty {
-                    Text(accessDuration(line.scope ?? "")).font(.caption).fontWeight(line.scope == "Server" ? .bold : .regular)
-                  }
                 }
               }.toggleStyle(.checkbox)
             }

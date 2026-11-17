@@ -91,6 +91,7 @@ final class ChatGPTSignInModel {
     if let onConnected { connected = onConnected }
     let status = await load()
     accounts = status.accounts
+    if let message = status.message { self.message = message }
     if let result = status.result, result.account.signedIn, result.account.planEnabled, result.welcome {
       welcome = result.account.clientId
     }
