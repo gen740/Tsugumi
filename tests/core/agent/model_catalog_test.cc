@@ -82,11 +82,12 @@ TEST(ModelCatalog, ExactRolesOrderAndBudgets) {
                                       "tool_result_read", "demo_list",
                                       "demo_read", "tools", "guide_show"}));
   // Budgets include names, descriptions, schemas and JSON framing, with room
-  // for small additions. No policy wording is pinned here.
+  // for small additions. Card-copy sources increased the helper catalog to
+  // 13614 bytes; retain a small margin without pinning policy wording.
   EXPECT_LT(CatalogBytes(catalog.ModelSpecs()), 15000u);
-  EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::Helper, false)), 13600u);
+  EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::Helper, false)), 13700u);
   EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::ScopedHelper, false)),
-            13600u);
+            13700u);
   EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::Guide)), 4600u);
 }
 

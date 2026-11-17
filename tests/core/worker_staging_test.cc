@@ -14,7 +14,7 @@
 #include <thread>
 
 #include "tsugumi/workerd/staging.hh"
-#include "util/sparse.hh"
+#include "tsugumi/util/sparse.hh"
 
 namespace {
 namespace stdfs = std::filesystem;

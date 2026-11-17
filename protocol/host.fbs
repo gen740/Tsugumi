@@ -12,6 +12,11 @@ namespace Tsugumi.Host;
 table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 0; }
 
 // Host settings are patched against a revision, never overwritten blindly.
+// Human-owned binary cache configuration; validation and persistence belong to hostd.
+table BinaryCachesGetRequest {}
+table BinaryCachesPutRequest { caches_json:string (required); }
+table BinaryCaches { caches_json:string (required); }
+
 table Setting { key:string (required); value_json:string (required); }
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
@@ -145,7 +150,7 @@ table DocumentCopy { edits_json:string (required); files:[DocumentFileCopy]; }
 // port names under ports/<card>/{inputs,outputs} for a Draft '+' gesture.
 table DocumentConnect { state_json:string (required); inserted_id:string; needs_fork:bool; }
 
-// The host serves the shared ui/templates catalog for a new Card.
+// The host serves the shared ui/shared/templates catalog for a new Card.
 table DocumentTemplateFile { path:string (required); text:string (required); }
 table DocumentTemplate { definition_json:string (required); files:[DocumentTemplateFile]; }
 
@@ -498,7 +503,7 @@ table Identifier { id:string (required); }
 
 union RequestPayload {
   VersionCommentsRequest,
-  GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
+  BinaryCachesGetRequest, BinaryCachesPutRequest, GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ProjectTrustRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutValidateRequest, VersionCanvasRequest,
@@ -514,7 +519,7 @@ union ReplyPayload {
   ProjectOperationResult,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  BinaryCaches, GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,

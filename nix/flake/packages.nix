@@ -19,9 +19,9 @@ in
       libgit2-local = pkgs.callPackage ../libgit2-local.nix { };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
-      kernel = pkgs.callPackage ../../macOS/Container/kernel.nix { };
-      vm-system = pkgs.callPackage ../../macOS/Container/vm-system.nix { tsugumid = core; };
-      vm-boot = pkgs.callPackage ../../macOS/Container/vm-boot.nix { inherit kernel vm-system; };
+      kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
+      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix { tsugumid = core; };
+      vm-boot = pkgs.callPackage ../../vm/guest/vm-boot.nix { inherit kernel vm-system; };
     in
     {
       packages = {

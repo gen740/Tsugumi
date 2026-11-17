@@ -8,8 +8,8 @@
 #include <string_view>
 
 #include "tsugumi/protocol/data_generated.h"
-#include "util/json.hh"
-#include "util/text.hh"
+#include "tsugumi/util/json.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::workerd {
 inline auto validate_display(const Tsugumi::Data::Display& display) -> std::optional<std::string> {

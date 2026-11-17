@@ -2,7 +2,7 @@
 #include <regex>
 #include <set>
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "oauth_fixture.hh"
 #include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"

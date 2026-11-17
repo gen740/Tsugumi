@@ -97,7 +97,7 @@ test('llms.txt lists existing downloadable documents', () => {
 test('the app help bundle contains all local script, style and image dependencies', () => {
   const destination = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-docs-test-'))
   try {
-    execFileSync('bash', [path.join(ROOT, 'macOS/tools/bundle-docs.sh'), destination])
+    execFileSync('bash', [path.join(ROOT, 'ui/macos/tools/bundle-docs.sh'), destination])
     assert.deepEqual(fs.readdirSync(path.join(destination, 'pages')).sort(), STORY.map(story => path.basename(story.out)).sort())
     for (const story of STORY) {
       const html = fs.readFileSync(path.join(destination, story.out), 'utf8')

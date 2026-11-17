@@ -6,7 +6,7 @@
 #include <thread>
 
 #include "tsugumi/workerd/local.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::workerd {
 namespace {

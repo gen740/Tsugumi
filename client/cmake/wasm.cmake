@@ -1,4 +1,5 @@
-include(${CMAKE_CURRENT_LIST_DIR}/transport-wasm.cmake)
+target_compile_options(tsugumi_client PRIVATE -fexceptions)
+target_link_libraries(tsugumi_client PUBLIC tsugumi_client_transport)
 
 add_executable(tsugumi_client_wasm src/wasm_bindings.cc)
 target_link_libraries(tsugumi_client_wasm PRIVATE tsugumi_client)

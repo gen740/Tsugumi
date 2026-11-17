@@ -71,8 +71,8 @@ No run history or artifacts are deleted by these checks.
 Rebuild the boot image; rebuilding only the C++/Swift source is insufficient:
 
 ```sh
-TSUGUMI_VM_BUILD=1 macOS/Container/build-image.sh --vm
-TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh
+TSUGUMI_VM_BUILD=1 vm/guest/build-image.sh --vm
+TSUGUMI_CODESIGN_IDENTITY="Apple Development" ui/macos/build-app.sh
 ```
 
 The first command writes the verified artifact set to `dist/tsugumi-vm`; the

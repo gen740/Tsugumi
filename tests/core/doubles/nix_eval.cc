@@ -16,9 +16,9 @@
 #include <thread>
 #include <utility>
 
-#include "util/json.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/json.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi {
 namespace {

@@ -4,11 +4,11 @@
 #include <cstdlib>
 #include <fstream>
 
-#include "document.hh"
-#include "graph.hh"
+#include "tsugumi/document/document.hh"
+#include "tsugumi/document/graph.hh"
 #include "nix_eval.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi {
 namespace {

@@ -14,14 +14,17 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | Where | What |
 | --- | --- |
 | [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
-| [core/](core/) | Project core `tsugumid`, host-side `tsugumi-hostd` (`src/host/`, `src/agent/`), worker pools, scheduling, Nix, history and versions |
+| [util/](util/), [rpc/](rpc/) | Generic filesystem/process/JSON mechanisms and protocol-free transport/TLS |
+| [tsugumid/](tsugumid/) | Project document contracts, runtime, scheduling, history and versions; narrow shared runtime accounting |
+| [hostd/](hostd/) | Human/Agent policy, settings, credentials, document operations and environment adapters |
 | [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
 | [workerd/](workerd/) | Native Card host `tsugumi-worker`, remote listener/supervisor/Nix runner `tsugumi-workerd`, framing and job support |
 | [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |
-| [macOS/](macOS/) | SwiftUI app, RPC/Agent adapters, shared Linux VM, image definitions and app tests |
-| [ui/](ui/) | Shared isolated web-module host (`modules/`) and Card scaffolds (`templates/`) |
-| [agent/](agent/) | Shared Agent prompts, tool descriptions and guide scripts (`Shared/`) |
-| [web/](web/) | Browser UI, host server and platform adapters |
+| [vm/](vm/) | Release-built Linux guest and independent macOS VM runtime/helper |
+| [ui/macos/](ui/macos/) | SwiftUI app and Host/Agent presentation adapters |
+| [ui/shared/](ui/shared/) | Shared isolated web-module host and Card scaffolds |
+| [hostd/agent/](hostd/agent/) | Agent implementation, prompts, tool descriptions and guide scripts |
+| [ui/web/](ui/web/) | Browser UI, host server and platform adapters |
 | [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
 | [nix/](nix/) | Runtime, SDK, remote worker and CLI packages; flake outputs, checks and development shell |
@@ -37,14 +40,14 @@ Instructions for Claude Code, Codex and others (`CLAUDE.md` is a link to this fi
 
 ### Language
 
-Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the English strings are in `macOS/Resources/tools/en_strings.py` and `web/src/i18n/en.json`.
+Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the English strings are in `ui/macos/Resources/tools/en_strings.py` and `ui/web/shared/i18n/en.json`.
 
 ### Running the Mac app
 
 Someone is doing other work on the same Mac. Do not take the foreground, and do not show dialogs.
 
-- **Launching:** use [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) (it opens the app in the background with `open -g`, and capturing works as it is). To launch directly, use `open -g -n --env TSUGUMI_UI_SCRIPT=<absolute path> <Tsugumi.app>`; never run the executable directly.
-- **Building:** sign with `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh`. An ad hoc signed build is treated as a different app on every rebuild, and reading the API key shows a password dialog ("Signing development builds" in [RELEASING.md](RELEASING.md)). Where there is no certificate (`security find-identity -v -p codesigning`), build as it is.
+- **Launching:** use [ui/macos/tools/run-ui.sh](ui/macos/tools/run-ui.sh) (it opens the app in the background with `open -g`, and capturing works as it is). To launch directly, use `open -g -n --env TSUGUMI_UI_SCRIPT=<absolute path> <Tsugumi.app>`; never run the executable directly.
+- **Building:** sign with `TSUGUMI_CODESIGN_IDENTITY="Apple Development" ui/macos/build-app.sh`. An ad hoc signed build is treated as a different app on every rebuild, and reading the API key shows a password dialog ("Signing development builds" in [RELEASING.md](RELEASING.md)). Where there is no certificate (`security find-identity -v -p codesigning`), build as it is.
 
 ### Checks before merging
 

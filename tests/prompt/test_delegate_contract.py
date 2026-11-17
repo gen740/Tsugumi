@@ -17,7 +17,7 @@ def structural_schema(value):
 
 class DelegateContractTests(unittest.TestCase):
     def test_helpers_skill_example_uses_only_supported_task_arguments(self):
-        prompt = (ROOT / "agent/Shared/helpers-skill.md").read_text()
+        prompt = (ROOT / "hostd/agent/Shared/helpers-skill.md").read_text()
         schema = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())["delegateSchema"]
         for line in prompt.splitlines():
             if not line.strip().startswith("delegate {"):
@@ -31,7 +31,7 @@ class DelegateContractTests(unittest.TestCase):
                 self.assertLessEqual(set(task), set(task_schema["properties"]))
 
     def test_capability_contract_replaces_the_parallelism_setting(self):
-        shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())["delegateTool"]
+        shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())["delegateTool"]
         fixture = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())["delegateSchema"]
         self.assertEqual(structural_schema(shared["inputSchema"]), fixture)
         tasks = fixture["properties"]["tasks"]

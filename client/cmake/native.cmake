@@ -1,4 +1,4 @@
-include(${CMAKE_CURRENT_LIST_DIR}/transport-native.cmake)
+target_link_libraries(tsugumi_client PUBLIC tsugumi_client_transport)
 
 add_executable(tsugumi-rpc src/main.cc)
 target_link_libraries(tsugumi-rpc PRIVATE tsugumi_client flatbuffers::flatbuffers)

@@ -19,26 +19,26 @@ def structural_schema(value):
 
 
 def test_delegate_schema_matches_the_core_contract():
-    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())
     fixture = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())
     assert structural_schema(shared["delegateTool"]["inputSchema"]) == fixture["delegateSchema"]
     assert "helper" not in shared
 
 
 def test_swift_copy_of_the_shared_files_is_current():
-    r = subprocess.run([sys.executable, str(ROOT / "agent/Shared/generate.py"), "--check"])
-    assert r.returncode == 0, "run python3 agent/Shared/generate.py"
+    r = subprocess.run([sys.executable, str(ROOT / "hostd/agent/Shared/generate.py"), "--check"])
+    assert r.returncode == 0, "run python3 hostd/agent/Shared/generate.py"
 
 
 def test_the_english_guide_script_is_the_japanese_one_translated():
-    """agent/Shared/guide-script.en.json has the same tours, steps, choices,
+    """hostd/agent/Shared/guide-script.en.json has the same tours, steps, choices,
     targets and buttons as guide-script.json; only its words differ, and they
     are all English."""
     import json
     import re
     jp = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
-    ja = json.loads((ROOT / "agent/Shared/guide-script.json").read_text())
-    en = json.loads((ROOT / "agent/Shared/guide-script.en.json").read_text())
+    ja = json.loads((ROOT / "hostd/agent/Shared/guide-script.json").read_text())
+    en = json.loads((ROOT / "hostd/agent/Shared/guide-script.en.json").read_text())
     problems = []
 
     def same(a, b, where):
@@ -83,7 +83,7 @@ def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
 
 
 def test_file_copy_schema():
-    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())
     tools = {tool["name"]: tool for tool in shared["hostTools"]}
     copy = tools["project_copy"]
     assert copy["mutating"]
@@ -94,7 +94,7 @@ def test_file_copy_schema():
 
 
 def test_run_wait_schema_is_shared_with_external_mcp():
-    shared = json.loads((ROOT / 'agent/Shared/agent.json').read_text())
+    shared = json.loads((ROOT / 'hostd/agent/Shared/agent.json').read_text())
     wait = shared['runWait']
     assert wait['schema']['type'] == 'integer' and wait['schema']['minimum'] == 0
     fixtures = json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())
@@ -104,6 +104,6 @@ def test_run_wait_schema_is_shared_with_external_mcp():
 
 
 def test_always_sent_prompt_stays_small_and_its_reference_is_bundled():
-    prompt = (ROOT / "agent/Shared/system-prompt.md").read_bytes()
+    prompt = (ROOT / "hostd/agent/Shared/system-prompt.md").read_bytes()
     assert len(prompt) < 8_000
     assert (ROOT / "demos/reference/cards.md").is_file()

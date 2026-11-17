@@ -1,7 +1,7 @@
 #include <set>
 #include <tuple>
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
 
 namespace tsugumi::test {

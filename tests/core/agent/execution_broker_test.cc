@@ -12,7 +12,7 @@
 
 #include "fixture.hh"
 #include "tsugumi/workerd/protocol.hh"
-#include "util/peer_tls.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 
 namespace tsugumi::test {
 namespace {

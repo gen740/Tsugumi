@@ -20,10 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 # Also support the documentation player harvester launched directly.
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
-TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "core" / "tsugumid"))
+TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
-WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "web" / "dist"))
+WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "ui/web" / "dist"))
 
 EMPTY_PROJECT = {
     "name": "test",
@@ -128,13 +128,13 @@ def daemon(project: Path):
 
 class SharedVM:
     """The app's shared VM driven through tsugumi-vmctl: one per test session,
-    with private disposable storage. macOS/tools/build-vmctl.sh builds and signs it."""
+    with private disposable storage. vm/macos/tools/build-vmctl.sh builds and signs it."""
 
     _instance: "SharedVM | None" = None
 
     def __init__(self):
         import atexit
-        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "macOS" / ".build" / "debug" / "tsugumi-vmctl"))
+        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/macos" / ".build" / "debug" / "tsugumi-vmctl"))
         self.directory = tempfile.TemporaryDirectory(prefix="vm-")
         support = Path(self.directory.name)
         support.mkdir(parents=True, exist_ok=True)

@@ -5,9 +5,9 @@
 #include <cstring>
 #include <iostream>
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "agent/context.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 #include "project_fixture.hh"
 
 #ifndef __APPLE__

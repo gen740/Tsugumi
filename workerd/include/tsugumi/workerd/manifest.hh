@@ -1,7 +1,7 @@
 // SDK worker manifest JSON contract.
 #pragma once
 
-#include "util/json.hh"
+#include "tsugumi/util/json.hh"
 
 namespace tsugumi::schema {
 // The manifest written by the SDK's tsugumi.manifest (read only). `run` is the

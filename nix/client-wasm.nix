@@ -19,7 +19,9 @@ stdenvNoCC.mkDerivation {
       ../client/include
       ../client/src/client.cc
       ../client/src/client_c.cc
-      ../client/src/transport_wasm.cc
+      ../rpc
+      ../cmake
+      ../client/cmake
       ../client/src/wasm_bindings.cc
       ../protocol/service_common.fbs
       ../protocol/host.fbs
@@ -31,8 +33,7 @@ stdenvNoCC.mkDerivation {
       ../protocol/worker.fbs
       ../protocol/local_worker.fbs
       ../protocol/remote_worker.fbs
-      ../protocol/local_worker.fbs
-      ../web/scripts/build-client.sh
+      ../ui/web/scripts/build-client.sh
     ];
   };
   nativeBuildInputs = [
@@ -45,7 +46,7 @@ stdenvNoCC.mkDerivation {
   buildPhase = ''
     runHook preBuild
     export EM_CACHE="$TMPDIR/emscripten-cache"
-    sh web/scripts/build-client.sh
+    sh ui/web/scripts/build-client.sh
     runHook postBuild
   '';
   installPhase = ''

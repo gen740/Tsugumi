@@ -16,3 +16,6 @@ set_target_properties(tsugumi_worker_values PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_worker_values.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_worker_values INTERFACE tsugumi_document tsugumi_util)
+
+add_library(tsugumi_launch_paths STATIC IMPORTED)
+set_target_properties(tsugumi_launch_paths PROPERTIES IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_launch_paths.a" INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")

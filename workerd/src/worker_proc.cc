@@ -18,11 +18,11 @@
 #endif
 
 #include "tsugumi/protocol/worker_generated.h"
-#include "util/fs.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/staging.hh"
-#include "util/text.hh"
-#include "util/log.hh"
-#include "util/process.hh"
+#include "tsugumi/util/text.hh"
+#include "tsugumi/util/log.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/value_wire.hh"
 #include "tsugumi/workerd/frame.hh"
 

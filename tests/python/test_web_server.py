@@ -1,7 +1,7 @@
 """The web UI's host server: only the page opened through the URL it printed
 (its key, then a cookie) reaches /api/, a malformed request fails alone, files
 outside the page are not served, and every answer forbids framing and
-sniffing. Needs node and a built web/dist (npm run build)."""
+sniffing. Needs node and a built ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVER = WEB_DIST / "server.js"
 
 pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
-                                reason="needs node and web/dist (cd web && npm run build)")
+                                reason="needs node and ui/web/dist (cd ui/web && npm run build)")
 
 
 @pytest.fixture

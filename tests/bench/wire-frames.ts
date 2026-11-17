@@ -1,7 +1,7 @@
-// Run with TSUGUMI_WIRE_BENCH=1 npm --prefix web test; timing is opt-in.
+// Run with TSUGUMI_WIRE_BENCH=1 npm --prefix ui/web test; timing is opt-in.
 import assert from 'node:assert/strict'
-import { WireRouter, type Pt, type Rect } from '../../web/src/model/canvasKit'
-import type { FlowDirection } from '../../web/src/model/prefs'
+import { WireRouter, type Pt, type Rect } from '../../ui/web/src/model/canvasKit'
+import type { FlowDirection } from '../../ui/web/src/model/prefs'
 export function wireFrameBudget(big: { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }, Router: typeof WireRouter) {
   const t0 = performance.now()
   const frames = 200

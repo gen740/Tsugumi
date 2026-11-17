@@ -1,7 +1,7 @@
 find_package(flatbuffers CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
-# A project's versions are a git repository (core/src/versions.cc).
+# A project's versions are a git repository (tsugumid/runtime/src/versions.cc).
 pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
 # A static libgit2 (nix/libgit2-local.nix) brings none of its own
 # dependencies: add what its pkg-config file lists as private, after it.

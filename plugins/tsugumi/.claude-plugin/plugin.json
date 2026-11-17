@@ -11,7 +11,7 @@
     "tsugumi_repo": {
       "type": "directory",
       "title": "Tsugumi checkout",
-      "description": "A built checkout of the Tsugumi repository (the core in build/, the web UI in web/dist). Leave it empty when the plugin is loaded from such a checkout. See docs/claude-code.md.",
+      "description": "A built checkout of the Tsugumi repository (the core in build/, the web UI in ui/web/dist). Leave it empty when the plugin is loaded from such a checkout. See docs/claude-code.md.",
       "required": false,
       "default": ""
     }

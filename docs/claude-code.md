@@ -6,11 +6,11 @@ The work shows in the [Web UI](WebUI.md) as it happens: Cards Claude Code saves 
 ## How it works
 
 ```text
-Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumi-hostd ── tsugumid
+Claude Code ── MCP (stdio) ── ui/web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumi-hostd ── tsugumid
                                                                        └─ events ── browser (Canvas, thrush, approvals)
 ```
 
-- The MCP server (`web/server/mcp.ts`) asks the Web host, which forwards calls to `tsugumi-hostd` as an external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
+- The MCP server (`ui/web/server/mcp.ts`) asks the Web host, which forwards calls to `tsugumi-hostd` as an external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
 - Agent events and project notifications let the Web UI show the work and run progress. A model key in Tsugumi is not required for Claude Code to use the tools.
 - Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](security.md#the-agents-permission-boundary)
 - The MCP server exposes hostd's tool catalog and Agent API operations prefixed with `agent_`. Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
@@ -34,7 +34,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 - `tsugumi_open` uses the command's host discovery and startup lock (`server.json` in the data folder), checks the build fingerprint, and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §7](security.md#the-agents-permission-boundary)).
 - A running host from another build is refused with its PID and URL; stop that host and retry with the intended build. Concurrent command and plugin starts use one host per data folder.
 - A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
-- The first `tsugumi_open` returns the MCP instructions defined by `INSTRUCTIONS` in `web/server/mcp.ts`.
+- The first `tsugumi_open` returns the MCP instructions defined by `INSTRUCTIONS` in `ui/web/server/mcp.ts`.
 
 | Environment variable (MCP server) | Meaning |
 | --- | --- |
@@ -46,7 +46,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 - The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.
 - Cards run in the environment of the Web UI server `tsugumi_open` found (inside the shared VM if the `tsugumi` command's server is running on a Mac). If no server is running, a server is started from the repository you built, and `tsugumid` runs directly on this host.
 
-The plugin uses core's project-tool allow list in `agent/Shared/agent.json`,
+The plugin uses core's project-tool allow list in `hostd/agent/Shared/agent.json`,
 shared with the built-in Agent. Run history deletion, cache clearing, version
 checkout and summary replacement remain explicit UI actions. `project_shell`
 requires a separate Shell grant and reads the project without write access;

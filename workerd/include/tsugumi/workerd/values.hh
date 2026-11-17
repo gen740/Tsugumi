@@ -6,8 +6,8 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "definition_values.hh"
-#include "types.hh"
+#include "tsugumi/document/definition_values.hh"
+#include "tsugumi/document/types.hh"
 namespace tsugumi {
 using FailureKind = Tsugumi::Data::FailureKind;
 using RunState = Tsugumi::Data::RunState;

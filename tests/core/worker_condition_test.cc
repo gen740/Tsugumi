@@ -1,4 +1,4 @@
-#include "worker_condition.hh"
+#include "tsugumi/document/worker_condition.hh"
 #include "worker_selection.hh"
 
 #include <gtest/gtest.h>

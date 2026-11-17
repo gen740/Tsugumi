@@ -1,6 +1,6 @@
 #include "project_fixture.hh"
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {

@@ -1,4 +1,4 @@
-// The app's bird, temari and branch (macOS/Sources/App/Loading/TsugumiArt.swift),
+// The app's bird, temari and branch (ui/macos/Sources/App/Loading/TsugumiArt.swift),
 // polygon for polygon, and the drawing helpers of the scenes.
 
 export const hex = (v, a = 1) => `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${a})`

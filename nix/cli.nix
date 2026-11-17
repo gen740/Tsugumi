@@ -28,6 +28,7 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
           coreutils
         ]
       } \
+      --set-default TSUGUMI_REPO ${web}/share/tsugumi \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_HOSTD ${tsugumid}/bin/tsugumi-hostd \
       --set-default TSUGUMI_WORKER ${tsugumid}/bin/tsugumi-worker \

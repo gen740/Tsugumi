@@ -281,7 +281,7 @@ and its sources in src/. You can use input_types to read the resolved input defi
   Plotly/Altair interactive plots carry at most 1 MiB of JSON, data inline.
   HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
   matplotlib need nothing more).
-* marimo: use the shared marimo notebook starting point (ui/templates/marimo.py; demo_read
+* marimo: use the shared marimo notebook starting point (ui/shared/templates/marimo.py; demo_read
   en/marimo/definitions/notebook/src/main.py and src/notebook.py). It is an ordinary Python Card with
   ps.marimo in pythonCard packages and reuseWorker: false. Keep the notebook in src/notebook.py;
   the bindings JSON maps notebook variables to inputs.<port>.<field> or param.<field>, e.g.

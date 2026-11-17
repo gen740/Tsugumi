@@ -1,0 +1,77 @@
+import { cardIds } from './cardIds'
+import assert from 'node:assert/strict'
+import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { parse } from '../shared/json'
+import { D, R } from '../src/wire/rpc'
+
+const page = globalThis as Record<string, unknown>
+page.document = { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
+page.window = globalThis
+page.matchMedia = () => ({ matches: false, addEventListener() {} })
+page.EventSource = class { addEventListener() {} close() {} }
+const { ProjectSession } = await import('../src/model/session')
+const { CardSettingsEditor } = await import('../src/ui/cardSettings')
+
+const session = cardIds(new ProjectSession('/p', 'k', 'p'))
+session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+session.layout = parse('{}')
+session.connected = true
+const card = await session.addCard('python', [], { x: 0, y: 0 })
+session.updateCard(card, def => def.set('executionService', 'local'))
+await session.save()
+const show = (nativeSystem: string, systems: string[]) => {
+  session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem, systems })]
+  return renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+}
+
+const linux = show('aarch64-linux', ['aarch64-linux', 'x86_64-linux'])
+assert.match(linux, /<option value="x86_64-linux">/)
+
+session.updateCard(card, (def) => def.set('system', 'x86_64-linux'))
+await session.save()
+const unavailable = show('aarch64-linux', ['aarch64-linux'])
+assert.match(unavailable, /<option value="x86_64-linux" disabled="" selected="">/)
+
+session.updateCard(card, (def) => def.set('system', undefined))
+await session.save()
+const darwin = show('aarch64-darwin', ['aarch64-darwin'])
+assert.doesNotMatch(darwin, /<option value="x86_64-linux"/)
+
+session.executionServices = [
+  Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem: 'aarch64-linux', systems: ['aarch64-linux'] }),
+  Object.assign(new R.ExecutionServiceT(), { id: 'worker', nativeSystem: 'x86_64-linux', systems: ['x86_64-linux'], resourceLimits: true }),
+]
+session.updateCard(card, (def) => {
+  def.set('executionService', 'worker')
+  def.set('executionResources', parse('{"cpuMillis":1000,"memoryBytes":1073741824}'))
+  def.set('sandbox', false)
+})
+await session.save()
+const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+assert.match(remote, /<option value="worker" selected="">worker/)
+assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
+assert.match(remote, /<input(?=[^>]*name="cpuMillis")(?=[^>]*value="1000")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="memoryBytes")(?=[^>]*value="1073741824")[^>]*>/)
+
+session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
+const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+assert.match(missingService, /<option value="worker" disabled="" selected="">worker/)
+
+const runEvents = session as unknown as { applyRunEvent(event: R.RunEventT): void }
+session.runStatus = Object.assign(new R.RunStatusT(), { runId: 'current', state: D.RunState.running })
+const event = (runId: string, state: D.CardState, executionState: D.RemoteExecutionState) =>
+  Object.assign(new R.RunEventT(), {
+    runId,
+    valueType: R.RunEventValue.RunCardChanged,
+    value: Object.assign(new R.RunCardChangedT(), { invocation: Object.assign(new R.InvocationSummaryT(), {
+      card: Object.assign(new D.CardPathT(), { segments: [card] }), invocation: 1n, state, executionState,
+    }) }),
+  })
+runEvents.applyRunEvent(event('current', D.CardState.running, D.RemoteExecutionState.running))
+runEvents.applyRunEvent(event('previous', D.CardState.succeeded, D.RemoteExecutionState.succeeded))
+assert.equal(session.remoteHistoryRevision, 2)
+assert.equal(session.cardStates.get(card)?.state, D.CardState.running)
+assert.equal(session.timeline.length, 1)
+assert.equal(session.timeline[0].state, D.CardState.running)
+
+console.log('Card execution settings: passed')

@@ -1,4 +1,4 @@
-// Standalone: swiftc -parse-as-library macOS/Sources/Launcher/AppTermination.swift
+// Standalone: swiftc -parse-as-library ui/macos/Sources/Launcher/AppTermination.swift
 // tests/swift/app_termination_test.swift -o /tmp/app-termination-test
 import Foundation
 

@@ -15,7 +15,7 @@ from tsugumi_client import Client
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
-DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "core/tsugumid"))
+DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid/tsugumid"))
 MOCK_DAEMON = Path(os.environ.get("TSUGUMI_MOCK_DAEMON", BUILD / "tests/core/tsugumid-mock"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
 WORKERD = Path(os.environ.get("TSUGUMI_WORKERD", WORKER.parent / "tsugumi-workerd"))

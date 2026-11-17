@@ -78,14 +78,14 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 
 - Nix (with flakes enabled)
 - Xcode or the Command Line Tools
-- For development image cache downloads: authenticated `gh` (`gh auth login`). If no artifact matches the current definition: a Linux Nix builder, or Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
+- For development image cache downloads: authenticated `gh` (`gh auth login`). If no artifact matches the current definition: a Linux Nix builder, or Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [vm/guest/versions.env](../vm/guest/versions.env); after `container system start`)
 
-Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
+Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../ui/macos/Package.swift) and the relevant package lock files.
 
 ### Minimal steps
 
 ```bash
-macOS/build-app.sh
+ui/macos/build-app.sh
 ```
 
 ```bash
@@ -115,21 +115,21 @@ First boot registers the shipped store and starts the prebuilt supervisor,
 without a source share or Tsugumi compilation:
 
 ```bash
-macOS/Container/build-image.sh --vm
+vm/guest/build-image.sh --vm
 ```
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
-`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`, including the shared
+`ui/macos/build-app.sh` packages the app into `dist/Tsugumi.app`, including the shared
 module host, demos, guest archive/manifest and expanded license inventory, then
 signs it. It resolves the current guest on every build. Set `TSUGUMI_VM_BUILD=1`
 to force a local guest build, or `TSUGUMI_VM_NIX_BUILDERS` to use a configured
 Linux builder. For release artifact requirements and signing, see
 [Releasing](../RELEASING.md). `--check` and `--kernel` remain local builder tools.
 
-Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `macOS/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `macOS/tools/build-vmctl.sh`.
+Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `ui/macos/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `vm/macos/tools/build-vmctl.sh`.
 
-The app icon `macOS/Resources/AppIcon.icns` is generated from `docs/assets/tsugumi-icon.svg` and committed. After changing the SVG, regenerate it with `swift macOS/Resources/tools/make_icon.swift`.
+The app icon `ui/macos/Resources/AppIcon.icns` is generated from `docs/assets/tsugumi-icon.svg` and committed. After changing the SVG, regenerate it with `swift ui/macos/Resources/tools/make_icon.swift`.
 
 ## Checking after building
 

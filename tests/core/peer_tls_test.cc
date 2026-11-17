@@ -1,7 +1,7 @@
 #include "tsugumi/workerd/authorized_keys.hh"
 // Real TLS handshakes over socketpair: no listener or network permission
 // needed.
-#include "util/peer_tls.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 
 #include <fcntl.h>
 #include <gtest/gtest.h>

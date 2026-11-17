@@ -17,7 +17,7 @@ import pytest
 
 from conftest import BUILD
 
-HOST = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "core/tsugumi-hostd"))
+HOST = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd/tsugumi-hostd"))
 BINDINGS = Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"))
 sys.path.insert(0, str(BINDINGS))
 pytestmark = pytest.mark.skipif(not HOST.exists() or not (BINDINGS / "Tsugumi/Host").exists(),

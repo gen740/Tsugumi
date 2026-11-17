@@ -73,7 +73,7 @@ must contain the requested service ID and remote job IDs. No local fallback is
 used. Remote capabilities and server ID are recorded, but the worker does not
 expose its build type: record that separately alongside the report.
 
-**Current remote resident limitation:** `core/src/graph.cc` rejects a remote
+**Current remote resident limitation:** `tsugumid/document/src/graph.cc` rejects a remote
 `reuseWorker` Card, and remote execution reports fresh workers. The remote
 resident row is therefore explicitly `unavailable`, with no samples, rather than
 substituting fresh calls. Measuring it requires remote resident slots and a reuse

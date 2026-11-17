@@ -6,7 +6,7 @@
 
 #include "agent/approval.hh"
 #include "agent/catalog.hh"
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "host/agent_policy.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 

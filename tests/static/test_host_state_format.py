@@ -22,8 +22,8 @@ CREATE = re.compile(r'\bCREATE\s+(?:TABLE|(?:UNIQUE\s+)?INDEX)\b[^;]*', re.I)
 
 def schema_digest():
     statements = []
-    for component in ("host", "agent"):
-        for source in sorted((ROOT / "core/src" / component).rglob("*")):
+    for component in ("hostd/src", "hostd/agent/src"):
+        for source in sorted((ROOT / component).rglob("*")):
             if source.suffix not in {".cc", ".hh"}:
                 continue
             text = source.read_text()
@@ -46,7 +46,7 @@ def schema_digest():
 
 
 def test_host_state_format_covers_all_database_definitions():
-    source = (ROOT / "core/src/host/state_format.hh").read_text()
+    source = (ROOT / "hostd/private/host/state_format.hh").read_text()
     number = re.search(r'kStateFormat\s*=\s*(\d+);', source)
     recorded = re.search(r'kStateSchemaDigest\s*=\s*"([0-9a-f]{64})";', source)
     actual = schema_digest()

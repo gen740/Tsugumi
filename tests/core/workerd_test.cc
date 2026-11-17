@@ -13,8 +13,8 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::workerd {
 namespace {

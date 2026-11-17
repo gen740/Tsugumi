@@ -1,5 +1,5 @@
 // The figures of the story pages, ported from the app's Learn about Tsugumi window
-// (macOS/Sources/App/Explainer/): a scene is a pure function of its story
+// (ui/macos/Sources/App/Explainer/): a scene is a pure function of its story
 // position `p` (where the reading line is in the figure) and the clock `t`
 // (idle motion only), so scrolling back plays it back. In 1000-wide coordinates.
 import {

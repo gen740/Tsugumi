@@ -3,7 +3,7 @@
 //   docs/site/js/player.js, docs/site/player.css   the player
 //   docs/site/player-data/<id>.json, index.json    each demo's real project, with
 //     its recorded run when harvest.py has one (player-data/assets/)
-// Needs web/node_modules and web/src/gen (`nix develop --command npm run gen` in web/).
+// Needs ui/web/node_modules and ui/web/shared/gen (`nix develop --command npm run gen` in ui/web/).
 //   node docs/site/player/build.mjs [--out-dir <directory>]
 // The output directory has the same layout as docs/site, including recorded assets.
 import { execFileSync } from 'node:child_process'
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
 const ROOT = path.resolve(SITE, '..', '..')
-const WEB = path.join(ROOT, 'web')
+const WEB = path.join(ROOT, 'ui', 'web')
 const DATA = path.join(SITE, 'player-data')
 const ASSETS = path.join(DATA, 'assets')
 const require = createRequire(path.join(WEB, 'package.json'))
@@ -60,14 +60,14 @@ function cardFiles(dir) {
 
 const KINDS = new Set(['trigger', 'input', 'fork', 'branch', 'merge', 'collect', 'draft'])
 
-/** As definitionKind in web/src/model/session.ts. */
+/** As definitionKind in ui/web/src/model/session.ts. */
 function kindOf(dir, def) {
   if (fs.existsSync(path.join(dir, '_link.json'))) return 'subgraph'
   if (KINDS.has(def?.template)) return def.template
   return def?.language === undefined ? 'draft' : 'code'
 }
 
-/** As paramText in web/src/model/session.ts. */
+/** As paramText in ui/web/src/model/session.ts. */
 const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? JSON.stringify(v) : '')
 
 const INLINE_TYPES = new Set(['int64', 'uint64', 'double', 'bool', 'string'])
@@ -337,8 +337,8 @@ async function main() {
   const destination = args.length ? path.resolve(args[1]) : SITE
   const esbuild = require('esbuild')
 
-  if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
-    console.error('web/src/gen is missing: run `nix develop --command npm run gen` in web/ first')
+  if (!fs.existsSync(path.join(WEB, 'shared', 'gen', 'tsugumi'))) {
+    console.error('ui/web/shared/gen is missing: run `nix develop --command npm run gen` in ui/web/ first')
     process.exit(1)
   }
 
@@ -352,7 +352,7 @@ async function main() {
     bundle: true, platform: 'browser', format: 'esm', target: 'es2022', minify: true, jsx: 'automatic', write: false,
     nodePaths: [path.join(WEB, 'node_modules')], absWorkingDir: WEB, tsconfig: path.join(WEB, 'tsconfig.json'),
     define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning',
-    // The site is in English: the player's strings (web/src/i18n.ts) from the start.
+    // The site is in English: the player's strings (ui/web/src/i18n.ts) from the start.
     banner: { js: "globalThis.TSUGUMI_LANGUAGE = 'en';" },
   })
   outputs.set(rel(path.join(SITE, 'js', 'player.js')), bundle.outputFiles[0].text)

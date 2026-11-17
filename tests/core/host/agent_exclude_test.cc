@@ -4,14 +4,14 @@
 #include <gtest/gtest.h>
 
 #include "../agent_fixture_server.hh"
-#include "document.hh"
+#include "tsugumi/document/document.hh"
 #include "host/attached_folder.hh"
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/project_operations.hh"
 #include "host/projects.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {

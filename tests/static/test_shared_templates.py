@@ -1,4 +1,4 @@
-"""The checked-in outputs of the template generators in ui/templates are what
+"""The checked-in outputs of the template generators in ui/shared/templates are what
 the generators write (no daemon, no Nix, no plotting libraries)."""
 import importlib.util
 import json
@@ -10,7 +10,7 @@ KINDS = ['line', 'scatter', 'histogram']
 
 
 def generator():
-    spec = importlib.util.spec_from_file_location('visualization_templates', ROOT / 'ui/templates/visualization.py')
+    spec = importlib.util.spec_from_file_location('visualization_templates', ROOT / 'ui/shared/templates/visualization.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -21,7 +21,7 @@ def test_shared_templates_are_current():
     template carries its selection code and the same params and contract."""
     module = generator()
     for path, value in module.outputs().items():
-        assert path.read_text() == value, f'{path.relative_to(ROOT)} is stale: run python3 ui/templates/visualization.py'
+        assert path.read_text() == value, f'{path.relative_to(ROOT)} is stale: run python3 ui/shared/templates/visualization.py'
     templates = module.templates()
     assert set(templates) == {f'visualization_{library}' for library in LIBRARIES}
     defaults = [{'name': n, 'type': t, 'data': v} for n, t, v in module.PARAMS]
@@ -48,7 +48,7 @@ def test_shared_templates_are_current():
 
 
 def test_shared_marimo_template_is_current():
-    spec=importlib.util.spec_from_file_location('marimo_template',ROOT/'ui/templates/marimo.py')
+    spec=importlib.util.spec_from_file_location('marimo_template',ROOT/'ui/shared/templates/marimo.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     for path,value in module.outputs().items():assert path.read_text()==value
     definition=json.loads(module.files()['_card.json'])

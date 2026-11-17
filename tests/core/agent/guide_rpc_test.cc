@@ -87,7 +87,7 @@ const std::vector<std::string> demos{"report", "exoplanet-transit",
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
   for (const auto &language : {"ja", "en"}) {
     const auto script = Parse(
-        ReadResource(std::filesystem::path("agent/Shared") /
+        ReadResource(std::filesystem::path("hostd/agent/Shared") /
                      (std::string(language) == "en" ? "guide-script.en.json"
                                                     : "guide-script.json")));
     const auto tours = Members(script, "/tours");

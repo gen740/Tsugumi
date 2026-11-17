@@ -27,7 +27,7 @@ symlinks or host bytes. Undeclared staging entries are ignored. CI runs it on
 macOS and Linux; it can also be built without Nix or generated bindings:
 
 ```sh
-c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src -I workerd/include \
+c++ -std=c++20 -Wall -Wextra -Werror -pthread -I tsugumid/runtime/src -I tsugumid/document/include -I util/include -I workerd/include -I workerd/nix/include \
   workerd/src/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
 /tmp/worker-staging-tests
 ```

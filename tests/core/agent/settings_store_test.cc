@@ -7,7 +7,7 @@
 #include <thread>
 
 #include "../agent_fixture_server.hh"
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "agent/runtime.hh"
 #include "host/models.hh"
 #include "host/settings.hh"

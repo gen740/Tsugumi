@@ -3,9 +3,10 @@
 #include <limits>
 
 #include "../agent_fixture_server.hh"
-#include "document.hh"
-#include "util/fs.hh"
-#include "util/json.hh"
+#include "tsugumi/document/document.hh"
+#include "runtime_schema.hh"
+#include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json.hh"
 
 namespace tsugumi::schema {
 namespace {

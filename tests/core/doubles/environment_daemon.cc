@@ -8,10 +8,10 @@
 #include <fstream>
 #include <thread>
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "server.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace {
 namespace R = Tsugumi::RPC;

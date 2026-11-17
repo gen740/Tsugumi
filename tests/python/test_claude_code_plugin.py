@@ -2,7 +2,7 @@
 host when none runs (found again through its server.json), opens a project,
 and runs the chat Agent's core tools there; a page sees each call (the bird
 flies to the Card) and nothing works before a project is open. Needs node, a
-built web/dist (npm run build) and tsugumid."""
+built ui/web/dist (npm run build) and tsugumid."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MCP = WEB_DIST / "mcp.js"
 
 pytestmark = pytest.mark.skipif(not shutil.which("node") or not MCP.exists() or not TSUGUMID.exists(),
-                                reason="needs node, web/dist (cd web && npm run build) and tsugumid")
+                                reason="needs node, ui/web/dist (cd ui/web && npm run build) and tsugumid")
 
 
 _socket_directories = {}
@@ -47,7 +47,7 @@ def isolated_environment(root: Path, **values) -> dict:
                TSUGUMI_SUPPORT_DIR=str(root / "support"),
                TSUGUMI_RUN_SCRATCH_DIR=str(root.resolve() / "run-scratch"),
                TSUGUMI_SOCKET_DIR=_socket_directories[root].name,
-               TSUGUMI_HOSTD=os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core" / "tsugumi-hostd")),
+               TSUGUMI_HOSTD=os.environ.get("TSUGUMI_HOSTD", str(BUILD / "hostd" / "tsugumi-hostd")),
                TSUGUMI_RPC_CLIENT=os.environ.get("TSUGUMI_RPC_CLIENT", str(BUILD / "client" / "tsugumi-rpc")),
                TSUGUMID=str(TSUGUMID),
                ANTHROPIC_API_KEY="fixture-no-network", OPENAI_API_KEY="fixture-no-network")
@@ -369,7 +369,7 @@ def test_tools_and_instructions(plugin):
     assert {"tools", "delegate", "demo_list", "project_edit"} <= set(names)
     assert "attached_folder_read" not in names
     assert not any(name.startswith(("guide_", "agent_guide_")) for name in names)
-    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())
     project_names = set(shared["modelTools"]["core"])
     assert project_names <= set(names)
     assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello", "agent_tool_call_cancel"} & set(names)
@@ -465,7 +465,7 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert error and "create: true" in text
     text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
     assert not error, text
-    rules = (ROOT / "agent/Shared/system-prompt.md").read_text().split("- Making a Draft (", 1)[0]
+    rules = (ROOT / "hostd/agent/Shared/system-prompt.md").read_text().split("- Making a Draft (", 1)[0]
     assert text.endswith(rules)  # initialize's size limit must not truncate the rules
     # The host it started is found through server.json, readable by this user alone.
     info_file = data / "server.json"

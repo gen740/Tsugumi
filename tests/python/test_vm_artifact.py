@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def module(name, filename):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "macOS/tools" / filename)
+    spec = importlib.util.spec_from_file_location(name, ROOT / "vm/guest/tools" / filename)
     result = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(result)
     return result

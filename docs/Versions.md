@@ -19,7 +19,7 @@ Choosing data here fixes it as part of the computation's definition. Removing a 
 
 ## The results of runs
 
-Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `core/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
+Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `tsugumid/runtime/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
 
 Automatic commit messages are JSON records with `tsugumi: "commit"`, `kind` (`create`, `run`, `checkout`) and a Card ID. User-written messages and imported demo messages remain opaque text. Neither writing nor reading a project RPC selects a language; `SessionHello` has no language field.
 

@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_every_run_table_is_copied():
-    source = (ROOT / 'core/src/history.cc').read_text()
+    source = (ROOT / 'tsugumid/runtime/src/history.cc').read_text()
     schema = source.split('std::string run_tables(', 1)[1].split('// Version of', 1)[0]
     tables = set(re.findall(r'R"SQL\((\w+)\(', schema))
     copied = source.split('constexpr Copied kCopied[] = {', 1)[1].split('\n};', 1)[0]

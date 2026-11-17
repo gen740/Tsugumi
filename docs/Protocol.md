@@ -561,6 +561,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | Request | Fields |
 | --- | --- |
 | `VersionCommentsRequest` | `project: string` (required), `commit: string` (required) |
+| `BinaryCachesGetRequest` | None |
+| `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
 | `HelloRequest` | `token: string` (required), `client_id: string` (required), `protocol: uint` |
@@ -611,4 +613,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |
 
-Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.

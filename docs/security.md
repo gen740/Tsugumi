@@ -1,7 +1,7 @@
 # Security and isolation
 
 This document describes Tsugumi's four trust boundaries (what is isolated from what) and how secrets (the API keys of outside models and the RPC's authentication token) are handled.
-Everything here is based on the current implementation (`core/src/vmd_main.cc`, `workerd/src/worker_proc.cc`, `core/src/server.cc`, `core/src/host/`, `core/src/agent/`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`, `web/server/coreHost.ts`).
+Everything here is based on the current implementation (`vm/guest/src/vmd_main.cc`, `workerd/src/worker_proc.cc`, `tsugumid/runtime/src/server.cc`, `hostd/src/`, `hostd/agent/src/`, `vm/macos/runtime/Sources/VMRuntime/`, `ui/macos/Sources/AgentClient/Provider.swift`, `ui/web/server/coreHost.ts`).
 
 ## Summary
 
@@ -43,21 +43,21 @@ There are four boundaries, from the innermost outwards.
 
 | Device | Contents | Writable |
 | --- | --- | --- |
-| rootfs | A release-built erofs image bundled in the guest archive (Linux kernel 6.12.115, Nix, Tsugumi, the worker and project tools; `macOS/Container/vm-boot.nix` and `vm-system.nix`). First boot starts the prebuilt supervisor | Read-only |
+| rootfs | A release-built erofs image bundled in the guest archive (Linux kernel 6.12.115, Nix, Tsugumi, the worker and project tools; `vm/guest/vm-boot.nix` and `vm-system.nix`). First boot starts the prebuilt supervisor | Read-only |
 | Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
 | Run-history disk | `~/Library/Application Support/Tsugumi/vm/history.img` (all projects' run histories, one directory per project) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
 | virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
-| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`macOS/Container/vm-system.nix`) | Read-only |
+| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
 | vsock | The control channel (1024) and the RPC relay (1025) | — |
 | Network | NAT (`VZNATNetworkDeviceAttachment`) | — |
 
 - **Of the Mac's files, the VM sees only the folder of each open project and its control folder, and the folders explicitly specified in that project's Card definitions or chat.** Neither the whole home folder nor other projects are shared. Stopping a project ends its slot's sharing; closing a UI leaves the resident environment running.
-- There are two routes for sharing a Mac folder with the VM (`core/src/host/environment.cc`; the signed helper applies the resulting mount plan).
+- There are two routes for sharing a Mac folder with the VM (`hostd/src/environment.cc`; the signed helper applies the resulting mount plan).
   - **A Card's "Allow access to folders of the host"** (`hostFolders` in `_card.json`, Experimental): folders written in the Card definitions of the project (and its `externals`) are shared into that project's slot when the environment starts. Those without write permission (`write: true`) are read-only. **This sharing is decided by what is written in the definition files alone, with no confirmation on opening** (a save the Agent makes waits for approval; §7, §9).
   - **Attaching a folder to the chat**: a folder for the Agent to read is shared read-only with that project.
 - Each project is given its own virtiofs device (`tsugumi-<slot>`) for sharing, so replacing one project's shares does not affect others.
-- The only entitlement given to the app is `com.apple.security.virtualization` (`macOS/Resources/Tsugumi.entitlements`).
+- The only entitlement given to the app is `com.apple.security.virtualization` (`vm/macos/Resources/Tsugumi.entitlements`).
 - The signed `tsugumi-vmhost` helper holds the file lock (`flock`) on `vm/vm.lock`; hostd requests VM operations through the private helper contract.
 
 ### The VM's network
@@ -67,7 +67,7 @@ Cards themselves are cut off from the network namespace by default and cannot co
 
 ## 3. project ⇄ project (inside the VM)
 
-The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugumid` under these isolation conditions (`core/src/vmd_main.cc`).
+The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugumid` under these isolation conditions (`vm/guest/src/vmd_main.cc`).
 
 - **Own uid**: each project is assigned a uid of its own (from 20001, recorded in `/persist/tsugumi/uids`), and root is given up with `setgroups(0)` → `setgid` → `setuid` before starting.
 - **Namespaces**: `CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS` are separated.
@@ -75,14 +75,14 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
   - `/project` … its own project folder
   - `/control` … its own control folder
   - `/history` … its own run-history folder (on the run-history disk, `nosuid,nodev`)
-  - `/scratch` … its own disk-backed invocation scratch (`/persist/run-scratch/<id>`, owned by the project uid, mode 0700). The core validates scratch ownership and private parents, rejects symbolic links and, on Linux, rejects tmpfs/ramfs (`core/src/run_scratch.cc`).
+  - `/scratch` … its own disk-backed invocation scratch (`/persist/run-scratch/<id>`, owned by the project uid, mode 0700). The core validates scratch ownership and private parents, rejects symbolic links and, on Linux, rejects tmpfs/ramfs (`tsugumid/runtime/src/run_scratch.cc`).
   - its own `/tmp` and `/run/tsugumi` (`tmpfs`)
   - `/run/tsugumi/rpc` … the sockets `tsugumid` listens on (WebSocket, Unix socket). They actually live in `/run/tsugumi-rpc/<id>` (a 0700 folder only that project's uid can enter), and `tsugumi-vmd` relays to them. There are no ports of any project on the VM's loopback (a Card allowed the network shares the VM's network, so a port there would let it reach another project's `tsugumid`).
   - `/run/tsugumi/host/<tag>`, `/run/tsugumi/chat/<tag>` … Mac folders shared with that project (§2, only when specified)
   - `/nix` … an overlay mount (the shared store is readable from every project; writes go only through `nix-daemon`)
 - **cgroup**: placed at `/sys/fs/cgroup/tsugumi/<id>`. Stopping a project ends exactly the processes in that cgroup with `cgroup.kill`, without affecting other projects.
 - **GC roots**: `/nix/var/nix/gcroots/tsugumi/projects/<id>/` is created by `tsugumi-vmd` as root, and the parent directory is not writable from projects, so another project cannot take it over by creating the directory first (checked in `test_shared_vm.py`).
-- **Kernel**: Linux 6.12 LTS (`macOS/Container/kernel.nix`) without io_uring, and with unprivileged BPF off by default. `/init` uses sysctls to restrict reading kernel addresses and logs, ptrace (descendants only) and planting links and files in shared sticky folders (Yama is enabled; BPF JIT and userfaultfd are not built in).
+- **Kernel**: Linux 6.12 LTS (`vm/guest/kernel.nix`) without io_uring, and with unprivileged BPF off by default. `/init` uses sysctls to restrict reading kernel addresses and logs, ptrace (descendants only) and planting links and files in shared sticky folders (Yama is enabled; BPF JIT and userfaultfd are not built in).
 - **Terminal**: opening the terminal inside the VM enters the project's namespaces with `setns`, joins the same cgroup and drops to the project's uid before starting `bash`. Stopping the project environment ends its terminals too.
 
 ### What projects share
@@ -135,9 +135,9 @@ Do not grant untrusted Cards network access when these unavoidable limits matter
 
 ### Showing Card views (line charts, Plotly, Vega-Lite and Card-owned modules)
 
-Card views run in the shared isolated host (`ui/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
+Card views run in the shared isolated host (`ui/shared/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
 
-The core accepts only Nix store module identities. A shared entry must resolve to a canonical store `index.js`, and the Card's Wasm must remain inside its own output directory (`core/src/module_source.cc`).
+The core accepts only Nix store module identities. A shared entry must resolve to a canonical store `index.js`, and the Card's Wasm must remain inside its own output directory (`tsugumid/runtime/src/module_source.cc`).
 
 - Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.
@@ -145,7 +145,7 @@ The core accepts only Nix store module identities. A shared entry must resolve t
 
 ## 5. Limits on Nix evaluation
 
-A Card's `default.nix` may contain any Nix expression, but evaluation enforces these limits (`core/src/nix_eval.cc`, `macOS/Container/vm-boot.nix`):
+A Card's `default.nix` may contain any Nix expression, but evaluation enforces these limits (`tsugumid/runtime/src/nix_eval.cc`, `vm/guest/vm-boot.nix`):
 
 - `restrictEval = true`: no files can be read outside the allowed paths (the Card's source, the SDK and the upstream definitions it may refer to).
 - `enableImportFromDerivation = false`: running builds or commands during evaluation of a Nix expression (IFD) is forbidden.
@@ -159,7 +159,7 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 
 ### Where it listens
 
-- Inside the VM, `tsugumid` opens no TCP port; it listens for WebSockets on the Unix socket `/run/tsugumi/rpc/s` (`--listen-unix-ws`, `core/src/vmd_main.cc`). It actually lives in `/run/tsugumi-rpc/<id>`, a 0700 folder only that project's uid can enter (§3).
+- Inside the VM, `tsugumid` opens no TCP port; it listens for WebSockets on the Unix socket `/run/tsugumi/rpc/s` (`--listen-unix-ws`, `vm/guest/src/vmd_main.cc`). It actually lives in `/run/tsugumi-rpc/<id>`, a 0700 folder only that project's uid can enter (§3).
 - To the Mac, it is **relayed through vsock only to the host's `127.0.0.1:<free port>`** (`LoopbackBridge`; on vsock 1025, `tsugumi-vmd` connects to the socket by project ID). It is not exposed to the LAN or outside networks.
 - With no ports on the VM's loopback, there is no route to `tsugumid` from another project or from a Card allowed the network.
 - The Mac's `tsugumi` command uses this route too (relayed by `tsugumi-vmhost`). In a Web UI started from the repository, and with the `tsugumi` command on Linux, `tsugumid` runs directly on the host and listens with a WebSocket on `127.0.0.1` ([Web UI](WebUI.md)).
@@ -185,7 +185,7 @@ Paging cursors, for reading history and the like, carry a signature like an HMAC
 
 ## 7. The model's API keys (Agent)
 
-- On macOS, the app stores API keys in the user's **login keychain** (`macOS/Sources/AgentClient/Provider.swift`). The service name is `app.tsugumi.agent`, and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web host use the same items.
+- On macOS, the app stores API keys in the user's **login keychain** (`ui/macos/Sources/AgentClient/Provider.swift`). The service name is `app.tsugumi.agent`, and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web host use the same items.
   - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
   - An item's access list trusts the program that saved it. When another program, including `security`, tries to read an app-saved key, macOS asks the user. An ad hoc signed app may ask after each rebuild; signing development builds with `TSUGUMI_CODESIGN_IDENTITY` gives the app a stable identity ([Releasing](../RELEASING.md)).
   - The Web host reads and writes through `/usr/bin/security`. An item saved by the Web UI trusts `security`, so any program running as this user can read it without confirmation with `security find-generic-password`. When using both UIs, registering the key from the app's settings is recommended.
@@ -199,7 +199,7 @@ Paging cursors, for reading history and the like, carry a signature like an HMAC
 
 ### The ChatGPT plan (Sign in with ChatGPT)
 
-Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. This follows the [procedure OpenAI publishes for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source) (ChatGPT plan usage) (`core/src/host/settings.cc` for OAuth and the callback; `core/src/host/credentials.cc` and `core/src/agent/provider.cc` for token refresh and revocation).
+Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. This follows the [procedure OpenAI publishes for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source) (ChatGPT plan usage) (`hostd/src/settings.cc` for OAuth and the callback; `hostd/src/credentials.cc` and `hostd/agent/src/provider.cc` for token refresh and revocation).
 
 - Sign-in happens in the default browser. Tsugumi waits for `/auth/callback` on a free port of `127.0.0.1` and closes it as soon as the result arrives. Each time it uses a new `state`, `nonce` and PKCE (S256), and a response whose `state` does not match is discarded. No client secret and no developer API key are used (the first time, Tsugumi registers itself with `dynamic_agent_client` and uses the issued `client_id` for later sign-ins).
 - The ID token's RS256 signature is checked against OpenAI's JWKS (`https://auth.openai.com/.well-known/jwks.json`), and its issuer, audience (the issued `client_id`), expiry and `nonce` are checked. Signing back in to a previous account, it also checks that it is the same account (`sub`). If permission to use the plan (`chatgpt.tokens.use.direct`) was not granted, the Agent does not use the plan and suggests granting it again or using an API key.
@@ -242,7 +242,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 - The only operations the Agent can perform are the published Agent and project RPC tools; it cannot operate the UI or the Mac's file system directly. To `tsugumid` it is one client equal to the UI, going through the same revision checks and conflict detection.
 - Tool calls that change something carry a unique `op_id`, and when a response is cut off the applied state is confirmed with `OperationGet`, so blind retries never apply anything twice.
 - Arguments the model wrote are checked by the Agent and `tsugumid`, and a tool call that is not a JSON object, or from a response cut off at the output limit, is not run.
-- **A Card's permissions belong to the user.** The host always sets `check_permissions: true` on Agent saves and reloads. When a checked save newly gives a Card any of the following, `tsugumid` does not save it and returns `approval_required`, listing each permission that widens (Cards inside a Card in Card included; `core/src/permissions.cc`):
+- **A Card's permissions belong to the user.** The host always sets `check_permissions: true` on Agent saves and reloads. When a checked save newly gives a Card any of the following, `tsugumid` does not save it and returns `approval_required`, listing each permission that widens (Cards inside a Card in Card included; `tsugumid/runtime/src/permissions.cc`):
   - the network (`network: true`)
   - running without isolation (`sandbox: false`)
   - Mac folders (`hostFolders`, reading and writing)
@@ -255,8 +255,8 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - If not allowed, nothing is saved, and the Agent is told to explain the reason to the user.
   - A direct client chooses whether to request this comparison with `check_permissions`, and lists its approvals in `approved_permissions`. The core applies the same comparison to every checked request, whatever its origin label. The UI's ordinary saves are the person's own edits and leave comparison off; its reload dialog compares first and sends the exact approved widenings. A Card on the Canvas shows the permissions it has as icons.
 - **Shell commands need a separate Shell grant.** `project_shell` needs Read, Write, Run and Shell access; its approval says it can change Card sources. The host stages accepted files and selects readable/writable Cards using the helper's exact sets. Core provides mechanisms only: a read-only root, explicit writable subtrees, protected files and folder mounts. No caller identity chooses core restrictions. Only the runtime closure of launcher tools is exposed from the Nix store: build caches contain actual Card source copies, so exposing the whole store would bypass a helper's read set. Host requests credential hiding, direct local RPC blocking and a view that hides the real project and `.tsugumi/`. Card paths remain project-relative; Read-granted folders are read-only at `attached/<SHA-256(folder path)[0:16]>/`, and conversation `scratch/` is writable. Root `tsugumi.json`, `layout.json`, each Card's `_card.json`, `_meta.json`, `_link.json`, `_inputs.fbs`, `_outputs.fbs`, `_params.fbs` are protected; the authored output schema also uses `project_save`. Unavailable isolation fails closed. After a zero exit status without cancellation/timeout, host validates paths/scope again and applies byte references through normal `ProjectSaveRequest`, with `origin=agent`, permission comparison, revision/hash checks and external-file conflict detection. Failed commands or saves leave real sources untouched. Commands have a 10-second default and 30-second maximum deadline; durable receipts prevent re-execution. Returned streams are capped at 256 KiB each (head and tail), with total sizes and `full_output_path` for complete `.stdout`/`.stderr` files under `.tsugumi/agent-files/`. Scratch, output and command views remain available to the person through their file tools. The person's terminal uses its own path.
-- **The Agent can write a Card's comments too.** The host prepares Agent saves and records comment authorship (`core/src/host/comments.cc`). The project core carries `_meta.json` as opaque bytes. Saves that follow comments go through the same permission comparison as above.
-- **Project tools use two explicit lists.** hostd reads `requests` (ordinary project tools) and `approvalRequests` (per-call approval tools) in `agent/Shared/agent.json`. Adding an operation to either catalog class takes one line. Chat and the Claude Code plugin use the same catalog, and model/plugin calls outside both lists are rejected. Every project entry is checked against the RPC schema at startup and in tests; host tools such as `attached_folder_read` are declared separately in `hostTools`, so a stale or duplicate name fails loudly. Internal hostd project RPC is encoded independently of this catalog and is never offered as a tool. View state, connection requests and version-note writes stay outside both lists. When a person selects Agent version notes, hostd reads and stores the generated note through internal RPC; models cannot request a note write.
+- **The Agent can write a Card's comments too.** The host prepares Agent saves and records comment authorship (`hostd/src/comments.cc`). The project core carries `_meta.json` as opaque bytes. Saves that follow comments go through the same permission comparison as above.
+- **Project tools use two explicit lists.** hostd reads `requests` (ordinary project tools) and `approvalRequests` (per-call approval tools) in `hostd/agent/Shared/agent.json`. Adding an operation to either catalog class takes one line. Chat and the Claude Code plugin use the same catalog, and model/plugin calls outside both lists are rejected. Every project entry is checked against the RPC schema at startup and in tests; host tools such as `attached_folder_read` are declared separately in `hostTools`, so a stale or duplicate name fails loudly. Internal hostd project RPC is encoded independently of this catalog and is never offered as a tool. View state, connection requests and version-note writes stay outside both lists. When a person selects Agent version notes, hostd reads and stores the generated note through internal RPC; models cannot request a note write.
 - **Each approval authorizes one act with those arguments.** Deleting run history, clearing the project's build cache, deleting selected run scratch, checking out a version, starting versioning, and keeping a named version need a fresh approval each time. Read, Write, Run, Shell and even an existing `CardPermissions` grant cannot authorize them. The Agent can inspect usage and propose a cleanup with its targets and sizes; it cannot decide to delete run data on its own.
   - The Agent service reads the targets through authenticated project RPC: all history pages for the selected finished runs and their count; `ProjectCacheUsageRequest` for the current cache's build bytes and the selected scratch folders' bytes; the inspected project revision and version graph for the working project and selected full commit. Missing measurements are shown explicitly as unknown, never as zero. The history description states that pending remote results are retained. Cache deletion removes build roots and unused builds, not run history or scratch.
   - The existing access request/resolve flow carries the core-generated description, proposed arguments and call ID. These requests use the `CardPermissions` access category but produce no standing grant. The person approves or declines in the Tsugumi page, also for Claude Code. There is no “do not ask again” option for these acts.
@@ -273,7 +273,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 - **The Claude Code plugin** ([Using it from Claude Code](claude-code.md)) operates only through the Web UI's server.
   - The server forwards tools to `tsugumi-hostd` as an external-agent principal, with the same host-owned Read, Write, Run and CardPermissions checks as the chat. Pending access requests are presented on the Web UI's page; a disconnected page does not cancel a core conversation. Attached-folder reads require a user-registered folder and its own Read grant.
   - The plugin's MCP server finds the server through `server.json`, which the server writes in the data folder (the port, PID, build fingerprint and a per-start key for agents; 0600, deleted on exit).
-  - That key reaches only the seven routes the plugin and a second run of the `tsugumi` command (which has the running server open a page) use (`/api/host/identify`, `/api/project/open`, `/api/project/create`, `/api/agent/tools`, `/api/agent/open`, `/api/agent/call`, `/api/page/open`; `AGENT_ROUTES` in `web/server/paths.ts`). It does not reach answers to approvals (`/api/chat/permission`), event subscriptions, the terminal, file listings or settings (`tests/python/test_claude_code_plugin.py`).
+  - That key reaches only the seven routes the plugin and a second run of the `tsugumi` command (which has the running server open a page) use (`/api/host/identify`, `/api/project/open`, `/api/project/create`, `/api/agent/tools`, `/api/agent/open`, `/api/agent/call`, `/api/page/open`; `AGENT_ROUTES` in `ui/web/server/paths.ts`). It does not reach answers to approvals (`/api/chat/permission`), event subscriptions, the terminal, file listings or settings (`tests/python/test_claude_code_plugin.py`).
   - The page's key (the key in the URL shown at startup) is not written to `server.json`. To open a page, the server opens the browser itself.
   - What this boundary protects is **operations through Tsugumi's tools**. Claude Code also has a shell and file operations, so with the same permissions as the user it can rewrite the project's files (`_card.json` and the like) directly and read what the user can read (such as the URL in the log `server.log` of a server Claude Code started). Stopping that is up to Claude Code's own permission settings, not Tsugumi.
 - `attached_folder_read` is a host tool: a registered folder needs its own Read grant, rechecked before releasing results. Components are opened without following links. `pread` reads only the requested page: default 256 KiB, maximum 1 MiB, total size included even for files of hundreds of MB. Directory listings remain limited to 5000 entries. Project file reads have the same page defaults/caps; the UI can fetch all pages. Results suggest `project_copy` or `project_shell`. The host copy tool takes an explicit list of files from attached folders, confirmed Card sources or the caller's private scratch. It checks source read and destination write scope, refuses links/special files/traversal, rechecks grants before save, and uses normal validation, permission-widening approval, conflicts, revisions and Agent origin. Only paths, sizes and SHA-256 hashes reach the model. Copy and shell saves stream file bytes through private durable staging files and the normal journal; file contents do not cross the RPC frame or require a whole-file buffer. There is no separate file-count or total-byte limit on a copy. Document JSON remains limited to 8 MiB and the source manifest to 10,000 entries; there is no separate per-source byte limit. Larger data should stay attached and be read by a Card with approved `hostFolders` at `/host/<name>`. The assumption is the owner's reported real workflow of attaching large CSV/JSON: direct copying prevents the read/retype round trip, paging prevents full-file read results, and output caps prevent printing commands from flooding context. They do not limit the original files or the person's access. Removing an attachment remains separate from revoking Read; changing VM shares restarts the environment.

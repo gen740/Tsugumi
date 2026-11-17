@@ -2,9 +2,9 @@
 
 #include "../agent_fixture_server.hh"
 #include "agent/context.hh"
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "agent/runtime.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::test {
 namespace {

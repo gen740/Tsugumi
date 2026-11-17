@@ -2,9 +2,9 @@
 
 #include <map>
 
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::test {
 namespace {

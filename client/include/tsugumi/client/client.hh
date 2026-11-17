@@ -8,7 +8,7 @@
 #include <span>
 #include <string>
 #include <vector>
-#include "tsugumi/client/transport.hh"
+#include "tsugumi/rpc/client_transport.hh"
 
 namespace tsugumi::client {
 

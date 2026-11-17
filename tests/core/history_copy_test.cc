@@ -2,8 +2,8 @@
 
 #include <gtest/gtest.h>
 
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 #include "wire.hh"
 
 namespace tsugumi {

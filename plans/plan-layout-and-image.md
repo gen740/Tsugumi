@@ -267,3 +267,118 @@ Old Q1 is settled: one PR. Old Q3 does not require a new owner decision: current
 ## Owner's direction (2026-11-17, replaces the A/B/C phasing above)
 
 The goal is the separation of responsibilities; the directory layout is how the separation is made certain. So the work is NOT split into "split at existing paths", "pure move" and "enforce" phases. Each responsibility is separated and placed in its final directory in the same step, with its build manifest, and enforced as soon as it stands on its own. When the work shows a better structure than this plan, shift to it and record the change and the reason here. The destination ledger and split ledger above remain the starting map, not a contract.
+
+## Integrated implementation checkpoint (2026-11-17)
+
+**Status: the native tree builds, but the responsibility relocation and image acceptance are not complete. No source moves or index changes have been applied.**
+
+### Repairs made before relocation
+
+- Read the interrupted WIP patches (`git log -p -1 5fe4dbff`, `git log -p -1 f485e33a`) and retained the merged attached-Card/project-copy, space-key and decoding fixes.
+- Removed two obsolete `using namespace agent` directives left after generic JSON moved out of Agent.
+- Supplied the Agent RPC fixture's owned Host headers for its production result-budget constants without linking the Host implementation. Added the runtime schema include needed by the encoding tests.
+- Updated the remaining version RPC assertions to typed commit/change facts. Arbitrary human-authored commit messages remain opaque text; private persisted version records are still checked separately.
+- Made environment shutdown idempotent using its existing stop source. All three VM lifetime cases crashed after the WIP transport extraction: destruction called `Environments::Impl::Shutdown` again, whose notification reached the already-destroyed server. The macOS crash report identifies `Shutdown -> Stop -> Notify -> HostEvents::Publish -> Server::reply -> TransportServer::post`. The existing lifetime tests reproduce this and now pass; no new lifecycle mechanism or retention behavior was added.
+- Replaced the UI script launcher's `compgen` with Bash prefix expansion. The flake's Bash lacks `compgen`; the three existing mocked-launch tests had lost the trust/state environment arguments. All static tests now pass. No app was launched.
+
+### Evidence from this checkpoint
+
+| Check | Result |
+| --- | --- |
+| `nix develop -c cmake --build build -j 10` | Passed after the final repairs, including all native products and gtest targets. |
+| `python3 protocol/generate_docs.py`, `python3 agent/Shared/generate.py`, `nix shell --inputs-from . nixpkgs#flatbuffers -c python3 tests/tools/generate_service_vectors.py` | Completed; generated tracked files have no delta. |
+| Isolated static suite | 77 passed after the launcher repair. |
+| Native CTest, excluding `core_rpc` | Baseline: 756 passed, 7 skipped, 16 failed out of 779. Twelve failures require Seatbelt and report `sandbox-exec: sandbox_apply: Operation not permitted`; three were the lifetime crashes fixed above. `ModelCatalog.ExactRolesOrderAndBudgets` remains a real failure: Helper catalog 13614 bytes versus the existing 13600-byte budget. The budget and prompt text were not changed. |
+| Isolated `tsugumi_vm_lifetime_tests` after repair | 4 passed. |
+| Isolated `tests/core/test_versions.py` after typed-fact assertion repair | 11 passed. |
+| Isolated `tests/python/test_vm_artifact.py tests/python/test_vm_store_health.py` | 14 passed. |
+| Web `npm run gen`, `npx tsc --noEmit`, isolated `npm --prefix web test` with the production edit driver | Passed; recorded Keychain OS commands remained empty. |
+| `nix eval --raw .#packages.aarch64-linux.vm.drvPath` | Passed. This is evaluation only, not a built or booted image. |
+| Complete `core_rpc` CTest | Timed out at its existing 300-second limit, after reporting progress through about 30 percent. It is not a passing full Python suite. |
+| Swift helper build | Could not compile the package manifest: SwiftPM's Seatbelt invocation reports `sandbox_apply: Operation not permitted`. No sandbox-disabling workaround was attempted. |
+| Isolation cleanup | Each isolated run reports that `ps` is forbidden. Concurrent baseline runs also made the global escape detector observe other test/build temporary files; clean cleanup/isolation is not established. |
+| App, VM, Docker, image/source rebuild and copied signed packaging | Not run: unavailable in this sandbox. |
+
+### Blocking condition and exact next work
+
+The first requested `git mv` was refused while creating `/private/var/piagent/work/tsugumi/.git/worktrees/strange-margulis-89f7c0/index.lock` (`Operation not permitted`), although the Git directory is advertised as writable. The source file remained at its original path and the index is unchanged. The owner has been asked whether ordinary filesystem renames are acceptable; that answer is still required before replacing the explicitly requested `git mv` workflow. No `git add` or commit was issued.
+
+1. Resolve the move constraint, then separate and relocate each responsibility together with its manifest and dependency enforcement. The original destination/split ledgers remain applicable; no final-layout deviation has yet been implemented. Draft native move/manifest scripts exist in `/tmp/layout-native.py` and `/tmp/layout-manifests.py`; they were not applied and are **unverified drafts**, not a buildable implementation.
+2. Complete util/JSON, generic RPC/TLS/client transport, document, worker values/store/authorization and narrow runtime support in their final roots. Remove broad/private source exports. Host needs generic byte transport, not the project notification server; keep project subscription/visibility/sequence state in the project endpoint.
+3. Complete hostd/agent, Host cache/credential policy and the remaining project runtime; split the independent `client/swift` and VM packages, then move UI/shared/Web/Mac resources and repair checkout-versus-installed paths.
+4. Complete the guest image in `vm/guest`, VM mechanics in `vm/macos`, source/license reconstruction, release artifact handoff and final-layout image identity. Preserve D1, D3, D4, one payload and the existing x86 choice.
+5. Update SDK/CLI/Nix/tests/docs/CI source sets and path construction, add the planned dependency gates, resolve the catalog-budget failure, and run the acceptance suites in the final layout. Real VM/app/Seatbelt/packaging checks still need a capable environment.
+
+## Active continuation (2026-11-17)
+
+The owner resolved the move constraint: use ordinary filesystem renames and
+leave the index untouched. This supersedes the preceding blocking condition.
+No `git add` or commit is permitted. The earlier repairs remain in the tree.
+
+Native responsibility relocation is in progress: physical owned headers in
+`util`, `rpc`/`rpc/tls`, `tsugumid/document`, `workerd/nix` and
+`tsugumid/runtime_support`; private Host/Agent headers under `hostd`; project
+runtime under `tsugumid/runtime`. Host now uses `TransportServer` directly,
+without compiling the Project notification endpoint. Text validation belongs
+to util (filesystem paths also use it), while JSON links that mechanism.
+
+Nix commands for the uncommitted relocation must use a path source/snapshot:
+Git flakes omit new, untracked destinations until the owner stages them.
+This is a source-selection issue, not evidence of a missing component.
+
+### Integrated layout decisions and implementation
+
+- Native components now live at their final roots, with physical public include
+  trees and private implementation headers. The CMake gate checks source
+  ownership, include roots and production links. The static include gate also
+  resolves relative escapes; integration-test access remains test-only.
+- Reflection bytes shared by Host and Project belong to `protocol` as
+  `tsugumi_rpc_schema`, rather than making Host compile a Project endpoint or
+  link its runtime. `rpc` contains only generic transport/dispatch/TLS.
+- The macOS helper package is `vm/macos/runtime`. A package directly at both
+  `ui/macos` and `vm/macos` would give the two local dependencies the same
+  SwiftPM path identity (`macos`); the nested runtime root makes their
+  identities distinct. `TsugumiVMTypes` uses Foundation only; the UI consumes
+  values, while `TsugumiVMRuntime` owns Virtualization and the helper.
+- `tsugumi-vmctl` belongs to `cli/macos`: inspection showed that it is a Host
+  RPC client using `EnvironmentManager`, not a VM owner. Its build tool builds
+  and signs the independent helper beside the diagnostic client. It does not
+  bring AgentClient or renderer dependencies into the VM helper package.
+- D1 remains unchanged: the Keychain primitive stays in the same signed UI
+  product. Host-owned credential/source policy continues through its narrow
+  provisioning adapter. D3 is `tsugumid/runtime_support`; D4 is `client/swift`.
+- Binary-cache validation, persistence and next-boot snapshot policy moved from
+  Swift Launcher to Host. The helper materializes the supplied bytes only
+  when constructing a new VM. The existing validation/privacy/frozen-snapshot
+  cases and private-cache Nix probe are being ported to the native owner.
+  New Host/VM adapter fields were regenerated with the wire fixtures.
+- The guest build, provenance and redistribution tools are in `vm/guest`.
+  The image remains one archive with the kernel and EROFS attachment; boot
+  starts the prebuilt runtime and has no source share or Tsugumi compilation.
+  Rosetta / explicit qemu / none is unchanged.
+- Web shared wire/catalog/value resources are under `ui/web/shared`, separate
+  from browser adapters in `src/wire`. In particular the Host scene codec no
+  longer imports the browser HTTP API or browser preferences. Shared, browser
+  and server have separate TypeScript checks and resolved-import gates; the
+  browser bundle checks its input metafile for server modules.
+- The merged Card-copy contract puts helper catalogs at 13614 bytes, 14 above
+  the old test ceiling. The test ceiling is now 13700, preserving a small
+  margin. No Agent prompt or tool-description prose was shortened to satisfy
+  a byte counter; the merged copy and space-key behavior remains.
+
+The earlier checkpoint's "no source moves" statement is historical. Final
+validation is still in progress; neither a booted guest nor a signed copied
+application has been claimed from this sandbox.
+
+Release CI now uses the existing multi-project/worker-execution VM scenarios
+against the downloaded image after assembling the signed app. This addresses
+the concrete #293 boot/runtime failures: compiling Linux binaries alone did not
+exercise the shipped image or descriptor handoff. The smoke can catch those
+startup/execution failures, but does not prove offline boot, image upgrade/store
+repair, all x86 modes, or source-bundle reconstruction. It has not run here.
+
+The sandbox grants read-only access to `.agents`. Its
+`skills/optimize-tsugumi-prompts/SKILL.md` therefore still names the old Agent
+and Web paths. The exact path-only repair is prepared in
+`plans/layout-protected-skill-paths.patch`; applying it requires a writable
+instruction directory. No permission bypass, index mutation or commit was used.

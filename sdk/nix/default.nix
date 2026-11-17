@@ -218,8 +218,8 @@ let
         flatc --cpp --scoped-enums --gen-mutable --keep-prefix --include-prefix tsugumi/protocol \
           -I worker/protocol -o gen/tsugumi/protocol worker/protocol/*.fbs
         # hosq is a system header there too: its warnings are not the worker's.
-        $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/core -isystem worker/include -Igen \
-          worker/src/native_main.cc worker/core/util/json.cc worker/core/util/text.cc \
+        $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/util/include -isystem worker/include -Igen \
+          worker/src/native_main.cc worker/util/src/json.cc worker/util/src/text.cc \
           -lflatbuffers -lpthread -ldl -o tsugumi-worker
       '';
       installPhase = ''

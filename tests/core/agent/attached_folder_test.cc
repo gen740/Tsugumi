@@ -5,8 +5,8 @@
 
 #include <fstream>
 
-#include "util/json_object.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::host {
 namespace {

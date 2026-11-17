@@ -31,7 +31,7 @@ class Failure(Exception):
 
 @pytest.fixture
 def scaffold(tmp_path, monkeypatch):
-    template = load('marimo_template', ROOT / 'ui/templates/marimo.py')
+    template = load('marimo_template', ROOT / 'ui/shared/templates/marimo.py')
     for name, content in template.files().items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,12 +1,12 @@
 #include "host/project_edit.hh"
 
-#include "graph.hh"
+#include "tsugumi/document/graph.hh"
 
 #include <gtest/gtest.h>
 
 #include "host/failure.hh"
 #include "host/project_operations.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {

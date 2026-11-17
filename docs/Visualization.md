@@ -1,6 +1,6 @@
 # Visualization Cards
 
-Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. The Python Card includes the data selection and plotting code in `src/main.py`, a `default.nix` environment and a `figure` Directory output. Set `kind` to change the figure. After editing the library templates under `ui/templates/visualization/`, run `python3 ui/templates/visualization.py` to regenerate the app bundles and demo source.
+Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. The Python Card includes the data selection and plotting code in `src/main.py`, a `default.nix` environment and a `figure` Directory output. Set `kind` to change the figure. After editing the library templates under `ui/shared/templates/visualization/`, run `python3 ui/shared/templates/visualization.py` to regenerate the app bundles and demo source.
 
 | Library | Card display | Saved figure files |
 | --- | --- | --- |

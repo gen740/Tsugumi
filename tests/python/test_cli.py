@@ -31,7 +31,7 @@ from test_claude_code_plugin import isolated_environment, stop_resident_services
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
 SERVER = WEB_DIST / "server.js"
-needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and web/dist (cd web && npm run build)")
+needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and ui/web/dist (cd ui/web && npm run build)")
 
 
 def executable(path: Path, text: str):
@@ -687,7 +687,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
+    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
     p = subprocess.Popen(["node", str(root / "web" / "dist" / "server.js"), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r":(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())

@@ -12,9 +12,12 @@ add_executable(tsugumi_host_settings_tests
 )
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
+  TSUGUMI_CACHE_PROBE="${_test_guide_root}/hostd/tools/test-binary-cache.py"
   TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
   TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")
 if(TSUGUMI_INSTALLED_CORE)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../hostd/tools/test-binary-cache.py
+    DESTINATION share/tsugumi/guide-tests/hostd/tools)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
     DESTINATION share/tsugumi/guide-tests/tests/fixtures)
 endif()

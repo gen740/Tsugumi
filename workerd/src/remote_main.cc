@@ -34,9 +34,9 @@
 
 #include "journal.hh"
 #include "tsugumi/workerd/invocation.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
-#include "util/peer_tls.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {

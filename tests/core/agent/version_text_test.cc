@@ -3,8 +3,8 @@
 #include <gtest/gtest.h>
 #include <map>
 
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 #include "version_record.hh"
 #include "version_facts.hh"
 #include "versions.hh"

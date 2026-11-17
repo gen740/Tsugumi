@@ -33,7 +33,7 @@ jobs:
         name: Evaluate the complete guest definition
         run: |
           stage="$RUNNER_TEMP/tsugumi-guest-source"
-          python3 macOS/tools/vm-snapshot.py "$GITHUB_WORKSPACE" "$stage"
+          python3 vm/guest/tools/vm-snapshot.py "$GITHUB_WORKSPACE" "$stage"
           echo "GUEST_BUILD_ROOT=$stage" >> "$GITHUB_ENV"
           identity=$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")
           echo "identity=${identity##*/}" >> "$GITHUB_OUTPUT"
@@ -54,8 +54,8 @@ jobs:
         env:
           REVISION: ${{ inputs.revision }}
         run: |
-          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c python3 "$GUEST_BUILD_ROOT/macOS/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
-          python3 macOS/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
+          nix shell --inputs-from . nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
+          python3 vm/guest/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
       - uses: actions/upload-artifact@v4
         with:
           name: vm-${{ steps.definition.outputs.identity }}

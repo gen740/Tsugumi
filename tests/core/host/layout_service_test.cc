@@ -8,9 +8,9 @@
 #include <memory>
 
 #include "agent/catalog.hh"
-#include "util/json_object.hh"
+#include "tsugumi/util/json_object.hh"
 #include "host/layout_saving.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::host {
 namespace {

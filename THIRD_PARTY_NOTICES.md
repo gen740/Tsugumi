@@ -5,7 +5,7 @@ copied code, fonts and external data retain their own licenses, including
 the [hosq](https://github.com/CLI20-dev/hosq) library.
 
 The app carries these notices and the full license texts in
-`Contents/Resources/licenses/` ([bundle-licenses.sh](macOS/tools/bundle-licenses.sh)).
+`Contents/Resources/licenses/` ([bundle-licenses.sh](ui/macos/tools/bundle-licenses.sh)).
 The corresponding source of the guest image is attached to the app's release on
 [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases); see
 [Licenses and distribution](docs/LicenseAudit.md). Lock files and build recipes
@@ -28,17 +28,17 @@ SwiftTreeSitter has its own BSD license.
 | tree-sitter-bash | [0.25.1, MIT](https://github.com/tree-sitter/tree-sitter-bash/blob/a06c2e4415e9bc0346c6b86d401879ffb44058f7/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-go | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-go/blob/1547678a9da59885853f5f5cc8a99cc203fa2e2c/LICENSE) | Linked grammar and copied highlight query |
 | tree-sitter-rust | [0.24.2, MIT](https://github.com/tree-sitter/tree-sitter-rust/blob/77a3747266f4d621d0757825e6b11edcbf991ca5/LICENSE) | Linked grammar and copied highlight query |
-| tree-sitter-julia | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-julia/blob/e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3/LICENSE) | Linked grammar and copied highlight query; its external scanner (`src/scanner.c`) is copied into `macOS/Sources/Grammars/TreeSitterJuliaScanner/`, with its [LICENSE](macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE), because the package's manifest leaves it out |
+| tree-sitter-julia | [0.25.0, MIT](https://github.com/tree-sitter/tree-sitter-julia/blob/e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3/LICENSE) | Linked grammar and copied highlight query; its external scanner (`src/scanner.c`) is copied into `ui/macos/Sources/Grammars/TreeSitterJuliaScanner/`, with its [LICENSE](ui/macos/Sources/Grammars/TreeSitterJuliaScanner/LICENSE), because the package's manifest leaves it out |
 | tree-sitter-r | [1.3.0, MIT](https://github.com/r-lib/tree-sitter-r/blob/346d3707b8c9301f1051e8f6e32666e67529f7d2/LICENSE) | Linked grammar and copied highlight query |
-| tree-sitter-nix | e49c2f317e896eb08967717e758a46d6eea038b2, MIT | Copied into `macOS/Sources/Grammars/TreeSitterNix/`, with its [LICENSE](macOS/Sources/Grammars/TreeSitterNix/LICENSE), and copied highlight query |
-| tree-sitter-python | 0.25.0, MIT | Copied into `macOS/Sources/Grammars/TreeSitterPython/`, with its [LICENSE](macOS/Sources/Grammars/TreeSitterPython/LICENSE), and copied highlight query |
+| tree-sitter-nix | e49c2f317e896eb08967717e758a46d6eea038b2, MIT | Copied into `ui/macos/Sources/Grammars/TreeSitterNix/`, with its [LICENSE](ui/macos/Sources/Grammars/TreeSitterNix/LICENSE), and copied highlight query |
+| tree-sitter-python | 0.25.0, MIT | Copied into `ui/macos/Sources/Grammars/TreeSitterPython/`, with its [LICENSE](ui/macos/Sources/Grammars/TreeSitterPython/LICENSE), and copied highlight query |
 
 `TreeSitterFBS/grammar.js`, its generated `src/parser.c`, grammar metadata
 and `fbs.scm` are Tsugumi-specific. This does **not** make the accompanying
 `src/tree_sitter/` support headers Tsugumi-authored code. Their notice is in
-[Grammars/LICENSE.tree-sitter](macOS/Sources/Grammars/LICENSE.tree-sitter).
-See the [grammar notes](macOS/Sources/Grammars/README.md) and
-[query sources](macOS/Sources/App/Resources/TreeSitter/SOURCES.md).
+[Grammars/LICENSE.tree-sitter](ui/macos/Sources/Grammars/LICENSE.tree-sitter).
+See the [grammar notes](ui/macos/Sources/Grammars/README.md) and
+[query sources](ui/macos/Sources/App/Resources/TreeSitter/SOURCES.md).
 The copied queries' upstream license texts are retained in
 [`third-party/tree-sitter/`](third-party/tree-sitter/README.md).
 
@@ -66,7 +66,7 @@ npm packages (`licenses/npm`), the boot image below, and FlatBuffers in
 
 ## Web UI
 
-`web/package-lock.json` pins this runtime package tree. esbuild bundles
+`ui/web/package-lock.json` pins this runtime package tree. esbuild bundles
 only code reachable from the server and browser entry points.
 
 | Component | Version | License |
@@ -79,14 +79,14 @@ only code reachable from the server and browser entry points.
 | commander | 15.0.0 | MIT; KaTeX CLI dependency, not an app import |
 | FlatBuffers | 25.9.23 | Apache-2.0 |
 | xterm.js (`@xterm/xterm`, `@xterm/addon-fit`) | 5.5.0, 0.10.0 | MIT |
-| node-pty | 1.1.0 | MIT; a native module, loaded from `web/node_modules` and not bundled |
+| node-pty | 1.1.0 | MIT; a native module, loaded from `ui/web/node_modules` and not bundled |
 
 ### Plot viewer (web UI and macOS app)
 
 Plotly figures and Altair (Vega-Lite) charts of Cards are drawn by the
-module viewer (`ui/modules`) with these minified browser builds, pinned in
-`web/package-lock.json`. The web build serves them from `/modules/` and
-`macOS/build-app.sh` copies them to `Contents/Resources/modules/`, each with
+module viewer (`ui/shared/modules`) with these minified browser builds, pinned in
+`ui/web/package-lock.json`. The web build serves them from `/modules/` and
+`ui/macos/build-app.sh` copies them to `Contents/Resources/modules/`, each with
 its license file (`LICENSE.<package>.txt`). The licenses of the packages the
 Vega builds were made from are in the app's `licenses/plot-viewer/`.
 
@@ -101,14 +101,14 @@ The Python packages a Card asks for (`matplotlib`, `plotly`, `altair`, …)
 come from nixpkgs when the Card is built; a Card that uses matplotlib also
 gets the IPAex fonts (IPA Font License v1.0) as its fallback for Japanese.
 
-`web/dist/` is built from a checkout, not distributed by this project; each
-installed package in `web/node_modules/` contains its license text. esbuild,
+`ui/web/dist/` is built from a checkout, not distributed by this project; each
+installed package in `ui/web/node_modules/` contains its license text. esbuild,
 TypeScript and type declarations are build-time dependencies.
 
 ## Core daemon and execution environment
 
 The shipped macOS app contains a **release-built guest image**, including the
-daemon, worker and project tools from `macOS/Container/vm-system.nix`. First boot
+daemon, worker and project tools from `vm/guest/vm-system.nix`. First boot
 registers this closure and starts it; it does not compile Tsugumi.
 
 | Component used by core | License / source |
@@ -126,11 +126,11 @@ are fixed by [flake.lock](flake.lock) and [nix/core.nix](nix/core.nix).
 
 ### Guest image redistributed with the app
 
-[`vm-boot.nix`](macOS/Container/vm-boot.nix) includes Nix, CA certificates,
+[`vm-boot.nix`](vm/guest/vm-boot.nix) includes Nix, CA certificates,
 Bash, coreutils, findutils, util-linux, e2fsprogs, BusyBox, gawk, and their
-runtime closure. [`kernel.nix`](macOS/Container/kernel.nix) builds Linux
+runtime closure. [`kernel.nix`](vm/guest/kernel.nix) builds Linux
 6.12.115 (GPL-2.0-only), with a Tsugumi configuration derived from
-[that of Kata Containers 3.17.0](macOS/Container/kernel/SOURCES.md). This is not
+[that of Kata Containers 3.17.0](vm/guest/kernel/SOURCES.md). This is not
 simply an unchanged nixpkgs kernel.
 
 The complete guest closure contains GPL / LGPL software as well as permissively

@@ -1,5 +1,0 @@
-module TsugumiClientC [system] {
-  header "../../../client/include/tsugumi/client/client.h"
-  link "tsugumi_client"
-  export *
-}
