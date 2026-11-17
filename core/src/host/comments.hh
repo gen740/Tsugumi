@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 namespace tsugumi::host::comments {
 

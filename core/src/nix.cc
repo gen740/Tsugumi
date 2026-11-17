@@ -1,3 +1,5 @@
+#include "runtime_schema.hh"
+#include "tsugumi/workerd/manifest.hh"
 #include "nix.hh"
 
 #include <sys/stat.h>
@@ -8,7 +10,7 @@
 #include <regex>
 
 #include "nix_eval.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "service.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"

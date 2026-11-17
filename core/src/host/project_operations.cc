@@ -18,7 +18,7 @@
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Value(const OperationReply& reply) -> json::Members {
   const auto envelope = json::Object(reply.json);
   const auto value = json::Object(json::Get(envelope, "value", "{}"));

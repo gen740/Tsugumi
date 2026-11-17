@@ -25,7 +25,7 @@ auto CardStem(const std::string& name) -> std::string {
 }
 
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Content(const std::string& raw) -> std::string {
   if (raw.starts_with('"')) return json::String(raw);
   if (raw.starts_with('{')) {

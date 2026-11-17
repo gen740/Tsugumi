@@ -1,7 +1,7 @@
 // Public Host contract scenarios, independent of project/conversation
 // lifetimes.
 #include "fixture.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include <unistd.h>
 
 namespace tsugumi::test {

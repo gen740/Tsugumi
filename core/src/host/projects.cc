@@ -4,7 +4,7 @@
 #include <chrono>
 #include <fstream>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/wire.hh"
 #include "document.hh"
 #include "host/skills.hh"
@@ -15,7 +15,7 @@ namespace tsugumi::host {
 namespace {
 namespace A = Tsugumi::Host;
 namespace f = std::filesystem;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 auto Text(const flatbuffers::String* value, std::string fallback = {})
     -> std::string {

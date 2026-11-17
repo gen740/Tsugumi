@@ -4,13 +4,13 @@
 #include <utility>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/failure.hh"
 #include "host/agent_exclude.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 DemoReferences::DemoReferences(std::filesystem::path root)
     : directory(std::move(root)) {}
 

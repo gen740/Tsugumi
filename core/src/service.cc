@@ -1,3 +1,6 @@
+#include "version_facts.hh"
+#include "tsugumi/workerd/store.hh"
+#include "runtime_schema.hh"
 #include "service.hh"
 #include "input_types.hh"
 #include "host_requirements.hh"
@@ -180,7 +183,7 @@ namespace {
 std::vector<std::string> configured_substituters(const stdfs::path& file) {
   std::vector<std::string> raw;
   if (file.empty()) {
-    raw = NixEvaluator::substituters();
+    raw = NixStore::substituters();
   } else {
     std::ifstream in(file);
     if (!in) log::error("cannot read the binary cache list " + file.string() + ": runs will record none");
@@ -539,7 +542,7 @@ void Service::fail(const RequestIn& req, const FailureData& f) {
 }
 
 std::pair<std::string, bool> Service::hello(const RequestIn& in) {
-  const auto* h = in.request()->value_as_SessionHelloRequest();
+  const auto* h = project_request(in)->value_as_SessionHelloRequest();
   auto failure = [&](FailureKind k, std::string msg) {
     return std::make_pair(wire::failure_reply(in.request_id, FailureData::make(k, std::move(msg))), false);
   };
@@ -622,7 +625,7 @@ void Service::dispatch(RequestIn req) {
   using P = R::RequestPayload;
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
-  switch (req.request()->value_type()) {
+  switch (project_request(req)->value_type()) {
     case P::ProjectActivityRequest: {
       // Observe outside the lanes so this query cannot count itself as work.
       flatbuffers::FlatBufferBuilder b;
@@ -1002,7 +1005,7 @@ void Service::check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) 
 // Mutation lane
 
 void Service::open_project(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectOpenRequest();
+  const auto* r = project_request(req)->value_as_ProjectOpenRequest();
   std::optional<std::string> view_id;
   if (r->view_id()) {
     if (!crypto::is_uuid(r->view_id()->str())) throw Failed(FailureKind::invalid_request, "view_id must be a UUID");
@@ -1116,7 +1119,7 @@ auto RequireApprovedPermissions(
 }  // namespace
 
 auto Service::card_id(RequestIn& req) -> void {
-  const auto* r = req.request()->value_as_CardIdRequest();
+  const auto* r = project_request(req)->value_as_CardIdRequest();
   auto id = store_->allocate_card_id(r->stem()->str(), r->project_path() ? r->project_path()->str() : "");
   FBB b;
   auto result = R::CreateCardIdResult(b, b.CreateString(id));
@@ -1124,9 +1127,9 @@ auto Service::card_id(RequestIn& req) -> void {
 }
 
 void Service::save(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectSaveRequest();
+  const auto* r = project_request(req)->value_as_ProjectSaveRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "save", digest)) return;
   try {
     auto check_cancelled = [&] {
@@ -1199,9 +1202,9 @@ void Service::save(RequestIn& req) {
 }
 
 void Service::reload(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectReloadRequest();
+  const auto* r = project_request(req)->value_as_ProjectReloadRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
     require_mutation(r->base_rev(), r->op_id());
@@ -1272,9 +1275,9 @@ void Service::note_run_end(const RunStatusData& s, const std::string& record_jso
 }
 
 void Service::version_init(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionInitRequest();
+  const auto* r = project_request(req)->value_as_VersionInitRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_operation_id(op_id))
@@ -1295,9 +1298,9 @@ void Service::version_init(RequestIn& req) {
 }
 
 void Service::version_mark(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionMarkRequest();
+  const auto* r = project_request(req)->value_as_VersionMarkRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_operation_id(op_id))
@@ -1319,9 +1322,9 @@ void Service::version_mark(RequestIn& req) {
 }
 
 void Service::version_checkout(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionCheckoutRequest();
+  const auto* r = project_request(req)->value_as_VersionCheckoutRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
     require_mutation(r->base_rev(), r->op_id());
@@ -1359,7 +1362,7 @@ void Service::version_checkout(RequestIn& req) {
 }
 
 void Service::version_graph(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionGraphRequest();
+  const auto* r = project_request(req)->value_as_VersionGraphRequest();
   auto g = versions_->graph(std::min<uint32_t>(r->limit().value_or(500), 5000));
   FBB b(1 << 16);
   auto strings = [&](const std::vector<std::string>& v) {
@@ -1370,19 +1373,23 @@ void Service::version_graph(RequestIn& req) {
   std::vector<flatbuffers::Offset<R::VersionCommit>> commits;
   for (const auto& c : g.commits) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
-    for (const auto& n : c.runs)
-      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds,
-                                         n.record_json.empty() ? 0 : b.CreateString(n.record_json)));
-    commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
-                                             b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
-                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
+    for (const auto& n : c.runs) {
+      const auto facts = version_facts::run(n.record_json);
+      runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state),
+          b.CreateString(n.ended), n.seconds, 0, facts ? R::VersionRunFacts::Pack(b, facts.get()) : 0));
+    }
+    const auto facts = version_facts::commit(c.message);
+    commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents),
+        b.CreateString(facts ? "" : c.summary), b.CreateString(facts ? "" : c.message),
+        b.CreateString(c.author), c.time_ms, strings(c.branches), strings(c.tags),
+        b.CreateVector(runs), strings(c.changed), facts ? R::VersionCommitFacts::Pack(b, facts.get()) : 0));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
 }
 
 void Service::version_canvas(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionCanvasRequest();
+  const auto* r = project_request(req)->value_as_VersionCanvasRequest();
   auto canvas = versions_->canvas(r->commit()->str());
   FBB b;
   std::vector<flatbuffers::Offset<R::VersionCanvasCard>> cards;
@@ -1394,17 +1401,18 @@ void Service::version_canvas(RequestIn& req) {
 }
 
 void Service::version_note(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionNoteRequest();
+  const auto* r = project_request(req)->value_as_VersionNoteRequest();
   auto note = versions_->note(r->commit()->str());
   FBB b;
-  auto n = R::CreateVersionNote(b, b.CreateString(note.record_json));
+  auto facts = version_facts::changes(note.record_json);
+  auto n = R::CreateVersionNote(b, R::VersionChanges::Pack(b, &facts));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote, n.Union()));
 }
 
 void Service::cache_clear(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectCacheClearRequest();
+  const auto* r = project_request(req)->value_as_ProjectCacheClearRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "cache_clear", digest)) return;
   try {
     if (scheduler_->active_status() || nix_->sdk_jobs_active())
@@ -1455,9 +1463,9 @@ void Service::cache_usage(RequestIn& req) {
 }
 
 void Service::scratch_delete(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunScratchDeleteRequest();
+  const auto* r = project_request(req)->value_as_RunScratchDeleteRequest();
   const auto op_id = r->op_id()->str();
-  const auto digest = request_digest(req.request());
+  const auto digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "scratch_delete", digest)) return;
   try {
     if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
@@ -1510,9 +1518,9 @@ void Service::scratch_delete(RequestIn& req) {
 }
 
 void Service::history_delete(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunHistoryDeleteRequest();
+  const auto* r = project_request(req)->value_as_RunHistoryDeleteRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "history_delete", digest)) return;
   try {
     // A later run may read files of earlier ones (saved inputs, upstream outputs).
@@ -1577,7 +1585,7 @@ void Service::history_delete(RequestIn& req) {
 // Read pool: documents, files, views
 
 void Service::close_project(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectCloseRequest();
+  const auto* r = project_request(req)->value_as_ProjectCloseRequest();
   {
     std::lock_guard<std::mutex> l(subs_mu_);
     auto it = subscriptions_.find(req.conn);
@@ -1603,7 +1611,7 @@ void Service::inspect(RequestIn& req) {
 }
 
 void Service::validate(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectValidateRequest();
+  const auto* r = project_request(req)->value_as_ProjectValidateRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   if (r->changes() && r->changes()->size() > 0) {
@@ -1644,7 +1652,7 @@ void Service::validate(RequestIn& req) {
 }
 
 void Service::operation_get(RequestIn& req) {
-  const auto* r = req.request()->value_as_OperationGetRequest();
+  const auto* r = project_request(req)->value_as_OperationGetRequest();
   std::string op_id = r->op_id()->str();
   if (!crypto::is_operation_id(op_id))
     throw Failed(FailureKind::invalid_request, "invalid op_id");
@@ -1704,7 +1712,7 @@ uint32_t chunk_limit(std::optional<uint32_t> v, uint32_t def, uint32_t lo, uint3
 }  // namespace
 
 void Service::file_list(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectFileListRequest();
+  const auto* r = project_request(req)->value_as_ProjectFileListRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   std::string path = r->path()->str();
@@ -1813,7 +1821,7 @@ std::optional<std::string> confirmed_bytes(const Document& doc, const Store& sto
 }  // namespace
 
 void Service::file_stat(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectFileStatRequest();
+  const auto* r = project_request(req)->value_as_ProjectFileStatRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   std::string path = r->path()->str();
@@ -1842,7 +1850,7 @@ void Service::file_stat(RequestIn& req) {
 }
 
 void Service::file_read(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectFileReadRequest();
+  const auto* r = project_request(req)->value_as_ProjectFileReadRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   std::string path = r->path()->str();
@@ -1861,7 +1869,7 @@ void Service::file_read(RequestIn& req) {
 }
 
 void Service::nix_source_resolve(RequestIn& req) {
-  auto info = nix_->resolve_flake(req.request()->value_as_NixSourceResolveRequest()->ref()->str());
+  auto info = nix_->resolve_flake(project_request(req)->value_as_NixSourceResolveRequest()->ref()->str());
   FBB b;
   std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
   for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
@@ -1873,7 +1881,7 @@ void Service::nix_source_resolve(RequestIn& req) {
 }
 
 void Service::input_types(RequestIn& req) {
-  const auto* request = req.request()->value_as_InputTypesRequest();
+  const auto* request = project_request(req)->value_as_InputTypesRequest();
   auto doc = store_->current();
   check_at_rev(request->at_rev(), *doc);
   const auto card = wire::card_arg(request->card());
@@ -1903,7 +1911,7 @@ void Service::input_types(RequestIn& req) {
 }
 
 void Service::output_types(RequestIn& req) {
-  const auto* r = req.request()->value_as_OutputTypesRequest();
+  const auto* r = project_request(req)->value_as_OutputTypesRequest();
   std::string text = r->text()->str();
   std::string root;
   std::string err;
@@ -1923,7 +1931,7 @@ void Service::output_types(RequestIn& req) {
 }
 
 void Service::view_save(RequestIn& req) {
-  const auto* r = req.request()->value_as_ViewSaveRequest();
+  const auto* r = project_request(req)->value_as_ViewSaveRequest();
   std::string view_id = r->view_id()->str();
   if (!crypto::is_uuid(view_id)) throw Failed(FailureKind::invalid_request, "view_id must be a UUID");
   if (!r->base_view_rev()) throw Failed(FailureKind::invalid_request, "base_view_rev is required");
@@ -1965,7 +1973,7 @@ void Service::view_save(RequestIn& req) {
 }
 
 void Service::view_set_visible(RequestIn& req) {
-  const auto* r = req.request()->value_as_ViewSetVisibleRequest();
+  const auto* r = project_request(req)->value_as_ViewSetVisibleRequest();
   std::set<std::string> cards;
   for (const auto* c : *r->cards()) cards.insert(path_key(wire::card_arg(c, "cards")));
   bool enabled = r->enabled().value_or(true);

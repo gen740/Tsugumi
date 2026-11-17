@@ -2,7 +2,7 @@
 
 #include <limits>
 
-#include "schema.hh"
+#include "util/json.hh"
 
 namespace tsugumi::schema {
 namespace {

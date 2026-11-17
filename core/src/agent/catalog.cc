@@ -8,7 +8,7 @@
 #include <optional>
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/failure.hh"
 #include "tsugumi/protocol/host_generated.h"
 #include "tsugumi/protocol/tsugumi_generated.h"

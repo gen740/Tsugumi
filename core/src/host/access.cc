@@ -2,7 +2,7 @@
 
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/presentation.hh"
 #include "agent/store.hh"
 #include "agent/wire.hh"
@@ -13,7 +13,7 @@
 namespace tsugumi::host {
 namespace A = Tsugumi::Agent;
 namespace S = Tsugumi::Service;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 using agent::Cancelled;
 using agent::Message;

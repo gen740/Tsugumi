@@ -12,8 +12,6 @@ class Store;
 
 namespace tsugumi {
 
-struct NixResult;
-
 enum class WorkerKind { native, remote };
 
 struct ExecutionTarget {

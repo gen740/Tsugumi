@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/providers.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"

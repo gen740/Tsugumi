@@ -61,9 +61,9 @@ void require_run_id(const flatbuffers::String *s, const char *what) {
 // Mutation lane
 
 void Service::run(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunRequest();
+  const auto* r = project_request(req)->value_as_RunRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   // Replays come before any base_rev or busy check.
   if (replay_or_join(req, op_id, "run", digest)) return;
   try {
@@ -110,9 +110,9 @@ void Service::run(RequestIn& req) {
 }
 
 void Service::sdk_prepare(RequestIn& req) {
-  const auto* r = req.request()->value_as_CardSDKPrepareRequest();
+  const auto* r = project_request(req)->value_as_CardSDKPrepareRequest();
   std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
+  std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "sdk", digest)) return;
   try {
     auto doc = store_->current();
@@ -147,7 +147,7 @@ void Service::sdk_prepare(RequestIn& req) {
 // Read pool
 
 void Service::sdk_status(RequestIn& req) {
-  const auto* r = req.request()->value_as_CardSDKStatusRequest();
+  const auto* r = project_request(req)->value_as_CardSDKStatusRequest();
   if (!r->op_id() || !crypto::is_operation_id(r->op_id()->str()))
     throw Failed(FailureKind::invalid_request, "invalid op_id");
   auto job = nix_->sdk_job(r->op_id()->str());
@@ -160,7 +160,7 @@ void Service::sdk_status(RequestIn& req) {
 }
 
 void Service::run_plan(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunPlanRequest();
+  const auto* r = project_request(req)->value_as_RunPlanRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   auto plan = Scheduler::plan(*doc->resolution, wire::card_arg(r->card()), r->propagate().value_or(true));
@@ -189,7 +189,7 @@ void Service::run_plan(RequestIn& req) {
 }
 
 void Service::run_cancel(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunCancelRequest();
+  const auto* r = project_request(req)->value_as_RunCancelRequest();
   require_run_id(r->run_id(), "run_id");
   auto st = scheduler_->cancel(r->run_id()->str());
   FBB b;
@@ -198,7 +198,7 @@ void Service::run_cancel(RequestIn& req) {
 }
 
 void Service::run_status(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunStatusRequest();
+  const auto* r = project_request(req)->value_as_RunStatusRequest();
   RunStatusData st;
   if (r->run_id()) {
     require_run_id(r->run_id(), "run_id");
@@ -219,7 +219,7 @@ void Service::run_status(RequestIn& req) {
 }
 
 void Service::run_history(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunHistoryRequest();
+  const auto* r = project_request(req)->value_as_RunHistoryRequest();
   std::optional<CardPath> card;
   if (r->card()) card = wire::card_arg(r->card());
   bool artifacts_only = r->artifacts_only().value_or(false);
@@ -266,7 +266,7 @@ void Service::run_history(RequestIn& req) {
 }
 
 void Service::run_latest_invocations(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunLatestInvocationsRequest();
+  const auto* r = project_request(req)->value_as_RunLatestInvocationsRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   const auto fingerprint = store_->current()->execution_fingerprint;
@@ -292,7 +292,7 @@ void Service::run_latest_invocations(RequestIn& req) {
 }
 
 void Service::run_invocations(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunInvocationsRequest();
+  const auto* r = project_request(req)->value_as_RunInvocationsRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
@@ -327,7 +327,7 @@ void Service::run_invocations(RequestIn& req) {
 }
 
 auto Service::run_environments(RequestIn& req) -> void {
-  const auto* r = req.request()->value_as_RunEnvironmentsRequest();
+  const auto* r = project_request(req)->value_as_RunEnvironmentsRequest();
   require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str();
   const auto offset = r->offset().value_or(0);
@@ -370,7 +370,7 @@ auto Service::run_environments(RequestIn& req) -> void {
 }
 
 auto Service::run_environment_paths(RequestIn& req) -> void {
-  const auto* r = req.request()->value_as_RunEnvironmentPathsRequest();
+  const auto* r = project_request(req)->value_as_RunEnvironmentPathsRequest();
   require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str();
   const auto id = r->environment_id()->str();
@@ -439,7 +439,7 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
 }
 
 auto Service::run_environment_uses(RequestIn& req) -> void {
-  const auto* r = req.request()->value_as_RunEnvironmentUsesRequest();
+  const auto* r = project_request(req)->value_as_RunEnvironmentUsesRequest();
   require_run_id(r->run_id(), "run_id");
   const auto run = r->run_id()->str(), id = r->environment_id()->str();
   const auto offset = r->offset().value_or(0);
@@ -477,7 +477,7 @@ auto Service::run_environment_uses(RequestIn& req) -> void {
 }
 
 void Service::run_record(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunRecordRequest();
+  const auto* r = project_request(req)->value_as_RunRecordRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
@@ -671,7 +671,7 @@ void Service::run_record(RequestIn& req) {
 }
 
 void Service::run_value_read(RequestIn& req) {
-  const auto* r = req.request()->value_as_RunValueReadRequest();
+  const auto* r = project_request(req)->value_as_RunValueReadRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
@@ -696,7 +696,7 @@ void Service::run_value_read(RequestIn& req) {
 }
 
 void Service::artifact_list(RequestIn& req) {
-  const auto* r = req.request()->value_as_ArtifactListRequest();
+  const auto* r = project_request(req)->value_as_ArtifactListRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   std::optional<CardPath> card;
@@ -743,7 +743,7 @@ void Service::artifact_list(RequestIn& req) {
 }
 
 auto Service::module_read(RequestIn& req) -> void {
-  const auto* r = req.request()->value_as_ModuleReadRequest();
+  const auto* r = project_request(req)->value_as_ModuleReadRequest();
   const auto identity = r->module_()->str();
   const stdfs::path root(identity);
   if (!valid_module_identity(identity) || stdfs::is_symlink(root))
@@ -764,7 +764,7 @@ auto Service::module_read(RequestIn& req) -> void {
 }
 
 void Service::artifact_read(RequestIn& req) {
-  const auto* r = req.request()->value_as_ArtifactReadRequest();
+  const auto* r = project_request(req)->value_as_ArtifactReadRequest();
   if (!r->artifact_id() || !fs::valid_relative_path(r->artifact_id()->str()))
     throw Failed(FailureKind::invalid_request, "invalid artifact_id");
   auto a = history_->read([&](sql::Db& db) { return History::artifact(db, r->artifact_id()->str()); });
@@ -817,7 +817,7 @@ void Service::artifact_read(RequestIn& req) {
 }
 
 void Service::log_range(RequestIn& req) {
-  const auto* r = req.request()->value_as_LogRangeRequest();
+  const auto* r = project_request(req)->value_as_LogRangeRequest();
   require_run_id(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   std::optional<CardPath> card;

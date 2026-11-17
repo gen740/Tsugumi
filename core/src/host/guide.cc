@@ -6,7 +6,7 @@
 #include <set>
 #include <sstream>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/wire.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -19,7 +19,7 @@ extern const unsigned long tsugumi_guide_script_en_size;
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Text(const flatbuffers::String *s) -> std::string {
   return s ? s->str() : "";
 }

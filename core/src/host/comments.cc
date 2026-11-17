@@ -5,7 +5,7 @@
 #include <map>
 #include <set>
 
-#include "schema.hh"
+#include "util/json.hh"
 #include "util/crypto.hh"
 #include <git2.h>
 
@@ -226,7 +226,7 @@ auto card_of(const std::string &path, const Files &files)
       if (local.find('/', 12) != local.size() - 11)
         continue;
       try {
-        if (agent::json::Text(agent::json::Object(text), "external") ==
+        if (::tsugumi::json::Text(::tsugumi::json::Object(text), "external") ==
             external) {
           id = local.substr(12, local.size() - 23);
           break;

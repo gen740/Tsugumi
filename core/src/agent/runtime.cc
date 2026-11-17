@@ -1,6 +1,6 @@
 #include "agent/runtime.hh"
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 #include <algorithm>
 #include <cctype>

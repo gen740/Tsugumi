@@ -219,7 +219,7 @@ let
           -I worker/protocol -o gen/tsugumi/protocol worker/protocol/*.fbs
         # hosq is a system header there too: its warnings are not the worker's.
         $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/core -isystem worker/include -Igen \
-          worker/src/native_main.cc worker/core/schema.cc worker/core/util/text.cc \
+          worker/src/native_main.cc worker/core/util/json.cc worker/core/util/text.cc \
           -lflatbuffers -lpthread -ldl -o tsugumi-worker
       '';
       installPhase = ''

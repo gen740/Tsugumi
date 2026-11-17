@@ -87,7 +87,7 @@
 #include <vector>
 
 #include "cache_usage.hh"
-#include "nix_eval.hh"
+#include "tsugumi/workerd/store.hh"
 
 namespace fs = std::filesystem;
 
@@ -1036,7 +1036,7 @@ int main(int argc, char** argv) {
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
   prepare_project_roots();
-  tsugumi::NixEvaluator::init_process();
+  tsugumi::NixStore::init_process();
   cache_usage = std::make_unique<tsugumi::CacheUsage>(kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);
   std::thread(reaper).detach();
   std::thread([stop_signals]() mutable {

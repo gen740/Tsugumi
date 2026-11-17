@@ -3,15 +3,13 @@
 #include <filesystem>
 #include <string>
 
-#include "agent/json.hh"
 #include "tsugumi/protocol/host_generated.h"
 
 namespace tsugumi::host {
-auto CommitText(const std::string& message, bool english) -> std::string;
-auto RunText(const std::string& record, bool english) -> std::string;
-auto ChangeText(const std::string& record, bool english) -> std::string;
+auto CommitText(const Tsugumi::RPC::VersionCommitFactsT& facts, bool english) -> std::string;
+auto RunText(const Tsugumi::RPC::VersionRunFactsT& facts, bool english) -> std::string;
+auto ChangeText(const Tsugumi::RPC::VersionChangesT& facts, bool english) -> std::string;
 auto PresentGraph(Tsugumi::RPC::VersionGraphT& graph, bool english) -> void;
-auto PresentGraph(agent::json::Members graph, bool english) -> agent::json::Members;
 // Model-read policy belongs here. The project repository remains unchanged.
 auto ResolveVersion(const std::filesystem::path &root, const std::string &name)
     -> std::string;

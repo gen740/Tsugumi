@@ -6,7 +6,7 @@
 #include <iterator>
 #include <map>
 
-#include "schema.hh"
+#include "util/json.hh"
 
 namespace tsugumi::layout {
 namespace {

@@ -4,7 +4,7 @@
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Snapshot(const std::string& kind) -> json::Members {
   return {{"rev", "\"7\""},
           {"definitions",

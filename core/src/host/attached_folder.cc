@@ -17,7 +17,7 @@
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 using Failure = FolderReadFailure;
 struct Descriptor {
   int value;

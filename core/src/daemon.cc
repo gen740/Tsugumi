@@ -1,3 +1,4 @@
+#include "runtime_schema.hh"
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
@@ -12,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "schema.hh"
+#include "util/json.hh"
 #include "service.hh"
 #include "tsugumi/core/daemon.hh"
 #include "util/crypto.hh"
@@ -259,6 +260,8 @@ int run_daemon(int argc, char** argv) {
   sv.allowed_origins = opt.origins;
   if (!opt.control_dir.empty()) sv.origins_file = (opt.control_dir / "origins.json").string();
   sv.allow_missing_origin = opt.allow_missing_origin;
+  ProjectEndpoint(sv);
+  ProjectEndpoint(sv);
   Server server(sv, &service);
   service.attach(&server);
   try {

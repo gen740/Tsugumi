@@ -1,9 +1,9 @@
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "project_fixture.hh"
 
 namespace tsugumi::test {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 TEST_F(AgentProjectFixture,
        AgentSavePolicyIsAppliedByTheHostAndItsReceiptSurvivesRestart) {
   Write(directory.path / "project/definitions/plan/_card.json",
@@ -302,7 +302,7 @@ TEST_F(AgentProjectFixture,
 namespace tsugumi::test {
 namespace {
 TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
       R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":{},"outputs":{}},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";

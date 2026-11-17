@@ -16,7 +16,7 @@
 #include <vector>
 #include <tuple>
 
-#include "worker_derivation.hh"
+#include "tsugumi/workerd/store_result.hh"
 
 namespace tsugumi {
 
@@ -49,11 +49,7 @@ struct NixCall {
   }
 };
 
-struct NixResult {
-  WorkerDerivation derivation;
-  std::string manifest;  // its contents
-  std::vector<std::string> closure;  // runtime references, including the manifest
-  bool built = false;    // false: the result was already in the store
+struct NixResult : WorkerStoreResult {
   bool execution_list = false;
   uint32_t implementation_count = 1;
   std::filesystem::path root;
@@ -73,16 +69,6 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
-  // The binary caches this process's Nix configuration names (after
-  // init_process), in order. Where a launcher hides part of the daemon's
-  // configuration from this process, it passes the daemon's list instead
-  // (ServiceOptions::substituters_file).
-  static std::vector<std::string> substituters();
-  // Store metadata only: no traversal of output contents and no evaluation.
-  // Includes derivations and outputs kept by the store's GC settings.
-  static auto rooted_usage(const std::vector<std::vector<std::string>>& roots)
-      -> std::vector<std::map<std::string, uint64_t>>;
-
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.
   NixEvaluator(std::string entry, std::vector<std::string> allowed);

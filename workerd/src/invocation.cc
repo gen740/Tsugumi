@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/manifest.hh"
 // Realises and runs one accepted invocation inside its supervised namespace.
 #include <fcntl.h>
 #include <unistd.h>
@@ -10,9 +11,9 @@
 #include <flatbuffers/reflection.h>
 
 #include "tsugumi/workerd/worker_execution.hh"
-#include "module_source.hh"
+#include "tsugumi/workerd/module_source.hh"
 #include "nix_store.hh"
-#include "nix_eval.hh"
+#include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -20,7 +21,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
-#include "wire.hh"
+#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
 namespace {
@@ -74,7 +75,7 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
 }
 
 auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocation, const stdfs::path& input,
-                const stdfs::path& directory, const stdfs::path& store, const NixResult& env,
+                const stdfs::path& directory, const stdfs::path& store, const WorkerStoreResult& env,
                 const WorkerProc::LogSink& log, const WorkerProc::DisplaySink& display,
                 const fs::TransferProgress& progress) -> WorkerOutcome {
   schema::CardManifest manifest;
@@ -214,7 +215,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
     invocation_log.append(static_cast<uint64_t>(stream), text);
   };
   std::string display;
-  NixResult environment;
+  WorkerStoreResult environment;
   WorkerOutcome outcome;
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.

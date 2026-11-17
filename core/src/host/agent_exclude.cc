@@ -10,7 +10,7 @@
 
 namespace tsugumi::host {
 namespace {
-namespace j = agent::json;
+namespace j = ::tsugumi::json;
 auto Under(const std::filesystem::path &parent,
            const std::filesystem::path &child) -> bool {
   auto p = parent.begin(), c = child.begin();

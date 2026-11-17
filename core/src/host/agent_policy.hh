@@ -2,14 +2,14 @@
 
 #include <string_view>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 namespace tsugumi::host {
 
 // Metadata presentation only: file/source bytes and arbitrary user JSON are
 // opaque. Integrity hashes remain exact because mutations use them for CAS.
 inline auto AgentReferences(const std::string &raw) -> std::string {
-  namespace j = agent::json;
+  namespace j = ::tsugumi::json;
   if (raw.starts_with('{')) {
     auto object = j::Object(raw);
     for (auto it = object.begin(); it != object.end();) {
@@ -62,7 +62,7 @@ inline auto AgentReferences(const std::string &raw) -> std::string {
 
 // Only the host chooses the restrictions for model/plugin project calls.
 inline auto RestrictAgentRequest(std::string_view name,
-                                 agent::json::Members& arguments) -> void {
+                                 ::tsugumi::json::Members& arguments) -> void {
   if (name == "project_save" || name == "project_reload")
     arguments["check_permissions"] = "true";
   if (name == "project_shell") {

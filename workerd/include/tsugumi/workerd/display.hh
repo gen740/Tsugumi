@@ -8,7 +8,7 @@
 #include <string_view>
 
 #include "tsugumi/protocol/data_generated.h"
-#include "schema.hh"
+#include "util/json.hh"
 #include "util/text.hh"
 
 namespace tsugumi::workerd {

@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/authorized_keys.hh"
 // Real TLS handshakes over socketpair: no listener or network permission
 // needed.
 #include "util/peer_tls.hh"
@@ -88,7 +89,7 @@ TEST(PeerTLS, AuthorizedKeysAreRequiredAndRemovalRevokesTheNextHandshake) {
   const auto file = directory.path / "authorized_keys";
   Write(file, "# Host key\n\n" + host.public_key() + " # workstation\n");
   peer_tls::Context server(worker, true, [&](std::string_view key) {
-    return peer_tls::Authorized(file, key);
+    return workerd::Authorized(file, key);
   });
   peer_tls::Context client(host, false, [&](std::string_view key) {
     return key == worker.public_key();

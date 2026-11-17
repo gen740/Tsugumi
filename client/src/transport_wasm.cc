@@ -4,15 +4,15 @@
 #include <stdexcept>
 #include <utility>
 
-#include "tsugumi/client/client.hh"
+#include "tsugumi/client/transport.hh"
 
 namespace tsugumi::client {
 namespace {
 
 class BrowserTransport final : public Transport {
   struct State : std::enable_shared_from_this<State> {
-    explicit State(Options value) : options(std::move(value)) {}
-    Options options;
+    explicit State(TransportOptions value) : options(std::move(value)) {}
+    TransportOptions options;
     TransportEvents events;
     EMSCRIPTEN_WEBSOCKET_T socket = 0;
     int interval = 0;
@@ -42,7 +42,7 @@ class BrowserTransport final : public Transport {
   };
 
  public:
-  explicit BrowserTransport(Options options)
+  explicit BrowserTransport(TransportOptions options)
       : state_(std::make_shared<State>(std::move(options))) {}
   ~BrowserTransport() override { Close(); }
 
@@ -53,12 +53,7 @@ class BrowserTransport final : public Transport {
     if (!emscripten_websocket_is_supported())
       throw std::runtime_error("WebSocket is unavailable");
     state->events = std::move(events);
-    const auto protocol =
-        state->options.subprotocol.empty()
-            ? state->options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
-              : state->options.protocol == Protocol::Host ? "tsugumi.host.v1"
-                                                          : "tsugumi.rpc.v1"
-            : state->options.subprotocol;
+    const auto& protocol = state->options.subprotocol;
     EmscriptenWebSocketCreateAttributes attributes{};
     attributes.url = state->options.endpoint.c_str();
     attributes.protocols = protocol.c_str();
@@ -149,7 +144,7 @@ class BrowserTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const Options& options) -> std::shared_ptr<Transport> {
+auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
   if (!options.endpoint.starts_with("ws://") &&
       !options.endpoint.starts_with("wss://"))
     throw std::invalid_argument("browser RPC requires a WebSocket endpoint");

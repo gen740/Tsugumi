@@ -26,8 +26,8 @@
 #include <nix/util/terminal.hh>
 #include <sstream>
 
-#include "nix_eval.hh"
-#include "model.hh"
+#include "tsugumi/workerd/store_result.hh"
+#include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
 namespace {
@@ -72,7 +72,7 @@ class WorkerLogger final : public nix::Logger {
 auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
-    const std::function<void(const std::string&)>& log, uint64_t timeout_ms) -> NixResult {
+    const std::function<void(const std::string&)>& log, uint64_t timeout_ms) -> WorkerStoreResult {
   // Invocations run in separate processes but share this persistent store.
   // Serialize its entire connection lifetime, including database creation and
   // closure import. The lock ends before Card execution, so Cards can still run
@@ -144,7 +144,7 @@ auto RemoteWorkerStore::realise(
   if (declared_out == declared.end() || declared_out->second != out)
     throw std::runtime_error(
         "remote Nix derivation has a different output path");
-  NixResult result;
+  WorkerStoreResult result;
   if (!store->isValidPath(out)) {
     try {
       store->buildPaths(

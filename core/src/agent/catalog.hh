@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/provider.hh"
 
 namespace tsugumi::agent {

@@ -6,3 +6,8 @@ add_custom_command(
           -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   VERBATIM)
+
+add_library(tsugumi_transport STATIC src/transport.cc src/lanes.cc)
+target_include_directories(tsugumi_transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+tsugumi_owned_headers(tsugumi_transport transport transport.hh lanes.hh)
+target_link_libraries(tsugumi_transport PUBLIC tsugumi_util Threads::Threads)

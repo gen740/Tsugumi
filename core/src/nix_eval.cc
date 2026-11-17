@@ -1,6 +1,7 @@
 // Built as C++23 (the Nix headers require it); the rest of the core is C++20
 // and never includes a Nix header.
 #include "nix_eval.hh"
+#include "tsugumi/workerd/store.hh"
 
 #include <fcntl.h>
 #include <pthread.h>
@@ -243,7 +244,7 @@ void NixEvaluator::init_process() {
   static bool done = false;
   if (done) return;
   done = true;
-  nix::initLibStore(true);  // nix.conf: substituters, the daemon socket, ...
+  NixStore::init_process();  // nix.conf: substituters, the daemon socket, ...
   nix::initGC();
   auto logger = std::make_unique<SinkLogger>();
   g_logger = logger.get();
@@ -253,12 +254,6 @@ void NixEvaluator::init_process() {
                             // checks for interrupts
   sigemptyset(&sa.sa_mask);
   ::sigaction(SIGUSR1, &sa, nullptr);
-}
-
-std::vector<std::string> NixEvaluator::substituters() {
-  std::vector<std::string> urls;
-  for (const auto& ref : nix::settings.getWorkerSettings().substituters.get()) urls.push_back(ref.render(false));
-  return urls;
 }
 
 struct NixEvaluator::Impl {
@@ -845,26 +840,5 @@ bool NixEvaluator::valid(const std::string& store_path) {
 
 uint64_t NixEvaluator::heap_bytes() { return GC_get_heap_size(); }
 
-auto NixEvaluator::rooted_usage(const std::vector<std::vector<std::string>>& roots)
-    -> std::vector<std::map<std::string, uint64_t>> {
-  auto store = nix::openStore();
-  std::vector<std::map<std::string, uint64_t>> result;
-  std::map<std::string, uint64_t> sizes;
-  for (const auto& project : roots) {
-    nix::StorePathSet closure;
-    for (const auto& path : project)
-      store->computeFSClosure(store->parseStorePath(path), closure, false,
-                              nix::settings.getLocalSettings().keepOutputs,
-                              nix::settings.getLocalSettings().keepDerivations);
-    auto& measured = result.emplace_back();
-    for (const auto& path : closure) {
-      auto name = store->printStorePath(path);
-      auto [it, inserted] = sizes.try_emplace(name, 0);
-      if (inserted) it->second = store->queryPathInfo(path)->narSize;
-      measured.emplace(name, it->second);
-    }
-  }
-  return result;
-}
 
 }  // namespace tsugumi

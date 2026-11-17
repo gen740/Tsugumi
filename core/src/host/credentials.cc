@@ -6,7 +6,7 @@
 #include "host/failure.hh"
 
 namespace tsugumi::host {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace {
 auto Now() -> int64_t {
   return std::chrono::duration_cast<std::chrono::milliseconds>(

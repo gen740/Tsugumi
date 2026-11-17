@@ -128,7 +128,7 @@ TEST_F(ConversationStoreTest,
       gate, *store, providers, settings, tools, turns, access,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
                                    [](const auto &, const auto &) {}});
-  const auto parent = agent::json::Object(
+  const auto parent = ::tsugumi::json::Object(
       R"({"read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1})");
   const auto boundary = [&] {
     auto result = std::make_shared<agent::HelperScope>(parent);
@@ -586,9 +586,9 @@ TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
 TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
   for (const auto& name :
        {"project_file_read", "run", "project_save", "project_shell"}) {
-    const auto arguments = agent::json::Encode(agent::json::Members{
-        {"path", agent::json::Quote("definitions/share/_outputs.fbs")}});
-    const auto raw = agent::json::Encode(agent::json::Members{
+    const auto arguments = ::tsugumi::json::Encode(::tsugumi::json::Members{
+        {"path", ::tsugumi::json::Quote("definitions/share/_outputs.fbs")}});
+    const auto raw = ::tsugumi::json::Encode(::tsugumi::json::Members{
         {"reply", "\"Failure\""},
         {"value",
          R"({"kind":"not_found","args":[{"key":"path","value":"definitions/share/_outputs.fbs"}],"diagnostic":"DIAGNOSTIC_SENTINEL\nsecond line","current_rev":null})"}});
@@ -596,20 +596,20 @@ TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
     auto call = std::make_unique<A::ModelMessageT>();
     call->role = "assistant";
     call->content_json =
-        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
-            agent::json::Members{{"type", "\"tool_use\""},
+        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
+            ::tsugumi::json::Members{{"type", "\"tool_use\""},
                                  {"id", "\"bad\""},
-                                 {"name", agent::json::Quote(name)},
-                                 {"input", agent::json::Quote(arguments)}})});
+                                 {"name", ::tsugumi::json::Quote(name)},
+                                 {"input", ::tsugumi::json::Quote(arguments)}})});
     conversation.archive.push_back(std::move(call));
     auto result = std::make_unique<A::ModelMessageT>();
     result->role = "user";
     result->content_json =
-        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
-            agent::json::Members{{"type", "\"tool_result\""},
+        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
+            ::tsugumi::json::Members{{"type", "\"tool_result\""},
                                  {"tool_use_id", "\"bad\""},
                                  {"is_error", "true"},
-                                 {"content", agent::json::Quote(raw)}})});
+                                 {"content", ::tsugumi::json::Quote(raw)}})});
     conversation.messages.push_back(std::move(result));
     const auto rows = agent::Presentation(conversation);
     ASSERT_EQ(rows.size(), 1u);

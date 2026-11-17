@@ -30,7 +30,7 @@ add_executable(tsugumi_agent_rpc_tests
   ${_tsugumi_host_rpc_settings_sources}
   ${_tsugumi_host_rpc_versions_sources}
 )
-target_link_libraries(tsugumi_agent_rpc_tests PRIVATE PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
+target_link_libraries(tsugumi_agent_rpc_tests PRIVATE PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls tsugumi_worker_authorization GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
   TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
@@ -39,8 +39,8 @@ target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
   TSUGUMI_TEST_SDK="${_test_sdk}")
-add_executable(tsugumi-environment-daemon-double doubles/environment_daemon.cc)
-target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_host_core)
+add_executable(tsugumi-environment-daemon-double doubles/environment_daemon.cc ${_project_endpoint_source})
+target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_host_core tsugumi_worker_values)
 target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 add_dependencies(tsugumi_agent_rpc_tests tsugumi-hostd tsugumid-mock tsugumi-environment-daemon-double)
 gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST

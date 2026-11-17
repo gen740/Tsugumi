@@ -1,4 +1,5 @@
-set(_tsugumi_core_runtime_support_sources
-  src/run_scratch.cc
-  src/cache_usage.cc
-)
+add_library(tsugumi_runtime_support STATIC src/cache_usage.cc src/scratch_usage.cc)
+tsugumi_owned_headers(tsugumi_runtime_support runtime_support cache_usage.hh scratch_usage.hh)
+target_include_directories(tsugumi_runtime_support PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src PUBLIC ${PROJECT_SOURCE_DIR}/workerd/include)
+target_link_libraries(tsugumi_runtime_support PUBLIC tsugumi_protocol tsugumi_util)
+set(_tsugumi_core_runtime_support_sources src/run_scratch.cc src/scratch_policy.cc)

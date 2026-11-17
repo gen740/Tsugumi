@@ -6,7 +6,7 @@
 #include <map>
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/layout.hh"
 #include "host/layout_schema.hh"
@@ -339,7 +339,7 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
     return agent::wire::HostReply(id, std::move(result));
   }
   if (const auto *v = req.value_as_LayoutCompleteRequest()) {
-    const auto definitions = agent::json::Object(v->definitions_json()->str());
+    const auto definitions = ::tsugumi::json::Object(v->definitions_json()->str());
     R::LayoutValidatedT result;
     result.json = CompleteLayout(
         v->project_json()->str(), v->layout_json()->str(),
@@ -347,7 +347,7 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
           const auto id = path.substr(12, path.size() - 23);
           if (!definitions.contains(id))
             return std::nullopt;
-          return LayoutFile{agent::json::Text(definitions, id), {}};
+          return LayoutFile{::tsugumi::json::Text(definitions, id), {}};
         });
     return agent::wire::HostReply(id, std::move(result));
   }

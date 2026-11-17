@@ -5,8 +5,8 @@
 #include <string>
 #include <utility>
 
-#include "agent/json.hh"
-#include "schema.hh"
+#include "util/json_object.hh"
+#include "util/json.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::agent {

@@ -803,22 +803,42 @@ table VersionResult {
 }
 
 /// A run's result as its commit's note records it (refs/notes/tsugumi).
+/// Mechanical version facts; persisted records are private to the project daemon.
+table VersionCommitFacts { kind:string (required); card:string (required); }
+table VersionInvocationCount { card:string (required); count:ulong; }
+table VersionRunFailure { card:string (required); kind:string (required); }
+table VersionRunFacts {
+  whole:bool;
+  card:string (required);
+  propagate:bool;
+  saved_inputs:bool;
+  ran:[VersionInvocationCount] (required);
+  failures:[VersionRunFailure] (required);
+  never:[string] (required);
+}
+table VersionCardChange { card:string (required); kinds:[string] (required); }
+table VersionChanges {
+  added:[string] (required);
+  removed:[string] (required);
+  changed:[VersionCardChange] (required);
+  workflow:bool;
+}
+
 table VersionRun {
   run_id:string (id: 0, required);
   state:string (id: 1, required);
   ended:string (id: 2);
   seconds:double (id: 3);
-  /// Core: neutral JSON Run record (version_record.hh). Host: localized text.
-  /// Absent for a run a demo's history lists.
+  /// Localized by the Host from facts; absent on the project endpoint.
   summary:string (id: 4);
+  facts:VersionRunFacts (id: 5);
 }
 
 table VersionCommit {
   id:string (id: 0, required);
   parents:[string] (id: 1);
   summary:string (id: 2);
-  /// Automatic commits contain a neutral JSON Commit record; user text is opaque.
-  /// The host projects these records into localized summary/message text.
+  /// User text is opaque. The Host supplies automatic text from facts.
   message:string (id: 3);
   author:string (id: 4);
   time:int64 = null (id: 5);
@@ -828,6 +848,7 @@ table VersionCommit {
   /// Card keys whose files changed from the first parent ("" for the
   /// project's own documents).
   changed:[string] (id: 9);
+  facts:VersionCommitFacts (id: 10);
 }
 
 // Raw version definition data. Presentation is interpreted by the host.
@@ -847,8 +868,7 @@ table VersionCanvas {
 }
 
 table VersionNote {
-  /// JSON Changes record (core/src/version_record.hh), without text or data values.
-  record_json:string (id: 0, required);
+  changes:VersionChanges (id: 0, required);
 }
 
 table VersionGraph {

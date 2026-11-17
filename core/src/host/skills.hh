@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "tsugumi/protocol/host_generated.h"
 #include "util/sqlite.hh"
 
@@ -18,13 +18,13 @@ auto SkillScope(std::string_view text)
     -> std::optional<std::vector<std::string>>;
 auto ScopedSkillTask(std::string_view text, const std::string &name,
                      const std::vector<std::string> &cards,
-                     const std::string &instruction) -> agent::json::Members;
+                     const std::string &instruction) -> ::tsugumi::json::Members;
 auto SelectScopedSkill(const Tsugumi::Host::SkillsListT &catalog,
                        const std::vector<std::string> &names,
                        const std::string &explicit_name,
                        const std::vector<std::string> &cards,
                        const std::string &instruction)
-    -> std::optional<agent::json::Members>;
+    -> std::optional<::tsugumi::json::Members>;
 auto BundledSkill(const std::string &path) -> std::string;
 auto ReadSkill(const std::filesystem::path &root,
                const std::filesystem::path &file) -> std::string;

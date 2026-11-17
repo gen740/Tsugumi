@@ -1,6 +1,6 @@
 #include "project_fixture.hh"
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -105,7 +105,7 @@ TEST_F(AgentProjectFixture, EditDecodeErrorsIdentifyTheFieldAndExpectedType) {
 
 TEST_F(AgentProjectFixture,
        CardReferenceDraftEditPreservesIntentAndRebindsWires) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto root = directory.path / "project";
   Write(root / "definitions/start/_card.json", R"({"template":"trigger"})");
   Write(root / "definitions/plan/_card.json", R"({"template":"draft"})");

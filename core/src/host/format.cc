@@ -11,7 +11,7 @@
 #endif
 
 #include "host/projects.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/process.hh"

@@ -2,7 +2,7 @@
 
 #include "../agent_fixture_server.hh"
 #include "agent/context.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/runtime.hh"
 #include "util/crypto.hh"
 
@@ -10,7 +10,7 @@ namespace tsugumi::test {
 namespace {
 TEST(FileResults, KeepTheirStructureInActualProviderRequests) {
   namespace agent = tsugumi::agent;
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   ModelServer model;
   model.Queue(AnthropicTool("shell", "project_shell", "{}"));
   model.Queue(AnthropicTool("read", "project_file_read", "{}"));

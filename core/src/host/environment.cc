@@ -1,3 +1,4 @@
+#include "scratch_policy.hh"
 #include "host/environment.hh"
 
 #include <signal.h>
@@ -12,7 +13,7 @@
 #include <mutex>
 #include <thread>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/vm_process.hh"
 #include "host_requirements.hh"
 #include "util/crypto.hh"
@@ -20,7 +21,7 @@
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace {
 using namespace std::chrono_literals;
 auto Strings(const std::vector<std::string>& values) -> std::string {
@@ -446,7 +447,7 @@ struct Environments::Impl {
       std::filesystem::remove(sockets / "s");
       const auto roots = options.directory.parent_path() / "build-roots";
       const auto scratch = options.run_scratch_directory.empty()
-                               ? fs::run_scratch_root()
+                               ? run_scratch_root()
                                : options.run_scratch_directory;
       if (options.process->Guest() && !entry.requirements)
         entry.requirements = load_host_requirements(entry.state.project);

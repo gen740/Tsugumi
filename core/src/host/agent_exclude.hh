@@ -18,9 +18,9 @@ public:
   auto Contains(const std::filesystem::path &path) const -> bool;
   auto Check(const std::filesystem::path &path) const -> void;
   auto CheckRequest(const std::string &name,
-                    const agent::json::Members &args) const -> void;
+                    const ::tsugumi::json::Members &args) const -> void;
   auto CheckContent(const std::string &raw) const -> void;
-  auto CheckSave(const agent::json::Members &plan, const SaveBase &base) const
+  auto CheckSave(const ::tsugumi::json::Members &plan, const SaveBase &base) const
       -> void;
   auto Filter(const std::string &raw, const std::string &prefix = "") const
       -> std::string;

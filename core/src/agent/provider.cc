@@ -14,7 +14,7 @@
 #include <set>
 #include <utility>
 
-#include "schema.hh"
+#include "util/json.hh"
 
 namespace tsugumi::agent {
 namespace {

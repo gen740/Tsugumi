@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "agent/context.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/identifiers.hh"

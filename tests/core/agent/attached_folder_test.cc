@@ -5,12 +5,12 @@
 
 #include <fstream>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 class AttachedFolderTest : public testing::Test {
  protected:
   std::filesystem::path root;

@@ -93,7 +93,7 @@ TEST(ShortIdentifiers,
 }
 
 TEST(ShortIdentifiers, ModelMetadataPreservesIntegrityContentAndGitPrefixes) {
-  namespace j = agent::json;
+  namespace j = ::tsugumi::json;
   const std::string digest(64, 'a'), commit(40, 'b');
   const auto raw =
       j::Encode(j::Members{{"hash", j::Quote(digest)},

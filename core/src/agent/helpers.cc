@@ -4,7 +4,7 @@
 
 #include "agent/context.hh"
 #include "agent/helper_scope.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
 #include "agent/tools.hh"

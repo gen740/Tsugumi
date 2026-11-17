@@ -53,7 +53,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
 #include "tsugumi/message_json.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/display.hh"
 

@@ -6,10 +6,8 @@
 #include <set>
 
 #include "host/projects.hh"
-#include "version_record.hh"
 
 namespace tsugumi::host {
-namespace j = agent::json;
 namespace {
 auto Names(const std::vector<std::string>& names, bool en) -> std::string {
   std::string text;
@@ -22,42 +20,35 @@ auto Names(const std::vector<std::string>& names, bool en) -> std::string {
 }
 }  // namespace
 
-auto CommitText(const std::string& message, bool en) -> std::string {
-  version_record::Commit record;
-  if (schema::decode(message, record) || *record.format != "commit") return message;
-  if (*record.kind == "create") return en ? "Create the project" : "プロジェクトを作成";
-  if (*record.kind == "checkout") return en ? "Changes in progress" : "作業中の変更";
-  if (*record.kind == "run")
-    return std::string(en ? "Run: " : "実行: ") + (record.card->empty() ? "Workflow" : *record.card);
-  return message;
+auto CommitText(const Tsugumi::RPC::VersionCommitFactsT& record, bool en) -> std::string {
+  if (record.kind == "create") return en ? "Create the project" : "プロジェクトを作成";
+  if (record.kind == "checkout") return en ? "Changes in progress" : "作業中の変更";
+  if (record.kind == "run")
+    return std::string(en ? "Run: " : "実行: ") + (record.card.empty() ? "Workflow" : record.card);
+  return record.kind;
 }
-auto RunText(const std::string& raw, bool en) -> std::string {
-  if (raw.empty()) return "";
-  version_record::Run record;
-  if (auto error = schema::decode(raw, record)) throw ProjectFailure("invalid_record", error->message);
+auto RunText(const Tsugumi::RPC::VersionRunFactsT& record, bool en) -> std::string {
   std::vector<std::string> ran, failed;
-  for (const auto& count : *record.ran)
-    ran.push_back(*count.card + (*count.count > 1 ? " ×" + std::to_string(*count.count) : ""));
-  for (const auto& failure : *record.failed)
-    failed.push_back(*failure.card + (en ? " (" : "（") + *failure.kind + (en ? ")" : "）"));
-  std::string out = en ? (*record.whole ? "whole" : (*record.propagate ? "from " : "only ") + *record.card)
-                       : (*record.whole ? "全体" : *record.card + (*record.propagate ? " から" : " だけ"));
-  if (*record.saved_inputs) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
+  for (const auto& count : record.ran)
+    ran.push_back(count->card + (count->count > 1 ? " ×" + std::to_string(count->count) : ""));
+  for (const auto& failure : record.failures)
+    failed.push_back(failure->card + (en ? " (" : "（") + failure->kind + (en ? ")" : "）"));
+  std::string out = en ? (record.whole ? "whole" : (record.propagate ? "from " : "only ") + record.card)
+                       : (record.whole ? "全体" : record.card + (record.propagate ? " から" : " だけ"));
+  if (record.saved_inputs) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
   if (!ran.empty()) out += ": " + Names(ran, en);
   if (!failed.empty()) out += (en ? " / failed: " : " / 失敗: ") + Names(failed, en);
-  if (!record.never->empty()) out += (en ? " / not run: " : " / 未実行: ") + Names(*record.never, en);
+  if (!record.never.empty()) out += (en ? " / not run: " : " / 未実行: ") + Names(record.never, en);
   return out;
 }
-auto ChangeText(const std::string& raw, bool en) -> std::string {
-  version_record::Changes record;
-  if (auto error = schema::decode(raw, record)) throw ProjectFailure("invalid_record", error->message);
+auto ChangeText(const Tsugumi::RPC::VersionChangesT& record, bool en) -> std::string {
   std::vector<std::string> entries;
-  for (const auto& id : *record.added) entries.push_back(std::string(en ? "Added " : "追加: ") + id);
-  for (const auto& id : *record.removed) entries.push_back(std::string(en ? "Removed " : "削除: ") + id);
-  for (const auto& change : *record.changed) {
+  for (const auto& id : record.added) entries.push_back(std::string(en ? "Added " : "追加: ") + id);
+  for (const auto& id : record.removed) entries.push_back(std::string(en ? "Removed " : "削除: ") + id);
+  for (const auto& change : record.changed) {
     std::string entry =
-        std::string(en ? "Changed " : "変更: ") + (change.card->empty() ? "Workflow" : *change.card) + " (";
-    for (const auto& kind : *change.kinds) {
+        std::string(en ? "Changed " : "変更: ") + (change->card.empty() ? "Workflow" : change->card) + " (";
+    for (const auto& kind : change->kinds) {
       std::string label = kind;
       if (!en) {
         if (kind == "definition")
@@ -73,7 +64,7 @@ auto ChangeText(const std::string& raw, bool en) -> std::string {
     }
     entries.push_back(entry + ")");
   }
-  if (*record.workflow) entries.push_back(en ? "Changed Workflow settings" : "Workflow の設定を変更");
+  if (record.workflow) entries.push_back(en ? "Changed Workflow settings" : "Workflow の設定を変更");
   std::string out;
   for (size_t i = 0; i < std::min(entries.size(), size_t{6}); ++i) out += (i ? "; " : "") + entries[i];
   if (entries.size() > 6)
@@ -86,28 +77,9 @@ auto ChangeText(const std::string& raw, bool en) -> std::string {
 }
 auto PresentGraph(Tsugumi::RPC::VersionGraphT& graph, bool en) -> void {
   for (auto& commit : graph.commits) {
-    commit->message = CommitText(commit->message, en);
-    commit->summary = CommitText(commit->summary, en);
-    for (auto& run : commit->runs) run->summary = RunText(run->summary, en);
+    if (commit->facts) commit->message = commit->summary = CommitText(*commit->facts, en);
+    for (auto& run : commit->runs) run->summary = run->facts ? RunText(*run->facts, en) : "";
   }
-}
-auto PresentGraph(j::Members graph, bool en) -> j::Members {
-  auto commits = j::Array(j::Get(graph, "commits", "[]"));
-  for (auto& raw : commits) {
-    auto commit = j::Object(raw);
-    for (const auto* field : {"message", "summary"})
-      commit[field] = j::Quote(CommitText(j::Text(commit, field), en));
-    auto runs = j::Array(j::Get(commit, "runs", "[]"));
-    for (auto& item : runs) {
-      auto run = j::Object(item);
-      run["summary"] = j::Quote(RunText(j::Text(run, "summary"), en));
-      item = j::Encode(run);
-    }
-    commit["runs"] = j::Encode(runs);
-    raw = j::Encode(commit);
-  }
-  graph["commits"] = j::Encode(commits);
-  return graph;
 }
 
 namespace stdfs = std::filesystem;

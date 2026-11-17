@@ -1,3 +1,4 @@
+#include "runtime_schema.hh"
 #include "history.hh"
 
 #include <fcntl.h>
@@ -10,7 +11,7 @@
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "util/log.hh"
 #include "wire.hh"
 

@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/provider.hh"
 #include "tsugumi/protocol/host_generated.h"
 
@@ -24,7 +24,7 @@ class SecretStore {
 class Settings {
  public:
   using Import =
-      std::function<void(const std::string&, const agent::json::Members&)>;
+      std::function<void(const std::string&, const ::tsugumi::json::Members&)>;
   using Token =
       std::function<std::string(const std::string&, std::string_view)>;
   using Forget = std::function<bool(const std::string&)>;
@@ -51,7 +51,7 @@ class Settings {
                            const std::string& openai_keys) -> agent::ProviderConfig;
   auto ModelSelection(const std::string& profile, const std::string& purpose)
       -> Tsugumi::Service::ProviderSelectionT;
-  auto Resolve(const agent::json::Members& selection) -> agent::ProviderConfig;
+  auto Resolve(const ::tsugumi::json::Members& selection) -> agent::ProviderConfig;
 
  private:
   struct State;

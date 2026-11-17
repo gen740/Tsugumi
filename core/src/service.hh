@@ -18,7 +18,7 @@
 #include "history.hh"
 #include "lanes.hh"
 #include "remote_job.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "server.hh"
 #include "store.hh"
 #include "versions.hh"

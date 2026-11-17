@@ -5,7 +5,7 @@
 #include <cstring>
 #include <iostream>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/context.hh"
 #include "util/crypto.hh"
 #include "project_fixture.hh"
@@ -57,7 +57,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
   project_fault = "transfer_gate";
   StartProject();
@@ -245,7 +245,7 @@ TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath
 }
 
 TEST_F(AgentProjectFixture, HelpersCannotCopyParentOrSiblingScratch) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json", R"({"template":"draft"})");
   StartProject();
   const auto conversation = Conversation("private-helper-scratch");
@@ -285,7 +285,7 @@ using NestedFileFixture = AgentProjectFixture;
 // Exercise real nested Helpers::RunHelper boundaries, not synthetic scopes.
 TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
   if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
   StartProject(true);
@@ -411,7 +411,7 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
 }
 
 TEST_F(NestedFileFixture, NestedCopyUsesItsOwnScratchAndCannotWidenCardSets) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/other/_card.json",
@@ -522,7 +522,7 @@ TEST_F(AgentProjectFixture, DirectAttachedFolderToolsNeedRegistrationAndTheirOwn
 }
 
 TEST_F(AgentProjectFixture, CopyMovesLargeAttachedBytesThroughASaveWithoutContentInResults) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
   StartProject();
   const auto conversation = Conversation("copy-large");
@@ -741,7 +741,7 @@ auto NestedHelperFiles::CheckFileScope(bool shell) -> void {
         Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
     Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
   ModelServer model;
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   auto tasks = json::Object(
       R"({"tasks":[{"name":"files","instruction":"Exercise file boundaries.","read_cards":["own"],"write_cards":["own","writer"],"run_cards":[]}]})");
   std::vector<std::string> delegates;

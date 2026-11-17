@@ -515,7 +515,7 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
   if (::geteuid() == 0)
     throw Failed(FailureKind::permission_denied,
                  "shell commands must run as an unprivileged project user");
-  const auto* request = req.request()->value_as_ProjectShellRequest();
+  const auto* request = project_request(req)->value_as_ProjectShellRequest();
   const auto command = request->command()->str();
   const auto timeout = request->timeout_ms().value_or(10000);
   if (timeout == 0 || timeout > 30000)
@@ -526,7 +526,7 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     throw Failed(FailureKind::invalid_request,
                  "command must contain 1 to 65536 bytes without NUL");
   const auto operation = request->op_id()->str();
-  const auto digest = request_digest(req.request());
+  const auto digest = request_digest(project_request(req));
   if (replay_or_join(req, operation, "shell", digest)) return;
   // Save an uncertainty receipt BEFORE spawning. If this daemon crashes, a
   // retry can report uncertainty but can never execute the command twice.

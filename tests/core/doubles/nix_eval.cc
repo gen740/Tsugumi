@@ -1,3 +1,5 @@
+#include "tsugumi/workerd/store.hh"
+#include "tsugumi/workerd/manifest.hh"
 // A build product double, not a Nix interpreter. The real daemon, RPC,
 // document store, scheduler and worker processes stay in use. Tests submit
 // ordinary projects and assert their public RPC results; only this adapter
@@ -14,7 +16,7 @@
 #include <thread>
 #include <utility>
 
-#include "schema.hh"
+#include "util/json.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
@@ -72,8 +74,9 @@ struct NixEvaluator::Impl {
 };
 
 auto NixEvaluator::init_process() -> void {}
+auto NixStore::init_process() -> void {}
 
-auto NixEvaluator::substituters() -> std::vector<std::string> { return {}; }
+auto NixStore::substituters() -> std::vector<std::string> { return {}; }
 
 NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed) : impl_(std::make_unique<Impl>()) {
   const char* control = std::getenv("TSUGUMI_MOCK_CONTROL");
@@ -195,7 +198,7 @@ auto NixEvaluator::valid(const std::string& store_path) -> bool {
   return fs::resolves_inside(impl_->products, store_path) && std::filesystem::is_regular_file(store_path);
 }
 
-auto NixEvaluator::rooted_usage(const std::vector<std::vector<std::string>>& roots)
+auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)
     -> std::vector<std::map<std::string, uint64_t>> {
   std::vector<std::map<std::string, uint64_t>> result;
   for (const auto& project : roots) {

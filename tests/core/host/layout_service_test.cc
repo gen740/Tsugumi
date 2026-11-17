@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "agent/catalog.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/layout_saving.hh"
 #include "util/fs.hh"
 
@@ -17,15 +17,15 @@ namespace {
 namespace H = Tsugumi::Host;
 
 TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
-  const auto cases = agent::json::Array(fs::read_file_or_throw(
+  const auto cases = ::tsugumi::json::Array(fs::read_file_or_throw(
       std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-invalid.json"));
   ASSERT_EQ(cases.size(), 16u);
   for (const auto& raw : cases) {
-    const auto value = agent::json::Object(raw);
-    SCOPED_TRACE(agent::json::Text(value, "name"));
+    const auto value = ::tsugumi::json::Object(raw);
+    SCOPED_TRACE(::tsugumi::json::Text(value, "name"));
     flatbuffers::FlatBufferBuilder b;
     const auto input = H::CreateLayoutValidateRequest(
-        b, b.CreateString(agent::json::Text(value, "json")));
+        b, b.CreateString(::tsugumi::json::Text(value, "json")));
     b.Finish(H::CreateRequest(b, H::RequestPayload::LayoutValidateRequest,
                               input.Union()));
     EXPECT_THROW(
@@ -35,8 +35,8 @@ TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
   }
 }
 
-auto SceneFixture(const agent::json::Members &value) -> H::LayoutSceneT {
-  namespace json = agent::json;
+auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
+  namespace json = ::tsugumi::json;
   H::LayoutSceneT scene;
   scene.flow = json::Text(value, "flow");
   scene.grid = std::stod(json::Get(value, "grid", "0"));
@@ -114,7 +114,7 @@ auto SceneFixture(const agent::json::Members &value) -> H::LayoutSceneT {
   return scene;
 }
 TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   for (const auto &raw : json::Array(fs::read_file_or_throw(
            std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-golden.json"))) {
     const auto value = json::Object(raw);
@@ -180,15 +180,15 @@ TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
 TEST(HostLayout, SavingClientRemovesOnlyDeletedCardReferences) {
   const auto text =
       R"({"cards":{"a":{"x":1,"y":2},"a/child":{"x":3,"y":4},"ab":{"x":5,"y":6}},"displays":{"a":{"x":1,"y":2,"width":3,"height":4}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"groups":[{"cards":["a","ab"],"outputs":[{"card":"a","port":"x"},{"card":"ab","port":"y"}]}]})";
-  const auto result = agent::json::Object(ValidateLayout(text, {"a"}));
-  EXPECT_EQ(agent::json::Object(result.at("cards")).size(), 1u);
-  EXPECT_TRUE(agent::json::Object(result.at("cards")).contains("ab"));
-  EXPECT_TRUE(agent::json::Object(result.at("displays")).empty());
-  EXPECT_TRUE(agent::json::Object(result.at("boundaries")).empty());
+  const auto result = ::tsugumi::json::Object(ValidateLayout(text, {"a"}));
+  EXPECT_EQ(::tsugumi::json::Object(result.at("cards")).size(), 1u);
+  EXPECT_TRUE(::tsugumi::json::Object(result.at("cards")).contains("ab"));
+  EXPECT_TRUE(::tsugumi::json::Object(result.at("displays")).empty());
+  EXPECT_TRUE(::tsugumi::json::Object(result.at("boundaries")).empty());
   const auto group =
-      agent::json::Object(agent::json::Array(result.at("groups")).at(0));
-  EXPECT_EQ(agent::json::Array(group.at("cards")).size(), 1u);
-  EXPECT_EQ(agent::json::Array(group.at("outputs")).size(), 1u);
+      ::tsugumi::json::Object(::tsugumi::json::Array(result.at("groups")).at(0));
+  EXPECT_EQ(::tsugumi::json::Array(group.at("cards")).size(), 1u);
+  EXPECT_EQ(::tsugumi::json::Array(group.at("outputs")).size(), 1u);
 }
 
 auto canvas(const std::string& layout) -> H::VersionCanvasT {
@@ -235,8 +235,8 @@ TEST(HostLayout, AgentLayoutAppliesAnOperationAndEditorsKeepPureProposals) {
   EXPECT_TRUE(tool->mutating);
   EXPECT_EQ(catalog.Find("layout_arrange"), nullptr);
   EXPECT_EQ(catalog.Find("layout_untangle"), nullptr);
-  const auto properties = agent::json::Object(agent::json::Get(
-      agent::json::Object(tool->spec.input_schema), "properties"));
+  const auto properties = ::tsugumi::json::Object(::tsugumi::json::Get(
+      ::tsugumi::json::Object(tool->spec.input_schema), "properties"));
   EXPECT_TRUE(properties.contains("action"));
   EXPECT_FALSE(properties.contains("scene"));
   EXPECT_THROW(agent::EncodeProjectRequest("project_layout", "{}", 1),
@@ -250,7 +250,7 @@ namespace {
 TEST(HostLayoutSaving, RootCleanupIsPartOfTheSameSave) {
   const auto args =
       R"({"base_rev":"7","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"cards\":[]}}"}}]})";
-  const auto saved = agent::json::Object(PrepareLayoutSave(
+  const auto saved = ::tsugumi::json::Object(PrepareLayoutSave(
       args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", {}};
@@ -258,20 +258,20 @@ TEST(HostLayoutSaving, RootCleanupIsPartOfTheSameSave) {
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", {}};
         return std::nullopt;
       }));
-  EXPECT_EQ(agent::json::Text(saved, "base_rev"), "7");
-  const auto changes = agent::json::Array(saved.at("changes"));
+  EXPECT_EQ(::tsugumi::json::Text(saved, "base_rev"), "7");
+  const auto changes = ::tsugumi::json::Array(saved.at("changes"));
   ASSERT_EQ(changes.size(), 2u);
-  const auto cleanup = agent::json::Object(changes.at(1));
-  EXPECT_EQ(agent::json::Text(cleanup, "value_type"), "SetLayout");
-  const auto layout = agent::json::Object(
-      agent::json::Text(agent::json::Object(cleanup.at("value")), "json"));
-  EXPECT_TRUE(agent::json::Object(layout.at("cards")).empty());
+  const auto cleanup = ::tsugumi::json::Object(changes.at(1));
+  EXPECT_EQ(::tsugumi::json::Text(cleanup, "value_type"), "SetLayout");
+  const auto layout = ::tsugumi::json::Object(
+      ::tsugumi::json::Text(::tsugumi::json::Object(cleanup.at("value")), "json"));
+  EXPECT_TRUE(::tsugumi::json::Object(layout.at("cards")).empty());
 }
 
 TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
   const auto args =
       R"({"changes":[{"value_type":"PutSource","value":{"path":"externals/child/tsugumi.json","bytes":"{\"canvas\":{\"cards\":[]}}","base_hash":"project"}}]})";
-  const auto saved = agent::json::Object(PrepareLayoutSave(
+  const auto saved = ::tsugumi::json::Object(PrepareLayoutSave(
       args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "externals/child/tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", "project"};
@@ -279,15 +279,15 @@ TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", "layout"};
         return std::nullopt;
       }));
-  const auto changes = agent::json::Array(saved.at("changes"));
+  const auto changes = ::tsugumi::json::Array(saved.at("changes"));
   ASSERT_EQ(changes.size(), 2u);
-  const auto cleanup = agent::json::Object(
-      agent::json::Get(agent::json::Object(changes.at(1)), "value"));
-  EXPECT_EQ(agent::json::Text(cleanup, "path"), "externals/child/layout.json");
-  EXPECT_EQ(agent::json::Text(cleanup, "base_hash"), "layout");
-  EXPECT_TRUE(agent::json::Object(
-                  agent::json::Get(
-                      agent::json::Object(agent::json::Text(cleanup, "bytes")),
+  const auto cleanup = ::tsugumi::json::Object(
+      ::tsugumi::json::Get(::tsugumi::json::Object(changes.at(1)), "value"));
+  EXPECT_EQ(::tsugumi::json::Text(cleanup, "path"), "externals/child/layout.json");
+  EXPECT_EQ(::tsugumi::json::Text(cleanup, "base_hash"), "layout");
+  EXPECT_TRUE(::tsugumi::json::Object(
+                  ::tsugumi::json::Get(
+                      ::tsugumi::json::Object(::tsugumi::json::Text(cleanup, "bytes")),
                       "cards"))
                   .empty());
 }
@@ -314,7 +314,7 @@ TEST(HostLayoutSaving, PatchesAreValidatedAndSourceLookalikesAreUnchanged) {
 namespace tsugumi::host {
 namespace {
 TEST(HostCardPlacement, ConnectedIsolatedAndBulkCardsGetFreePlaces) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const std::string original =
       R"({"cards":{"fixed":{"x":123,"y":456,"collapsed":true},"other":{"x":1300,"y":456}}})";
   for (
@@ -347,7 +347,7 @@ TEST(HostCardPlacement, ConnectedIsolatedAndBulkCardsGetFreePlaces) {
   }
 }
 TEST(HostCardPlacement, APersonsDropAndNestedWorkflowAreKeptInTheTransaction) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto args = json::Encode(json::Members{
       {"changes",
        json::Encode(std::vector<std::string>{
@@ -386,7 +386,7 @@ TEST(HostCardPlacement, APersonsDropAndNestedWorkflowAreKeptInTheTransaction) {
 namespace tsugumi::host {
 namespace {
 TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto project =
       R"({"canvas":{"cards":[{"id":"far"},{"id":"near"},{"id":"new"}],"connections":[{"from":{"card":"near","port":"out"},"to":{"card":"new","port":"in"}}]}})";
   const auto layout =
@@ -434,7 +434,7 @@ TEST(HostLayout, DefaultDisplayGeometryIsServedToBothClients) {
 }
 
 TEST(HostCardPlacement, DefaultDisplayBlocksTheTemptingRightHandSlot) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   // Left and below are occupied. No display position is saved: both UIs
   // nevertheless show the source's output to its right after a display call.
   const auto project =
@@ -464,7 +464,7 @@ TEST(HostCardPlacement, DefaultDisplayBlocksTheTemptingRightHandSlot) {
 namespace tsugumi::host {
 namespace {
 TEST(HostCardPlacement, UnsavedFlowReservesEitherDefaultDisplay) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto project =
       R"({"canvas":{"cards":[{"id":"source"},{"id":"new"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"new","port":"in"}}]}})";
   const auto completed = json::Object(
@@ -484,7 +484,7 @@ TEST(HostCardPlacement, UnsavedFlowReservesEitherDefaultDisplay) {
 namespace tsugumi::host {
 namespace {
 TEST(HostLayoutSaving, AnySaveMaterializesDerivedPlacesAtEveryDepth) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const std::string project =
       R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})";
   const std::map<std::string, LayoutFile> files{
@@ -514,7 +514,7 @@ TEST(HostLayoutSaving, AnySaveMaterializesDerivedPlacesAtEveryDepth) {
 }
 
 TEST(HostLayoutSaving, AddingAndPatchingKeepThePlacesAlreadyDerivedForDisplay) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const std::string before =
       R"({"canvas":{"cards":[{"id":"legacy"}],"connections":[]}})";
   const std::string after =
@@ -543,7 +543,7 @@ TEST(HostLayoutSaving, AddingAndPatchingKeepThePlacesAlreadyDerivedForDisplay) {
 }
 
 TEST(HostCardPlacement, DisplayRpcUsesTheSameDefinitionsAndGeometryAsSaving) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const std::string project =
       R"({"canvas":{"cards":[{"id":"wide"},{"id":"new"}],"connections":[]}})";
   const std::string definition =
@@ -576,7 +576,7 @@ TEST(HostCardPlacement, DisplayRpcUsesTheSameDefinitionsAndGeometryAsSaving) {
 namespace tsugumi::host {
 namespace {
 TEST(HostLayoutSaving, RemovingAnExternalDoesNotRecreateItsLayout) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto args =
       R"({"changes":[{"value_type":"RemoveSource","value":{"path":"externals/child/tsugumi.json","base_hash":"project"}},{"value_type":"RemoveSource","value":{"path":"externals/child/layout.json","base_hash":"layout"}}]})";
   const auto prepared = json::Object(PrepareLayoutSave(
@@ -598,7 +598,7 @@ namespace tsugumi::host {
 namespace {
 TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
   const std::string project = R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}]}})";
-  const auto saved = agent::json::Object(PrepareLayoutSave(
+  const auto saved = ::tsugumi::json::Object(PrepareLayoutSave(
       R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"edit"}}]})",
       [&](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "tsugumi.json") return LayoutFile{project, {}};
@@ -606,9 +606,9 @@ TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
         return std::nullopt;
       },
       {"tsugumi.json"}, [](const auto&, const auto&) { return false; }));
-  EXPECT_EQ(agent::json::Array(saved.at("changes")).size(), 1u);
-  EXPECT_EQ(agent::json::Object(
-                agent::json::Object(CompleteLayout(project, "{}")).at("cards"))
+  EXPECT_EQ(::tsugumi::json::Array(saved.at("changes")).size(), 1u);
+  EXPECT_EQ(::tsugumi::json::Object(
+                ::tsugumi::json::Object(CompleteLayout(project, "{}")).at("cards"))
                 .size(),
             2u);
 }
@@ -687,16 +687,16 @@ TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
       SCOPED_TRACE(flow);
       SCOPED_TRACE(cards);
       std::vector<std::string> instances;
-      for (const auto& raw : agent::json::Array(cards))
-        instances.push_back(agent::json::Encode(agent::json::Members{
-            {"id", agent::json::Get(agent::json::Object(raw), "id")}}));
-      const auto document = agent::json::Encode(agent::json::Members{
-          {"canvas", agent::json::Encode(agent::json::Members{
-                         {"cards", agent::json::Encode(instances)}})}});
+      for (const auto& raw : ::tsugumi::json::Array(cards))
+        instances.push_back(::tsugumi::json::Encode(::tsugumi::json::Members{
+            {"id", ::tsugumi::json::Get(::tsugumi::json::Object(raw), "id")}}));
+      const auto document = ::tsugumi::json::Encode(::tsugumi::json::Members{
+          {"canvas", ::tsugumi::json::Encode(::tsugumi::json::Members{
+                         {"cards", ::tsugumi::json::Encode(instances)}})}});
       const auto completed = CompleteLayout(document, "{}", {});
       EXPECT_NO_THROW(ValidateLayout(completed));
       const auto input =
-          SceneFixture({{"flow", agent::json::Quote(flow)}, {"cards", cards}});
+          SceneFixture({{"flow", ::tsugumi::json::Quote(flow)}, {"cards", cards}});
       for (const auto &proposal :
            {layout::arrange(MeasuredScene(input)),
             layout::untangle(MeasuredScene(input), {})}) {

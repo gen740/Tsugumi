@@ -400,7 +400,8 @@ auto Tools::UnfilteredProjectCall(const std::string& project, const std::string&
         json::Members{{"reply", json::Quote("ProjectSnapshot")},
                       {"value", json::Encode(inspection.snapshot)}});
   }
-  auto result = RawProjectCall(project, name, json::Encode(args), stop);
+  std::string raw_reply;
+  auto result = RawProjectCall(project, name, json::Encode(args), stop, &raw_reply);
   if (name == "project_file_read" || name == "project_file_list" ||
       name == "project_file_stat") {
     auto envelope = json::Object(result);
@@ -450,8 +451,16 @@ auto Tools::UnfilteredProjectCall(const std::string& project, const std::string&
         path.bind(1, project);
         if (path.step()) root = path.text(0);
       }
-      auto graph = host::PresentGraph(
-          json::Object(json::Get(envelope, "value", "{}")), english);
+      namespace R = Tsugumi::RPC;
+      const auto* reply = R::GetMessage(raw_reply.data())->payload_as_Reply();
+      auto typed = std::unique_ptr<R::VersionGraphT>(reply->value_as_VersionGraph()->UnPack());
+      host::PresentGraph(*typed, english);
+      flatbuffers::FlatBufferBuilder builder;
+      const auto value = R::VersionGraph::Pack(builder, typed.get());
+      const auto response = R::CreateReply(builder, R::ReplyPayload::VersionGraph, value.Union());
+      R::FinishMessageBuffer(builder, R::CreateMessage(builder, 1, R::Payload::Reply, response.Union()));
+      auto presented = json::Object(catalog.Reply({reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize()}));
+      auto graph = json::Object(json::Get(presented, "value", "{}"));
       if (!root.empty()) {
         auto commits = json::Array(json::Get(graph, "commits", "[]"));
         for (auto& raw : commits) {

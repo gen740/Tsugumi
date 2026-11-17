@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/runtime.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/protocol/agent_generated.h"

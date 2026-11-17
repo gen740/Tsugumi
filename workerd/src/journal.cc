@@ -10,7 +10,7 @@
 #include <fstream>
 #include <set>
 
-#include "schema.hh"
+#include "util/json.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"

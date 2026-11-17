@@ -1,7 +1,7 @@
 // Language-neutral Git records. Card references are permanent IDs, never names.
 #pragma once
 
-#include "schema.hh"
+#include "util/json.hh"
 
 namespace tsugumi::version_record {
 struct Commit {

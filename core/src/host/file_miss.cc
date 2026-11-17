@@ -5,7 +5,7 @@
 #include "util/fs.hh"
 
 namespace tsugumi::host {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
                       const SaveRead& read) -> std::string {
   if (!fs::valid_relative_path(path)) return {};

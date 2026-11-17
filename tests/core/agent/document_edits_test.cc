@@ -5,13 +5,13 @@
 #include <gtest/gtest.h>
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/permission_kinds.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 auto Normalized(const std::string &value) -> std::string {
   const auto raw = schema::text(schema::capture(value));

@@ -6,7 +6,7 @@
 #include <set>
 #include <tuple>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::agent {

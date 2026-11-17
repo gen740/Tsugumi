@@ -54,7 +54,7 @@ TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   EXPECT_THROW(credentials.Get("absent"), host::Failure);
   credentials.Import(
       "account",
-      agent::json::Object(
+      ::tsugumi::json::Object(
           R"({"access_token":"current","refresh_token":"refresh","id_token":"identity","expires_at_ms":9999999999999,"scope":"metadata"})"));
   EXPECT_EQ(credentials.AccessToken("account", ""), "current");
   // Another caller already replaced the rejected token: return the saved one
@@ -110,9 +110,9 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());
   EXPECT_EQ(providers.Profile("absent"), "desktop");
-  const auto selection = agent::json::Object(
+  const auto selection = ::tsugumi::json::Object(
       R"({"profile":"alternate","provider_id":"fixture","model":"selected"})");
-  providers.Configure("conversation", agent::json::Encode(selection));
+  providers.Configure("conversation", ::tsugumi::json::Encode(selection));
   EXPECT_EQ(providers.Selection("conversation"), selection);
   EXPECT_EQ(providers.Profile("conversation"), "alternate");
   const auto config = providers.ForConversation("conversation");

@@ -7,7 +7,7 @@
 #include <csignal>
 #include <thread>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/service.hh"
 #include "host/state_format.hh"
 #include "util/crypto.hh"
@@ -15,7 +15,7 @@
 #include "util/log.hh"
 
 namespace tsugumi::host {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace {
 class HostContract final : public RequestSink {
  public:
@@ -37,7 +37,7 @@ auto RunHost(int argc, char** argv) -> int {
   try {
     HostOptions options;
     ServerOptions listener;
-    listener.protocol = ServerOptions::Protocol::Agent;
+    AgentEndpoint(listener);
     listener.tcp_host = "127.0.0.1";
     listener.tcp_port = 0;
     listener.allow_missing_origin = true;
@@ -155,7 +155,7 @@ auto RunHost(int argc, char** argv) -> int {
     Service host(options);
     Server server(listener, &host);
     auto host_listener = listener;
-    host_listener.protocol = ServerOptions::Protocol::Host;
+    HostEndpoint(host_listener);
     host_listener.unix_path += ".host";
     if (host_listener.tcp_port >= 0) host_listener.tcp_port = 0;
     HostContract host_contract(host);

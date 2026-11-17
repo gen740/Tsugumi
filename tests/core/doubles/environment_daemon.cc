@@ -8,14 +8,14 @@
 #include <fstream>
 #include <thread>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "server.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
 namespace {
 namespace R = Tsugumi::RPC;
-namespace json = tsugumi::agent::json;
+namespace json = tsugumi::json;
 class Daemon final : public tsugumi::RequestSink {
  public:
   std::string token = tsugumi::crypto::random_token(16);
@@ -24,7 +24,7 @@ class Daemon final : public tsugumi::RequestSink {
   tsugumi::Server* server = nullptr;
   auto hello(const tsugumi::RequestIn& request)
       -> std::pair<std::string, bool> override {
-    const auto* input = request.request()->value_as_SessionHelloRequest();
+    const auto* input = project_request(request)->value_as_SessionHelloRequest();
     const bool accepted =
         input && input->protocol() == 1 && input->client_id() &&
         tsugumi::crypto::is_uuid(input->client_id()->str()) && input->token() &&
@@ -45,7 +45,7 @@ class Daemon final : public tsugumi::RequestSink {
             true};
   }
   auto dispatch(tsugumi::RequestIn request) -> void override {
-    if (!request.request()->value_as_ProjectHostRequirementsRequest()) return;
+    if (!project_request(request)->value_as_ProjectHostRequirementsRequest()) return;
     flatbuffers::FlatBufferBuilder b;
     auto value = R::CreateProjectHostRequirements(b);
     auto reply = R::CreateReply(b, R::ReplyPayload::ProjectHostRequirements, value.Union());
@@ -114,6 +114,8 @@ auto main(int argc, char** argv) -> int {
   options.unix_path = unix_socket;
   options.tcp_host = "127.0.0.1";
   options.tcp_port = 0;
+  tsugumi::ProjectEndpoint(options);
+  tsugumi::ProjectEndpoint(options);
   tsugumi::Server server(options, &daemon);
   daemon.server = &server;
   server.start();

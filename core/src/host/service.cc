@@ -45,7 +45,7 @@ namespace tsugumi::host {
 namespace A = Tsugumi::Agent;
 namespace H = Tsugumi::Host;
 namespace S = Tsugumi::Service;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 using agent::Approvals;
 using agent::Cancelled;

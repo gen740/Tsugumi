@@ -2,7 +2,7 @@
 #include <regex>
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "oauth_fixture.hh"
 #include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -259,7 +259,7 @@ TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
 
 // Inspect the actual provider requests as well as the external RPC catalog.
 TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
-  namespace J = agent::json;
+  namespace J = ::tsugumi::json;
   auto names = [](const auto& tools) {
     std::set<std::string> result;
     for (const auto& tool : J::Array(tools))
@@ -357,7 +357,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
 }
 
 TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
-  namespace J = agent::json;
+  namespace J = ::tsugumi::json;
   StartProject();
   ModelServer model;
   Configure(model);
@@ -401,7 +401,7 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
 }
 
 TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
-  namespace J = agent::json;
+  namespace J = ::tsugumi::json;
   const auto bundled = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos";
   // Nix-installed fixtures have read-only directories. Write an owned copy
   // without inheriting their permissions.

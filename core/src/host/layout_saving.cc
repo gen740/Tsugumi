@@ -5,14 +5,14 @@
 #include <map>
 #include <set>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/layout.hh"
 #include "host/layout_service.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Bytes(const std::string& raw) -> std::string {
   if (!raw.empty() && raw.front() == '"')
     return json::String(raw);

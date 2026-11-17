@@ -5,7 +5,7 @@
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 TEST(HostSaveInspection, WriterBetweenSnapshotAndExternalReadsRestartsCapture) {
   const std::string path = "externals/storage/layout.json";

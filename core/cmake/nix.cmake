@@ -1,4 +1,7 @@
-# Nix integration units use C++23; the rest of the core never includes Nix headers.
-add_library(tsugumi_nix_eval STATIC src/nix_eval.cc src/derivation_transport.cc)
+add_library(tsugumi_nix_store STATIC ${PROJECT_SOURCE_DIR}/workerd/src/store.cc ${PROJECT_SOURCE_DIR}/workerd/src/derivation_transport.cc)
+target_compile_features(tsugumi_nix_store PRIVATE cxx_std_23)
+target_include_directories(tsugumi_nix_store PUBLIC ${PROJECT_SOURCE_DIR}/workerd/include)
+target_link_libraries(tsugumi_nix_store PRIVATE PkgConfig::NIX Threads::Threads)
+add_library(tsugumi_nix_eval STATIC src/nix_eval.cc)
 target_compile_features(tsugumi_nix_eval PRIVATE cxx_std_23)
-target_link_libraries(tsugumi_nix_eval PRIVATE PkgConfig::NIX Threads::Threads)
+target_link_libraries(tsugumi_nix_eval PUBLIC tsugumi_nix_store PRIVATE PkgConfig::NIX Threads::Threads)

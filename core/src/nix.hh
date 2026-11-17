@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/manifest.hh"
 // Nix evaluation/build lane, generated Card SDK files and build cache.
 #pragma once
 

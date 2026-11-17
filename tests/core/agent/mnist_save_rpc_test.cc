@@ -1,12 +1,12 @@
 #include <set>
 #include <tuple>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "project_fixture.hh"
 
 namespace tsugumi::test {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 class MnistSaveFixture
     : public AgentProjectFixture,

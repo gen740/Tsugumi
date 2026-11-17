@@ -1,3 +1,4 @@
+include(cmake/headers.cmake)
 # Component fragments run in this directory scope; paths and target ownership
 # remain unchanged until the corresponding separation commit.
 # Values fixed at build time (Nix supplies them for the container image).

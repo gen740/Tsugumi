@@ -1,3 +1,4 @@
+#include "runtime_schema.hh"
 #include "store.hh"
 
 #include <thread>

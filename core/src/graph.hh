@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "document.hh"
-#include "model.hh"
 #include "types.hh"
 #include "worker_condition.hh"
 
@@ -44,6 +43,7 @@ struct HostFolder {
 };
 
 inline constexpr char kLocalExecutionService[] = "local";
+
 
 struct Settings {
   std::string name;  // the Card id

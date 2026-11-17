@@ -1,6 +1,6 @@
 #pragma once
 
-#include "schema.hh"
+#include "util/json.hh"
 
 namespace tsugumi::host::layout_schema {
 using namespace tsugumi::schema;

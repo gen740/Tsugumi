@@ -5,7 +5,7 @@
 #include <set>
 #include <vector>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 namespace tsugumi::agent {
 

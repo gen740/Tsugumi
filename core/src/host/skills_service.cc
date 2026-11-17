@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
@@ -10,7 +10,7 @@
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 namespace {
 auto Text(const flatbuffers::String* value) -> std::string {

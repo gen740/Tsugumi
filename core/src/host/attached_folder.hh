@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 namespace tsugumi::host {
 
@@ -18,7 +18,7 @@ struct FolderReadFailure : std::runtime_error {
 // The caller must authorize this registered root and recheck the grant before
 // releasing the result. Opens components without following symbolic links.
 auto ReadAttachedFolder(const std::filesystem::path& root,
-                        const agent::json::Members& arguments,
+                        const ::tsugumi::json::Members& arguments,
                         const AgentExclude* policy = nullptr) -> std::string;
 
 }  // namespace tsugumi::host

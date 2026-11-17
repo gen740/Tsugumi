@@ -1,3 +1,4 @@
+#include <span>
 #include <curl/curl.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -21,7 +22,7 @@
 #include <thread>
 #include <utility>
 
-#include "tsugumi/client/client.hh"
+#include "tsugumi/client/transport.hh"
 
 namespace tsugumi::client {
 namespace {
@@ -147,8 +148,8 @@ auto WebSocketFrame(std::span<const uint8_t> message, uint8_t opcode = 2)
 
 class NativeTransport final : public Transport {
   struct State {
-    explicit State(Options value) : options(std::move(value)) {}
-    Options options;
+    explicit State(TransportOptions value) : options(std::move(value)) {}
+    TransportOptions options;
     TransportEvents events;
     std::atomic<bool> stopping{false};
     std::atomic<bool> opened{false};
@@ -293,12 +294,7 @@ class NativeTransport final : public Transport {
       if (target.empty()) target = "/";
       const auto query = part(CURLUPART_QUERY);
       if (!query.empty()) target += '?' + query;
-      const auto protocol =
-          options.subprotocol.empty()
-              ? options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
-                : options.protocol == Protocol::Host ? "tsugumi.host.v1"
-                                                     : "tsugumi.rpc.v1"
-              : options.subprotocol;
+      const auto& protocol = options.subprotocol;
       if (protocol.find_first_of("\r\n ,") != std::string::npos)
         throw std::runtime_error("invalid WebSocket subprotocol");
       curl = curl_easy_init();
@@ -538,7 +534,7 @@ class NativeTransport final : public Transport {
   };
 
  public:
-  explicit NativeTransport(Options options)
+  explicit NativeTransport(TransportOptions options)
       : state_(std::make_shared<State>(std::move(options))) {}
   ~NativeTransport() override { Close(); }
 
@@ -594,7 +590,7 @@ class NativeTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const Options& options) -> std::shared_ptr<Transport> {
+auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
   if (options.max_frame_bytes == 0 || options.max_frame_bytes > UINT32_MAX ||
       options.max_queued_bytes < options.max_frame_bytes ||
       options.connect_timeout.count() <= 0)

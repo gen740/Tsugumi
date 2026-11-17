@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/store.hh"
 #include "cache_usage.hh"
 
 #include <sys/stat.h>
@@ -7,8 +8,7 @@
 #include <map>
 #include <set>
 
-#include "nix_eval.hh"
-#include "run_scratch.hh"
+#include "scratch_usage.hh"
 #include "util/fs.hh"
 #include "util/log.hh"
 
@@ -118,7 +118,7 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
   }
   if (stopping_) return result;
   try {
-    const auto closures = NixEvaluator::rooted_usage(roots);
+    const auto closures = NixStore::rooted_usage(roots);
     std::map<std::string, uint64_t> all;
     for (size_t i = 0; i < closures.size(); ++i) {
       uint64_t bytes = 0;

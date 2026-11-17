@@ -1,11 +1,11 @@
 #include "project_fixture.hh"
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::test {
 namespace {
-namespace j = agent::json;
+namespace j = ::tsugumi::json;
 class AgentExclusionRPC : public AgentProjectFixture {
 protected:
   auto Error(const Reply &reply) -> std::string {

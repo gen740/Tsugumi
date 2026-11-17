@@ -92,7 +92,7 @@ class VMLifetime : public ::testing::Test {
     config.environment.process = runtime;
     service = std::make_unique<host::Service>(config);
     ServerOptions listen;
-    listen.protocol = ServerOptions::Protocol::Host;
+    HostEndpoint(listen);
     listen.unix_path = (directory / "s").string();
     options.endpoint = "unix:" + listen.unix_path;
     options.protocol = client::Protocol::Host;

@@ -77,8 +77,6 @@ class FileLock {
   int fd_ = -1;
 };
 
-// Shared disk-backed run storage; choosing a path does not create it.
-auto run_scratch_root() -> stdfs::path;
 
 uint64_t directory_size(const stdfs::path& p);
 

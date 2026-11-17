@@ -1,3 +1,4 @@
+#include "runtime_schema.hh"
 #include "versions.hh"
 #include "version_record.hh"
 

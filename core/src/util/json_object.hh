@@ -5,9 +5,9 @@
 #include <string_view>
 #include <vector>
 
-#include "schema.hh"
+#include "util/json.hh"
 
-namespace tsugumi::agent::json {
+namespace tsugumi::json {
 
 using Members = std::map<std::string, std::string>;
 
@@ -96,4 +96,4 @@ inline auto UInt(std::string_view raw, uint64_t fallback = 0) -> uint64_t {
   return schema::decode(raw, value) ? fallback : value.value();
 }
 
-} // namespace tsugumi::agent::json
+} // namespace tsugumi::json

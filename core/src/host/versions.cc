@@ -4,7 +4,7 @@
 #include <cctype>
 #include <sstream>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
@@ -18,7 +18,7 @@
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
 namespace R = Tsugumi::RPC;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 using agent::ContentBlock;
 using agent::ProviderAPI;
@@ -81,18 +81,14 @@ auto Versions::Note(const RequestIn& request, bool human,
   }
   lock.unlock();
   std::lock_guard note_lock(*gate);
-  const auto call = [&](const std::string& name, const std::string& args) {
-    const auto reply = json::Object(tools->UnfilteredProjectCall(project, name, args, {}));
-    const auto value = json::Object(json::Get(reply, "value", "{}"));
-    if (json::Text(reply, "reply") == "Failure")
-      throw Failure("unavailable", json::Text(value, "message"));
-    return value;
-  };
-  const auto note =
-      call("version_note",
-           json::Encode(json::Members{{"commit", json::Quote(commit)}}));
-  const auto factual =
-      host::ChangeText(json::Text(note, "record_json"), english);
+  std::string bytes;
+  tools->RawProjectCall(project, "version_note",
+      json::Encode(json::Members{{"commit", json::Quote(commit)}}), {}, &bytes);
+  const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+  const auto* note = reply ? reply->value_as_VersionNote() : nullptr;
+  if (!note) throw Failure("unavailable", "Cannot read version facts");
+  const auto changes = std::unique_ptr<R::VersionChangesT>(note->changes()->UnPack());
+  const auto factual = host::ChangeText(*changes, english);
   const auto saved_summary = host::ReadSummary(root, commit, english);
   Tsugumi::Service::TextResultT result;
   if (host_settings->VersionNoteMode(profile) == "mechanical") {

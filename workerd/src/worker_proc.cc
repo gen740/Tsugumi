@@ -23,7 +23,7 @@
 #include "util/text.hh"
 #include "util/log.hh"
 #include "util/process.hh"
-#include "wire.hh"
+#include "tsugumi/workerd/value_wire.hh"
 #include "tsugumi/workerd/frame.hh"
 
 #ifndef TSUGUMI_BWRAP

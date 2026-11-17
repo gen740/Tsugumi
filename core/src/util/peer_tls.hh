@@ -13,8 +13,6 @@ auto ConfigureSocket(int fd, int timeout_seconds) -> void;
 
 // Canonical Ed25519 SubjectPublicKeyInfo, base64 encoded after "ed25519:".
 auto ValidateKey(std::string_view value) -> void;
-auto Authorized(const std::filesystem::path& file, std::string_view key)
-    -> bool;
 
 class Identity {
  public:

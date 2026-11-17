@@ -16,7 +16,7 @@
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 struct Span {
   size_t start = 0, end = 0, member_start = 0;
   std::string key;

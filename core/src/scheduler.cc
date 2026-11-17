@@ -1,3 +1,4 @@
+#include "runtime_schema.hh"
 #include "scheduler.hh"
 #include "version_record.hh"
 
@@ -15,7 +16,7 @@
 #include "history.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
-#include "schema.hh"
+#include "util/json.hh"
 #include "nix.hh"
 #include "service.hh"
 #include "util/crypto.hh"

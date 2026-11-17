@@ -64,6 +64,7 @@ foreach(program tsugumid tsugumi-hostd tsugumi-worker tsugumi-workerd tsugumi-rp
     IMPORTED_LOCATION "${TSUGUMI_CORE_ROOT}/bin/${program}")
 endforeach()
 
+set(_project_endpoint_source ${TSUGUMI_CORE_TEST_SUPPORT}/src/project_endpoint.cc)
 set(_core_main ${TSUGUMI_CORE_TEST_SUPPORT}/src/main.cc)
 set(_core_headers ${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core)
 set(_test_mock ${CMAKE_INSTALL_PREFIX}/libexec/tsugumi-tests/tsugumid-mock)

@@ -11,7 +11,7 @@
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Field(std::vector<std::string> fields, std::string old_value,
            std::string new_value) -> H::ProjectFieldEditT {
   H::ProjectFieldEditT edit;

@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/provider.hh"
 #include "host/state_gate.hh"
 #include "util/sqlite.hh"

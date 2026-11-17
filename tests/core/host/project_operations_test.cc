@@ -15,7 +15,7 @@
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 TEST(ProjectOperations,
      MissingHostIdentityIsAnInternalFailureBeforeAnyReadOrWrite) {
   for (const auto &invalid : {"project", "operation"}) {

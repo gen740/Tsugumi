@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/authorized_keys.hh"
 // Public Host management RPC and independent remote-worker wire peer.
 #include <signal.h>
 #include <sys/socket.h>
@@ -74,7 +75,7 @@ class WorkerPeer {
         path_(path.string()),
         authorized_(path.parent_path() / "authorized_keys"),
         tls_(identity, true, [this](std::string_view key) {
-          return peer_tls::Authorized(authorized_, key);
+          return workerd::Authorized(authorized_, key);
         }) {
     socket_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
     sockaddr_un address{};

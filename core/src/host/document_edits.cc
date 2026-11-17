@@ -6,13 +6,13 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "host/templates.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 auto Endpoint(const std::string &card, const std::string &port) -> std::string {
   return json::Encode(

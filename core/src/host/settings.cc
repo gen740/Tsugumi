@@ -27,7 +27,7 @@ extern const unsigned long tsugumi_agent_settings_size;
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
 namespace S = Tsugumi::Service;
-namespace j = agent::json;
+namespace j = ::tsugumi::json;
 namespace {
 auto Text(const flatbuffers::String* p) -> std::string {
   return p ? p->str() : "";

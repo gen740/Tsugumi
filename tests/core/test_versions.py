@@ -242,7 +242,14 @@ def summary_of(c, st) -> dict:
             break
         time.sleep(0.1)
     run = next(r for r in runs if text(r.runId) == text(st.runId))
-    return json.loads(text(run.summary))
+    facts = run.facts
+    assert facts is not None
+    assert not run.summary
+    return {"whole": facts.whole, "card": text(facts.card), "propagate": facts.propagate,
+            "saved_inputs": facts.savedInputs,
+            "ran": [{"card": text(x.card), "count": x.count} for x in facts.ran or []],
+            "failures": [{"card": text(x.card), "kind": text(x.kind)} for x in facts.failures or []],
+            "never": [text(x) for x in facts.never or []]}
 
 
 def run_facts(*, whole=False, card="", propagate=True, saved=False, ran=(), failed=(), never=()):

@@ -373,23 +373,23 @@ auto SkillScope(std::string_view text)
 
 auto ScopedSkillTask(std::string_view text, const std::string &name,
                      const std::vector<std::string> &cards,
-                     const std::string &instruction) -> agent::json::Members {
+                     const std::string &instruction) -> ::tsugumi::json::Members {
   const auto scope = SkillScope(text);
   if (!scope || cards.empty())
     throw std::runtime_error(
         "A scoped helper requires a declared Skill and selected Cards");
   std::vector<std::string> selected;
   for (const auto &card : cards)
-    selected.push_back(agent::json::Quote(card));
-  agent::json::Members task{
-      {"name", agent::json::Quote(name)},
+    selected.push_back(::tsugumi::json::Quote(card));
+  ::tsugumi::json::Members task{
+      {"name", ::tsugumi::json::Quote(name)},
       {"instruction",
-       agent::json::Quote(instruction + "\n" + std::string(text))}};
+       ::tsugumi::json::Quote(instruction + "\n" + std::string(text))}};
   for (const auto *access : {"read", "write", "run"})
     task[std::string(access) + "_cards"] =
         std::find(scope->begin(), scope->end(), access) == scope->end()
             ? "[]"
-            : agent::json::Encode(selected);
+            : ::tsugumi::json::Encode(selected);
   agent::HelperScope::Validate(task, false);
   return task;
 }
@@ -399,7 +399,7 @@ auto SelectScopedSkill(const H::SkillsListT &catalog,
                        const std::string &explicit_name,
                        const std::vector<std::string> &cards,
                        const std::string &instruction)
-    -> std::optional<agent::json::Members> {
+    -> std::optional<::tsugumi::json::Members> {
   std::set<std::string> selected;
   for (const auto &name : names)
     selected.insert(SkillNameKey(name));
@@ -419,7 +419,7 @@ auto SelectScopedSkill(const H::SkillsListT &catalog,
                          ? BundledSkill(skill.path)
                          : ReadSkill(skill.source_folder, skill.path);
   auto task = ScopedSkillTask(bytes, skill.name, cards, instruction);
-  task["skill_path"] = agent::json::Quote(skill.path);
+  task["skill_path"] = ::tsugumi::json::Quote(skill.path);
   return task;
 }
 

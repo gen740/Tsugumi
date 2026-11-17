@@ -9,9 +9,10 @@ add_library(tsugumi_document STATIC
   src/nix_refs.cc
   src/collect_type.cc
   src/host_requirements.cc)
-target_include_directories(tsugumi_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(tsugumi_document PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+tsugumi_owned_headers(tsugumi_document document schema.hh document.hh graph.hh definition_values.hh types.hh worker_condition.hh input_types.hh nix_refs.hh collect_type.hh host_requirements.hh)
 target_link_libraries(tsugumi_document PUBLIC tsugumi_protocol tsugumi_json
-  flatbuffers::flatbuffers Threads::Threads tsugumi_workerd_support)
+  flatbuffers::flatbuffers Threads::Threads tsugumi_util)
 
 set_source_files_properties(src/worker_condition.cc PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")

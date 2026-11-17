@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 
 extern const unsigned char tsugumi_host_templates[];
 extern const unsigned long tsugumi_host_templates_size;
@@ -11,7 +11,7 @@ extern const unsigned long tsugumi_host_templates_size;
 namespace tsugumi::host {
 auto WriteTemplate(const std::string &name, const std::string &id)
     -> Tsugumi::Host::DocumentTemplateT {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   static const auto catalog = json::Object(
       std::string(reinterpret_cast<const char *>(tsugumi_host_templates),
                   tsugumi_host_templates_size));

@@ -1,7 +1,7 @@
 #include "agent/wire.hh"
 
 
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/presentation.hh"
 
 namespace tsugumi::agent::wire {

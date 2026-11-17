@@ -267,8 +267,17 @@ struct Connection::State {
   }
 };
 
+namespace {
+auto TransportConfiguration(const Options& options) -> TransportOptions {
+  auto result = static_cast<const TransportOptions&>(options);
+  if (result.subprotocol.empty())
+    result.subprotocol = options.protocol == Protocol::Agent ? "tsugumi.agent.v1" :
+                         options.protocol == Protocol::Host ? "tsugumi.host.v1" : "tsugumi.rpc.v1";
+  return result;
+}
+}  // namespace
 Connection::Connection(Options options)
-    : Connection(options, MakeTransport(options)) {}
+    : Connection(options, MakeTransport(TransportConfiguration(options))) {}
 Connection::Connection(Options options, std::shared_ptr<Transport> transport)
     : state_(std::make_shared<State>(std::move(options))),
       transport_(std::move(transport)) {

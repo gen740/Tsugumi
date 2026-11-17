@@ -7,7 +7,7 @@
 #include <thread>
 
 #include "../agent_fixture_server.hh"
-#include "agent/json.hh"
+#include "util/json_object.hh"
 #include "agent/runtime.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
@@ -189,7 +189,7 @@ TEST(HostSettingsStore,
                   ->payload_as_Reply()
                   ->value_as_ProviderStatus()
                   ->configured());
-  const agent::json::Members selection{
+  const ::tsugumi::json::Members selection{
       {"profile", Quote("desktop")},
       {"key_profile", Quote("macos:keychain:fixture")}};
   EXPECT_EQ(service->Resolve(selection).credential, key);
@@ -523,22 +523,22 @@ TEST_F(ContextBudget, ConsecutiveRequestsHaveByteIdenticalCachedPrefixes) {
     const auto requests = model.Requests();
     ASSERT_EQ(requests.size(), start + 3);
     for (size_t step = start; step < start + 2; ++step) {
-      const auto first = agent::json::Object(requests[step]);
-      const auto second = agent::json::Object(requests[step + 1]);
+      const auto first = ::tsugumi::json::Object(requests[step]);
+      const auto second = ::tsugumi::json::Object(requests[step + 1]);
       const auto field =
           api == agent::ProviderAPI::AnthropicMessages ? "messages" : "input";
-      const auto prefix = agent::json::Get(first, field);
-      const auto marker = agent::json::Quote(field) + ":" + prefix;
+      const auto prefix = ::tsugumi::json::Get(first, field);
+      const auto marker = ::tsugumi::json::Quote(field) + ":" + prefix;
       const auto at = requests[step].find(marker);
       ASSERT_NE(at, std::string::npos);
       const auto end = at + marker.size() - 1;
       EXPECT_EQ(requests[step + 1].substr(0, end),
                 requests[step].substr(0, end));
       for (const auto* key : {"tools", "system", "instructions", "model"})
-        EXPECT_EQ(agent::json::Get(first, key), agent::json::Get(second, key));
+        EXPECT_EQ(::tsugumi::json::Get(first, key), ::tsugumi::json::Get(second, key));
       if (api == agent::ProviderAPI::AnthropicMessages)
-        EXPECT_EQ(agent::json::Text(
-                      agent::json::Object(first.at("cache_control")), "type"),
+        EXPECT_EQ(::tsugumi::json::Text(
+                      ::tsugumi::json::Object(first.at("cache_control")), "type"),
                   "ephemeral");
     }
   }
@@ -612,8 +612,8 @@ TEST_F(ContextBudget,
   EXPECT_EQ(visible, "done");
   EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/content"), text);
   EXPECT_EQ(messages[2].content[0].text, text);
-  const auto summary = agent::json::Object(requests[1]);
-  const auto normal = agent::json::Object(requests[0]);
+  const auto summary = ::tsugumi::json::Object(requests[1]);
+  const auto normal = ::tsugumi::json::Object(requests[0]);
   EXPECT_EQ(summary.at("system"), normal.at("system"));
   EXPECT_EQ(summary.at("tools"), normal.at("tools"));
   EXPECT_NE(requests[1].find("Want:"), std::string::npos);
@@ -710,9 +710,9 @@ TEST_F(ContextBudget,
                    "/messages/" + std::to_string(2 * i) + "/content/0/content");
     EXPECT_TRUE(latest.ends_with("TAIL inspect-" + std::to_string(i)));
     const auto before =
-        agent::json::Get(agent::json::Object(requests[i - 1]), "messages");
+        ::tsugumi::json::Get(::tsugumi::json::Object(requests[i - 1]), "messages");
     const auto after =
-        agent::json::Get(agent::json::Object(requests[i]), "messages");
+        ::tsugumi::json::Get(::tsugumi::json::Object(requests[i]), "messages");
     if (!after.starts_with(before.substr(0, before.size() - 1))) ++rewrites;
   }
   EXPECT_GT(rewrites, 0u);
@@ -916,16 +916,16 @@ TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
   EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
                                               "claude-opus-4-5-20251101"),
             200000u);
-  const auto embedded = agent::json::Object(std::string_view(
+  const auto embedded = ::tsugumi::json::Object(std::string_view(
       reinterpret_cast<const char*>(tsugumi_agent_settings), tsugumi_agent_settings_size));
-  const auto options = agent::json::Object(agent::json::Get(embedded, "modelOptions"));
-  const auto connections = agent::json::Object(agent::json::Get(options, "connections"));
+  const auto options = ::tsugumi::json::Object(::tsugumi::json::Get(embedded, "modelOptions"));
+  const auto connections = ::tsugumi::json::Object(::tsugumi::json::Get(options, "connections"));
   for (const auto& [provider, raw] : connections)
-    for (const auto& group : agent::json::Array(
-             agent::json::Get(agent::json::Object(raw), "effort")))
-      for (const auto& id : agent::json::Array(
-               agent::json::Get(agent::json::Object(group), "models"))) {
-        const auto name = agent::json::String(id);
+    for (const auto& group : ::tsugumi::json::Array(
+             ::tsugumi::json::Get(::tsugumi::json::Object(raw), "effort")))
+      for (const auto& id : ::tsugumi::json::Array(
+               ::tsugumi::json::Get(::tsugumi::json::Object(group), "models"))) {
+        const auto name = ::tsugumi::json::String(id);
         EXPECT_GT(host::Models::ContextWindowTokens(directory.path, provider, name),
                   128000u) << name;
       }

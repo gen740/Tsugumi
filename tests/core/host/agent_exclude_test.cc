@@ -15,7 +15,7 @@
 
 namespace tsugumi::host {
 namespace {
-namespace j = agent::json;
+namespace j = ::tsugumi::json;
 namespace H = Tsugumi::Host;
 using test::Read;
 using test::Write;
