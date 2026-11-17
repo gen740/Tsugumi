@@ -187,28 +187,40 @@ auto Tools::FileOperation(const std::string& conversation,
   }
   const bool attached_card =
       json::Text(args, "source") == "attached" && args.contains("card");
-  if (name == "project_copy" &&
-      (json::Text(args, "source") == "demo" || attached_card)) {
+  const bool attached_project = json::Text(args, "source") == "attached" &&
+                                !attached_card && args.contains("id");
+  if (name == "project_copy" && (json::Text(args, "source") == "demo" ||
+                                 attached_card || attached_project)) {
     H::ProjectOperateRequestT request;
     request.project_id = project;
     request.op_id = operation;
-    H::ProjectCopyT copy;
-    copy.project_path = json::Text(args, "project_path");
-    auto item = std::make_unique<H::ProjectCopyItemT>();
-    if (attached_card)
-      item->folder = json::Text(args, "folder");
-    else
-      item->demo = json::Text(args, "demo");
-    item->from = json::Text(args, "card");
-    item->id = json::Text(args, "id");
-    item->name = json::Text(args, "name");
-    item->x = std::stod(json::Get(args, "x", "0"));
-    item->y = std::stod(json::Get(args, "y", "0"));
-    if (attached_card ? item->folder.empty() : item->demo.empty())
-      throw Failure("invalid_request",
-                    attached_card ? "folder is required" : "demo is required");
-    copy.items.push_back(std::move(item));
-    request.body.Set(std::move(copy));
+    if (attached_project) {
+      H::ProjectImportT imported;
+      imported.project_path = json::Text(args, "project_path");
+      imported.path = json::Text(args, "folder");
+      imported.id = json::Text(args, "id");
+      imported.x = std::stod(json::Get(args, "x", "0"));
+      imported.y = std::stod(json::Get(args, "y", "0"));
+      request.body.Set(std::move(imported));
+    } else {
+      H::ProjectCopyT copy;
+      copy.project_path = json::Text(args, "project_path");
+      auto item = std::make_unique<H::ProjectCopyItemT>();
+      if (attached_card)
+        item->folder = json::Text(args, "folder");
+      else
+        item->demo = json::Text(args, "demo");
+      item->from = json::Text(args, "card");
+      item->id = json::Text(args, "id");
+      item->name = json::Text(args, "name");
+      item->x = std::stod(json::Get(args, "x", "0"));
+      item->y = std::stod(json::Get(args, "y", "0"));
+      if (attached_card ? item->folder.empty() : item->demo.empty())
+        throw Failure("invalid_request", attached_card ? "folder is required"
+                                                       : "demo is required");
+      copy.items.push_back(std::move(item));
+      request.body.Set(std::move(copy));
+    }
     host::OperationContext context;
     context.origin = "agent";
     context.authorize_file = [&](const auto& path, const auto& base) {
@@ -222,7 +234,7 @@ auto Tools::FileOperation(const std::string& conversation,
         for (const auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
           if (!access_service.HasGrant(resource, conversation, access))
             throw Failure("permission_denied", "Project access was revoked before saving");
-        if (attached_card) {
+        if (attached_card || attached_project) {
           auto folder =
               db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
           folder.bind(1, project).bind(2, json::Text(args, "folder"));
@@ -335,8 +347,25 @@ auto Tools::FileOperation(const std::string& conversation,
         stage(to, from, attached);
       } else if (source == "card") {
         check(from, false);
-        if (!hashes.contains(from))
+        if (!hashes.contains(from)) {
+          if (fs::valid_relative_path(from)) {
+            std::error_code error;
+            const auto type =
+                std::filesystem::symlink_status(root / from, error);
+            if (!error && std::filesystem::is_directory(type))
+              throw Failure("invalid_path",
+                            from +
+                                " is a folder; list its files or copy the "
+                                "whole Card with card + id");
+            if (!error && std::filesystem::exists(type) &&
+                !std::filesystem::is_regular_file(type))
+              throw Failure(
+                  "invalid_path",
+                  from +
+                      " is not a regular file; choose a regular file to copy");
+          }
           throw Failure("not_found", "Not a confirmed Card source: " + from);
+        }
         stage(to, from, "", hashes.at(from));
       } else if (source == "scratch") {
         policy.Check(root / scratch_path / from);
@@ -568,6 +597,8 @@ auto Tools::FileOperation(const std::string& conversation,
       throw Failure("permission_denied",
                     "Shell grant was revoked before saving");
   }
+  const bool scratch_copy =
+      name == "project_copy" && json::Text(args, "source") == "scratch";
   args = {{"base_rev", revision},
           {"op_id", json::Quote(operation)},
           {"origin", json::Quote("agent")},
@@ -577,7 +608,19 @@ auto Tools::FileOperation(const std::string& conversation,
   if (stop.stop_requested()) throw Cancelled();
   auto saved = json::Object(
       SaveProject(project, args, stop));
-  if (json::Text(saved, "reply") == "Failure") return json::Encode(saved);
+  if (json::Text(saved, "reply") == "Failure") {
+    if (scratch_copy) {
+      auto failure = json::Object(json::Get(saved, "value", "{}"));
+      auto diagnostic = json::Text(failure, "diagnostic");
+      const auto prefix = scratch_path + '/';
+      for (auto at = diagnostic.find(prefix); at != std::string::npos;
+           at = diagnostic.find(prefix, at))
+        diagnostic.erase(at, prefix.size());
+      failure["diagnostic"] = json::Quote(diagnostic);
+      saved["value"] = json::Encode(failure);
+    }
+    return json::Encode(saved);
+  }
   const auto value = json::Object(json::Get(saved, "value", "{}"));
   const auto delta = json::Object(json::Get(value, "delta", "{}"));
   for (const auto& raw : json::Array(json::Get(delta, "sources_upsert", "[]"))) {

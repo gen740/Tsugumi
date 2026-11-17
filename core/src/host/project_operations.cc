@@ -505,7 +505,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';
     empty(destination);
-    for (const auto &[path, bytes] : ReadProjectFiles(imported->path))
+    for (const auto& [path, bytes] :
+         ReadProjectFiles(imported->path, authorize))
       put(destination + path, bytes);
     link(imported->id,
          std::filesystem::path(imported->path).filename().string());

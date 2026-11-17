@@ -331,10 +331,16 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::
     int fd;
     ~Close() { ::close(fd); }
   } close{source};
+  struct stat status{};
+  if (::fstat(source, &status) != 0)
+    throw Error("fstat " + rel.string() + ": " + std::strerror(errno));
+  if (!S_ISREG(status.st_mode))
+    throw NotRegularFile(rel, S_ISDIR(status.st_mode));
   uint64_t size = 0;
-  write_atomic_using(destination, 0644, [&](int fd, const stdfs::path& temporary) {
-    size = copy_sparse_file(source, fd, root / rel, temporary, on_chunk);
-  });
+  write_atomic_using(
+      destination, 0644, [&](int fd, const stdfs::path& temporary) {
+        size = copy_sparse_file(source, fd, rel, temporary, on_chunk);
+      });
   return size;
 }
 

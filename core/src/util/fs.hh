@@ -19,6 +19,15 @@ class Error : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+class NotRegularFile : public Error {
+ public:
+  NotRegularFile(const stdfs::path& path, bool folder)
+      : Error(path.string() +
+              (folder ? " is a folder" : " is not a regular file")),
+        folder(folder) {}
+  bool folder;
+};
+
 // Validates a project relative Path: UTF-8, no NUL, not absolute, no "." or
 // ".." segments (except the single "." root), no empty segments, no backslash.
 bool valid_relative_path(std::string_view p, bool allow_root = false);
