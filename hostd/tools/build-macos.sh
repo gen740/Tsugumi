@@ -36,7 +36,8 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
 run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd
 
 # Copy pinned native formatter binaries and their dylibs, with no Nix paths at runtime.
-python3 "$repo/ui/macos/tools/bundle-formatters.py" "$repo/build-host/Resources/formatters" \
+# Apple's tools from Xcode: the shell's older SDK strip rejects these dylibs.
+env -u DEVELOPER_DIR -u SDKROOT python3 "$repo/ui/macos/tools/bundle-formatters.py" "$repo/build-host/Resources/formatters" \
   "$TSUGUMI_FORMAT_CLANG" "$TSUGUMI_FORMAT_RUFF" "$TSUGUMI_FORMAT_NIX" "$TSUGUMI_FORMAT_SH"
 
 # Bundle the two OpenSSL runtime libraries, keeping the native product usable
