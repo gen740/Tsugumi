@@ -1,8 +1,6 @@
-# The boot disk of the shared Tsugumi VM (one per app, run with
-# Virtualization.framework): the kernel and a small read-only root file
-# system with Nix. Everything else is built by Nix inside the VM on its first
-# boot from Tsugumi's own source (vm-system.nix): the app bundles only this
-# and the source, and downloads use cache.nixos.org and tsugumi.cachix.org.
+# Release-built shared guest: Nix and the complete Tsugumi runtime closure.
+# First boot registers the shipped store and starts the prebuilt supervisor.
+# Card definitions may still build with Nix.
 #
 #   $out/vmlinux        guest kernel (kernel.nix)
 #   $out/rootfs.erofs   read-only root file system: /init, this closure, /etc
@@ -15,10 +13,6 @@
 #   /dev/vdc    the run history disk (its own sparse file, synchronized with
 #               fsync), formatted on first boot and mounted as /history-disk:
 #               one folder per project (tsugumi-vmd)
-#   virtiofs "tsugumi-source"  Tsugumi's flake source (read-only), mounted at
-#               /source: /init builds packages.<system>.vm-system from it
-#               when its content changed (first boot, an app update) and
-#               starts its supervisor
 #   virtiofs "tsugumi-<n>" (16 slots): one per open project, with its
 #               `project` and `control` folders, at /mnt/slots/<n> (tsugumi-vmd)
 #   hvc0        console: everything here and in tsugumi-vmd is logged to it,
@@ -27,13 +21,31 @@
 #
 # Contents and why each is needed:
 #   nix            the one nix-daemon of the shared store, the clients, and
-#                  the build of the system at boot
+#                  builds of Card definitions
 #   cacert         TLS for cache.nixos.org and the pinned nixpkgs archive
 #   bash/coreutils/findutils/util-linux/e2fsprogs/gawk  /init (store disk,
-#                  overlay, the source's hash)
+#                  overlay)
 #   busybox        udhcpc and ip for the NAT network
-{ lib, runCommand, writeShellScript, writeTextDir, closureInfo, buildEnv, erofs-utils, kernel, nix
-, cacert, bashInteractive, coreutils, findutils, util-linux, e2fsprogs, busybox, gawk }:
+{
+  lib,
+  runCommand,
+  writeShellScript,
+  writeTextDir,
+  closureInfo,
+  buildEnv,
+  erofs-utils,
+  kernel,
+  vm-system,
+  nix,
+  cacert,
+  bashInteractive,
+  coreutils,
+  findutils,
+  util-linux,
+  e2fsprogs,
+  busybox,
+  gawk,
+}:
 let
   nixbld = map toString (lib.range 1 16);
   nixConf = writeTextDir "etc/nix/nix.conf" ''
@@ -62,10 +74,15 @@ let
     name = "tsugumi-vm-etc";
     paths = [
       nixConf
-      (writeTextDir "etc/passwd" (''
-        root:x:0:0:root:/root:/bin/sh
-        nobody:x:65534:65534:nobody:/var/empty:/bin/false
-      '' + lib.concatMapStrings (i: "nixbld${i}:x:${toString (30000 + lib.toInt i)}:30000:nixbld:/var/empty:/bin/false\n") nixbld))
+      (writeTextDir "etc/passwd" (
+        ''
+          root:x:0:0:root:/root:/bin/sh
+          nobody:x:65534:65534:nobody:/var/empty:/bin/false
+        ''
+        + lib.concatMapStrings (
+          i: "nixbld${i}:x:${toString (30000 + lib.toInt i)}:30000:nixbld:/var/empty:/bin/false\n"
+        ) nixbld
+      ))
       (writeTextDir "etc/group" ''
         root:x:0:
         nixbld:x:30000:${lib.concatMapStringsSep "," (i: "nixbld${i}") nixbld}
@@ -90,11 +107,28 @@ let
     esac
   '';
   storeHealth = writeShellScript "tsugumi-store-health" (
-    "export PATH=${lib.makeBinPath [ coreutils util-linux nix bashInteractive ]}\n"
+    "export PATH=${
+      lib.makeBinPath [
+        coreutils
+        util-linux
+        nix
+        bashInteractive
+      ]
+    }\n"
     + builtins.readFile ./store-health.sh
   );
   init = writeShellScript "tsugumi-vm-init" ''
-    export PATH=${lib.makeBinPath [ coreutils findutils util-linux e2fsprogs nix bashInteractive gawk ]}
+    export PATH=${
+      lib.makeBinPath [
+        coreutils
+        findutils
+        util-linux
+        e2fsprogs
+        nix
+        bashInteractive
+        gawk
+      ]
+    }
     export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
     export SSL_CERT_FILE=$NIX_SSL_CERT_FILE HOME=/root TMPDIR=/tmp USER=root
     exec </dev/console >/dev/console 2>&1
@@ -197,39 +231,32 @@ let
     ip link set lo up
     ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
 
-    # No project starts, or uses a cached vm-system, before repair succeeds.
+    # No project starts before repair succeeds.
     ${storeHealth} check /persist "$boot" "$check_reason" \
       || fail "Nix store content check/repair failed; see the VM console and /persist/store-health/check.log"
 
-    # Tsugumi itself, built by Nix from the source the app shares
-    # (vm-system.nix): once per content of the source, then reused from the
-    # store disk. It is a GC root; the one it replaces is not any more.
-    stage system
-    mkdir -p /source /persist/system
-    mount -t virtiofs -o ro tsugumi-source /source || fail "cannot mount Tsugumi's source"
-    hash=$(cd /source && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)
-    system=$(readlink "/persist/system/$hash" 2>/dev/null || true)
-    if [ -z "$system" ] || [ ! -e "$system/supervisor" ]; then
-      echo "building Tsugumi from its source ($hash): the first time takes a minute or two"
-      start=$(date +%s)
-      system=$(NIX_REMOTE=daemon NO_COLOR=1 nix build --no-link --print-out-paths -L --log-format raw \
-        "path:/source#packages.$(uname -m)-linux.vm-system") || fail "cannot build Tsugumi from its source"
-      sync
-      echo "built $system in $(( $(date +%s) - start )) s"
-      rm -f /persist/system/*
-      ln -sfn "$system" "/persist/system/$hash"
-    fi
-    ln -sfn "$system" /nix/var/nix/gcroots/tsugumi/system
-
     stage supervisor
-    exec "$system/tini" -- "$system/supervisor"
+    exec ${vm-system}/tini -- ${vm-system}/supervisor
   '';
-  runtime = [ nix cacert bashInteractive coreutils findutils util-linux e2fsprogs busybox gawk etc init ];
+  runtime = [
+    nix
+    cacert
+    bashInteractive
+    coreutils
+    findutils
+    util-linux
+    e2fsprogs
+    busybox
+    gawk
+    etc
+    init
+    vm-system
+  ];
   registration = closureInfo { rootPaths = runtime; };
 in
 runCommand "tsugumi-vm-boot-1" { nativeBuildInputs = [ erofs-utils ]; } ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,scratch,var/empty,bin,mnt,source}
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,scratch,var/empty,bin,mnt}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

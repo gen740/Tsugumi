@@ -1,123 +1,96 @@
 #!/usr/bin/env bash
-# Builds the shared VM's Linux parts inside an Apple container (no Linux host
-# or remote builder needed).
-#
-#   macOS/Container/build-image.sh --vm       # the shared VM's boot disk into dist/tsugumi-vm/
-#                                             # (vm-boot.nix: kernel and a small rootfs with Nix),
-#                                             # downloaded from a vm-<hash> release of gen740/Tsugumi when released;
-#                                             # Tsugumi itself is built inside the VM (vm-system.nix)
-#   macOS/Container/build-image.sh --check    # only build the Linux tsugumid package
-#   macOS/Container/build-image.sh --kernel   # build the guest kernel into dist/tsugumi-kernel
-#
-# Pinned builder: docker.io/nixos/nix:2.31.2 (see versions.env). The builder's
-# Nix store lives in the volume tsugumi-builder-nix and is reused.
+# Resolve the current guest definition: verified local artifact, matching Actions
+# artifact (gh auth login), then a local Nix/Apple-container build.
+# TSUGUMI_VM_BUILD=1 bypasses caches. TSUGUMI_VM_ARTIFACT_ONLY=1 forbids fallback
+# and requires the artifact's revision to match HEAD (release packaging).
+# --check builds tsugumid; --kernel builds the guest kernel; --vm resolves the guest.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 source "$here/versions.env"
 case "${1:-}" in
-  --vm) attr=vm ;;
-  --check) attr=tsugumid ;;
-  --kernel) attr=kernel ;;
-  *) sed -n '2,10s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+--vm) attr=vm ;;
+--check) attr=tsugumid ;;
+--kernel) attr=kernel ;;
+*)
+  echo "usage: $0 --vm|--check|--kernel" >&2
+  exit 2
+  ;;
 esac
-# The builder VM runs on Tsugumi's guest kernel when it exists (the stock
-# kernel's SELinux oops leaves builder VMs stuck on shutdown; kernel.nix).
-kernel_args=()
-kernel="$repo/dist/tsugumi-kernel"
-[ -f "$kernel" ] && kernel_args=(--kernel "$kernel")
-
 stage="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-src.XXXXXX")"
 out="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-image.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
-# Exactly the files Git would ship (tracked + untracked, not ignored).
-(cd "$repo" && git ls-files -z -co --exclude-standard | xargs -0 -I{} rsync -R "{}" "$stage/")
-(cd "$stage" && git init -q && git add -A && git -c user.email=b@t -c user.name=b commit -qm build)
-
+trap 'rm -rf "$stage" "$out"' EXIT
+# Snapshot current tracked and untracked intended inputs, including local edits.
+python3 "$repo/macOS/tools/vm-snapshot.py" "$repo" "$stage"
+revision="$(git -C "$repo" rev-parse HEAD)"
+if [ -n "$(git -C "$repo" status --porcelain)" ]; then revision="$revision-dirty"; fi
 dist_vm="$repo/dist/tsugumi-vm"
-# Puts vmlinux, rootfs.erofs and vm-version of a folder in place of
-# dist/tsugumi-vm, whole: a failure keeps the last one.
-install_vm() {
-  local new="$dist_vm.new"
-  rm -rf "$new"
-  mkdir -p "$new"
-  cp "$1/vmlinux" "$1/rootfs.erofs" "$1/vm-version" "$new/"
-  rm -rf "$dist_vm"
-  mv "$new" "$dist_vm"
-  echo "vm: $dist_vm ($(cat "$dist_vm/vm-version"), rootfs $(stat -f %z "$dist_vm/rootfs.erofs") bytes)"
-}
+verify=(python3 "$stage/macOS/tools/vm-artifact.py" verify)
 if [ "$attr" = vm ]; then
-  # The boot disk changes only with nixpkgs and vm-boot.nix: kept from the
-  # last build, or downloaded from the releases of gen740/Tsugumi where it is released
-  # as vm-<hash of its store name> (macOS/tools/publish-vm.sh), evaluated
-  # here without building anything. TSUGUMI_VM_BUILD=1 builds it.
-  boot=$(nix --extra-experimental-features "nix-command flakes" eval --raw \
-    "git+file://$stage#packages.aarch64-linux.vm-boot.outPath" 2>/dev/null || true)
-  boot=${boot#/nix/store/}
-  if [ "${TSUGUMI_VM_BUILD:-}" != 1 ] && [ -n "$boot" ]; then
-    if [ "$(cat "$dist_vm/vm-version" 2>/dev/null)" = "$boot" ]; then
-      echo "vm: $dist_vm is $boot"
+  identity="$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")"
+  identity="${identity##*/}"
+  if [ "${TSUGUMI_VM_ARTIFACT_ONLY:-}" = 1 ]; then
+    "${verify[@]}" "$dist_vm" "$identity" --revision "$revision"
+    exit 0
+  fi
+  if [ "${TSUGUMI_VM_BUILD:-}" != 1 ]; then
+    if "${verify[@]}" "$dist_vm" "$identity" 2>/dev/null; then
+      echo "vm: reusing $identity"
       exit 0
     fi
-    url="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-${boot%%-*}"
-    if curl -fsSL -o "$out/SHA256SUMS" "$url/SHA256SUMS" 2>/dev/null; then
-      echo "downloading the boot disk $boot"
-      for f in vmlinux rootfs.erofs vm-version; do curl -fL --retry 3 -o "$out/$f" "$url/$f"; done
-      (cd "$out" && shasum -a 256 -c SHA256SUMS >/dev/null)
-      [ "$(cat "$out/vm-version")" = "$boot" ]
-      install_vm "$out"
-      rm -rf "$out"
+    if command -v gh >/dev/null && python3 "$stage/macOS/tools/vm-download.py" "$identity" "$out" "${GITHUB_REPOSITORY:-gen740/Tsugumi}" &&
+      "${verify[@]}" "$out" "$identity"; then
+      mkdir -p "$repo/dist"
+      rm -rf "$dist_vm"
+      mv "$out" "$dist_vm"
       exit 0
     fi
-    echo "no release of the boot disk $boot; building it"
+    echo "no successful CI artifact for $identity; building locally"
   fi
 fi
-
-volume="${TSUGUMI_BUILDER_VOLUME:-tsugumi-builder-nix}"
-container volume inspect "$volume" >/dev/null 2>&1 || container volume create -s 40G "$volume" >/dev/null
-# The builder runs detached and signals completion through /out, so the build
-# never depends on how quickly the VM is torn down afterwards.
-builder="tsugumi-image-builder-$(date +%s)"
-container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TSUGUMI_BUILDER_MEMORY:-16G}" \
-  -v "$volume:/cache" -v "$stage:/src:ro" -v "$out:/out" \
-  "$TSUGUMI_BUILDER_IMAGE" sh -uc '
-    # Any failing step ends the shell (set -e, not inside an && list where it
-    # would be ignored), and the trap then marks the build failed.
-    trap "[ -e /out/done ] || touch /out/failed" EXIT
-    set -e
-    exec > /out/log 2>&1
-    {
-      # Chroot store under /cache: persistent across builds, separate from the image store.
-      nixf() { nix --option fsync-store-paths true --option fsync-metadata true --extra-experimental-features "nix-command flakes" --accept-flake-config --store /cache "$@"; }
-      # build.log grows while it builds (watch it from the Mac).
-      img=$(nixf build --no-link --print-out-paths -L "git+file:///src#packages.aarch64-linux.'"$attr"'" 2>&1 | grep -v "^copying path" | tee /out/build.log | tail -1)
-      # A failed build prints no store path: stop here instead of copying nothing.
-      case "$img" in /nix/store/*) [ -e "/cache$img" ] ;; *) false ;; esac
-      if [ "'"$attr"'" = kernel ]; then cp /cache$img/vmlinux /out/tsugumi-kernel; fi
-      if [ "'"$attr"'" = vm ]; then
-        # Links into the store: copy from the chroot store under /cache.
-        for f in vmlinux rootfs.erofs; do cp "/cache$(readlink /cache$img/$f)" /out/$f; done
-        cp /cache$img/vm-version /out/
-      fi
-    }
-    # Persist the private builder store before its container exits.
-    sync -f /cache
-    touch /out/done
-  ' >/dev/null
-echo "building $attr in $builder (progress: $out/build.log)"
-while [ ! -e "$out/done" ] && [ ! -e "$out/failed" ]; do sleep 2; done
-cat "$out/build.log" 2>/dev/null | tail -5
-if [ -e "$out/failed" ]; then tail -40 "$out/log"; exit 1; fi
-if [ "$attr" = kernel ]; then
-  mkdir -p "$repo/dist"
-  cp "$out/tsugumi-kernel" "$repo/dist/tsugumi-kernel"
-  echo "kernel: $repo/dist/tsugumi-kernel ($(stat -f %z "$repo/dist/tsugumi-kernel") bytes)"
-  rm -rf "$out"
-  exit 0
+if [ "$(uname -s)" = Linux ] || [ -n "${TSUGUMI_VM_NIX_BUILDERS:-}" ]; then
+  build_args=()
+  if [ -n "${TSUGUMI_VM_NIX_BUILDERS:-}" ]; then
+    build_args=(--builders "$TSUGUMI_VM_NIX_BUILDERS")
+    export NIX_CONFIG="${NIX_CONFIG:-}
+builders = $TSUGUMI_VM_NIX_BUILDERS"
+  fi
+  image="$(nix build --no-link --print-out-paths -L ${build_args[@]+"${build_args[@]}"} "path:$stage#packages.aarch64-linux.$attr")"
+  if [ "$attr" = vm ]; then
+    nix shell --inputs-from "$stage" nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c \
+      python3 "$stage/macOS/tools/vm-artifact.py" build "$image" "$out" --revision "$revision"
+  elif [ "$attr" = kernel ]; then cp "$image/vmlinux" "$out/tsugumi-kernel"; fi
+else
+  kernel_args=()
+  [ ! -f "$repo/dist/tsugumi-kernel" ] || kernel_args=(--kernel "$repo/dist/tsugumi-kernel")
+  volume="${TSUGUMI_BUILDER_VOLUME:-tsugumi-builder-nix}"
+  container volume inspect "$volume" >/dev/null 2>&1 || container volume create -s 40G "$volume" >/dev/null
+  builder="tsugumi-image-builder-$(date +%s)"
+  # Keep the builder image's bootstrap /nix visible. The persistent build store
+  # remains rooted under /cache, as in the existing Apple-container builder.
+  container run -d --rm --name "$builder" ${kernel_args[@]+"${kernel_args[@]}"} -c "${TSUGUMI_BUILDER_CPUS:-8}" -m "${TSUGUMI_BUILDER_MEMORY:-16G}" \
+    -v "$volume:/cache" -v "$stage:/src:ro" -v "$out:/out" \
+    -e "GUEST_ATTRIBUTE=$attr" -e "GUEST_REVISION=$revision" \
+    "$TSUGUMI_BUILDER_IMAGE" sh -uc '
+      trap "[ -e /out/done ] || touch /out/failed" EXIT
+      set -e
+      exec > /out/log 2>&1
+      # Use the flake-pinned Nix for both derivation JSON and source export.
+      nix shell --inputs-from /src nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c sh /src/macOS/Container/build-in-container.sh
+      sync -f /cache
+      touch /out/done
+    ' >/dev/null
+  echo "building $attr in $builder (progress: $out/log)"
+  while [ ! -e "$out/done" ] && [ ! -e "$out/failed" ]; do sleep 2; done
+  tail -10 "$out/log"
+  [ ! -e "$out/failed" ] || exit 1
+  rm -f "$out/done" "$out/log"
 fi
+mkdir -p "$repo/dist"
 if [ "$attr" = vm ]; then
-  install_vm "$out"
-  rm -rf "$out"
-  exit 0
+  "${verify[@]}" "$out" "$identity"
+  rm -rf "$dist_vm"
+  mv "$out" "$dist_vm"
+elif [ "$attr" = kernel ]; then
+  cp "$out/tsugumi-kernel" "$repo/dist/tsugumi-kernel"
 fi
-rm -rf "$out"

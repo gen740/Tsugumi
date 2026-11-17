@@ -391,7 +391,7 @@ def vm_server(tmp_path):
     write_project(project)
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
-    env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
+    env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
                TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:

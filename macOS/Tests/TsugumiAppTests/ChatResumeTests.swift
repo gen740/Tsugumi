@@ -149,7 +149,7 @@ import TsugumiRPC
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
       let support = directory.appendingPathComponent("support")
       core.arguments = (core.arguments ?? []) + ["--vmhost", helper.path, "--vm-support", support.path,
-                                                 "--vm-image", "/image", "--vm-source", "/source"]
+                                                 "--vm-image", "/image"]
       core.environment = environment.merging(["HOST_LOG": directory.appendingPathComponent("vmhost.log").path,
         "HOST_BUSY": directory.appendingPathComponent("vmhost.busy").path, "HOST_PID": helperPID.path]) { _, value in value }
     }

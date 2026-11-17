@@ -125,7 +125,7 @@ def test_failed_repair_retains_dirty_marker_and_retries(tmp_path, monkeypatch, c
 def test_boot_marks_before_writes_and_repairs_before_projects():
     boot = (ROOT / "macOS/Container/vm-boot.nix").read_text()
     assert boot.index('storeHealth} begin') < boot.index('nix-store --load-db')
-    assert boot.index('storeHealth} check') < boot.index('stage system')
+    assert boot.index('storeHealth} check') < boot.index('stage supervisor')
     assert '|| fail "Nix store content check/repair failed' in boot
     assert 'fsync-store-paths = true' in boot
     assert 'fsync-metadata = true' in boot

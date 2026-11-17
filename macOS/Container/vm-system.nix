@@ -1,7 +1,4 @@
-# Tsugumi in the shared VM: built by Nix inside the VM from the source the
-# app shares (vm-boot.nix's /init), so nothing of Tsugumi is downloaded to
-# the Mac. Rebuilt when the source changes; its dependencies come from
-# cache.nixos.org and stay in the store disk.
+# Tsugumi and project tools built into the release guest image.
 #
 #   $out/supervisor   tsugumi-vmd with the tools projects see, run under tini
 #   $out/tini         PID 1 of the VM's service and of each project
@@ -17,14 +14,48 @@
 # Tools a project's terminal and Card shell steps see. Editing formatters live
 # on the host. tsugumid's own run time tools (bubblewrap,
 # sqlite, jq) come with its closure.
-{ lib, runCommand, writeShellScript, tsugumid, tini, bashInteractive, cacert, coreutils, findutils, gnugrep
-, gnused, gawk, gnutar, gzip, nix, util-linux, qemu-user }:
+{
+  lib,
+  runCommand,
+  writeShellScript,
+  tsugumid,
+  tini,
+  bashInteractive,
+  cacert,
+  coreutils,
+  findutils,
+  gnugrep,
+  gnused,
+  gawk,
+  gnutar,
+  gzip,
+  nix,
+  util-linux,
+  qemu-user,
+}:
 let
-  projectTools = [ bashInteractive coreutils findutils gnugrep gnused gawk gnutar gzip nix ];
+  projectTools = [
+    bashInteractive
+    coreutils
+    findutils
+    gnugrep
+    gnused
+    gawk
+    gnutar
+    gzip
+    nix
+  ];
   # Not part of this closure: fetched only when qemu is asked for.
   qemu = builtins.unsafeDiscardStringContext qemu-user.outPath;
   x86 = writeShellScript "tsugumi-x86_64" ''
-    export PATH=${lib.makeBinPath [ coreutils gnused util-linux nix ]}
+    export PATH=${
+      lib.makeBinPath [
+        coreutils
+        gnused
+        util-linux
+        nix
+      ]
+    }
     mode=$(sed -n 's/.*tsugumi\.x86=\([a-z]*\).*/\1/p' /proc/cmdline)
     sandbox=""
     case "$mode" in

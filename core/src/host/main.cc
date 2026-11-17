@@ -58,10 +58,6 @@ auto RunHost(int argc, char** argv) -> int {
         options.vm.support = next();
       else if (arg == "--vm-image")
         options.vm.image = next();
-      else if (arg == "--vm-source")
-        options.vm.source = next();
-      else if (arg == "--vm-source-entry")
-        options.vm.source_entries.push_back(next());
       else if (arg == "--vm-cpus")
         options.vm.cpus = std::stoul(next());
       else if (arg == "--vm-memory")
@@ -144,10 +140,9 @@ auto RunHost(int argc, char** argv) -> int {
       options.environment.directory = options.state_dir / "environments";
     options.environment.socket_directory = broker_dir / "env";
     if (!options.vm.binary.empty()) {
-      if (options.vm.support.empty() || options.vm.image.empty() ||
-          options.vm.source.empty())
+      if (options.vm.support.empty() || options.vm.image.empty())
         throw std::runtime_error(
-            "VM helper support, image and source paths are required");
+            "VM helper support and image paths are required");
       options.environment.directory = options.vm.support / "environments";
       options.environment.start_timeout = std::chrono::seconds(90);
     }

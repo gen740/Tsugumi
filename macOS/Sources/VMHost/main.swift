@@ -8,8 +8,7 @@ import Virtualization
 
 signal(SIGPIPE, SIG_IGN)
 _ = setsid()
-var support: URL?, imageDir: URL?, sourceDir: URL?
-var sourceEntries: [String] = []
+var support: URL?, imageDir: URL?
 var resources = VMResources.default
 var arguments = CommandLine.arguments.dropFirst()
 while let argument = arguments.popFirst() {
@@ -17,15 +16,13 @@ while let argument = arguments.popFirst() {
   switch argument {
   case "--support": support = URL(fileURLWithPath: value)
   case "--image": imageDir = URL(fileURLWithPath: value)
-  case "--source": sourceDir = URL(fileURLWithPath: value)
-  case "--source-entry": sourceEntries.append(value)
   case "--cpus": if let n = Int(value), n > 0 { resources.cpus = n }
   case "--memory": if let n = Int(value), n > 0 { resources.memoryGiB = n }
   case "--store": if let n = Int(value), n > 0 { resources.storeGiB = n }
   default: exit(2)
   }
 }
-guard let support, let imageDir, let sourceDir else { exit(2) }
+guard let support, let imageDir else { exit(2) }
 try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 chmod(support.path, 0o700)
 let hostLock = open(support.appendingPathComponent("vmhost.lock").path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
@@ -34,7 +31,7 @@ guard flock(hostLock, LOCK_EX | LOCK_NB) == 0 else { exit(0) }
 let socketPath = VMHostIPC.socketPath(support: support)
 let listener = try VMHostIPC.listen(path: socketPath)
 let vm = SharedVM(directory: support.appendingPathComponent("vm"))
-let image = VMImage(directory: imageDir, source: sourceDir, sourceEntries: sourceEntries.isEmpty ? nil : sourceEntries)
+let image = VMImage(directory: imageDir)
 
 // The spawning UI may quit while work continues. The host's Watch connection
 // owns the resident VM; EOF (including a host crash) ends it orderly.

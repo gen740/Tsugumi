@@ -52,7 +52,9 @@ def consumers(path):
         return jobs
     if path == "macOS/tools/bundle-docs.sh":
         return {"docs", "swift"}
-    if path.startswith("macOS/Container/"):
+    if path.startswith(("macOS/Container/", "macOS/tools/vm-")) or path in {
+        "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
+    }:
         return {"swift", "vm", "sdk", "host"}
     if path.startswith("macOS/"):
         return {"swift"}

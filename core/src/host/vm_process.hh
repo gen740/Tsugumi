@@ -8,8 +8,7 @@ auto VMResetPolicy() -> Tsugumi::VMHost::ResetT;
 auto DescribeVMReset(Tsugumi::Host::HostRuntimeT &runtime) -> void;
 
 struct VMProcessOptions {
-  std::filesystem::path binary, support, image, source;
-  std::vector<std::string> source_entries;
+  std::filesystem::path binary, support, image;
   std::string broker_endpoint;
   uint32_t cpus = 0, memory = 0, store = 64;
   std::function<void(const Tsugumi::VMHost::ProgressT&)> progress;

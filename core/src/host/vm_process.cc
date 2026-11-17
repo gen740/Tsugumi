@@ -322,15 +322,10 @@ class VMProcess final : public EnvironmentProcess {
     launch.vm_helper = true;
     launch.arguments = {options_.binary.string(),        "--support",
                         options_.support.string(),       "--image",
-                        options_.image.string(),         "--source",
-                        options_.source.string(),        "--cpus",
+                        options_.image.string(),         "--cpus",
                         std::to_string(options_.cpus),   "--memory",
                         std::to_string(options_.memory), "--store",
                         std::to_string(options_.store)};
-    for (const auto& entry : options_.source_entries) {
-      launch.arguments.push_back("--source-entry");
-      launch.arguments.push_back(entry);
-    }
     launch.log = options_.support / "vmhost.log";
     auto native = NativeEnvironmentProcess();
     helper_pid_ = native->Launch(launch);

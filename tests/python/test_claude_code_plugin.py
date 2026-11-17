@@ -41,7 +41,7 @@ def isolated_environment(root: Path, **values) -> dict:
         _socket_directories[root] = tempfile.TemporaryDirectory(
             prefix="tsugumi-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
     env = dict(os.environ)
-    for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE", "TSUGUMI_VM_SOURCE"):
+    for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE"):
         env.pop(key, None)
     env.update(TSUGUMI_HOST_STATE=str(root / "host-core"),
                TSUGUMI_SUPPORT_DIR=str(root / "support"),

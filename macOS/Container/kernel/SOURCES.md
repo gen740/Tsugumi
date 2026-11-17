@@ -10,4 +10,4 @@ That is the default kernel of Apple `container` 0.6.0, the version
 
 The file is the output of Linux's Kconfig for Kata's configuration; Kata Containers is under
 Apache-2.0. `kernel.nix` applies its changes to it when it builds, and the result
-is `kernel-config` in `licenses.tar.gz` of the boot disk's release.
+is `kernel-config` in `vm-licenses.tar.gz` of the app's release.

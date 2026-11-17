@@ -81,6 +81,17 @@ def test_native_changes_cover_all_platform_runtime_consumers():
         assert "swift" in result["aarch64-darwin"]
 
 
+@pytest.mark.parametrize("path", [
+    "macOS/tools/vm-inventory.py", "macOS/tools/vm-source-bundle.py",
+    "macOS/tools/vm-artifact.py", "macOS/tools/vm-download.py", "macOS/tools/vm-snapshot.py",
+    "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
+])
+def test_guest_artifact_changes_select_the_image_and_its_consumers(path):
+    result = checks([path])
+    assert result["aarch64-linux"] >= {"native", "vm", "host", "sdk"}
+    assert result["aarch64-darwin"] >= {"native", "swift"}
+
+
 def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms():
     paths = list(selection.ADAPTER_TESTS) + [
         "README.md", "docs/CardGuide.md", "docs/site/src/content.config.ts",

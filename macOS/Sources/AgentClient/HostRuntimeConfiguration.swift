@@ -1,46 +1,44 @@
 import Foundation
 
+/// One release-built guest archive and its manifest.
 public struct VMImage: Sendable, Equatable {
-  public static let files = ["vmlinux", "rootfs.erofs"]
-  public let kernel: URL
-  public let rootfs: URL
-  /// The source folder; `sourceEntries` lists what of it the VM gets (all of
-  /// it when nil, as in the bundle, which holds only those).
-  public let source: URL
-  public let sourceEntries: [String]?
+  public let directory: URL
+  public var archive: URL { directory.appendingPathComponent("tsugumi-vm.tar.gz") }
   public let version: String
+  public let sha256: String
+  public let checksums: [String: String]
 
-  public init?(directory: URL, source: URL, sourceEntries: [String]? = nil) {
-    let urls = Self.files.map { directory.appendingPathComponent($0) }
-    guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }),
-          FileManager.default.fileExists(atPath: source.appendingPathComponent("flake.nix").path) else { return nil }
-    kernel = urls[0]
-    rootfs = urls[1]
-    self.source = source
-    self.sourceEntries = sourceEntries
-    version = (try? String(contentsOf: directory.appendingPathComponent("vm-version"), encoding: .utf8))?
-      .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
+  private struct Manifest: Decodable {
+    let identity: String
+    let system: String
+    let files: [String: String]
+    let members: [String: String]
+  }
+
+  public init?(directory: URL) {
+    guard let data = try? Data(contentsOf: directory.appendingPathComponent("vm-manifest.json")),
+          let manifest = try? JSONDecoder().decode(Manifest.self, from: data),
+          manifest.system == "aarch64-linux", !manifest.identity.isEmpty,
+          let hash = manifest.files["tsugumi-vm.tar.gz"], hash.count == 64,
+          Set(manifest.members.keys) == Set(["vmlinux", "rootfs.erofs", "vm-version"]),
+          manifest.members.values.allSatisfy({ $0.count == 64 }),
+          FileManager.default.fileExists(atPath: directory.appendingPathComponent("tsugumi-vm.tar.gz").path) else { return nil }
+    self.directory = directory
+    version = manifest.identity
+    sha256 = hash
+    checksums = manifest.members
   }
 
   public static func find(bundle: Bundle = .main) -> VMImage? {
     if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil),
-       let source = bundle.url(forResource: "tsugumi-source", withExtension: nil),
-       let image = VMImage(directory: dir, source: source) { return image }
+       let image = VMImage(directory: dir) { return image }
     #if DEBUG
-    // A development build (tsugumi-vmctl, tests) uses the repository.
     var repo = URL(fileURLWithPath: #filePath)
     for _ in 0..<4 { repo.deleteLastPathComponent() }
-    return VMImage(directory: repo.appendingPathComponent("dist/tsugumi-vm"), source: repo,
-                   sourceEntries: sourceList(repo.appendingPathComponent("macOS/Container/vm-source.txt")))
+    return VMImage(directory: repo.appendingPathComponent("dist/tsugumi-vm"))
     #else
     return nil
     #endif
-  }
-
-  /// macOS/Container/vm-source.txt: one path per line, `#` comments.
-  static func sourceList(_ url: URL) -> [String]? {
-    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-    return text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
   }
 }
 
@@ -74,14 +72,11 @@ public enum HostRuntimeConfiguration {
     #else
     let repo = Bundle.main.bundleURL
     #endif
-    let directory = image?.kernel.deletingLastPathComponent()
+    let directory = image?.directory
       ?? environment["TSUGUMI_VM_IMAGE"].map { URL(fileURLWithPath: $0) }
       ?? Bundle.main.url(forResource: "tsugumi-vm", withExtension: nil) ?? repo.appendingPathComponent("dist/tsugumi-vm")
-    let source = image?.source ?? environment["TSUGUMI_VM_SOURCE"].map { URL(fileURLWithPath: $0) }
-      ?? Bundle.main.url(forResource: "tsugumi-source", withExtension: nil) ?? repo
-    var arguments = ["--vmhost", helper.path, "--vm-support", support.path, "--vm-image", directory.path, "--vm-source", source.path,
+    let arguments = ["--vmhost", helper.path, "--vm-support", support.path, "--vm-image", directory.path,
       "--vm-cpus", "\(resources.cpus)", "--vm-memory", "\(resources.memoryGiB)", "--vm-store", "\(resources.storeGiB)"]
-    for entry in image?.sourceEntries ?? [] { arguments += ["--vm-source-entry", entry] }
     return arguments
   }
 }
