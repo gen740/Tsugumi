@@ -1,0 +1,7 @@
+add_library(tsugumi_peer_tls STATIC core/src/util/peer_tls.cc)
+target_include_directories(tsugumi_peer_tls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/src)
+target_link_libraries(tsugumi_peer_tls PUBLIC OpenSSL::SSL tsugumi_workerd_support)
+target_compile_options(tsugumi_peer_tls PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+if(TARGET tsugumi-workerd)
+  target_link_libraries(tsugumi-workerd PRIVATE tsugumi_peer_tls)
+endif()

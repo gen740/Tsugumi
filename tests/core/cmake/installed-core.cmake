@@ -40,74 +40,23 @@ pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers n
 add_library(hosq INTERFACE)
 target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
 
-add_library(tsugumi_json STATIC IMPORTED)
-set_target_properties(tsugumi_json PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_json.a")
-target_link_libraries(tsugumi_json INTERFACE hosq)
+include(${CMAKE_CURRENT_LIST_DIR}/installed/json.cmake)
 
-add_library(tsugumi_worker_protocol STATIC IMPORTED)
-set_target_properties(tsugumi_worker_protocol PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_worker_protocol.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_worker_protocol INTERFACE flatbuffers::flatbuffers)
-add_library(tsugumi_workerd_support STATIC IMPORTED)
-set_target_properties(tsugumi_workerd_support PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_workerd_support.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_workerd_support INTERFACE tsugumi_worker_protocol tsugumi_json)
-set(_local_service_source ${TSUGUMI_CORE_TEST_SUPPORT}/src/local_service.cc)
-set(_workerd_headers ${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-workerd)
-add_library(tsugumi_peer_tls STATIC IMPORTED)
-set_target_properties(tsugumi_peer_tls PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_peer_tls.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core")
-target_link_libraries(tsugumi_peer_tls INTERFACE OpenSSL::SSL tsugumi_workerd_support)
-add_library(tsugumi_document STATIC IMPORTED)
-set_target_properties(tsugumi_document PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_document.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core")
-target_link_libraries(tsugumi_document INTERFACE tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_workerd_support)
-add_library(tsugumi_nix_eval STATIC IMPORTED)
-set_target_properties(tsugumi_nix_eval PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_nix_eval.a")
-target_link_libraries(tsugumi_nix_eval INTERFACE "$<LINK_ONLY:PkgConfig::NIX>" "$<LINK_ONLY:Threads::Threads>")
-add_library(tsugumi_core STATIC IMPORTED)
-set_target_properties(tsugumi_core PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_core.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-# As in-tree, users choose either tsugumi_nix_eval or the evaluator double.
-target_link_libraries(tsugumi_core INTERFACE tsugumi_document tsugumi_workerd_support tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads)
-if(NOT APPLE)
-  pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
-  target_link_libraries(tsugumi_workerd_support INTERFACE PkgConfig::CRYPTO)
-  target_link_libraries(tsugumi_core INTERFACE PkgConfig::CRYPTO)
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/installed/worker.cmake)
 
-add_library(tsugumi_client STATIC IMPORTED)
-set_target_properties(tsugumi_client PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_ROOT}/lib/libtsugumi_client.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_ROOT}/include;${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_client INTERFACE flatbuffers::flatbuffers CURL::libcurl Threads::Threads)
-add_library(tsugumi_sdk_describe STATIC IMPORTED)
-set_target_properties(tsugumi_sdk_describe PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_sdk_describe.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-sdk-describe")
-target_link_libraries(tsugumi_sdk_describe INTERFACE flatbuffers::flatbuffers)
+include(${CMAKE_CURRENT_LIST_DIR}/installed/tls.cmake)
 
-add_library(tsugumi_host_core STATIC IMPORTED)
-set_target_properties(tsugumi_host_core PROPERTIES
-  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_host_core.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core;${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_host_core INTERFACE tsugumi_sdk_describe tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
-if(APPLE)
-  target_link_libraries(tsugumi_host_core INTERFACE "-framework CoreFoundation")
-else()
-  find_package(ICU REQUIRED COMPONENTS uc i18n)
-  target_link_libraries(tsugumi_host_core INTERFACE ICU::uc ICU::i18n PkgConfig::CRYPTO)
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/installed/document.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/installed/nix.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/installed/daemon.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/installed/client.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/installed/sdk.cmake)
+
+include(${CMAKE_CURRENT_LIST_DIR}/installed/host.cmake)
 
 foreach(program tsugumid tsugumi-hostd tsugumi-worker tsugumi-workerd tsugumi-rpc)
   add_executable(${program} IMPORTED)

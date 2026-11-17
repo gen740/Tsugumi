@@ -1,0 +1,5 @@
+add_executable(tsugumi-workerd src/main.cc src/local_service.cc)
+target_include_directories(tsugumi-workerd PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(tsugumi-workerd PRIVATE tsugumi_core)
+target_compile_options(tsugumi-workerd PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+install(TARGETS tsugumi-workerd RUNTIME DESTINATION bin)

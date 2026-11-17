@@ -31,82 +31,17 @@ if(TSUGUMI_BUILD_CORE)
   target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
 endif()
 
-set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
-set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker local_worker remote_worker tsugumi service_common agent host vm_host)
-
-# Bindings are generated with the standard flatc into the build tree only.
-set(_gen_cpp "")
-set(_gen_bfbs "")
-foreach(schema ${TSUGUMI_SCHEMAS})
-  set(_src ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
-  list(APPEND _gen_cpp ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h)
-  add_custom_command(
-    OUTPUT ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h
-    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable --gen-object-api
-            --keep-prefix --include-prefix tsugumi/protocol
-            -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol ${_src}
-    COMMAND ${TSUGUMI_FLATC} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}
-            -o ${TSUGUMI_GEN_DIR}/python ${_src}
-    COMMAND ${TSUGUMI_FLATC} --swift --gen-object-api -I ${TSUGUMI_PROTOCOL_DIR}
-            -o ${TSUGUMI_GEN_DIR}/swift ${_src}
-    DEPENDS ${_src} ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/host.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs
-    COMMENT "flatc ${schema}.fbs"
-    VERBATIM)
-endforeach()
-foreach(schema worker local_worker remote_worker tsugumi agent host vm_host)
-  list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
-  add_custom_command(
-    OUTPUT ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs
-    COMMAND ${TSUGUMI_FLATC} -b --schema --bfbs-comments --bfbs-builtins
-            -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/bfbs
-            ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs
-    DEPENDS ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/host.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs
-            ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs
-    VERBATIM)
-endforeach()
-add_custom_target(tsugumi_protocol_gen DEPENDS ${_gen_cpp} ${_gen_bfbs})
-
-add_library(tsugumi_protocol INTERFACE)
-add_dependencies(tsugumi_protocol tsugumi_protocol_gen)
-target_include_directories(tsugumi_protocol INTERFACE ${TSUGUMI_GEN_DIR}/cpp)
+include(cmake/protocol.cmake)
 
 find_package(flatbuffers CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 add_subdirectory(client)
 
 if(TSUGUMI_BUILD_CORE)
-  find_package(flatbuffers CONFIG REQUIRED)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
-  # A project's versions are a git repository (core/src/versions.cc).
-  pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
-  # A static libgit2 (nix/libgit2-local.nix) brings none of its own
-  # dependencies: add what its pkg-config file lists as private, after it.
-  if(LIBGIT2_LINK_LIBRARIES MATCHES "libgit2\\.a$")
-    set(_libgit2_private ${LIBGIT2_STATIC_LIBRARIES})
-    list(REMOVE_ITEM _libgit2_private git2)
-    target_link_directories(PkgConfig::LIBGIT2 INTERFACE ${LIBGIT2_STATIC_LIBRARY_DIRS})
-    target_link_libraries(PkgConfig::LIBGIT2 INTERFACE ${_libgit2_private} ${LIBGIT2_STATIC_LDFLAGS_OTHER})
-  endif()
-  # The embedded Nix evaluator: the same Nix version as the environment's daemon.
-  pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-flake nix-util)
-  # Hashing: CommonCrypto on macOS, OpenSSL's libcrypto elsewhere.
-  if(NOT APPLE)
-    pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
-  endif()
-  find_package(Threads REQUIRED)
-  find_package(CURL REQUIRED)
-  find_package(OpenSSL 3 REQUIRED)
+  include(cmake/native-dependencies.cmake)
   add_subdirectory(sdk)
   add_subdirectory(workerd)
-  add_library(tsugumi_peer_tls STATIC core/src/util/peer_tls.cc)
-  target_include_directories(tsugumi_peer_tls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core/src)
-  target_link_libraries(tsugumi_peer_tls PUBLIC OpenSSL::SSL tsugumi_workerd_support)
-  target_compile_options(tsugumi_peer_tls PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-  if(TARGET tsugumi-workerd)
-    target_link_libraries(tsugumi-workerd PRIVATE tsugumi_peer_tls)
-  endif()
+  include(cmake/peer-tls.cmake)
   add_subdirectory(core)
 endif()
 

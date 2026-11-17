@@ -19,215 +19,28 @@ endif()
 add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough
   -Wmissing-designated-field-initializers)
 
-# The real core serves its public RPC. Only the external Nix evaluator is
-# replaced: these targets compile its double and do not link tsugumi_nix_eval.
-# This is installed only by ci-core.
-add_executable(tsugumid-mock
-  ${_core_main}
-  doubles/nix_eval.cc)
-target_include_directories(tsugumid-mock PRIVATE ${_core_headers})
-target_link_libraries(tsugumid-mock PRIVATE tsugumi_core)
-add_dependencies(tsugumid-mock tsugumid tsugumi-worker tsugumi-workerd)
-
-if(NOT TSUGUMI_INSTALLED_CORE)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_test(NAME core_rpc
-    COMMAND ${Python3_EXECUTABLE} -m pytest -q --core-report -m "not environment" ${CMAKE_CURRENT_SOURCE_DIR})
-  set_tests_properties(core_rpc PROPERTIES
-    TIMEOUT 300
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>;TSUGUMI_WORKERD=$<TARGET_FILE:tsugumi-workerd>")
-endif()
+include(cmake/daemon-double.cmake)
 
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
-# Input descriptions share the core resolver and Host presentation without sockets.
-add_executable(tsugumi_input_types_tests input_types_test.cc doubles/nix_eval.cc)
-target_include_directories(tsugumi_input_types_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_input_types_tests PRIVATE tsugumi_host_core tsugumi_core GTest::gtest)
-gtest_discover_tests(tsugumi_input_types_tests TEST_PREFIX "input_types." DISCOVERY_MODE PRE_TEST)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_input_types_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/document.cmake)
 
-# The worker condition seam is independent of services and scheduling.
-add_executable(tsugumi_worker_condition_tests worker_condition_test.cc)
-target_include_directories(tsugumi_worker_condition_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_worker_condition_tests PRIVATE tsugumi_core GTest::gtest_main)
-target_compile_options(tsugumi_worker_condition_tests PRIVATE
-  -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-gtest_discover_tests(tsugumi_worker_condition_tests TEST_PREFIX "worker_condition."
-  DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_worker_condition_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/host-rpc.cmake)
 
-# Product client -> real Agent/core sockets -> controlled external model.
-# These scenarios neither include nor link private core implementation APIs.
-if(TSUGUMI_INSTALLED_CORE)
-  set(_test_environment_daemon ${CMAKE_INSTALL_PREFIX}/libexec/tsugumi-tests/tsugumi-environment-daemon-double)
-  # Nix build sources are temporary; installed tests own their guide fixtures.
-  set(_test_guide_root ${CMAKE_INSTALL_PREFIX}/share/tsugumi/guide-tests)
-  install(FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../agent/Shared/guide-script.json
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../agent/Shared/guide-script.en.json
-    DESTINATION share/tsugumi/guide-tests/agent/Shared
-    COMPONENT guide-test-resources)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/service-contract.json
-    DESTINATION share/tsugumi/guide-tests/tests/fixtures
-    COMPONENT guide-test-resources)
-  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../demos
-    DESTINATION share/tsugumi/guide-tests
-    COMPONENT guide-test-resources)
-else()
-  set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
-  set(_test_guide_root ${PROJECT_SOURCE_DIR})
-endif()
-add_executable(tsugumi_agent_rpc_tests agent/conversation_store_rpc_test.cc agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/exclude_rpc_test.cc agent/run_wait_rpc_test.cc agent/version_note_rpc_test.cc agent/save_rpc_test.cc agent/layout_rpc_test.cc agent/edit_rpc_test.cc agent/mnist_save_rpc_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_agent_rpc_tests PRIVATE PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
-target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
-  TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
-  TSUGUMI_ENVIRONMENT_DAEMON="${_test_environment_daemon}"
-  TSUGUMI_HOST_BINARY="$<TARGET_FILE:tsugumi-hostd>"
-  TSUGUMI_PROJECT_BINARY="${_test_mock}"
-  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
-add_executable(tsugumi-environment-daemon-double doubles/environment_daemon.cc)
-target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_host_core)
-target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-add_dependencies(tsugumi_agent_rpc_tests tsugumi-hostd tsugumid-mock tsugumi-environment-daemon-double)
-gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
-  TEST_FILTER "-RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
-  PROPERTIES TIMEOUT 30)
-# This scenario follows the real environment's startup and cleanup budget.
-gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
-  TEST_FILTER "RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
-  TEST_LIST real_environment_tests
-  PROPERTIES TIMEOUT 120)
+include(cmake/client.cmake)
 
-add_executable(tsugumi_rpc_cli_tests rpc_cli_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_rpc_cli_tests PRIVATE GTest::gtest_main hosq Threads::Threads)
-target_compile_options(tsugumi_rpc_cli_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-target_compile_definitions(tsugumi_rpc_cli_tests PRIVATE
-  TSUGUMI_RPC_BINARY="$<TARGET_FILE:tsugumi-rpc>"
-  TSUGUMI_PROJECT_BINARY="${_test_mock}"
-  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_PROJECT_SCHEMA="${_test_project_schema}"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
-add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
-gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
-  PROPERTIES TIMEOUT 30)
+include(cmake/remote-result.cmake)
 
-add_executable(tsugumi_remote_result_tests shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc remote_lifetime_test.cc source_transfer_test.cc host_requirements_test.cc)
-target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers} ${_workerd_headers})
-target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
-target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISCOVERY_MODE PRE_TEST
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
-  PROPERTIES TIMEOUT 30)
+include(cmake/worker.cmake)
 
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi-environment-daemon-double tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
-    RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/tls.cmake)
 
-add_executable(tsugumi_workerd_tests workerd_test.cc)
-target_include_directories(tsugumi_workerd_tests PRIVATE ${_core_headers} ${_workerd_headers})
-target_link_libraries(tsugumi_workerd_tests PRIVATE tsugumi_workerd_support)
-target_compile_options(tsugumi_workerd_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-add_test(NAME workerd_protocol_journal COMMAND tsugumi_workerd_tests)
+include(cmake/host.cmake)
 
-add_executable(tsugumi_worker_staging_tests worker_staging_test.cc)
-target_include_directories(tsugumi_worker_staging_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_worker_staging_tests PRIVATE tsugumi_workerd_support Threads::Threads)
-target_compile_options(tsugumi_worker_staging_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-add_test(NAME worker_staging COMMAND tsugumi_worker_staging_tests)
-set_tests_properties(worker_staging PROPERTIES TIMEOUT 15)
-add_executable(tsugumi_file_transfer_tests file_transfer_test.cc)
-target_include_directories(tsugumi_file_transfer_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_file_transfer_tests PRIVATE tsugumi_workerd_support)
-foreach(scenario large sparse shrink-stream shrink-sparse)
-  add_test(NAME file_transfer_${scenario} COMMAND tsugumi_file_transfer_tests ${scenario})
-  set_tests_properties(file_transfer_${scenario} PROPERTIES TIMEOUT 15)
-endforeach()
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_workerd_tests tsugumi_worker_staging_tests tsugumi_file_transfer_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/host-edit-driver.cmake)
 
-add_executable(tsugumi_peer_tls_tests peer_tls_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_peer_tls_tests PRIVATE tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
-target_compile_options(tsugumi_peer_tls_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-gtest_discover_tests(tsugumi_peer_tls_tests TEST_PREFIX "peer_tls." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 15)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_peer_tls_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/execution.cmake)
 
-# Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/file_result_test.cc agent/store_test.cc agent/context_measure_test.cc agent/context_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/model_catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc host/schema_encode_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/tool_arguments_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
-target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
-target_sources(tsugumi_host_settings_tests PRIVATE host/agent_exclude_test.cc short_identifiers_test.cc host/save_inspection_test.cc host/project_edit_test.cc host/project_operations_test.cc host/file_miss_test.cc)
-target_compile_definitions(tsugumi_host_settings_tests PRIVATE
-  TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
-  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")
-if(TSUGUMI_INSTALLED_CORE)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
-    DESTINATION share/tsugumi/guide-tests/tests/fixtures)
-endif()
-target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="tests/fixtures")
-target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_host_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
-target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_host_settings_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/nix.cmake)
 
-# Lets native client fixtures exercise the real pure host edit without sockets.
-add_executable(tsugumi_document_edit_driver agent/document_edit_driver.cc)
-target_link_libraries(tsugumi_document_edit_driver PRIVATE tsugumi_host_core)
-target_compile_options(tsugumi_document_edit_driver PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_document_edit_driver RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
-
-add_executable(tsugumi_native_contract_tests native_contract_test.cc)
-target_include_directories(tsugumi_native_contract_tests PRIVATE ${_core_headers}
-  ${_test_sdk}/include ${_test_sdk}/worker/include ${_test_sdk}/worker/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../workerd/include ${CMAKE_CURRENT_SOURCE_DIR}/../../workerd/src)
-target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_protocol tsugumi_json
-  flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
-gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
-
-add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc local_worker_test.cc ${_local_service_source} doubles/nix_eval.cc)
-target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
-target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
-target_compile_definitions(tsugumi_execution_service_tests PRIVATE
-  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
-add_dependencies(tsugumi_execution_service_tests tsugumi-worker tsugumi-workerd)
-gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_execution." DISCOVERY_MODE PRE_TEST)
-
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_native_contract_tests tsugumi_execution_service_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
-
-# Embedded evaluator checks build tiny text derivations, never start a worker.
-add_executable(tsugumi_definition_evaluation_tests definition_evaluation_test.cc)
-target_include_directories(tsugumi_definition_evaluation_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_definition_evaluation_tests PRIVATE tsugumi_core tsugumi_nix_eval GTest::gtest_main)
-target_compile_options(tsugumi_definition_evaluation_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
-gtest_discover_tests(tsugumi_definition_evaluation_tests TEST_PREFIX "definition_evaluation." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_definition_evaluation_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
-
-# Only transport/host lifetime seams; no VM or Nix evaluator is started.
-add_executable(tsugumi_vm_lifetime_tests vm_lifetime_test.cc)
-target_include_directories(tsugumi_vm_lifetime_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_vm_lifetime_tests PRIVATE tsugumi_host_core tsugumi_client GTest::gtest_main)
-gtest_discover_tests(tsugumi_vm_lifetime_tests TEST_PREFIX "vm_lifetime." DISCOVERY_MODE PRE_TEST)
-if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_vm_lifetime_tests RUNTIME DESTINATION libexec/tsugumi-tests)
-endif()
+include(cmake/vm.cmake)
