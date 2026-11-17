@@ -52,8 +52,6 @@ let
     build-users-group = nixbld
     sandbox = true
     # Registered paths must survive power loss, not just their database rows.
-    fsync-store-paths = true
-    fsync-metadata = true
     experimental-features = nix-command flakes
     substituters = https://cache.nixos.org
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=

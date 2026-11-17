@@ -50,12 +50,6 @@ A failed history/overlay remount or pre-unlink backing sync keeps the marker.
 SIGKILL, power loss and an expired shutdown
 deadline cannot be made orderly; they cause a content check on the next boot.
 
-`fsync-store-paths = true` and `fsync-metadata = true` address the separate window
-between Nix registering a path and its file data reaching persistent storage.
-The persistent private remote-worker store and image-builder store use the same
-settings. This protects durable registration; it does not restore already
-corrupt paths or repair physical storage failure.
-
 Boot writes and syncs the marker before store registration. A dirty marker,
 a missing health version (including **existing disks on the first new image
 boot**), or a changed boot closure runs root's

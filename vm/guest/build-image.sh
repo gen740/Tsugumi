@@ -77,9 +77,7 @@ else
       exec > /out/log 2>&1
       # Use the flake-pinned Nix for the image and its license metadata.
       # The builder image enables no experimental features.
-      export NIX_CONFIG="experimental-features = nix-command flakes
-fsync-store-paths = true
-fsync-metadata = true"
+      export NIX_CONFIG="experimental-features = nix-command flakes"
       nix shell --inputs-from /src nixpkgs#nix nixpkgs#python3 nixpkgs#erofs-utils -c sh /src/vm/guest/build-in-container.sh
       sync -f /cache
       touch /out/done

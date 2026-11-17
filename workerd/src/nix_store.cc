@@ -94,10 +94,6 @@ auto RemoteWorkerStore::realise(
     WorkerLogger* sink;
     ~ClearLog() { sink->clear(); }
   } clear_log{sink};
-  // The private store survives invocation/supervisor death. Persist imported
-  // and built paths before Nix registers them, just as in the shared VM.
-  nix::settings.getLocalSettings().fsyncStorePaths = true;
-  nix::settings.getLocalSettings().fsyncMetadata = true;
   nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;
   nix::settings.getLocalSettings().sandboxFallback = false;
   // This process is the only user of its namespace. For a root supervisor Nix
