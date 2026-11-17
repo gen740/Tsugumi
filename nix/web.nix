@@ -81,8 +81,8 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     share=$out/share/tsugumi
-    mkdir -p $share/web $share/agent $testSupport
-    cp -R ui/web/dist $share/web/dist
+    mkdir -p $share/ui/web $share/agent $testSupport
+    cp -R ui/web/dist $share/ui/web/dist
     cp -R demos flake.lock VERSION $share/
     cp -R sdk $share/sdk
     # Checks reuse installation and generated bindings, without putting the

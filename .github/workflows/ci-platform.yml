@@ -210,7 +210,7 @@ jobs:
         run: nix build --no-link .#cli
       - name: Adapter behavior
         env:
-          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/web/dist
+          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/ui/web/dist
         run: bash tests/ci/run-suite.sh adapters '${{ inputs.system }}'
 
   sdk:

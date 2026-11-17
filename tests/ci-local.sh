@@ -37,7 +37,7 @@ linux_job() {
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   local web system sdk_python
   web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
-  export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
+  export TSUGUMI_WEB_DIST="$web/share/tsugumi/ui/web/dist"
   step "Public Agent RPC tests"
   agent_checks
   step "Public core and CLI RPC tests"

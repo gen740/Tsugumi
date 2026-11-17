@@ -22,7 +22,7 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
     mkdir -p $out/bin $out/share
     ln -s ${web}/share/tsugumi $out/share/tsugumi
     makeWrapper ${nodejs}/bin/node $out/bin/tsugumi \
-      --add-flags "${web}/share/tsugumi/web/dist/server.js --open --reuse" \
+      --add-flags "${web}/share/tsugumi/ui/web/dist/server.js --open --reuse" \
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils

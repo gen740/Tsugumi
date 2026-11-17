@@ -30,7 +30,7 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$dist/cli"
-mkdir -p "$tree/bin" "$tree/web" "$tree/licenses" "$tree/Frameworks"
+mkdir -p "$tree/bin" "$tree/ui/web" "$tree/licenses" "$tree/Frameworks"
 cp "$repo/VERSION" "$tree/"
 install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 
@@ -54,8 +54,8 @@ codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-hos
 codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
 # The server finds these from ui/web/dist/server.js, as in the repository.
-cp -R "$repo/ui/web/dist" "$tree/web/dist"
-find "$tree/web/dist" -name '*.map' -delete
+cp -R "$repo/ui/web/dist" "$tree/ui/web/dist"
+find "$tree/ui/web/dist" -name '*.map' -delete
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 
