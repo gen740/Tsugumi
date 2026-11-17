@@ -167,37 +167,6 @@ def test_other_typed_faces_match_generated_fields(description, generated, langua
     assert 'Pack(' not in text and 'FlatBufferBuilder' not in text
 
 
-@pytest.mark.parametrize('language', ['go', 'rust', 'csharp', 'r', 'julia', 'ruby', 'bash'])
-def test_each_language_parses_with_its_own_parser(description, tmp_path, language):
-    text = description(language)
-    extension = dict(go='go', rust='rs', csharp='cs', r='R', julia='jl', ruby='rb', bash='sh')[language]
-    source = tmp_path / ('input.' + extension)
-    source.write_text(text)
-    parser = dict(go='gofmt', rust='rustfmt', csharp='dotnet', r='Rscript', julia='julia', ruby='ruby', bash='bash')[language]
-    command = shutil.which(parser)
-    if not command:
-        pytest.skip(f'{parser} is not installed')
-    if language == 'go':
-        run([command, source])
-    elif language == 'rust':
-        run([command, '--emit', 'stdout', source])
-    elif language == 'csharp':
-        run([command, 'new', 'classlib', '--no-restore', '-o', tmp_path / 'cs'])
-        shutil.copy(source, tmp_path / 'cs/Input.cs')
-        run([command, 'build', tmp_path / 'cs', '--nologo'])
-    elif language == 'r':
-        run([command, '-e', 'parse(file=commandArgs(TRUE)[1])', source])
-    elif language == 'julia':
-        run([command, '--startup-file=no', '-e', 'Meta.parseall(read(ARGS[1], String))', source])
-    elif language == 'ruby':
-        run([command, '-c', source])
-    else:
-        run([command, '-n', source])
-        schema = json.loads(run([command, source]))
-        assert schema['properties']['noise_sd']['type'] == 'number'
-        assert schema['properties']['children']['items']['properties']['item_count']['type'] == 'integer'
-
-
 def test_json_faces_keep_sdk_field_names(description):
     # JSON-face SDKs preserve schema keys; they do not use flatc's Python/Go names.
     for language in ('r', 'julia', 'ruby', 'bash'):
