@@ -136,24 +136,6 @@ table HostRecentListRequest {}
 table HostRecentRememberRequest { path:string (required); }
 table HostRecentForgetRequest { paths:[string]; }
 
-// Pure edit of the affected project document. Definition folders and their
-// bytes move unchanged under externals/<id>/ in the caller's single save.
-// Existing scope boundary references are rerouted through the new Card.
-table DocumentSubgraph { project_json:string (required); external_json:string (required); link_json:string (required); }
-
-// Internal transformation result: the host stages these byte transfers in
-// the same atomic operation as the document edits.
-table DocumentFileCopy { from:string (required); to:string (required); }
-table DocumentCopy { edits_json:string (required); files:[DocumentFileCopy]; }
-
-// Scope state contains project, layout and definitions, plus current visible
-// port names under ports/<card>/{inputs,outputs} for a Draft '+' gesture.
-table DocumentConnect { state_json:string (required); inserted_id:string; needs_fork:bool; }
-
-// The host serves the shared ui/shared/templates catalog for a new Card.
-table DocumentTemplateFile { path:string (required); text:string (required); }
-table DocumentTemplate { definition_json:string (required); files:[DocumentTemplateFile]; }
-
 // Intent editing, shared by all clients. Object fields and keyed array entities
 // are selected by identity; numeric array offsets are never entity identities.
 table ProjectSelector {

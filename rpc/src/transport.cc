@@ -199,12 +199,12 @@ void TransportServer::send(ConnId conn, std::string bytes) {
 void TransportServer::send_note(ConnId conn, PendingMessage note) {
   if (auto it = conns_.find(conn); it != conns_.end()) enqueue_note(*it->second, note);
 }
-void TransportServer::clear_notes(ConnId conn, const std::string& group) {
+void TransportServer::clear_notes(ConnId conn) {
   auto it = conns_.find(conn);
   if (it == conns_.end()) return;
   auto& c = *it->second;
   for (auto o = c.outq.begin(); o != c.outq.end();) {
-    if (o->note && (group.empty() || o->note->group == group)) {
+    if (o->note) {
       c.out_bytes -= o->note->approx_bytes;
       o = c.outq.erase(o);
     } else ++o;

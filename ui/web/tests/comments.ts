@@ -4,7 +4,7 @@ import { cardIds } from './cardIds'
 // what is kept; the canvas shows how many are open and the Agent is asked about those only.
 import assert from 'node:assert/strict'
 import { get, parse, serialize, str } from '../shared/json'
-import { savedComments, toolSummary } from '../shared/agentShared'
+import { savedComments } from '../shared/agentShared'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -129,16 +129,6 @@ const session = () => {
   await s.save()
   assert.deepEqual(s.comments(k)[0].cards, [], 'opening it again takes back what the resolving save did')
   assert.equal(s.comments(k)[0].stateBy, 'user')
-}
-
-{
-  // A save's result, whose end the chat row's start would cut off.
-  const list = [{ card: 'plot', text: 'log scale', change: 'resolved', by: 'agent', resolution: 'done', cards: ['plot', 'audit'] }]
-  const result = JSON.stringify({ reply: 'SaveResult', value: { delta: { big: 'x'.repeat(2000) }, comments: list } })
-  const row = 'args\n→ ' + toolSummary(result)
-  assert.deepEqual(savedComments(row), list)
-  assert.deepEqual(savedComments('args\n→ ' + toolSummary('{"reply":"RunStatus"}')), [])
-  assert.equal(toolSummary('x'.repeat(500)).length, 400)
 }
 
 console.log('comments: ok')

@@ -1,4 +1,4 @@
-// What the Swift and the web Agent share (agent/Shared/agent.json): the RPC
+// What the Swift and the web Agent share (hostd/agent/Shared/agent.json): the RPC
 // requests offered as tools, the fields the Agent fills itself, its own
 // reference tool and model options.
 import shared from '../../../hostd/agent/Shared/agent.json'
@@ -20,7 +20,7 @@ export function helperScopeLabel(request: string): string {
 
 export const AGENT = shared
 
-/** What a connection offers for a model (agent/Shared/agent.json, from the
+/** What a connection offers for a model (hostd/agent/Shared/agent.json, from the
  *  providers' documents). A model not listed offers nothing: nothing is sent
  *  that the provider might refuse. */
 export interface ModelOptions {
@@ -47,19 +47,6 @@ export function modelChoices(connection: string, model: string, effort: string, 
 /** `{name}` in a text replaced by its value, in one pass (values are not read again). */
 export function fill(text: string, values: Record<string, string>): string {
   return text.replace(/\{(\w+)\}/g, (m, k: string) => values[k] ?? m)
-}
-
-/** What a tool's row in the chat shows of its result: its start, after what a
- *  save did to the comments on Cards (the result's end, which the start cuts off). */
-export function toolSummary(result: string): string {
-  let comments: unknown
-  if (result.startsWith('{"reply":"SaveResult"') && result.includes('"comments"')) {
-    try {
-      comments = JSON.parse(result)?.value?.comments
-    } catch {}
-  }
-  const head = Array.isArray(comments) && comments.length ? `comments: ${JSON.stringify(comments)}\n` : ''
-  return head + result.slice(0, 400)
 }
 
 /** A change to a comment, as a save's result and the chat row have it. */

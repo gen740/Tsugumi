@@ -24,7 +24,7 @@ const session = () => {
   const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
   inner.subscription = 'sub'
   inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}',
-    definitions: [definition('a', '{"template":"draft"}')], resolution: [resolved('a')] }), true)
+    definitions: [definition('a', '{"template":"draft"}')], resolution: [resolved('a')] }))
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }
 

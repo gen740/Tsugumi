@@ -123,7 +123,7 @@ struct ModelMenuTests {
     let item = models[1]
     _ = (item.target as? NSObject)?.perform(item.action, with: item)
     #expect(picked == ["anthropic", "a1"])
-    m.setCurrent(provider: "anthropic", model: "a1")
+    m.setContents(connections: [.init(id: "anthropic", name: "Anthropic API", models: ["a1", "a2"]), .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])], provider: "anthropic", model: "a1", names: ["g1": "GPT One"])
     #expect(m.menu.items.filter { $0.state == .on }.map(\.title) == ["a1"])
   }
 
@@ -160,12 +160,12 @@ struct ModelMenuTests {
     #expect(effortItems().first { ($0.representedObject as? [String])?.last == "xhigh" }?.state == .on)
     #expect(fastItem()?.state == .on)
     press(fastItem()); #expect(fast == false)
-    m.setCurrent(provider: "anthropic", model: "claude-sonnet-4-6")
+    m.setContents(connections: connections, provider: "anthropic", model: "claude-sonnet-4-6", names: [:])
     #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ["", "low", "medium", "high", "max"])
     #expect(fastItem()?.isEnabled == false)
-    m.setCurrent(provider: "anthropic", model: "claude-haiku-4-5")
+    m.setContents(connections: connections, provider: "anthropic", model: "claude-haiku-4-5", names: [:])
     #expect(effortItems().isEmpty && fastItem()?.isEnabled == false)
-    m.setCurrent(provider: "chatgpt", model: "gpt-6.1-sol")
+    m.setContents(connections: connections, provider: "chatgpt", model: "gpt-6.1-sol", names: [:])
     #expect(fastItem()?.isEnabled == false)
   }
 }

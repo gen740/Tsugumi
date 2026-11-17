@@ -7,12 +7,13 @@ page.window ??= globalThis
 page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 const originalFetch = globalThis.fetch
 let send: any
+let rows: any[] = []
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
 globalThis.fetch = (async (url, init) => {
   let value: unknown = {}
   if (url === '/api/chat/sessions') value = [{ id: 'scope-chat', title: 'Chat', updatedAt: 0, messages: 0 }]
   if (url === '/api/skills') value = [{ name: 'review', path: 'builtin:review', scoped: true, scope: ['read'] }]
-  if (url === '/api/chat/conversation') value = { conversation: { id: 'scope-chat', rows: [], messages: [], archive: [], helpers: [], usage: {} } }
+  if (url === '/api/chat/conversation') value = { conversation: { id: 'scope-chat', rows, messages: [], archive: [], helpers: [], usage: {} } }
   if (url === '/api/chat/send') send = JSON.parse(String(init!.body))
   return { ok: true, json: async () => value } as Response
 }) as typeof fetch
@@ -31,8 +32,9 @@ try {
   assert.match(label, /read: outer\/a, b/)
   assert.match(label, /write: —/)
   assert.match(label, /run: —/)
-  const internal = chat as any
-  internal.load({ rows: [{ id: 'turn:0', kind: 'helper', name: 'review', state: 'completed', text: 'Read only: finding', instruction: 'Review the selected Cards', scopeJa: '読む: outer/a, b, 変更: なし, 実行: なし', scopeEn: 'Read: outer/a, b, Change: none, Run: none', children: [] }] })
+  rows = [{ id: 'turn:0', kind: 'helper', name: 'review', state: 'completed', text: 'Read only: finding', instruction: 'Review the selected Cards', scopeJa: '読む: outer/a, b, 変更: なし, 実行: なし', scopeEn: 'Read: outer/a, b, Change: none, Run: none', children: [] }]
+  chat.select('scope-chat')
+  await flush()
   assert.equal(chat.items[0].role, 'helper')
   assert.equal(chat.items[0].helper, 'review')
   assert.match(chat.items[0].text, /Read only: finding/)

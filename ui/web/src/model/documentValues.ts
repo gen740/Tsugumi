@@ -1,4 +1,4 @@
-import { clone, jeq, J, JObj, get, obj } from '../../shared/json'
+import { clone, jeq } from '../../shared/json'
 import type { DefinitionDraft, ExternalProject } from './session'
 
 export const defEq = (a: DefinitionDraft | undefined, b: DefinitionDraft | undefined): boolean =>

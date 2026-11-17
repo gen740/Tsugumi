@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 48 requests.
+There are 47 requests.
 
 ## Connection
 
@@ -41,7 +41,6 @@ No fields.
 | Request | Response | Description |
 | --- | --- | --- |
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
-| [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | Read current documents, definitions, sources and revision. |
 | [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
 | [`CardId`](#cardid) | CardIdResult | Reserve a permanent unique Card id from stem; repeated calls reserve fresh ids. |
@@ -59,12 +58,6 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `view_id` | `string` |  |  |
-
-### ProjectClose
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `subscription_id` | `string` | yes |  |
 
 ### ProjectInspect
 

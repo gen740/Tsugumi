@@ -311,10 +311,6 @@ export class ChatController extends Observable {
     void this.request('/api/chat/resume', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
-  private load(c: Conversation) {
-    this.items = c.rows.map(presentedItem)
-  }
-
   private async createSession(): Promise<string> {
     return (await api<{ id: string }>('/api/chat/new', { path: this.session.dir })).id
   }

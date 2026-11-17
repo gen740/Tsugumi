@@ -902,8 +902,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
     std::vector<std::string> files;
     for (const auto& file : edit.files)
       files.push_back(
-          json::Encode(json::Members{{"path", json::Quote(file->path)},
-                                     {"text", json::Quote(file->text)}}));
+          json::Encode(json::Members{{"path", json::Quote(file.path)},
+                                     {"text", json::Quote(file.text)}}));
     return {json::Encode(json::Members{
                 {"definition_json", json::Quote(edit.definition_json)},
                 {"files", json::Encode(files)}}),

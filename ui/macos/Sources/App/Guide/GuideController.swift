@@ -69,11 +69,6 @@ struct GuideBubble: Equatable {
   var local = false
 }
 
-/// The guide reads the project on the user's screen; on Home there is none.
-private struct GuideNoProject: Error, CustomStringConvertible {
-  var description: String { Agent.guideText("noProject") }
-}
-
 /// The guide's reads go to the project of the window the user asked from.
 private struct GuideTransport: ToolTransport {
   @MainActor func project() async throws -> AgentProject? {

@@ -462,3 +462,85 @@ with SwiftPM/Seatbelt, Linux builders and VM/app execution. Apply
 `plans/layout-protected-skill-paths.patch` when `.agents` is writable. No further
 source relocation is pending in this continuation. The owner will stage and
 commit the three changed files.
+
+## Unused-code cleanup (2026-11-17)
+
+Audited tracked native, Swift, Web, SDK, guest, CLI, Nix/CMake, scripts,
+contracts, generated consumers, tests and documentation. References were checked
+across owners and platforms, including Agent reflection catalogs, runtime
+callbacks, installed targets, template resources and Card environment inputs.
+A declaration or a test alone was not treated as a production caller.
+
+| Removed or simplified | Evidence |
+| --- | --- |
+| `ProjectCloseRequest`, its service handler and `Server::unsubscribe`; both clients' unused `closeSubscription` wrappers; optional group filter in `TransportServer::clear_notes` | No client invoked either wrapper and no test sent the request. Remaining mentions were schema/dispatch/docs and negative catalog assertions. Clients close the connection; `Server::State::disconnected` and `Service::disconnected` release subscriptions. Reopening still replaces the subscription and clears queued notes. Coalescing groups remain in use. |
+| Six Host contract tables: `DocumentSubgraph`, `DocumentCopy`, `DocumentFileCopy`, `DocumentConnect`, `DocumentTemplate`, `DocumentTemplateFile` | Not members of any request, reply, event or containing wire table. Only Host transformations used their generated C++ object types. Replaced them with private value structs; operations and Agent tools retain the same results and bytes. |
+| Mac/Web JSON-to-FlatBuffer encoders and encoder-only helpers; `InvalidArguments`; Swift `AgentError.invalidArguments` and `.cancelled` | Neither encoder had a production caller after Host took over Agent tool requests. Only Swift `ContractTests` called `build`; the decoder remains used by recorded-value and Card-settings views. The two error cases had no remaining constructor sites. |
+| Swift `ContractTests.swift`, its 23 `flatjson` fixture cases, `RPCSchema`, and the Swift plugin's RPC BFBS resource command | The deleted encoder test was the only reader of the bundled RPC schema. Remaining fixture sections still serve model-menu/delegate tests. Runtime port schemas and native/server BFBS generation remain in use. |
+| Both raw project `callRaw` methods, Swift raw-table wrapper/accessor, browser `Change` builders and raw-dispatch branch | No production or test caller outside those implementations; Agent requests use Host adapters. Typed request handling remains. |
+| `HistoryVersionMismatch.diagnostic`, `GuideNoProject`, `toolSummary` on both clients, `hasPendingSignIns` | No production reader/constructor/caller. History decoding and explicit recovery remain. Host already authors chat result summaries; removed the test block for the obsolete client formatter and test-only pending-map assertions. |
+| Mac/Web `isOwnCard`, `hasSource`, `confirmedCardDefinitionDraft`, `restartEnvironment`, `updateGroup`, `resultSummary`; Mac `rpcBytes`; Web `setPosition`, `placementPoint`, `noteIds`, `groupIds` | No references outside their declarations/bodies. Current operation/selection, layout and display paths use other methods. |
+| Test-only convenience APIs: Mac/Web `renameCard`; Web `setParam` and `sourceData`; Mac `ModelMenu.setCurrent`, `EnvironmentManager.attachedFolders`, `CoreHostClient.validateLayout`; three Swift `Change` constructors | Production had no callers. Retained behavior coverage through the actual mutation/menu entry points and raw RPC fixture setup. The three raw document constructors now live only in `SyncTests`' private fixture. |
+| Browser layout-validation wrapper and HTTP route; abandoned `ChatController.load` | No application caller. Agent `LayoutValidateRequest` remains reachable through its catalog and Host adapter. Chat tests now exercise reload/presentation events, the paths production uses. |
+| Both revision reducers' `fromSave` state/arguments and both snapshots' `resetDraft` argument | All callers used the default save flag, and the final reducers ignored it; snapshot implementations ignored resetDraft. Ordered reply/notification application and waiters remain covered by existing tests. |
+| `NixEvaluator::heap_bytes` (including its double) and private JSON `BuildCache` | Only declaration/definition existed for heap_bytes; no serialization or reader instantiated BuildCache. Current evaluation cache records use other types. |
+| 18 translation entries (17 Mac, 1 Web) and unused Web imports/layout proposal types | No Mac source or dynamic guide/demo label read the removed keys; Web's exact key inventory identified its orphan. `LayoutPlace`, `LayoutPortOrder`, `LayoutProposal` had only obsolete imports/type-to-type references. |
+
+### Retained or listed for follow-up
+
+- `RevisionEdit.apply` / inline edit `commit` carry an unused `overwrite`
+  argument, and the raw-definition Apply action also ignores its overwrite
+  choice. This is tied to visible conflict controls: selecting the intended
+  retry semantics needs behavior work, so it is listed rather than changed.
+- `Aggregate.total_duration_ms` has no direct UI read, but is populated in
+  `service_run.cc` and exposed to Agent schema-driven results. Shell size and
+  truncation fields similarly reach Agent results through generated builders.
+  They are not established dead fields.
+- Keep AppKit/Virtualization/SwiftPM/Astro callback entry points, manual tools,
+  installed CMake targets and SDK/Card environment inputs even when a token
+  search finds no direct caller. Cross-platform source and packaging references
+  supplied no additional proven dead target or platform path.
+- The compile-on-boot source share, `vm-<hash>` publication and idle self-exit
+  implementations are already absent. Current `vm-source-bundle.py` produces
+  release redistribution sources; history format refusal/explicit archival is
+  active recovery behavior, not a compatibility reader. Similar worker-loading
+  tests cover different standby/reuse boundaries; the Python AST comparison
+  found no identical test bodies to delete.
+- `.agents` was not changed. The existing
+  `plans/layout-protected-skill-paths.patch` remains for the owner.
+
+### Validation of this cleanup
+
+- `python3 protocol/generate_docs.py`, the relocated
+  `python3 hostd/agent/Shared/generate.py`, and
+  `nix shell --inputs-from . nixpkgs#flatbuffers -c python3 tests/tools/generate_service_vectors.py`
+  completed. Native CMake and Web generation regenerated C++/Python/Swift/TS
+  bindings and BFBS. Deleted stale per-type Python outputs for the seven
+  removed tables (flatc does not remove old files). Service wire goldens have
+  no delta; `docs/Protocol.md` now lists 47 project requests.
+- `nix develop -c cmake --build build -j 10` passed, including all native
+  products, production document edit driver and gtest targets.
+- Isolated native CTest excluding `core_rpc`: 765 passed, 7 skipped,
+  12 failed of 784. All 12 failures contain nested Seatbelt refusal
+  (`sandbox_apply: Operation not permitted`). Skips: four shell probes,
+  one scenario-only Agent probe and two unconfigured formatter tools.
+- Isolated pytest for transport, RPC schema/contracts, project tool operations,
+  definitions and both evaluation-reuse/economy files: 91 passed. Isolated
+  `tests/python/test_claude_code_plugin.py`: 14 passed with the build-tree mock.
+  The full core Python suite was not repeated.
+- `tests/check-fast.sh --no-nix`: all 79 static assertions passed.
+- Web generation, shared/browser/server typechecks, `npx tsc --noEmit`, full
+  isolated Web suite with the production edit driver, and `npm run build`
+  (Wasm, browser/server/MCP and player) passed. The Keychain OS-command record
+  stayed empty. Documentation build and all 10 documentation tests passed.
+- UI, CoreTests and independent VM Swift tests could not start: CoreTests/VM
+  manifest compilation requires denied Seatbelt; UI manifest compilation
+  cannot write the system module cache. Syntax parsing of changed Swift files
+  passed; this is not a Swift build/typecheck/test pass. The first attempts
+  inside the Nix shell also lacked its configured Swift developer tool; the
+  system Xcode attempts above establish the sandbox failures.
+- Each isolated wrapper exited nonzero because cleanup cannot invoke `ps`.
+  Concurrent runs also reported other validators' temporary paths. Passing
+  assertions do not establish clean process cleanup/isolation.
+- No app, VM, Docker, Linux build/image boot or signed packaging was run in
+  this sandbox. No index mutation, staging, commit or `.agents` write was made.

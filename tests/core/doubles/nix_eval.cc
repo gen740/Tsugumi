@@ -208,6 +208,5 @@ auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)
   return result;
 }
 
-auto NixEvaluator::heap_bytes() -> uint64_t { return 0; }
 
 }  // namespace tsugumi

@@ -146,7 +146,6 @@ class Service : public RequestSink {
   void version_graph(RequestIn& req);
   void version_canvas(RequestIn& req);
   void version_note(RequestIn& req);
-  void close_project(RequestIn& req);
   auto project_host_requirements(RequestIn& req) -> void;
   void inspect(RequestIn& req);
   void validate(RequestIn& req);

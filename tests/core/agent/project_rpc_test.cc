@@ -1145,7 +1145,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(JsonString(saved.View(), "/text"), "/reply"),
             "CardIdResult");
   for (const auto *name :
-       {"view_save", "view_set_visible", "project_open", "project_close"})
+       {"view_save", "view_set_visible", "project_open"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
@@ -2159,7 +2159,7 @@ TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   StartProject();
   const auto conversation = Conversation("unlisted-tools");
   for (const auto *name : {"view_save", "view_set_visible", "project_open",
-                           "project_close", "session_hello"})
+                           "session_hello"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 

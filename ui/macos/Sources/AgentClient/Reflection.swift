@@ -110,16 +110,12 @@ public struct BFBS {
 
 public enum AgentError: Error, CustomStringConvertible {
   case schema(String)
-  case invalidArguments(String)
   case provider(String)
-  case cancelled
 
   public var description: String {
     switch self {
     case .schema(let s): return "schema: \(s)"
-    case .invalidArguments(let s): return "invalid tool arguments: \(s)"
     case .provider(let s): return "model provider: \(s)"
-    case .cancelled: return "cancelled"
     }
   }
 }

@@ -130,9 +130,6 @@ extension ProjectSession {
     }
   }
 
-  /// Whether a Card is one of this project's own (not inside a Card in Card).
-  func isOwnCard(_ k: CardKey) -> Bool { path(k).count == 1 }
-
   /// Definition folders of this project that no Card uses (copied from
   /// another project, or left over).
   var unplacedDefinitions: [String] {
@@ -200,15 +197,6 @@ extension ProjectSession {
     try await operate(.projectcreatecard, body: body)
     forgetResult(key(scope + [id]))
     return key(scope + [id])
-  }
-
-  /// A file's bytes as the draft sees them.
-  func rpcBytes(_ p: String) async throws -> Data {
-    guard let rpc else { throw RPCError.disconnected }
-    guard let hash = sources[p]?.hash else { throw RPCFailure(kind: .notFound, diagnostic: "unknown source: \(p)") }
-    // Autosave can advance the core's revision before its delta reaches us.
-    // Copy the manifest's exact bytes, regardless of unrelated canvas edits.
-    return try await rpc.readFile(path: p, atRev: nil, ifHash: hash)
   }
 
   @discardableResult
@@ -343,26 +331,6 @@ extension ProjectSession {
       else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content; inlineDraft?.initialMeta = after }
     }
     return ok && nameChanged ? e.card : nil
-  }
-
-  /// Changes only the human name. History and all exact addresses keep their identifiers.
-  func renameCard(_ k: CardKey, to raw: String) async throws {
-    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let problem = cardNameProblem(k, name) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
-    guard name != displayName(k) else { return }
-    guard let prefix = projectPrefix(Array(path(k).dropLast())), let id = path(k).last else { return }
-    let file = prefix + "definitions/\(id)/_meta.json"
-    let edit: Tsugumi_Host_ProjectEditT
-    if let meta = cardMeta(k) {
-      edit = fieldEdit(file, [.string("name")], old: meta["name"], new: .string(name))
-    } else {
-      let put = Tsugumi_Host_ProjectFilePutT()
-      put.filePath = file; put.expectMissing = true
-      put.bytes = Array(JSONValue.object([("name", .string(name))]).serialized().utf8)
-      edit = Tsugumi_Host_ProjectEditT()
-      edit.value = Tsugumi_Host_ProjectEditValueUnion(put, type: .projectfileput)
-    }
-    try await operateFields([edit])
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
@@ -578,17 +546,6 @@ extension ProjectSession {
     return id
   }
 
-  func updateGroup(_ id: String, _ fn: @escaping (inout JSONValue) -> Void) {
-    queueFields { [self] in
-      guard let scope = scopeHolding("groups", id), let prefix = projectPrefix(scope),
-            let before = groups(in: scope).first(where: { $0["id"]?.string == id }) else {
-        throw RPCFailure(kind: .notFound, diagnostic: "Unknown group: \(id)")
-      }
-      var after = before; fn(&after)
-      return [fieldEdit(prefix + "layout.json", [.string("groups"), .object([("id", .string(id))])], old: before, new: after)]
-    }
-  }
-
   /// Removes the group frame only; its Cards stay where they are.
   func ungroup(_ id: String) {
     queueFields { [self] in
@@ -788,15 +745,11 @@ extension ProjectSession {
     }
   }
 
-
-
   // MARK: - Definitions
 
   func removeDefinition(_ id: String) {
     selectionOperation(.deletedefinitions, cards: [key([id])], in: [])
   }
-
-  func hasSource(_ p: String) -> Bool { sources[p] != nil }
 
   func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }

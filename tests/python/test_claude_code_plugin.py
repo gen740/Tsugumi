@@ -1,4 +1,4 @@
-"""The Claude Code plugin's MCP server (web/dist/mcp.js): it starts the web UI
+"""The Claude Code plugin's MCP server (ui/web/dist/mcp.js): it starts the web UI
 host when none runs (found again through its server.json), opens a project,
 and runs the chat Agent's core tools there; a page sees each call (the bird
 flies to the Card) and nothing works before a project is open. Needs node, a
@@ -372,7 +372,7 @@ def test_tools_and_instructions(plugin):
     shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())
     project_names = set(shared["modelTools"]["core"])
     assert project_names <= set(names)
-    assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello", "agent_tool_call_cancel"} & set(names)
+    assert not {"view_save", "session_hello", "project_open", "agent_hello", "agent_tool_call_cancel"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
     write_project(root / "proj")

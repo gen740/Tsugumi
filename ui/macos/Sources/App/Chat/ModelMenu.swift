@@ -125,12 +125,6 @@ final class ModelMenu: NSObject, NSMenuDelegate {
     rebuild()
   }
 
-  func setCurrent(provider: String, model: String) {
-    self.provider = provider
-    self.model = model
-    rebuild()
-  }
-
   /// The items, also while the menu is open.
   private func rebuild() {
     var items = connections.isEmpty ? [] : choiceItems()

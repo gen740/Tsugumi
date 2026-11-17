@@ -13,9 +13,5 @@ public struct HistoryVersionMismatch: Sendable, Equatable {
     self.found = found
     self.expected = expected
   }
-
-  public var diagnostic: [String: String] {
-    ["kind": "incompatible_history", "found": found, "expected": expected]
-  }
 }
 

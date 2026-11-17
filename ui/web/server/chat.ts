@@ -2,7 +2,6 @@ import type { AccessGroup } from '../shared/chatPresentation'
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs'
 import path from 'node:path'
 import { modelChoices } from '../shared/agentShared'
 import { type AgentEvent, type ProviderConfig } from './agent'

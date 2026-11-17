@@ -159,10 +159,6 @@ struct NixpkgsPin {
   t::String<"narHash"> nar_hash;
 };
 
-struct BuildCache {
-  t::String<"out"> out;
-};
-
 struct SdkFileJson {
   t::String<"path"> path;
   t::String<"hash"> hash;

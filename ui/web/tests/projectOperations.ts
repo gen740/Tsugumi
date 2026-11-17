@@ -39,7 +39,7 @@ for (const echoFirst of [false, true]) {
   s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
-  }), true)
+  }))
   const entered = deferred<H.ProjectOperateRequestT>(), reply = deferred<R.SaveResultT>()
   s.operateProject = (request: H.ProjectOperateRequestT) => { entered.resolve(request); return reply.promise }
   const action = s.operateFields([s.fieldEdit('tsugumi.json', ['name'], 'old', 'new')])
@@ -110,7 +110,7 @@ for (const echoFirst of [false, true]) {
   s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{"flow":"topToBottom"}',
-  }), true)
+  }))
   const first = deferred<H.ProjectOperateRequestT>(), second = deferred<H.ProjectOperateRequestT>()
   const firstReply = deferred<R.SaveResultT>(), secondReply = deferred<R.SaveResultT>()
   let calls = 0
@@ -146,7 +146,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
     definitions: [new R.DefinitionT('a', '{"template":"draft"}')],
-  }), true)
+  }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     requests.push(request)
@@ -176,7 +176,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
-  }), true)
+  }))
   const entered = deferred<H.ProjectOperateRequestT>(), undoEntered = deferred<H.ProjectOperateRequestT>()
   const reply = deferred<R.SaveResultT>(), undoReply = deferred<R.SaveResultT>()
   let calls = 0
@@ -209,7 +209,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
     definitions: [new R.DefinitionT('a', '{"template":"draft"}', '{"description":"old"}')],
-  }), true)
+  }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     requests.push(request)
@@ -263,13 +263,13 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   assert.equal(await editor.rename(dir + 'data.bin', 'renamed.bin'), true)
   assert.equal(reads, 0, 'rename sends byte-preserving intent without a source read')
   assert.equal(await editor.apply(), true)
-  assert.deepEqual([...await s.sourceData(dir + 'renamed.bin')], binary)
+  assert.deepEqual([...await client.readFile(dir + 'renamed.bin', s.rev)], binary)
   await editor.text(dir + 'renamed.bin')
   const beforeRename = reads
   assert.equal(await editor.rename(dir + 'renamed.bin', 'again.bin'), true)
   assert.equal(reads, beforeRename)
   assert.equal(await editor.apply(), true)
-  assert.deepEqual([...await s.sourceData(dir + 'again.bin')], binary)
+  assert.deepEqual([...await client.readFile(dir + 'again.bin', s.rev)], binary)
 
   await s.addComment(card, 'one operation')
   assert.equal(s.comments(card)[0].text, 'one operation')

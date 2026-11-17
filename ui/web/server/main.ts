@@ -259,7 +259,6 @@ const routes: Record<string, Handler> = {
   'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
   'POST /api/layout/display-geometry': () => hostRequest('DisplayGeometryRequest', {}),
   'POST /api/layout/complete': (b) => hostRequest('LayoutCompleteRequest', b),
-  'POST /api/layout/validate': (b) => hostRequest('LayoutValidateRequest', b),
   'POST /api/layout/version-canvas': (b) => hostRequest('VersionCanvasRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
   'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),

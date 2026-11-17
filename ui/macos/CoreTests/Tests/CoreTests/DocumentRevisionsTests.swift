@@ -15,7 +15,7 @@ struct DocumentRevisionsTests {
       let stream = DocumentRevisions()
       stream.reset(10)
       var seen: [UInt64] = []
-      let apply: (Tsugumi_RPC_DocumentDeltaT, Bool) -> Void = { value, _ in seen.append(value.rev!) }
+      let apply: (Tsugumi_RPC_DocumentDeltaT) -> Void = { value in seen.append(value.rev!) }
       let own = delta(11, "mine")
       if echoFirst { stream.receive(own, apply: apply) }
       stream.receive(own, apply: apply) // The operation reply.
@@ -36,7 +36,7 @@ struct DocumentRevisionsTests {
     stream.reset(20)
     try await stream.applied(19)
     var calls = 0
-    stream.receive(delta(19, "old-reply")) { _, _ in calls += 1 }
+    stream.receive(delta(19, "old-reply")) { _ in calls += 1 }
     #expect(calls == 0)
   }
 }
@@ -46,7 +46,7 @@ extension DocumentRevisionsTests {
     let stream = DocumentRevisions()
     var seen: [UInt64] = []
     var completed = false
-    let apply: (Tsugumi_RPC_DocumentDeltaT, Bool) -> Void = { value, _ in seen.append(value.rev!) }
+    let apply: (Tsugumi_RPC_DocumentDeltaT) -> Void = { value in seen.append(value.rev!) }
     stream.receive(delta(1, "reply"), apply: apply)
     var waiter: Task<Void, Error>!
     // The main actor runs the waiter through its suspension before returning

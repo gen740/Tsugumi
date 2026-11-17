@@ -329,13 +329,6 @@ public actor CoreHostClient {
     return saved
   }
 
-  public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
-    let request = Tsugumi_Host_LayoutValidateRequestT()
-    request.json = json; request.removedCards = removedCards.map(Optional.some)
-    let result: Tsugumi_Host_LayoutValidatedT = try await layoutCall(.layoutvalidaterequest, request)
-    return result.json
-  }
-
   public func configure(_ config: ProviderConfig, conversationID: String) async throws {
     _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }

@@ -47,16 +47,6 @@ void Server::subscribe(ConnId conn, std::string id, std::string reply) {
     state_->transport.send(conn, std::move(reply));
   });
 }
-void Server::unsubscribe(ConnId conn, std::string id, std::string ack) {
-  state_->transport.ordered(conn, [this, conn, id = std::move(id), ack = std::move(ack)]() mutable {
-    auto it = state_->subscriptions.find(conn);
-    if (it != state_->subscriptions.end() && it->second->id == id) {
-      state_->transport.clear_notes(conn, id);
-      state_->subscriptions.erase(it);
-    }
-    state_->transport.send(conn, std::move(ack));
-  });
-}
 void Server::set_visible(ConnId conn, std::string id, std::set<std::string> cards, bool enabled,
                          std::string ack, std::vector<Note> initial) {
   state_->transport.ordered(conn, [this, conn, id = std::move(id), cards = std::move(cards), enabled,

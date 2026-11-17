@@ -393,7 +393,6 @@ public actor Agent {
     Shared.fill(Shared.guideTexts[key]!, values)
   }
 
-  public static func toolSummary(_ result: String) -> String { String(result.prefix(400)) }
 }
 
 /// Reads can cross a service restart. Stale readiness and a failed reconnect

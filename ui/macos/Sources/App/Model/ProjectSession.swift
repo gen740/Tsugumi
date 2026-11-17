@@ -685,20 +685,6 @@ final class ProjectSession {
     reconnectTask = nil
   }
 
-  /// Starts the environment again (folders shared with it are set when it
-  /// starts); unsaved edits stay in the draft.
-  func restartEnvironment() async {
-    // The old connection's end is not a loss to reconnect from.
-    listenTask?.cancel()
-    reconnectTask?.cancel()
-    reconnectTask = nil
-    await client?.close()
-    client = nil
-    setConnected(false)
-    try? await environments.stop(identity)
-    await connect()
-  }
-
   func stopEnvironment() {
     // A stopped environment stays stopped: its connection's end is not a
     // loss to reconnect from (that would start it again).
@@ -775,11 +761,11 @@ final class ProjectSession {
   /// Adopt an opened host project before accepting operations from a client.
   func receiveProjectSnapshot(_ snapshot: Tsugumi_RPC_ProjectSnapshotT, projectId: String) {
     self.projectId = projectId
-    apply(snapshot: snapshot, resetDraft: true)
+    apply(snapshot: snapshot)
     setConnected(true)
   }
 
-  private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT, resetDraft: Bool) {
+  private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT) {
     rev = s.rev ?? 0
     documentRevisions.reset(rev)
     executionRev = s.executionRev ?? 0
@@ -808,7 +794,7 @@ final class ProjectSession {
     }
     project = confirmedProject
     layout = confirmedLayout
-    documentRevisions.drain { delta, saved in applyOrderedDelta(delta, fromSave: saved) }
+    documentRevisions.drain { delta in applyOrderedDelta(delta) }
   }
 
   private func applyResolution(_ res: [Tsugumi_RPC_ResolvedCardT], _ diags: [Tsugumi_Data_DiagnosticT]) {
@@ -910,13 +896,13 @@ final class ProjectSession {
     for batch in page.batches.compactMap({ $0 }) { noteBatch(batch) }
   }
 
-  func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
-    documentRevisions.receive(d, fromSave: fromSave) { delta, saved in
-      applyOrderedDelta(delta, fromSave: saved)
+  func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT) {
+    documentRevisions.receive(d) { delta in
+      applyOrderedDelta(delta)
     }
   }
 
-  private func applyOrderedDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
+  private func applyOrderedDelta(_ d: Tsugumi_RPC_DocumentDeltaT) {
     guard d.baseRev == rev else {
       if let r = d.rev, r <= rev { return }  // already applied (our own save reply)
       reconnect()
@@ -1456,13 +1442,6 @@ final class ProjectSession {
 
   /// The Card's _meta.json.
   func cardMeta(_ k: CardKey) -> JSONValue? { cardDefinitionDraft(k)?.meta }
-
-  /// The confirmed definition files of a Card (not the draft).
-  func confirmedCardDefinitionDraft(_ k: CardKey) -> DefinitionDraft? {
-    let p = path(k)
-    guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
-    return prefix.isEmpty ? confirmedDefinitionDrafts[id] : externals[prefix]?.definitions[id]
-  }
 
   /// Sets a Card's definition files in the draft (nil removes them).
   func setCardDefinition(_ k: CardKey, _ d: DefinitionDraft?) {

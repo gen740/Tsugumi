@@ -2,29 +2,29 @@ import type { DocumentDeltaT } from '../../shared/gen/tsugumi/rpc/document-delta
 
 /** Replies and notifications feed the same revision order. No echo is applied twice. */
 export class DocumentRevisions {
-  private pending = new Map<bigint, { delta: DocumentDeltaT; fromSave: boolean }>()
+  private pending = new Map<bigint, DocumentDeltaT>()
   private waiting: { revision: bigint; resolve: () => void; reject: (error: Error) => void }[] = []
   constructor(public revision = 0n) {}
 
   reset(revision: bigint) {
     this.revision = revision
-    for (const [base, { delta }] of this.pending) if (delta.rev! <= revision) this.pending.delete(base)
+    for (const [base, delta] of this.pending) if (delta.rev! <= revision) this.pending.delete(base)
     this.finish()
   }
 
-  receive(delta: DocumentDeltaT, apply: (delta: DocumentDeltaT, fromSave: boolean) => void, fromSave = false) {
+  receive(delta: DocumentDeltaT, apply: (delta: DocumentDeltaT) => void) {
     if (delta.rev == null || delta.baseRev == null || delta.rev <= this.revision) return
-    this.pending.set(delta.baseRev, { delta, fromSave })
+    this.pending.set(delta.baseRev, delta)
     this.drain(apply)
   }
 
-  drain(apply: (delta: DocumentDeltaT, fromSave: boolean) => void) {
+  drain(apply: (delta: DocumentDeltaT) => void) {
     for (;;) {
       const next = this.pending.get(this.revision)
       if (!next) break
       this.pending.delete(this.revision)
-      apply(next.delta, next.fromSave)
-      this.revision = next.delta.rev!
+      apply(next)
+      this.revision = next.rev!
       this.finish()
     }
   }

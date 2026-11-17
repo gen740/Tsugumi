@@ -278,9 +278,6 @@ table SessionHelloRequest {
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
 table ProjectOpenRequest { view_id:string (id: 0); }
 
-/// -> Ack. Ends only the given subscription. Unknown ids are acknowledged.
-table ProjectCloseRequest { subscription_id:string (id: 0, required); }
-
 /// -> ProjectSnapshot. Read current documents, definitions, sources and revision.
 table ProjectInspectRequest {}
 
@@ -747,7 +744,6 @@ table ProjectActivity { busy:bool; }
 union RequestPayload {
   SessionHelloRequest = 1,
   ProjectOpenRequest = 2,
-  ProjectCloseRequest = 3,
   ProjectInspectRequest = 4,
   ProjectSaveRequest = 5,
   ProjectReloadRequest = 6,

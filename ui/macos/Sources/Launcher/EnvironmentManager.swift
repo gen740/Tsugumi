@@ -99,11 +99,6 @@ public actor EnvironmentManager {
     }
   }
   public func stop(_ project: ProjectIdentity) async throws { _ = try await environment(project, .stop) }
-  public func attachedFolders(_ project: ProjectIdentity) async throws -> [String] {
-    await prepare()
-    let value = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.state])
-    return value["folders"] as? [String] ?? []
-  }
   public func attachFolders(_ project: ProjectIdentity, _ paths: [String]) async throws -> (Endpoint, [(folder: String, resource: String)]) {
     await prepare()
     let reply = try await client.call("AttachFoldersRequest", ["project": project.url.path, "folders": paths])

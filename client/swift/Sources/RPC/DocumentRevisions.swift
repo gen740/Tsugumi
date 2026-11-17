@@ -4,27 +4,27 @@ import Foundation
 @MainActor
 public final class DocumentRevisions {
   public private(set) var revision: UInt64 = 0
-  private var pending: [UInt64: (Tsugumi_RPC_DocumentDeltaT, Bool)] = [:]
+  private var pending: [UInt64: Tsugumi_RPC_DocumentDeltaT] = [:]
   private var waiting: [(UInt64, CheckedContinuation<Void, Error>)] = []
 
   public init() {}
 
   public func reset(_ revision: UInt64) {
     self.revision = revision
-    pending = pending.filter { ($0.value.0.rev ?? 0) > revision }
+    pending = pending.filter { ($0.value.rev ?? 0) > revision }
     finish()
   }
 
-  public func receive(_ delta: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false,
-                      apply: (Tsugumi_RPC_DocumentDeltaT, Bool) -> Void) {
+  public func receive(_ delta: Tsugumi_RPC_DocumentDeltaT,
+                      apply: (Tsugumi_RPC_DocumentDeltaT) -> Void) {
     guard let rev = delta.rev, let base = delta.baseRev, rev > revision else { return }
-    pending[base] = (delta, fromSave)
+    pending[base] = delta
     drain(apply: apply)
   }
 
-  public func drain(apply: (Tsugumi_RPC_DocumentDeltaT, Bool) -> Void) {
-    while let (next, saved) = pending.removeValue(forKey: revision) {
-      apply(next, saved)
+  public func drain(apply: (Tsugumi_RPC_DocumentDeltaT) -> Void) {
+    while let next = pending.removeValue(forKey: revision) {
+      apply(next)
       revision = next.rev!
       finish()
     }

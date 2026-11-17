@@ -1,3 +1,4 @@
+import FlatBuffers
 import Darwin
 import Foundation
 import Observation
@@ -91,7 +92,7 @@ import TsugumiTestSupport
       let source = showMarkdown && name == "default.nix"
         ? contents.replacingOccurrences(of: #""text":"Received input""#, with: #""markdown":"**Received input**""#)
         : contents
-      return Change.putSource(path: "definitions/\(id)/\(name)", bytes: Data(source.utf8), baseHash: nil)
+      return FixtureChange.putSource(path: "definitions/\(id)/\(name)", bytes: Data(source.utf8), baseHash: nil)
     }
   }
 
@@ -136,7 +137,7 @@ import TsugumiTestSupport
                           ("to", .object([("card", .string(card)), ("port", .string("in"))]))]))
     proj["canvas"]?["connections"] = .array(conns)
     let saved = try await c.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
-                                 changes: [Change.setProject(proj.serialized())])
+                                 changes: [FixtureChange.setProject(proj.serialized())])
     return saved.rev ?? 0
   }
 
@@ -251,9 +252,12 @@ import TsugumiTestSupport
     var left = try JSONValue.parse(again.projectJson)
     let kept = (left["canvas"]?["cards"]?.array ?? []).filter { $0["id"]?.string != "b" }
     left["canvas"]?["cards"] = .array(kept)
-    let cleaned = try await CoreHostClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
+    let request = Tsugumi_Host_LayoutValidateRequestT()
+    request.json = again.layoutJson; request.removedCards = ["b"]
+    let validated: Tsugumi_Host_LayoutValidatedT = try await CoreHostClient.shared.layoutCall(.layoutvalidaterequest, request)
+    let cleaned = validated.json
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
-                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
+                              changes: [FixtureChange.setProject(left.serialized()), FixtureChange.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     try await waitForModel { !(s.resolution[renamed] != nil) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
     #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
@@ -450,7 +454,7 @@ import TsugumiTestSupport
                ("to", .object([("card", .string("b")), ("port", .string("in"))]))])
     ])
     let saved = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: UUID(), origin: "ui",
-                                   changes: [Change.setProject(project.serialized())])
+                                   changes: [FixtureChange.setProject(project.serialized())])
     var finishes = ended.stream.makeAsyncIterator()
     for _ in 0..<2 {
       let accepted = try await rpc.run(baseRev: saved.rev ?? 0, opId: UUID(), card: ["start"], propagate: true)
@@ -494,7 +498,7 @@ import TsugumiTestSupport
     try await waitForModel { !(s.displays[b] == nil) }
     let run = s.displays[b]?.runId
     #expect(run != nil)
-    try await s.renameCard(b, to: "同じ名前")
+    _ = try await s.applyMutation { $0.updateMeta(b) { $0["name"] = .string("同じ名前") } }
     #expect(s.displayName(b) == "同じ名前")
     #expect(s.nodeData(b).title == "同じ名前")
     #expect(s.nodeData(b, meta: .object([("name", .string("Preview"))])).title == "Preview")
@@ -669,7 +673,7 @@ import TsugumiTestSupport
     #expect(s.cardNameProblem(b, "日本語") == nil)
     let kept = await s.finishDraftEdit()
     #expect(kept == b && s.displayName(b) == "日本語" && s.instance(b) != nil)
-    try await s.renameCard(c, to: "日本語")
+    _ = try await s.applyMutation { $0.updateMeta(c) { $0["name"] = .string("日本語") } }
     #expect(s.displayName(c) == s.displayName(b) && b != c)
     #expect(wires() == ["p.>r."])
     #expect(s.cardNameProblem(b, " \n ") != nil)
@@ -945,5 +949,34 @@ extension SyncTests {
     #expect(runMark(status) == RunMarkLabel.derived)
     status.partialRun = true
     #expect(runMark(status) == "\(RunMarkLabel.partial) · \(RunMarkLabel.derived)")
+  }
+}
+
+/// Raw core mutations only set up the other writer in synchronization scenarios.
+private enum FixtureChange {
+  static func setProject(_ json: String) -> Tsugumi_RPC_DocumentChangeT {
+    let v = Tsugumi_RPC_SetProjectT()
+    v.json = json
+    return change(v, .setproject)
+  }
+
+  static func removeDefinition(id: String) -> Tsugumi_RPC_DocumentChangeT {
+    let v = Tsugumi_RPC_RemoveDefinitionT()
+    v.id = id
+    return change(v, .removedefinition)
+  }
+
+  static func putSource(path: String, bytes: Data, baseHash: String?) -> Tsugumi_RPC_DocumentChangeT {
+    let v = Tsugumi_RPC_PutSourceT()
+    v.path = path
+    v.bytes = [UInt8](bytes)
+    v.baseHash = baseHash
+    return change(v, .putsource)
+  }
+
+  private static func change(_ value: NativeObject, _ type: Tsugumi_RPC_DocumentChangeValue) -> Tsugumi_RPC_DocumentChangeT {
+    let result = Tsugumi_RPC_DocumentChangeT()
+    result.value = Tsugumi_RPC_DocumentChangeValueUnion(value, type: type)
+    return result
   }
 }

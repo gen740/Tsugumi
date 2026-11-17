@@ -25,7 +25,7 @@ function session() {
   s.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 0n,
     projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
     definitions: [new R.DefinitionT('a', '{"template":"input","params":[{"name":"value","type":"int","data":1}]}', '{"content":"before"}')],
-  }), true)
+  }))
   return s
 }
 function inverse(name: string) { return new H.ProjectEditsT([new H.ProjectEditT(H.ProjectEditValue.ProjectFieldEdit,
@@ -99,8 +99,12 @@ for (const echoFirst of [false, true]) {
     return new TextEncoder().encode(file.endsWith('/tsugumi.json') ? '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}' : card(value))
   }
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
-    const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
-    assert.equal(Number(field.oldValue!.json), ++calls)
+    const edit = (request.body as H.ProjectEditsT).edits[0]
+    const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
+    const before = parse(String(field.oldValue!.json))
+    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(field.oldValue!.json)
+      : Number(serialize(get(arr(get(before, 'params'))![0], 'data')!))
+    assert.equal(old, ++calls)
     value = calls + 1
     const result = saved(s, request, inverse('internal'), { sourcesUpsert: [
       Object.assign(new R.SourceInfoT(), { path: prefix + 'tsugumi.json', hash: 'project' }), Object.assign(new R.SourceInfoT(), { path: prefix + 'definitions/a/_card.json', hash: String(value) }),
@@ -108,11 +112,12 @@ for (const echoFirst of [false, true]) {
     if (echoFirst) s.applyDelta(result.delta)
     return result
   }
-  s.setParam('sub/a', 'value', num(2))
-  s.setParam('sub/a', 'value', num(3))
+  const first = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(2)))
+  const second = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(3)))
   await Promise.race([readStarted.promise, s.operationTask.then(() => { throw new Error('Operation completed before internal read: ' + s.saveError) })])
   assert.equal(calls, 1)
   releaseRead.resolve()
+  await Promise.all([first, second])
   await s.save()
   assert.equal(calls, 2)
   assert.equal(numText(get(arr(get(s.cardDefinition('sub/a'), 'params'))![0], 'data')), '3')

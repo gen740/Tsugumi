@@ -267,7 +267,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   | Requests | Why they remain outside the Agent catalog |
   | --- | --- |
   | `ViewSave`, `ViewSetVisible` | A person's selection, camera and visible Display subscriptions belong to the UI. |
-  | `SessionHello`, `ProjectOpen`, `ProjectClose` | Connection and subscription lifecycle belongs to the client, rather than model tools. |
+  | `SessionHello`, `ProjectOpen` | Connection and subscription lifecycle belongs to the client, rather than model tools. |
 
 - **External reloads require permission approval.** `project_reload` compares every Card's permissions, including nested Cards and Nix sources, with the accepted document. With `check_permissions: true`, it returns `approval_required` with every unapproved widening and accepts only a request listing all of those in `approved_permissions`, regardless of origin. The host always selects this check for the Agent, and the UIs select it for external reloads. Rejection leaves the accepted revision and externally edited files unchanged. Agent clients supply approvals only after the user grants them; the model cannot set that field.
 - **The Claude Code plugin** ([Using it from Claude Code](claude-code.md)) operates only through the Web UI's server.

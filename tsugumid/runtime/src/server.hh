@@ -39,7 +39,6 @@ class Server {
   // Thread safe commands. All are applied in posting order.
   void reply(ConnId conn, std::string bytes);
   void subscribe(ConnId conn, std::string sub_id, std::string open_reply);
-  void unsubscribe(ConnId conn, std::string sub_id, std::string ack);
   void set_visible(ConnId conn, std::string sub_id, std::set<std::string> cards, bool enabled,
                    std::string ack, std::vector<Note> initial);
   void broadcast(Note note);

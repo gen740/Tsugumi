@@ -34,7 +34,7 @@ const shown = () => nixReferences(session).map(r => [r.source, r.target, r.expre
 
 // A saved default.nix arrives as the resolution of a document delta: the
 // overlay is what that resolution says, with nothing kept from before.
-inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }), true)
+inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }))
 assert.deepEqual(shown(), [])
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
 assert.deepEqual(shown(), [['analysis', 'source', 'inputs.source.export', true]])

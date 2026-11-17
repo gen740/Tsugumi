@@ -201,7 +201,7 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, id: bigint, raw: boolean, timeoutMs: number): Promise<ReplyT | Uint8Array> {
+  private async dispatch(frame: Uint8Array, id: bigint, timeoutMs: number): Promise<ReplyT> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
@@ -210,7 +210,6 @@ export class RPCClient {
       this.close()
       throw new RPCError('protocol', 'unexpected RPC reply')
     }
-    if (raw) return bytes
     const wire = message.payload(new Reply()) as Reply
     const reply = wire.valueType() === R.ReplyPayload.RecordResult
       ? new ReplyT(R.ReplyPayload.RecordResult, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
@@ -224,31 +223,10 @@ export class RPCClient {
     const msg = new MessageT(id, Payload.Request, new RequestT(type, value))
     const b = new Builder(1024)
     b.finish(msg.pack(b), 'TSG1')
-    const reply = (await this.dispatch(b.asUint8Array().slice(), id, false, timeoutMs)) as ReplyT
+    const reply = await this.dispatch(b.asUint8Array().slice(), id, timeoutMs)
     if (reply.valueType === R.ReplyPayload.Failure) throw new RPCFailure(reply.value as D.FailureT)
     if (reply.valueType === R.ReplyPayload.NONE) throw new RPCError('unexpected', 'empty reply')
     return reply.value as T
-  }
-
-  /** Sends a request whose table is written by `build` (schema-driven tools).
-   *  Returns the reply union type and the reply table position. */
-  async callRaw(payloadType: number, build: (b: Builder) => number, timeoutMs = 60_000): Promise<{ type: number; bb: ByteBuffer; table: number }> {
-    const id = this.nextId++
-    const b = new Builder(4096)
-    const value = build(b)
-    R.Request.startRequest(b)
-    R.Request.addValueType(b, payloadType)
-    R.Request.addValue(b, value)
-    const req = R.Request.endRequest(b)
-    const msg = Message.createMessage(b, id, Payload.Request, req)
-    b.finish(msg, 'TSG1')
-    const frame = (await this.dispatch(b.asUint8Array().slice(), id, true, timeoutMs)) as Uint8Array
-    const bb = new ByteBuffer(frame)
-    const m = Message.getRootAsMessage(bb)
-    const reply = m.payload(new Reply()) as Reply
-    const t = reply.value(new R.Ack()) as R.Ack | null
-    if (!t) throw new RPCError('unexpected', 'no reply value')
-    return { type: reply.valueType(), bb, table: t.bb_pos }
   }
 
   cardId(name: string, projectPath = '') {
@@ -259,9 +237,6 @@ export class RPCClient {
 
   open(viewId: string | null) {
     return this.call<R.OpenResultT>(RequestPayload.ProjectOpenRequest, Object.assign(new R.ProjectOpenRequestT(), { viewId }))
-  }
-  closeSubscription(id: string) {
-    return this.call<R.AckT>(RequestPayload.ProjectCloseRequest, Object.assign(new R.ProjectCloseRequestT(), { subscriptionId: id }))
   }
   inspect() {
     return this.call<R.ProjectSnapshotT>(RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
@@ -432,18 +407,6 @@ export const cardPath = (segments: string[]) => new D.CardPathT([...segments])
 export const segs = (p: D.CardPathT | null | undefined): string[] => (p?.segments ?? []).map((x) => s(x))
 
 /** DocumentChange builders. */
-export const Change = {
-  setProject: (json: string) => new R.DocumentChangeT(R.DocumentChangeValue.SetProject, new R.SetProjectT(json)),
-  setLayout: (json: string) => new R.DocumentChangeT(R.DocumentChangeValue.SetLayout, new R.SetLayoutT(json)),
-  putDefinition: (id: string, cardJson: string, metaJson: string | null, linkJson: string | null = null) =>
-    new R.DocumentChangeT(R.DocumentChangeValue.PutDefinition, new R.PutDefinitionT(id, linkJson === null ? cardJson : '', metaJson, linkJson)),
-  removeDefinition: (id: string) => new R.DocumentChangeT(R.DocumentChangeValue.RemoveDefinition, new R.RemoveDefinitionT(id)),
-  putSource: (path: string, bytes: Uint8Array, baseHash: string | null) =>
-    new R.DocumentChangeT(R.DocumentChangeValue.PutSource, new R.PutSourceT(path, Array.from(bytes), baseHash)),
-  removeSource: (path: string, baseHash: string) =>
-    new R.DocumentChangeT(R.DocumentChangeValue.RemoveSource, new R.RemoveSourceT(path, baseHash)),
-}
-
 export function concat(parts: Uint8Array[]): Uint8Array {
   const n = parts.reduce((a, p) => a + p.length, 0)
   const out = new Uint8Array(n)

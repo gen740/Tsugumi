@@ -838,7 +838,6 @@ bool NixEvaluator::valid(const std::string& store_path) {
   });
 }
 
-uint64_t NixEvaluator::heap_bytes() { return GC_get_heap_size(); }
 
 
 }  // namespace tsugumi

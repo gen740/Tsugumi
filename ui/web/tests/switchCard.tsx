@@ -20,7 +20,7 @@ assert.deepEqual(session.portData(card), { inputs: [], outputs: [{ name: 'value'
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 
 const before = operations
-session.setParam(card, 'value', true)
+await session.applyMutation(x => x.updateParam(card, 'value', true))
 await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 assert.equal(operations, before + 1, 'Toggling submits one operation')
@@ -55,7 +55,7 @@ for (const flow of ['leftToRight', 'topToBottom'] as const) {
 session.updateCard(card, c => c.set('params', undefined))
 await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'false')
-session.setParam(card, 'value', true)
+await session.applyMutation(x => x.updateParam(card, 'value', true))
 await session.save()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 await session.undo()

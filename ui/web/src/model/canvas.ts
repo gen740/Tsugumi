@@ -3,9 +3,9 @@
 // controls, the menus and the shortcuts.
 import { arr, bool, dbl, get, isObj, J, real, str } from '../../shared/json'
 import { D } from '../wire/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter, snapToGrid } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
-import { prefs, ShortcutAction } from './prefs'
+import { ShortcutAction } from './prefs'
 import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
@@ -491,12 +491,6 @@ export class CanvasController extends Observable implements CanvasOverlay {
     void this.session.addNote(this.tab.scope, at ?? this.middle()).then(id => this.set('editingNote', id)).catch(e => this.session.cardEditFailed(e))
   }
 
-  /** Where a definition placed from the sidebar lands (near the top left of the view). */
-  placementPoint(): Pt {
-    const c = this.camera
-    return { x: (240 - c.x) / c.zoom, y: (160 - c.y) / c.zoom }
-  }
-
   /** ⌘F: the Card search box. */
   find() {
     this.findText = this.findText ?? ''
@@ -617,14 +611,6 @@ export class CanvasController extends Observable implements CanvasOverlay {
       this.tab.selectedConnection = undefined
       this.tab.setSelection([])
     }
-  }
-
-  noteIds(): string[] {
-    return this.session.notes(this.tab.scope).map((n) => str(get(n, 'id'))).filter((x): x is string => !!x)
-  }
-
-  groupIds(): string[] {
-    return this.session.groups(this.tab.scope).map((g) => str(g.get('id'))).filter((x): x is string => !!x)
   }
 
   groupMembers(id: string): CardKey[] {

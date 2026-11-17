@@ -499,7 +499,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     const auto dir = prefix + "definitions/" + create->id + '/';
     definition(dir, json::Encode(state));
     for (const auto &file : prepared.files)
-      put(dir + file->path, file->text);
+      put(dir + file.path, file.text);
     place(create->id, create->x, create->y, create->automatic_placement);
   } else if (const auto *imported = body.AsProjectImport()) {
     empty(prefix + "definitions/" + imported->id + '/');
@@ -573,8 +573,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
         external(dir, raw);
       }
       for (const auto &file : patch.files)
-        put(file->to,
-            imported ? imported_files.at(file->from) : required(file->from));
+        put(file.to,
+            imported ? imported_files.at(file.from) : required(file.from));
       if (is_external)
         link(item->id, item->name.empty() ? item->id : item->name);
       double x = item->x, y = item->y;

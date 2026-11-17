@@ -13,7 +13,7 @@ OUT = ROOT / "docs" / "Protocol.md"
 
 GROUPS = [
     ("Connection", ["SessionHello", "ProjectActivity"]),
-    ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
+    ("Projects and saving", ["ProjectOpen", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "InputTypes", "OutputTypes", "NixSourceResolve"]),

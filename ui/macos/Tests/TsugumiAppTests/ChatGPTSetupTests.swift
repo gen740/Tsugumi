@@ -126,7 +126,7 @@ import Testing
     host.finishCancel()
     await pending.value
     #expect(host.browserOpens == (beginPending ? 0 : 1))
-    #expect(model.signingIn == nil && !ChatGPTSignInModel.hasPendingSignIns)
+    #expect(model.signingIn == nil)
   }
 
   @Test(arguments: [false, true]) func terminationWaitsForTheHostCancelReply(beginPending: Bool) async throws {
@@ -158,7 +158,6 @@ import Testing
     await pending.value
     try await until { replies.value == 1 }
     #expect(host.browserOpens == (beginPending ? 0 : 1))
-    #expect(!ChatGPTSignInModel.hasPendingSignIns)
   }
 
   @Test func terminationHasABoundedWaitForAnUnresponsiveHost() async throws {

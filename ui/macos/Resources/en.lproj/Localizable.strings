@@ -122,7 +122,6 @@
 "ChatGPT プランを使っています" = "You're using your ChatGPT plan";
 "ChatGPT プラン（Sign in with ChatGPT）" = "ChatGPT plan (Sign in with ChatGPT)";
 "Continue with ChatGPT" = "Continue with ChatGPT";
-"Continue with ChatGPT（別のアカウント）" = "Continue with ChatGPT (another account)";
 "Derivation" = "Derivation";
 "Draft %lld 枚（%@）から Card を生成します" = "Generating Cards from %lld Drafts (%@)";
 "Draft Card を追加" = "Add Draft Card";
@@ -175,7 +174,6 @@
 "Python の処理" = "Python step";
 "Quarto レポート（HTML）" = "Quarto Report (HTML)";
 "R Markdown レポート（HTML）" = "R Markdown Report (HTML)";
-"RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で送信" = "Return sends";
 "Return で送信（⇧Return で改行）" = "Return sends (⇧Return for a new line)";
 "Ruby の処理" = "Ruby Card";
@@ -232,8 +230,6 @@
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
-"hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。" = "Saved in hostd. The key is not stored in Cards, projects, settings or logs.";
-"hostd（このホストの所有者だけが読み書きできます）" = "hostd (readable and writable only by this host’s owner)";
 "macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "marimo ノートブック" = "marimo notebook";
@@ -300,7 +296,6 @@
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
-"このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。" = "Using your ChatGPT plan is not allowed for this account, so the Agent cannot run. Allow it, or choose an API key connection.";
 "このアカウントを使う" = "Use This Account";
 "このアプリの Nixpkgs に固定" = "Pin to This App's Nixpkgs";
 "このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
@@ -394,7 +389,6 @@
 "まだ結果がありません" = "No result yet";
 "まだ結果がありません（実行すると表示されます）" = "No result yet (run to see one)";
 "まもなく確認します" = "Checking shortly";
-"もう一度保存" = "Save Again";
 "もう一方の処理が終わるのを待ってから、再試行してください。" = "Wait for the other operation to finish, then retry.";
 "やり直す" = "Redo";
 "アイコン" = "Icon";
@@ -621,7 +615,6 @@
 "プロジェクトの操作に失敗しました。" = "The project operation failed.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
-"プロジェクトへのアクセスは許可されませんでした。" = "Access to the project was not allowed.";
 "プロジェクトを再読込" = "Reloaded the project";
 "プロジェクトを再読込しています" = "Reloading the project";
 "プロジェクトを取り込む" = "Import Project";
@@ -650,7 +643,6 @@
 "メンバーを選択" = "Select Members";
 "モジュール %@" = "Module %@";
 "モデル" = "Model";
-"モデルが文を返しませんでした。" = "The model returned no text.";
 "モデルの応答" = "Model response";
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
@@ -688,7 +680,6 @@
 "一覧を読み込めませんでした" = "Could not load the list";
 "上から下" = "Top to bottom";
 "上書き" = "Overwrite";
-"上流から順に Card を書いて、糸でつないでいく" = "Write Cards from upstream on, and tie them together with threads";
 "上流の Card が失敗したので実行していません" = "Not run, because a Card upstream failed";
 "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
 "不明" = "Unknown";
@@ -703,7 +694,6 @@
 "今の操作に必要" = "Needed now";
 "今後は確認しない（設定の「API」でいつでも変えられます）" = "Don't ask again (can be changed any time in Settings > API)";
 "他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）" = "Import another project (copied into externals and placed as a Card in Card)";
-"他の変更と重なり保存できませんでした。変更は保持しています。" = "Could not save: it overlaps other changes. The changes are kept.";
 "付箋を削除" = "Delete Note";
 "付箋を編集" = "Edit Note";
 "付箋を編集…" = "Edit Note…";
@@ -731,7 +721,6 @@
 "使うモデル" = "Model provider";
 "使う接続先" = "Connection in Use";
 "使用中" = "In use";
-"使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
 "依存 package" = "Packages";
 "依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
@@ -787,7 +776,6 @@
 "入力" = "Inputs";
 "入力 " = "Input ";
 "入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。" = "Name a real input for each incoming wire and a real output for each outgoing wire, even when there is only one candidate.";
-"入力が届きません" = "Inputs do not arrive";
 "入力が届くたび" = "Each time an input arrives";
 "入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。" = "An input's type comes from the output it is connected to (_inputs.fbs is generated, never written by hand).";
 "入力はありません" = "No inputs";
@@ -960,7 +948,6 @@
 "変更を保存できないため実行できません。" = "Cannot run: the changes cannot be saved.";
 "変更を保存できませんでした。" = "Could not save the changes.";
 "変更を破棄" = "Discard Changes";
-"変更を破棄…" = "Discard Changes…";
 "変更を破棄して Home へ戻る" = "Discard Changes and Go Back to Home";
 "変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
@@ -994,7 +981,6 @@
 "実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@" = "%lld runs (%lld succeeded, %lld failed) · last: %@";
 "実行 revision" = "Execution revision";
 "実行: %@" = "Run: %@";
-"実行が終わったら保存します" = "Saved when the run ends";
 "実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます" = "Shows the versions kept at each run (git) with their branches, tags and run results";
 "実行されていません" = "Not run";
 "実行されませんでした" = "Did not run";
@@ -1047,7 +1033,6 @@
 "実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
-"実行後に保存" = "Save after the run";
 "実行方式" = "Execution";
 "実行時の closure は、ビルド時の依存関係の完全な一覧ではありません。" = "The runtime closure is not a complete inventory of build-time dependencies.";
 "実行時の依存パス" = "Runtime dependencies";
@@ -1192,7 +1177,6 @@
 "最後のウインドウを閉じたら Tsugumi を終了する" = "Quit Tsugumi when the last window closes";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
-"最新を読み込む" = "Load Latest";
 "最近のプロジェクト" = "Recent Projects";
 "最近開いたプロジェクトはありません" = "No recent projects";
 "有効なプロジェクトのフォルダを指定してください。複製先は元のフォルダの外にしてください。" = "Choose a valid project folder and a destination outside the source folder.";
@@ -1378,7 +1362,6 @@
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
 "読み直す" = "Reload";
 "読み込み中…" = "Loading…";
-"読み込めないため名前を変更しませんでした: " = "Not renamed: it could not be read: ";
 "読み込んでいます…" = "Reading…";
 "読めませんでした: " = "Could not read: ";
 "質問できる会話を開きます" = "Opens a conversation to ask questions";

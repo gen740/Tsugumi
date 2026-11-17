@@ -13,12 +13,12 @@ import { registerModuleClient, ModuleBlobs } from './moduleSources'
 // saved (a run in progress, a lost connection).
 import { api, EnvPublicState, onServerEvent } from '../api'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport, sha256Hex } from '../wire/rpc'
+import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
-import type { LayoutBar, LayoutPortOrder, LayoutProposal, LayoutScene } from '../../shared/layoutScene'
+import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
 import { Observable } from './observable'
@@ -531,7 +531,6 @@ export class ProjectSession extends Observable {
   get definitions(): Map<string, J> { return this.confirmedDefinitions }
   get links(): Map<string, J> { return this.confirmedLinks }
   get definitionMeta(): Map<string, J> { return this.confirmedDefinitionMeta }
-  hasSource(p: string): boolean { return this.sources.has(p) }
   get sourcePaths(): string[] { return [...this.sources.keys()].sort() }
 
   get runActive(): boolean {
@@ -624,7 +623,7 @@ export class ProjectSession extends Observable {
       this.projectId = env.projectId
       this.endpoint = env.endpoint
       this.readyFile = env.readyFile
-      this.apply(opened.snapshot!, !this.dirty)
+      this.apply(opened.snapshot!)
       this.subscription = s(opened.subscriptionId)
       this.lastSeq = opened.seq ?? 1n
       this.connected = true
@@ -716,16 +715,6 @@ export class ProjectSession extends Observable {
     })()
     this.environmentChange = run
     try { return await run } finally { if (this.environmentChange === run) this.environmentChange = undefined }
-  }
-
-  async restartEnvironment() {
-    const c = this.client
-    this.client = undefined
-    c?.close()
-    this.connected = false
-    this.changed()
-    await api('/api/env/stop', { path: this.dir }).catch(() => {})
-    await this.openConnection()
   }
 
   /** The project was left: no more connections, whatever is under way. */
@@ -875,7 +864,7 @@ export class ProjectSession extends Observable {
     }
   }
 
-  private apply(snap: R.ProjectSnapshotT, resetDraft: boolean) {
+  private apply(snap: R.ProjectSnapshotT) {
     this.executionServices = snap.executionServices
     this.rev = snap.rev ?? 0n
     this.documentRevisions.reset(this.rev)
@@ -902,7 +891,7 @@ export class ProjectSession extends Observable {
     }
     this.project = clone(this.confirmedProject)
     this.layout = clone(this.confirmedLayout)
-    this.documentRevisions.drain((delta, saved) => this.applyOrderedDelta(delta, saved))
+    this.documentRevisions.drain(delta => this.applyOrderedDelta(delta))
   }
 
   private applyResolution(res: R.ResolvedCardT[], diags: D.DiagnosticT[]) {
@@ -925,11 +914,11 @@ export class ProjectSession extends Observable {
     for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
-  private applyDelta(d: R.DocumentDeltaT, fromSave = false) {
-    this.documentRevisions.receive(d, (delta, saved) => this.applyOrderedDelta(delta, saved), fromSave)
+  private applyDelta(d: R.DocumentDeltaT) {
+    this.documentRevisions.receive(d, delta => this.applyOrderedDelta(delta))
   }
 
-  private applyOrderedDelta(d: R.DocumentDeltaT, fromSave = false) {
+  private applyOrderedDelta(d: R.DocumentDeltaT) {
     if (d.baseRev !== this.rev) {
       if (d.rev !== null && d.rev <= this.rev) return // already applied (our own save reply)
       this.reconnect()
@@ -1415,13 +1404,6 @@ export class ProjectSession extends Observable {
     return this.cardDefinitionDraft(k)?.meta
   }
 
-  /** The confirmed definition files of a Card (not the draft). */
-  confirmedCardDefinitionDraft(k: CardKey): DefinitionDraft | undefined {
-    const sp = this.split(k)
-    if (!sp) return undefined
-    return sp.prefix === '' ? this.confirmedDefinitionDrafts.get(sp.id) : this.externals.get(sp.prefix)?.definitions.get(sp.id)
-  }
-
   /** Sets a Card's definition files in the draft (undefined removes them). */
   setCardDefinition(k: CardKey, d: DefinitionDraft | undefined) {
     const dir = this.definitionDir(k), before = this.cardDefinitionDraft(k)
@@ -1577,24 +1559,6 @@ export class ProjectSession extends Observable {
     return { x: dbl(get(p, 'x')) ?? 0, y: dbl(get(p, 'y')) ?? 0 }
   }
 
-  setPosition(k: CardKey, pt: { x: number; y: number }) {
-    const lk = this.layoutKey(k)
-    this.updateLayout(path(k).slice(0, -1), (l) => {
-      let cards = l.get('cards')
-      if (!isObj(cards)) {
-        cards = obj()
-        l.set('cards', cards)
-      }
-      let entry = (cards as JObj).get(lk)
-      if (!isObj(entry)) {
-        entry = obj()
-        ;(cards as JObj).set(lk, entry)
-      }
-      ;(entry as JObj).set('x', real(Math.round(pt.x * 10) / 10))
-      ;(entry as JObj).set('y', real(Math.round(pt.y * 10) / 10))
-    })
-  }
-
   /** Reads the externals' documents when their sources changed. */
   private externalsTask?: Promise<void>
 
@@ -1694,11 +1658,6 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Whether a Card is one of this project's own (not inside a Card in Card). */
-  isOwnCard(k: CardKey): boolean {
-    return path(k).length === 1
-  }
-
   /** Definition folders of this project that no Card uses. */
   get unplacedDefinitions(): string[] {
     const used = new Set(this.cards([]).map((c) => str(get(c, 'id'))))
@@ -1721,12 +1680,6 @@ export class ProjectSession extends Observable {
 
   deleteSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, scope: string[]) {
     this.selectOperation(H.ProjectSelectionAction.Delete, scope, cards, notes, frames)
-  }
-
-  /** Source bytes as the draft sees them; copying must never decode binary files. */
-  async sourceData(p: string): Promise<Uint8Array> {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    return this.client.readFile(p, this.rev)
   }
 
   /** Source text as the draft sees it. */
@@ -1909,21 +1862,6 @@ export class ProjectSession extends Observable {
     return ok && nameChanged ? e.card : undefined
   }
 
-  async renameCard(k: CardKey, raw: string): Promise<void> {
-    const name = raw.trim()
-    const problem = this.cardNameProblem(k, name)
-    if (problem) throw new Error(problem)
-    if (name === this.displayName(k)) return
-    const prefix = this.projectPrefix(path(k).slice(0, -1))
-    if (prefix === undefined) return
-    const id = path(k).at(-1)!, meta = this.cardMeta(k)
-    const file = `${prefix}definitions/${id}/_meta.json`
-    const edit = meta === undefined
-      ? new H.ProjectEditT(H.ProjectEditValue.ProjectFilePut, new H.ProjectFilePutT(file, null, true, Array.from(new TextEncoder().encode(serialize(obj([['name', name]]))))))
-      : this.fieldEdit(file, ['name'], get(meta, 'name'), name)
-    await this.operateFields([edit])
-  }
-
   deleteCards(keys: Set<CardKey>, scope: string[]) {
     this.selectOperation(H.ProjectSelectionAction.Delete, scope, keys)
   }
@@ -1962,19 +1900,6 @@ export class ProjectSession extends Observable {
       }
       return [this.fieldEdit(prefix + 'layout.json', ['cards', this.layoutKey(k), 'collapsed'], get(entry, 'collapsed'), value ? true : undefined)]
     })).catch(e => this.cardEditFailed(e))
-  }
-
-  /** A simple setter reads the value after earlier actions in this window. */
-  setParam(k: CardKey, name: string, value: J | undefined) {
-    const dir = this.definitionDir(k)
-    if (!dir) return
-    void this.operateFields(() => {
-      const definition = this.cardDefinition(k), match = obj([['name', name]])
-      const param = (arr(get(definition, 'params')) ?? []).find(p => str(get(p, 'name')) === name)
-      if (param) return [this.fieldEdit(dir + '_card.json', ['params', match, 'data'], get(param, 'data'), value)]
-      if (!(str(get(definition, 'template')) === 'switch' && name === 'value' && typeof value === 'boolean')) throw new Error('Unknown param: ' + name)
-      return [this.fieldEdit(dir + '_card.json', ['params', match], undefined, obj([['name', name], ['type', 'bool'], ['data', value!]]))]
-    }).catch(e => this.cardEditFailed(e))
   }
 
   /** Mutates the value inside the caller's transaction, without an autosave. */
@@ -2121,17 +2046,6 @@ export class ProjectSession extends Observable {
       ['id', id], ['scope', ''], ['name', name], ['color', 'blue'], ['cards', [...keys].map(k => path(k).pop()!).sort()],
     ]))
     return id
-  }
-
-  updateGroup(id: string, fn: (g: JObj) => void) {
-    void this.operateFields(() => {
-      const scope = this.scopeHolding('groups', id)
-      if (!scope) throw new Error('Unknown group: ' + id)
-      const before = this.groups(scope).find(g => str(get(g, 'id')) === id)
-      if (!before) throw new Error('Unknown group: ' + id)
-      const after = clone(before) as JObj; fn(after)
-      return [this.fieldEdit(this.projectPrefix(scope) + 'layout.json', ['groups', obj([['id', id]])], before, after)]
-    }).catch(e => this.cardEditFailed(e))
   }
 
   /** Removes the group frame only; its Cards stay where they are. */
@@ -2513,15 +2427,6 @@ export class ProjectSession extends Observable {
       }
     }
     return waits
-  }
-
-  /** One line describing the latest result of a Card. */
-  resultSummary(k: CardKey): string | undefined {
-    const st = this.cardStates.get(k)
-    if (st && st.state === D.CardState.failed) return st.failure ?? L('失敗')
-    if (st && st.state === D.CardState.blocked) return st.failure ?? L('入力が届きません')
-    const d = this.displays.get(k)
-    return d ? displaySummary(d) : undefined
   }
 
   /** Stage strip of the latest invocation (undefined before any run of the Card). */

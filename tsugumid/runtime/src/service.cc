@@ -522,7 +522,7 @@ void Service::export_now() {
 
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
-      "SessionHello", "ProjectActivity", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "SessionHello", "ProjectActivity", "ProjectHostRequirements", "ProjectOpen", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "InputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
@@ -650,7 +650,6 @@ void Service::dispatch(RequestIn req) {
     case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
     case P::VersionCanvasRequest: return on_lane(r, std::move(req), &Service::version_canvas);
     case P::VersionNoteRequest: return on_lane(m, std::move(req), &Service::version_note);
-    case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
     case P::OperationGetRequest: return on_lane(r, std::move(req), &Service::operation_get);
@@ -1583,19 +1582,6 @@ void Service::history_delete(RequestIn& req) {
 
 // ---------------------------------------------------------------------------
 // Read pool: documents, files, views
-
-void Service::close_project(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_ProjectCloseRequest();
-  {
-    std::lock_guard<std::mutex> l(subs_mu_);
-    auto it = subscriptions_.find(req.conn);
-    if (it != subscriptions_.end() && it->second == r->subscription_id()->str()) subscriptions_.erase(it);
-  }
-  FBB b;
-  auto ack = R::CreateAck(b);
-  server_->unsubscribe(req.conn, r->subscription_id()->str(),
-                       wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
-}
 
 auto Service::project_host_requirements(RequestIn& req) -> void {
   const auto doc = store_->current();

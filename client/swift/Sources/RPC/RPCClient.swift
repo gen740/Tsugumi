@@ -248,26 +248,6 @@ public actor RPCClient {
     return reply
   }
 
-  public func callRaw(payloadType: UInt8, build: (inout FlatBufferBuilder) throws -> Offset,
-                      timeout: Duration = .seconds(60)) async throws -> (UInt8, Table) {
-    guard let type = Tsugumi_RPC_RequestPayload(rawValue: payloadType) else {
-      throw RPCError.protocolViolation("unknown request type \(payloadType)")
-    }
-    let id = try requestId()
-    var builder = FlatBufferBuilder(initialSize: 4096)
-    let value = try build(&builder)
-    let request = Tsugumi_RPC_Request.createRequest(&builder, valueType: type, valueOffset: value)
-    let message = Tsugumi_RPC_Message.createMessage(&builder, requestId: id, payloadType: .request, payloadOffset: request)
-    Tsugumi_RPC_Message.finish(&builder, end: message)
-    let data = try await exchange(builder.data, timeout: timeout)
-    var buffer = ByteBuffer(data: data)
-    let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
-    guard let reply = root.payload(type: Tsugumi_RPC_Reply.self), let value = reply.rawValue else {
-      throw RPCError.unexpectedReply("no reply value")
-    }
-    return (reply.valueType.rawValue, value.table)
-  }
-
   private func receiveEvent(_ data: Data) {
     guard !closed else { return }
     do {
@@ -387,21 +367,4 @@ private func unpackRecordResult(_ wire: Tsugumi_RPC_RecordResult) -> Tsugumi_RPC
     value.record = r
   }
   return value
-}
-
-/// Reads the reply union's table without unpacking it.
-struct Tsugumi_RPC_Failure_or_Table: FlatbuffersInitializable {
-  let table: Table
-  init(_ bb: ByteBuffer, o: Int32) { table = Table(bb: bb, position: o) }
-}
-
-extension Tsugumi_RPC_Reply {
-  var rawValue: Tsugumi_RPC_Failure_or_Table? { value(type: Tsugumi_RPC_Failure_or_Table.self) }
-}
-
-/// The published RPC schema (doc comments included) for schema-driven clients.
-public enum RPCSchema {
-  public static func bfbs() -> Data? {
-    Bundle.module.url(forResource: "tsugumi", withExtension: "bfbs").flatMap { try? Data(contentsOf: $0) }
-  }
 }

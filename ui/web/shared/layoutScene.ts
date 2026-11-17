@@ -35,7 +35,3 @@ export interface LayoutScene {
   inputs?: LayoutBar
   outputs?: LayoutBar
 }
-
-export interface LayoutPlace { id: string; x: number; y: number }
-export interface LayoutPortOrder { id: string; inputs: string[]; outputs: string[] }
-export interface LayoutProposal { cards: LayoutPlace[]; frames: LayoutPlace[]; notes: LayoutPlace[]; portOrders: LayoutPortOrder[] }

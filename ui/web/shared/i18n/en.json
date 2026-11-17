@@ -664,7 +664,6 @@
  "入出力を記録": "Record I/O",
  "入力": "Inputs",
  "入力 ": "Input ",
- "入力が届きません": "Inputs do not arrive",
  "入力が届くたび": "Each time an input arrives",
  "入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。": "An input's type comes from the output it is connected to (_inputs.fbs is generated, never written by hand).",
  "入力はありません": "No inputs",

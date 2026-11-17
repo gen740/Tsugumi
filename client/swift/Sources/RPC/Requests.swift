@@ -10,12 +10,6 @@ public extension RPCClient {
     return try await call(.projectopenrequest, r)
   }
 
-  func closeSubscription(_ id: String) async throws {
-    let r = Tsugumi_RPC_ProjectCloseRequestT()
-    r.subscriptionId = id
-    let _: Tsugumi_RPC_AckT = try await call(.projectcloserequest, r)
-  }
-
   func inspect() async throws -> Tsugumi_RPC_ProjectSnapshotT {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
@@ -49,7 +43,6 @@ public extension RPCClient {
     r.approvedPermissions = approvedPermissions
     return try await call(.projectsaverequest, r)
   }
-
 
   func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ProjectValidateResultT {
     let r = Tsugumi_RPC_ProjectValidateRequestT()
@@ -315,18 +308,10 @@ public extension RPCClient {
     if port != nil { r.kind = kind }
     return try await call(.outputtypesrequest, r)
   }
-
-
 }
 
 /// DocumentChange builders.
 public enum Change {
-  public static func setProject(_ json: String) -> Tsugumi_RPC_DocumentChangeT {
-    let v = Tsugumi_RPC_SetProjectT()
-    v.json = json
-    return wrap(v, .setproject)
-  }
-
   public static func setLayout(_ json: String) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_SetLayoutT()
     v.json = json
@@ -340,29 +325,6 @@ public enum Change {
     v.metaJson = metaJSON
     v.linkJson = linkJSON
     return wrap(v, .putdefinition)
-  }
-
-
-
-  public static func removeDefinition(id: String) -> Tsugumi_RPC_DocumentChangeT {
-    let v = Tsugumi_RPC_RemoveDefinitionT()
-    v.id = id
-    return wrap(v, .removedefinition)
-  }
-
-  public static func putSource(path: String, bytes: Data, baseHash: String?) -> Tsugumi_RPC_DocumentChangeT {
-    let v = Tsugumi_RPC_PutSourceT()
-    v.path = path
-    v.bytes = [UInt8](bytes)
-    v.baseHash = baseHash
-    return wrap(v, .putsource)
-  }
-
-  public static func removeSource(path: String, baseHash: String) -> Tsugumi_RPC_DocumentChangeT {
-    let v = Tsugumi_RPC_RemoveSourceT()
-    v.path = path
-    v.baseHash = baseHash
-    return wrap(v, .removesource)
   }
 
   private static func wrap(_ v: NativeObject, _ t: Tsugumi_RPC_DocumentChangeValue) -> Tsugumi_RPC_DocumentChangeT {

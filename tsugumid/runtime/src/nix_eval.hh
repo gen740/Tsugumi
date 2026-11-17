@@ -95,7 +95,6 @@ class NixEvaluator {
   bool valid(const std::string& store_path);
 
   // Resident memory of the evaluator's heap (Boehm GC), in bytes.
-  uint64_t heap_bytes();
 
  private:
   struct Impl;

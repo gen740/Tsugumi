@@ -101,7 +101,7 @@ class TransportServer {
   // The following methods are called only by ordered actions.
   void send(ConnId conn, std::string bytes);
   void send_note(ConnId conn, PendingMessage note);
-  void clear_notes(ConnId conn, const std::string& group = {});
+  void clear_notes(ConnId conn);
   void close(ConnId conn);
 
  private:

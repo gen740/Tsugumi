@@ -104,7 +104,7 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
   EXPECT_EQ(actual, expected);
   EXPECT_EQ(catalog.tools().size(), expected.size());
   for (const auto *denied : {"view_save", "view_set_visible", "project_open",
-                             "project_close", "session_hello"}) {
+                             "session_hello"}) {
     EXPECT_EQ(catalog.Find(denied), nullptr);
     EXPECT_THROW(catalog.Request(denied, "{}", 1), std::runtime_error);
   }

@@ -60,7 +60,7 @@ auto Canonical(const std::string &raw) -> std::string {
 
 auto MakeSubgraph(const std::string &project,
                   const std::vector<std::string> &cards, const std::string &id)
-    -> Tsugumi::Host::DocumentSubgraphT {
+    -> DocumentSubgraph {
   const std::set<std::string> selected(cards.begin(), cards.end());
   if (selected.empty() || id.empty() || id.find('/') != std::string::npos ||
       id == "." || id == "..")
@@ -131,7 +131,7 @@ auto MakeSubgraph(const std::string &project,
   inner["name"] = json::Quote(id);
   inner["boundary"] = json::Encode(json::Members{
       {"inputs", json::Encode(inputs)}, {"outputs", json::Encode(outputs)}});
-  Tsugumi::Host::DocumentSubgraphT result;
+  DocumentSubgraph result;
   result.project_json = json::Encode(outer);
   result.external_json = json::Encode(inner);
   result.link_json = json::Encode(json::Members{{"external", json::Quote(id)}});
@@ -140,16 +140,13 @@ auto MakeSubgraph(const std::string &project,
 auto CopyDocuments(const std::string &state,
                    const std::vector<std::string> &paths,
                    const std::string &from, const std::string &to,
-                   const std::string &name) -> Tsugumi::Host::DocumentCopyT {
+                   const std::string &name) -> DocumentCopy {
   const auto root = json::Object(state);
   const auto externals = json::Object(json::Get(root, "externals", "{}"));
   json::Members definitions, copied_externals;
-  Tsugumi::Host::DocumentCopyT result;
+  DocumentCopy result;
   const auto file = [&](const std::string &source, const std::string &target) {
-    auto copy = std::make_unique<Tsugumi::Host::DocumentFileCopyT>();
-    copy->from = source;
-    copy->to = target;
-    result.files.push_back(std::move(copy));
+    result.files.push_back({source, target});
   };
   const auto copy_external = [&](const std::string &source,
                                  const std::string &target) {
@@ -242,7 +239,7 @@ auto CopyDocuments(const std::string &state,
 auto ConnectDocuments(const std::string &state, const std::string &from_card,
                       const std::string &from_port, const std::string &to_card,
                       const std::string &to_port, const std::string &fork_id)
-    -> Tsugumi::Host::DocumentConnectT {
+    -> DocumentConnect {
   auto scope = json::Object(state);
   auto project = json::Object(json::Get(scope, "project", "{}"));
   auto graph = json::Object(json::Get(project, "canvas", "{}"));
@@ -321,7 +318,7 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
     if (matches(w, "from", from_card, fp) && !matches(w, "to", to_card, tp))
       taken.push_back(w);
   auto source_card = from_card, source_port = fp;
-  Tsugumi::Host::DocumentConnectT result;
+  DocumentConnect result;
   if (!taken.empty() && kind(from_card) != "draft") {
     const auto next =
         taken.size() == 1

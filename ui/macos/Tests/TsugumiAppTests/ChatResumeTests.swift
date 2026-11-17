@@ -331,7 +331,8 @@ import TsugumiRPC
       await chat.attach(folders: [first, second, first])
       let paths = [first, second].map { $0.standardizedFileURL.path }
       #expect(chat.folders == paths && chat.status == nil && !chat.attaching)
-      #expect(try await t.session.environments.attachedFolders(t.session.identity) == paths)
+      let attached = try await CoreHostClient(support: t.session.environments.support).call("EnvironmentRequest", ["project": t.session.identity.url.path, "action": Tsugumi_Host_EnvironmentAction.state])
+      #expect(attached["folders"] as? [String] == paths)
       await chat.attach(folders: [first, second])
       #expect(chat.folders == paths, "Repeated attachment does not duplicate either folder")
       #expect(t.session.connected)

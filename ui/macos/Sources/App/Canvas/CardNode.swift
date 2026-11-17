@@ -134,13 +134,6 @@ extension ProjectSession {
     return waits
   }
 
-  /// One line describing the latest result of a Card.
-  func resultSummary(_ k: CardKey) -> String? {
-    if let s = cardStates[k], s.state == .failed { return s.failure ?? String(localized: "失敗") }
-    if let s = cardStates[k], s.state == .blocked { return s.failure ?? String(localized: "入力が届きません") }
-    return displays[k]?.summary
-  }
-
   /// Stage strip of the latest invocation (nil before any run of the Card),
   /// from the stages the core recorded. Stages the invocation did not reach
   /// are "pending" while it runs and "not run" once it ended.

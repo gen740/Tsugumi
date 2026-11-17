@@ -13,7 +13,7 @@ import {
   SEND_KEY_LABELS, SendKey, SHORTCUT_ACTIONS, SHORTCUT_TITLES, ShortcutAction, Theme, THEME_LABELS,
 } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
-import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Sheet, Stepper, TextField, Toggle } from './controls'
+import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Stepper, TextField, Toggle } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import { ProjectSettingsContent } from './projectViews'

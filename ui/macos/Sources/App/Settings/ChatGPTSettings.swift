@@ -57,7 +57,6 @@ struct ChatGPTSettings: View {
 final class ChatGPTSignInModel {
   // Includes dismissed sheets until the host acknowledges their cancellation.
   private static var pending: [UUID: Task<Void, Never>] = [:]
-  static var hasPendingSignIns: Bool { !pending.isEmpty }
   static func cancelPendingSignIns() async {
     let tasks = Array(pending.values)
     for task in tasks { task.cancel() }
