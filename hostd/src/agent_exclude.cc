@@ -7,6 +7,7 @@
 #include "host/layout_saving.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -366,8 +367,7 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base) const
         if (!base.files.contains(path))
           throw Failure("not_found", "Path not found");
         const auto& original = base.files.at(path);
-        std::string patched;
-        uint64_t cursor = 0;
+        text::PatchApplier apply(original);
         for (const auto& raw_patch : j::Array(j::Get(value, "patches", "[]"))) {
           const auto patch = j::Object(raw_patch);
           const auto offset = j::UInt(
@@ -376,15 +376,12 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base) const
           const auto remove = j::UInt(
               j::String(j::Get(patch, "remove"), j::Get(patch, "remove")),
               UINT64_MAX);
-          if (offset < cursor || offset > original.size() ||
+          if (offset < apply.cursor() || offset > original.size() ||
               remove > original.size() - offset)
             throw Failure("invalid_range", "Invalid patch range");
-          patched.append(original, cursor, offset - cursor);
-          patched += j::Text(patch, "text");
-          cursor = offset + remove;
+          apply.append(offset, remove, j::Text(patch, "text"));
         }
-        patched.append(original, cursor, std::string::npos);
-        document(path, patched);
+        document(path, std::move(apply).finish());
       }
     }
   }

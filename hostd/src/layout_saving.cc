@@ -9,6 +9,7 @@
 #include "host/layout_service.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -35,8 +36,7 @@ auto Patched(const LayoutFile& file, const json::Members& value)
     -> std::string {
   if (!file.hash || *file.hash != json::Text(value, "base_hash"))
     throw LayoutFailure("layout source hash changed");
-  std::string out;
-  size_t cursor = 0;
+  text::PatchApplier apply(file.text);
   const auto patches = json::Array(json::Get(value, "patches", "[]"));
   if (patches.empty())
     throw LayoutFailure("layout source patches must not be empty");
@@ -44,7 +44,7 @@ auto Patched(const LayoutFile& file, const json::Members& value)
     const auto patch = json::Object(raw);
     const auto offset = Integer(json::Get(patch, "offset"));
     const auto remove = Integer(json::Get(patch, "remove"));
-    if (offset < cursor || offset > file.text.size() ||
+    if (offset < apply.cursor() || offset > file.text.size() ||
         remove > file.text.size() - offset)
       throw LayoutFailure("invalid layout source patch range");
     auto boundary = [&](size_t at) {
@@ -53,12 +53,9 @@ auto Patched(const LayoutFile& file, const json::Members& value)
     };
     if (!boundary(offset) || !boundary(offset + remove))
       throw LayoutFailure("layout source patch splits UTF-8");
-    out.append(file.text, cursor, offset - cursor);
-    out += json::Text(patch, "text");
-    cursor = offset + remove;
+    apply.append(offset, remove, json::Text(patch, "text"));
   }
-  out.append(file.text, cursor, std::string::npos);
-  return out;
+  return std::move(apply).finish();
 }
 auto CardIds(const std::string& text, const std::string& path)
     -> std::set<std::string> {

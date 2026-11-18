@@ -748,10 +748,9 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           if (!text::valid_utf8(original))
             throw Failed(FailureKind::invalid_request, c.path + " is not UTF-8",
                          {{"path", c.path}});
-          std::string out;
-          uint64_t cursor = 0;
+          text::PatchApplier patch(original);
           for (const auto& p : c.patches) {
-            if (p.offset < cursor)
+            if (p.offset < patch.cursor())
               throw Failed(FailureKind::invalid_range,
                            "patches must be ascending and non-overlapping");
             if (p.offset + p.remove > original.size() ||
@@ -763,14 +762,12 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
               throw Failed(FailureKind::invalid_range,
                            "patch is not on a UTF-8 boundary",
                            {{"offset", std::to_string(p.offset)}});
-            out.append(original, cursor, p.offset - cursor);
-            out += p.text;
-            cursor = p.offset + p.remove;
+            patch.append(p.offset, p.remove, p.text);
           }
           if (c.patches.empty())
             throw Failed(FailureKind::invalid_request,
                          "patches must not be empty");
-          out.append(original, cursor, std::string::npos);
+          auto out = std::move(patch).finish();
           doc->sources[c.path] =
               SourceEntry{crypto::sha256_hex(out), out.size()};
           files[c.path] = std::move(out);

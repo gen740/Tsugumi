@@ -4,6 +4,7 @@
 
 #include "host/failure.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::agent {
 namespace {
@@ -130,17 +131,17 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
                              {{"path", json::Quote(path)}, {"at_rev", rev}}),
                         "bytes"));
           before[path] = old;
-          size_t offset = 0;
+          text::PatchApplier apply(old);
           for (const auto& patch : json::Array(json::Get(c, "patches", "[]"))) {
             auto p = json::Object(patch);
-            const auto start = Integer(json::Get(p, "offset")),
-                       end = start + Integer(json::Get(p, "remove"));
-            if (start < offset || end < start || end > old.size())
+            const auto start = Integer(json::Get(p, "offset"));
+            const auto remove = Integer(json::Get(p, "remove"));
+            const auto end = start + remove;
+            if (start < apply.cursor() || end < start || end > old.size())
               throw std::runtime_error("Invalid patch range");
-            value += old.substr(offset, start - offset) + json::Text(p, "text");
-            offset = end;
+            apply.append(start, remove, json::Text(p, "text"));
           }
-          value += old.substr(offset);
+          value = std::move(apply).finish();
         }
         after[path] = value;
       }

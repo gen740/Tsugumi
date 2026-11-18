@@ -2,8 +2,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace tsugumi::text {
+
+auto PatchApplier::append(size_t offset, size_t remove, std::string_view text)
+    -> void {
+  result_.append(source_.substr(cursor_, offset - cursor_));
+  result_.append(text);
+  cursor_ = offset + remove;
+}
+
+auto PatchApplier::finish() && -> std::string {
+  result_.append(source_.substr(cursor_));
+  return std::move(result_);
+}
 
 bool valid_utf8(std::string_view s) {
   size_t i = 0;
