@@ -47,7 +47,8 @@ struct TransportEvents {
       deadline;
 };
 
-// The adapter owns framing. Callbacks deliver complete protocol messages and
+// The adapter owns framing and enforces the configured frame size on send
+// and receive. Callbacks deliver complete protocol messages and
 // must be serialized. Native adapters run them on their I/O thread; the browser
 // adapter uses its event loop. Callbacks must not block waiting for another
 // RPC. Send only enqueues data and must not invoke callbacks inline.

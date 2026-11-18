@@ -7,6 +7,7 @@
 #include <iosfwd>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -21,7 +22,6 @@ struct RemoteTarget {
   std::string id;
   std::string native_system;
   std::vector<std::string> systems;
-  std::string server_id;
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;
@@ -81,6 +81,7 @@ class RemoteJobClient {
   auto get_blob(std::string_view service, std::string_view instance,
                 std::string_view job_id, std::string_view digest,
                 std::ostream& destination, uint64_t limit,
+                std::optional<uint64_t> expected_size,
                 const std::atomic<bool>* stop = nullptr,
                 const TransferProgress& progress = {}) const -> void;
   auto submit(std::string_view service, std::string_view instance,

@@ -98,7 +98,7 @@ class Worker:
     def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
         fields = {}
         if scoped:
-            fields.update(serverId=self.caps.serverId, projectScope=self.scope, coreLifeId=self.core_life_id)
+            fields.update(projectScope=self.scope, coreLifeId=self.core_life_id)
             if kind != R.RequestBody.ProbeRequest:
                 fields["instanceId"] = self.instance
         fields.update(routing)

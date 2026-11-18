@@ -40,7 +40,7 @@ def generate(contract):
         prop = property_name(port['name'])
         field = catalog_property(port['name'])
         if port['required']:
-            value = f'(table.{field} ?? throw new Failure("input_missing", "Input {port["name"]} is absent")).UnPack()'
+            value = f'table.{field}!.Value.UnPack()'
         else:
             value = f'table.{field}?.UnPack()'
         lines.append(f'  public {qualified(port["type"])}T{"" if port["required"] else "?"} {prop} => {value};')

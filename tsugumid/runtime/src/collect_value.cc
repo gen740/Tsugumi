@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <fstream>
-#include <stdexcept>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -17,7 +16,6 @@ namespace tsugumi {
 namespace {
 
 namespace stdfs = std::filesystem;
-using reflection::BaseType;
 
 constexpr size_t kMaxMessageBytes = size_t{16} << 20;
 constexpr size_t kMaxFiles = 1000;
@@ -36,47 +34,19 @@ auto invalid_member(size_t index, const std::string& why) -> Failed {
 
 auto field_of(const reflection::Object& object, const char* name)
     -> const reflection::Field& {
-  const auto* field = object.fields()->LookupByKey(name);
-  if (!field)
-    throw Failed(
-        FailureKind::internal_error,
-        "collect type " + object.name()->str() + " has no field " + name);
-  return *field;
+  return *object.fields()->LookupByKey(name);
 }
 
-// The table type of a vector-of-tables field.
+// The Collect schema defines items as a vector of tables.
 auto element_object(const types::Type& type, const reflection::Field& field)
     -> const reflection::Object& {
-  const auto* t = field.type();
-  if (t->base_type() != BaseType::Vector || t->element() != BaseType::Obj ||
-      t->index() < 0)
-    throw Failed(
-        FailureKind::internal_error,
-        "collect field " + field.name()->str() + " is not a vector of tables");
   return *type.schema()->objects()->Get(
-      static_cast<flatbuffers::uoffset_t>(t->index()));
+      static_cast<flatbuffers::uoffset_t>(field.type()->index()));
 }
 
 auto as_string(const flatbuffers::FlatBufferBuilder& builder) -> std::string {
   return {reinterpret_cast<const char*>(builder.GetBufferPointer()),
           builder.GetSize()};
-}
-
-// The caller's output port must carry the type derived from the source.
-auto check_output_port(const types::PortType& source,
-                       const types::PortType& output, PortKind kind) -> void {
-  if (output.kind != kind || !output.type)
-    throw Failed(
-        FailureKind::internal_error,
-        "collect output " + output.name + " has the wrong kind or no type");
-  std::string error;
-  const auto expected = collect_output_type(source, error);
-  if (!expected)
-    throw Failed(FailureKind::internal_error, "collect input type: " + error);
-  if (!types::compatible(*expected, *output.type))
-    throw Failed(
-        FailureKind::internal_error,
-        "collect output " + output.name + " does not match its input type");
 }
 
 auto check_member(const types::PortType& source, const Value& member,
@@ -106,7 +76,6 @@ auto collect_messages(const types::PortType& source,
                    "collected values exceed 16 MiB");
   }
   const auto& items = field_of(*output.type->root(), "items");
-  (void)element_object(*output.type, items);
 
   // Relocating a whole verified buffer leaves its internal offsets intact.
   // The vector points at each relocated root table. This preserves shared
@@ -133,11 +102,7 @@ auto collect_messages(const types::PortType& source,
       flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
   if (builder.GetSize() > kMaxMessageBytes)
     throw Failed(FailureKind::output_invalid, "collected value exceeds 16 MiB");
-  auto bytes = as_string(builder);
-  if (!types::verify(*output.type, bytes))
-    throw Failed(FailureKind::internal_error,
-                 "collected value does not verify against its type");
-  return bytes;
+  return as_string(builder);
 }
 
 // --- File / Directory members -----------------------------------------------
@@ -292,11 +257,7 @@ auto directory_message(const types::Type& type, const std::string& value,
       flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
   if (builder.GetSize() > kMaxMessageBytes)
     throw Failed(FailureKind::output_invalid, "collected value exceeds 16 MiB");
-  auto bytes = as_string(builder);
-  if (!types::verify(type, bytes))
-    throw Failed(FailureKind::internal_error,
-                 "collected directory value does not verify against its type");
-  return bytes;
+  return as_string(builder);
 }
 
 auto collect_files(const types::PortType& source, const types::PortType& output,
@@ -375,10 +336,8 @@ auto collect_values(const types::PortType& source,
   result.kind = output.kind;
   result.type = output.type;
   if (source.kind == PortKind::FlatBuffer) {
-    check_output_port(source, output, PortKind::FlatBuffer);
     result.bytes = collect_messages(source, output, members, cancel);
   } else {
-    check_output_port(source, output, PortKind::Directory);
     result.bytes =
         collect_files(source, output, members, file_roots, output_dir, cancel);
   }

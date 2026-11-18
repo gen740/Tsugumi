@@ -301,7 +301,10 @@ struct ExecutionBroker::State {
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
-      auto message = W::decode(q.blob(4));
+      const auto bytes = q.blob(4);
+      Require(bytes.size() <= W::kMaxFrame,
+              "Invalid stored worker capabilities");
+      auto message = W::decode(bytes);
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");

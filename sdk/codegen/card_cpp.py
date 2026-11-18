@@ -71,11 +71,12 @@ def main(contract_path, out):
         cc.append("  const auto* in = ::inputs::GetInputs(c.inputs());")
     for p in c["inputs"]:
         m = member(p["name"])
-        cc.append(f"  if (auto* value = in->{m}()) {{")
-        cc.append(f"    value->UnPackTo(&inputs.{m}{'' if p['required'] else '.emplace()'});")
-        cc.append("  }")
         if p["required"]:
-            cc.append(f'  else throw tsugumi::Failure("input_missing", "{p["name"]}");')
+            cc.append(f"  in->{m}()->UnPackTo(&inputs.{m});")
+        else:
+            cc.append(f"  if (auto* value = in->{m}()) {{")
+            cc.append(f"    value->UnPackTo(&inputs.{m}.emplace());")
+            cc.append("  }")
     cc += ["  c.unpack_params<::params::Params>(inputs.params);", "  return inputs;", "}", "}",
            'extern "C" int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* result) {',
            "  if (call->phase == TSUGUMI_PREPARE || call->phase == TSUGUMI_LOAD) return 0;",

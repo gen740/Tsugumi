@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <set>
 #include <stdexcept>
 
 #include "tsugumi/util/crypto.hh"
@@ -71,71 +72,85 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
   return {reuse && alive, {}};
 }
 
-auto stage_outputs(WorkerOutcome& outcome,
-                   const std::vector<types::PortType>& ports,
-                   std::span<const Value> inputs,
+auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
+                    std::span<const types::PortType> ports)
+    -> std::vector<Value> {
+  std::set<std::string_view> seen;
+  std::vector<Value> outputs;
+  outputs.reserve(raw.size());
+  for (auto& [name, bytes] : raw) {
+    const auto port = std::ranges::find(ports, name, &types::PortType::name);
+    if (port == ports.end() || !port->type)
+      throw Failed(FailureKind::output_invalid, "unknown output " + name,
+                   {{"port", name}});
+    if (!seen.insert(name).second)
+      throw Failed(FailureKind::output_invalid,
+                   "output " + name + " produced twice", {{"port", name}});
+    if (!types::verify(*port->type, bytes))
+      throw Failed(
+          FailureKind::output_invalid,
+          "output " + name + " is not a valid " + port->type->root_type,
+          {{"port", name}});
+    outputs.push_back({name, port->kind, port->type, std::move(bytes), {}});
+  }
+  for (const auto& port : ports)
+    if (!port.optional && !seen.contains(port.name))
+      throw Failed(FailureKind::output_invalid,
+                   "required output " + port.name + " is missing",
+                   {{"port", port.name}});
+  return outputs;
+}
+
+auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
                    std::span<const Value> original_inputs, int output_root,
                    const std::string& output_alias, int input_root,
                    const stdfs::path& input_directory,
                    const stdfs::path& destination, OutputDelivery delivery,
                    const std::atomic<bool>& cancel,
                    const fs::TransferProgress& progress) -> void {
-  if (delivery == OutputDelivery::local_paths) {
-    // Forwarded inputs retain their recorded path, not worker staging paths.
-    for (auto& [name, bytes] : outcome.outputs) {
-      const auto port = std::ranges::find(ports, name, &types::PortType::name);
-      if (port == ports.end() || port->kind == PortKind::FlatBuffer ||
-          !types::verify(*port->type, bytes))
-        continue;
-      Value value{name, port->kind, port->type, bytes, {}};
-      for (size_t i = 0; i < inputs.size(); ++i)
-        if (inputs[i].kind == value.kind &&
-            path_value(inputs[i]) == path_value(value)) {
-          bytes = with_path(value, *path_value(original_inputs[i])).bytes;
-          break;
-        }
-    }
-  }
-  if (outcome.failure || destination.empty()) return;
   stdfs::path forwarded;
-  for (auto& [name, bytes] : outcome.outputs) {
-    const auto port = std::ranges::find(ports, name, &types::PortType::name);
-    if (port == ports.end() || !types::verify(*port->type, bytes)) {
-      if (delivery == OutputDelivery::local_paths) continue;
-      throw Failed(FailureKind::output_invalid,
-                   "invalid remote worker output " + name);
-    }
-    if (port->kind == PortKind::FlatBuffer) continue;
-    Value value{name, port->kind, port->type, bytes, {}};
+  for (auto& value : outputs) {
+    if (value.kind == PortKind::FlatBuffer) continue;
     const auto actual = path_value(value);
     if (!actual) {
       if (delivery == OutputDelivery::local_paths) continue;
       throw Failed(FailureKind::output_invalid, "remote output has no path");
     }
     if (delivery == OutputDelivery::local_paths) {
+      // Forwarded inputs retain the recorded path instead of their staging
+      // path.
+      bool forwarded_input = false;
+      for (size_t i = 0; i < inputs.size(); ++i) {
+        if (inputs[i].kind == value.kind && path_value(inputs[i]) == actual) {
+          value = with_path(value, *path_value(original_inputs[i]));
+          forwarded_input = true;
+          break;
+        }
+      }
+      if (forwarded_input || destination.empty()) continue;
       const auto relative =
           stdfs::path(*actual).lexically_relative(output_alias);
       if (relative.empty() || relative.is_absolute() ||
           std::ranges::any_of(relative,
                               [](const auto& part) { return part == ".."; }))
         continue;
-      copy_output(output_root, relative, destination / relative, port->kind,
+      copy_output(output_root, relative, destination / relative, value.kind,
                   cancel, delivery, progress);
       continue;
     }
     stdfs::path rel;
     if (*actual == output_alias) {
       rel = "out";
-      copy_output(output_root, ".", destination, port->kind, cancel, delivery,
+      copy_output(output_root, ".", destination, value.kind, cancel, delivery,
                   progress);
     } else if (actual->starts_with(output_alias + "/")) {
       const auto relative = remote::relative_path(
           std::string_view(*actual).substr(output_alias.size() + 1));
       rel = "out" / relative;
-      copy_output(output_root, relative, destination / relative, port->kind,
+      copy_output(output_root, relative, destination / relative, value.kind,
                   cancel, delivery, progress);
     } else if (std::ranges::any_of(inputs, [&](const Value& in) {
-                 return in.kind == port->kind && path_value(in) == actual;
+                 return in.kind == value.kind && path_value(in) == actual;
                })) {
       if (forwarded.empty()) {
         forwarded = stdfs::path("out") / (".forwarded-" + crypto::uuid4());
@@ -143,11 +158,11 @@ auto stage_outputs(WorkerOutcome& outcome,
           throw Failed(FailureKind::output_invalid,
                        "cannot create a private forwarded output directory");
       }
-      rel = forwarded / std::to_string(port - ports.begin()) /
+      rel = forwarded / std::to_string(&value - outputs.data()) /
             stdfs::path(*actual).filename();
       copy_output(input_root,
                   stdfs::path(*actual).lexically_relative(input_directory),
-                  destination.parent_path() / rel, port->kind, cancel, delivery,
+                  destination.parent_path() / rel, value.kind, cancel, delivery,
                   progress);
     } else {
       throw Failed(FailureKind::output_invalid,
@@ -158,7 +173,7 @@ auto stage_outputs(WorkerOutcome& outcome,
         actual_path != destination)
       throw Failed(FailureKind::output_invalid,
                    "remote output escapes its directory");
-    bytes = with_path(value, rel.generic_string()).bytes;
+    value = with_path(value, rel.generic_string());
   }
 }
 
@@ -172,10 +187,10 @@ auto run_invocation(const ReleaseWorker& release_worker,
   const auto release = [&] {
     const auto disposition =
         worker_disposition(reuse, worker.alive(), between_calls,
-                           validation_rejected, result.outcome.failure);
+                           validation_rejected, result.failure);
     // Failed/dead/uncertain workers end without inspecting scratch. Transfer
     // failures retain living residents after clearing disposable call staging.
-    if (between_calls && !validation_rejected && !result.outcome.failure &&
+    if (between_calls && !validation_rejected && !result.failure &&
         worker.alive())
       worker.clear_scratch();
     release_worker(std::move(lease.worker), disposition.keep,
@@ -242,37 +257,51 @@ auto run_invocation(const ReleaseWorker& release_worker,
     if (!local) input_directory.emplace(invocation.input_directory, "remote");
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
-    result.outcome =
+    auto outcome =
         worker.call(frame, id, invocation.cancel, deadline, invocation.display);
+    result.failure = std::move(outcome.failure);
     between_calls = true;
     if (invocation.stop_before_outputs)
       worker.terminate();
     else
       worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
-    const std::atomic<bool> no_cancel{false};
-    stage_outputs(
-        result.outcome, invocation.outputs, inputs, invocation.inputs,
-        output_directory.get(), worker.out_dir(),
-        input_directory ? input_directory->get() : -1,
-        invocation.input_directory,
-        local && !needs_out ? stdfs::path{} : invocation.output_directory,
-        invocation.delivery, invocation.cancel ? *invocation.cancel : no_cancel,
-        invocation.transfer);
-    if (!result.outcome.failure && invocation.validate) {
+    if (!result.failure) {
       try {
-        invocation.validate(result);
+        result.outputs =
+            accept_outputs(std::move(outcome.outputs), invocation.outputs);
       } catch (const Failed& error) {
-        result.outcome.failure = error.failure;
+        result.failure = error.failure;
       } catch (...) {
         validation_rejected = true;
         throw;
       }
     }
+    if (!result.failure) {
+      const std::atomic<bool> no_cancel{false};
+      stage_outputs(
+          result.outputs, inputs, invocation.inputs, output_directory.get(),
+          worker.out_dir(), input_directory ? input_directory->get() : -1,
+          invocation.input_directory,
+          local && !needs_out ? stdfs::path{} : invocation.output_directory,
+          invocation.delivery,
+          invocation.cancel ? *invocation.cancel : no_cancel,
+          invocation.transfer);
+      if (invocation.validate) {
+        try {
+          invocation.validate(result);
+        } catch (const Failed& error) {
+          result.failure = error.failure;
+        } catch (...) {
+          validation_rejected = true;
+          throw;
+        }
+      }
+    }
     try {
       release();
     } catch (...) {
-      if (!result.outcome.failure) throw;
+      if (!result.failure) throw;
       return result;
     }
   } catch (...) {

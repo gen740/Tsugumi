@@ -381,8 +381,6 @@ class NativeTransport final : public Transport {
             incoming.insert(incoming.end(), block.begin(),
                             block.begin() + received);
             ParseMessages();
-            if (incoming.size() > options.max_frame_bytes + 14)
-              throw std::runtime_error("RPC receive buffer exceeds its limit");
           }
           if (events.tick) events.tick();
           bool has_output;

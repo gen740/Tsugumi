@@ -21,6 +21,7 @@ struct Options : TransportOptions {
 class Connection {
  public:
   using Completion = std::function<void(Result)>;
+  // Builds a request for this connection using the supplied correlation ID.
   using BuildRequest = std::function<Bytes(uint64_t)>;
 
   explicit Connection(Options options);

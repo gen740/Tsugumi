@@ -112,8 +112,6 @@ std::optional<std::string> read_frame(int fd) {
 }
 
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
-  if (b.GetSize() > kMaxFrame)
-    throw std::runtime_error("worker frame exceeds 16 MiB");
   std::lock_guard<std::mutex> l(g_write_mu);
   const auto prefix = tsugumi::workerd::encode_length(b.GetSize());
   write_full(kData, prefix.data(), prefix.size());
@@ -214,41 +212,10 @@ auto result_frame(const Call& call) -> flatbuffers::FlatBufferBuilder {
   return b;
 }
 
-int collect_output(const char* port, const uint8_t* data,
-                     size_t size) {
-  if (!g_call) return 1;
-  const auto invalid = [&](const std::string& reason) {
-    record_failure(D::FailureKind::output_invalid, reason);
-    return 1;
-  };
-  if (!port || !data || size > kMaxFrame)
-    return invalid("output exceeds 16 MiB or has no data");
-  for (const auto& [name, _] : g_call->outputs)
-    if (name == port)
-      return invalid(std::string("output ") + port + " emitted twice");
-  const D::Port* declared = nullptr;
-  for (const auto* p : *g_call->msg->outputs())
-    if (p->name()->string_view() == port) declared = p;
-  if (!declared) return invalid(std::string("unknown output port ") + port);
-  if (declared->schema_bfbs() && declared->root_type()) {
-    const auto* bfbs = declared->schema_bfbs();
-    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
-    if (!reflection::VerifySchemaBuffer(verifier))
-      return invalid("invalid output schema");
-    const auto* schema = reflection::GetSchema(bfbs->data());
-    const auto* root =
-        schema->objects()->LookupByKey(declared->root_type()->c_str());
-    if (!root || !flatbuffers::Verify(*schema, *root, data, size))
-      return invalid(std::string("output ") + port +
-                     " does not match its declared type");
-  }
+auto append_output(std::string_view port, const uint8_t* data, size_t size)
+    -> void {
   g_call->outputs.emplace_back(
       port, std::string(reinterpret_cast<const char*>(data), size));
-  if (result_frame(*g_call).GetSize() > kMaxFrame) {
-    g_call->outputs.pop_back();
-    return invalid("combined outputs exceed the 16 MiB result frame limit");
-  }
-  return 0;
 }
 
 void validate_required_outputs(Call& call) {
@@ -741,6 +708,13 @@ auto pack_inputs(const W::WorkerCall& call) -> flatbuffers::FlatBufferBuilder {
   const auto start = b.StartTable();
   for (const auto& [field, value] : fields) b.AddOffset(field, value);
   b.Finish(fb::Offset<fb::Table>(b.EndTable(start)));
+  const auto& inputs = *fb::GetAnyRoot(b.GetBufferPointer());
+  for (const auto* field : parser->root_struct_def_->fields.vec) {
+    if (field->IsRequired() && !inputs.CheckField(field->value.offset)) {
+      record_failure(D::FailureKind::input_missing, field->name);
+      break;
+    }
+  }
   return b;
 }
 
@@ -888,8 +862,8 @@ auto receive_outputs(const tsugumi_buffer& outputs) -> void {
     const auto* type = schema->objects()->Get(field->type()->index());
     fb::FlatBufferBuilder b;
     b.Finish(copy_table(b, *schema, *type, *table));
-    if (collect_output(field->name()->c_str(), b.GetBufferPointer(), b.GetSize()))
-      return;
+    append_output(field->name()->string_view(), b.GetBufferPointer(),
+                  b.GetSize());
   }
 }
 
@@ -1120,8 +1094,14 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
                          (p ? ": " + p->error_ : ""));
       return;
     }
-    collect_output(name.c_str(), p->builder_.GetBufferPointer(),
-                     p->builder_.GetSize());
+    if (std::ranges::any_of(g_call->outputs, [&](const auto& output) {
+          return output.first == name;
+        })) {
+      record_failure(D::FailureKind::output_invalid,
+                     "output " + name + " emitted twice");
+      return;
+    }
+    append_output(name, p->builder_.GetBufferPointer(), p->builder_.GetSize());
   }
 }
 
@@ -1240,7 +1220,18 @@ auto display_json_impl(void*, const char* json) -> int {
   return status;
 }
 
-void execute(const Options& opt, Call& call) {
+auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
+  if (call.failure) return flatbuffers::FlatBufferBuilder();
+  auto result = result_frame(call);
+  if (result.GetSize() > kMaxFrame)
+    record_failure(D::FailureKind::output_invalid,
+                   "combined outputs exceed the 16 MiB result frame limit");
+  validate_required_outputs(call);
+  return result;
+}
+
+void execute(const Options& opt, Call& call,
+             flatbuffers::FlatBufferBuilder& result) {
   const auto* m = call.msg;
   std::string work = m->working_directory()->str();
   std::string tmp = m->temporary_directory()->str();
@@ -1372,7 +1363,7 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
-  validate_required_outputs(call);
+  result = finish_outputs(call);
   // postRun also runs after a failed step (cleanup), but never after a
   // cancel or the deadline; its success never clears an earlier failure.
   bool stopped =
@@ -1395,10 +1386,9 @@ void execute(const Options& opt, Call& call) {
   }
 }
 
-void reply(const Call& call) {
+void reply(const Call& call, flatbuffers::FlatBufferBuilder& result) {
   if (!call.failure) {
-    auto b = result_frame(call);
-    send_frame(b);
+    send_frame(result);
     return;
   }
   flatbuffers::FlatBufferBuilder b;
@@ -1413,6 +1403,8 @@ void reply(const Call& call) {
   W::FinishWorkerMessageBuffer(
       b, W::CreateWorkerMessage(
              b, call.call_id, W::WorkerPayload::WorkerFailure, value.Union()));
+  if (b.GetSize() > kMaxFrame)
+    throw std::runtime_error("worker frame exceeds 16 MiB");
   send_frame(b);
 }
 
@@ -1491,10 +1483,11 @@ int main(int argc, char** argv) {
     }
     g_cancel = false;
     g_call = &call;
-    execute(opt, call);
+    flatbuffers::FlatBufferBuilder result;
+    execute(opt, call, result);
     std::fflush(stdout);
     std::fflush(stderr);
-    reply(call);
+    reply(call, result);
     g_call = nullptr;
   }
 }

@@ -56,7 +56,7 @@ auto type(const flatbuffers::Vector<uint8_t>* schema,
   return result;
 }
 
-auto make_result(const WorkerOutcome& outcome) -> std::string {
+auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
   flatbuffers::Offset<void> body;
@@ -66,10 +66,12 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
         W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
   } else {
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-    for (const auto& [name, value] : outcome.outputs) {
-      auto data = b.CreateVector(reinterpret_cast<const uint8_t*>(value.data()),
-                                 value.size());
-      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name), data));
+    for (const auto& value : outcome.outputs) {
+      auto data =
+          b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                         value.bytes.size());
+      outputs.push_back(
+          W::CreateWorkerOutput(b, b.CreateString(value.name), data));
     }
     kind = W::WorkerPayload::WorkerResult;
     body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
@@ -86,7 +88,7 @@ auto run_worker(const W::WorkerCall& call,
                 const stdfs::path& store, const WorkerStoreResult& env,
                 const WorkerProc::LogSink& log,
                 const WorkerProc::DisplaySink& display,
-                const fs::TransferProgress& progress) -> WorkerOutcome {
+                const fs::TransferProgress& progress) -> workerd::InvocationResult {
   schema::CardManifest manifest;
   if (schema::decode(env.manifest, manifest))
     throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
@@ -177,11 +179,10 @@ auto run_worker(const W::WorkerCall& call,
   request.transfer = progress;
   request.display = display;
   return workerd::run_invocation(
-             [&](auto worker, bool keep, const auto& reason) {
-               pool.release(spawn.card, "", std::move(worker), keep, reason);
-             },
-             lease, false, request)
-      .outcome;
+      [&](auto worker, bool keep, const auto& reason) {
+        pool.release(spawn.card, "", std::move(worker), keep, reason);
+      },
+      lease, false, request);
 }
 
 }  // namespace
@@ -192,8 +193,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   const auto& derivation = job->derivation;
   const auto& output = job->output;
-  if (job->system != native_system())
-    throw std::runtime_error("remote job system mismatch");
   const std::set<std::string> accepted(job->input_blobs.begin(),
                                        job->input_blobs.end());
   const auto blob = [&](const std::string& digest) -> stdfs::path {
@@ -242,8 +241,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;
-    if (auto entry =
-            invocation_log.append(static_cast<uint64_t>(stream), text)) {
+    if (auto entry = invocation_log.append(stream, text)) {
       logs << *entry << '\n';
     } else {
       const int fd = ::open(truncation_marker.c_str(),
@@ -253,7 +251,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   };
   std::string display;
   WorkerStoreResult environment;
-  WorkerOutcome outcome;
+  InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.
   try {

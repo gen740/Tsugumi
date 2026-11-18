@@ -75,8 +75,10 @@ TEST(DisplayModule, SourceCacheIsBoundedImmutableAndRejectsSymlinks) {
     stdfs::path path;
     ~Cleanup() { stdfs::remove_all(path); }
   } cleanup{cache};
-  const std::string identity(
+  const auto module = ModuleIdentity::parse(
       "/nix/store/00000000000000000000000000000000-card-view");
+  ASSERT_TRUE(module);
+  const auto& identity = *module;
   EXPECT_FALSE(cached_module_source(cache, identity));
   save_module_source(cache, identity, "export function mount(){}");
   EXPECT_EQ(cached_module_source(cache, identity), "export function mount(){}");
@@ -84,11 +86,11 @@ TEST(DisplayModule, SourceCacheIsBoundedImmutableAndRejectsSymlinks) {
       save_module_source(cache, identity, "export function mount(){}"));
   EXPECT_THROW(save_module_source(cache, identity, "different"),
                std::runtime_error);
-  EXPECT_THROW(save_module_source(cache, "/etc", ""), std::runtime_error);
+  EXPECT_FALSE(ModuleIdentity::parse("/etc"));
   EXPECT_THROW(save_module_source(cache, identity,
                                   std::string(kModuleSourceLimit + 1, 'x')),
                std::runtime_error);
-  const auto file = cache / stdfs::path(identity).filename() / "index.js";
+  const auto file = cache / identity.path().filename() / "index.js";
   stdfs::resize_file(file, kModuleSourceLimit + 1);
   EXPECT_THROW(cached_module_source(cache, identity), std::runtime_error);
   stdfs::remove(file);

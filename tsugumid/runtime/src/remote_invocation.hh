@@ -7,7 +7,8 @@
 namespace tsugumi {
 
 struct RemoteInvocationResult {
-  WorkerOutcome worker;
+  std::vector<Value> outputs;
+  std::optional<FailureData> failure;
   BuildEnvironmentData environment;
   std::vector<std::pair<LogStream, std::string>> logs;
   bool built = false;
@@ -36,7 +37,8 @@ auto import_remote_result(
     const std::filesystem::path& module_cache,
     const std::vector<types::PortType>& outputs,
     const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
-    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress =
-        {}) -> RemoteInvocationResult;
+    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
+    const std::function<void(int64_t, int64_t)>& on_validation)
+    -> RemoteInvocationResult;
 
 }  // namespace tsugumi

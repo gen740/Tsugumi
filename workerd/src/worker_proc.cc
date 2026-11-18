@@ -736,12 +736,14 @@ WorkerOutcome WorkerProc::call(
       }
       switch (m->value_type()) {
         case W::WorkerPayload::WorkerDisplay:
-          try {
-            if (display)
-              display(
-                  wire::display(m->value_as_WorkerDisplay()->display(), msg));
-          } catch (const Failed&) {
-            // Presentation cannot fail the invocation.
+          if (display) {
+            auto presentation =
+                wire::display(m->value_as_WorkerDisplay()->display(), msg);
+            try {
+              display(presentation);
+            } catch (const Failed&) {
+              // Presentation sinks cannot fail the invocation.
+            }
           }
           break;
         case W::WorkerPayload::WorkerResult: {

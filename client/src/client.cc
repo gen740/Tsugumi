@@ -38,6 +38,48 @@ auto RequestReply(const Message* message) -> std::optional<Envelope> {
   return std::nullopt;
 }
 
+template <class Message>
+class RequestEnvelope : private flatbuffers::Table {
+ public:
+  auto Verify(flatbuffers::Verifier& verifier) const -> bool {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, Message::VT_REQUEST_ID, 8) &&
+           VerifyField<uint8_t>(verifier, Message::VT_PAYLOAD_TYPE, 1) &&
+           verifier.EndTable();
+  }
+
+  template <class Payload>
+  static auto Read(std::span<const uint8_t> bytes, const char* file_id,
+                   Payload request_tag) -> uint64_t {
+    flatbuffers::Verifier verifier(bytes.data(), bytes.size());
+    if (!verifier.VerifyBuffer<RequestEnvelope>(file_id))
+      throw std::runtime_error("invalid RPC request envelope");
+    const auto* envelope = flatbuffers::GetRoot<RequestEnvelope>(bytes.data());
+    if (envelope->template GetField<uint8_t>(Message::VT_PAYLOAD_TYPE, 0) !=
+        static_cast<uint8_t>(request_tag))
+      throw std::runtime_error("expected RPC request");
+    return envelope->template GetField<uint64_t>(Message::VT_REQUEST_ID, 0);
+  }
+};
+
+auto RequestId(Protocol protocol, std::span<const uint8_t> bytes) -> uint64_t {
+  switch (protocol) {
+    case Protocol::Project:
+      return RequestEnvelope<Tsugumi::RPC::Message>::Read(
+          bytes, Tsugumi::RPC::MessageIdentifier(),
+          Tsugumi::RPC::Payload::Request);
+    case Protocol::Agent:
+      return RequestEnvelope<Tsugumi::Agent::Message>::Read(
+          bytes, Tsugumi::Agent::MessageIdentifier(),
+          Tsugumi::Agent::Payload::Request);
+    case Protocol::Host:
+      return RequestEnvelope<Tsugumi::Host::Message>::Read(
+          bytes, Tsugumi::Host::MessageIdentifier(),
+          Tsugumi::Host::Payload::Request);
+  }
+  throw std::runtime_error("invalid RPC protocol");
+}
+
 auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
   flatbuffers::Verifier verifier(bytes.data(), bytes.size());
   if (protocol == Protocol::Project) {
@@ -167,8 +209,6 @@ struct Connection::State {
   auto Receive(Bytes bytes) -> void {
     Envelope envelope;
     try {
-      if (bytes.size() > options.max_frame_bytes)
-        throw std::runtime_error("RPC message too large");
       envelope = Inspect(options.protocol, bytes);
       if (envelope.kind == Kind::Request)
         throw std::runtime_error("server sent a request");
@@ -223,14 +263,13 @@ struct Connection::State {
           if (!id || id == UINT64_MAX)
             throw std::runtime_error("request IDs exhausted; reconnect");
           frame = supplied ? std::move(*supplied) : build(id);
-          if (frame.size() > options.max_frame_bytes)
-            throw std::runtime_error("RPC request too large");
-          const auto envelope = Inspect(options.protocol, frame);
-          if (envelope.kind != Kind::Request || envelope.id < next_id ||
-              (!supplied && envelope.id != id) || envelope.id == UINT64_MAX)
-            throw std::runtime_error(
-                "request ID must be nonzero and strictly increasing");
-          id = envelope.id;
+          if (supplied) {
+            const auto supplied_id = RequestId(options.protocol, frame);
+            if (supplied_id < next_id || supplied_id == UINT64_MAX)
+              throw std::runtime_error(
+                  "request ID must be nonzero and strictly increasing");
+            id = supplied_id;
+          }
           next_id = id + 1;
           pending.emplace(
               id, Pending{completion,

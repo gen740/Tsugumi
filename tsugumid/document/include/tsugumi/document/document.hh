@@ -69,6 +69,8 @@ struct Document {
 
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
+  enum class SourcePath { Invalid, Protected, Source };
+  static auto classify_source_path(const std::string& rel) -> SourcePath;
   static bool is_source_area(const std::string& rel);
   // Version opt-ins never name internal state or Git metadata, at any depth.
   static auto valid_version_path(const std::string& rel) -> bool;

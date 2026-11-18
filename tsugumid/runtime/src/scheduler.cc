@@ -329,7 +329,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     PreparedExecution* execution = nullptr;
     std::optional<uint32_t> batch_index, batch_size;
     bool execution_list = false;
-    std::optional<std::pair<std::string, std::string>> out_alias;
     std::optional<DisplayData> display;
     std::optional<FailureData> preparation_failure;
   };
@@ -497,7 +496,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
     auto& budget = log_budget(card, inv);
     if (budget.truncated()) return;
-    if (budget.append(static_cast<uint64_t>(stream), text))
+    if (budget.append(stream, text))
       record_card_log(card, inv, stream, text);
     else
       mark_card_log_truncated(card, inv);
@@ -941,12 +940,21 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Resolve worker kind and system before any Card or source evaluation.
     prepared = svc_.prepare_execution(
         node, invocation_dir(node, work.invocation), request);
+    const auto check_reused_plan = [&](const CardBuildPlan& plan) {
+      try {
+        enforce_implementation_limit(plan.implementations.size(),
+                                     max_implementations);
+      } catch (const NixImplementationLimit& error) {
+        throw batch_limit(node, error.what());
+      }
+    };
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
         rt.build_target->system == request.target.system) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
+      check_reused_plan(*rt.build);
       return *rt.build;
     }
     request.log = [&](const std::string& line) {
@@ -985,6 +993,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       early->log = nullptr;
       early->on_phase = nullptr;
       if (early->error) std::rethrow_exception(early->error);
+      check_reused_plan(*early->plan);
       rt.build = std::move(early->plan);
     } else {
       rt.build = svc_.nix().build(request);
@@ -1142,9 +1151,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto& plan = prepare_code(
             rt, work, kMaxExecutionBatchSize / count, lane, prepared);
         batch.execution_list |= plan.execution_list;
-        if (plan.implementations.size() > kMaxExecutionBatchSize / count)
-          throw batch_limit(
-              node, "input and run list expansion exceeds 256 combinations");
         for (size_t index = 0; index < plan.implementations.size(); ++index)
           implementations.push_back(plan.implementation(index));
         count *= static_cast<uint32_t>(implementations.size());
@@ -1394,11 +1400,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       } catch (const std::exception& e) {
         out.failure = FailureData::make(FailureKind::internal_error, e.what());
       }
-      if (!out.failure) {
+      if (!out.failure && node.kind != Template::Code) {
         stage_begin(s, Phase::validate);
         const auto started = now_ms();
         try {
-          validate_outputs(node, w, out.outputs, inputs);
+          validate_outputs(node, w, out.outputs, inputs, std::nullopt);
         } catch (const Failed& f) {
           out.failure = f.failure;
           out.outputs.clear();
@@ -1524,8 +1530,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           std::lock_guard<std::mutex> lock(log_policy_mu_);
           auto& budget = log_budget(s.card, s.invocation);
           std::erase_if(out.remote_logs, [&](const auto& entry) {
-            return !budget.append(static_cast<uint64_t>(entry.first),
-                                  entry.second);
+            return !budget.append(entry.first, entry.second);
           });
           if (out.remote_log_truncated) budget.truncate();
           if (budget.truncated()) {
@@ -1687,9 +1692,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         });
   }
 
-  auto validate_outputs(const Node& node, const Work& w,
-                        std::vector<Value>& outputs,
-                        const std::vector<Value>& inputs) -> void {
+  auto validate_outputs(
+      const Node& node, const Work& w, std::vector<Value>& outputs,
+      const std::vector<Value>& inputs,
+      const std::optional<std::pair<std::string, std::string>>& out_alias)
+      -> void {
     // Files received as inputs may be passed on unchanged (fork, branch, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
@@ -1700,30 +1707,32 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           forwarded.insert(stdfs::path(*p).lexically_normal().string());
     std::set<std::string> seen;
     for (auto& v : outputs) {
-      const auto* port = node.output(v.name);
-      if (!port || !port->type)
-        throw Failed(FailureKind::output_invalid, "unknown output " + v.name,
-                     {{"port", v.name}});
-      if (!seen.insert(v.name).second)
-        throw Failed(FailureKind::output_invalid,
-                     "output " + v.name + " produced twice",
-                     {{"port", v.name}});
-      v.kind = port->kind;
-      v.type = port->type;
-      if (!types::verify(*v.type, v.bytes))
-        throw Failed(
-            FailureKind::output_invalid,
-            "output " + v.name + " is not a valid " + v.type->root_type,
-            {{"port", v.name}});
+      if (node.kind != Template::Code && node.kind != Template::Collect) {
+        const auto* port = node.output(v.name);
+        if (!port || !port->type)
+          throw Failed(FailureKind::output_invalid, "unknown output " + v.name,
+                       {{"port", v.name}});
+        if (!seen.insert(v.name).second)
+          throw Failed(FailureKind::output_invalid,
+                       "output " + v.name + " produced twice",
+                       {{"port", v.name}});
+        v.kind = port->kind;
+        v.type = port->type;
+        if (!types::verify(*v.type, v.bytes))
+          throw Failed(
+              FailureKind::output_invalid,
+              "output " + v.name + " is not a valid " + v.type->root_type,
+              {{"port", v.name}});
+      }
       if (v.kind != PortKind::FlatBuffer) {
         auto p = path_value(v);
         // A path under the passed output descriptor is the output folder's real
         // path.
-        if (p && w.out_alias) {
-          const auto& [alias, real] = *w.out_alias;
+        if (p && out_alias) {
+          const auto& [alias, real] = *out_alias;
           if (*p == alias || p->starts_with(alias + "/")) {
-            v = with_path(v, real + p->substr(alias.size()));
-            p = path_value(v);
+            p = real + p->substr(alias.size());
+            v = with_path(v, *p);
           }
         }
         auto out_dir = invocation_dir(node, w.invocation) / "out";
@@ -1747,12 +1756,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                        {{"port", v.name}});
       }
     }
-    for (const auto& port : node.outputs)
-      if (!port.optional && !seen.count(port.name) &&
-          node.kind == Template::Code)
-        throw Failed(FailureKind::output_invalid,
-                     "required output " + port.name + " is missing",
-                     {{"port", port.name}});
   }
 
   // A File / Directory value's path below the trees tsugumid keeps them in
@@ -2027,22 +2030,22 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            set_state(RunState::running);
          },
          [&] { card_status(s); },
-         [&](const ExecutionResult& completed) {
-           w.out_alias = completed.out_alias;
-           std::vector<Value> outputs;
-           for (const auto& [name, bytes] : completed.outcome.outputs)
-             outputs.push_back(
-                 {name, PortKind::FlatBuffer, nullptr, bytes, {}});
+         [&](workerd::InvocationResult& completed) {
+           stage_begin(s, Phase::validate);
            const auto started = now_ms();
-           try {
-             validate_outputs(node, w, outputs, in);
-           } catch (...) {
-             stage_begin(s, Phase::validate);
+           const auto trace_validation = [&] {
              svc_.server()->broadcast(timeline_note(run_id_, node.path, inv,
                                                     Phase::validate, lane,
                                                     started, now_ms()));
+           };
+           try {
+             validate_outputs(node, w, completed.outputs, in,
+                              completed.out_alias);
+           } catch (...) {
+             trace_validation();
              throw;
            }
+           trace_validation();
          },
          kInvocationLogLimitBytes,
          [&](std::string_view direction, std::string_view name, uint64_t done,
@@ -2058,18 +2061,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            s.transfer_total = total;
            card_status(s);
          },
-         [&] { mark_card_log_truncated(node.path, inv); }});
+         [&] { mark_card_log_truncated(node.path, inv); },
+         [&](int64_t begin, int64_t end) {
+           stage_begin(s, Phase::validate, StageOutcome::running, begin);
+           svc_.server()->broadcast(timeline_note(
+               run_id_, node.path, inv, Phase::validate, lane, begin, end));
+         }});
     s.transfer_direction.clear();
     s.transfer_name.clear();
-    w.out_alias = std::move(result.out_alias);
     Produced p;
-    p.failure = result.outcome.failure;
+    p.failure = std::move(result.failure);
     p.remote_logs = std::move(result.logs);
     p.remote_log_truncated = result.log_truncated;
-    if (!p.failure)
-      for (auto& [name, bytes] : result.outcome.outputs)
-        p.outputs.push_back(
-            {name, PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
+    if (!p.failure) p.outputs = std::move(result.outputs);
     return p;
   }
 

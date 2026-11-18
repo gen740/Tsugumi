@@ -33,19 +33,16 @@ def main(contract_path, out):
              'params,err:=scope.ParamsBytes();if err!=nil{return inputs,err}', 'inputs.params=params',
              'bytes,err:=scope.InputsBytes();if err!=nil{return inputs,err}',
              'inputs.table=input_types.GetRootAsInputs(bytes,0)']
-    for p in contract['inputs']:
-        if p['required']:
-            code += [f'if inputs.table.{exported(p["name"])}(nil)==nil{{return inputs,Fail("input_missing",{json.dumps(p["name"])})}}']
     code += ['return inputs,nil','}','func (out Output) pack() []byte {',
              'builder:=flatbuffers.NewBuilder(256)', 'root:=(&output_types.OutputsT{']
     code += [f'{exported(p["name"])}: out.{exported(p["name"])},' for p in contract['outputs']]
     code += ['}).Pack(builder)', 'builder.Finish(root)', 'return builder.FinishedBytes()', '}', '''
 func InvokeRun(raw unsafe.Pointer, function any) ([]byte, int) {
  var bytes []byte
+ var out Output
  status := host.Invoke(raw,func(scope *host.Scope) error {
   inputs,err:=readInput(scope);if err!=nil{return err}
   report:=host.NewReport(scope)
-  var out Output
   switch f:=function.(type) {
   case func(Inputs)(Output,error): out,err=f(inputs)
   case func(Inputs,*Report)(Output,error): out,err=f(inputs,report)
@@ -53,10 +50,8 @@ func InvokeRun(raw unsafe.Pointer, function any) ([]byte, int) {
   default: return Fail("worker_failed","define run(inputs[, report[, run]])")
   }
   if err!=nil{return err}
-  if err:=scope.Wait();err!=nil{return err}
-  bytes=out.pack()
   return nil
- })
+ },func(){bytes=out.pack()})
  return bytes,status
 }
 func InvokeStart(raw unsafe.Pointer, function any) int {
@@ -68,7 +63,7 @@ func InvokeStart(raw unsafe.Pointer, function any) int {
   case func(Inputs,*Report,*Run) error: return f(inputs,host.NewReport(scope),host.NewRun(scope))
   default: return Fail("worker_failed","define onRunStart(inputs[, report[, run]])")
   }
- })
+ },nil)
 }
 ''']
     os.makedirs(out,exist_ok=True)

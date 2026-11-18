@@ -39,11 +39,14 @@ auto upload(const RemoteJobClient& client, const std::string& service,
 auto download(const RemoteJobClient& client, const std::string& service,
               const std::string& instance, const std::string& job_id,
               const std::string& digest, uint64_t limit,
-              const std::atomic<bool>& stop) -> std::string {
+              const std::atomic<bool>& stop,
+              std::optional<uint64_t> expected_size = std::nullopt)
+    -> std::string {
   if (!crypto::is_sha256_hex(digest))
     throw std::runtime_error("invalid remote blob digest");
   std::ostringstream bytes;
-  client.get_blob(service, instance, job_id, digest, bytes, limit, &stop);
+  client.get_blob(service, instance, job_id, digest, bytes, limit,
+                  expected_size, &stop);
   return bytes.str();
 }
 
@@ -67,7 +70,8 @@ auto import_logs(const stdfs::path& path, RemoteInvocationResult& result)
     // of the line and validate it before decoding the same bytes again.
     if (hosq::decode_document_into<hosq::json::FastReader<>>(
             entry, line, {.error_path = false}) ||
-        *entry.stream < 1 || *entry.stream > 4)
+        *entry.stream <= static_cast<uint64_t>(LogStream::unspecified) ||
+        *entry.stream > static_cast<uint64_t>(LogStream::MAX))
       throw std::runtime_error("invalid remote log entry");
     result.logs.emplace_back(static_cast<LogStream>(*entry.stream),
                              std::move(*entry.text));
@@ -240,7 +244,8 @@ auto import_remote_result(
     const stdfs::path& directory, const stdfs::path& module_cache,
     const std::vector<types::PortType>& outputs,
     const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
-    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
+    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
+    const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
   const auto job = workerd::parse_spec(spec);
   const auto manifest_bytes = download(client, service, instance, job_id,
@@ -278,7 +283,7 @@ auto import_remote_result(
   } remove{temp};
   std::set<stdfs::path> written;
   uint64_t total = 0;
-  std::vector<std::pair<std::string, const R::ResultFile*>> module_files;
+  std::vector<std::pair<ModuleIdentity, const R::ResultFile*>> module_files;
   for (const auto* file : *files) {
     const auto name_value = file->path()->str();
     const auto digest_value = file->sha256()->str();
@@ -310,28 +315,25 @@ auto import_remote_result(
     total += *size;
     if (base == "modules") {
       const auto name = rel.parent_path().filename().string();
-      const auto identity = "/nix/store/" + name;
-      if (rel == stdfs::path("modules") / name / "index.js" &&
-          valid_module_identity(identity))
-        module_files.emplace_back(identity, file);
+      if (rel == stdfs::path("modules") / name / "index.js")
+        if (auto identity = ModuleIdentity::parse("/nix/store/" + name))
+          module_files.emplace_back(std::move(*identity), file);
       continue;  // Built definition resources are independent of display data.
     }
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, instance, job_id, *digest, destination, *size,
-                    &stop, [&](uint64_t done, uint64_t bytes) {
+    client.get_blob(service, instance, job_id, *digest, destination, *size, *size,
+                     &stop, [&](uint64_t done, uint64_t bytes) {
                       if (progress) progress(*name, done, bytes);
                     });
     destination.close();
-    if (!destination || stdfs::file_size(path) != *size)
-      throw std::runtime_error("remote result size mismatch");
+    if (!destination) throw std::runtime_error("cannot close remote result");
   }
   remote::EnvironmentJson environment;
   const auto info = fs::read_file(temp / "environment.json");
-  if (!info || schema::decode(*info, environment) ||
-      !std::ranges::all_of(*environment.paths, remote::store_path))
+  if (!info || schema::decode(*info, environment))
     throw std::runtime_error("invalid remote build environment");
   result.built = *environment.built;
   result.log_truncated = *environment.log_truncated;
@@ -340,18 +342,17 @@ auto import_remote_result(
   if (auto blob = fs::read_file(temp / "display.fb"))
     decoded_display = wire::standalone_display(*blob);
   for (const auto& [identity, file] : module_files) {
-    if (std::ranges::find(result.environment.paths, identity) ==
+    if (std::ranges::find(result.environment.paths, identity.path().string()) ==
         result.environment.paths.end())
       continue;
     try {
-      const stdfs::path root(identity);
+      const auto& root = identity.path();
       if (stdfs::is_symlink(root)) continue;
       if (!stdfs::is_directory(root) &&
           !cached_module_source(module_cache, identity)) {
         const auto source =
             download(client, service, instance, job_id, file->sha256()->str(),
-                     kModuleSourceLimit, stop);
-        if (source.size() != file->size()) continue;
+                     kModuleSourceLimit, stop, file->size());
         // The pinned builder supplies built resources, restricted to its
         // closure. A Nix store path is an identity, not the content hash of
         // this source.
@@ -362,38 +363,27 @@ auto import_remote_result(
     }
   }
   if (const auto* failure = message->value_as_WorkerFailure()) {
-    result.worker.failure = wire::failure(failure->failure());
+    result.failure = wire::failure(failure->failure());
   } else if (const auto* worker = message->value_as_WorkerResult()) {
-    std::set<std::string> seen;
+    const auto started = now_ms();
+    std::vector<std::pair<std::string, std::string>> raw;
+    for (const auto* output : *worker->outputs())
+      raw.emplace_back(
+          output->name()->str(),
+          std::string(reinterpret_cast<const char*>(output->bytes()->data()),
+                      output->bytes()->size()));
+    result.outputs = workerd::accept_outputs(std::move(raw), outputs);
     std::vector<std::pair<stdfs::path, PortKind>> returned_paths;
-    for (const auto* output : *worker->outputs()) {
-      const auto port = std::ranges::find(outputs, output->name()->str(),
-                                          &types::PortType::name);
-      if (port == outputs.end() || !seen.insert(port->name).second)
-        throw Failed(FailureKind::output_invalid,
-                     "remote worker sent an unknown or duplicate port");
-      std::string value(reinterpret_cast<const char*>(output->bytes()->data()),
-                        output->bytes()->size());
-      if (!port->type || !types::verify(*port->type, value))
-        throw Failed(FailureKind::output_invalid,
-                     "invalid remote output value");
-      if (port->kind != PortKind::FlatBuffer) {
-        Value path{port->name, port->kind, port->type, std::move(value), {}};
-        const auto relative = path_value(path);
-        if (!relative) throw std::runtime_error("missing remote output path");
-        const auto rel = remote::relative_path(*relative);
-        if (*rel.begin() != "out")
-          throw std::runtime_error(
-              "remote output is outside its output folder");
-        returned_paths.emplace_back(rel, port->kind);
-        value = with_path(path, (directory / rel).string()).bytes;
-      }
-      result.worker.outputs.emplace_back(port->name, std::move(value));
+    for (auto& value : result.outputs) {
+      if (value.kind == PortKind::FlatBuffer) continue;
+      const auto relative = path_value(value);
+      if (!relative) throw std::runtime_error("missing remote output path");
+      const auto rel = remote::relative_path(*relative);
+      if (*rel.begin() != "out")
+        throw std::runtime_error("remote output is outside its output folder");
+      returned_paths.emplace_back(rel, value.kind);
+      value = with_path(value, (directory / rel).string());
     }
-    for (const auto& port : outputs)
-      if (!port.optional && !seen.contains(port.name))
-        throw Failed(FailureKind::output_invalid,
-                     "remote worker omitted " + port.name);
     for (const auto& dir : *environment.directories) {
       const auto rel = remote::relative_path(dir);
       const auto top = *rel.begin();
@@ -418,6 +408,7 @@ auto import_remote_result(
       stdfs::remove_all(target);
       stdfs::rename(staged, target);
     }
+    if (on_validation) on_validation(started, now_ms());
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }

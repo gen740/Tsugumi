@@ -23,10 +23,8 @@ namespace tsugumi::workerd {
 enum class OutputDelivery { local_paths, transferred_files };
 
 struct InvocationResult {
-  WorkerOutcome outcome;
-  // A carrier may return logs with the result instead of streaming them.
-  std::vector<std::pair<LogStream, std::string>> logs;
-  bool log_truncated = false;
+  std::vector<Value> outputs;
+  std::optional<FailureData> failure;
   // Worker-visible out path and its caller-visible destination.
   std::optional<std::pair<std::string, std::string>> out_alias;
 };
@@ -68,7 +66,7 @@ struct Invocation {
   std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
   std::function<InvocationParameters()> prepare_params;
   std::function<void(int64_t, int64_t)> on_timing;
-  std::function<void(const InvocationResult&)> validate;
+  std::function<void(InvocationResult&)> validate;
   fs::TransferProgress transfer = {};
 };
 
@@ -84,11 +82,14 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 
-// Output transfer can fail after a successful ABI call. It must not turn that
-// call into a failed Card or discard a resident. Validation is a separate step.
-auto stage_outputs(WorkerOutcome& outcome,
-                   const std::vector<types::PortType>& ports,
-                   std::span<const Value> inputs,
+// Admit bytes from a worker process before interpreting them as port values.
+auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
+                    std::span<const types::PortType> ports)
+    -> std::vector<Value>;
+
+// Output transfer can fail after a successful ABI call. Transfer failures
+// preserve resident reuse.
+auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
                    std::span<const Value> original_inputs, int output_root,
                    const std::string& output_alias, int input_root,
                    const std::filesystem::path& input_directory,

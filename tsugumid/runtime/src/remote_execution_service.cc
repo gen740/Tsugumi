@@ -164,12 +164,12 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                          reply->transfer_total);
     } catch (const BrokerInstanceChanged& error) {
       s.execution_state = RemoteExecutionState::interrupted;
-      output.outcome.failure =
+      output.failure =
           FailureData::make(FailureKind::interrupted, error.what());
       return output;
     } catch (const BrokerRequestRejected& error) {
       s.execution_state = RemoteExecutionState::failed;
-      output.outcome.failure =
+      output.failure =
           FailureData::make(FailureKind::invalid_request, error.what());
       return output;
     } catch (const std::exception&) {
@@ -192,7 +192,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
-            });
+            },
+            request.on_remote_validation);
         if (!result.environment.paths.empty()) {
           s.build_cached = !result.built;
           history.write_sync([&](sql::Db& db) {
@@ -202,9 +203,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         }
         output.log_truncated = result.log_truncated;
         output.logs = std::move(result.logs);
-        output.outcome = std::move(result.worker);
-        if (output.outcome.failure)
-          s.execution_state = RemoteExecutionState::failed;
+        output.outputs = std::move(result.outputs);
+        output.failure = std::move(result.failure);
+        if (output.failure) s.execution_state = RemoteExecutionState::failed;
         return output;
       } catch (const BrokerDisconnected&) {
         s.execution_state = RemoteExecutionState::disconnected;
@@ -213,7 +214,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     } else if (reply &&
                (reply->state == "failed" || reply->state == "cancelled" ||
                 reply->state == "interrupted")) {
-      output.outcome.failure = remote_failure(*reply);
+      output.failure = remote_failure(*reply);
       return output;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(750));
@@ -246,12 +247,11 @@ auto RemoteExecutionService::prepare(const Node& node,
                                                " is not registered");
   auto probe = client_.probe(target->id, target->server_id);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
-  if (system.empty())
-    throw Failed(FailureKind::unsupported, "remote worker system is unknown");
   if (settings.execution_resources && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");
-  if (std::ranges::find(probe.systems, system) == probe.systems.end())
+  if (!settings.system.empty() &&
+      std::ranges::find(probe.systems, system) == probe.systems.end())
     throw Failed(
         FailureKind::unsupported,
         "external execution service no longer supports system " + system);

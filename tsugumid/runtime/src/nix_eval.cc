@@ -688,9 +688,8 @@ struct NixEvaluator::Impl {
                            ->forceInt(attr("implementationCount"), nix::noPos,
                                       "while counting Card implementations")
                            .value;
-    if (count < 0 || count > c.max_implementations)
-      throw NixImplementationLimit(
-          "input and run list expansion exceeds 256 combinations");
+    enforce_implementation_limit(static_cast<uint64_t>(count),
+                                 c.max_implementations);
     r.implementation_count = static_cast<uint32_t>(count);
     auto& manifest = attr("manifest");
     state->forceValue(manifest, nix::noPos);

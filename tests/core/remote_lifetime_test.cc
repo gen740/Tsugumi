@@ -163,13 +163,14 @@ class JournalBroker : public testing::Test {
           journal->put(q.job_id, *put, q.core_life_id);
           response = W::reply(R::AckT{});
         } else if (const auto* submit = q.body.AsSubmitRequest()) {
-          response = W::reply(
-              journal
-                  ->submit(q.job_id,
-                           {reinterpret_cast<const char*>(submit->spec.data()),
-                            submit->spec.size()},
-                           q.core_life_id)
-                  .status());
+          const std::string_view bytes(
+              reinterpret_cast<const char*>(submit->spec.data()),
+              submit->spec.size());
+          response =
+              W::reply(journal
+                           ->submit(q.job_id, bytes, *W::parse_spec(bytes),
+                                    q.core_life_id)
+                           .status());
         } else if (const auto* cancel = q.body.AsCancelRequest()) {
           response =
               W::reply(journal->cancel(q.job_id, cancel->fingerprint).status());

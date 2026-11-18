@@ -261,11 +261,9 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   if (!catalog) throw BrokerDisconnected("expected execution broker catalog");
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
-    if (!t->capabilities)
-      throw BrokerDisconnected("missing target capabilities");
     const auto& c = *t->capabilities;
-    targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                       t->available, c.resource_limits, c.max_jobs, t->grade,
+    targets.push_back({t->id, c.native_system, c.systems, t->available,
+                       c.resource_limits, c.max_jobs, t->grade,
                        t->unavailable_reason});
   }
   return targets;
@@ -322,6 +320,7 @@ auto RemoteJobClient::get_blob(std::string_view service,
                                std::string_view instance, std::string_view job,
                                std::string_view digest,
                                std::ostream& destination, uint64_t limit,
+                               std::optional<uint64_t> expected_size,
                                const std::atomic<bool>* stop,
                                const TransferProgress& progress) const -> void {
   crypto::Sha256 hash;
@@ -336,8 +335,9 @@ auto RemoteJobClient::get_blob(std::string_view service,
         request(command(std::move(chunk), service, instance, job), stop);
     const auto* body = reply.body.AsBlobChunk();
     if (!body || body->digest != digest || body->offset != offset ||
-        body->total > limit || (offset && body->total != total) ||
-        body->offset > body->total ||
+        (offset ? body->total != total
+                : expected_size ? body->total != *expected_size
+                                : body->total > limit) ||
         body->bytes.size() > body->total - offset ||
         body->bytes.size() > workerd::kChunkBytes ||
         (body->bytes.empty() && offset < body->total))

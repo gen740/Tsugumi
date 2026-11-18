@@ -36,6 +36,8 @@ auto reply(T value) -> R::MessageT {
   return message;
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT;
+// Decodes a packed spec. Apply admission policy when accepting a new job.
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT>;
+auto validate_log_limit(const R::JobSpecT& spec) -> void;
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

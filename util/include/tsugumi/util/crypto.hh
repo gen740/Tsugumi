@@ -48,6 +48,7 @@ auto short_id() -> std::string;
 auto is_short_id(std::string_view value) -> bool;
 auto is_run_id(std::string_view value) -> bool;
 auto is_operation_id(std::string_view value) -> bool;
+// The generator returns a valid short ID.
 auto unique_short_id(const std::function<bool(const std::string&)>& exists,
                      const std::function<std::string()>& generate = short_id)
     -> std::string;

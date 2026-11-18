@@ -41,7 +41,6 @@ struct LogJson {
 };
 
 auto relative_path(std::string_view path) -> std::filesystem::path;
-auto store_path(std::string_view path) -> bool;
 
 }  // namespace remote
 }  // namespace tsugumi
