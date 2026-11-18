@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,7 @@ struct Options {
   stdfs::path host_folders;
   bool project_shell = false;
   stdfs::path substituters_file;
+  stdfs::path prepare_cards;
   std::string fault;
 };
 
@@ -64,7 +66,10 @@ void usage() {
       "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
       "[--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
       "                [--usage-file FILE]\n"
-      "                [--host-folders DIR] [--substituters-file FILE]\n");
+      "                [--host-folders DIR] [--substituters-file FILE]\n"
+      "       tsugumid --project DIR --prepare-cards FILE [options]\n"
+      "                builds every Code Card without running any, writes one\n"
+      "                JSON line per Card to FILE and exits\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -120,6 +125,8 @@ std::optional<Options> parse(int argc, char** argv) {
       o.project_shell = true;
     else if (a == "--substituters-file")
       o.substituters_file = next();
+    else if (a == "--prepare-cards")
+      o.prepare_cards = next();
     else if (a == "--help")
       return std::nullopt;
     else
@@ -276,6 +283,16 @@ int run_daemon(int argc, char** argv) {
     }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
+  }
+  if (!opt.prepare_cards.empty()) {
+    std::ofstream out(opt.prepare_cards, std::ios::trunc);
+    if (!out) {
+      log::error("cannot write " + opt.prepare_cards.string());
+      return 2;
+    }
+    const bool built = service.prepare_cards(out);
+    service.shutdown();
+    return built ? 0 : 1;
   }
   ServerOptions sv;
   sv.unix_path = opt.unix_socket;

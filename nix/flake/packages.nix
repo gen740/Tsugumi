@@ -20,10 +20,9 @@ in
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
-      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix {
-        # Formatting runs on the host; guest binaries need no formatter paths.
-        tsugumid = core.override { withFormatters = false; };
-      };
+      # Formatting runs on the host; guest binaries need no formatter paths.
+      guestCore = core.override { withFormatters = false; };
+      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix { tsugumid = guestCore; };
       vm-boot = pkgs.callPackage ../../vm/guest/vm-boot.nix { inherit kernel vm-system; };
     in
     {
@@ -59,6 +58,11 @@ in
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
         inherit kernel vm-boot vm-system;
+        # The guest of tsugumi-pack and of the apps it exports (pack/).
+        pack-guest = pkgs.callPackage ../../pack/guest {
+          inherit kernel cardNixpkgs;
+          tsugumid = guestCore;
+        };
         # One distributable image; the helper extracts its VZ attachments.
         vm =
           pkgs.runCommand "tsugumi-vm"

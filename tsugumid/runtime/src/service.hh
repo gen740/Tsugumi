@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <iosfwd>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -99,6 +100,9 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
+  // Builds every Code Card the way a run would, without running any
+  // (tsugumid --prepare-cards): one JSON line per Card. False when one failed.
+  auto prepare_cards(std::ostream& out) -> bool;
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
