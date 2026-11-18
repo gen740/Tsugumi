@@ -51,7 +51,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer
+    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
     case project(URL), newProject
   }
 
@@ -190,6 +190,7 @@ final class UIScript {
         // Not `move`: SwiftUI's hover does not see a mouse event sent to a window in the back.
         NotificationCenter.default.post(name: .versionHover, object: Int(w[1]) ?? 0)
       case "explainer": request = .explainer
+      case "debugpanel": request = .debug
       case "home": if let w = workspace { AppModel.shared.leaveProject(in: w) }
       case "newproject": request = .newProject
       case "openproject": request = .project(URL(fileURLWithPath: w.dropFirst().joined(separator: " ")))
@@ -502,21 +503,31 @@ final class UIScript {
       case "panel": workspace?.togglePanel(w[1] == "timeline" ? .timeline : .log)
       case "details":
         NotificationCenter.default.post(name: .canvasShowDetails, object: workspace?.active?.id, userInfo: ["card": w[1]])
-      case "click", "move":
+      case "click", "doubleclick", "move":
         let title = w.dropFirst(3).joined(separator: " ")
         let win = title.isEmpty ? mainWindow : NSApp.windows.first { $0.isVisible && $0.title.contains(title) }
         guard let win, let x = Double(w[1]), let y = Double(w[2]) else { say("no window for " + line); break }
         let p = NSPoint(x: x, y: win.frame.height - y)
-        func event(_ t: NSEvent.EventType) -> NSEvent? {
+        func event(_ t: NSEvent.EventType, clicks: Int = 1) -> NSEvent? {
           NSEvent.mouseEvent(with: t, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                             windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                             windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)
+        }
+        // Taken from the queue, so it is NSApp.currentEvent while views are hit-tested (the canvas asks).
+        func send(_ e: NSEvent?) {
+          guard let e else { return }
+          NSApp.postEvent(e, atStart: true)
+          if let next = NSApp.nextEvent(matching: .any, until: nil, inMode: .default, dequeue: true) { win.sendEvent(next) }
         }
         if cmd == "move" {
-          if let e = event(.mouseMoved) { win.sendEvent(e) }
+          send(event(.mouseMoved))
         } else {
-          if let d = event(.leftMouseDown) { win.sendEvent(d) }
-          try? await Task.sleep(for: .milliseconds(60))
-          if let u = event(.leftMouseUp) { win.sendEvent(u) }
+          // A double click: two presses within the double-click interval, the second counting 2.
+          for clicks in 1...(cmd == "doubleclick" ? 2 : 1) {
+            send(event(.leftMouseDown, clicks: clicks))
+            try? await Task.sleep(for: .milliseconds(60))
+            send(event(.leftMouseUp, clicks: clicks))
+            if clicks == 1, cmd == "doubleclick" { try? await Task.sleep(for: .milliseconds(80)) }
+          }
         }
       case "scroll":
         // scroll <x> <y> <dy>: a wheel event at a point of the window (dy > 0 scrolls down), as a trackpad sends
@@ -562,6 +573,24 @@ final class UIScript {
             CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.postToPid(getpid())
             try? await Task.sleep(for: .milliseconds(40))
           }
+        }
+      case "selection":
+        // What a click picked: the selected Cards and wire, and the windows open.
+        let t = workspace?.active
+        say("selection key \(workspace?.window?.isKeyWindow ?? false) active \(NSApp.isActive) cards \(t?.selection.sorted().joined(separator: ",") ?? "-") wire \(t?.selectedConnection.map(String.init) ?? "-") windows \(NSApp.windows.filter(\.isVisible).map(\.title).joined(separator: "|"))")
+      case "chatfailure": if let s = session { AppModel.shared.chat(for: s).showFailureSample() }
+      case "projecttrust":
+        // projecttrust yes|no: answers the project's trust question (saved for that project)
+        if let s = session { await s.setProjectTrust(w.count > 1 && w[1] == "yes") }
+      case "debug":
+        // debug <option> on|off: a toggle of the debug panel
+        let on = w.count > 2 && w[2] == "on", o = DebugOptions.shared
+        switch w[1] {
+        case "hit": o.showHitAreas = on
+        case "errors": o.fullErrorDetail = on
+        case "keys": o.showKeys = on
+        case "stats": o.showCanvasStats = on
+        default: say("unknown " + line)
         }
       case "save": if let s = session { await s.save() }
       case "quit": requestQuit()

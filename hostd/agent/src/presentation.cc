@@ -77,6 +77,28 @@ auto OneLine(std::string text) -> std::string {
     if (c == '\n' || c == '\r' || c == '\t') c = ' ';
   return text;
 }
+// The reason a failure gives, short enough for one line of the chat: its
+// first non-empty line, cut at a character boundary. The whole result stays
+// in the row (the app's debug panel shows it).
+auto ShortReason(std::string_view text) -> std::string {
+  constexpr std::size_t kLimit = 160;
+  constexpr std::string_view kSpace = " \t\r\n";
+  const auto first = text.find_first_not_of(kSpace);
+  if (first == std::string_view::npos) return {};
+  auto line = text.substr(first, text.find('\n', first) - first);
+  line = line.substr(0, line.find_last_not_of(kSpace) + 1);
+  const auto rest = first + line.size();
+  bool more = text.find_first_not_of(kSpace, rest) != std::string_view::npos;
+  if (line.size() > kLimit) {
+    auto cut = kLimit;
+    // Not inside a UTF-8 sequence.
+    while (cut > 0 && (static_cast<unsigned char>(line[cut]) & 0xC0) == 0x80)
+      --cut;
+    line = line.substr(0, cut);
+    more = true;
+  }
+  return OneLine(std::string(line)) + (more ? "…" : "");
+}
 auto FailureSummary(A::ChatRowT& row) -> void {
   if (row.kind != "tool" || row.state != "failed") return;
   const auto envelope = ObjectOrEmpty(row.result);
@@ -146,7 +168,7 @@ auto FailureSummary(A::ChatRowT& row) -> void {
   }
   const auto subject =
       row.name + (target.empty() ? "" : " · " + OneLine(target));
-  const auto detail = diagnostic.empty() ? "" : ": " + OneLine(diagnostic);
+  const auto detail = diagnostic.empty() ? "" : ": " + ShortReason(diagnostic);
   row.summary_ja =
       subject + " · 失敗" + (kind.empty() ? "" : "（" + kind + "）") + detail;
   row.summary_en =

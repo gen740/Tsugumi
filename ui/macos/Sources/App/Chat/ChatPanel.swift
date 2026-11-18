@@ -760,6 +760,7 @@ private struct StructuredChatRow: View {
         // Unresolved failures remain visible even when the step is folded.
         ForEach(row.children.filter { $0.kind == "tool" && $0.state == "failed" }) { failure in
           Text(english ? failure.summaryEn : failure.summaryJa).font(.caption).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          if DebugOptions.shared.fullErrorDetail { ToolFailureDetail(arguments: failure.arguments, result: failure.result) }
         }
       } else if row.kind == "tool" {
         ToolRow(item: ChatController.presentedItem(row), tab: tab, session: session)
@@ -827,7 +828,9 @@ struct ToolRow: View {
           .padding(.leading, 19)
           .fixedSize(horizontal: false, vertical: true)
       }
-      if open {
+      if item.tool?.ok == false, DebugOptions.shared.fullErrorDetail, let row = item.presentation {
+        ToolFailureDetail(arguments: row.arguments, result: row.result)
+      } else if open {
         (item.tool?.name == "web_search" ? Text(Self.linked(item.text)) : Text(item.text))
           .font(.caption.monospaced()).textSelection(.enabled)
           .lineLimit(40)
@@ -836,6 +839,37 @@ struct ToolRow: View {
           .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
       }
     }
+  }
+}
+
+/// A failed tool call in full (debug panel): its arguments and the result as
+/// returned, JSON laid out to read. The chat otherwise shows the short reason.
+struct ToolFailureDetail: View {
+  let arguments: String
+  let result: String
+
+  static func readable(_ text: String) -> String {
+    guard let data = text.data(using: .utf8), let v = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+          v is [Any] || v is [String: Any],
+          let out = try? JSONSerialization.data(withJSONObject: v, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+          let s = String(data: out, encoding: .utf8) else { return text }
+    // A diagnostic inside the result reads with its own line breaks.
+    return s.replacingOccurrences(of: "\\n", with: "\n")
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("引数").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+      Text(verbatim: Self.readable(arguments))
+      Text("結果").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+      Text(verbatim: Self.readable(result))
+    }
+    .font(.caption.monospaced())
+    .textSelection(.enabled)
+    .fixedSize(horizontal: false, vertical: true)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(6)
+    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
   }
 }
 
