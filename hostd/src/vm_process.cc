@@ -294,10 +294,6 @@ class VMProcess final : public EnvironmentProcess {
     if (::connect(socket.fd, reinterpret_cast<sockaddr*>(&address),
                   sizeof address))
       return -1;
-    timeval timeout{1800, 0};
-    ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-    timeout.tv_sec = 5;
-    ::setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
     const auto fd = socket.fd;
     socket.fd = -1;
     return fd;
