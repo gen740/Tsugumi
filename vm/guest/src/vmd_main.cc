@@ -297,6 +297,14 @@ const std::string kSubstituters = "/run/tsugumi-substituters";
 // given (share entries host-<tag>) at /run/tsugumi/host/<tag> and those
 // attached to its chats (chat-<tag>) at /run/tsugumi/chat/<tag>, nothing of the
 // share, the store disk or other projects.
+// host-<tag> / chat-<tag> folders: the tag is lowercase hex, like a project id.
+bool valid_id(const std::string& id) {
+  if (id.empty() || id.size() > 64) return false;
+  for (char c : id)
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  return true;
+}
+
 ProjectView project_view(int slot, const std::string& id) {
   ProjectView v;
   std::string dir = opt.host + "/" + std::to_string(slot);
@@ -310,7 +318,6 @@ ProjectView project_view(int slot, const std::string& id) {
     std::string name = e.path().filename().string();
     bool host = name.starts_with("host-");
     bool chat = name.starts_with("chat-");
-    // host-<tag> / chat-<tag>: the tag is 16 hex digits, like a project id.
     if (!(host || chat) || !valid_id(name.substr(5))) continue;
     v.extra.emplace_back(
         e.path().string(),
