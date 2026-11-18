@@ -76,11 +76,18 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
                           "bytes"));
   }
   auto after = before;
-  auto changes = json::Array(json::Get(args, "changes", "[]"));
+  auto encoded_changes = json::Array(json::Get(args, "changes", "[]"));
+  struct Change {
+    json::Members wrapper;
+    json::Members value;
+    std::string kind;
+  };
+  std::vector<Change> changes;
+  changes.reserve(encoded_changes.size());
   std::set<std::string> changed;
-  for (auto& raw : changes) {
+  for (const auto& raw : encoded_changes) {
     auto wrapper = json::Object(raw);
-    const auto kind = json::Text(wrapper, "value_type");
+    auto kind = json::Text(wrapper, "value_type");
     auto c = json::Object(json::Get(wrapper, "value", "{}"));
     const auto id = json::Text(c, "id"), path = json::Text(c, "path");
     if (kind == "PutDefinition") {
@@ -151,8 +158,7 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
                      hashes.at(path) != crypto::sha256_hex(after.at(path))))
           changed.insert(*card);
     }
-    wrapper["value"] = json::Encode(c);
-    raw = json::Encode(wrapper);
+    changes.push_back({std::move(wrapper), std::move(c), std::move(kind)});
   }
   // A Draft's intent is Agent policy, checked before core permission approvals.
   for (const auto& [path, text] : before) {
@@ -198,10 +204,7 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
   const auto was = comments::of(before);
   const std::vector<std::string> cards(changed.begin(), changed.end());
   // Stamp only metadata written by this save. A keep-only save preserves it.
-  for (auto& raw : changes) {
-    auto wrapper = json::Object(raw),
-         c = json::Object(json::Get(wrapper, "value", "{}"));
-    const auto kind = json::Text(wrapper, "value_type");
+  for (auto& [wrapper, c, kind] : changes) {
     const auto path = kind == "PutDefinition"
                           ? "definitions/" + json::Text(c, "id") + "/_meta.json"
                           : json::Text(c, "path");
@@ -221,10 +224,13 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
         c["bytes"] = json::Quote(after.at(path));
       }
     }
-    wrapper["value"] = json::Encode(c);
-    raw = json::Encode(wrapper);
   }
-  args["changes"] = json::Encode(changes);
+  encoded_changes.clear();
+  for (auto& change : changes) {
+    change.wrapper["value"] = json::Encode(change.value);
+    encoded_changes.push_back(json::Encode(change.wrapper));
+  }
+  args["changes"] = json::Encode(encoded_changes);
   return {std::move(args),
           comments::record_json(comments::changes(was, comments::of(after)))};
 }
