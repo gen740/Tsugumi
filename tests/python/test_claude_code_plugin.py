@@ -73,24 +73,36 @@ def test_web_environment_cannot_enable_the_real_secret_store(tmp_path):
         _socket_directories.pop(tmp_path).cleanup()
 
 
-def stop_resident_services(root: Path):
-    """A UI close intentionally leaves core alive; fixture teardown owns it."""
-    pids = set()
-    for name in ("host.ready", "server.ready", "server.json"):
-        for ready in root.rglob(name):
-            if ready.is_symlink():
+def _stop_matching_processes(argument: str, *, socket_directory: str | None = None):
+    listing = subprocess.check_output(["ps", "-axww", "-o", "pid=,stat=,command="], text=True)
+    for line in listing.splitlines():
+        fields = line.split(maxsplit=2)
+        if len(fields) != 3:
+            continue
+        pid, state, command = fields
+        if state.startswith("Z") or argument not in command:
+            continue
+        if socket_directory is not None:
+            # MCP's detached Web server has no per-test path in its arguments.
+            environment = subprocess.run(["ps", "eww", "-p", pid, "-o", "command="],
+                                         capture_output=True, text=True)
+            if f"TSUGUMI_SOCKET_DIR={socket_directory}" not in environment.stdout.split():
                 continue
-            try:
-                pid = int(json.loads(ready.read_text())["pid"])
-                if pid > 1 and pid != os.getpid():
-                    pids.add(pid)
-            except (FileNotFoundError, ProcessLookupError, KeyError):
-                pass
-    for pid in pids:
-        terminate_process(pid)
-    directory = _socket_directories.pop(root, None)
-    if directory:
-        directory.cleanup()
+        terminate_process(int(pid), grace=None)
+
+
+def stop_resident_services(root: Path, *, vm_helper: Path | None = None):
+    """Stop each launcher before looking for the services it can spawn."""
+    directory = _socket_directories[root]
+    _stop_matching_processes(f" {WEB_DIST.resolve() / 'server.js'} --reuse --port ",
+                             socket_directory=directory.name)
+    # hostd creates sockets before it publishes host.ready. Its shutdown
+    # stops and waits for the native project daemons it launched.
+    _stop_matching_processes(f" --state-dir {root / 'host-core'} --unix {directory.name}/")
+    if vm_helper is not None:
+        _stop_matching_processes(f" {vm_helper} --support {root / 'support'} --image ")
+    directory.cleanup()
+    del _socket_directories[root]
 
 
 def page_post(port: int, cookie: str, route: str, body: dict) -> dict:
@@ -235,11 +247,6 @@ def plugin_at(root, **environment):
         yield mcp, root, data
     finally:
         mcp.close()
-        try:
-            info = json.loads((data / "server.json").read_text())
-            terminate_process(info["pid"])
-        except (FileNotFoundError, ProcessLookupError):
-            pass
         stop_resident_services(root)
 
 

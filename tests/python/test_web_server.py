@@ -5,10 +5,12 @@ sniffing. Needs node and a built ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
 import json
+import select
 import shutil
 import subprocess
 import sys
@@ -17,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from harness.file_events import process_file
+from harness.file_events import process_exit, process_file, terminate_process
 from conftest import WEB_DIST
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 
@@ -28,9 +30,9 @@ pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
                                 reason="needs node and ui/web/dist (cd ui/web && npm run build)")
 
 
-@pytest.fixture
-def web(tmp_path):
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+@contextmanager
+def web_server(tmp_path, **environment):
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), **environment)
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         ready = process_file(p, tmp_path / "data/server.json")
@@ -45,6 +47,12 @@ def web(tmp_path):
         p.terminate()
         p.wait(10)
         stop_resident_services(tmp_path)
+
+
+@pytest.fixture
+def web(tmp_path):
+    with web_server(tmp_path) as server:
+        yield server
 
 
 def request(port: int, method: str, path: str, headers=None, body=None):
@@ -94,6 +102,35 @@ def test_only_the_page_with_the_key_reaches_the_api(web):
     r, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
     assert r.status == 200, data
     json.loads(data)
+
+
+def test_teardown_stops_host_before_readiness(tmp_path):
+    # Keep host.ready absent even after an authenticated request succeeds.
+    started = tmp_path / "host.pid"
+    binary = tmp_path / "starting-host"
+    binary.write_text(f"""#!{sys.executable}
+import os
+from pathlib import Path
+import signal
+
+signals = {{signal.SIGTERM}}
+signal.pthread_sigmask(signal.SIG_BLOCK, signals)
+started = Path({str(started)!r})
+pending = started.with_suffix(".tmp")
+pending.write_text(str(os.getpid()))
+pending.rename(started)
+signal.sigwait(signals)
+""")
+    binary.chmod(0o700)
+    with ExitStack() as cleanup:
+        with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (web_process, port, key):
+            assert process_file(web_process, started) is not None
+            pid = int(started.read_text())
+            cleanup.callback(terminate_process, pid)
+            exited = cleanup.enter_context(process_exit(pid))
+            assert request(port, "GET", "/api/env/list", {"Cookie": page_cookie(port, key)})[0].status == 200
+            assert not (tmp_path / "host-core/host.ready").exists()
+        assert select.select([exited], [], [], 0)[0], "hostd survived Web fixture teardown"
 
 
 def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(web):
