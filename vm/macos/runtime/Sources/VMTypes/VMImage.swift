@@ -30,18 +30,16 @@ public struct VMImage: Sendable, Equatable {
   }
 }
 
-/// Size of the shared VM (all projects share it).
+/// Size of the shared VM (all projects share it). hostd chooses it (its
+/// settings, else the defaults for this Mac) and sends it with each Boot.
 public struct VMResources: Sendable, Equatable {
   public var cpus: Int
   public var memoryGiB: Int
   public var storeGiB: Int
 
-  /// Half the Mac's memory (4–16 GiB), all but two cores (2–8).
-  public static var `default`: VMResources {
-    let mem = Int(ProcessInfo.processInfo.physicalMemory >> 30)
-    let cores = ProcessInfo.processInfo.activeProcessorCount
-    return VMResources(cpus: min(8, max(2, cores - 2)), memoryGiB: min(16, max(4, mem / 2)), storeGiB: 64)
+  public init(cpus: Int, memoryGiB: Int, storeGiB: Int) {
+    self.cpus = cpus
+    self.memoryGiB = memoryGiB
+    self.storeGiB = storeGiB
   }
 }
-
-

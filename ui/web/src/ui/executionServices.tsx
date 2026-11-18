@@ -47,10 +47,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     && /^(0x[0-9a-f]+|[0-9]+)$/i.test(edit.grade) && BigInt(edit.grade) <= 0xffffffffffffffffn
 
   return <Form>
-    <Section title={L('このホストの公開鍵')}>
+    <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
       <Row><code className="selectable">{hostPublicKey}</code>
         <Button disabled={!hostPublicKey} onClick={() => void perform(async () => { await navigator.clipboard.writeText(hostPublicKey) })}>{L('公開鍵をコピー')}</Button></Row>
-      <Row><span className="caption">{L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}</span></Row>
     </Section>
     <Section title={L('実行サービス')}>
       {entries.map((entry) => <Row key={entry.id}>

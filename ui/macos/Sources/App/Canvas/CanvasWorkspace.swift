@@ -48,10 +48,7 @@ struct CanvasWorkspace: View {
     // At narrow widths the status moves above the left controls.
     .overlay(alignment: .bottom) {
       CanvasBottomControls {
-        HStack(spacing: 8) {
-          viewControls.fixedSize()
-          NixReferenceControls(session: session, tab: tab).fixedSize()
-        }
+        viewControls.fixedSize()
       } status: {
         StatusBar(workspace: workspace, session: session, tab: tab)
       }
@@ -146,6 +143,9 @@ struct CanvasWorkspace: View {
       Toggle(isOn: Binding(get: { prefs.showGrid }, set: { prefs.showGrid = $0 })) { Image(systemName: "grid") }
         .toggleStyle(.button)
         .help("グリッド")
+      Divider().frame(height: 16)
+      // The Nix references belong to the same bar as the other view controls.
+      NixReferenceControls(session: session, tab: tab)
     }
     .buttonStyle(.borderless)
     .padding(.horizontal, 10).padding(.vertical, 5)

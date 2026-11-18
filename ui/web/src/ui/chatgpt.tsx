@@ -27,8 +27,7 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
   const active = st.accounts.find((a) => a.active)
   return (
     <>
-      <Section title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
-        {!onboarding && <Row><span className="callout secondary" style={{ whiteSpace: 'normal' }}>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}</span></Row>}
+      <Section info={onboarding ? undefined : <>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}<br />{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</>} title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
         {st.connectionMessage && <Row><span className="caption selectable">{st.connectionMessage}</span></Row>}
         {!onboarding && active && <Row label={L('使用中のアカウント')}><span className="selectable">{active.email ?? active.clientId}</span></Row>}
         {active?.signedIn && !active.planEnabled && (
@@ -63,7 +62,6 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
           </div>
         </Row>
         {!connection.local && <Row><span className="caption secondary" role="status">{L('ChatGPT のサインインは、Web UI のサーバーと同じマシンで localhost または 127.0.0.1 のページを開いて行ってください。ここでは API キーを使えます。')}</span></Row>}
-        {!onboarding && <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</span></Row>}
       </Section>
       {!onboarding && <Section title={L('モデル')}>
         <Row label={L('モデル')}><TextField value={model} onChange={setModel ?? (() => {})} /></Row>

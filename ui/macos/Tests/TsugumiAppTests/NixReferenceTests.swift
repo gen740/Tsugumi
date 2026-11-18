@@ -31,5 +31,5 @@ import Testing
   #expect(activeNixLinks(links, hovered: "other", selected: nil).isEmpty)
   #expect(ends(activeNixLinks(links, hovered: nil, selected: links[1].reference.id)) == ["report>analysis"])
   #expect(activeNixLinks(links, hovered: nil, selected: nil).isEmpty)
-  #expect(refs[1].expression == "inputs.analysis.export")
+  #expect(refs[1].expression == "inputs.analysis")
 }
