@@ -180,6 +180,10 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       s.execution_state = RemoteExecutionState::disconnected;
     }
     if (request.detach.load()) throw ExecutionDetached{};
+    if (reply && reply->log_truncated && !s.log_truncated_at_bytes) {
+      s.log_truncated_at_bytes = request.log_limit_bytes;
+      if (request.log_truncated) request.log_truncated();
+    }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
       output.logs.clear();
@@ -203,6 +207,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
+        output.log_truncated = result.log_truncated;
         output.outcome = std::move(result.worker);
         if (output.outcome.failure)
           s.execution_state = RemoteExecutionState::failed;

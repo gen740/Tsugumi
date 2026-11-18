@@ -632,7 +632,9 @@ TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
       EXPECT_NE(summary->find(name), std::string::npos);
       EXPECT_NE(summary->find("definitions/share/_outputs.fbs"),
                 std::string::npos);
-      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL"), std::string::npos);
+      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL…"), std::string::npos);
+      // Only the reason: the rest of the diagnostic stays in the result.
+      EXPECT_EQ(summary->find("second line"), std::string::npos);
       EXPECT_EQ(summary->find('\n'), std::string::npos);
       EXPECT_EQ(summary->find("\"reply\""), std::string::npos);
     }
@@ -650,6 +652,29 @@ TEST(AgentPresentation, PlainToolErrorsKeepTheirDiagnosticInTheSummary) {
   EXPECT_EQ(row.result, "PLAIN_DIAGNOSTIC");
   EXPECT_NE(row.summary_en.find("PLAIN_DIAGNOSTIC"), std::string::npos);
   EXPECT_NE(row.summary_ja.find("PLAIN_DIAGNOSTIC"), std::string::npos);
+}
+
+TEST(AgentPresentation, LongToolErrorsShowAShortReason) {
+  // A first line far longer than a chat line, in a script with multibyte
+  // characters, after blank lines.
+  std::string first;
+  for (int i = 0; i < 100; ++i) first += "失敗";
+  const auto conversation = Snapshot(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"\n  )" +
+                                     first + R"(\nTRACE_LINE"}]}]})");
+  const auto& row = *conversation.rows[0]->children[0];
+  EXPECT_EQ(row.state, "failed");
+  EXPECT_NE(row.result.find("TRACE_LINE"), std::string::npos);
+  for (const auto* summary : {&row.summary_ja, &row.summary_en}) {
+    EXPECT_EQ(summary->find("TRACE_LINE"), std::string::npos);
+    EXPECT_NE(summary->find("失敗失敗"), std::string::npos);
+    EXPECT_TRUE(summary->ends_with("…"));
+    EXPECT_LT(summary->size(), 220u);
+    // Cut between characters, not inside one.
+    const auto body = summary->substr(0, summary->size() - std::string("…").size());
+    EXPECT_TRUE(body.ends_with("失") || body.ends_with("敗"));
+  }
 }
 
 TEST(AgentPresentation,

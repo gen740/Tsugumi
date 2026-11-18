@@ -128,6 +128,10 @@ struct GraphCanvas: View {
       }
     }
 
+    /// For the debug panel's canvas state: what the last routing took, and whether one is under way.
+    var lastSeconds: Double { seconds }
+    var busy: Bool { working }
+
     private nonisolated static func seconds(_ d: Duration) -> Double {
       Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
     }
@@ -173,6 +177,7 @@ struct GraphCanvas: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
               .coordinateSpace(name: "canvas")
               .padding(m)
+            if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
           }
         }
         // In the view's own space (where the pointer is), not the canvas's.
@@ -199,6 +204,12 @@ struct GraphCanvas: View {
             .transition(.opacity)
         }
         if findText != nil { findBox.padding(.top, 52).frame(maxWidth: .infinity, alignment: .top) }
+        if debug.showCanvasStats {
+          canvasStats(routed)
+            .padding(.leading, 10).padding(.top, 52)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
         // ⌘I: details of the selected Card without the pointer.
         Button("") { showDetailsForSelection() }
           .shortcut(.showDetails)
@@ -349,6 +360,54 @@ struct GraphCanvas: View {
     let base = passes.base, now = camera
     let scale = now.zoom / base.zoom
     return CGPoint(x: p.x * scale + now.x - base.x * scale, y: p.y * scale + now.y - base.y * scale)
+  }
+
+  // MARK: - Debug
+
+  /// The debug panel's options (presentation only).
+  private var debug: DebugOptions { DebugOptions.shared }
+
+  /// What takes a click, drawn over the canvas (debug panel): the rectangles
+  /// where the content takes the mouse at all (gray), each Card's hit shape
+  /// (blue) and the band around each wire that selects it (orange).
+  private func hitAreaLayer(_ routed: [RoutedWire], transform: CGAffineTransform) -> some View {
+    let solidRects = solid(routed).map { Path($0).applying(transform) }
+    let band = 2 * wireTolerance * camera.zoom
+    let wires = routed.filter { $0.connection != nil }.map {
+      $0.path.applying(transform).strokedPath(StrokeStyle(lineWidth: band, lineCap: .round, lineJoin: .round))
+    }
+    let cards = cardKeys.map { k in
+      let o = origin(k).applying(transform)
+      return CardNodeView.hitShape(session.nodeData(k), flow: session.flow, zoom: camera.zoom, newPorts: session.isEditable)
+        .applying(CGAffineTransform(translationX: o.x, y: o.y))
+    }
+    return Canvas { ctx, _ in
+      for r in solidRects { ctx.stroke(r, with: .color(.gray.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [4, 3])) }
+      for w in wires { ctx.fill(w, with: .color(.orange.opacity(0.28))) }
+      for c in cards {
+        ctx.fill(c, with: .color(.blue.opacity(0.18)))
+        ctx.stroke(c, with: .color(.blue.opacity(0.8)), lineWidth: 1)
+      }
+    }
+    .allowsHitTesting(false)
+  }
+
+  /// The canvas's state in a corner (debug panel).
+  private func canvasStats(_ routed: [RoutedWire]) -> some View {
+    let c = camera
+    let wires = routed.filter { $0.connection != nil }.count
+    let lines = [
+      String(format: "zoom %.3f · camera %.0f, %.0f · view %.0f×%.0f", c.zoom, c.x, c.y, size.width, size.height),
+      "cards \(cardKeys.count) · wires \(wires) (+\(routed.count - wires) boundary/display) · notes \(noteIds.count)",
+      String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", passes.count),
+      "scope /\(tab.scope.joined(separator: "/")) · selection \(tab.selection.count) · wire \(tab.selectedConnection.map(String.init) ?? "-")",
+    ]
+    return VStack(alignment: .leading, spacing: 1) {
+      ForEach(lines, id: \.self) { Text(verbatim: $0) }
+    }
+    .font(.caption2.monospaced())
+    .padding(6)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
   }
 
   /// What of the content takes the mouse (world units, with room for ports and handles): CanvasPanHost.
@@ -651,7 +710,7 @@ struct GraphCanvas: View {
     .background(Color(nsColor: .textBackgroundColor))
     .contentShape(Rectangle())
     .gesture(backgroundDrag)
-    .onTapGesture(count: 2, coordinateSpace: .named("canvas")) { _ in fitAll() }
+    .onTapGesture(count: 2, coordinateSpace: .named("canvas")) { loc in backgroundDoubleTap(loc) }
     .onTapGesture(coordinateSpace: .named("canvas")) { loc in backgroundTap(loc) }
     .contextMenu {
       Menu("Card を追加") {
@@ -1018,18 +1077,14 @@ struct GraphCanvas: View {
     hoverAt = p
     guard !interacting else { clearHover(); return }
     let w = world(p)
-    let over = cardKeys.reversed().first(where: { cardRect($0).contains(w) })
+    let over = cardAt(w)
     if tab.showNixReferences { tab.hoveredNixCard = over }
     var target: HoverTarget?
-    if let k = cardKeys.reversed().first(where: { cardRect($0).contains(w) }) {
+    if let k = over {
       // A Draft being written has its details in front of it.
       target = k == session.inlineDraft?.card ? nil : .card(k)
     } else {
-      // About 8 points on screen either side of the line, at any zoom.
-    let tolerance = 8 / camera.zoom
-      target = routed.first { r in
-        r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
-      }?.connection.map(HoverTarget.wire)
+      target = wireAt(w, routed: routed).map(HoverTarget.wire)
     }
     if target == hover { return }
     hoverTask?.cancel()
@@ -1075,7 +1130,8 @@ struct GraphCanvas: View {
     switch t {
     case .card(let k):
       let d = session.nodeData(k)
-      let lines = session.cardDetails(k)
+      var lines = session.cardDetails(k)
+      if debug.showKeys { lines.append("key: \(k)") }
       var status = d.runText ?? d.idleText
       if let id = session.currentRunId, d.invocation > 0 {
         status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
@@ -1093,6 +1149,7 @@ struct GraphCanvas: View {
       let out = session.resolution[fk]?.outputs.first { $0.name == fp }
       let inp = session.resolution[tk]?.inputs.first { $0.name == tp }
       var lines = ["\(session.displayName(fk)).\(fp)  →  \(session.displayName(tk)).\(tp)"]
+      if debug.showKeys { lines.append("connection #\(i): \(fk).\(fp) → \(tk).\(tp)") }
       lines.append(String(localized: "型: ") + (out?.rootType ?? inp?.rootType ?? String(localized: "未解決")))
       lines.append((inp?.optional ?? false) ? String(localized: "受け側の入力: 省略可") : String(localized: "受け側の入力: 必須"))
       var status = String(localized: "この Run ではまだ値が通っていません")
@@ -1160,10 +1217,19 @@ struct GraphCanvas: View {
                           snap: prefs.showGrid ? prefs.gridSize : nil)
   }
 
+  /// A double click on the canvas: on a Card (its view having let the click
+  /// through) it opens the Card; elsewhere it shows the whole flow.
+  private func backgroundDoubleTap(_ loc: CGPoint) {
+    if let k = cardAt(world(loc)) { return open(k) }
+    fitAll()
+  }
+
   private func backgroundTap(_ loc: CGPoint) {
     // A click near a wire selects it (the path as drawn); elsewhere clears the selection.
     let w = world(loc)
-    let tolerance = max(5, 7 / camera.zoom)
+    // On a Card the click is the Card's, whatever runs under it.
+    if let k = cardAt(w) { return select(k) }
+    let tolerance = wireTolerance
     if tab.showNixReferences, let ref = nixLinks.first(where: {
       nixCurve(cardRect($0.source), cardRect($0.target)).strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
     }) {
@@ -1172,15 +1238,44 @@ struct GraphCanvas: View {
       return
     }
     tab.selectedNixReference = nil
-    if let i = routedWires().first(where: { r in
-      r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
-    })?.connection {
+    if let i = wireAt(w, routed: routedWires()) {
       tab.selectedConnection = i
       tab.selection = []
       return
     }
     tab.selection.removeAll()
     tab.selectedConnection = nil
+  }
+
+  // MARK: - Hit testing
+
+  /// How far from a wire a click still selects it (world units): about 7
+  /// points on screen, and never less than 5 units when zoomed in.
+  private var wireTolerance: Double { max(5, 7 / camera.zoom) }
+
+  /// The top-most Card whose hit shape (the outline and the ports, as its
+  /// view takes the mouse) is at a world point.
+  private func cardAt(_ w: CGPoint) -> CardKey? {
+    let z = camera.zoom
+    return cardKeys.reversed().first { k in
+      guard cardRect(k).insetBy(dx: -14, dy: -14).contains(w) else { return false }
+      let o = origin(k)
+      return CardNodeView.hitShape(session.nodeData(k), flow: session.flow, zoom: z, newPorts: session.isEditable)
+        .contains(CGPoint(x: (w.x - o.x) * z, y: (w.y - o.y) * z))
+    }
+  }
+
+  /// The connection whose wire is at a world point, the nearest when several
+  /// run within reach. Only where nothing drawn over the wires (a Card, an
+  /// output frame, a note) is: a wire running under one never takes its click.
+  private func wireAt(_ w: CGPoint, routed: [RoutedWire]) -> Int? {
+    guard cardAt(w) == nil, !outputKeys.contains(where: { frameRect($0).contains(w) }),
+          !session.notes(in: tab.scope).contains(where: { noteRect($0).contains(w) }) else { return nil }
+    let wires = routed.filter { $0.connection != nil && $0.path.boundingRect.insetBy(dx: -wireTolerance, dy: -wireTolerance).contains(w) }
+    for t in [wireTolerance / 3, wireTolerance] {
+      if let r = wires.first(where: { $0.path.strokedPath(StrokeStyle(lineWidth: t * 2)).contains(w) }) { return r.connection }
+    }
+    return nil
   }
 
   private func select(_ k: CardKey) {

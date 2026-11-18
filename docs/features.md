@@ -121,6 +121,7 @@ in
 
 - `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. New projects are created already pinned to the app's revision. To keep using it after an app update, open **Project settings → Name and Environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
 - Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch during evaluation are limited to nixpkgs archives (build-time fetches must be pinned by hash).
+- When a run starts, every Code Card in it whose preferred worker is the local one is evaluated, in turn, and its build is handed to nix-daemon right away, without waiting for its inputs; nix-daemon decides how many build at once. A Card on a remote worker is built by that worker when it receives the invocation.
 - Builds reuse outputs already in the Nix store. A signed [binary cache](BinaryCaches.md) can supply a missing store path before Nix builds it locally.
 
 ### Sharing Nix exports through connections

@@ -17,7 +17,10 @@ struct StageLogView: View {
   @State private var state: Tsugumi_Data_CardState?
   @State private var failure: String?
   @State private var shownInvocation: UInt64?
-  @State private var logs: [Tsugumi_Data_LogStream: String] = [:]
+  @State private var logs: [Tsugumi_Data_LogStream: Tsugumi_RPC_LogSliceT] = [:]
+  @State private var truncatedAt: UInt64?
+  @State private var exporting = false
+  @State private var exportError: String?
   @State private var open: Set<String> = []
   /// Groups opened when they started running: each once, so one the reader folds stays folded.
   @State private var openedRunning: Set<String> = []
@@ -67,7 +70,7 @@ struct StageLogView: View {
         ContentUnavailableView {
           Label("ログを読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await load() } } }
-      } else if stages.isEmpty && logs.values.allSatisfy(\.isEmpty) {
+      } else if truncatedAt == nil && stages.isEmpty && logs.values.allSatisfy({ $0.text.isEmpty }) {
         ContentUnavailableView("この実行では、この Card はまだ動いていません", systemImage: "circle.dotted")
       } else {
         ScrollView {
@@ -82,7 +85,7 @@ struct StageLogView: View {
                   Text("journal").tag(Tsugumi_Data_LogStream.journal)
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 300)
-                logText(logs[rawStream] ?? "", empty: String(localized: "この stream への出力はありません"))
+                logText(rawStream, empty: String(localized: "この stream への出力はありません"))
               }
             } label: {
               Label("stream 別（元の出力）", systemImage: "list.bullet.rectangle").font(.callout)
@@ -110,6 +113,8 @@ struct StageLogView: View {
       state = nil
       failure = nil
       logs = [:]
+      truncatedAt = nil
+      exportError = nil
       loaded = false
       follow.restart()
       scrollPosition.scrollTo(edge: .bottom)
@@ -169,14 +174,14 @@ struct StageLogView: View {
         }
         switch g.id {
         case "build":
-          logText(logs[.build] ?? "", empty: String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）"))
+          logText(.build, empty: String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）"))
         case "execute":
           Text("stdout").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.standardOutput] ?? "", empty: String(localized: "stdout への出力はありません"))
+          logText(.standardOutput, empty: String(localized: "stdout への出力はありません"))
           Text("stderr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.standardError] ?? "", empty: String(localized: "stderr への出力はありません"))
+          logText(.standardError, empty: String(localized: "stderr への出力はありません"))
         default:
-          logText(journal(for: ["validate", "save"]), empty: String(localized: "記録された出来事はありません"))
+          logText(.journal, empty: String(localized: "記録された出来事はありません"), phases: ["validate", "save"])
           if let failure, label == String(localized: "失敗") { Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
         }
       }
@@ -193,19 +198,74 @@ struct StageLogView: View {
     .padding(.horizontal, 8).padding(.vertical, 3)
   }
 
-  private func logText(_ text: String, empty: String) -> some View {
-    Text(text.isEmpty ? empty : terminalText(text))
-      .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: text.isEmpty ? .default : .monospaced))
-      .foregroundStyle(text.isEmpty ? .secondary : .primary)
-      .textSelection(.enabled)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(6)
-      .background(.background.secondary, in: RoundedRectangle(cornerRadius: 5))
+  private func logText(_ stream: Tsugumi_Data_LogStream, empty: String, phases: [String]? = nil) -> some View {
+    let slice = logs[stream]
+    let raw = slice?.text ?? ""
+    let text = phases.map { journal(raw, for: $0) } ?? raw
+    return VStack(alignment: .leading, spacing: 4) {
+      if let slice, (slice.offset ?? 0) > 0 {
+        HStack {
+          Text("ログの末尾を表示しています").font(.caption).foregroundStyle(.secondary)
+          Button("ログを書き出す…") { export(stream, size: slice.sizeBytes ?? 0) }
+            .disabled(exporting)
+        }
+        if let exportError { Text(exportError).font(.caption).foregroundStyle(.red) }
+      }
+      Text(text.isEmpty ? empty : terminalText(text))
+        .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: text.isEmpty ? .default : .monospaced))
+        .foregroundStyle(text.isEmpty ? .secondary : .primary)
+        .textSelection(.enabled)
+      if let truncatedAt {
+        Text("ログはここで切り詰めました（上限 \(truncatedAt / 1_048_576) MiB）")
+          .font(.caption.weight(.semibold))
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(6)
+    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 5))
+  }
+
+  private func export(_ stream: Tsugumi_Data_LogStream, size: UInt64) {
+    guard let rpc = session.rpc, let inv = shownInvocation else { return }
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "\(runId)-\(stream).log"
+    exporting = true
+    exportError = nil
+    Task {
+      defer { exporting = false }
+      guard await panel.begin() == .OK, let url = panel.url else { return }
+      do {
+        let temporary = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                     appropriateFor: url, create: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = temporary.appendingPathComponent("log")
+        try Data().write(to: file)
+        let output = try FileHandle(forWritingTo: file)
+        do {
+          defer { try? output.close() }
+          var offset: UInt64 = 0
+          while offset < size {
+            let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream,
+                                               offset: offset, limit: 256 * 1024)
+            guard let next = slice.nextOffset, next > offset else { break }
+            try output.write(contentsOf: Data(slice.text.utf8.prefix(Int(min(next, size) - offset))))
+            offset = next
+          }
+        }
+        if FileManager.default.fileExists(atPath: url.path) {
+          _ = try FileManager.default.replaceItemAt(url, withItemAt: file)
+        } else {
+          try FileManager.default.moveItem(at: file, to: url)
+        }
+      } catch {
+        exportError = "\(error)"
+      }
+    }
   }
 
   /// Journal lines (JSON) of the given phases, as "event: message".
-  private func journal(for phases: [String]) -> String {
-    (logs[.journal] ?? "").split(separator: "\n").compactMap { line -> String? in
+  private func journal(_ text: String, for phases: [String]) -> String {
+    text.split(separator: "\n").compactMap { line -> String? in
       guard let v = try? JSONValue.parse(String(line)), let p = v["phase"]?.string, phases.contains(p) else { return nil }
       return "\(p) · \(v["event"]?.string ?? ""): \(v["message"]?.string ?? "")"
     }.joined(separator: "\n")
@@ -231,20 +291,16 @@ struct StageLogView: View {
         nextState = summary.state
         nextFailure = summary.failure?.diagnostic
       }
-      var out: [Tsugumi_Data_LogStream: String] = [:]
+      var out: [Tsugumi_Data_LogStream: Tsugumi_RPC_LogSliceT] = [:]
+      var nextTruncatedAt = rec?.record?.summary.logTruncatedAtBytes
       for stream in [Tsugumi_Data_LogStream.build, .standardOutput, .standardError, .journal] {
-        var text = "", offset: UInt64 = 0
-        while true {
-          let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream, offset: offset, limit: 256 * 1024)
-          guard !Task.isCancelled else { return }
-          text += slice.text
-          let next = slice.nextOffset ?? offset
-          if next == offset || next >= (slice.sizeBytes ?? 0) { break }
-          offset = next
-        }
-        out[stream] = text
+        let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream, tail: true)
+        guard !Task.isCancelled else { return }
+        out[stream] = slice
+        nextTruncatedAt = nextTruncatedAt ?? slice.logTruncatedAtBytes
       }
       guard !Task.isCancelled else { return }
+      truncatedAt = nextTruncatedAt
       shownInvocation = inv
       stages = nextStages
       state = nextState
@@ -268,6 +324,7 @@ struct StageLogView: View {
       state = nil
       failure = nil
       logs = [:]
+      truncatedAt = nil
       error = nil
     } catch {
       guard !Task.isCancelled else { return }

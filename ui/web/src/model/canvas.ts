@@ -274,9 +274,21 @@ export class Scene {
     return undefined
   }
 
-  /** The connection drawn within `tolerance` (world units) of a point. */
+  /** The connection drawn nearest a point, within `tolerance` (world units). Only where nothing drawn
+   *  over the wires (a Card, an output frame, a note) is: a wire running under one never takes its click. */
   wireAt(w: Pt, tolerance: number): number | undefined {
-    return this.wires.find((r) => r.connection !== undefined && distTo(w, r.pts) <= tolerance)?.connection
+    if (this.cardAt(w) || this.outputKeys.some((k) => contains(this.frameRect(k), w))
+      || this.session.notes(this.scope).some((n) => contains(noteRect(n), w))) return undefined
+    let best: number | undefined, bestD = tolerance
+    for (const r of this.wires) {
+      if (r.connection === undefined) continue
+      const d = distTo(w, r.pts)
+      if (d <= bestD) {
+        best = r.connection
+        bestD = d
+      }
+    }
+    return best
   }
 
   /** Everything shown: Cards, output frames, notes, groups, the boundary bars and the wires. */

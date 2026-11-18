@@ -10,6 +10,7 @@ struct RemoteInvocationResult {
   WorkerOutcome worker;
   BuildEnvironmentData environment;
   bool built = false;
+  bool log_truncated = false;
 };
 
 auto stage_remote_archive(const RemoteJobClient& client,

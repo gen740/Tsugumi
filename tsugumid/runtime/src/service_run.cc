@@ -1036,6 +1036,8 @@ void Service::log_range(RequestIn& req) {
   lb.add_size_bytes(slice.size);
   lb.add_exists(slice.exists);
   lb.add_truncated(slice.truncated);
+  if (slice.log_truncated_at_bytes)
+    lb.add_log_truncated_at_bytes(*slice.log_truncated_at_bytes);
   auto off = lb.Finish();
   reply(req,
         wire::reply(b, req.request_id, R::ReplyPayload::LogSlice, off.Union()));
