@@ -15,7 +15,8 @@ TEST(HostFormat, JsonAndDiagnosticsNeverReadOrWriteAProject) {
   request.path = "definitions/missing/_card.json";
   request.text = R"({"a":[1,2],"b":{}})";
   const auto result = Format(request);
-  EXPECT_EQ(result.text, "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n");
+  EXPECT_EQ(result.text,
+            "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n");
   EXPECT_TRUE(result.diagnostics.empty());
   request.text = result.text;
   EXPECT_EQ(Format(request).text, result.text);
@@ -38,13 +39,15 @@ TEST(HostFormat, PinnedToolsFormatRepeatablyAndKeepInvalidInput) {
   try {
     bad = Format(request);
   } catch (const ProjectFailure& error) {
-    if (error.code == "unsupported") GTEST_SKIP() << "Host formatter paths were not configured";
+    if (error.code == "unsupported")
+      GTEST_SKIP() << "Host formatter paths were not configured";
     throw;
   }
   ASSERT_EQ(bad.diagnostics.size(), 1u);
   EXPECT_EQ(bad.text, request.text);
   EXPECT_TRUE(bad.diagnostics.front()->offset.has_value());
-  EXPECT_EQ(bad.diagnostics.front()->message.find("tsugumi-format-"), std::string::npos);
+  EXPECT_EQ(bad.diagnostics.front()->message.find("tsugumi-format-"),
+            std::string::npos);
   request.text = "x= [1,2]\n";
   const auto first = Format(request);
   request.text = first.text;
@@ -52,11 +55,16 @@ TEST(HostFormat, PinnedToolsFormatRepeatablyAndKeepInvalidInput) {
   EXPECT_TRUE(first.diagnostics.empty());
 }
 TEST(HostFormat, FixedToolsIgnorePathAndUserConfiguration) {
-  const auto dir = std::filesystem::temp_directory_path() / ("formatter-environment-" + crypto::uuid4());
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("formatter-environment-" + crypto::uuid4());
   fs::write_atomic(dir / "ruff", "#!/bin/sh\necho WRONG\n", 0700);
   fs::write_atomic(dir / "ruff.toml", "line-length = 1\n", 0600);
-  const auto old_path = std::getenv("PATH") ? std::optional<std::string>(std::getenv("PATH")) : std::nullopt;
-  const auto old_home = std::getenv("HOME") ? std::optional<std::string>(std::getenv("HOME")) : std::nullopt;
+  const auto old_path = std::getenv("PATH")
+                            ? std::optional<std::string>(std::getenv("PATH"))
+                            : std::nullopt;
+  const auto old_home = std::getenv("HOME")
+                            ? std::optional<std::string>(std::getenv("HOME"))
+                            : std::nullopt;
   struct Restore {
     std::filesystem::path dir;
     std::optional<std::string> path, home;
@@ -75,10 +83,11 @@ TEST(HostFormat, FixedToolsIgnorePathAndUserConfiguration) {
   setenv("PATH", dir.c_str(), 1);
   setenv("HOME", dir.c_str(), 1);
   for (const auto& [name, text] :
-       std::vector<std::pair<std::string, std::string>>{{"x.py", "x=[1,2]\n"},
-                                                        {"x.cc", "int  main( ){return 0;}"},
-                                                        {"x.nix", "{ a = 1; b = [ 1 2 ]; }"},
-                                                        {"x.sh", "if true;then echo hi;fi\n"}}) {
+       std::vector<std::pair<std::string, std::string>>{
+           {"x.py", "x=[1,2]\n"},
+           {"x.cc", "int  main( ){return 0;}"},
+           {"x.nix", "{ a = 1; b = [ 1 2 ]; }"},
+           {"x.sh", "if true;then echo hi;fi\n"}}) {
     SCOPED_TRACE(name);
     Tsugumi::Host::FileFormatRequestT request;
     request.path = name;
@@ -87,7 +96,8 @@ TEST(HostFormat, FixedToolsIgnorePathAndUserConfiguration) {
     try {
       first = Format(request);
     } catch (const ProjectFailure& error) {
-      if (error.code == "unsupported") GTEST_SKIP() << "Host formatter paths were not configured";
+      if (error.code == "unsupported")
+        GTEST_SKIP() << "Host formatter paths were not configured";
       throw;
     }
     EXPECT_TRUE(first.diagnostics.empty());

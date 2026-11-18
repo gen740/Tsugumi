@@ -11,14 +11,15 @@
 
 #include "journal.hh"
 #include "tsugumi/protocol/worker_generated.h"
-#include "tsugumi/workerd/log.hh"
-#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi::workerd {
 namespace {
-template<class T> concept HasWorkerToken = requires(T value) { value.token; };
+template <class T>
+concept HasWorkerToken = requires(T value) { value.token; };
 static_assert(!HasWorkerToken<R::RequestT>);
 auto expect(bool condition, const char* message) -> void {
   if (!condition) throw std::runtime_error(message);
@@ -33,7 +34,8 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20, uint32_t interval = 15,
+auto spec(const std::string& digest, uint32_t timeout = 60,
+          uint64_t log_limit = 8u << 20, uint32_t interval = 15,
           uint32_t missed = 0) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
@@ -63,11 +65,13 @@ auto log_test() -> void {
   std::ostringstream boundary;
   InvocationLog maximum(boundary, remote::kMaxLogLimitBytes);
   maximum.append(1, std::string(remote::kMaxLogLimitBytes - 23, 'x'));
-  expect(boundary.str().size() == remote::kMaxLogLimitBytes, "boundary entry did not fill budget");
+  expect(boundary.str().size() == remote::kMaxLogLimitBytes,
+         "boundary entry did not fill budget");
   maximum.append(2, "overflow");
   maximum.finish();
   expect(boundary.str().size() > remote::kMaxLogLimitBytes &&
-         boundary.str().size() <= remote::kMaxLogResultBytes, "truncation notice exceeds import allowance");
+             boundary.str().size() <= remote::kMaxLogResultBytes,
+         "truncation notice exceeds import allowance");
   // 25 encoded bytes: the raw text fits, but JSON escaping and framing do not
   // fit in a 23-byte budget. A dropped entry must not look like a complete log.
   std::ostringstream output;
@@ -77,7 +81,8 @@ auto log_test() -> void {
   remote::LogJson entry;
   std::istringstream lines(output.str());
   std::string line;
-  expect(static_cast<bool>(std::getline(lines, line)), "missing truncation notice");
+  expect(static_cast<bool>(std::getline(lines, line)),
+         "missing truncation notice");
   expect(!schema::decode(line, entry) && *entry.stream == 3 &&
              *entry.text == "\n[Log output truncated at the 23-byte limit.]\n",
          "invalid truncation notice");
@@ -85,13 +90,15 @@ auto log_test() -> void {
 
   const std::string first = "{\"stream\":4,\"text\":\"build\"}\n";
   const std::string second = "{\"stream\":2,\"text\":\"error\"}\n";
-  for (const auto limit : {first.size() + second.size(), first.size() + second.size() + 1}) {
+  for (const auto limit :
+       {first.size() + second.size(), first.size() + second.size() + 1}) {
     std::ostringstream complete;
     InvocationLog full(complete, limit);
     full.append(4, "build");
     full.append(2, "error");
     full.finish();
-    expect(complete.str() == first + second, "complete log was changed or marked truncated");
+    expect(complete.str() == first + second,
+           "complete log was changed or marked truncated");
   }
   std::ostringstream combined;
   InvocationLog bounded(combined, first.size() + second.size() - 1);
@@ -104,8 +111,9 @@ auto log_test() -> void {
   expect(combined.str() == once, "duplicate truncation notice");
   expect(once.starts_with(first) && once.find("error") == std::string::npos,
          "combined stream budget was not enforced");
-  expect(once.find("[Log output truncated at the " + std::to_string(first.size() + second.size() - 1) +
-                       "-byte limit.]") != std::string::npos,
+  expect(once.find("[Log output truncated at the " +
+                   std::to_string(first.size() + second.size() - 1) +
+                   "-byte limit.]") != std::string::npos,
          "combined stream truncation lacks its configured limit");
 
   std::ostringstream tiny;
@@ -113,28 +121,33 @@ auto log_test() -> void {
   minimum.append(1, "too large");
   minimum.append(2, "also too large");
   minimum.finish();
-  expect(tiny.str().find("[Log output truncated at the 1-byte limit.]") != std::string::npos,
+  expect(tiny.str().find("[Log output truncated at the 1-byte limit.]") !=
+             std::string::npos,
          "tiny budget suppressed the truncation notice");
   std::ostringstream local, remote;
   InvocationLog worker(remote, 80);
-  InvocationLog recording([&](uint64_t stream, const std::string& text) {
-    tsugumi::remote::LogJson entry;
-    *entry.stream = stream;
-    *entry.text = text;
-    local << schema::encode(entry) << '\n';
-  }, 80);
-  for (const auto& text : {std::string("build"), std::string("stdout"), std::string(100, 'x')}) {
+  InvocationLog recording(
+      [&](uint64_t stream, const std::string& text) {
+        tsugumi::remote::LogJson entry;
+        *entry.stream = stream;
+        *entry.text = text;
+        local << schema::encode(entry) << '\n';
+      },
+      80);
+  for (const auto& text :
+       {std::string("build"), std::string("stdout"), std::string(100, 'x')}) {
     worker.append(1, text);
     recording.append(1, text);
   }
   worker.finish();
   recording.finish();
-  expect(local.str() == remote.str(), "local and remote recording budgets differ");
-
+  expect(local.str() == remote.str(),
+         "local and remote recording budgets differ");
 }
 auto protocol_test() -> void {
   const std::string digest(64, 'a');
-  expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17, "job lost the core log budget");
+  expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17,
+         "job lost the core log budget");
   rejected([&] { spec(digest, 60, 0); });
   rejected([&] { spec(digest, 60, remote::kMaxLogLimitBytes + 1); });
   R::RequestT q;
@@ -340,7 +353,8 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   Journal journal(root / "lifetimes");
   const std::string core(64, 'a'), replacement(64, 'b');
   constexpr uint32_t interval = 2, missed = 3;
-  constexpr uint64_t grace = uint64_t{interval} * missed * 1000 + kHeartbeatGrace.count();
+  constexpr uint64_t grace =
+      uint64_t{interval} * missed * 1000 + kHeartbeatGrace.count();
   const uint64_t start = now_ms();
   const auto input = chunk("input");
   rejected([&] { spec(input.digest, 60, 8u << 20, 0, missed); });
@@ -352,8 +366,9 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   journal.put(single, input, core);
   journal.submit(single, spec(input.digest, 60, 8u << 20, 15, 1), core);
   journal.touch_core(core, start + 15001);
-  expect(journal.status(single).state == R::JobState::Queued,
-         "one missed interval cancelled an on-time probe plus scheduling delay");
+  expect(
+      journal.status(single).state == R::JobState::Queued,
+      "one missed interval cancelled an on-time probe plus scheduling delay");
   // Reset the synthetic lease before testing the other exact boundaries.
   journal.touch_core(core, start);
   const std::string huge(64, '5');
@@ -379,8 +394,11 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
     journal.put(job, input, core);
     journal.submit(job, spec(input.digest), core);
   }
-  expect(journal.claim(unlimited_running, 11, 1, "boot"), "never running fixture");
-  rejected([&] { journal.submit(queued, spec(input.digest, 60, 8u << 20, 4, missed), core); });
+  expect(journal.claim(unlimited_running, 11, 1, "boot"),
+         "never running fixture");
+  rejected([&] {
+    journal.submit(queued, spec(input.digest, 60, 8u << 20, 4, missed), core);
+  });
   journal.touch_core(core, start + grace - 1);  // brief network cut, same core
   Journal restarted(root / "lifetimes");
   restarted.expire_core(running, start + grace);
@@ -399,7 +417,8 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   expect(restarted.status(running).state == R::JobState::Cancelling,
          "orphaned worker was not cancelled");
   restarted.expire_core(unlimited, expired + uint64_t{365} * 24 * 3600 * 1000);
-  restarted.expire_core(unlimited_running, expired + uint64_t{365} * 24 * 3600 * 1000);
+  restarted.expire_core(unlimited_running,
+                        expired + uint64_t{365} * 24 * 3600 * 1000);
   expect(restarted.status(unlimited).state == R::JobState::Queued &&
              restarted.status(unlimited_running).state == R::JobState::Running,
          "never policy cancelled a job");
@@ -430,12 +449,16 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   validate_spec(*settings);
   flatbuffers::FlatBufferBuilder builder;
   builder.Finish(R::JobSpec::Pack(builder, settings.get()));
-  bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize());
+  bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
+               builder.GetSize());
   const auto submitted = journal.submit(job, bytes, core);
-  expect(submitted.deadline == 0, "a Card deadline must not start while queued");
+  expect(submitted.deadline == 0,
+         "a Card deadline must not start while queued");
   journal.expire(job);
-  expect(journal.claim(job, 1, 1, "boot"), "queue consumed a Card or build budget");
-  expect(journal.status(job).deadline == 0, "job has an aggregate wall deadline");
+  expect(journal.claim(job, 1, 1, "boot"),
+         "queue consumed a Card or build budget");
+  expect(journal.status(job).deadline == 0,
+         "job has an aggregate wall deadline");
   auto decoded = parse_spec(bytes);
   expect(decoded->build_timeout_ms == 1 && decoded->timeout_seconds == 2,
          "build and call budgets were not kept separately");

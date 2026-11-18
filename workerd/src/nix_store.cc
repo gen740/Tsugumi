@@ -2,20 +2,18 @@
 #include "nix_store.hh"
 
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <signal.h>
 
 #include <algorithm>
 #include <cerrno>
-#include <memory>
-#include <mutex>
 #include <chrono>
 #include <condition_variable>
-#include <thread>
-#include <nix/util/signals.hh>
+#include <memory>
+#include <mutex>
 #include <nix/store/derivations.hh>
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
@@ -23,8 +21,10 @@
 #include <nix/store/store-open.hh>
 #include <nix/util/file-descriptor.hh>
 #include <nix/util/logging.hh>
+#include <nix/util/signals.hh>
 #include <nix/util/terminal.hh>
 #include <sstream>
+#include <thread>
 
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/values.hh"
@@ -72,14 +72,15 @@ class WorkerLogger final : public nix::Logger {
 auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
-    const std::function<void(const std::string&)>& log, uint64_t timeout_ms) -> WorkerStoreResult {
+    const std::function<void(const std::string&)>& log, uint64_t timeout_ms)
+    -> WorkerStoreResult {
   // Invocations run in separate processes but share this persistent store.
   // Serialize its entire connection lifetime, including database creation and
   // closure import. The lock ends before Card execution, so Cards can still run
   // concurrently. Never unlink it: surviving supervisors also use this inode.
   nix::AutoCloseFD store_lock{::open((store_root / "realise.lock").c_str(),
-                                    O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
-                                    0600)};
+                                     O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+                                     0600)};
   if (!store_lock)
     throw std::runtime_error("cannot open remote Nix store lock");
   while (::flock(store_lock.get(), LOCK_EX) != 0) {
@@ -115,13 +116,16 @@ auto RemoteWorkerStore::realise(
   ::sigaction(SIGUSR1, &action, nullptr);
   std::atomic<bool> timed_out{false};
   nix::unix::interruptCheck = [&] { return timed_out.load(); };
-  struct ClearInterrupt { ~ClearInterrupt() { nix::unix::interruptCheck = {}; } } clear_interrupt;
+  struct ClearInterrupt {
+    ~ClearInterrupt() { nix::unix::interruptCheck = {}; }
+  } clear_interrupt;
   std::mutex timer_mutex;
   std::condition_variable timer_cv;
   std::jthread timer([&](std::stop_token stop) {
     std::unique_lock lock(timer_mutex);
     while (!stop.stop_requested()) {
-      if (timeout_ms && std::chrono::steady_clock::now() - began >= std::chrono::milliseconds(timeout_ms)) {
+      if (timeout_ms && std::chrono::steady_clock::now() - began >=
+                            std::chrono::milliseconds(timeout_ms)) {
         timed_out.store(true);
         ::pthread_kill(thread, SIGUSR1);
       }
@@ -131,7 +135,11 @@ auto RemoteWorkerStore::realise(
   struct StopTimer {
     std::jthread& timer;
     std::condition_variable& cv;
-    ~StopTimer() { timer.request_stop(); cv.notify_all(); timer.join(); }
+    ~StopTimer() {
+      timer.request_stop();
+      cv.notify_all();
+      timer.join();
+    }
   } stop_timer{timer, timer_cv};
   if (store->readDerivation(drv).platform != derivation.system)
     throw std::runtime_error("remote derivation has a different system");
@@ -143,11 +151,12 @@ auto RemoteWorkerStore::realise(
   WorkerStoreResult result;
   if (!store->isValidPath(out)) {
     try {
-      store->buildPaths(
-          {nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
-                                   .outputs = nix::OutputsSpec::All{}}});
+      store->buildPaths({nix::DerivedPath::Built{
+          .drvPath = nix::makeConstantStorePathRef(drv),
+          .outputs = nix::OutputsSpec::All{}}});
     } catch (...) {
-      if (timed_out.load()) throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
+      if (timed_out.load())
+        throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
       throw;
     }
     result.built = true;

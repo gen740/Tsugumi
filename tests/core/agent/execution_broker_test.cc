@@ -11,8 +11,8 @@
 #include <mutex>
 
 #include "fixture.hh"
-#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -186,7 +186,8 @@ class BrokerFixture : public AgentFixture {
                           ->str());
   }
   auto Put(std::string key = {}, std::string id = "worker",
-           std::string endpoint = {}, bool verify = true, std::string name = "Test worker", uint32_t interval = 15,
+           std::string endpoint = {}, bool verify = true,
+           std::string name = "Test worker", uint32_t interval = 15,
            uint32_t missed = 0, uint64_t grade = 1) -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
@@ -334,7 +335,8 @@ TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
   ASSERT_EQ(ListSize(services), 1u);
   EXPECT_EQ(services->Get(0)->id()->str(), "local");
   EXPECT_EQ(services->Get(0)->grade(), 0u);
-  ASSERT_TRUE(Put({}, "worker", {}, true, "worker", 15, 0, UINT64_MAX).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "worker", {}, true, "worker", 15, 0, UINT64_MAX).Code().empty());
   Restart();
   listed = List();
   services = listed.HostValue()->value_as_ExecutionServices()->services();
@@ -348,7 +350,7 @@ TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
 TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
   ASSERT_TRUE(Put().Code().empty());
   auto listed = List();
-  auto *service =
+  auto* service =
       listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
   EXPECT_EQ(service->heartbeat_interval_seconds(), 15u);
   EXPECT_EQ(service->missed_heartbeats(), 0u);
@@ -361,7 +363,7 @@ TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
   EXPECT_EQ(service->heartbeat_interval_seconds(), 2u);
   EXPECT_EQ(service->missed_heartbeats(), 3u);
   const auto response = Broker(R::CatalogRequestT{}, capability);
-  const auto *catalog = response->payload.AsReply()->body.AsCatalog();
+  const auto* catalog = response->payload.AsReply()->body.AsCatalog();
   ASSERT_NE(catalog, nullptr);
   ASSERT_EQ(catalog->services.size(), 2u);
   EXPECT_TRUE(catalog->services[1]->available);
@@ -393,7 +395,8 @@ TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
   EXPECT_NE(worker.unavailable_reason.find("project"), std::string::npos);
   EXPECT_EQ(Authorize("project"), capability);
   const auto granted = Broker(R::CatalogRequestT{}, capability);
-  const auto& approved = *granted->payload.AsReply()->body.AsCatalog()->services[1];
+  const auto& approved =
+      *granted->payload.AsReply()->body.AsCatalog()->services[1];
   EXPECT_TRUE(approved.available);
   EXPECT_TRUE(approved.unavailable_reason.empty());
 }
@@ -497,16 +500,20 @@ TEST_F(BrokerFixture, UnlistedHostKeyIsRejectedDuringTheWorkerHandshake) {
   EXPECT_FALSE(Put().Code().empty());
   EXPECT_EQ(worker->Requests().size(), before);
 }
-TEST_F(BrokerFixture, RenameVerificationAndUnrelatedEditsPreserveProjectAuthorization) {
+TEST_F(BrokerFixture,
+       RenameVerificationAndUnrelatedEditsPreserveProjectAuthorization) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   const auto background = Authorize("background-project");
   ASSERT_TRUE(Put({}, "worker", {}, false, "Renamed").Code().empty());
   ASSERT_TRUE(Put().Code().empty());
   ASSERT_TRUE(Put({}, "other").Code().empty());
-  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
-    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("other")).Union();
-  });
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest,
+                      [](Builder& b) {
+                        return H::CreateExecutionServiceRemoveRequest(
+                                   b, b.CreateString("other"))
+                            .Union();
+                      });
   ASSERT_TRUE(removed.Code().empty());
   Restart();
   for (const auto& grant : {capability, background}) {
@@ -515,46 +522,63 @@ TEST_F(BrokerFixture, RenameVerificationAndUnrelatedEditsPreserveProjectAuthoriz
   }
   EXPECT_EQ(Authorize("project"), capability);
 }
-TEST_F(BrokerFixture, ChangedRegistrationInvalidatesOnlyItsServiceBeforeDialing) {
+TEST_F(BrokerFixture,
+       ChangedRegistrationInvalidatesOnlyItsServiceBeforeDialing) {
   ASSERT_TRUE(Put().Code().empty());
   ASSERT_TRUE(Put({}, "other").Code().empty());
   const auto capability = Authorize("project");
-  ASSERT_TRUE(Put({}, "other", "unix:/tmp/changed-worker.sock", false).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "other", "unix:/tmp/changed-worker.sock", false).Code().empty());
   auto response = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
-  ASSERT_TRUE(Put({}, "worker", "unix:/tmp/changed-worker.sock", false).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "worker", "unix:/tmp/changed-worker.sock", false).Code().empty());
   auto count = worker->Requests().size();
   auto replaced = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(replaced->payload.AsReply()->body.AsFailure(), nullptr);
-  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
   EXPECT_EQ(worker->Requests().size(), count);
 }
 TEST_F(BrokerFixture, RemovedAndReaddedRegistrationDoesNotReviveOldGrant) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
-  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
-    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("worker")).Union();
-  });
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest,
+                      [](Builder& b) {
+                        return H::CreateExecutionServiceRemoveRequest(
+                                   b, b.CreateString("worker"))
+                            .Union();
+                      });
   ASSERT_TRUE(removed.Code().empty());
   auto response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
   ASSERT_TRUE(Put().Code().empty());
   response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
 }
-TEST_F(BrokerFixture, ProbeRefreshesCapabilitiesWithoutReregistrationOrReauthorization) {
+TEST_F(BrokerFixture,
+       ProbeRefreshesCapabilitiesWithoutReregistrationOrReauthorization) {
   worker->SetResourceLimits(false);
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   worker->SetResourceLimits(true);
   auto response = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
-  EXPECT_TRUE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+  EXPECT_TRUE(
+      response->payload.AsReply()->body.AsCapabilities()->resource_limits);
   auto listed = List();
-  EXPECT_TRUE(listed.HostValue()->value_as_ExecutionServices()->services()->Get(1)->capabilities()->resource_limits());
+  EXPECT_TRUE(listed.HostValue()
+                  ->value_as_ExecutionServices()
+                  ->services()
+                  ->Get(1)
+                  ->capabilities()
+                  ->resource_limits());
   worker->SetResourceLimits(false);
   response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_FALSE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+  EXPECT_FALSE(
+      response->payload.AsReply()->body.AsCapabilities()->resource_limits);
 }
 
 }  // namespace

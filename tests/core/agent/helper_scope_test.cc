@@ -4,7 +4,7 @@
 
 namespace tsugumi::agent {
 namespace {
-const HelperScope::Reader kRead = [](const std::string &path) -> std::string {
+const HelperScope::Reader kRead = [](const std::string& path) -> std::string {
   if (path == "tsugumi.json")
     return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
   if (path == "definitions/outer/_link.json")
@@ -14,41 +14,44 @@ const HelperScope::Reader kRead = [](const std::string &path) -> std::string {
 TEST(HelperScope, FailureKeepsInScopeDiagnosticAndTypedFields) {
   HelperScope scope(json::Object(
       R"({"read_cards":["knn","compare"],"write_cards":["knn"],"run_cards":[]})"));
-  const auto read = [](const std::string &path) -> std::string {
+  const auto read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"},{"id":"private"}]}})";
     return "";
   };
-  for (const std::string diagnostic : {
-           "wire knn -> compare: compare is still a Draft, so its to end keeps port \"\"",
-           "Concurrent edit conflicts at /tsugumi.json/canvas/cards/knn/name; inspect and re-apply",
-           "Concurrent edit conflicts at /definitions~1knn~1_card.json/inputs; inspect and re-apply"}) {
-  const auto failure = json::Encode(json::Members{
-      {"reply", json::Quote("Failure")},
-      {"value",
-       json::Encode(json::Members{{"kind", json::Quote("validation_failed")},
-                                  {"diagnostic", json::Quote(diagnostic)},
-                                  {"message", json::Quote(diagnostic)},
-                                  {"args", R"([{"key":"card","value":"knn"}])"},
-                                  {"current_rev", "7"}})}});
-  const auto value = json::Object(
-      json::Get(json::Object(scope.FailureResult(failure, read)), "value"));
-  EXPECT_EQ(json::Text(value, "kind"), "validation_failed");
-  EXPECT_EQ(json::Text(value, "diagnostic"), diagnostic);
-  EXPECT_EQ(json::Text(value, "message"), diagnostic);
-  EXPECT_EQ(value.at("args"), R"([{"key":"card","value":"knn"}])");
-  EXPECT_EQ(value.at("current_rev"), "7");
+  for (const std::string diagnostic :
+       {"wire knn -> compare: compare is still a Draft, so its to end keeps "
+        "port \"\"",
+        "Concurrent edit conflicts at /tsugumi.json/canvas/cards/knn/name; "
+        "inspect and re-apply",
+        "Concurrent edit conflicts at /definitions~1knn~1_card.json/inputs; "
+        "inspect and re-apply"}) {
+    const auto failure = json::Encode(json::Members{
+        {"reply", json::Quote("Failure")},
+        {"value", json::Encode(json::Members{
+                      {"kind", json::Quote("validation_failed")},
+                      {"diagnostic", json::Quote(diagnostic)},
+                      {"message", json::Quote(diagnostic)},
+                      {"args", R"([{"key":"card","value":"knn"}])"},
+                      {"current_rev", "7"}})}});
+    const auto value = json::Object(
+        json::Get(json::Object(scope.FailureResult(failure, read)), "value"));
+    EXPECT_EQ(json::Text(value, "kind"), "validation_failed");
+    EXPECT_EQ(json::Text(value, "diagnostic"), diagnostic);
+    EXPECT_EQ(json::Text(value, "message"), diagnostic);
+    EXPECT_EQ(value.at("args"), R"([{"key":"card","value":"knn"}])");
+    EXPECT_EQ(value.at("current_rev"), "7");
   }
 }
 TEST(HelperScope, FailureRedactsUnreadableCardsAndFilesOnly) {
   HelperScope scope(json::Object(
       R"({"read_cards":["mine"],"write_cards":["mine","SECRET"],"run_cards":[]})"));
-  const auto read = [](const std::string &path) -> std::string {
+  const auto read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"mine"},{"id":"SECRET"}]}})";
     return "";
   };
-  for (const auto &diagnostic :
+  for (const auto& diagnostic :
        {"wire mine -> SECRET: SECRET is still a Draft; write to.port as \"\"",
         "definitions/mine/main.py: cannot read definitions/SECRET/hidden.csv",
         "Concurrent edit conflicts at /definitions~1SECRET~1_card.json/name; "
@@ -85,13 +88,15 @@ TEST(HelperScope, FailureKeepsNestedCardAndFileNamesWithinReadScope) {
     return "";
   };
   const std::string diagnostic =
-      "outer/child: externals/storage/definitions/child/_card.json inputs need a name";
+      "outer/child: externals/storage/definitions/child/_card.json inputs need "
+      "a name";
   const auto failure = json::Encode(json::Members{
       {"reply", json::Quote("Failure")},
-      {"value", json::Encode(json::Members{{"kind", json::Quote("validation_failed")},
-                                          {"diagnostic", json::Quote(diagnostic)}})}});
-  const auto value = json::Object(json::Get(
-      json::Object(scope.FailureResult(failure, read)), "value"));
+      {"value",
+       json::Encode(json::Members{{"kind", json::Quote("validation_failed")},
+                                  {"diagnostic", json::Quote(diagnostic)}})}});
+  const auto value = json::Object(
+      json::Get(json::Object(scope.FailureResult(failure, read)), "value"));
   EXPECT_EQ(json::Text(value, "kind"), "validation_failed");
   EXPECT_EQ(json::Text(value, "diagnostic"), diagnostic);
 }
@@ -138,23 +143,36 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
               R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"reader"}}]})"),
           kRead),
       std::runtime_error);
-  EXPECT_THROW(scope.Check("log_range",
-                           json::Object(R"({"card":{"segments":["outer"]}})"),
-                           kRead),
-               std::runtime_error);
+  EXPECT_THROW(
+      scope.Check("log_range",
+                  json::Object(R"({"card":{"segments":["outer"]}})"), kRead),
+      std::runtime_error);
 }
-TEST(HelperScope, ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
-  const std::string before = R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
-  const auto reader = [&](const std::string& path) { return path == "tsugumi.json" ? before : ""; };
-  HelperScope scope(json::Object(R"({"read_cards":["writer"],"write_cards":["writer"],"run_cards":[]})"));
-  auto plan = json::Members{{"changes", json::Encode(std::vector<std::string>{json::Encode(json::Members{
-      {"value_type", json::Quote("SetProject")}, {"value", json::Encode(json::Members{{"json", json::Quote(before)}})}})})}};
+TEST(HelperScope,
+     ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
+  const std::string before =
+      R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
+  const auto reader = [&](const std::string& path) {
+    return path == "tsugumi.json" ? before : "";
+  };
+  HelperScope scope(json::Object(
+      R"({"read_cards":["writer"],"write_cards":["writer"],"run_cards":[]})"));
+  auto plan = json::Members{
+      {"changes",
+       json::Encode(std::vector<std::string>{json::Encode(json::Members{
+           {"value_type", json::Quote("SetProject")},
+           {"value",
+            json::Encode(json::Members{{"json", json::Quote(before)}})}})})}};
   const auto bytes = json::Encode(plan);
   EXPECT_NO_THROW(scope.CheckCurrentSave(plan, reader));
   EXPECT_EQ(json::Encode(plan), bytes);
-  auto changed = before; changed.replace(changed.find("workflow"), 8, "changed");
-  plan["changes"] = json::Encode(std::vector<std::string>{json::Encode(json::Members{
-      {"value_type", json::Quote("SetProject")}, {"value", json::Encode(json::Members{{"json", json::Quote(changed)}})}})});
+  auto changed = before;
+  changed.replace(changed.find("workflow"), 8, "changed");
+  plan["changes"] =
+      json::Encode(std::vector<std::string>{json::Encode(json::Members{
+          {"value_type", json::Quote("SetProject")},
+          {"value",
+           json::Encode(json::Members{{"json", json::Quote(changed)}})}})});
   EXPECT_THROW(scope.CheckCurrentSave(plan, reader), std::runtime_error);
 }
 
@@ -167,7 +185,7 @@ TEST(HelperScope, WireEndEditsDoNotDependOnCardOrConnectionOrder) {
             nested ? "externals/storage/tsugumi.json" : "tsugumi.json";
         const std::vector<std::string> ids{"alpha", "middle", "zulu"};
         std::vector<std::string> cards{R"({"id":"share"})"}, wires;
-        for (const auto &id : ids) {
+        for (const auto& id : ids) {
           cards.push_back(json::Encode(json::Members{{"id", json::Quote(id)}}));
           const auto own = json::Encode(json::Members{
               {"card", json::Quote(id)}, {"port", json::Quote("")}});
@@ -187,16 +205,14 @@ TEST(HelperScope, WireEndEditsDoNotDependOnCardOrConnectionOrder) {
         graph["connections"] = json::Encode(wires);
         const auto after =
             json::Encode(json::Members{{"canvas", json::Encode(graph)}});
-        const auto read = [&](const std::string &path) {
-          if (path == document)
-            return before;
+        const auto read = [&](const std::string& path) {
+          if (path == document) return before;
           return kRead(path);
         };
         // Write ownership need not also grant a separate read capability.
         for (const auto read_own : {false, true}) {
           std::vector<std::string> reads{json::Quote(prefix + "share")};
-          if (read_own)
-            reads.push_back(json::Quote(prefix + ids[writable]));
+          if (read_own) reads.push_back(json::Quote(prefix + ids[writable]));
           HelperScope scope(
               {{"read_cards", json::Encode(reads)},
                {"write_cards", json::Encode(std::vector<std::string>{
@@ -223,11 +239,11 @@ TEST(HelperScope, WireEndEditsDoNotDependOnCardOrConnectionOrder) {
 TEST(HelperScope, FullGraphDenialNamesTheUnassignedField) {
   const std::string before =
       R"({"name":"original","canvas":{"cards":[{"id":"writer"},{"id":"secret"}],"connections":[]}})";
-  const auto read = [&](const std::string &) { return before; };
+  const auto read = [&](const std::string&) { return before; };
   HelperScope scope(json::Object(
       R"({"read_cards":["writer"],"write_cards":["writer"],"run_cards":[]})"));
   for (
-      const auto &after :
+      const auto& after :
       {std::string(
            R"({"name":"changed","canvas":{"cards":[{"id":"writer"},{"id":"secret"}],"connections":[]}})"),
        std::string(
@@ -238,7 +254,7 @@ TEST(HelperScope, FullGraphDenialNamesTheUnassignedField) {
     try {
       scope.CheckCurrentSave(plan, read);
       FAIL() << "Unassigned edit was accepted";
-    } catch (const std::runtime_error &error) {
+    } catch (const std::runtime_error& error) {
       const std::string message = error.what();
       EXPECT_NE(message.find(after.find("changed") != std::string::npos
                                  ? "tsugumi.json/name"
@@ -252,10 +268,10 @@ TEST(HelperScope, FullGraphDenialNamesTheUnassignedField) {
 TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
   const std::string before =
       R"({"canvas":{"cards":[{"id":"writer"},{"id":"share"},{"id":"reader"},{"id":"secret"}],"connections":[{"from":{"card":"reader","port":"out"},"to":{"card":"share","port":"in"}}]}})";
-  const auto read = [&](const std::string &) { return before; };
+  const auto read = [&](const std::string&) { return before; };
   HelperScope scope(json::Object(
       R"({"read_cards":["writer","share","reader"],"write_cards":["writer"],"run_cards":[]})"));
-  const auto check = [&](const std::string &after) {
+  const auto check = [&](const std::string& after) {
     scope.CheckCurrentSave(json::Object("{\"changes\":[{\"value_type\":"
                                         "\"SetProject\",\"value\":{\"json\":" +
                                         json::Quote(after) + "}}]}"),
@@ -265,7 +281,7 @@ TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
   auto formatted = before;
   formatted.insert(formatted.find("\"from\":"), " ");
   EXPECT_NO_THROW(check(formatted));
-  for (const auto &replacement :
+  for (const auto& replacement :
        {std::string("reader"), std::string("secret")}) {
     auto after = before;
     if (replacement == "reader")
@@ -276,7 +292,7 @@ TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
     try {
       check(after);
       FAIL() << "Out-of-scope wire edit was accepted";
-    } catch (const std::runtime_error &error) {
+    } catch (const std::runtime_error& error) {
       EXPECT_NE(std::string(error.what()).find("canvas/connections"),
                 std::string::npos);
     }
@@ -284,7 +300,7 @@ TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
 }
 
 TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
-  const HelperScope::Reader read = [](const std::string &path) -> std::string {
+  const HelperScope::Reader read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"},{"id":"alias"}]}})";
     if (path == "definitions/outer/_link.json" ||
@@ -313,7 +329,7 @@ TEST(HelperScope,
       R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/outer/_card.json","bytes":[]}}]})");
   EXPECT_THROW(scope.Check("project_save", source, kRead), std::runtime_error);
   const HelperScope::Reader unavailable =
-      [](const std::string &) -> std::string {
+      [](const std::string&) -> std::string {
     throw std::runtime_error("unavailable");
   };
   EXPECT_THROW(scope.Check("project_save", definition, unavailable),
@@ -413,7 +429,7 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
   HelperScope runner(json::Object(
       R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})"));
   const auto card = json::Object(R"({"card":{"segments":["a"]}})");
-  for (const auto *tool : {"run", "card_s_d_k_prepare"}) {
+  for (const auto* tool : {"run", "card_s_d_k_prepare"}) {
     EXPECT_THROW(writer.Check(tool, card, kRead), std::runtime_error);
     EXPECT_NO_THROW(runner.Check(tool, card, kRead));
   }
@@ -424,10 +440,10 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
               R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a"}}]})"),
           kRead),
       std::runtime_error);
-  EXPECT_THROW(runner.Check("run",
-                            json::Object(R"({"card":{"segments":["b"]}})"),
-                            kRead),
-               std::runtime_error);
+  EXPECT_THROW(
+      runner.Check("run", json::Object(R"({"card":{"segments":["b"]}})"),
+                   kRead),
+      std::runtime_error);
   const auto plan =
       R"({"reply":"RunPlanResult","value":{"targets":[{"segments":["a"]}],"starts":[],"build_candidates":[]}})";
   EXPECT_NO_THROW(runner.CheckPlan(plan, true));
@@ -452,8 +468,8 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
                    json::Object(R"({"read_cards":[],"write_cards":[]})"), true),
                std::runtime_error);
 }
-} // namespace
-} // namespace tsugumi::agent
+}  // namespace
+}  // namespace tsugumi::agent
 
 namespace tsugumi::agent {
 namespace {
@@ -570,8 +586,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
 
 namespace tsugumi::agent {
 namespace {
-TEST(HelperGraphScope,
-     SaveReceiptFiltersOtherHelpersCards) {
+TEST(HelperGraphScope, SaveReceiptFiltersOtherHelpersCards) {
   HelperScope scope(json::Object(
       R"({"read_cards":["mine"],"write_cards":["mine"],"run_cards":[]})"));
   const auto result =
@@ -579,7 +594,6 @@ TEST(HelperGraphScope,
   const auto filtered = scope.SaveResult(result, kRead);
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_NE(filtered.find("mine"), std::string::npos);
-
 }
 TEST(HelperCapability, NarrowedChildrenCannotRegainAnAncestorsSets) {
   const auto ancestor = json::Object(

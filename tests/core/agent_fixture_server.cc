@@ -371,9 +371,10 @@ auto AnthropicTool(std::string_view id, std::string_view name,
 auto AnthropicFamilyTool(std::string_view id, std::string_view family,
                          std::string_view action, std::string_view arguments)
     -> std::string {
-  return AnthropicTool(id, "tools", "{\"family\":" + Quote(family) +
-      ",\"action\":" + Quote(action) + ",\"arguments\":" +
-      std::string(arguments) + "}");
+  return AnthropicTool(id, "tools",
+                       "{\"family\":" + Quote(family) +
+                           ",\"action\":" + Quote(action) +
+                           ",\"arguments\":" + std::string(arguments) + "}");
 }
 
 auto ResponsesText(std::string_view text) -> std::string {

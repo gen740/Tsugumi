@@ -1,20 +1,20 @@
 // Public Host contract scenarios, independent of project/conversation
 // lifetimes.
+#include <unistd.h>
+
 #include "fixture.hh"
 #include "tsugumi/util/json_object.hh"
-#include <unistd.h>
 
 namespace tsugumi::test {
 namespace {
 TEST_F(AgentFixture, HostUnixAndWebSocketReturnTypedReplies) {
   auto websocket = ConnectHost(true);
-  const auto unix_reply =
-      Call(*host, H::RequestPayload::HostRecentListRequest, [](Builder &b) {
-        return H::CreateHostRecentListRequest(b).Union();
-      });
+  const auto unix_reply = Call(
+      *host, H::RequestPayload::HostRecentListRequest,
+      [](Builder& b) { return H::CreateHostRecentListRequest(b).Union(); });
   const auto ws_reply = Call(
       *websocket, H::RequestPayload::HostRecentListRequest,
-      [](Builder &b) { return H::CreateHostRecentListRequest(b).Union(); });
+      [](Builder& b) { return H::CreateHostRecentListRequest(b).Union(); });
   ASSERT_NE(unix_reply.HostValue()->value_as_RecentList(), nullptr);
   ASSERT_NE(ws_reply.HostValue()->value_as_RecentList(), nullptr);
   EXPECT_EQ(unix_reply.View(), ws_reply.View());
@@ -26,14 +26,19 @@ TEST_F(AgentFixture, HostUnixAndWebSocketReturnTypedReplies) {
       conversation);
 }
 TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
-  const auto result = Call(*host, H::RequestPayload::FileFormatRequest, [](Builder& b) {
-    return H::CreateFileFormatRequest(b, b.CreateString("missing/file.json"), b.CreateString("{\"a\":1}")).Union();
-  });
+  const auto result =
+      Call(*host, H::RequestPayload::FileFormatRequest, [](Builder& b) {
+        return H::CreateFileFormatRequest(b,
+                                          b.CreateString("missing/file.json"),
+                                          b.CreateString("{\"a\":1}"))
+            .Union();
+      });
   ASSERT_TRUE(result.Code().empty());
   const auto* formatted = result.HostValue()->value_as_FileFormatResult();
   ASSERT_NE(formatted, nullptr);
   EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
-  EXPECT_TRUE(!formatted->diagnostics() || formatted->diagnostics()->size() == 0);
+  EXPECT_TRUE(!formatted->diagnostics() ||
+              formatted->diagnostics()->size() == 0);
 }
 
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
@@ -48,7 +53,7 @@ TEST_F(AgentFixture, HostFramesAreRejectedByTheAgentListener) {
   ASSERT_FALSE(wrong.Start().get());
   EXPECT_THROW(
       Call(wrong, H::RequestPayload::HelloRequest,
-           [&](Builder &b) {
+           [&](Builder& b) {
              return Tsugumi::Service::CreateHelloRequest(
                         b, b.CreateString(JsonString(ready, "/user_token")),
                         b.CreateString("wrong"))
@@ -59,20 +64,20 @@ TEST_F(AgentFixture, HostFramesAreRejectedByTheAgentListener) {
 }
 // Host lifecycle scenarios need no project daemon and no conversation.
 class HostProjectsFixture : public AgentFixture {
-protected:
-  auto Create(const std::string &name, const std::string &flow = "topToBottom")
+ protected:
+  auto Create(const std::string& name, const std::string& flow = "topToBottom")
       -> Reply {
     return Call(*host, H::RequestPayload::HostProjectCreateRequest,
-                [&](Builder &b) {
+                [&](Builder& b) {
                   return H::CreateHostProjectCreateRequest(
                              b, b.CreateString(directory.path.string()),
                              b.CreateString(name), b.CreateString(flow))
                       .Union();
                 });
   }
-  auto Remember(const std::filesystem::path &path) -> Reply {
+  auto Remember(const std::filesystem::path& path) -> Reply {
     return Call(*host, H::RequestPayload::HostRecentRememberRequest,
-                [&](Builder &b) {
+                [&](Builder& b) {
                   return H::CreateHostRecentRememberRequest(
                              b, b.CreateString(path.string()))
                       .Union();
@@ -81,13 +86,13 @@ protected:
   auto Recents() -> Reply {
     return Call(
         *host, H::RequestPayload::HostRecentListRequest,
-        [](Builder &b) { return H::CreateHostRecentListRequest(b).Union(); });
+        [](Builder& b) { return H::CreateHostRecentListRequest(b).Union(); });
   }
 };
 
 TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
   const auto defaults = Call(
-      *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder &b) {
+      *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
         return H::CreateHostProjectDefaultsRequest(b).Union();
       });
   ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
@@ -114,11 +119,11 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
   EXPECT_TRUE(std::filesystem::exists(directory.path / "finder/tsugumi.json"));
   EXPECT_EQ(Create("bad-flow", "sideways").Code(), "invalid_flow");
   EXPECT_FALSE(std::filesystem::exists(directory.path / "bad-flow"));
-  for (const auto *name :
+  for (const auto* name :
        {"", ".", "..", "a/b", "a\\b", "trailing ", "bad:name"})
     EXPECT_EQ(Create(name).Code(), "invalid_project_name") << name;
   const auto info =
-      Call(*host, H::RequestPayload::HostProjectInfoRequest, [&](Builder &b) {
+      Call(*host, H::RequestPayload::HostProjectInfoRequest, [&](Builder& b) {
         return H::CreateHostProjectInfoRequest(b,
                                                b.CreateString(folder.string()))
             .Union();
@@ -138,13 +143,13 @@ TEST_F(HostProjectsFixture,
       directory.path / "demos/ja/index.json",
       R"({"demos":[{"id":"sample","title":"Sample","path":"sample","field":""}]})");
   const auto list =
-      Call(*host, H::RequestPayload::HostDemoListRequest, [](Builder &b) {
+      Call(*host, H::RequestPayload::HostDemoListRequest, [](Builder& b) {
         return H::CreateHostDemoListRequest(b, b.CreateString("ja")).Union();
       });
   EXPECT_EQ(JsonString(list.View(), "/0/id"), "sample");
   EXPECT_EQ(JsonString(list.View(), "/0/description"), "");
   EXPECT_NE(list.View().find("\"tags\":[]"), std::string::npos);
-  for (const auto &entry :
+  for (const auto& entry :
        std::filesystem::recursive_directory_iterator(source))
     std::filesystem::permissions(entry.path(),
                                  entry.is_directory()
@@ -153,8 +158,8 @@ TEST_F(HostProjectsFixture,
                                      : std::filesystem::perms::owner_read);
   std::filesystem::permissions(source, std::filesystem::perms::owner_read |
                                            std::filesystem::perms::owner_exec);
-  const auto copy = [&](const std::string &id) {
-    return Call(*host, H::RequestPayload::HostDemoCopyRequest, [&](Builder &b) {
+  const auto copy = [&](const std::string& id) {
+    return Call(*host, H::RequestPayload::HostDemoCopyRequest, [&](Builder& b) {
       return H::CreateHostDemoCopyRequest(
                  b, b.CreateString(id), b.CreateString(directory.path.string()),
                  b.CreateString("ja"))
@@ -179,7 +184,7 @@ TEST_F(HostProjectsFixture,
   }
   EXPECT_EQ(copy("missing").Code(), "demo_not_found");
   const auto duplicate = Call(
-      *host, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder &b) {
+      *host, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder& b) {
         return H::CreateHostProjectDuplicateRequest(
                    b, b.CreateString(source.string()),
                    b.CreateString(directory.path.string()),
@@ -196,7 +201,7 @@ TEST_F(HostProjectsFixture,
   EXPECT_EQ(duplicate_trust.HostValue()->value_as_ProjectTrust()->decision(),
             H::ProjectTrustDecision::Unknown);
 
-  for (const auto *name : {"sample", "duplicate"}) {
+  for (const auto* name : {"sample", "duplicate"}) {
     const auto dest = directory.path / name;
     EXPECT_FALSE(std::filesystem::exists(dest / ".tsugumi"));
     EXPECT_FALSE(std::filesystem::exists(dest / "nested/.tsugumi"));
@@ -207,7 +212,7 @@ TEST_F(HostProjectsFixture,
   }
   // Restore the fixture so its cleanup can remove read-only source folders.
   std::filesystem::permissions(source, std::filesystem::perms::owner_all);
-  for (const auto &entry :
+  for (const auto& entry :
        std::filesystem::recursive_directory_iterator(source))
     std::filesystem::permissions(entry.path(),
                                  std::filesystem::perms::owner_all);
@@ -230,7 +235,7 @@ TEST_F(HostProjectsFixture,
   EXPECT_EQ(JsonString(list, "/0/name"), "recent-4");
   EXPECT_GT(JsonUInt(list, "/0/openedAt"), JsonUInt(list, "/1/openedAt"));
   const auto forgotten =
-      Call(*host, H::RequestPayload::HostRecentForgetRequest, [&](Builder &b) {
+      Call(*host, H::RequestPayload::HostRecentForgetRequest, [&](Builder& b) {
         const std::vector<flatbuffers::Offset<flatbuffers::String>> paths{
             b.CreateString((directory.path / "recent-4").string())};
         return H::CreateHostRecentForgetRequest(b, b.CreateVector(paths))
@@ -250,5 +255,5 @@ TEST_F(HostProjectsFixture,
   EXPECT_EQ(JsonString(Recents().View(), "/0/name"), "recent-30");
 }
 
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

@@ -23,7 +23,8 @@ constexpr auto cache_is_large(uint64_t bytes, uint64_t capacity) -> bool {
 class CacheUsage {
  public:
   CacheUsage(std::filesystem::path roots, std::filesystem::path scratch,
-             std::filesystem::path single_roots = {}, std::filesystem::path single_scratch = {},
+             std::filesystem::path single_roots = {},
+             std::filesystem::path single_scratch = {},
              std::string single_id = {}, std::filesystem::path publish = {});
   ~CacheUsage();
   auto snapshot() -> Tsugumi::RPC::ProjectCacheUsageResultT;
@@ -32,7 +33,8 @@ class CacheUsage {
  private:
   auto measure() -> Tsugumi::RPC::ProjectCacheUsageResultT;
   auto loop() -> void;
-  std::filesystem::path roots_, scratch_, single_roots_, single_scratch_, publish_;
+  std::filesystem::path roots_, scratch_, single_roots_, single_scratch_,
+      publish_;
   std::string single_id_;
   std::mutex mu_;
   std::condition_variable cv_;

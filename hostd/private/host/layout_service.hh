@@ -18,7 +18,7 @@ auto DefaultDisplayGeometry(bool top_to_bottom)
 auto LayoutHandles(Tsugumi::Host::RequestPayload type) -> bool;
 auto LayoutHandle(const Tsugumi::Host::Request& request, uint64_t id)
     -> std::string;
-auto MeasuredScene(const Tsugumi::Host::LayoutSceneT &scene) -> layout::Scene;
+auto MeasuredScene(const Tsugumi::Host::LayoutSceneT& scene) -> layout::Scene;
 auto VersionCanvas(const Tsugumi::Host::VersionCanvasRequest& request)
     -> Tsugumi::Host::VersionCanvasT;
 }  // namespace tsugumi::host

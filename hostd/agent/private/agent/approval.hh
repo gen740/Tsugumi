@@ -12,11 +12,10 @@ namespace tsugumi::agent {
 // All descriptions of existing targets come from authenticated project reads.
 // Model text is shown only as the proposed arguments, never as evidence.
 inline auto DescribeOperation(
-    const std::string &name, json::Members args, const std::string &project,
-    const std::function<json::Members(const std::string &,
-                                      const json::Members &)> &read,
-    std::vector<std::string> *run_ids = nullptr)
-    -> std::string {
+    const std::string& name, json::Members args, const std::string& project,
+    const std::function<json::Members(const std::string&,
+                                      const json::Members&)>& read,
+    std::vector<std::string>* run_ids = nullptr) -> std::string {
   if (run_ids) run_ids->clear();
   json::Members targets{{"project", json::Quote(project)}};
   if (name == "run_history_delete") {
@@ -25,10 +24,9 @@ inline auto DescribeOperation(
     const auto cutoff = json::Get(args, "ended_before");
     do {
       json::Members query{{"limit", "500"}};
-      if (!cursor.empty())
-        query["cursor"] = json::Quote(cursor);
+      if (!cursor.empty()) query["cursor"] = json::Quote(cursor);
       const auto page = read("run_history", query);
-      for (const auto &row : json::Array(json::Get(page, "runs", "[]"))) {
+      for (const auto& row : json::Array(json::Get(page, "runs", "[]"))) {
         const auto status =
             json::Object(json::Get(json::Object(row), "status"));
         const auto state = json::Text(status, "state");
@@ -36,11 +34,13 @@ inline auto DescribeOperation(
         if ((state == "succeeded" || state == "failed" ||
              state == "cancelled") &&
             (cutoff == "null" ||
-             (ended != "null" && std::stoll(json::String(ended, ended)) <
-                                     std::stoll(json::String(cutoff, cutoff))))) {
+             (ended != "null" &&
+              std::stoll(json::String(ended, ended)) <
+                  std::stoll(json::String(cutoff, cutoff))))) {
           runs.push_back(json::Encode(status));
           const auto id = json::Text(status, "run_id");
-          if (id.empty()) throw std::runtime_error("approval target has no run ID");
+          if (id.empty())
+            throw std::runtime_error("approval target has no run ID");
           if (run_ids) run_ids->push_back(json::Quote(id));
         }
       }
@@ -60,10 +60,9 @@ inline auto DescribeOperation(
     const auto usage = read("project_cache_usage", {});
     const auto current = json::Text(usage, "current_project");
     json::Members selected;
-    for (const auto &row : json::Array(json::Get(usage, "projects", "[]"))) {
+    for (const auto& row : json::Array(json::Get(usage, "projects", "[]"))) {
       const auto item = json::Object(row);
-      if (json::Text(item, "project") == current)
-        selected = item;
+      if (json::Text(item, "project") == current) selected = item;
     }
     targets["cache"] = json::Quote(current);
     targets["name"] = json::Get(selected, "name");
@@ -78,15 +77,14 @@ inline auto DescribeOperation(
     } else {
       std::vector<std::string> folders;
       std::set<std::string> paths;
-      for (const auto &path : json::Array(json::Get(args, "paths", "[]")))
+      for (const auto& path : json::Array(json::Get(args, "paths", "[]")))
         paths.insert(json::String(path));
-      for (const auto &path : paths) {
+      for (const auto& path : paths) {
         json::Members folder{{"path", json::Quote(path)}, {"bytes", "null"}};
-        for (const auto &row :
+        for (const auto& row :
              json::Array(json::Get(selected, "run_scratch", "[]"))) {
           const auto item = json::Object(row);
-          if (json::Text(item, "path") == path)
-            folder = item;
+          if (json::Text(item, "path") == path) folder = item;
         }
         folders.push_back(json::Encode(folder));
       }
@@ -109,7 +107,7 @@ inline auto DescribeOperation(
     if (name == "version_checkout") {
       const auto requested = json::Text(args, "commit");
       std::vector<json::Members> matches;
-      for (const auto &row : json::Array(json::Get(graph, "commits", "[]"))) {
+      for (const auto& row : json::Array(json::Get(graph, "commits", "[]"))) {
         const auto commit = json::Object(row);
         bool match =
             requested.size() >= 7 && requested.size() <= 40 &&
@@ -118,8 +116,7 @@ inline auto DescribeOperation(
         // Resolve an unambiguous core-reported object prefix; a moving ref
         // cannot change what an approved call affects. The model can read
         // version_graph first.
-        if (match)
-          matches.push_back(commit);
+        if (match) matches.push_back(commit);
       }
       if (matches.size() != 1)
         throw std::runtime_error(
@@ -132,7 +129,8 @@ inline auto DescribeOperation(
               "the selected version."
         : name == "version_init"
             ? "Start versioning the saved project and keep its first commit."
-        : "Commit the saved working project and keep the proposed named version.");
+            : "Commit the saved working project and keep the proposed named "
+              "version.");
   }
   const auto details = "operation_approval\n" + name + "\n" +
                        json::Encode(targets) +
@@ -140,4 +138,4 @@ inline auto DescribeOperation(
   return details;
 }
 
-} // namespace tsugumi::agent
+}  // namespace tsugumi::agent

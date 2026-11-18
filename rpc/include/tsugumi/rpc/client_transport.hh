@@ -59,6 +59,7 @@ class Transport {
   virtual auto Close() -> void = 0;
 };
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport>;
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport>;
 
 }  // namespace tsugumi::client

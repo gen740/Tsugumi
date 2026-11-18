@@ -173,8 +173,8 @@ struct SdkJobJson {
   t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
 };
 
-// ---- .tsugumi-history.json (a demo's versions, tsugumid/runtime/src/versions.cc) ------------
-
+// ---- .tsugumi-history.json (a demo's versions,
+// tsugumid/runtime/src/versions.cc) ------------
 
 // (A struct's fields are all required or all optional: these are optional,
 // and versions.cc checks the ones it needs.)
@@ -199,12 +199,13 @@ struct HistoryCommit {
 struct HistoryFile {
   t::Array<"commits", Obj<HistoryCommit>> commits;
   t::Mapping<"branches", v::String, v::String> branches;  // name -> commit id
-  t::String<"head"> head;                                  // a branch name
+  t::String<"head"> head;                                 // a branch name
 };
 
 // server.ready, written for the launcher into the 0700 control directory.
 struct ServerReady {
-  t::String<"endpoint"> endpoint;  // ws://host:port/rpc as seen inside the environment
+  t::String<"endpoint">
+      endpoint;  // ws://host:port/rpc as seen inside the environment
   t::String<"token"> token;
   t::Uint32<"protocol"> protocol;
   t::String<"project_id"> project_id;
@@ -212,6 +213,5 @@ struct ServerReady {
   t::String<"unix_socket"> unix_socket;
   t::Int64<"pid"> pid;
 };
-
 
 }  // namespace tsugumi::schema

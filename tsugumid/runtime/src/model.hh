@@ -9,10 +9,10 @@
 #include <vector>
 
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/types.hh"
+#include "tsugumi/protocol/tsugumi_enums_generated.h"
 #include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/values.hh"
-#include "tsugumi/protocol/tsugumi_enums_generated.h"
-#include "tsugumi/document/types.hh"
 
 namespace tsugumi {
 
@@ -25,7 +25,8 @@ struct RunStatusData {
   std::optional<int64_t> started_at;
   std::optional<int64_t> ended_at;
   std::optional<FailureData> failure;
-  std::optional<std::string> commit;  // the project's version the run started from
+  std::optional<std::string>
+      commit;  // the project's version the run started from
   bool partial_run = false;
   bool uses_partial_result = false;
   bool terminal() const {
@@ -63,7 +64,6 @@ struct BuildEnvironmentData {
   std::vector<std::string> paths;
 };
 
-
 struct InvocationSummaryData {
   std::string run_id;
   CardPath card;
@@ -84,7 +84,8 @@ struct InvocationSummaryData {
   // another system (binfmt_misc); "" when it ran natively.
   std::string emulator;
   std::string environment_id;
-  std::string params_json;  // the invocation's parameters, not the current document
+  std::string
+      params_json;  // the invocation's parameters, not the current document
   std::string execution_service;
   std::string transfer_name, transfer_direction;
   uint64_t transfer_done = 0, transfer_total = 0;

@@ -17,16 +17,19 @@ static double last_time;
 static const char shader[] =
     "struct Camera { angles: vec2f, aspect: f32, zoom: f32 }\n"
     "@group(0) @binding(0) var<uniform> camera: Camera;\n"
-    "struct Vertex { @builtin(position) position: vec4f, @location(0) color: vec3f }\n"
+    "struct Vertex { @builtin(position) position: vec4f, @location(0) color: "
+    "vec3f }\n"
     "@vertex fn vs(@location(0) p: vec3f) -> Vertex {\n"
     "  let c = cos(camera.angles); let s = sin(camera.angles);\n"
     "  let q = vec3f(c.x*p.x+s.x*p.z, p.y, -s.x*p.x+c.x*p.z);\n"
     "  let r = vec3f(q.x, c.y*q.y-s.y*q.z, s.y*q.y+c.y*q.z);\n"
     "  var out: Vertex;\n"
-    "  out.position = vec4f(r.x/camera.aspect*camera.zoom, r.y*camera.zoom, r.z*0.2+0.5, 1.0);\n"
+    "  out.position = vec4f(r.x/camera.aspect*camera.zoom, r.y*camera.zoom, "
+    "r.z*0.2+0.5, 1.0);\n"
     "  out.color = p*0.4+vec3f(0.5); return out;\n"
     "}\n"
-    "@fragment fn fs(in: Vertex) -> @location(0) vec4f { return vec4f(in.color, 1.0); }\n";
+    "@fragment fn fs(in: Vertex) -> @location(0) vec4f { return "
+    "vec4f(in.color, 1.0); }\n";
 
 static void draw(void) {
   if (!points) return;
@@ -50,7 +53,8 @@ static void draw(void) {
   desc.colorAttachmentCount = 1;
   desc.colorAttachments = &color;
   WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, NULL);
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &desc);
+  WGPURenderPassEncoder pass =
+      wgpuCommandEncoderBeginRenderPass(encoder, &desc);
   wgpuRenderPassEncoderSetPipeline(pass, pipeline);
   wgpuRenderPassEncoderSetBindGroup(pass, 0, bind, 0, NULL);
   wgpuRenderPassEncoderSetVertexBuffer(pass, 0, points, 0, WGPU_WHOLE_SIZE);
@@ -67,13 +71,15 @@ static void draw(void) {
   wgpuTextureRelease(texture.texture);
 }
 
-static void pointer(TsugumiPointerKind kind, float x, float y, uint32_t buttons) {
+static void pointer(TsugumiPointerKind kind, float x, float y,
+                    uint32_t buttons) {
   if (kind == TSUGUMI_POINTER_DOWN) dragging = (buttons & 1) != 0;
   if (kind == TSUGUMI_POINTER_MOVE && dragging) {
     yaw += (x - last_x) * 0.01f;
     pitch += (y - last_y) * 0.01f;
   }
-  if (kind == TSUGUMI_POINTER_UP || kind == TSUGUMI_POINTER_CANCEL) dragging = 0;
+  if (kind == TSUGUMI_POINTER_UP || kind == TSUGUMI_POINTER_CANCEL)
+    dragging = 0;
   last_x = x;
   last_y = y;
 }
@@ -84,12 +90,14 @@ static void wheel(float dx, float dy) {
 }
 
 static void frame(double time) {
-  if (last_time && !dragging) yaw += (float)fmin(time - last_time, 50) * 0.00015f;
+  if (last_time && !dragging)
+    yaw += (float)fmin(time - last_time, 50) * 0.00015f;
   last_time = time;
   draw();
 }
 
-void tsugumi_view_initialise(WGPUDevice gpu, WGPUSurface output, WGPUTextureFormat format) {
+void tsugumi_view_initialise(WGPUDevice gpu, WGPUSurface output,
+                             WGPUTextureFormat format) {
   device = gpu;
   surface = output;
   queue = wgpuDeviceGetQueue(device);
@@ -124,7 +132,8 @@ void tsugumi_view_initialise(WGPUDevice gpu, WGPUSurface output, WGPUTextureForm
   buffer_desc.size = 16;
   buffer_desc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
   uniform = wgpuDeviceCreateBuffer(device, &buffer_desc);
-  WGPUBindGroupLayout layout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
+  WGPUBindGroupLayout layout =
+      wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
   WGPUBindGroupEntry entry = WGPU_BIND_GROUP_ENTRY_INIT;
   entry.buffer = uniform;
   entry.size = 16;
@@ -143,13 +152,17 @@ void tsugumi_view_update(void) {
   size_t config_size, bytes;
   const char* config = tsugumi_view_config(&config_size);
   const void* data = tsugumi_view_blob("points", &bytes);
-  // This fixture's configuration has exactly one key, emitted by JSON.stringify.
+  // This fixture's configuration has exactly one key, emitted by
+  // JSON.stringify.
   if (!config_size || sscanf(config, "{\"count\":%u}", &count) != 1 || !data ||
       count > 8 * 1024 * 1024 / 12 || bytes != (size_t)count * 12) {
     tsugumi_view_error("Expected float32 XYZ triples and a count");
     return;
   }
-  if (points) { wgpuBufferDestroy(points); wgpuBufferRelease(points); }
+  if (points) {
+    wgpuBufferDestroy(points);
+    wgpuBufferRelease(points);
+  }
   WGPUBufferDescriptor desc = WGPU_BUFFER_DESCRIPTOR_INIT;
   desc.size = bytes ? bytes : 4;
   desc.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
@@ -163,9 +176,26 @@ void tsugumi_view_dispose(void) {
   tsugumi_view_on_frame(NULL);
   tsugumi_view_on_pointer(NULL);
   tsugumi_view_on_wheel(NULL);
-  if (points) { wgpuBufferDestroy(points); wgpuBufferRelease(points); points = NULL; }
-  if (uniform) { wgpuBufferDestroy(uniform); wgpuBufferRelease(uniform); uniform = NULL; }
-  if (bind) { wgpuBindGroupRelease(bind); bind = NULL; }
-  if (pipeline) { wgpuRenderPipelineRelease(pipeline); pipeline = NULL; }
-  if (queue) { wgpuQueueRelease(queue); queue = NULL; }
+  if (points) {
+    wgpuBufferDestroy(points);
+    wgpuBufferRelease(points);
+    points = NULL;
+  }
+  if (uniform) {
+    wgpuBufferDestroy(uniform);
+    wgpuBufferRelease(uniform);
+    uniform = NULL;
+  }
+  if (bind) {
+    wgpuBindGroupRelease(bind);
+    bind = NULL;
+  }
+  if (pipeline) {
+    wgpuRenderPipelineRelease(pipeline);
+    pipeline = NULL;
+  }
+  if (queue) {
+    wgpuQueueRelease(queue);
+    queue = NULL;
+  }
 }

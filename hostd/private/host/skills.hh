@@ -6,8 +6,8 @@
 #include <string_view>
 #include <vector>
 
-#include "tsugumi/util/json_object.hh"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::host {
@@ -16,18 +16,19 @@ inline constexpr size_t kSkillLimit = 512 * 1024;
 // duplicate declarations fail closed; the body can never change this contract.
 auto SkillScope(std::string_view text)
     -> std::optional<std::vector<std::string>>;
-auto ScopedSkillTask(std::string_view text, const std::string &name,
-                     const std::vector<std::string> &cards,
-                     const std::string &instruction) -> ::tsugumi::json::Members;
-auto SelectScopedSkill(const Tsugumi::Host::SkillsListT &catalog,
-                       const std::vector<std::string> &names,
-                       const std::string &explicit_name,
-                       const std::vector<std::string> &cards,
-                       const std::string &instruction)
+auto ScopedSkillTask(std::string_view text, const std::string& name,
+                     const std::vector<std::string>& cards,
+                     const std::string& instruction)
+    -> ::tsugumi::json::Members;
+auto SelectScopedSkill(const Tsugumi::Host::SkillsListT& catalog,
+                       const std::vector<std::string>& names,
+                       const std::string& explicit_name,
+                       const std::vector<std::string>& cards,
+                       const std::string& instruction)
     -> std::optional<::tsugumi::json::Members>;
-auto BundledSkill(const std::string &path) -> std::string;
-auto ReadSkill(const std::filesystem::path &root,
-               const std::filesystem::path &file) -> std::string;
+auto BundledSkill(const std::string& path) -> std::string;
+auto ReadSkill(const std::filesystem::path& root,
+               const std::filesystem::path& file) -> std::string;
 auto SkillNameKey(std::string_view name) -> std::string;
 // Built-in names resolve by project > registered folders > built-in.
 // Untrusted project entries remain available only for explicit selection.
@@ -39,9 +40,9 @@ auto ProjectTrust(sql::Db& db, const std::filesystem::path& path,
     -> Tsugumi::Host::ProjectTrustDecision;
 auto TrustedParent(const std::filesystem::path& path,
                    const std::vector<std::string>& folders) -> std::string;
-auto SetProjectTrust(sql::Db &db, const std::filesystem::path &path,
+auto SetProjectTrust(sql::Db& db, const std::filesystem::path& path,
                      Tsugumi::Host::ProjectTrustDecision decision) -> void;
 auto ListSkills(const std::filesystem::path& project,
                 const std::vector<std::string>& folders, bool trusted = false)
     -> Tsugumi::Host::SkillsListT;
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

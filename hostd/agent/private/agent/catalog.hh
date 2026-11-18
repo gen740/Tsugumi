@@ -4,8 +4,8 @@
 #include <string_view>
 #include <vector>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/provider.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 
@@ -26,11 +26,11 @@ struct CatalogTool {
 enum class ModelRole { Main, Helper, ScopedHelper, Guide };
 
 class Catalog {
-public:
+ public:
   Catalog();
   auto shared() const -> json::Members;
-  auto tools() const -> const std::vector<CatalogTool> & { return tools_; }
-  auto Find(std::string_view name) const -> const CatalogTool *;
+  auto tools() const -> const std::vector<CatalogTool>& { return tools_; }
+  auto Find(std::string_view name) const -> const CatalogTool*;
   auto Json() const -> std::string;
   auto AllSpecs() const -> std::vector<ToolSpec>;
   auto ModelSpecs(ModelRole role = ModelRole::Main,
@@ -49,8 +49,8 @@ public:
                    uint64_t id) const -> std::string;
   auto HostReply(std::string_view bytes) const -> std::string;
 
-private:
+ private:
   std::vector<CatalogTool> tools_;
 };
 
-} // namespace tsugumi::agent
+}  // namespace tsugumi::agent

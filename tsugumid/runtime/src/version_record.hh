@@ -9,7 +9,8 @@ struct Commit {
   schema::t::String<"kind"> kind;
   schema::t::String<"card"> card;
 };
-inline auto commit(const std::string& kind, const std::string& card = "") -> std::string {
+inline auto commit(const std::string& kind, const std::string& card = "")
+    -> std::string {
   Commit record;
   *record.format = "commit";
   *record.kind = kind;

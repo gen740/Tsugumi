@@ -194,13 +194,12 @@ TEST_F(SkillsFixture, TrustFollowsTheFolderIdentityAndSurvivesOrdinarySaves) {
   const auto trust = [&](H::ProjectTrustDecision decision =
                              H::ProjectTrustDecision::Unknown) {
     const auto reply =
-        Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder &b) {
+        Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
           return H::CreateProjectTrustRequest(b, b.CreateString(path.string()),
                                               decision)
               .Union();
         });
-    if (!reply.Code().empty())
-      throw std::runtime_error(reply.Code());
+    if (!reply.Code().empty()) throw std::runtime_error(reply.Code());
     return reply.HostValue()->value_as_ProjectTrust()->decision();
   };
   const auto trusted = H::ProjectTrustDecision::Trusted;
@@ -294,12 +293,17 @@ TEST_F(SkillsFixture, AutomaticScopedSkillsAreRefusedBeforeAnyModelRequest) {
   Write(directory.path / "project/skills/automatic.md",
         "---\nalways: true\nscope: [read]\n---\nWRITE_SENTINEL");
   StartProject();
-  ASSERT_TRUE(Call(*host, H::RequestPayload::ProjectTrustRequest,
-                   [&](Builder& b) {
-                     return H::CreateProjectTrustRequest(
-                                b, b.CreateString((directory.path / "project").string()),
-                                H::ProjectTrustDecision::Trusted).Union();
-                   }).Code().empty());
+  ASSERT_TRUE(
+      Call(*host, H::RequestPayload::ProjectTrustRequest,
+           [&](Builder& b) {
+             return H::CreateProjectTrustRequest(
+                        b,
+                        b.CreateString((directory.path / "project").string()),
+                        H::ProjectTrustDecision::Trusted)
+                 .Union();
+           })
+          .Code()
+          .empty());
   const auto list = List();
   const auto* skills = list.HostValue()->value_as_SkillsList()->skills();
   bool found = false;
@@ -307,7 +311,8 @@ TEST_F(SkillsFixture, AutomaticScopedSkillsAreRefusedBeforeAnyModelRequest) {
     if (skill->name()->str() == "automatic") {
       found = true;
       EXPECT_EQ(skill->status()->str(), "invalid_scope");
-      EXPECT_NE(skill->description()->str().find("cannot combine always: true with scope"),
+      EXPECT_NE(skill->description()->str().find(
+                    "cannot combine always: true with scope"),
                 std::string::npos);
     }
   ASSERT_TRUE(found);
@@ -318,7 +323,8 @@ TEST_F(SkillsFixture, AutomaticScopedSkillsAreRefusedBeforeAnyModelRequest) {
   const auto state = WaitUntilIdle(conversation);
   const auto events = Events(conversation).View();
   EXPECT_NE(events.find("cannot combine always: true with scope"),
-            std::string::npos) << state;
+            std::string::npos)
+      << state;
   EXPECT_TRUE(model.Requests().empty());
 }
 
@@ -570,56 +576,76 @@ TEST_F(AgentProjectFixture,
 }
 TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ModelServer model;
-  model.Queue(AnthropicTool("try-write", "project_save", R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"selected"}}]})"));
+  model.Queue(AnthropicTool(
+      "try-write", "project_save",
+      R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"selected"}}]})"));
   model.Queue(AnthropicText(
       "Read only: [source](card:selected?file=src%2Fmain.py&lines=1-2) uses a "
       "clock."));
   Configure(model);
   StartProject();
-  Write(directory.path / "project/skills/inspect.md", "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");
+  Write(directory.path / "project/skills/inspect.md",
+        "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");
   const auto conversation = Conversation("direct-skill");
   ASSERT_TRUE(List({}, true, false, conversation).Code().empty());
-  const auto start = Call(*human, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
-    A::ConversationSendRequestT request;
-    request.conversation_id = conversation;
-    request.turn_id = "direct-turn";
-    request.text = "$inspect";
-    request.selected_cards = {"selected"};
-    request.skill_names = {"inspect"};
-    request.scoped_skill = "inspect";
-    return A::ConversationSendRequest::Pack(b, &request).Union();
-  });
+  const auto start =
+      Call(*human, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
+        A::ConversationSendRequestT request;
+        request.conversation_id = conversation;
+        request.turn_id = "direct-turn";
+        request.text = "$inspect";
+        request.selected_cards = {"selected"};
+        request.skill_names = {"inspect"};
+        request.scoped_skill = "inspect";
+        return A::ConversationSendRequest::Pack(b, &request).Union();
+      });
   ASSERT_TRUE(start.Code().empty());
   EXPECT_FALSE(model.WaitForRequests(1, 100ms));
   std::string approval;
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
-    const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-      return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
-    });
+    const auto list =
+        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+          return A::CreateAccessListRequest(b, b.CreateString(conversation))
+              .Union();
+        });
     for (const auto* item : *list.Value()->value_as_AccessList()->requests())
       if (item->access() == Tsugumi::Service::Access::HelperScope) {
         approval = item->id()->str();
         EXPECT_NE(item->reason()->str().find("selected"), std::string::npos);
-        EXPECT_NE(item->reason()->str().find(R"("write_cards":[])"), std::string::npos);
+        EXPECT_NE(item->reason()->str().find(R"("write_cards":[])"),
+                  std::string::npos);
       }
     if (approval.empty()) std::this_thread::sleep_for(10ms);
   }
   ASSERT_FALSE(approval.empty());
-  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
-    return A::CreateAccessResolveRequest(b, b.CreateString(approval), true).Union();
-  }).Code().empty());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& b) {
+                     return A::CreateAccessResolveRequest(
+                                b, b.CreateString(approval), true)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
   const auto snapshot = Get(conversation);
-  EXPECT_EQ(ListSize(snapshot.Value()->value_as_ConversationResult()->conversation()->helpers()), 1u);
+  EXPECT_EQ(ListSize(snapshot.Value()
+                         ->value_as_ConversationResult()
+                         ->conversation()
+                         ->helpers()),
+            1u);
   EXPECT_NE(snapshot.View().find("Read only:"), std::string::npos);
-  EXPECT_EQ(model.Requests().size(), 2u);  // Only the helper; no parent model turn.
-  EXPECT_NE(model.Requests()[0].find("INSPECT_SKILL_SENTINEL"), std::string::npos);
+  EXPECT_EQ(model.Requests().size(),
+            2u);  // Only the helper; no parent model turn.
+  EXPECT_NE(model.Requests()[0].find("INSPECT_SKILL_SENTINEL"),
+            std::string::npos);
   EXPECT_NE(model.Requests()[1].find("Helper scope denied"), std::string::npos);
-  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
-  });
+  const auto access =
+      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+        return A::CreateAccessListRequest(b, b.CreateString(conversation))
+            .Union();
+      });
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->grants()), 0u);
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->requests()), 1u);
 }

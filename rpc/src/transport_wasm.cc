@@ -144,7 +144,8 @@ class BrowserTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport> {
   if (!options.endpoint.starts_with("ws://") &&
       !options.endpoint.starts_with("wss://"))
     throw std::invalid_argument("browser RPC requires a WebSocket endpoint");

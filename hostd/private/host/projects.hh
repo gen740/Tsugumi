@@ -16,8 +16,8 @@ namespace tsugumi::host {
 // Exact bytes, with the same exclusions and bounds as project
 // duplication/import.
 auto ReadProjectFiles(
-    const std::string &path,
-    const std::function<void(const std::string &)> &authorize = {})
+    const std::string& path,
+    const std::function<void(const std::string&)>& authorize = {})
     -> std::map<std::string, std::string>;
 
 // Presentation metadata only; a missing/unreadable manifest falls back to the
@@ -36,14 +36,15 @@ class Projects {
  public:
   Projects(std::filesystem::path state, std::filesystem::path demos,
            sql::Db* db = nullptr)
-      : db_(db), registry_(std::move(state) / "recent-projects.json"),
+      : db_(db),
+        registry_(std::move(state) / "recent-projects.json"),
         demos_(std::move(demos)) {}
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
-  auto Handle(const Tsugumi::Host::Request &request, uint64_t id)
+  auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
 
-private:
-  auto Apply(const Tsugumi::Host::Request &request) -> std::string;
+ private:
+  auto Apply(const Tsugumi::Host::Request& request) -> std::string;
   auto Catalog(const std::string& language) const -> std::vector<std::string>;
   auto Recents() const -> std::vector<std::string>;
   sql::Db* db_;

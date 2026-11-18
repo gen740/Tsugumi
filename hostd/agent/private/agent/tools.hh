@@ -14,8 +14,8 @@
 #include "agent/helper_scope.hh"
 #include "agent/runtime.hh"
 #include "agent/store.hh"
-#include "host/layout_saving.hh"
 #include "host/agent_exclude.hh"
+#include "host/layout_saving.hh"
 #include "host/project_operations.hh"
 #include "host/save.hh"
 #include "host/state_gate.hh"
@@ -75,9 +75,12 @@ struct Tools {
                          std::stop_token stop,
                          const host::LayoutWrite& may_write = {})
       -> std::string;
-  auto Exclusions(const std::string& project, std::stop_token stop = {}) -> host::AgentExclude;
-  auto UnfilteredProjectCall(const std::string& project, const std::string& name,
-                            const std::string& arguments, std::stop_token stop) -> std::string;
+  auto Exclusions(const std::string& project, std::stop_token stop = {})
+      -> host::AgentExclude;
+  auto UnfilteredProjectCall(const std::string& project,
+                             const std::string& name,
+                             const std::string& arguments, std::stop_token stop)
+      -> std::string;
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {})
       -> std::string;
@@ -101,8 +104,8 @@ struct Tools {
                    const std::string& requested_project, const ToolCall& call,
                    bool wait, std::stop_token stop, bool helper = false,
                    HelperScope* boundary = nullptr) -> ToolResult;
-  auto AllocateCall(const std::string &conversation,
-                    const std::string &scope = {}) -> std::string;
+  auto AllocateCall(const std::string& conversation,
+                    const std::string& scope = {}) -> std::string;
   auto Hooks(const std::string& id, bool helper = false,
              std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks;
   auto RequireHelperPermission(const std::string& conversation,

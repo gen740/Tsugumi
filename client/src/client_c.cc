@@ -27,8 +27,7 @@ extern "C" {
 auto tsugumi_client_create(const char* endpoint, int protocol)
     -> tsugumi_client* {
   try {
-    if (!endpoint || (protocol < 0 || protocol > 2))
-      return nullptr;
+    if (!endpoint || (protocol < 0 || protocol > 2)) return nullptr;
     C::Options options;
     options.endpoint = endpoint;
     options.protocol = static_cast<C::Protocol>(protocol);

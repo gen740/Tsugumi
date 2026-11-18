@@ -13,19 +13,37 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
 #include "tsugumi/document/worker_condition.hh"
-
 #include "tsugumi/util/system.hh"
 
 namespace tsugumi {
 
-enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Collect, Subgraph, Draft };
+enum class Template {
+  Code,
+  Trigger,
+  Input,
+  Switch,
+  Fork,
+  Branch,
+  Merge,
+  Collect,
+  Subgraph,
+  Draft
+};
 const char* template_name(Template t);
 // What a definition is; no definition at all is a Draft.
 Template template_of(const DefinitionDoc* def);
 
 enum class ParamType {
-  Bool, Int64, UInt64, Double, String,
-  BoolArray, Int64Array, UInt64Array, DoubleArray, StringArray,
+  Bool,
+  Int64,
+  UInt64,
+  Double,
+  String,
+  BoolArray,
+  Int64Array,
+  UInt64Array,
+  DoubleArray,
+  StringArray,
 };
 std::optional<ParamType> parse_param_type(const std::string& s);
 const char* param_type_name(ParamType t);
@@ -34,7 +52,8 @@ std::string param_fbs_type(ParamType t);
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
-  std::optional<hosq::json::GenericDom<>> data;  // effective value (validated against type)
+  std::optional<hosq::json::GenericDom<>>
+      data;  // effective value (validated against type)
   bool nix = false;
 };
 
@@ -46,11 +65,11 @@ struct HostFolder {
 
 inline constexpr char kLocalExecutionService[] = "local";
 
-
 struct Settings {
   std::string name;  // the Card id
   std::string symbol;
-  std::string language;  // "", cpp, python, go, rust, csharp, bash, r, julia, ruby
+  std::string
+      language;  // "", cpp, python, go, rust, csharp, bash, r, julia, ruby
   bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
@@ -64,11 +83,10 @@ struct Settings {
   std::string execution_service = "auto";
   std::shared_ptr<const worker_condition::Condition> worker_condition;
   std::optional<ExecutionResources> execution_resources;
-  std::string system;     // "" = the execution service's native system
+  std::string system;  // "" = the execution service's native system
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data
 };
-
 
 struct InputDef {
   std::string name;
@@ -92,13 +110,17 @@ struct Node {
   // The Card's definition folder, project relative ("definitions/<id>/", or
   // "externals/<p>/definitions/<id>/" inside a Card in Card).
   std::string def_dir;
-  std::string project_dir;                    // "" or "externals/<p>/": the project the Card is written in
-  std::string pkgs_path;                      // of the project the Card is written in
-  std::vector<NixSourceRef> nix_sources;      // what that project opts in to (tsugumi.json nixSources)
+  std::string project_dir;  // "" or "externals/<p>/": the project the Card is
+                            // written in
+  std::string pkgs_path;    // of the project the Card is written in
+  std::vector<NixSourceRef>
+      nix_sources;  // what that project opts in to (tsugumi.json nixSources)
   std::vector<CardNixReference> nix_references;
-  std::map<std::string, size_t> nix_inputs;  // destination port -> guaranteed Code producer
-  std::optional<schema::Boundary> boundary;  // Card in Card: its external's ports
-  std::string external;                      // Card in Card: "externals/<p>/" (project relative)
+  std::map<std::string, size_t>
+      nix_inputs;  // destination port -> guaranteed Code producer
+  std::optional<schema::Boundary>
+      boundary;          // Card in Card: its external's ports
+  std::string external;  // Card in Card: "externals/<p>/" (project relative)
   Settings settings;
   std::vector<InputDef> input_defs;
   std::vector<types::PortType> inputs;
@@ -121,11 +143,14 @@ struct Edge {
 struct Resolution {
   std::vector<Node> nodes;
   std::map<std::string, size_t> index;  // path_key -> node
-  std::vector<Edge> edges;               // between executable nodes only
+  std::vector<Edge> edges;              // between executable nodes only
   std::vector<Diag> diags;
   // Boundary aliases produced by the same leaf resolution as executable wires.
-  std::map<std::tuple<std::string, std::string, bool>, std::pair<size_t, std::string>> endpoints;
-  auto endpoint(const CardPath& card, const std::string& port, bool output) const
+  std::map<std::tuple<std::string, std::string, bool>,
+           std::pair<size_t, std::string>>
+      endpoints;
+  auto endpoint(const CardPath& card, const std::string& port,
+                bool output) const
       -> std::optional<std::pair<size_t, std::string>>;
   // Per node: the nodes that have always run before it fires, whichever path
   // its inputs arrived on (sorted). The basis for Nix upstream references.
@@ -138,13 +163,16 @@ struct Resolution {
   std::vector<Diag> all_diagnostics(bool executable) const;
 };
 
-using SourceReader = std::function<std::optional<std::string>(const std::string& rel)>;
+using SourceReader =
+    std::function<std::optional<std::string>(const std::string& rel)>;
 
-std::shared_ptr<const Resolution> resolve(const Document& doc, const SourceReader& read);
+std::shared_ptr<const Resolution> resolve(const Document& doc,
+                                          const SourceReader& read);
 
 // Checks that a captured JSON value has the param type (no implicit
 // conversion, integers in range); returns error text.
-std::optional<std::string> check_param_value(ParamType t, const hosq::json::GenericDom<>& v);
+std::optional<std::string> check_param_value(ParamType t,
+                                             const hosq::json::GenericDom<>& v);
 // Decodes an array-of-strings param.
 std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v);
 

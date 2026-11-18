@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -19,7 +19,8 @@ inline constexpr uint32_t kContract = 7;
 inline constexpr auto kControlTimeout = std::chrono::seconds(30);
 inline constexpr auto kHeartbeatPollInterval = std::chrono::milliseconds(100);
 // One bounded control round trip plus the sender's scheduling granularity.
-inline constexpr auto kHeartbeatGrace = kControlTimeout + kHeartbeatPollInterval;
+inline constexpr auto kHeartbeatGrace =
+    kControlTimeout + kHeartbeatPollInterval;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;

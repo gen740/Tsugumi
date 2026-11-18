@@ -2,13 +2,13 @@
 
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/presentation.hh"
 #include "agent/store.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/projects.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace A = Tsugumi::Agent;
@@ -39,8 +39,8 @@ Access::Access(StateGate& gate, sql::Db& db, ProjectRegistry& registry,
       dependencies(std::move(dependencies)) {}
 
 auto Access::HasGrant(const std::string& project,
-                      const std::string& conversation, Tsugumi::Service::Access access)
-    -> bool {
+                      const std::string& conversation,
+                      Tsugumi::Service::Access access) -> bool {
   if (project.empty()) return true;
   if (project.starts_with("helper-scope:")) {
     auto approval = db.prepare(
@@ -80,12 +80,12 @@ auto Access::AccessDescription(const std::string& resource,
   }
   if (title.empty() && !path.empty()) title = host::ProjectDisplayName(path);
   return "project_access " +
-         json::Encode(
-             json::Members{{"title", json::Quote(title)},
-                           {"path", json::Quote(path)},
-                           {"access", json::Quote(Tsugumi::Service::EnumNameAccess(access))},
-                           {"reason", json::Quote(reason)},
-                           {"needed_now", needed ? "true" : "false"}});
+         json::Encode(json::Members{
+             {"title", json::Quote(title)},
+             {"path", json::Quote(path)},
+             {"access", json::Quote(Tsugumi::Service::EnumNameAccess(access))},
+             {"reason", json::Quote(reason)},
+             {"needed_now", needed ? "true" : "false"}});
 }
 
 auto Access::AccessDescriptions(const std::string& id,
@@ -145,10 +145,12 @@ auto Access::RequestAccess(const std::string& project,
       .run();
   // Only ordinary project access is bundled. Folder access, shell access and
   // per-operation approvals retain their own, narrower questions.
-  if (combine && access <= Tsugumi::Service::Access::Run && !conversation.empty() &&
+  if (combine && access <= Tsugumi::Service::Access::Run &&
+      !conversation.empty() &&
       conversations->GetConversation(conversation).project == project) {
     for (const auto candidate :
-         {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run}) {
+         {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
+          Tsugumi::Service::Access::Run}) {
       auto asked = db.prepare(
           "SELECT 1 FROM access_requests r JOIN access_prompt_items i ON "
           "i.request=r.id "
@@ -179,8 +181,9 @@ auto Access::RequestAccess(const std::string& project,
 }
 
 auto Access::Require(const std::string& project,
-                     const std::string& conversation, Tsugumi::Service::Access access,
-                     bool wait, std::stop_token stop, const std::string& reason,
+                     const std::string& conversation,
+                     Tsugumi::Service::Access access, bool wait,
+                     std::stop_token stop, const std::string& reason,
                      const std::string& authorization) -> void {
   std::unique_lock lock(mutex);
   if (!authorization.empty()) {
@@ -330,10 +333,11 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
           db.prepare("SELECT 1 FROM operation_approvals WHERE request=?");
       operation.bind(1, p->request_id()->str());
       const bool per_call =
-          operation.step() ||
-          static_cast<Tsugumi::Service::Access>(q.i64(2)) == Tsugumi::Service::Access::HelperScope;
+          operation.step() || static_cast<Tsugumi::Service::Access>(q.i64(2)) ==
+                                  Tsugumi::Service::Access::HelperScope;
       if (p->allow() && !per_call &&
-          static_cast<Tsugumi::Service::Access>(q.i64(2)) != Tsugumi::Service::Access::HelperScope) {
+          static_cast<Tsugumi::Service::Access>(q.i64(2)) !=
+              Tsugumi::Service::Access::HelperScope) {
         auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
         grant.bind(1, p->request_id()->str())
             .bind(2, q.text(0))
@@ -344,17 +348,19 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       auto items =
           db.prepare("SELECT access FROM access_prompt_items WHERE request=?");
       items.bind(1, p->request_id()->str());
-      while (items.step()) offered.insert(static_cast<Tsugumi::Service::Access>(items.i64(0)));
+      while (items.step())
+        offered.insert(static_cast<Tsugumi::Service::Access>(items.i64(0)));
       if (p->also_allow()) {
         for (const auto access : *p->also_allow()) {
-          if (per_call || access == static_cast<Tsugumi::Service::Access>(q.i64(2)) ||
+          if (per_call ||
+              access == static_cast<Tsugumi::Service::Access>(q.i64(2)) ||
               !offered.contains(access))
             throw Failure(
                 "invalid_request",
                 "Only other accesses listed in this prompt can be allowed");
         }
         std::set<Tsugumi::Service::Access> allowed(p->also_allow()->begin(),
-                                    p->also_allow()->end());
+                                                   p->also_allow()->end());
         for (const auto access : allowed) {
           auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
           grant.bind(1, crypto::uuid4())

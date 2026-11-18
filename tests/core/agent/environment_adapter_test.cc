@@ -29,7 +29,8 @@ class HelperDouble final : public host::EnvironmentProcess {
   std::string log;
   auto Guest() const -> bool override { return guest; }
   Tsugumi::RPC::ProjectHostRequirementsT accepted;
-  auto Requirements(const H::EnvironmentStateT&) -> Tsugumi::RPC::ProjectHostRequirementsT override {
+  auto Requirements(const H::EnvironmentStateT&)
+      -> Tsugumi::RPC::ProjectHostRequirementsT override {
     return accepted;
   }
   host::EnvironmentLaunch received;
@@ -38,7 +39,8 @@ class HelperDouble final : public host::EnvironmentProcess {
     received = launch;
     if (guest) {
       accepted = load_host_requirements(launch.project);
-      if (change_requirements && !accepted.folders.empty()) accepted.folders.front()->write = true;
+      if (change_requirements && !accepted.folders.empty())
+        accepted.folders.front()->write = true;
     }
     if (fail || std::exchange(fail_once, false))
       throw std::runtime_error("helper could not run the process");
@@ -112,10 +114,12 @@ TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndStopsTheProcessOnShutdown) {
   auto ready = service.Handle(input);
   EXPECT_EQ(ready.phase, H::EnvironmentPhase::Ready);
   for (const auto* option : {"--run-scratch-dir", "--scratch-dir"}) {
-    const auto found = std::find(helper->received.arguments.begin(), helper->received.arguments.end(), option);
+    const auto found = std::find(helper->received.arguments.begin(),
+                                 helper->received.arguments.end(), option);
     ASSERT_NE(found, helper->received.arguments.end());
     ASSERT_NE(std::next(found), helper->received.arguments.end());
-    const auto relative = std::filesystem::path(*std::next(found)).lexically_relative(directory.path);
+    const auto relative = std::filesystem::path(*std::next(found))
+                              .lexically_relative(directory.path);
     EXPECT_FALSE(relative.empty());
     EXPECT_NE(*relative.begin(), "..");
   }
@@ -188,8 +192,9 @@ TEST(EnvironmentAdapterTest,
     input.action = H::EnvironmentAction::Start;
     const auto failed = service.Handle(input);
     EXPECT_EQ(failed.phase, H::EnvironmentPhase::Failed);
-    EXPECT_EQ(failed.failure_code, die ? H::EnvironmentFailureCode::ProcessExit
-                                       : H::EnvironmentFailureCode::ReadinessTimeout);
+    EXPECT_EQ(failed.failure_code,
+              die ? H::EnvironmentFailureCode::ProcessExit
+                  : H::EnvironmentFailureCode::ReadinessTimeout);
     EXPECT_NE(failed.message.find("final stderr diagnosis"), std::string::npos);
     EXPECT_NE(failed.message.find("*******"), std::string::npos);
     EXPECT_EQ(failed.message.find("discarded beginning"), std::string::npos);
@@ -203,25 +208,36 @@ TEST(EnvironmentAdapterTest,
     EXPECT_FALSE(helper->running);
   }
 }
-TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedFiles) {
+TEST(EnvironmentAdapterTest,
+     HostUsesCoreRequirementsAndDoesNotRescanUnacceptedFiles) {
   TemporaryDirectory directory;
   const auto project = directory.path / "project",
              data = directory.path / "data", chat = directory.path / "chat";
   std::filesystem::create_directory(data);
   std::filesystem::create_directory(chat);
-  Write(project / "tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})");
+  Write(
+      project / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "\"path\":" +
+            Quote(data.string()) + "}]}");
   Write(project / "definitions/nested/_link.json", R"({"external":"x"})");
-  Write(project / "externals/x/tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"b"}],"connections":[]}})");
+  Write(
+      project / "externals/x/tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"b"}],"connections":[]}})");
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "\"path\":" +
+            Quote(data.string()) + ",\"write\":true}]}");
   Write(project / "definitions/unused/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"chat\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"chat\","
+        "\"path\":" +
+            Quote(chat.string()) + ",\"write\":true}]}");
   Write(project / "externals/unused/definitions/ignored/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"ignored\",\"path\":" + Quote(chat.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":"
+        "\"ignored\",\"path\":" +
+            Quote(chat.string()) + ",\"write\":true}]}");
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
@@ -244,7 +260,8 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   EXPECT_FALSE(helper->received.archive);
   ASSERT_EQ(helper->accepted.folders.size(), 2u);
   EXPECT_EQ(helper->accepted.folders[0]->card->segments, (CardPath{"a"}));
-  EXPECT_EQ(helper->accepted.folders[1]->card->segments, (CardPath{"nested", "b"}));
+  EXPECT_EQ(helper->accepted.folders[1]->card->segments,
+            (CardPath{"nested", "b"}));
   const auto& mounts = helper->received.mounts;
   ASSERT_EQ(mounts.size(), 4u);
   EXPECT_EQ(mounts[2].path, data.string());
@@ -257,12 +274,15 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
             "/run/tsugumi/chat/" + mounts[3].name.substr(5));
   // A disk edit not accepted by the running core must not alter its mounts,
   // and a start of a ready project leaves the running guest's folders alone.
-  Write(project / "externals/x/definitions/b/_card.json", "unaccepted broken JSON");
+  Write(project / "externals/x/definitions/b/_card.json",
+        "unaccepted broken JSON");
   EXPECT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Ready);
   EXPECT_EQ(helper->launches, 1);
   EXPECT_EQ(helper->signals, 0);
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "\"path\":" +
+            Quote(data.string()) + ",\"write\":true}]}");
   // A guest keeps the folders of its start: any other set starts it again.
   input.action = H::EnvironmentAction::RemoveFolders;
   input.folders = {chat.string()};
@@ -370,14 +390,19 @@ TEST(EnvironmentAdapterTest, AttachWaitsForTheGuestAndRollsBackFailedBatches) {
   service.Handle(start);
 }
 
-TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument) {
+TEST(EnvironmentAdapterTest,
+     StartupRequirementsMustMatchTheAcceptedCoreDocument) {
   TemporaryDirectory directory;
-  const auto project = directory.path / "project", data = directory.path / "data";
+  const auto project = directory.path / "project",
+             data = directory.path / "data";
   std::filesystem::create_directory(data);
-  Write(project / "tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+  Write(
+      project / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + "}]}");
+        "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "\"path\":" +
+            Quote(data.string()) + "}]}");
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
   helper->change_requirements = true;
@@ -387,7 +412,8 @@ TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument
   options.socket_directory = directory.path / "sockets";
   options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
-  host::Environments service(options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   H::EnvironmentRequestT input;
   input.project = project.string();
   input.action = H::EnvironmentAction::Start;
@@ -448,8 +474,9 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
 TEST(EnvironmentAdapterTest,
      GuestAttachedRootUsesTheMountEvenWhenTheHostPathExists) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  Write(
+      directory.path / "project/tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   auto process = std::make_shared<HelperDouble>();
   process->guest = true;
   host::EnvironmentOptions options;
@@ -459,8 +486,7 @@ TEST(EnvironmentAdapterTest,
   AuthorizationDouble authorization;
   const auto make = [&] {
     return std::make_unique<host::Environments>(
-        options, authorization.Bind(), [](const auto &) {},
-        [](const auto &) {});
+        options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   };
   auto service = make();
   H::EnvironmentRequestT request;

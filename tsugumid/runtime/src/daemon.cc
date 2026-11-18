@@ -1,4 +1,5 @@
-#include "runtime_schema.hh"
+#include "tsugumi/core/daemon.hh"
+
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
@@ -13,11 +14,11 @@
 #include <string>
 #include <vector>
 
-#include "tsugumi/util/json.hh"
+#include "runtime_schema.hh"
 #include "service.hh"
-#include "tsugumi/core/daemon.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::core {
@@ -54,14 +55,19 @@ struct Options {
 };
 
 void usage() {
-  std::fprintf(stderr,
-               "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
-               "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
-               "                [--worker PATH] [--workerd PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
-               "                [--archive-incompatible-history]\n"
-               "                [--scratch-dir DIR] [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
-               "                [--usage-file FILE]\n"
-               "                [--host-folders DIR] [--substituters-file FILE]\n");
+  std::fprintf(
+      stderr,
+      "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] "
+      "[--control-dir DIR]\n"
+      "                [--allow-origin ORIGIN]... [--allow-missing-origin] "
+      "[--sdk-dir DIR]\n"
+      "                [--worker PATH] [--workerd PATH] [--cpus N] "
+      "[--gcroots-dir DIR] [--history-dir DIR]\n"
+      "                [--archive-incompatible-history]\n"
+      "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
+      "[--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
+      "                [--usage-file FILE]\n"
+      "                [--host-folders DIR] [--substituters-file FILE]\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -72,39 +78,66 @@ std::optional<Options> parse(int argc, char** argv) {
       if (i + 1 >= argc) throw std::runtime_error(a + " needs a value");
       return argv[++i];
     };
-    if (a == "--project") o.project = next();
-    else if (a == "--unix") o.unix_socket = next();
-    else if (a == "--listen-unix-ws") o.ws_unix_socket = next();
+    if (a == "--project")
+      o.project = next();
+    else if (a == "--unix")
+      o.unix_socket = next();
+    else if (a == "--listen-unix-ws")
+      o.ws_unix_socket = next();
     else if (a == "--listen") {
       std::string v = next();
       auto colon = v.rfind(':');
-      if (colon == std::string::npos) throw std::runtime_error("--listen needs HOST:PORT");
+      if (colon == std::string::npos)
+        throw std::runtime_error("--listen needs HOST:PORT");
       o.listen_host = v.substr(0, colon);
       o.listen_port = std::stoi(v.substr(colon + 1));
-    } else if (a == "--control-dir") o.control_dir = next();
-    else if (a == "--allow-origin") o.origins.push_back(next());
-    else if (a == "--allow-missing-origin") o.allow_missing_origin = true;
-    else if (a == "--sdk-dir") o.sdk_dir = next();
-    else if (a == "--worker") o.worker = next();
-    else if (a == "--workerd") o.workerd = next();
-    else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
-    else if (a == "--gcroots-dir") o.gcroots_dir = next();
-    else if (a == "--history-dir") o.history_dir = next();
-    else if (a == "--run-scratch-dir") o.run_scratch_dir = next();
-    else if (a == "--scratch-dir") o.scratch_dir = next();
-    else if (a == "--usage-roots-dir") o.usage_roots_dir = next();
-    else if (a == "--usage-scratch-dir") o.usage_scratch_dir = next();
-    else if (a == "--usage-file") o.usage_file = next();
-    else if (a == "--archive-incompatible-history") o.archive_incompatible_history = true;
-    else if (a == "--host-folders") o.host_folders = next();
-    else if (a == "--project-shell") o.project_shell = true;
-    else if (a == "--substituters-file") o.substituters_file = next();
-    else if (a == "--help") return std::nullopt;
-    else throw std::runtime_error("unknown option " + a);
+    } else if (a == "--control-dir")
+      o.control_dir = next();
+    else if (a == "--allow-origin")
+      o.origins.push_back(next());
+    else if (a == "--allow-missing-origin")
+      o.allow_missing_origin = true;
+    else if (a == "--sdk-dir")
+      o.sdk_dir = next();
+    else if (a == "--worker")
+      o.worker = next();
+    else if (a == "--workerd")
+      o.workerd = next();
+    else if (a == "--cpus")
+      o.cpus = static_cast<uint32_t>(std::stoul(next()));
+    else if (a == "--gcroots-dir")
+      o.gcroots_dir = next();
+    else if (a == "--history-dir")
+      o.history_dir = next();
+    else if (a == "--run-scratch-dir")
+      o.run_scratch_dir = next();
+    else if (a == "--scratch-dir")
+      o.scratch_dir = next();
+    else if (a == "--usage-roots-dir")
+      o.usage_roots_dir = next();
+    else if (a == "--usage-scratch-dir")
+      o.usage_scratch_dir = next();
+    else if (a == "--usage-file")
+      o.usage_file = next();
+    else if (a == "--archive-incompatible-history")
+      o.archive_incompatible_history = true;
+    else if (a == "--host-folders")
+      o.host_folders = next();
+    else if (a == "--project-shell")
+      o.project_shell = true;
+    else if (a == "--substituters-file")
+      o.substituters_file = next();
+    else if (a == "--help")
+      return std::nullopt;
+    else
+      throw std::runtime_error("unknown option " + a);
   }
   if (o.project.empty()) throw std::runtime_error("--project is required");
-  // Fault injection exists for the persistence tests only and needs an explicit opt-in.
-  if (const char* f = std::getenv("TSUGUMI_FAULT"); f && std::getenv("TSUGUMI_ENABLE_FAULTS")) o.fault = f;
+  // Fault injection exists for the persistence tests only and needs an explicit
+  // opt-in.
+  if (const char* f = std::getenv("TSUGUMI_FAULT");
+      f && std::getenv("TSUGUMI_ENABLE_FAULTS"))
+    o.fault = f;
   return o;
 }
 
@@ -138,16 +171,20 @@ int run_daemon(int argc, char** argv) {
   std::error_code ec;
   auto root = stdfs::canonical(opt.project, ec);
   if (ec || !stdfs::is_regular_file(root / "tsugumi.json")) {
-    log::error("project " + opt.project.string() + " is not an initialized Tsugumi project");
+    log::error("project " + opt.project.string() +
+               " is not an initialized Tsugumi project");
     return 2;
   }
   auto bin = exe_dir(argv[0]);
   if (opt.worker.empty()) opt.worker = bin / "tsugumi-worker";
   if (opt.workerd.empty()) {
-    if (const auto* path = std::getenv("TSUGUMI_WORKERD")) opt.workerd = path;
-    else opt.workerd = opt.worker.parent_path() / "tsugumi-workerd";
+    if (const auto* path = std::getenv("TSUGUMI_WORKERD"))
+      opt.workerd = path;
+    else
+      opt.workerd = opt.worker.parent_path() / "tsugumi-workerd";
   }
-  if (opt.sdk_dir.empty()) opt.sdk_dir = bin.parent_path() / "share" / "tsugumi" / "sdk";
+  if (opt.sdk_dir.empty())
+    opt.sdk_dir = bin.parent_path() / "share" / "tsugumi" / "sdk";
 
   // Ownership: a fixed lock file, exclusive and non-blocking, held for life.
   auto state = root / ".tsugumi";
@@ -156,7 +193,8 @@ int run_daemon(int argc, char** argv) {
   auto lock_path = state / "tsugumid.lock";
   std::optional<fs::FileLock> lock;
   try {
-    if (auto l = fs::FileLock::try_acquire(lock_path)) lock.emplace(std::move(*l));
+    if (auto l = fs::FileLock::try_acquire(lock_path))
+      lock.emplace(std::move(*l));
   } catch (const std::exception& e) {
     log::error(std::string("cannot open the project lock: ") + e.what());
     return 3;
@@ -168,10 +206,13 @@ int run_daemon(int argc, char** argv) {
   // Refuse storage where the advisory lock is not actually enforced.
   {
     int fd = ::open(lock_path.c_str(), O_RDWR | O_CLOEXEC);
-    bool enforced = fd >= 0 && ::flock(fd, LOCK_EX | LOCK_NB) != 0 && errno == EWOULDBLOCK;
+    bool enforced =
+        fd >= 0 && ::flock(fd, LOCK_EX | LOCK_NB) != 0 && errno == EWOULDBLOCK;
     if (fd >= 0) ::close(fd);
     if (!enforced) {
-      log::error("file locks are not enforced on this storage; refusing to serve " + root.string());
+      log::error(
+          "file locks are not enforced on this storage; refusing to serve " +
+          root.string());
       return 5;
     }
   }
@@ -206,7 +247,8 @@ int run_daemon(int argc, char** argv) {
     if (::setenv("TMPDIR", resolved.c_str(), 1) != 0)
       throw std::runtime_error("cannot select evaluator temporary directory");
   }
-  // Block termination signals before threads start; they are taken with sigwait.
+  // Block termination signals before threads start; they are taken with
+  // sigwait.
   sigset_t set;
   sigemptyset(&set);
   sigaddset(&set, SIGTERM);
@@ -228,7 +270,8 @@ int run_daemon(int argc, char** argv) {
       *error.expected = e.expected;
       *error.source = e.source;
       *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+      fs::write_atomic(opt.control_dir / "server.startup-error.json",
+                       schema::encode(error), 0600);
     }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
@@ -236,9 +279,11 @@ int run_daemon(int argc, char** argv) {
     if (!opt.control_dir.empty()) {
       schema::StartupError error;
       *error.kind = e.code == HistoryOpenCode::NotRegular
-                        ? "history_not_regular" : "history_archive_conflict";
+                        ? "history_not_regular"
+                        : "history_archive_conflict";
       *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+      fs::write_atomic(opt.control_dir / "server.startup-error.json",
+                       schema::encode(error), 0600);
     }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
@@ -247,7 +292,8 @@ int run_daemon(int argc, char** argv) {
       schema::StartupError error;
       *error.kind = "project_open_failed";
       *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+      fs::write_atomic(opt.control_dir / "server.startup-error.json",
+                       schema::encode(error), 0600);
     }
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
@@ -258,7 +304,8 @@ int run_daemon(int argc, char** argv) {
   sv.tcp_host = opt.listen_host;
   sv.tcp_port = opt.listen_port;
   sv.allowed_origins = opt.origins;
-  if (!opt.control_dir.empty()) sv.origins_file = (opt.control_dir / "origins.json").string();
+  if (!opt.control_dir.empty())
+    sv.origins_file = (opt.control_dir / "origins.json").string();
   sv.allow_missing_origin = opt.allow_missing_origin;
   ProjectEndpoint(sv);
   ProjectEndpoint(sv);
@@ -271,8 +318,11 @@ int run_daemon(int argc, char** argv) {
     log::error(std::string("cannot start the RPC server: ") + e.what());
     return 7;
   }
-  std::string endpoint =
-      opt.listen_port >= 0 ? "ws://" + opt.listen_host + ":" + std::to_string(server.bound_tcp_port()) + "/rpc" : "";
+  std::string endpoint = opt.listen_port >= 0
+                             ? "ws://" + opt.listen_host + ":" +
+                                   std::to_string(server.bound_tcp_port()) +
+                                   "/rpc"
+                             : "";
   if (!opt.control_dir.empty()) {
     schema::ServerReady ready;
     *ready.endpoint = endpoint;
@@ -283,14 +333,18 @@ int run_daemon(int argc, char** argv) {
     *ready.unix_socket = opt.unix_socket;
     *ready.pid = ::getpid();
     stdfs::create_directories(opt.control_dir);
-    fs::write_atomic(opt.control_dir / "server.ready", schema::encode(ready), 0600);
+    fs::write_atomic(opt.control_dir / "server.ready", schema::encode(ready),
+                     0600);
   }
-  log::info("ready project_id=" + service.project_id() + (endpoint.empty() ? "" : " endpoint=" + endpoint) +
+  log::info("ready project_id=" + service.project_id() +
+            (endpoint.empty() ? "" : " endpoint=" + endpoint) +
             (opt.unix_socket.empty() ? "" : " unix=" + opt.unix_socket));
   int sig = 0;
   sigwait(&set, &sig);
-  log::info(std::string("stopping on ") + (sig == SIGTERM ? "SIGTERM" : "SIGINT"));
-  if (!opt.control_dir.empty()) ::unlink((opt.control_dir / "server.ready").c_str());
+  log::info(std::string("stopping on ") +
+            (sig == SIGTERM ? "SIGTERM" : "SIGINT"));
+  if (!opt.control_dir.empty())
+    ::unlink((opt.control_dir / "server.ready").c_str());
   service.shutdown();
   server.stop();
   return 0;

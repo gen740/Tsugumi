@@ -8,11 +8,11 @@
 #include <utility>
 
 #include "agent/context.hh"
-#include "tsugumi/util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/identifiers.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::agent {
@@ -49,9 +49,10 @@ auto FoldAscii(std::string text) -> std::string {
 
 // Conversation records contain no provisioning, host capabilities or settings.
 auto CreateConversationTables(sql::Db& db) -> void {
-  db.exec("CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
-          "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
-          "KEY(conversation,scope))");
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
+      "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
+      "KEY(conversation,scope))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
       "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
@@ -261,7 +262,8 @@ auto ConversationStore::RememberConversation(const std::string& id,
     -> void {
   if (const auto known = ConversationProject(id)) {
     if (*known != project)
-      throw Failure("conflict", "A conversation belongs to its original project");
+      throw Failure("conflict",
+                    "A conversation belongs to its original project");
     return;
   }
   auto q =
@@ -334,9 +336,10 @@ auto ConversationStore::SaveMessages(const std::string& id,
   // orders JSON objects in providerContent; that is not a history replacement.
   // Preparing a send expands the provisional request in place. Only runtime
   // replacements remove conversation history that belongs in the archive.
-  const auto removed = mode == SaveMode::PrepareSend
-                           ? std::vector<Message>{}
-                           : RemovedMessages(previous, ParseMessages(serialized));
+  const auto removed =
+      mode == SaveMode::PrepareSend
+          ? std::vector<Message>{}
+          : RemovedMessages(previous, ParseMessages(serialized));
   if (!removed.empty()) {
     auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();
@@ -347,10 +350,7 @@ auto ConversationStore::SaveMessages(const std::string& id,
         RememberResource(id, resource);
   auto q = ConversationDatabase(id).prepare(
       "UPDATE conversations SET messages=?,updated=? WHERE id=?");
-  q.bind(1, serialized)
-      .bind(2, Now())
-      .bind(3, id)
-      .run();
+  q.bind(1, serialized).bind(2, Now()).bind(3, id).run();
   if (transaction) transaction->commit();
 }
 

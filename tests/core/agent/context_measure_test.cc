@@ -90,10 +90,9 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   instruction.text = "Inspect forty records, keeping all evidence.";
   messages.push_back(
       {"user", {instruction}, {}, {}, agent::ProviderAPI::AnthropicMessages});
-  const auto result =
-      agent::Runtime()
-          .Run(config, "system", messages,
-               {{"inspect", "Inspect one record.", "{}"}}, {}, hooks);
+  const auto result = agent::Runtime().Run(
+      config, "system", messages, {{"inspect", "Inspect one record.", "{}"}},
+      {}, hooks);
   scripted.request_stop();
   scripted.join();
   ASSERT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;

@@ -1,9 +1,10 @@
 /* Julia is initialized on, and always called from, the worker's main thread. */
-#include "native_host.h"
 #include <dlfcn.h>
 #include <julia.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "native_host.h"
 
 static int check_exception(void) {
   if (!jl_exception_occurred()) return 0;
@@ -47,13 +48,15 @@ int tsugumi_prepare(void) {
   jl_init();
   if (check_exception()) return 1;
   jl_eval_string("try; include(\"" TSUGUMI_JULIA_SDK
-                 "\"); using .Tsugumi; catch error; showerror(stderr, error, catch_backtrace()); println(stderr); rethrow(); end");
+                 "\"); using .Tsugumi; catch error; showerror(stderr, error, "
+                 "catch_backtrace()); println(stderr); rethrow(); end");
   return check_exception();
 }
 int tsugumi_load(const tsugumi_call* call) {
   current_call = call;
   jl_eval_string("try; include(\"" TSUGUMI_JULIA_SOURCE
-                 "/main.jl\"); catch error; showerror(stderr, error, catch_backtrace()); println(stderr); rethrow(); end");
+                 "/main.jl\"); catch error; showerror(stderr, error, "
+                 "catch_backtrace()); println(stderr); rethrow(); end");
   int error = check_exception();
   current_call = NULL;
   return error;

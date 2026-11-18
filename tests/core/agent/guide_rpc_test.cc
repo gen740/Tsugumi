@@ -1,11 +1,10 @@
 // Guide policy is exercised through the public Host socket without a provider.
-#include "fixture.hh"
-
 #include <hosq/hosq.hh>
 #include <hosq/json/dom.hh>
-
 #include <map>
 #include <set>
+
+#include "fixture.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -15,53 +14,48 @@ using Json = hosq::Elem<hosq::decode::json_dom<> | hosq::store::assign,
 namespace v = hosq::types::value;
 auto Parse(std::string_view raw) -> Dom {
   Dom d;
-  if (auto e = d.assign(raw))
-    throw std::runtime_error(std::string(e.detail));
+  if (auto e = d.assign(raw)) throw std::runtime_error(std::string(e.detail));
   return d;
 }
-auto Members(const Dom &d, std::string_view path = "")
+auto Members(const Dom& d, std::string_view path = "")
     -> std::map<std::string, Dom> {
   v::Mapping<v::String, Json> value;
-  if (!d[path].exists())
-    return {};
+  if (!d[path].exists()) return {};
   if (auto e = d[path].decode_into(value))
     throw std::runtime_error(std::string(e.detail));
   std::map<std::string, Dom> out;
-  for (const auto &[k, x] : value.value())
-    out.emplace(k, x);
+  for (const auto& [k, x] : value.value()) out.emplace(k, x);
   return out;
 }
-auto Array(const Dom &d, std::string_view path) -> std::vector<Dom> {
+auto Array(const Dom& d, std::string_view path) -> std::vector<Dom> {
   v::Array<Json> value;
-  if (!d[path].exists())
-    return {};
+  if (!d[path].exists()) return {};
   if (auto e = d[path].decode_into(value))
     throw std::runtime_error(std::string(e.detail));
   return value.value();
 }
-auto String(const Dom &d, std::string_view path = "") -> std::string {
+auto String(const Dom& d, std::string_view path = "") -> std::string {
   return d[path].exists() ? JsonString(d.source(), path) : "";
 }
-auto State(const Reply &r) -> H::GuideStateT {
+auto State(const Reply& r) -> H::GuideStateT {
   if (!r.Code().empty())
     throw std::runtime_error(r.Code() + ": " + r.Failure()->message()->str());
-  const auto *s = r.HostValue()->value_as_GuideState();
-  if (!s)
-    throw std::runtime_error("Missing guide state");
+  const auto* s = r.HostValue()->value_as_GuideState();
+  if (!s) throw std::runtime_error("Missing guide state");
   return *std::unique_ptr<H::GuideStateT>(s->UnPack());
 }
-auto GuideGet(client::Connection &c, std::string session = "desktop",
+auto GuideGet(client::Connection& c, std::string session = "desktop",
               std::string language = "ja") -> H::GuideStateT {
-  return State(Call(c, H::RequestPayload::GuideGetRequest, [&](Builder &b) {
+  return State(Call(c, H::RequestPayload::GuideGetRequest, [&](Builder& b) {
     return H::CreateGuideGetRequest(b, b.CreateString(session),
                                     b.CreateString(language))
         .Union();
   }));
 }
-auto Advance(client::Connection &c, H::GuideInputT e,
+auto Advance(client::Connection& c, H::GuideInputT e,
              std::string session = "desktop", std::string language = "ja")
     -> H::GuideStateT {
-  return State(Call(c, H::RequestPayload::GuideAdvanceRequest, [&](Builder &b) {
+  return State(Call(c, H::RequestPayload::GuideAdvanceRequest, [&](Builder& b) {
     const auto event = H::GuideInput::Pack(b, &e);
     return H::CreateGuideAdvanceRequest(b, b.CreateString(session),
                                         b.CreateString(language), event)
@@ -75,7 +69,7 @@ auto Event(std::string kind, std::string text = "") -> H::GuideInputT {
   return e;
 }
 const std::filesystem::path root = TSUGUMI_GUIDE_TEST_ROOT;
-auto ReadResource(const std::filesystem::path &relative) -> std::string {
+auto ReadResource(const std::filesystem::path& relative) -> std::string {
   const auto path = root / relative;
   if (!std::filesystem::is_regular_file(path))
     throw std::runtime_error("Missing guide test resource: " + path.string());
@@ -85,7 +79,7 @@ const std::vector<std::string> demos{"report", "exoplanet-transit",
                                      "pharmacokinetics"};
 
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
-  for (const auto &language : {"ja", "en"}) {
+  for (const auto& language : {"ja", "en"}) {
     const auto script = Parse(
         ReadResource(std::filesystem::path("hostd/agent/Shared") /
                      (std::string(language) == "en" ? "guide-script.en.json"
@@ -93,44 +87,42 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
     const auto tours = Members(script, "/tours");
     ASSERT_EQ(tours.size(), demos.size());
     std::map<std::string, Dom> steps;
-    for (const auto &[demo, tour] : tours) {
-      for (const auto &group : {"home", "steps"})
-        for (const auto &[id, step] : Members(tour, "/" + std::string(group)))
+    for (const auto& [demo, tour] : tours) {
+      for (const auto& group : {"home", "steps"})
+        for (const auto& [id, step] : Members(tour, "/" + std::string(group)))
           steps[demo + "/" + id] = step;
     }
-    for (const auto &demo : demos) {
+    for (const auto& demo : demos) {
       const std::set<std::string> expected{"start", "result", "change",
                                            "failed", "farewell"};
       std::set<std::string> actual;
-      for (const auto &[id, step] : Members(tours.at(demo), "/steps"))
+      for (const auto& [id, step] : Members(tours.at(demo), "/steps"))
         actual.insert(id);
       EXPECT_EQ(actual, expected);
-      for (const auto &id : {"pick", "about"})
+      for (const auto& id : {"pick", "about"})
         EXPECT_TRUE(steps.contains(demo + "/" + id));
       const auto index = Parse(ReadResource(std::filesystem::path("demos") /
                                             language / "index.json"));
       std::string folder;
-      for (const auto &entry : Array(index, "/demos"))
-        if (String(entry, "/id") == demo)
-          folder = String(entry, "/path");
+      for (const auto& entry : Array(index, "/demos"))
+        if (String(entry, "/id") == demo) folder = String(entry, "/path");
       ASSERT_FALSE(folder.empty());
       const auto dir = std::filesystem::path("demos") / language / folder;
       const auto project = Parse(ReadResource(dir / "tsugumi.json"));
       std::set<std::string> cards;
-      for (const auto &card : Array(project, "/canvas/cards"))
+      for (const auto& card : Array(project, "/canvas/cards"))
         cards.insert(String(card, "/id"));
-      for (const auto &[id, step] : steps) {
-        if (!id.starts_with(demo + "/"))
-          continue;
+      for (const auto& [id, step] : steps) {
+        if (!id.starts_with(demo + "/")) continue;
         SCOPED_TRACE(std::string(language) + ":" + id);
         std::set<std::string> choices, next;
-        for (const auto &c : Array(step, "/show/choices"))
+        for (const auto& c : Array(step, "/show/choices"))
           choices.insert(String(c));
-        auto resolve = [&](const std::string &target) {
+        auto resolve = [&](const std::string& target) {
           return target.find('/') == std::string::npos ? demo + "/" + target
                                                        : target;
         };
-        for (const auto &[choice, target] : Members(step, "/next")) {
+        for (const auto& [choice, target] : Members(step, "/next")) {
           next.insert(choice);
           EXPECT_TRUE(steps.contains(resolve(String(target))));
         }
@@ -149,7 +141,7 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         const auto actions = Array(step, "/show/actions");
         EXPECT_LE(actions.size(), 3u);
         EXPECT_LE(choices.size(), 4u);
-        for (const auto &action : actions) {
+        for (const auto& action : actions) {
           EXPECT_TRUE(kinds.contains(String(action, "/kind")));
           if (action["/demo"].exists())
             EXPECT_TRUE(tours.contains(String(action, "/demo")));
@@ -157,15 +149,14 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         const auto h = String(step, "/show/highlight");
         if (h.starts_with("card:"))
           EXPECT_TRUE(cards.contains(h.substr(5, h.find('/', 5) - 5)));
-        if (h.starts_with("demo:"))
-          EXPECT_EQ(h, "demo:" + demo);
+        if (h.starts_with("demo:")) EXPECT_EQ(h, "demo:" + demo);
         if (h.starts_with("param:")) {
           const auto opened = String(step, "/show/open");
           ASSERT_TRUE(opened.starts_with("card:"));
           const auto card = Parse(ReadResource(
               dir / "definitions" / opened.substr(5) / "_card.json"));
           bool found = false;
-          for (const auto &param : Array(card, "/params"))
+          for (const auto& param : Array(card, "/params"))
             found |= String(param, "/name") == h.substr(6);
           EXPECT_TRUE(found);
         }
@@ -178,32 +169,32 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
     EXPECT_EQ(String(actions[0], "/kind"), "open_settings");
     EXPECT_EQ(String(actions[1], "/kind"), "open_demo");
     std::vector<std::string> offered;
-    for (const auto &a : Array(script, "/otherProject/show/actions"))
+    for (const auto& a : Array(script, "/otherProject/show/actions"))
       offered.push_back(String(a, "/demo"));
     EXPECT_EQ(offered, demos);
   }
 }
 
 class GuideFixture : public AgentFixture {
-protected:
+ protected:
   auto SetUp() -> void override {
     // hostd resolves $demo against its installed catalog, never a client list.
-    for (const auto &language : {"ja", "en"})
+    for (const auto& language : {"ja", "en"})
       Write(directory.path / "demos" / language / "index.json",
             ReadResource(std::filesystem::path("demos") / language /
                          "index.json"));
     AgentFixture::SetUp();
   }
-  auto Choose(const H::GuideStateT &s, const std::string &choice,
-              const std::string &lang = "ja", client::Connection *c = nullptr)
+  auto Choose(const H::GuideStateT& s, const std::string& choice,
+              const std::string& lang = "ja", client::Connection* c = nullptr)
       -> H::GuideStateT {
     auto e = Event("message", choice);
     e.expected_step = s.step;
     e.project = s.project;
     return Advance(c ? *c : *host, e, "desktop", lang);
   }
-  auto Observe(const std::string &run, const std::string &state, bool active,
-               const std::string &lang = "ja") -> H::GuideStateT {
+  auto Observe(const std::string& run, const std::string& state, bool active,
+               const std::string& lang = "ja") -> H::GuideStateT {
     auto e = Event("observe");
     e.project = "/copy";
     e.connected = true;
@@ -212,7 +203,7 @@ protected:
     e.active = active;
     return Advance(*host, e, "desktop", lang);
   }
-  auto Start(const std::string &demo, const std::string &lang = "ja")
+  auto Start(const std::string& demo, const std::string& lang = "ja")
       -> H::GuideStateT {
     auto e = Event("start");
     e.demo = demo;
@@ -244,14 +235,14 @@ TEST_F(GuideFixture,
       {"Aggregating data and reports", "report/pick"},
       {"Anything", "report/pick"},
       {"Astronomy, earthquakes and protein data", "exoplanet-transit/pick"}};
-  for (const auto &[text, step] : interests)
+  for (const auto& [text, step] : interests)
     EXPECT_EQ(Advance(*host, Event("interest", text), "desktop", "en").step,
               step);
 }
 TEST_F(GuideFixture,
        EveryTourRunsWithoutConfirmationsThroughFailureRetryChangeAndFarewell) {
-  for (const auto &lang : {"ja", "en"})
-    for (const auto &demo : demos) {
+  for (const auto& lang : {"ja", "en"})
+    for (const auto& demo : demos) {
       SCOPED_TRACE(std::string(lang) + ":" + demo);
       auto s = Start(demo, lang);
       ASSERT_EQ(s.step, demo + "/start");
@@ -372,7 +363,7 @@ TEST_F(GuideFixture, DemoCommandUnknownProjectsAndAbsentVectors) {
   EXPECT_EQ(s.step, "otherProject");
   EXPECT_EQ(s.actions.size(), 3u);
   const auto index = Parse(ReadResource("demos/en/index.json"));
-  for (const auto &demo : Array(index, "/demos"))
+  for (const auto& demo : Array(index, "/demos"))
     if (String(demo, "/id") == "pharmacokinetics")
       e.title = String(demo, "/title");
   s = Advance(*host, e, "desktop", "en");
@@ -380,10 +371,10 @@ TEST_F(GuideFixture, DemoCommandUnknownProjectsAndAbsentVectors) {
   ASSERT_NE(s.tour, nullptr);
   EXPECT_EQ(s.tour->path, "/copy");
   const auto reply =
-      Call(*host, H::RequestPayload::GuideGetRequest, [](Builder &b) {
+      Call(*host, H::RequestPayload::GuideGetRequest, [](Builder& b) {
         return H::CreateGuideGetRequest(b, b.CreateString("desktop")).Union();
       });
-  const auto *value = reply.HostValue()->value_as_GuideState();
+  const auto* value = reply.HostValue()->value_as_GuideState();
   ASSERT_NE(value, nullptr);
   EXPECT_EQ(value->choices(), nullptr);
   EXPECT_EQ(ListSize(value->choices()), 0u);
@@ -391,5 +382,5 @@ TEST_F(GuideFixture, DemoCommandUnknownProjectsAndAbsentVectors) {
   finish.project = "/copy";
   EXPECT_EQ(Advance(*host, finish).step, s.step);
 }
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

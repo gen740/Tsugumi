@@ -75,25 +75,36 @@ class RemoteJobClient {
   auto catalog() const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service, std::string_view registered_server,
              uint32_t heartbeat_interval_seconds) const -> RemoteProbe;
-  auto put_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest, uint64_t size,
-                std::istream& contents, const std::atomic<bool>* cancel = nullptr, const TransferProgress& progress = {}) const -> void;
-  auto get_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest,
-                std::ostream& destination, uint64_t limit, const std::atomic<bool>* stop = nullptr, const TransferProgress& progress = {}) const -> void;
-  auto submit(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
+  auto put_blob(std::string_view service, std::string_view server_id,
+                std::string_view instance, std::string_view job_id,
+                std::string_view digest, uint64_t size, std::istream& contents,
+                const std::atomic<bool>* cancel = nullptr,
+                const TransferProgress& progress = {}) const -> void;
+  auto get_blob(std::string_view service, std::string_view server_id,
+                std::string_view instance, std::string_view job_id,
+                std::string_view digest, std::ostream& destination,
+                uint64_t limit, const std::atomic<bool>* stop = nullptr,
+                const TransferProgress& progress = {}) const -> void;
+  auto submit(std::string_view service, std::string_view server_id,
+              std::string_view instance, std::string_view job_id,
               std::string_view spec) const -> RemoteJobState;
-  auto status(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id) const -> RemoteJobState;
-  auto cancel(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
+  auto status(std::string_view service, std::string_view server_id,
+              std::string_view instance, std::string_view job_id) const
+      -> RemoteJobState;
+  auto cancel(std::string_view service, std::string_view server_id,
+              std::string_view instance, std::string_view job_id,
               std::string_view fingerprint) const -> RemoteJobState;
 
-  auto release(std::string_view service, std::string_view server_id, std::string_view instance,
-               std::string_view job_id, std::string_view fingerprint) const -> void;
+  auto release(std::string_view service, std::string_view server_id,
+               std::string_view instance, std::string_view job_id,
+               std::string_view fingerprint) const -> void;
 
  private:
-  auto request(Tsugumi::RemoteWorker::RequestT message, const std::atomic<bool>* cancel = nullptr) const
+  auto request(Tsugumi::RemoteWorker::RequestT message,
+               const std::atomic<bool>* cancel = nullptr) const
       -> Tsugumi::RemoteWorker::ReplyT;
   auto keep_alive(std::string_view service, std::string_view server,
-                  uint32_t interval) const
-      -> void;
+                  uint32_t interval) const -> void;
   const std::string core_life_id_;
   mutable std::mutex heartbeat_mutex_;
   mutable std::map<std::string, std::jthread> heartbeats_;

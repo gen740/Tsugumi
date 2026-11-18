@@ -1,5 +1,4 @@
 #include "host/service.hh"
-#include "host/binary_caches.hh"
 
 #include <flatbuffers/flatbuffers.h>
 
@@ -18,6 +17,7 @@
 #include "agent/turns.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"
+#include "host/binary_caches.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
@@ -166,9 +166,11 @@ struct Service::State {
                   for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
                 },
-            .excluded = [this](const auto& project, const auto& path, auto stop) {
-              return !project.empty() && tools->Exclusions(project, stop).Contains(path);
-            }});
+            .excluded =
+                [this](const auto& project, const auto& path, auto stop) {
+                  return !project.empty() &&
+                         tools->Exclusions(project, stop).Contains(path);
+                }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,
@@ -251,7 +253,7 @@ struct Service::State {
             events->Publish(wire::HostEvent(value));
           });
     options.environment.prepare_project_identity =
-        [this](const std::filesystem::path &root) {
+        [this](const std::filesystem::path& root) {
           std::lock_guard lock(mutex);
           const auto file = root / ".tsugumi/project-id";
           if (const auto id = fs::read_file(file)) {
@@ -270,8 +272,7 @@ struct Service::State {
             id = host::AllocateId(db, "project");
             auto known = db.prepare("SELECT 1 FROM projects WHERE id=?");
             known.bind(1, id);
-            if (!known.step())
-              break;
+            if (!known.step()) break;
           }
           fs::write_atomic(file, id, 0600);
         };
@@ -543,13 +544,20 @@ struct Service::State {
     if (const auto* input = r->value_as_InputTypesRequest()) {
       const auto project = input->project()->str();
       std::vector<std::string> segments;
-      for (const auto* part : *input->card()->segments()) segments.push_back(json::Quote(part->str()));
-      json::Members args{{"card", json::Encode(json::Members{{"segments", json::Encode(segments)}})}};
-      if (input->output_port()) args["output_port"] = json::Quote(input->output_port()->str());
-      if (input->language()) args["language"] = json::Quote(input->language()->str());
-      if (input->at_rev()) args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
+      for (const auto* part : *input->card()->segments())
+        segments.push_back(json::Quote(part->str()));
+      json::Members args{{"card", json::Encode(json::Members{
+                                      {"segments", json::Encode(segments)}})}};
+      if (input->output_port())
+        args["output_port"] = json::Quote(input->output_port()->str());
+      if (input->language())
+        args["language"] = json::Quote(input->language()->str());
+      if (input->at_rev())
+        args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
       lock.unlock();
-      return wire::HostReply(request.request_id, tools->InputTypesQuery(project, std::move(args), shutdown.get_token()));
+      return wire::HostReply(request.request_id,
+                             tools->InputTypesQuery(project, std::move(args),
+                                                    shutdown.get_token()));
     }
     if (r->value_as_HostVersionGraphRequest() ||
         r->value_as_HostVersionDiffRequest())
@@ -631,7 +639,9 @@ struct Service::State {
     if (r->value_type() == H::RequestPayload::BinaryCachesGetRequest ||
         r->value_type() == H::RequestPayload::BinaryCachesPutRequest) {
       Human(human);
-      const auto support = options.vm.support.empty() ? options.state_dir.parent_path() : options.vm.support;
+      const auto support = options.vm.support.empty()
+                               ? options.state_dir.parent_path()
+                               : options.vm.support;
       if (const auto* put = r->value_as_BinaryCachesPutRequest())
         host::SaveBinaryCaches(support, put->caches_json()->string_view());
       H::BinaryCachesT result;
@@ -673,26 +683,27 @@ struct Service::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
-    case H::RequestPayload::IdentifierReserveRequest: {
-      const auto *input = r->value_as_IdentifierReserveRequest();
-      const auto project = input->project_id()->str(),
-                 kind = input->kind()->str();
-      registry.Lookup(project);
-      if (kind != "note" && kind != "group" && kind != "comment")
-        throw Failure("invalid_request", "Unknown annotation kind");
-      const auto scope = input->scope() ? input->scope()->str() : "";
-      if ((kind == "comment") != !scope.empty())
-        throw Failure("invalid_request", "Only comments require a Card scope");
-      std::vector<std::string> occupied;
-      if (input->occupied())
-        for (const auto *id : *input->occupied())
-          occupied.push_back(id->str());
-      H::IdentifierT result;
-      result.id = host::ReserveOrdinal(
-          db, "annotation:" + project + ":" + kind + ":" + scope,
-          kind == "comment" ? "" : kind + "-", occupied);
-      return wire::HostReply(request.request_id, std::move(result));
-    }
+      case H::RequestPayload::IdentifierReserveRequest: {
+        const auto* input = r->value_as_IdentifierReserveRequest();
+        const auto project = input->project_id()->str(),
+                   kind = input->kind()->str();
+        registry.Lookup(project);
+        if (kind != "note" && kind != "group" && kind != "comment")
+          throw Failure("invalid_request", "Unknown annotation kind");
+        const auto scope = input->scope() ? input->scope()->str() : "";
+        if ((kind == "comment") != !scope.empty())
+          throw Failure("invalid_request",
+                        "Only comments require a Card scope");
+        std::vector<std::string> occupied;
+        if (input->occupied())
+          for (const auto* id : *input->occupied())
+            occupied.push_back(id->str());
+        H::IdentifierT result;
+        result.id = host::ReserveOrdinal(
+            db, "annotation:" + project + ":" + kind + ":" + scope,
+            kind == "comment" ? "" : kind + "-", occupied);
+        return wire::HostReply(request.request_id, std::move(result));
+      }
       case H::RequestPayload::DemoListRequest: {
         H::DemoPathsT result;
         for (const auto& path : json::Array(demo_references.ListFiles()))
@@ -756,7 +767,8 @@ struct Service::State {
 Service::Service(HostOptions options)
     : state_(std::make_unique<State>(std::move(options))) {}
 Service::~Service() { Shutdown(); }
-auto Service::Attach(TransportServer* server, TransportServer* host_server) -> void {
+auto Service::Attach(TransportServer* server, TransportServer* host_server)
+    -> void {
   state_->server = server;
   state_->events->host_server = host_server;
 }

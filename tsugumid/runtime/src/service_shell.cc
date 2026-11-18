@@ -24,8 +24,8 @@
 
 #include "service.hh"
 #include "shell.hh"
-#include "tsugumi/util/process.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/process.hh"
 
 namespace tsugumi {
 namespace {
@@ -76,7 +76,8 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
                     uint32_t timeout, const std::atomic<bool>& cancelled,
                     bool read_only, bool hide_credentials,
                     bool no_project_socket,
-                    const std::filesystem::path& control, const View& view) -> Output {
+                    const std::filesystem::path& control, const View& view)
+    -> Output {
   Pipe out;
   Pipe err;
   ShellTemporary temporary;
@@ -118,14 +119,16 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
       };
       add_runtime(TSUGUMI_BASH, false);
       for (const auto* name : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-        if (const auto* certificate = std::getenv(name)) add_runtime(certificate, false);
+        if (const auto* certificate = std::getenv(name))
+          add_runtime(certificate, false);
       std::vector<std::string> search;
       std::istringstream paths(std::getenv("PATH") ? std::getenv("PATH") : "");
       std::string path;
-      while (std::getline(paths, path, ':')) if (!path.empty()) {
-        search.push_back(path);
-        add_runtime(path, true);
-      }
+      while (std::getline(paths, path, ':'))
+        if (!path.empty()) {
+          search.push_back(path);
+          add_runtime(path, true);
+        }
       if (!runtime_store.empty()) {
         search.push_back("/nix/var/nix/profiles/default/bin");
         std::string query;
@@ -134,21 +137,28 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
             query = directory + "/nix-store";
             break;
           }
-        if (query.empty()) throw Failed(FailureKind::permission_denied,
-                                         "cannot resolve the shell tool runtime closure");
+        if (query.empty())
+          throw Failed(FailureKind::permission_denied,
+                       "cannot resolve the shell tool runtime closure");
         proc::Spec closure;
         closure.argv = {query, "--query", "--requisites"};
-        closure.argv.insert(closure.argv.end(), runtime_store.begin(), runtime_store.end());
+        closure.argv.insert(closure.argv.end(), runtime_store.begin(),
+                            runtime_store.end());
         closure.env = {"HOME=" + temporary.path.string()};
-        const auto result = proc::run(closure, &cancelled,
-            Clock::now() + std::chrono::milliseconds(timeout), [](const auto&) {});
+        const auto result =
+            proc::run(closure, &cancelled,
+                      Clock::now() + std::chrono::milliseconds(timeout),
+                      [](const auto&) {});
         if (!proc::exited_ok(result.status))
-          throw Failed(FailureKind::permission_denied, "cannot resolve the shell tool runtime closure");
+          throw Failed(FailureKind::permission_denied,
+                       "cannot resolve the shell tool runtime closure");
         runtime_store.clear();
         std::istringstream output(result.out);
         while (std::getline(output, path)) {
-          if (!path.starts_with("/nix/store/") || path.find('/', 11) != std::string::npos)
-            throw Failed(FailureKind::invalid_path, "invalid runtime closure path");
+          if (!path.starts_with("/nix/store/") ||
+              path.find('/', 11) != std::string::npos)
+            throw Failed(FailureKind::invalid_path,
+                         "invalid runtime closure path");
           runtime_store.insert(path);
         }
       }
@@ -178,7 +188,10 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
       // Every process reads the root directory itself while it starts, and
       // aborts without it. Its data alone does not let a command list it.
       profile += "(deny file-read*)(allow file-read-data (literal \"/\"))";
-      for (const auto* runtime : {"/usr/bin", "/usr/sbin", "/usr/lib", "/usr/share", "/bin", "/sbin", "/Library/Apple/System", "/System", "/dev", "/private/etc/ssl", "/private/etc/resolv.conf", "/private/etc/hosts"})
+      for (const auto* runtime :
+           {"/usr/bin", "/usr/sbin", "/usr/lib", "/usr/share", "/bin", "/sbin",
+            "/Library/Apple/System", "/System", "/dev", "/private/etc/ssl",
+            "/private/etc/resolv.conf", "/private/etc/hosts"})
         profile += "(allow file-read* (subpath " + quote(runtime) + "))";
       for (const auto& runtime : runtime_store)
         profile += "(allow file-read* (subpath " + quote(runtime) + "))";
@@ -193,14 +206,17 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
     for (const auto& path : view.writable)
       profile += "(allow file-write* (subpath " + quote(path.string()) + "))";
     for (const auto& mount : view.mounts) {
-      profile += "(allow file-read* (subpath " + quote(mount.source.string()) + "))";
+      profile +=
+          "(allow file-read* (subpath " + quote(mount.source.string()) + "))";
       if (mount.writable)
-        profile += "(allow file-write* (subpath " + quote(mount.source.string()) + "))";
+        profile += "(allow file-write* (subpath " +
+                   quote(mount.source.string()) + "))";
     }
     for (const auto& path : view.protected_files)
       profile += "(deny file-write* (literal " + quote(path.string()) + "))";
     for (const auto& path : view.excluded) {
-      profile += "(deny file-read* file-write* (subpath " + quote(path.string()) + "))";
+      profile += "(deny file-read* file-write* (subpath " +
+                 quote(path.string()) + "))";
     }
     // The control directory remains hidden even if it is under the project.
     if (hide_credentials && !control.empty())
@@ -277,11 +293,15 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
                                        "--cap-drop",
                                        "ALL",
                                        read_only ? "--ro-bind" : "--bind",
-                                       "/", "/"};
+                                       "/",
+                                       "/"};
     if (!view.hidden_root.empty()) {
       isolation.resize(isolation.size() - 3);
       isolation.insert(isolation.end(), {"--tmpfs", "/"});
-      for (const auto* runtime : {"/usr/bin", "/usr/sbin", "/usr/lib", "/usr/share", "/bin", "/sbin", "/lib", "/lib64", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"})
+      for (const auto* runtime :
+           {"/usr/bin", "/usr/sbin", "/usr/lib", "/usr/share", "/bin", "/sbin",
+            "/lib", "/lib64", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts",
+            "/etc/nsswitch.conf"})
         if (std::filesystem::exists(runtime))
           isolation.insert(isolation.end(), {"--ro-bind", runtime, runtime});
       for (const auto& runtime : runtime_store)
@@ -304,28 +324,38 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
     isolation.insert(isolation.end(),
                      {read_only ? "--ro-bind" : "--bind", root, root});
     for (const auto& path : view.writable)
-      isolation.insert(isolation.end(), {"--bind", path.string(), path.string()});
+      isolation.insert(isolation.end(),
+                       {"--bind", path.string(), path.string()});
     for (const auto& mount : view.mounts)
-      isolation.insert(isolation.end(), {mount.writable ? "--bind" : "--ro-bind",
-                                         mount.source.string(), mount.target.string()});
+      isolation.insert(isolation.end(),
+                       {mount.writable ? "--bind" : "--ro-bind",
+                        mount.source.string(), mount.target.string()});
     for (const auto& path : view.protected_files)
-      isolation.insert(isolation.end(), {"--ro-bind", path.string(), path.string()});
+      isolation.insert(isolation.end(),
+                       {"--ro-bind", path.string(), path.string()});
     for (const auto& path : view.excluded) {
       const auto under = [](const auto& parent, const auto& child) {
         const auto relative = child.lexically_relative(parent);
         return !relative.empty() && *relative.begin() != "..";
       };
-      bool exposed = view.hidden_root.empty() || under(std::filesystem::path(root), path);
-      for (const auto& mount : view.mounts) exposed = exposed || under(mount.target, path);
-      for (const auto& runtime : runtime_store) exposed = exposed || under(std::filesystem::path(runtime), path) || under(path, std::filesystem::path(runtime));
+      bool exposed =
+          view.hidden_root.empty() || under(std::filesystem::path(root), path);
+      for (const auto& mount : view.mounts)
+        exposed = exposed || under(mount.target, path);
+      for (const auto& runtime : runtime_store)
+        exposed = exposed || under(std::filesystem::path(runtime), path) ||
+                  under(path, std::filesystem::path(runtime));
       auto native = path;
       for (const auto& mount : view.mounts)
-        if (under(mount.target, path)) native = mount.source / path.lexically_relative(mount.target);
+        if (under(mount.target, path))
+          native = mount.source / path.lexically_relative(mount.target);
       if (!exposed || !std::filesystem::exists(native)) continue;
       if (std::filesystem::is_directory(native))
-        isolation.insert(isolation.end(), {"--tmpfs", path.string(), "--remount-ro", path.string()});
+        isolation.insert(isolation.end(), {"--tmpfs", path.string(),
+                                           "--remount-ro", path.string()});
       else
-        isolation.insert(isolation.end(), {"--ro-bind", "/dev/null", path.string()});
+        isolation.insert(isolation.end(),
+                         {"--ro-bind", "/dev/null", path.string()});
     }
     // A control directory inside the project must be covered after root.
     if (hide_credentials && !control.empty())
@@ -366,9 +396,11 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
   std::array<std::ofstream, 2> logs;
   if (!view.output_prefix.empty()) {
     for (size_t index = 0; index < 2; ++index) {
-      logs[index].open(view.output_prefix.string() + (index ? ".stderr" : ".stdout"),
-                       std::ios::binary | std::ios::trunc);
-      if (!logs[index]) throw std::runtime_error("cannot preserve shell output");
+      logs[index].open(
+          view.output_prefix.string() + (index ? ".stderr" : ".stdout"),
+          std::ios::binary | std::ios::trunc);
+      if (!logs[index])
+        throw std::runtime_error("cannot preserve shell output");
     }
   }
   const auto pid = proc::spawn(spec);
@@ -435,9 +467,11 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
         result.sizes[index] += length;
         if (logs[index].is_open()) {
           logs[index].write(buffer, count);
-          if (!logs[index]) throw std::runtime_error("cannot preserve shell output");
+          if (!logs[index])
+            throw std::runtime_error("cannot preserve shell output");
         }
-        if (output.size() + length <= kOutputLimit) output.append(buffer, length);
+        if (output.size() + length <= kOutputLimit)
+          output.append(buffer, length);
         else {
           // Keep the beginning and the most recent end, even without newlines.
           const auto head = kOutputLimit / 2;
@@ -548,41 +582,51 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     shell::View view;
     if (request->working_directory()) {
       const auto relative = request->working_directory()->str();
-      if (!fs::valid_relative_path(relative) || !fs::resolves_inside(opts_.root, opts_.root / relative))
+      if (!fs::valid_relative_path(relative) ||
+          !fs::resolves_inside(opts_.root, opts_.root / relative))
         throw Failed(FailureKind::invalid_path, "invalid shell workspace");
       cwd /= relative;
     }
     auto path_in_view = [&](const std::string& relative) {
-      if (!fs::valid_relative_path(relative) || !fs::resolves_inside(cwd, cwd / relative))
+      if (!fs::valid_relative_path(relative) ||
+          !fs::resolves_inside(cwd, cwd / relative))
         throw Failed(FailureKind::invalid_path, "invalid shell view path");
       return cwd / relative;
     };
-    if (request->workspace_only()) view.hidden_root = std::filesystem::canonical(opts_.root);
-    if (request->writable_paths()) for (const auto* path : *request->writable_paths())
-      view.writable.push_back(path_in_view(path->str()));
-    if (request->protected_paths()) for (const auto* path : *request->protected_paths())
-      view.protected_files.push_back(path_in_view(path->str()));
+    if (request->workspace_only())
+      view.hidden_root = std::filesystem::canonical(opts_.root);
+    if (request->writable_paths())
+      for (const auto* path : *request->writable_paths())
+        view.writable.push_back(path_in_view(path->str()));
+    if (request->protected_paths())
+      for (const auto* path : *request->protected_paths())
+        view.protected_files.push_back(path_in_view(path->str()));
     if (request->output_prefix()) {
       const auto path = request->output_prefix()->str();
-      if (!fs::valid_relative_path(path) || !fs::resolves_inside(opts_.root, opts_.root / path))
+      if (!fs::valid_relative_path(path) ||
+          !fs::resolves_inside(opts_.root, opts_.root / path))
         throw Failed(FailureKind::invalid_path, "invalid shell output path");
       view.output_prefix = opts_.root / path;
     }
-    if (request->mounts()) for (const auto* mount : *request->mounts()) {
-      auto source = mount->project_relative() ? opts_.root / mount->path()->str()
-                                               : std::filesystem::path(mount->path()->str());
-      source = std::filesystem::canonical(source);
-      const auto target = path_in_view(mount->name()->str());
+    if (request->mounts())
+      for (const auto* mount : *request->mounts()) {
+        auto source = mount->project_relative()
+                          ? opts_.root / mount->path()->str()
+                          : std::filesystem::path(mount->path()->str());
+        source = std::filesystem::canonical(source);
+        const auto target = path_in_view(mount->name()->str());
 #ifdef __APPLE__
-      std::filesystem::remove(target);
-      std::filesystem::create_directory_symlink(source, target);
+        std::filesystem::remove(target);
+        std::filesystem::create_directory_symlink(source, target);
 #endif
-      view.mounts.push_back({source, target, mount->writable()});
-    }
-    if (request->excluded_paths()) for (const auto* path : *request->excluded_paths()) {
-      const std::filesystem::path denied(path->str());
-      view.excluded.push_back(std::filesystem::weakly_canonical(denied.is_absolute() ? denied : cwd / denied));
-    }
+        view.mounts.push_back({source, target, mount->writable()});
+      }
+    if (request->excluded_paths())
+      for (const auto* path : *request->excluded_paths()) {
+        const std::filesystem::path denied(path->str());
+        view.excluded.push_back(std::filesystem::weakly_canonical(
+            denied.is_absolute() ? denied : cwd / denied));
+      }
     const auto output =
         shell::Execute(command, cwd.string(), timeout, cancelled,
                        request->read_only(), request->hide_credentials(),
@@ -600,7 +644,9 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
         WIFSIGNALED(output.status) ? WTERMSIG(output.status) : 0,
         output.cancelled, output.timed_out, output.truncated[0],
         output.truncated[1], output.sizes[0], output.sizes[1],
-        request->output_prefix() ? builder.CreateString(request->output_prefix()->str()) : 0);
+        request->output_prefix()
+            ? builder.CreateString(request->output_prefix()->str())
+            : 0);
     const auto bytes =
         ShellReceipt(builder, operation, R::ReceiptValue::ProjectShellResult,
                      result.Union());

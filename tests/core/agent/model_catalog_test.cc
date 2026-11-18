@@ -1,10 +1,9 @@
-#include "agent/catalog.hh"
-
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <set>
 
+#include "agent/catalog.hh"
 #include "host/failure.hh"
 
 namespace tsugumi::agent {

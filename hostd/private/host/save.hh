@@ -14,8 +14,8 @@ struct SaveBase {
 };
 using SaveRead = std::function<::tsugumi::json::Members(
     const std::string&, const ::tsugumi::json::Members&)>;
-auto CaptureSaveBase(const ::tsugumi::json::Members& snapshot, const SaveRead& read)
-    -> SaveBase;
+auto CaptureSaveBase(const ::tsugumi::json::Members& snapshot,
+                     const SaveRead& read) -> SaveBase;
 struct SaveInspection {
   ::tsugumi::json::Members snapshot;
   SaveBase base;

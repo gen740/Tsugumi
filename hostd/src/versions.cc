@@ -4,7 +4,6 @@
 #include <cctype>
 #include <sstream>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
@@ -14,6 +13,7 @@
 #include "host/settings.hh"
 #include "host/version_text.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
@@ -82,12 +82,14 @@ auto Versions::Note(const RequestIn& request, bool human,
   lock.unlock();
   std::lock_guard note_lock(*gate);
   std::string bytes;
-  tools->RawProjectCall(project, "version_note",
+  tools->RawProjectCall(
+      project, "version_note",
       json::Encode(json::Members{{"commit", json::Quote(commit)}}), {}, &bytes);
   const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
   const auto* note = reply ? reply->value_as_VersionNote() : nullptr;
   if (!note) throw Failure("unavailable", "Cannot read version facts");
-  const auto changes = std::unique_ptr<R::VersionChangesT>(note->changes()->UnPack());
+  const auto changes =
+      std::unique_ptr<R::VersionChangesT>(note->changes()->UnPack());
   const auto factual = host::ChangeText(*changes, english);
   const auto saved_summary = host::ReadSummary(root, commit, english);
   Tsugumi::Service::TextResultT result;

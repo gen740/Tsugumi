@@ -4,7 +4,8 @@
 
 namespace tsugumi {
 
-Lane::Lane(size_t threads, size_t capacity, std::chrono::milliseconds wait_limit)
+Lane::Lane(size_t threads, size_t capacity,
+           std::chrono::milliseconds wait_limit)
     : capacity_(capacity), wait_limit_(wait_limit) {
   for (size_t i = 0; i < threads; ++i) threads_.emplace_back([this] { run(); });
 }
@@ -58,7 +59,8 @@ void Lane::run() {
       q_.pop_front();
       ++running_;
     }
-    bool expired = std::chrono::steady_clock::now() - item.enqueued > wait_limit_;
+    bool expired =
+        std::chrono::steady_clock::now() - item.enqueued > wait_limit_;
     try {
       item.task(expired);
     } catch (const std::exception& e) {

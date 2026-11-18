@@ -7,10 +7,12 @@ HostStore::HostStore(const std::filesystem::path& directory)
     : db((directory / "host.sqlite").string()) {
   ::chmod((directory / "host.sqlite").c_str(), 0600);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-  db.exec("CREATE TABLE IF NOT EXISTS identifiers(scope TEXT NOT NULL, id TEXT "
-          "NOT NULL, PRIMARY KEY(scope,id))");
-  db.exec("CREATE TABLE IF NOT EXISTS project_trust(path TEXT PRIMARY KEY, "
-          "device INTEGER NOT NULL, inode INTEGER NOT NULL, "
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS identifiers(scope TEXT NOT NULL, id TEXT "
+      "NOT NULL, PRIMARY KEY(scope,id))");
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS project_trust(path TEXT PRIMARY KEY, "
+      "device INTEGER NOT NULL, inode INTEGER NOT NULL, "
       "decision INTEGER NOT NULL)");
   db.exec(
       "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, endpoint "
@@ -44,8 +46,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "PRIMARY KEY, project TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS environment_projects(key TEXT PRIMARY KEY, "
       "project TEXT NOT NULL);"
-      "CREATE TABLE IF NOT EXISTS project_attached_roots(project TEXT NOT NULL, "
-      "path TEXT NOT NULL, execution_path TEXT NOT NULL, PRIMARY KEY(project,path));"
+      "CREATE TABLE IF NOT EXISTS project_attached_roots(project TEXT NOT "
+      "NULL, "
+      "path TEXT NOT NULL, execution_path TEXT NOT NULL, PRIMARY "
+      "KEY(project,path));"
       "CREATE TABLE IF NOT EXISTS project_paths(id TEXT PRIMARY KEY, path "
       "TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "

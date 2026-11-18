@@ -6,8 +6,13 @@ namespace tsugumi {
 
 namespace {
 
-bool ident_start(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
-bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'' || c == '-'; }
+bool ident_start(char c) {
+  return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+}
+bool ident_char(char c) {
+  return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'' ||
+         c == '-';
+}
 bool space(char c) { return std::isspace(static_cast<unsigned char>(c)); }
 
 }  // namespace
@@ -21,7 +26,9 @@ auto nix_references(const std::string& t) -> std::vector<std::string> {
     int braces;
   };
   std::vector<Level> stack = {{Mode::Code, 0}};
-  auto starts = [&](size_t at, const char* s) { return t.compare(at, std::char_traits<char>::length(s), s) == 0; };
+  auto starts = [&](size_t at, const char* s) {
+    return t.compare(at, std::char_traits<char>::length(s), s) == 0;
+  };
   size_t i = 0;
   while (i < t.size()) {
     Level& top = stack.back();
@@ -73,8 +80,10 @@ auto nix_references(const std::string& t) -> std::vector<std::string> {
       ++i;
     } else if (c == '}') {
       // The end of an interpolation goes back to its string.
-      if (top.braces == 0 && stack.size() > 1) stack.pop_back();
-      else --top.braces;
+      if (top.braces == 0 && stack.size() > 1)
+        stack.pop_back();
+      else
+        --top.braces;
       ++i;
     } else if (ident_start(c) && (i == 0 || !ident_char(t[i - 1]))) {
       size_t e = i;
@@ -95,8 +104,10 @@ auto nix_references(const std::string& t) -> std::vector<std::string> {
       std::string name;
       if (p < t.size() && t[p] == '"') {
         size_t q = p + 1;
-        while (q < t.size() && t[q] != '"' && t[q] != '\\' && t[q] != '$') name += t[q++];
-        if (q >= t.size() || t[q] != '"') continue;  // an escape or interpolation: not a plain name
+        while (q < t.size() && t[q] != '"' && t[q] != '\\' && t[q] != '$')
+          name += t[q++];
+        if (q >= t.size() || t[q] != '"')
+          continue;  // an escape or interpolation: not a plain name
         i = q + 1;
       } else if (p < t.size() && ident_start(t[p])) {
         size_t q = p;
@@ -106,7 +117,8 @@ auto nix_references(const std::string& t) -> std::vector<std::string> {
       } else {
         continue;
       }
-      if (name != "tsugumi" && name != "sources") out.push_back(std::move(name));
+      if (name != "tsugumi" && name != "sources")
+        out.push_back(std::move(name));
     } else {
       ++i;
     }

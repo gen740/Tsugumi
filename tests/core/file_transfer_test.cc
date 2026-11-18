@@ -10,9 +10,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/staging.hh"
 
 namespace {
 namespace fs = std::filesystem;
@@ -24,7 +24,8 @@ auto expect(bool condition, const char* message) -> void {
 class Scratch {
  public:
   Scratch() {
-    auto pattern = (fs::temp_directory_path() / "tsugumi-transfer-XXXXXX").string();
+    auto pattern =
+        (fs::temp_directory_path() / "tsugumi-transfer-XXXXXX").string();
     const auto* made = ::mkdtemp(pattern.data());
     if (!made) throw std::runtime_error("mkdtemp failed");
     path = made;
@@ -45,9 +46,12 @@ auto large_file(const fs::path& root, bool sparse) -> void {
       file.write("tail", 4);
     } else {
       std::string block(65536, '\0');
-      for (size_t i = 0; i < block.size(); ++i) block[i] = static_cast<char>(i % 251);
+      for (size_t i = 0; i < block.size(); ++i)
+        block[i] = static_cast<char>(i % 251);
       for (uint64_t offset = 0; offset < size; offset += block.size()) {
-        file.write(block.data(), static_cast<std::streamsize>(std::min<uint64_t>(block.size(), size - offset)));
+        file.write(block.data(),
+                   static_cast<std::streamsize>(
+                       std::min<uint64_t>(block.size(), size - offset)));
       }
     }
     expect(static_cast<bool>(file), "write large file");
@@ -59,9 +63,11 @@ auto large_file(const fs::path& root, bool sparse) -> void {
       file.seekg(static_cast<std::streamoff>(size - 4));
       char tail[4];
       file.read(tail, sizeof tail);
-      expect(file.gcount() == 4 && std::string_view(tail, 4) == "tail", "lost data beyond 2 GiB");
+      expect(file.gcount() == 4 && std::string_view(tail, 4) == "tail",
+             "lost data beyond 2 GiB");
     } else {
-      expect(tsugumi::fs::sha256_file(path) == tsugumi::fs::sha256_file(source), "staging changed file content");
+      expect(tsugumi::fs::sha256_file(path) == tsugumi::fs::sha256_file(source),
+             "staging changed file content");
     }
   };
   const int directory = ::open(output.c_str(), O_RDONLY | O_DIRECTORY);
@@ -73,7 +79,8 @@ auto large_file(const fs::path& root, bool sparse) -> void {
   check(saved);
   // The next Card's input uses copy_beneath, just like keep_file_value.
   const auto next = root / "next-input";
-  expect(tsugumi::fs::copy_beneath(root, "saved", next, {}) == size, "input copy count");
+  expect(tsugumi::fs::copy_beneath(root, "saved", next, {}) == size,
+         "input copy count");
   check(next);
 }
 
@@ -85,7 +92,9 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
     expect(::ftruncate(file, 47040016) == 0, "size changing sparse file");
   } else {
     const std::string data(131072, 'x');
-    expect(::write(file, data.data(), data.size()) == static_cast<ssize_t>(data.size()), "write changing file");
+    expect(::write(file, data.data(), data.size()) ==
+               static_cast<ssize_t>(data.size()),
+           "write changing file");
   }
   bool changed = false;
   const auto shrink = [&](std::string_view) {
@@ -96,11 +105,14 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
   };
   bool rejected = false;
   try {
-    if (sparse) tsugumi::fs::copy_beneath(root, "changing", root / "failed-copy", shrink);
-    else tsugumi::fs::stream_beneath(root, "changing", UINT64_MAX, shrink);
+    if (sparse)
+      tsugumi::fs::copy_beneath(root, "changing", root / "failed-copy", shrink);
+    else
+      tsugumi::fs::stream_beneath(root, "changing", UINT64_MAX, shrink);
   } catch (const std::exception& error) {
     const std::string message = error.what();
-    expect(message.find("changing") != std::string::npos, "transfer failure lacks source path");
+    expect(message.find("changing") != std::string::npos,
+           "transfer failure lacks source path");
     rejected = true;
   }
   ::close(file);
@@ -115,17 +127,22 @@ auto transfer_progress(const fs::path& root) -> void {
   std::atomic<bool> cancel = false;
   uint64_t previous = 0;
   size_t calls = 0;
-  tsugumi::fs::copy_staging_output(directory, "data", root / "copy", false, cancel,
+  tsugumi::fs::copy_staging_output(
+      directory, "data", root / "copy", false, cancel,
       [&](const fs::path& name, uint64_t done, uint64_t total) {
         expect(name == "data", "progress lost the current filename");
-        expect(total == bytes.size() && done >= previous && done <= total, "invalid byte progress");
-        if (!calls) expect(done == 0, "progress did not announce transfer start");
+        expect(total == bytes.size() && done >= previous && done <= total,
+               "invalid byte progress");
+        if (!calls)
+          expect(done == 0, "progress did not announce transfer start");
         previous = done;
         ++calls;
       });
   ::close(directory);
-  expect(calls > 2 && previous == bytes.size(), "progress missing during transfer or at completion");
-  expect(tsugumi::fs::read_file_or_throw(root / "copy") == bytes, "progress changed the copied file");
+  expect(calls > 2 && previous == bytes.size(),
+         "progress missing during transfer or at completion");
+  expect(tsugumi::fs::read_file_or_throw(root / "copy") == bytes,
+         "progress changed the copied file");
 }
 }  // namespace
 
@@ -134,10 +151,14 @@ auto main(int argc, char** argv) -> int {
     expect(argc == 2, "expected large, sparse, shrink-stream or shrink-sparse");
     Scratch scratch;
     const std::string test = argv[1];
-    if (test == "progress") transfer_progress(scratch.path);
-    else if (test == "large" || test == "sparse") large_file(scratch.path, test == "sparse");
-    else if (test == "shrink-stream" || test == "shrink-sparse") shrinking_source(scratch.path, test == "shrink-sparse");
-    else throw std::runtime_error("unknown test");
+    if (test == "progress")
+      transfer_progress(scratch.path);
+    else if (test == "large" || test == "sparse")
+      large_file(scratch.path, test == "sparse");
+    else if (test == "shrink-stream" || test == "shrink-sparse")
+      shrinking_source(scratch.path, test == "shrink-sparse");
+    else
+      throw std::runtime_error("unknown test");
     std::cout << test << " passed\n";
     return 0;
   } catch (const std::exception& error) {

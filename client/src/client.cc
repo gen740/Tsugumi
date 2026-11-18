@@ -72,31 +72,31 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
         break;
       default:
         break;
-      }
+    }
   } else if (protocol == Protocol::Host) {
     namespace A = Tsugumi::Host;
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Host RPC buffer");
-    const auto *message = A::GetMessage(bytes.data());
+    const auto* message = A::GetMessage(bytes.data());
     const auto id = message->request_id();
     switch (message->payload_type()) {
-    case A::Payload::Request:
-      if (id && message->payload_as_Request() &&
-          KnownPayload(message->payload_as_Request()->value_type()))
-        return {Kind::Request, id};
-      break;
-    case A::Payload::Reply:
-      if (id && message->payload_as_Reply() &&
-          KnownPayload(message->payload_as_Reply()->value_type()))
-        return {Kind::Reply, id};
-      break;
-    case A::Payload::Event:
-      if (!id && message->payload_as_Event() &&
-          KnownPayload(message->payload_as_Event()->value_type()))
-        return {Kind::Event, 0};
-      break;
-    default:
-      break;
+      case A::Payload::Request:
+        if (id && message->payload_as_Request() &&
+            KnownPayload(message->payload_as_Request()->value_type()))
+          return {Kind::Request, id};
+        break;
+      case A::Payload::Reply:
+        if (id && message->payload_as_Reply() &&
+            KnownPayload(message->payload_as_Reply()->value_type()))
+          return {Kind::Reply, id};
+        break;
+      case A::Payload::Event:
+        if (!id && message->payload_as_Event() &&
+            KnownPayload(message->payload_as_Event()->value_type()))
+          return {Kind::Event, 0};
+        break;
+      default:
+        break;
     }
   }
   throw std::runtime_error("invalid RPC envelope");
@@ -271,8 +271,10 @@ namespace {
 auto TransportConfiguration(const Options& options) -> TransportOptions {
   auto result = static_cast<const TransportOptions&>(options);
   if (result.subprotocol.empty())
-    result.subprotocol = options.protocol == Protocol::Agent ? "tsugumi.agent.v1" :
-                         options.protocol == Protocol::Host ? "tsugumi.host.v1" : "tsugumi.rpc.v1";
+    result.subprotocol =
+        options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
+        : options.protocol == Protocol::Host ? "tsugumi.host.v1"
+                                             : "tsugumi.rpc.v1";
   return result;
 }
 }  // namespace

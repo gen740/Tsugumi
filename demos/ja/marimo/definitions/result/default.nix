@@ -1,4 +1,8 @@
-{ pkgs, inputs, params }:
+{
+  pkgs,
+  inputs,
+  params,
+}:
 {
   run = ''
     set -e

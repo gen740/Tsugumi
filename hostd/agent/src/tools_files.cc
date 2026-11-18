@@ -157,7 +157,9 @@ auto Tools::FileOperation(const std::string& conversation,
                           json::Members& args, const std::string& operation,
                           HelperScope* boundary, std::stop_token stop,
                           std::vector<std::string>& resources) -> std::string {
-  auto check_cancelled = [&] { if (stop.stop_requested()) throw Cancelled(); };
+  auto check_cancelled = [&] {
+    if (stop.stop_requested()) throw Cancelled();
+  };
   check_cancelled();
   if (name == "project_copy" && !args.contains("base_rev"))
     throw Failure("invalid_request",
@@ -224,16 +226,22 @@ auto Tools::FileOperation(const std::string& conversation,
     host::OperationContext context;
     context.origin = "agent";
     context.authorize_file = [&](const auto& path, const auto& base) {
-      host::AgentExclude(root, json::Text(base.snapshot, "project_json")).Check(path);
+      host::AgentExclude(root, json::Text(base.snapshot, "project_json"))
+          .Check(path);
     };
     context.authorize = [&](auto& plan, const auto& base) {
-      host::AgentExclude(root, json::Text(base.snapshot, "project_json")).CheckSave(plan, base);
+      host::AgentExclude(root, json::Text(base.snapshot, "project_json"))
+          .CheckSave(plan, base);
       {
         std::lock_guard lock(mutex);
-        const auto resource = boundary && !boundary->authorization().empty() ? boundary->authorization() : project;
-        for (const auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
+        const auto resource = boundary && !boundary->authorization().empty()
+                                  ? boundary->authorization()
+                                  : project;
+        for (const auto access :
+             {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
           if (!access_service.HasGrant(resource, conversation, access))
-            throw Failure("permission_denied", "Project access was revoked before saving");
+            throw Failure("permission_denied",
+                          "Project access was revoked before saving");
         if (attached_card || attached_project) {
           auto folder =
               db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
@@ -246,9 +254,13 @@ auto Tools::FileOperation(const std::string& conversation,
                 "Attached-folder Read grant was revoked before saving");
         }
       }
-      if (args.contains("approved_permissions")) plan["approved_permissions"] = args.at("approved_permissions");
+      if (args.contains("approved_permissions"))
+        plan["approved_permissions"] = args.at("approved_permissions");
       if (boundary && boundary->scoped())
-        boundary->CheckCurrentSave(plan, HelperReader(conversation, stop, json::Get(base.snapshot, "rev"), boundary->authorization()));
+        boundary->CheckCurrentSave(
+            plan,
+            HelperReader(conversation, stop, json::Get(base.snapshot, "rev"),
+                         boundary->authorization()));
     };
     return OperateProject(project, request, context, stop).json;
   }
@@ -312,9 +324,12 @@ auto Tools::FileOperation(const std::string& conversation,
     check(path, true);
     json::Members transfer{{"path", json::Quote(path)},
                            {"from", json::Quote(from)}};
-    if (!source_root.empty()) transfer["source_root"] = json::Quote(source_root);
-    if (!expected_hash.empty()) transfer["expected_hash"] = json::Quote(expected_hash);
-    if (hashes.contains(path)) transfer["base_hash"] = json::Quote(hashes.at(path));
+    if (!source_root.empty())
+      transfer["source_root"] = json::Quote(source_root);
+    if (!expected_hash.empty())
+      transfer["expected_hash"] = json::Quote(expected_hash);
+    if (hashes.contains(path))
+      transfer["base_hash"] = json::Quote(hashes.at(path));
     transfers.push_back(json::Encode(transfer));
   };
   json::Members shell_result;
@@ -369,7 +384,8 @@ auto Tools::FileOperation(const std::string& conversation,
         stage(to, from, "", hashes.at(from));
       } else if (source == "scratch") {
         policy.Check(root / scratch_path / from);
-        if (!fs::valid_relative_path(from)) throw Failure("invalid_path", "Invalid scratch path: " + from);
+        if (!fs::valid_relative_path(from))
+          throw Failure("invalid_path", "Invalid scratch path: " + from);
         stage(to, scratch_path + '/' + from);
       } else
         throw Failure("invalid_request",
@@ -414,8 +430,10 @@ auto Tools::FileOperation(const std::string& conversation,
       // Copy confirmed bytes directly; even a large existing source stays out
       // of both the model context and a whole-file host buffer.
       crypto::Sha256 digest;
-      fs::copy_beneath(root, path, work / path,
-                       [&](std::string_view chunk) { check_cancelled(); digest.update(chunk); });
+      fs::copy_beneath(root, path, work / path, [&](std::string_view chunk) {
+        check_cancelled();
+        digest.update(chunk);
+      });
       if (digest.finish_hex() != hash)
         throw Failure("external_change",
                       "Reload external edits before running shell: " + path);
@@ -439,7 +457,8 @@ auto Tools::FileOperation(const std::string& conversation,
         protected_paths.insert(path);
         initial[path] = fs::sha256_file(work / path);
       }
-    std::vector<std::string> mounts, writable_json, protected_json, excluded_aliases;
+    std::vector<std::string> mounts, writable_json, protected_json,
+        excluded_aliases;
     std::vector<std::string> folder_resources;
     {
       std::lock_guard lock(mutex);
@@ -458,7 +477,8 @@ auto Tools::FileOperation(const std::string& conversation,
         for (const auto& excluded : policy.Paths()) {
           const auto relative = excluded.lexically_relative(real_folder);
           if (!relative.empty() && *relative.begin() != "..")
-            excluded_aliases.push_back(json::Quote("attached/" + tag + '/' + relative.generic_string()));
+            excluded_aliases.push_back(json::Quote("attached/" + tag + '/' +
+                                                   relative.generic_string()));
         }
         mounts.push_back(json::Encode(json::Members{
             {"path", json::Quote(registry.AttachedRoot(project, folder))},
@@ -490,7 +510,8 @@ auto Tools::FileOperation(const std::string& conversation,
     std::vector<std::string> excluded = excluded_aliases;
     for (const auto& path : policy.Paths()) {
       excluded.push_back(json::Quote(path.string()));
-      const auto relative = path.lexically_relative(std::filesystem::weakly_canonical(root));
+      const auto relative =
+          path.lexically_relative(std::filesystem::weakly_canonical(root));
       // Only content copied into the view gets an alias. Internal state is
       // never staged; it holds the generated workspace itself.
       if (!relative.empty() && *relative.begin() != "..")
@@ -498,7 +519,8 @@ auto Tools::FileOperation(const std::string& conversation,
     }
     for (const auto& raw : excluded) {
       const std::filesystem::path path(json::String(raw));
-      if (!path.is_absolute() && !path.string().starts_with("attached/") && !std::filesystem::exists(work / path))
+      if (!path.is_absolute() && !path.string().starts_with("attached/") &&
+          !std::filesystem::exists(work / path))
         std::filesystem::create_directories(work / path);
     }
     shell_args["excluded_paths"] = json::Encode(excluded);
@@ -606,8 +628,7 @@ auto Tools::FileOperation(const std::string& conversation,
           {"transfers", json::Encode(transfers)},
           {"check_permissions", "true"}};
   if (stop.stop_requested()) throw Cancelled();
-  auto saved = json::Object(
-      SaveProject(project, args, stop));
+  auto saved = json::Object(SaveProject(project, args, stop));
   if (json::Text(saved, "reply") == "Failure") {
     if (scratch_copy) {
       auto failure = json::Object(json::Get(saved, "value", "{}"));
@@ -623,7 +644,8 @@ auto Tools::FileOperation(const std::string& conversation,
   }
   const auto value = json::Object(json::Get(saved, "value", "{}"));
   const auto delta = json::Object(json::Get(value, "delta", "{}"));
-  for (const auto& raw : json::Array(json::Get(delta, "sources_upsert", "[]"))) {
+  for (const auto& raw :
+       json::Array(json::Get(delta, "sources_upsert", "[]"))) {
     const auto info = json::Object(raw);
     source_info[json::Text(info, "path")] = raw;
   }
@@ -632,9 +654,10 @@ auto Tools::FileOperation(const std::string& conversation,
   for (const auto& raw : transfers) {
     const auto path = json::Text(json::Object(raw), "path");
     const auto info = json::Object(source_info.at(path));
-    summaries.push_back(json::Encode(json::Members{
-        {"path", json::Quote(path)}, {"size_bytes", json::Get(info, "size_bytes")},
-        {"hash", json::Get(info, "hash")}}));
+    summaries.push_back(json::Encode(
+        json::Members{{"path", json::Quote(path)},
+                      {"size_bytes", json::Get(info, "size_bytes")},
+                      {"hash", json::Get(info, "hash")}}));
   }
   if (name == "project_shell") {
     auto output = json::Object(json::Get(shell_result, "value", "{}"));

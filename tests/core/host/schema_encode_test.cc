@@ -3,8 +3,8 @@
 #include <limits>
 
 #include "../agent_fixture_server.hh"
-#include "tsugumi/document/document.hh"
 #include "runtime_schema.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
 
@@ -17,13 +17,13 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto file = directory.path / "definitions/x/_card.json";
   std::filesystem::create_directories(file.parent_path());
-  for (const auto *member : {"filesystem", "unrecognizedSetting"}) {
-    fs::write_atomic(file, "{\"template\":\"draft\",\"" + std::string(member) +
-                               "\":true}");
+  for (const auto* member : {"filesystem", "unrecognizedSetting"}) {
+    fs::write_atomic(
+        file, "{\"template\":\"draft\",\"" + std::string(member) + "\":true}");
     try {
       load_from_disk(directory.path);
       FAIL() << "Unknown settings must be rejected";
-    } catch (const DocumentError &error) {
+    } catch (const DocumentError& error) {
       EXPECT_EQ(error.code, "invalid_document");
       ASSERT_TRUE(error.args.contains("path")) << error.what();
       EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
@@ -37,13 +37,13 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 }
 
 TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {
-  for (const auto &[text, member] :
+  for (const auto& [text, member] :
        {std::pair{R"({"params":[{"unrecognized":true}]})", "unrecognized"},
         std::pair{R"({"sandbox":"yes"})", "sandbox"}}) {
     try {
       parse_card_json("x", text);
       FAIL() << "Invalid settings must be rejected";
-    } catch (const DocumentError &error) {
+    } catch (const DocumentError& error) {
       const std::string message = error.what();
       EXPECT_NE(message.find("definitions/x/_card.json"), std::string::npos);
       EXPECT_NE(message.find(member), std::string::npos);

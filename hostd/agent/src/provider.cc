@@ -732,7 +732,7 @@ struct ModelStream {
   std::map<uint32_t, ContentBlock> calls;
   std::string text;
   bool finished = false;
-  const std::function<std::string()> &allocate_call;
+  const std::function<std::string()>& allocate_call;
   std::vector<std::pair<std::string, size_t>> event_types;
   std::vector<std::string> output_items;
   bool terminal_output = false;
@@ -1126,24 +1126,22 @@ struct ModelStream {
       auto original_blocks = Items(Parse(reply.message.provider_content));
       std::vector<std::string> encoded;
       size_t next = 0;
-      for (auto &block : reply.message.content) {
-        if (block.type != "tool_use")
-          continue;
+      for (auto& block : reply.message.content) {
+        if (block.type != "tool_use") continue;
         block.id = allocate_call();
         while (next < original_blocks.size()) {
           auto item = Members(original_blocks[next]);
           const auto kind = String(original_blocks[next], "/type");
           if (kind == "tool_use" || kind == "function_call") {
             item[kind == "tool_use" ? "id" : "call_id"] = Quote(block.id);
-            if (kind == "function_call")
-              item.erase("id");
+            if (kind == "function_call") item.erase("id");
             original_blocks[next++] = Parse(Encode(item));
             break;
           }
           ++next;
         }
       }
-      for (const auto &item : original_blocks)
+      for (const auto& item : original_blocks)
         encoded.push_back(schema::text(item));
       reply.message.provider_content = Array(encoded);
     }
@@ -1173,11 +1171,11 @@ auto ValidToolArguments(std::string_view json) -> bool {
   }
 }
 
-auto StreamReply(const ProviderConfig &config, std::string_view system,
-                 const std::vector<Message> &messages,
-                 const std::vector<ToolSpec> &tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent &)> &event,
-                 const std::function<std::string()> &allocate_call)
+auto StreamReply(const ProviderConfig& config, std::string_view system,
+                 const std::vector<Message>& messages,
+                 const std::vector<ToolSpec>& tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent&)>& event,
+                 const std::function<std::string()>& allocate_call)
     -> ModelReply {
   if (config.model.empty()) throw std::runtime_error("model is not configured");
   const bool anthropic = config.api == ProviderAPI::AnthropicMessages;
@@ -1254,7 +1252,8 @@ auto ListModels(const ProviderConfig& config, std::stop_token stop)
     const auto nullable_number = [&](std::string_view field) {
       return Raw(item, field) == "null" ? uint64_t{0} : Number(item, field);
     };
-    auto window = nullable_number(plan ? "/context_window" : "/max_input_tokens");
+    auto window =
+        nullable_number(plan ? "/context_window" : "/max_input_tokens");
     if (plan && !window) window = nullable_number("/max_context_window");
     if (!id.empty())
       models.push_back({id, String(item, "/display_name", id),

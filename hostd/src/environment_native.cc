@@ -35,14 +35,14 @@ class NativeProcess final : public EnvironmentProcess {
     return terminals_.Handle(request);
   }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    std::vector<char *> arguments;
-    for (const auto &argument : launch.arguments)
-      arguments.push_back(const_cast<char *>(argument.c_str()));
+    std::vector<char*> arguments;
+    for (const auto& argument : launch.arguments)
+      arguments.push_back(const_cast<char*>(argument.c_str()));
     arguments.push_back(nullptr);
     // Project runtime values come from the OS and fixed installation paths.
     // The VM helper additionally receives only its named startup options.
     passwd user{};
-    passwd *found = nullptr;
+    passwd* found = nullptr;
     std::vector<char> buffer(16384);
     if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
         !found)
@@ -55,19 +55,20 @@ class NativeProcess final : public EnvironmentProcess {
             "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
     // These are filesystem locations, not credentials. Preserve the host's
     // explicit XDG storage layout when starting a project or VM helper.
-    for (const auto* name : {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
+    for (const auto* name :
+         {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
       if (const auto* value = std::getenv(name))
         environment.push_back(std::string(name) + "=" + value);
     if (launch.vm_helper) {
-      for (const auto *name :
+      for (const auto* name :
            {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
             "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
             "HOST_BUSY", "HOST_PID", "TSUGUMI_SOCKET_DIR"}) {
-        if (const auto *value = std::getenv(name))
+        if (const auto* value = std::getenv(name))
           environment.push_back(std::string(name) + "=" + value);
       }
     }
-    for (const auto *certificate :
+    for (const auto* certificate :
          {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
           "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
       if (::access(certificate, R_OK) == 0) {
@@ -82,9 +83,8 @@ class NativeProcess final : public EnvironmentProcess {
       environment.push_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=" +
                             launch.authorization.capability_file);
     }
-    std::vector<char *> env;
-    for (auto &value : environment)
-      env.push_back(value.data());
+    std::vector<char*> env;
+    for (auto& value : environment) env.push_back(value.data());
     env.push_back(nullptr);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -195,11 +195,12 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
     -> std::unique_ptr<client::Connection> {
   namespace R = Tsugumi::RPC;
   client::Options options;
-  options.endpoint = ready.unix_socket.empty() ? ready.endpoint
-                                               : "unix:" + ready.unix_socket;
+  options.endpoint =
+      ready.unix_socket.empty() ? ready.endpoint : "unix:" + ready.unix_socket;
   options.connect_timeout = 500ms;
   auto connection = std::make_unique<client::Connection>(options);
-  if (connection->Start().get()) throw std::runtime_error("Cannot connect to project core");
+  if (connection->Start().get())
+    throw std::runtime_error("Cannot connect to project core");
   auto response =
       connection
           ->Call(
@@ -220,8 +221,7 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
               500ms)
           .get();
   if (response.error) throw std::runtime_error("Project handshake failed");
-  const auto* reply =
-      R::GetMessage(response.bytes.data())->payload_as_Reply();
+  const auto* reply = R::GetMessage(response.bytes.data())->payload_as_Reply();
   const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
   if (!hello || hello->project_id()->str() != ready.project_id ||
       hello->server_instance_id()->str() != ready.server_instance_id)
@@ -232,43 +232,69 @@ auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
-  auto result = connection->Call([](uint64_t id) {
-    flatbuffers::FlatBufferBuilder b;
-    auto value = R::CreateProjectHostRequirementsRequest(b);
-    auto request = R::CreateRequest(b, R::RequestPayload::ProjectHostRequirementsRequest, value.Union());
-    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
-    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
-  }, 500ms).get();
-  if (result.error) throw std::runtime_error("Cannot read project host requirements");
+  auto result =
+      connection
+          ->Call(
+              [](uint64_t id) {
+                flatbuffers::FlatBufferBuilder b;
+                auto value = R::CreateProjectHostRequirementsRequest(b);
+                auto request = R::CreateRequest(
+                    b, R::RequestPayload::ProjectHostRequirementsRequest,
+                    value.Union());
+                R::FinishMessageBuffer(
+                    b, R::CreateMessage(b, id, R::Payload::Request,
+                                        request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              },
+              500ms)
+          .get();
+  if (result.error)
+    throw std::runtime_error("Cannot read project host requirements");
   const auto* value = R::GetMessage(result.bytes.data())->payload_as_Reply();
-  const auto* requirements = value ? value->value_as_ProjectHostRequirements() : nullptr;
-  if (!requirements) throw std::runtime_error("Missing project host requirements");
+  const auto* requirements =
+      value ? value->value_as_ProjectHostRequirements() : nullptr;
+  if (!requirements)
+    throw std::runtime_error("Missing project host requirements");
   Tsugumi::RPC::ProjectHostRequirementsT out;
   requirements->UnPackTo(&out);
   return out;
 }
 }  // namespace
-auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> bool {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
-  auto result = connection->Call([](uint64_t id) {
-    flatbuffers::FlatBufferBuilder b;
-    auto value = R::CreateProjectActivityRequest(b);
-    auto request = R::CreateRequest(b, R::RequestPayload::ProjectActivityRequest, value.Union());
-    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
-    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
-  }, 500ms).get();
+  auto result =
+      connection
+          ->Call(
+              [](uint64_t id) {
+                flatbuffers::FlatBufferBuilder b;
+                auto value = R::CreateProjectActivityRequest(b);
+                auto request = R::CreateRequest(
+                    b, R::RequestPayload::ProjectActivityRequest,
+                    value.Union());
+                R::FinishMessageBuffer(
+                    b, R::CreateMessage(b, id, R::Payload::Request,
+                                        request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              },
+              500ms)
+          .get();
   if (result.error) throw std::runtime_error("Cannot read project activity");
   const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();
   const auto* activity = reply ? reply->value_as_ProjectActivity() : nullptr;
   if (!activity) throw std::runtime_error("Missing project activity");
   return activity->busy();
 }
-auto EnvironmentProcess::Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
+auto EnvironmentProcess::Requirements(
+    const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   return ReadProjectRequirements(ready);
 }
-auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> bool {
   try {
     ReadProjectRequirements(ready);
     return true;

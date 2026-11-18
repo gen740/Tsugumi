@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sparse.hh"
@@ -37,7 +37,8 @@ bool valid_relative_path(std::string_view p, bool allow_root) {
   if (p.empty()) return false;
   if (p == ".") return allow_root;
   if (!text::valid_utf8(p)) return false;
-  if (p.find('\0') != std::string_view::npos || p.find('\\') != std::string_view::npos)
+  if (p.find('\0') != std::string_view::npos ||
+      p.find('\\') != std::string_view::npos)
     return false;
   if (p.front() == '/' || p.back() == '/') return false;
   size_t start = 0;
@@ -52,7 +53,8 @@ bool valid_relative_path(std::string_view p, bool allow_root) {
   return true;
 }
 
-std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset, uint64_t size) {
+std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset,
+                                      uint64_t size) {
   int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
   if (fd < 0) {
     if (errno == ENOENT || errno == ENOTDIR) return std::nullopt;
@@ -61,7 +63,8 @@ std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset, uin
   std::string out(size, '\0');
   size_t got = 0;
   while (got < size) {
-    ssize_t r = ::pread(fd, out.data() + got, size - got, static_cast<off_t>(offset + got));
+    ssize_t r = ::pread(fd, out.data() + got, size - got,
+                        static_cast<off_t>(offset + got));
     if (r < 0) {
       if (errno == EINTR) continue;
       int e = errno;
@@ -127,7 +130,8 @@ std::string read_file_or_throw(const stdfs::path& p) {
 
 void fsync_dir(const stdfs::path& dir) {
   int fd = ::open(dir.c_str(), O_RDONLY | O_CLOEXEC);
-  if (fd < 0) throw Error("open dir " + dir.string() + ": " + std::strerror(errno));
+  if (fd < 0)
+    throw Error("open dir " + dir.string() + ": " + std::strerror(errno));
   ::fsync(fd);
   ::close(fd);
 }
@@ -135,15 +139,18 @@ void fsync_dir(const stdfs::path& dir) {
 namespace {
 
 template <class Write>
-auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write) -> void {
+auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
+    -> void {
   stdfs::create_directories(p.parent_path());
   stdfs::path tmp = p;
   tmp += ".tsugumi-tmp-" + crypto::random_token(6);
   int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
-  if (fd < 0) throw Error("create " + tmp.string() + ": " + std::strerror(errno));
+  if (fd < 0)
+    throw Error("create " + tmp.string() + ": " + std::strerror(errno));
   try {
     write(fd, tmp);
-    if (::fsync(fd) != 0) throw Error("fsync " + tmp.string() + ": " + std::strerror(errno));
+    if (::fsync(fd) != 0)
+      throw Error("fsync " + tmp.string() + ": " + std::strerror(errno));
   } catch (...) {
     ::close(fd);
     ::unlink(tmp.c_str());
@@ -186,8 +193,9 @@ bool resolves_inside(const stdfs::path& root, const stdfs::path& p) {
   if (ec) return false;
   auto rs = r.string();
   auto cs = c.string();
-  return cs == rs || (cs.size() > rs.size() && cs.compare(0, rs.size(), rs) == 0 &&
-                      cs[rs.size()] == '/');
+  return cs == rs ||
+         (cs.size() > rs.size() && cs.compare(0, rs.size(), rs) == 0 &&
+          cs[rs.size()] == '/');
 }
 
 Listing list_tree(const stdfs::path& root) {
@@ -203,9 +211,11 @@ Listing list_tree(const stdfs::path& root) {
       out.links.push_back(rel);
       it.disable_recursion_pending();
     } else if (it->path().filename() == ".tsugumi" && it->is_directory()) {
-      it.disable_recursion_pending();  // a project's own state (an external's), never a source
+      it.disable_recursion_pending();  // a project's own state (an external's),
+                                       // never a source
     } else if (it->is_regular_file()) {
-      if (rel.find(".tsugumi-tmp-") == std::string::npos) out.files.push_back(rel);
+      if (rel.find(".tsugumi-tmp-") == std::string::npos)
+        out.files.push_back(rel);
     }
   }
   std::sort(out.files.begin(), out.files.end());
@@ -221,8 +231,10 @@ int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
   auto directory = root.lexically_normal();
   while (directory != directory.root_path() && directory.filename().empty())
     directory = directory.parent_path();
-  int dir = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (dir < 0) throw Error("open " + root.string() + ": " + std::strerror(errno));
+  int dir = ::open(directory.c_str(),
+                   O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (dir < 0)
+    throw Error("open " + root.string() + ": " + std::strerror(errno));
   std::vector<std::string> parts;
   for (const auto& c : rel.lexically_normal())
     if (!c.empty() && c != ".") parts.push_back(c.string());
@@ -232,16 +244,20 @@ int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
       throw Error(rel.string() + " leaves " + root.string());
     }
     bool last = i + 1 == parts.size();
-    int fd = ::openat(dir, parts[i].c_str(), (last ? flags : (O_RDONLY | O_DIRECTORY)) | O_NOFOLLOW | O_CLOEXEC);
+    int fd = ::openat(
+        dir, parts[i].c_str(),
+        (last ? flags : (O_RDONLY | O_DIRECTORY)) | O_NOFOLLOW | O_CLOEXEC);
     int err = errno;
     ::close(dir);
-    if (fd < 0) throw Error("open " + (root / rel).string() + ": " + std::strerror(err));
+    if (fd < 0)
+      throw Error("open " + (root / rel).string() + ": " + std::strerror(err));
     dir = fd;
   }
   return dir;
 }
 
-void list_fd(int dir, const std::string& prefix, Listing& out, size_t& remaining) {
+void list_fd(int dir, const std::string& prefix, Listing& out,
+             size_t& remaining) {
   DIR* d = ::fdopendir(dir);
   if (!d) {
     ::close(dir);
@@ -255,22 +271,29 @@ void list_fd(int dir, const std::string& prefix, Listing& out, size_t& remaining
   while (auto* e = ::readdir(d)) {
     std::string name = e->d_name;
     if (name == "." || name == "..") continue;
-    if (remaining == 0) throw Error("directory exceeds its transfer entry limit");
+    if (remaining == 0)
+      throw Error("directory exceeds its transfer entry limit");
     --remaining;
     struct stat st{};
-    if (::fstatat(::dirfd(d), name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) continue;
-    if (S_ISLNK(st.st_mode)) out.links.push_back(prefix + name);
+    if (::fstatat(::dirfd(d), name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0)
+      continue;
+    if (S_ISLNK(st.st_mode))
+      out.links.push_back(prefix + name);
     else if (S_ISDIR(st.st_mode)) {
       subdirs.push_back(name);
       out.directories.push_back(prefix + name);
-    }
-    else if (S_ISREG(st.st_mode)) out.files.push_back(prefix + name);
-    else out.special.push_back(prefix + name);
+    } else if (S_ISREG(st.st_mode))
+      out.files.push_back(prefix + name);
+    else
+      out.special.push_back(prefix + name);
   }
   for (const auto& s : subdirs) {
-    int fd = ::openat(::dirfd(d), s.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) out.links.push_back(prefix + s);  // replaced since it was read
-    else list_fd(fd, prefix + s + "/", out, remaining);
+    int fd = ::openat(::dirfd(d), s.c_str(),
+                      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+      out.links.push_back(prefix + s);  // replaced since it was read
+    else
+      list_fd(fd, prefix + s + "/", out, remaining);
   }
 }
 
@@ -278,12 +301,15 @@ void list_fd(int dir, const std::string& prefix, Listing& out, size_t& remaining
 
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel) {
   std::string out;
-  stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) { out.append(chunk); });
+  stream_beneath(root, rel, UINT64_MAX,
+                 [&](std::string_view chunk) { out.append(chunk); });
   return out;
 }
 
-auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
-                    const std::function<void(std::string_view)>& consume) -> uint64_t {
+auto stream_beneath(const stdfs::path& root, const stdfs::path& rel,
+                    uint64_t limit,
+                    const std::function<void(std::string_view)>& consume)
+    -> uint64_t {
   const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
   struct Close {
     int fd;
@@ -292,7 +318,8 @@ auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t li
   struct stat st{};
   if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))
     throw Error((root / rel).string() + " is not a regular file");
-  if (st.st_size < 0 || static_cast<uint64_t>(st.st_size) > limit) throw Error("file exceeds its transfer limit");
+  if (st.st_size < 0 || static_cast<uint64_t>(st.st_size) > limit)
+    throw Error("file exceeds its transfer limit");
   uint64_t size = 0;
   char buf[1 << 16];
   for (;;) {
@@ -303,18 +330,22 @@ auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t li
       throw Error("read " + (root / rel).string() + ": " + std::strerror(err));
     }
     if (n == 0) break;
-    if (static_cast<uint64_t>(n) > limit - size) throw Error("file exceeds its transfer limit");
+    if (static_cast<uint64_t>(n) > limit - size)
+      throw Error("file exceeds its transfer limit");
     consume({buf, static_cast<size_t>(n)});
     size += static_cast<uint64_t>(n);
   }
   if (size != static_cast<uint64_t>(st.st_size))
     throw Error("file size changed during transfer " + (root / rel).string() +
-                ": expected " + std::to_string(st.st_size) + " bytes, read " + std::to_string(size));
+                ": expected " + std::to_string(st.st_size) + " bytes, read " +
+                std::to_string(size));
   return size;
 }
 
-auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::path& destination,
-                  const std::function<void(std::string_view)>& on_chunk) -> uint64_t {
+auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
+                  const stdfs::path& destination,
+                  const std::function<void(std::string_view)>& on_chunk)
+    -> uint64_t {
   const int source = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
   struct Close {
     int fd;
@@ -333,9 +364,11 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::
   return size;
 }
 
-Listing list_beneath(const stdfs::path& root, const stdfs::path& rel, size_t max_entries) {
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
+                     size_t max_entries) {
   Listing out;
-  list_fd(open_beneath(root, rel, O_RDONLY | O_DIRECTORY), "", out, max_entries);
+  list_fd(open_beneath(root, rel, O_RDONLY | O_DIRECTORY), "", out,
+          max_entries);
   std::sort(out.files.begin(), out.files.end());
   std::sort(out.links.begin(), out.links.end());
   std::sort(out.directories.begin(), out.directories.end());
@@ -349,7 +382,8 @@ FileLock::~FileLock() {
 std::optional<FileLock> FileLock::try_acquire(const stdfs::path& p) {
   stdfs::create_directories(p.parent_path());
   int fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-  if (fd < 0) throw Error("open lock " + p.string() + ": " + std::strerror(errno));
+  if (fd < 0)
+    throw Error("open lock " + p.string() + ": " + std::strerror(errno));
   if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
     int e = errno;
     ::close(fd);
@@ -368,7 +402,8 @@ uint64_t directory_size(const stdfs::path& p) {
   for (auto it = stdfs::recursive_directory_iterator(p, ec);
        it != stdfs::recursive_directory_iterator(); it.increment(ec)) {
     if (ec) break;
-    if (it->is_regular_file(ec) && !it->is_symlink(ec)) total += it->file_size(ec);
+    if (it->is_regular_file(ec) && !it->is_symlink(ec))
+      total += it->file_size(ec);
   }
   return total;
 }

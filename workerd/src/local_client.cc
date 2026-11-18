@@ -3,8 +3,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "tsugumi/workerd/local.hh"
 #include "tsugumi/util/process.hh"
+#include "tsugumi/workerd/local.hh"
 
 namespace tsugumi::workerd {
 namespace L = Tsugumi::LocalWorker;

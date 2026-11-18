@@ -1,7 +1,5 @@
 #include "agent/runtime.hh"
 
-#include "tsugumi/util/json_object.hh"
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -13,6 +11,7 @@
 
 #include "agent/context.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 auto EstimateTextTokens(std::string_view text) -> uint64_t {
@@ -43,14 +42,16 @@ auto EstimateMessageTokens(const Message& message) -> uint64_t {
 namespace {
 // Only a typed service failure is terminal; ordinary tool text may start with
 // arbitrary or incomplete JSON and must remain a normal tool result.
-auto InternalToolFailure(const ToolResult& output) -> std::optional<std::string> {
+auto InternalToolFailure(const ToolResult& output)
+    -> std::optional<std::string> {
   if (!output.is_error) return {};
   try {
     const auto envelope = json::Object(output.text);
     if (json::Text(envelope, "reply") != "Failure") return {};
     const auto failure = json::Object(json::Get(envelope, "value", "{}"));
     if (json::Text(failure, "kind") == "internal_error")
-      return json::Text(failure, "diagnostic", "Internal service error; retrying will not help.");
+      return json::Text(failure, "diagnostic",
+                        "Internal service error; retrying will not help.");
   } catch (const std::exception&) {
   }
   return {};
@@ -311,7 +312,7 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
     try {
       auto reply = StreamReply(
           config, system, messages, tools, stop,
-          [&](const ModelEvent &model) {
+          [&](const ModelEvent& model) {
             CheckCancelled(stop);
             RuntimeEvent event;
             event.kind = model.kind;
@@ -452,8 +453,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         context_refusals = 0;
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
-        if (!options_.compact || ++context_refusals > 3)
-          throw CannotFit();
+        if (!options_.compact || ++context_refusals > 3) throw CannotFit();
         context->input_tokens = 0;
         context->result_limit =
             std::max(size_t{1024}, context->result_limit / 2);
@@ -474,11 +474,11 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           throw std::runtime_error(
               "model replies repeatedly exceeded the output limit");
         std::string argument_sizes;
-        for (const auto &block : reply.message.content)
+        for (const auto& block : reply.message.content)
           if (block.type == "tool_use")
             argument_sizes += block.name + "=" +
                               std::to_string(block.input.size()) + " bytes; ";
-        std::erase_if(reply.message.content, [](const auto &block) {
+        std::erase_if(reply.message.content, [](const auto& block) {
           return block.type == "tool_use";
         });
         reply.message.provider_content.clear();

@@ -18,7 +18,8 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   TemporaryDirectory directory;
   const auto home = directory.path / "empty home";
   std::filesystem::create_directory(home);
-  // Readiness is emitted by Bash after its login startup, before accepting input.
+  // Readiness is emitted by Bash after its login startup, before accepting
+  // input.
   Write(home / ".bash_profile", "printf '\\0READY\\0'\n");
   // A Nix build sandbox has no /bin/bash: use the one on PATH there.
   std::string bash = "/bin/bash";
@@ -33,13 +34,14 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   const auto shell = directory.path / "login-shell";
   // Capture the environment at the exec boundary, before system profiles can
   // rewrite it. This account shell then starts a normal Bash login session.
-  Write(shell,
-        "#!" + bash + "\n"
-        "printf '\\0PASSED\\0'\n"
-        "for name in $(compgen -e); do "
-        "printf '%s=%s\\0' \"$name\" \"${!name}\"; done\n"
-        "printf '\\0END\\0'\n"
-        "exec " + bash + " \"$@\"\n");
+  Write(shell, "#!" + bash +
+                   "\n"
+                   "printf '\\0PASSED\\0'\n"
+                   "for name in $(compgen -e); do "
+                   "printf '%s=%s\\0' \"$name\" \"${!name}\"; done\n"
+                   "printf '\\0END\\0'\n"
+                   "exec " +
+                   bash + " \"$@\"\n");
   std::filesystem::permissions(shell, std::filesystem::perms::owner_all);
   const host::NativeTerminals::Account account{home.string(), "terminal-user",
                                                shell.string()};

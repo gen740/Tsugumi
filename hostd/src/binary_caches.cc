@@ -30,14 +30,13 @@ struct Cache {
 struct CacheInvalid : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
-auto Invalid(const char *message) -> void { throw CacheInvalid(message); }
-auto NameValid(const std::string &name) -> bool {
+auto Invalid(const char* message) -> void { throw CacheInvalid(message); }
+auto NameValid(const std::string& name) -> bool {
 #ifdef __APPLE__
   auto string = CFStringCreateWithBytes(
-      nullptr, reinterpret_cast<const UInt8 *>(name.data()), name.size(),
+      nullptr, reinterpret_cast<const UInt8*>(name.data()), name.size(),
       kCFStringEncodingUTF8, false);
-  if (!string)
-    return false;
+  if (!string) return false;
   auto whitespace =
       CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
   bool nonempty = false;
@@ -45,7 +44,8 @@ auto NameValid(const std::string &name) -> bool {
   for (CFIndex offset = 0; offset < CFStringGetLength(string);) {
     nonempty |= !CFCharacterSetIsCharacterMember(
         whitespace, CFStringGetCharacterAtIndex(string, offset));
-    const auto range = CFStringGetRangeOfComposedCharactersAtIndex(string, offset);
+    const auto range =
+        CFStringGetRangeOfComposedCharactersAtIndex(string, offset);
     offset = range.location + range.length;
     ++count;
   }
@@ -58,17 +58,14 @@ auto NameValid(const std::string &name) -> bool {
   std::vector<UChar> text(length + 1);
   u_strFromUTF8(text.data(), text.size(), nullptr, name.data(), name.size(),
                 &error);
-  if (U_FAILURE(error))
-    return false;
+  if (U_FAILURE(error)) return false;
   bool nonempty = std::any_of(text.begin(), text.begin() + length,
                               [](UChar c) { return !u_isUWhiteSpace(c); });
-  auto *iterator = ubrk_open(UBRK_CHARACTER, "", text.data(), length, &error);
-  if (U_FAILURE(error))
-    return false;
+  auto* iterator = ubrk_open(UBRK_CHARACTER, "", text.data(), length, &error);
+  if (U_FAILURE(error)) return false;
   size_t count = 0;
   ubrk_first(iterator);
-  while (ubrk_next(iterator) != UBRK_DONE)
-    ++count;
+  while (ubrk_next(iterator) != UBRK_DONE) ++count;
   ubrk_close(iterator);
 #endif
   return nonempty && count <= 80;
@@ -80,9 +77,9 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
   const auto entries = j::Array(json);
   if (entries.size() > 32)
     Invalid("At most 32 binary caches may be configured.");
-  for (const auto &entry : entries) {
+  for (const auto& entry : entries) {
     const auto fields = j::Object(entry);
-    auto field = [&](const char *key) {
+    auto field = [&](const char* key) {
       schema::v::String value;
       if (schema::decode(j::Get(fields, key), value))
         throw std::runtime_error("binary-caches.json cannot be read");
@@ -102,13 +99,12 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
       Invalid("Each cache must have a distinct identity.");
     if (!NameValid(cache.name))
       Invalid("Each cache needs a name of at most 80 characters.");
-    auto *url = curl_url();
+    auto* url = curl_url();
     bool valid = url && curl_url_set(url, CURLUPART_URL, cache.url.c_str(),
                                      0) == CURLUE_OK;
     auto part = [&](CURLUPart which) {
-      char *value = nullptr;
-      if (url)
-        curl_url_get(url, which, &value, 0);
+      char* value = nullptr;
+      if (url) curl_url_get(url, which, &value, 0);
       std::string result = value ? value : "";
       curl_free(value);
       return result;
@@ -124,8 +120,9 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
             urls.insert(cache.url).second;
     curl_url_cleanup(url);
     if (!valid)
-      Invalid("Use distinct HTTP(S) cache endpoints without credentials, query "
-              "strings or whitespace.");
+      Invalid(
+          "Use distinct HTTP(S) cache endpoints without credentials, query "
+          "strings or whitespace.");
     const auto colon = cache.key.find(':');
     std::string decoded;
     if (colon == 0 || colon == cache.key.npos ||
@@ -137,78 +134,80 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
                      }) ||
         !crypto::base64_decode(cache.key.substr(colon + 1), decoded) ||
         decoded.size() != 32)
-      Invalid("Each cache needs its complete Nix signing public key "
-              "(name:base64).");
+      Invalid(
+          "Each cache needs its complete Nix signing public key "
+          "(name:base64).");
     if (cache.username.empty() != cache.password.empty())
-      Invalid("Provide both an authentication username and password, or leave "
-              "both empty.");
+      Invalid(
+          "Provide both an authentication username and password, or leave "
+          "both empty.");
     if (!cache.password.empty()) {
-      auto printable = [](const std::string &text) {
+      auto printable = [](const std::string& text) {
         return std::all_of(text.begin(), text.end(), [](unsigned char c) {
           return c > 32 && c < 127 && c != 34 && c != 92 && c != 35;
         });
       };
       if (cache.scheme != "https" || !printable(cache.username) ||
           !printable(cache.password) || !printable(cache.host))
-        Invalid("Cache credentials require HTTPS and printable values without "
-                "whitespace, quotes or backslashes.");
+        Invalid(
+            "Cache credentials require HTTPS and printable values without "
+            "whitespace, quotes or backslashes.");
       const auto secret = cache.username + '\n' + cache.password;
       if (credentials.contains(cache.host) &&
           credentials.at(cache.host) != secret)
-        Invalid("Caches on the same host must use the same authentication "
-                "credentials.");
+        Invalid(
+            "Caches on the same host must use the same authentication "
+            "credentials.");
       credentials[cache.host] = secret;
     }
     caches.push_back(std::move(cache));
   }
   return caches;
 }
-} // namespace
+}  // namespace
 
 auto ValidateBinaryCaches(std::string_view json) -> void { Parse(json); }
-auto LoadBinaryCaches(const std::filesystem::path &support) -> std::string {
+auto LoadBinaryCaches(const std::filesystem::path& support) -> std::string {
   const auto raw = fs::read_file(support / "binary-caches.json").value_or("[]");
   ValidateBinaryCaches(raw);
   return raw;
 }
-auto SaveBinaryCaches(const std::filesystem::path &support,
+auto SaveBinaryCaches(const std::filesystem::path& support,
                       std::string_view json) -> void {
   ValidateBinaryCaches(json);
   std::filesystem::create_directories(support);
   ::chmod(support.c_str(), 0700);
   fs::write_atomic(support / "binary-caches.json", json, 0600);
 }
-auto PrepareBinaryCaches(const std::filesystem::path &support)
+auto PrepareBinaryCaches(const std::filesystem::path& support)
     -> BinaryCacheSnapshot {
   BinaryCacheSnapshot result;
   std::vector<Cache> caches;
   try {
     caches = Parse(LoadBinaryCaches(support));
-  } catch (const std::exception &error) {
+  } catch (const std::exception& error) {
     // Parsing/validation diagnostics never include the submitted credentials.
     result.problem =
         std::string("The binary cache settings were not applied: ") +
-        (dynamic_cast<const CacheInvalid *>(&error)
+        (dynamic_cast<const CacheInvalid*>(&error)
              ? error.what()
              : "binary-caches.json cannot be read") +
-        std::string(" Only the default caches are used until they are saved "
-                    "again in Settings.");
+        std::string(
+            " Only the default caches are used until they are saved "
+            "again in Settings.");
     return result;
   }
-  if (caches.empty())
-    return result;
+  if (caches.empty()) return result;
   result.configuration = "extra-substituters =";
-  for (const auto &cache : caches)
-    result.configuration += ' ' + cache.url;
+  for (const auto& cache : caches) result.configuration += ' ' + cache.url;
   result.configuration += "\nextra-trusted-public-keys =";
-  for (const auto &cache : caches)
-    result.configuration += ' ' + cache.key;
+  for (const auto& cache : caches) result.configuration += ' ' + cache.key;
   result.configuration += "\nnetrc-file = /run/tsugumi/binary-caches/netrc\n";
   std::set<std::string> hosts;
-  for (const auto &cache : caches)
+  for (const auto& cache : caches)
     if (!cache.password.empty() && hosts.insert(cache.host).second)
       result.netrc += "machine " + cache.host + " login " + cache.username +
                       " password " + cache.password + '\n';
   return result;
 }
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

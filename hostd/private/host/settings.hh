@@ -7,9 +7,9 @@
 #include <utility>
 #include <vector>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/provider.hh"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 // API-key storage has a narrow interface, independent of platform UI and OAuth.
@@ -48,11 +48,14 @@ class Settings {
   auto TrustedFolders() -> std::vector<std::string>;
   auto Language(const std::string& profile) -> std::string;
   auto VersionNoteMode(const std::string& profile) -> std::string;
-  auto VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
-                           const std::string& openai_keys) -> agent::ProviderConfig;
+  auto VersionNoteProvider(const std::string& profile,
+                           const std::string& anthropic_keys,
+                           const std::string& openai_keys)
+      -> agent::ProviderConfig;
   auto ModelSelection(const std::string& profile, const std::string& purpose)
       -> Tsugumi::Service::ProviderSelectionT;
-  auto Resolve(const ::tsugumi::json::Members& selection) -> agent::ProviderConfig;
+  auto Resolve(const ::tsugumi::json::Members& selection)
+      -> agent::ProviderConfig;
 
  private:
   struct State;

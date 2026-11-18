@@ -1,21 +1,20 @@
-#include "runtime_schema.hh"
-#include "tsugumi/workerd/manifest.hh"
 #include "nix.hh"
 
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <fstream>
-
 #include <regex>
 
 #include "nix_eval.hh"
-#include "tsugumi/util/json.hh"
+#include "runtime_schema.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
+#include "tsugumi/workerd/manifest.hh"
 
 #ifndef TSUGUMI_CARD_NIXPKGS_REV
 #define TSUGUMI_CARD_NIXPKGS_REV ""
@@ -31,11 +30,13 @@ namespace stdfs = std::filesystem;
 namespace {
 
 // The interpreter the kernel runs ELF executables of a Linux system with
-// (binfmt_misc: a static qemu-user in the shared VM, boot.binfmt.emulatedSystems
-// on NixOS), or "" when none is registered. Matched by the ELF header the
-// entry's magic names, whatever the entry is called.
+// (binfmt_misc: a static qemu-user in the shared VM,
+// boot.binfmt.emulatedSystems on NixOS), or "" when none is registered. Matched
+// by the ELF header the entry's magic names, whatever the entry is called.
 std::string binfmt_interpreter(const std::string& system) {
-  std::string machine = system == "x86_64-linux" ? "3e00" : system == "aarch64-linux" ? "b700" : "";
+  std::string machine = system == "x86_64-linux"    ? "3e00"
+                        : system == "aarch64-linux" ? "b700"
+                                                    : "";
   const stdfs::path dir = "/proc/sys/fs/binfmt_misc";
   std::error_code ec;
   if (machine.empty() || !stdfs::is_directory(dir, ec)) return "";
@@ -49,13 +50,16 @@ std::string binfmt_interpreter(const std::string& system) {
     std::string line, interpreter, magic;
     bool enabled = false;
     while (std::getline(f, line)) {
-      if (line == "enabled") enabled = true;
-      else if (line.starts_with("interpreter ")) interpreter = line.substr(12);
-      else if (line.starts_with("magic ")) magic = line.substr(6);
+      if (line == "enabled")
+        enabled = true;
+      else if (line.starts_with("interpreter "))
+        interpreter = line.substr(12);
+      else if (line.starts_with("magic "))
+        magic = line.substr(6);
     }
     // 7f 'E' 'L' 'F', 64-bit, little-endian, ..., e_machine at byte 18.
-    if (enabled && !interpreter.empty() && magic.starts_with("7f454c4602") && magic.size() >= 40 &&
-        magic.substr(36, 4) == machine)
+    if (enabled && !interpreter.empty() && magic.starts_with("7f454c4602") &&
+        magic.size() >= 40 && magic.substr(36, 4) == machine)
       return interpreter;
   }
   return "";
@@ -146,7 +150,10 @@ std::string nix_quote(const std::string& s) {
 std::string root_prefix(const CardPath& card) {
   std::string k = path_key(card);
   std::string out;
-  for (char c : k) out += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' ? c : '_';
+  for (char c : k)
+    out += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_'
+               ? c
+               : '_';
   return out + "-" + crypto::sha256_hex(k).substr(0, 8) + "--";
 }
 
@@ -158,11 +165,13 @@ auto dep_json(const CardPath& target, const std::string& name) -> std::string {
 
 }  // namespace
 
-NixRunner::NixRunner(Service& svc, stdfs::path eval_dir) : svc_(svc), eval_dir_(std::move(eval_dir)) {
+NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
+    : svc_(svc), eval_dir_(std::move(eval_dir)) {
   std::error_code ec;
   stdfs::remove_all(eval_dir_, ec);
   stdfs::create_directories(eval_dir_);
-  // Restricted evaluation compares resolved paths (/tmp is /private/tmp on macOS).
+  // Restricted evaluation compares resolved paths (/tmp is /private/tmp on
+  // macOS).
   eval_dir_ = stdfs::canonical(eval_dir_);
   sdk_dir_ = stdfs::canonical(svc_.options().sdk_dir, ec);
   if (ec) sdk_dir_ = svc_.options().sdk_dir;
@@ -180,13 +189,17 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir) : svc_(svc), eval_dir_(
       job.card = *j.card;
       if (*j.state == "ready") {
         job.state = SDKJob::State::Ready;
-        for (const auto& f : *j.files) job.files.emplace_back(*f.path, *f.hash, *f.size);
+        for (const auto& f : *j.files)
+          job.files.emplace_back(*f.path, *f.hash, *f.size);
       } else {
         job.state = SDKJob::State::Failed;
         std::string bytes;
-        if (crypto::base64_decode(*j.failure_b64, bytes)) job.failure = FailureData::from_bytes(bytes);
+        if (crypto::base64_decode(*j.failure_b64, bytes))
+          job.failure = FailureData::from_bytes(bytes);
         if (*j.state == "pending" || !job.failure)
-          job.failure = FailureData::make(FailureKind::interrupted, "SDK preparation was interrupted by a restart");
+          job.failure =
+              FailureData::make(FailureKind::interrupted,
+                                "SDK preparation was interrupted by a restart");
       }
       sdk_jobs_[job.op_id] = std::move(job);
     }
@@ -200,12 +213,17 @@ NixRunner::~NixRunner() {
 }
 
 FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
-  static const std::regex page(R"(^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$)");
-  static const std::regex allowed(R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]+$)");
+  static const std::regex page(
+      R"(^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$)");
+  static const std::regex allowed(
+      R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]+$)");
   std::smatch m;
-  std::string flake = std::regex_match(ref, m, page) ? "github:" + m[1].str() + "/" + m[2].str() : ref;
+  std::string flake = std::regex_match(ref, m, page)
+                          ? "github:" + m[1].str() + "/" + m[2].str()
+                          : ref;
   if (!std::regex_match(flake, allowed))
-    throw Failed(FailureKind::validation_failed, "not a flake reference Tsugumi reads: " + ref);
+    throw Failed(FailureKind::validation_failed,
+                 "not a flake reference Tsugumi reads: " + ref);
   NixCall call;
   call.deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
   try {
@@ -220,11 +238,15 @@ FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
 NixEvaluator& NixRunner::evaluator() {
   std::lock_guard<std::mutex> l(eval_mu_);
   if (!evaluator_)
-    evaluator_ = std::make_unique<NixEvaluator>(entry_nix(), std::vector<std::string>{sdk_dir_.string(), eval_dir_.string()});
+    evaluator_ = std::make_unique<NixEvaluator>(
+        entry_nix(),
+        std::vector<std::string>{sdk_dir_.string(), eval_dir_.string()});
   return *evaluator_;
 }
 
-stdfs::path NixRunner::cache_dir() const { return svc_.store().state_dir() / "cache"; }
+stdfs::path NixRunner::cache_dir() const {
+  return svc_.store().state_dir() / "cache";
+}
 
 stdfs::path NixRunner::gcroots_dir() const {
   const auto& d = svc_.options().gcroots_dir;
@@ -238,14 +260,17 @@ std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
     std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
     hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
     if (rev.empty() || hash.empty())
-      throw Failed(FailureKind::nix_failed, "this build of tsugumid has no default nixpkgs pin");
+      throw Failed(FailureKind::nix_failed,
+                   "this build of tsugumid has no default nixpkgs pin");
     url = "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz";
   } else {
-    static const std::regex re(R"(^(https://github\.com/NixOS/nixpkgs/archive/[0-9a-f]{40}\.tar\.gz)#(sha256-[A-Za-z0-9+/=]{44})$)");
+    static const std::regex re(
+        R"(^(https://github\.com/NixOS/nixpkgs/archive/[0-9a-f]{40}\.tar\.gz)#(sha256-[A-Za-z0-9+/=]{44})$)");
     std::smatch m;
     if (!std::regex_match(pkgs, m, re))
       throw Failed(FailureKind::nix_failed,
-                   "pkgsPath must be tsugumi:default or a pinned nixpkgs archive URL with #sha256-<hash>");
+                   "pkgsPath must be tsugumi:default or a pinned nixpkgs "
+                   "archive URL with #sha256-<hash>");
     url = m[1];
     hash = m[2];
   }
@@ -257,7 +282,8 @@ std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
 
 types::TypeRef NixRunner::params_type(const Node& node) {
   std::vector<std::pair<std::string, std::string>> fields;
-  for (const auto& p : node.settings.params) fields.emplace_back(p.name, param_fbs_type(p.type));
+  for (const auto& p : node.settings.params)
+    fields.emplace_back(p.name, param_fbs_type(p.type));
   std::string err;
   auto t = types::compile(types::params_schema(fields), "params.Params", &err);
   if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
@@ -285,30 +311,40 @@ std::string NixRunner::params_buffer(const Node& node) {
 std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   std::map<std::string, std::string> files;
   // Inputs: each port's type closure under its own namespace plus a catalog.
-  std::string inputs = "// Generated by tsugumid from the connected upstream outputs.\nattribute \"tsugumi\";\n";
+  std::string inputs =
+      "// Generated by tsugumid from the connected upstream "
+      "outputs.\nattribute \"tsugumi\";\n";
   std::string catalog = "namespace inputs;\ntable Inputs {\n";
   int id = 0;
   for (const auto& p : node.inputs) {
     if (!p.type) continue;
-    std::string root = types::render_closure(*p.type, "inputs." + p.name, inputs);
+    std::string root =
+        types::render_closure(*p.type, "inputs." + p.name, inputs);
     catalog += "  " + p.name + ":" + root + " (id: " + std::to_string(id++) +
-               (p.kind == PortKind::File ? ", tsugumi: \"file\"" : p.kind == PortKind::Directory ? ", tsugumi: \"directory\"" : "") +
+               (p.kind == PortKind::File        ? ", tsugumi: \"file\""
+                : p.kind == PortKind::Directory ? ", tsugumi: \"directory\""
+                                                : "") +
                (p.optional ? "" : ", required") + ");\n";
   }
   catalog += "}\nroot_type Inputs;\n";
   files["_inputs.fbs"] = inputs + catalog;
   std::vector<std::pair<std::string, std::string>> pf;
-  for (const auto& p : node.settings.params) pf.emplace_back(p.name, param_fbs_type(p.type));
+  for (const auto& p : node.settings.params)
+    pf.emplace_back(p.name, param_fbs_type(p.type));
   files["_params.fbs"] = types::params_schema(pf);
   // Output types as resolved (self-contained per port).
-  std::string outputs = "// Generated by tsugumid from _outputs.fbs.\nattribute \"tsugumi\";\n";
+  std::string outputs =
+      "// Generated by tsugumid from _outputs.fbs.\nattribute \"tsugumi\";\n";
   std::string ocat = "namespace outputs;\ntable Outputs {\n";
   id = 0;
   for (const auto& p : node.outputs) {
     if (!p.type) continue;
-    std::string root = types::render_closure(*p.type, "outputs." + p.name, outputs);
+    std::string root =
+        types::render_closure(*p.type, "outputs." + p.name, outputs);
     ocat += "  " + p.name + ":" + root + " (id: " + std::to_string(id++) +
-            (p.kind == PortKind::File ? ", tsugumi: \"file\"" : p.kind == PortKind::Directory ? ", tsugumi: \"directory\"" : "") +
+            (p.kind == PortKind::File        ? ", tsugumi: \"file\""
+             : p.kind == PortKind::Directory ? ", tsugumi: \"directory\""
+                                             : "") +
             (p.optional ? "" : ", required") + ");\n";
   }
   ocat += "}\nroot_type Outputs;\n";
@@ -320,47 +356,67 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
       std::string q = "\"";
       for (char c : v) {
         if (c == '"' || c == '\\') q += '\\';
-        if (static_cast<unsigned char>(c) < 0x20) { q += ' '; continue; }
+        if (static_cast<unsigned char>(c) < 0x20) {
+          q += ' ';
+          continue;
+        }
         q += c;
       }
       return q + "\"";
     };
-    auto kind_name = [](PortKind k) { return k == PortKind::File ? "file" : k == PortKind::Directory ? "directory" : "flatbuffer"; };
-    auto list = [&](const std::vector<types::PortType>& ports, const std::string& side) {
+    auto kind_name = [](PortKind k) {
+      return k == PortKind::File        ? "file"
+             : k == PortKind::Directory ? "directory"
+                                        : "flatbuffer";
+    };
+    auto list = [&](const std::vector<types::PortType>& ports,
+                    const std::string& side) {
       std::string out = "[";
       bool first = true;
       for (const auto& p : ports) {
         if (!p.type) continue;
         std::string scratch;
-        std::string root = types::render_closure(*p.type, side + "." + p.name, scratch);
+        std::string root =
+            types::render_closure(*p.type, side + "." + p.name, scratch);
         std::string unions = "[";
         for (const auto& u : types::root_unions(*p.type, side + "." + p.name)) {
-          unions += std::string(unions.size() > 1 ? "," : "") + "{\"field\":" + json_quote(u.field) +
+          unions += std::string(unions.size() > 1 ? "," : "") +
+                    "{\"field\":" + json_quote(u.field) +
                     ",\"type\":" + json_quote(u.type) + ",\"members\":[";
-          for (size_t i = 0; i < u.members.size(); ++i) unions += (i ? "," : "") + json_quote(u.members[i]);
+          for (size_t i = 0; i < u.members.size(); ++i)
+            unions += (i ? "," : "") + json_quote(u.members[i]);
           unions += "]}";
         }
-        out += std::string(first ? "" : ",") + "{\"name\":" + json_quote(p.name) +
-               ",\"type\":" + json_quote(root) + ",\"kind\":\"" + kind_name(p.kind) +
-               "\",\"required\":" + (p.optional ? "false" : "true") + ",\"unions\":" + unions + "]}";
+        out += std::string(first ? "" : ",") +
+               "{\"name\":" + json_quote(p.name) +
+               ",\"type\":" + json_quote(root) + ",\"kind\":\"" +
+               kind_name(p.kind) +
+               "\",\"required\":" + (p.optional ? "false" : "true") +
+               ",\"unions\":" + unions + "]}";
         first = false;
       }
       return out + "]";
     };
     std::string params = "[";
     for (size_t i = 0; i < node.settings.params.size(); ++i)
-      params += std::string(i ? "," : "") + "{\"name\":" + json_quote(node.settings.params[i].name) + "}";
-    files["_contract.json"] = "{\"inputs\":" + list(node.inputs, "inputs") + ",\"outputs\":" + list(node.outputs, "outputs") +
+      params += std::string(i ? "," : "") +
+                "{\"name\":" + json_quote(node.settings.params[i].name) + "}";
+    files["_contract.json"] = "{\"inputs\":" + list(node.inputs, "inputs") +
+                              ",\"outputs\":" + list(node.outputs, "outputs") +
                               ",\"params\":" + params + "]}\n";
   }
   // Binary schemas for reflection based tools.
   for (const char* name : {"_inputs", "_outputs", "_params"}) {
     std::string err;
     std::string text = files[std::string(name) + ".fbs"];
-    std::string root = std::string(name) == "_inputs" ? "inputs.Inputs"
-                       : std::string(name) == "_outputs" ? "outputs.Outputs" : "params.Params";
-    if (auto t = types::compile(text, root, &err)) files[std::string(name) + ".bfbs"] = (*t)->bfbs;
-    else throw Failed(FailureKind::validation_failed, std::string(name) + ".fbs: " + err);
+    std::string root = std::string(name) == "_inputs"    ? "inputs.Inputs"
+                       : std::string(name) == "_outputs" ? "outputs.Outputs"
+                                                         : "params.Params";
+    if (auto t = types::compile(text, root, &err))
+      files[std::string(name) + ".bfbs"] = (*t)->bfbs;
+    else
+      throw Failed(FailureKind::validation_failed,
+                   std::string(name) + ".fbs: " + err);
   }
   files["params.json"] = params_json(node, false);
   files["params-nix.json"] = params_json(node, true);
@@ -370,7 +426,9 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
 void NixRunner::acquire_lane(const std::atomic<bool>* cancel) {
   std::unique_lock<std::mutex> l(lane_mu_);
   while (lane_busy_) {
-    if (cancel && cancel->load()) throw Failed(FailureKind::cancelled, "cancelled while waiting for the Nix lane");
+    if (cancel && cancel->load())
+      throw Failed(FailureKind::cancelled,
+                   "cancelled while waiting for the Nix lane");
     lane_cv_.wait_for(l, std::chrono::milliseconds(100));
   }
   lane_busy_ = true;
@@ -386,8 +444,9 @@ void NixRunner::release_lane() {
 
 // A folder of the evaluation area named after its contents: written once,
 // then reused by every later Card and run with the same contents.
-stdfs::path NixRunner::content_dir(const char* kind, const std::string& digest,
-                                   const std::function<std::map<std::string, std::string>()>& files) {
+stdfs::path NixRunner::content_dir(
+    const char* kind, const std::string& digest,
+    const std::function<std::map<std::string, std::string>()>& files) {
   auto dir = eval_dir_ / kind / digest.substr(0, 32);
   std::lock_guard<std::mutex> l(dirs_mu_);
   if (written_.count(dir.string())) return dir;
@@ -431,7 +490,8 @@ auto CardBuildPlan::implementation(size_t index) const -> CardBuild {
 auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   const Node& node = *req.node;
   if (req.target.system.empty())
-    throw Failed(FailureKind::unsupported, "execution target system is unknown");
+    throw Failed(FailureKind::unsupported,
+                 "execution target system is unknown");
   // Definition sources from the confirmed snapshot. _card.json and
   // _meta.json are not part of it: Nix gets what it needs from them through
   // the generated files, and settings or descriptions never re-evaluate.
@@ -448,7 +508,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     }
     return content_dir("defs", h.finish_hex(), [&] {
       std::map<std::string, std::string> m;
-      for (const auto& p : paths) m[p.substr(prefix.size())] = svc_.store().read_source(*req.doc, p);
+      for (const auto& p : paths)
+        m[p.substr(prefix.size())] = svc_.store().read_source(*req.doc, p);
       return m;
     });
   };
@@ -462,27 +523,42 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     }
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
-  // The sources a Card names, evaluated apart from it; nothing is fetched for a Card that names none.
+  // The sources a Card names, evaluated apart from it; nothing is fetched for a
+  // Card that names none.
   auto with_sources = [&](const Node& n) {
     auto generated = generate(n);
     std::string sources = "[";
-    auto nix = req.doc->sources.count(n.def_dir + "default.nix") ? svc_.store().read_source(*req.doc, n.def_dir + "default.nix") : std::string();
+    auto nix =
+        req.doc->sources.count(n.def_dir + "default.nix")
+            ? svc_.store().read_source(*req.doc, n.def_dir + "default.nix")
+            : std::string();
     for (const auto& s : n.nix_sources) {
-      if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
+      if (nix.find("sources") == std::string::npos ||
+          nix.find(s.name) == std::string::npos)
+        continue;
       NixCall lookup;
       lookup.system = req.target.system;
       lookup.source_overrides = s.overrides;
       lookup.cancel = req.cancel;
-      if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
+      if (req.timeout_seconds)
+        lookup.deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(*req.timeout_seconds);
       lookup.log = req.log;
       if (req.on_phase) req.on_phase(Phase::evaluate);
       try {
         auto info = evaluator().flake(lookup, s.ref);
-        sources += std::string(sources.size() > 1 ? "," : "") + "{\"name\":\"" + s.name + "\",\"type\":\"" + s.type + "\",\"value\":" + info.json + "}";  // a name and a type are checked when the project is read
+        sources +=
+            std::string(sources.size() > 1 ? "," : "") + "{\"name\":\"" +
+            s.name + "\",\"type\":\"" + s.type + "\",\"value\":" + info.json +
+            "}";  // a name and a type are checked when the project is read
       } catch (const NixInterrupted& e) {
-        throw Failed(e.timed_out ? FailureKind::timeout : FailureKind::cancelled, e.what());
+        throw Failed(
+            e.timed_out ? FailureKind::timeout : FailureKind::cancelled,
+            e.what());
       } catch (const std::runtime_error& e) {
-        throw Failed(FailureKind::nix_failed, "nixSources " + s.name + " for system " + req.target.system + ": " + e.what());
+        throw Failed(FailureKind::nix_failed,
+                     "nixSources " + s.name + " for system " +
+                         req.target.system + ": " + e.what());
       }
     }
     generated["sources.json"] = sources + "]";
@@ -494,11 +570,14 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   if (req.target.kind == WorkerKind::native && !node.settings.system.empty()) {
     emulator = binfmt_interpreter(node.settings.system);
     if (emulator.empty())
-      throw Failed(FailureKind::unsupported,
-                   "system " + node.settings.system + " needs an emulator registered with the kernel (binfmt_misc), " +
-                       "and Nix's extra-platforms to include it: the shared VM on a Mac has qemu-x86_64; " +
-                       "on NixOS, set boot.binfmt.emulatedSystems",
-                   {{"system", node.settings.system}});
+      throw Failed(
+          FailureKind::unsupported,
+          "system " + node.settings.system +
+              " needs an emulator registered with the kernel (binfmt_misc), " +
+              "and Nix's extra-platforms to include it: the shared VM on a Mac "
+              "has qemu-x86_64; " +
+              "on NixOS, set boot.binfmt.emulatedSystems",
+          {{"system", node.settings.system}});
   }
   auto files = with_sources(node);
   files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
@@ -526,7 +605,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     auto k = schema::string_value(path_key(u.path));
     auto deps = schema::capture(dependencies(u));
     if (cards_json.size() > 1) cards_json += ",";
-    cards_json += schema::object_text({{"key", &k}, {"gen", &ugen}, {"def", &udef}, {"deps", &deps}});
+    cards_json += schema::object_text(
+        {{"key", &k}, {"gen", &ugen}, {"def", &udef}, {"deps", &deps}});
   }
   cards_json += "]";
   const auto deps_json = dependencies(node);
@@ -547,20 +627,25 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   auto gen = generated_dir(files);
   auto def = definition_dir(node.def_dir);
   schema::NixpkgsPin pin;
-  if (auto err = schema::decode(files["nixpkgs.json"], pin)) throw Failed(FailureKind::internal_error, err->message);
+  if (auto err = schema::decode(files["nixpkgs.json"], pin))
+    throw Failed(FailureKind::internal_error, err->message);
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
   call.system = req.target.system;
   call.max_implementations = req.max_implementations;
   call.definition_dir = def;
-  call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
-              "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
-              "; card = /. + " + nix_quote(def.string()) + (req.target.kind == WorkerKind::native ? "; }" : "; remote = true; }");
+  call.args =
+      "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " +
+      nix_quote(gen.string()) + "; upstream = /. + " +
+      nix_quote((upstream / "upstream.json").string()) + "; card = /. + " +
+      nix_quote(def.string()) +
+      (req.target.kind == WorkerKind::native ? "; }" : "; remote = true; }");
   call.cancel = req.cancel;
   const auto budget_start = std::chrono::steady_clock::now();
   std::chrono::steady_clock::duration transfer_time{};
-  if (req.timeout_seconds) call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
+  if (req.timeout_seconds)
+    call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
   call.on_phase = [&](bool building) {
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
@@ -581,16 +666,18 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     const auto key = call.evaluation_key();
     const auto card = path_key(node.path);
     std::erase_if(evaluations_, [&](const auto& item) {
-      return std::none_of(graph.nodes.begin(), graph.nodes.end(), [&](const auto& n) {
-        return path_key(n.path) == item.first;
-      });
+      return std::none_of(
+          graph.nodes.begin(), graph.nodes.end(),
+          [&](const auto& n) { return path_key(n.path) == item.first; });
     });
     auto found = evaluations_.find(card);
     if (call.on_phase) call.on_phase(false);
-    if (found != evaluations_.end() && found->second.first == key && evaluator().reuse(call, found->second.second)) {
+    if (found != evaluations_.end() && found->second.first == key &&
+        evaluator().reuse(call, found->second.second)) {
       res = found->second.second;
       if (res.implementation_count > call.max_implementations)
-        throw NixImplementationLimit("input and run list expansion exceeds 256 combinations");
+        throw NixImplementationLimit(
+            "input and run list expansion exceeds 256 combinations");
       res.built = false;
       res.root.clear();
     } else {
@@ -598,36 +685,45 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
       log::info("Card full evaluation " + std::to_string(++full_evaluations_));
       res = evaluator().evaluate(call);
     }
-    if (!req.transport) throw std::runtime_error("execution target has no derivation transport");
+    if (!req.transport)
+      throw std::runtime_error("execution target has no derivation transport");
     const auto transfer_start = std::chrono::steady_clock::now();
     const auto build_deadline = call.deadline;
     call.deadline.reset();
     evaluator().make_available(call, *req.transport, res.derivation);
     transfer_time = std::chrono::steady_clock::now() - transfer_start;
     if (build_deadline) call.deadline = *build_deadline + transfer_time;
-    if (req.target.kind == WorkerKind::native) res = evaluator().realise_native(call, std::move(res));
+    if (req.target.kind == WorkerKind::native)
+      res = evaluator().realise_native(call, std::move(res));
     std::erase_if(evaluations_, [&](const auto& item) {
       return item.second.second.evaluation_epoch != res.evaluation_epoch;
     });
     if (res.evaluation_epoch) {
-      if (evaluations_.size() >= 256 && !evaluations_.contains(card)) evaluations_.erase(evaluations_.begin());
+      if (evaluations_.size() >= 256 && !evaluations_.contains(card))
+        evaluations_.erase(evaluations_.begin());
       evaluations_[card] = {key, res};
     }
   } catch (const NixInterrupted& e) {
     if (e.timed_out)
-      throw Failed(FailureKind::timeout, e.what(), {{"timeout_seconds", std::to_string(req.timeout_seconds.value_or(0))}});
+      throw Failed(FailureKind::timeout, e.what(),
+                   {{"timeout_seconds",
+                     std::to_string(req.timeout_seconds.value_or(0))}});
     throw Failed(FailureKind::cancelled, e.what());
   } catch (const NixImplementationLimit& e) {
-    throw Failed(FailureKind::execution_limit, e.what(), {{"card", path_key(node.path)}});
+    throw Failed(FailureKind::execution_limit, e.what(),
+                 {{"card", path_key(node.path)}});
   } catch (const std::exception& e) {
-    throw Failed(FailureKind::nix_failed, "Card preparation for system " + call.system + ": " + e.what(),
+    throw Failed(FailureKind::nix_failed,
+                 "Card preparation for system " + call.system + ": " + e.what(),
                  {{"card", path_key(node.path)}, {"system", call.system}});
   }
   CardBuildPlan plan;
   plan.execution_list = res.execution_list;
   auto& build = plan.common;
-  build.preparation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - budget_start - transfer_time).count();
+  build.preparation_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - budget_start - transfer_time)
+          .count();
   build.derivation = std::move(res.derivation);
   build.environment.derivation = build.derivation.path;
   build.environment.manifest = build.derivation.output;
@@ -638,21 +734,32 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   }
   schema::CardManifest manifest;
   if (auto error = schema::decode(res.manifest, manifest))
-    throw Failed(FailureKind::nix_failed, "the Card manifest is invalid: " + error->message);
+    throw Failed(FailureKind::nix_failed,
+                 "the Card manifest is invalid: " + error->message);
   const auto* one = schema::get(manifest.run);
   const auto* many = schema::get(manifest.runs);
-  if (res.execution_list && many && !one) plan.implementations = *many;
-  else if (!res.execution_list && one && !many) plan.implementations.push_back(*one);
-  else throw Failed(FailureKind::nix_failed, "the Card manifest run shape does not match the evaluated plan");
+  if (res.execution_list && many && !one)
+    plan.implementations = *many;
+  else if (!res.execution_list && one && !many)
+    plan.implementations.push_back(*one);
+  else
+    throw Failed(
+        FailureKind::nix_failed,
+        "the Card manifest run shape does not match the evaluated plan");
   if (plan.implementations.size() != res.implementation_count)
-    throw Failed(FailureKind::nix_failed, "the Card manifest has a different implementation count");
+    throw Failed(FailureKind::nix_failed,
+                 "the Card manifest has a different implementation count");
   for (const auto& run : plan.implementations)
-    if ((schema::get(run.package) != nullptr) == (schema::get(run.bash) != nullptr))
-      throw Failed(FailureKind::nix_failed, "each Card implementation needs exactly one package or Bash body");
+    if ((schema::get(run.package) != nullptr) ==
+        (schema::get(run.bash) != nullptr))
+      throw Failed(
+          FailureKind::nix_failed,
+          "each Card implementation needs exactly one package or Bash body");
   const auto* shell = schema::get(manifest.shell);
   const auto* path = schema::get(manifest.path);
   if (!shell || shell->empty() || !path || path->empty())
-    throw Failed(FailureKind::nix_failed, "the Card manifest lacks its shell or PATH");
+    throw Failed(FailureKind::nix_failed,
+                 "the Card manifest lacks its shell or PATH");
   build.shell = *shell;
   build.path = *path;
   build.emulator = emulator;
@@ -665,7 +772,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   return plan;
 }
 
-SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node, uint64_t rev) {
+SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node,
+                              uint64_t rev) {
   SDKJob job;
   job.op_id = op_id;
   job.card = node.path;
@@ -675,7 +783,9 @@ SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node, uint64
     schema::SdkJobJson o;
     *o.card = j.card;
     *o.rev = j.rev;
-    *o.state = j.state == SDKJob::State::Ready ? "ready" : j.state == SDKJob::State::Failed ? "failed" : "pending";
+    *o.state = j.state == SDKJob::State::Ready    ? "ready"
+               : j.state == SDKJob::State::Failed ? "failed"
+                                                  : "pending";
     for (const auto& [p, h, s] : j.files) {
       schema::SdkFileJson f;
       *f.path = p;
@@ -697,7 +807,8 @@ SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node, uint64
       auto files = generate(copy);
       for (const auto& [name, content] : files) {
         fs::write_atomic(dir / "files" / name, content, 0444);
-        job.files.emplace_back(".sdk/" + job.op_id + "/" + name, crypto::sha256_hex(content), content.size());
+        job.files.emplace_back(".sdk/" + job.op_id + "/" + name,
+                               crypto::sha256_hex(content), content.size());
       }
       job.state = SDKJob::State::Ready;
     } catch (const Failed& f) {
@@ -731,7 +842,8 @@ bool NixRunner::sdk_jobs_active() {
   return false;
 }
 
-std::optional<std::string> NixRunner::sdk_file(const std::string& path, std::optional<uint64_t> rev) {
+std::optional<std::string> NixRunner::sdk_file(const std::string& path,
+                                               std::optional<uint64_t> rev) {
   if (!path.starts_with(".sdk/")) return std::nullopt;
   auto rest = path.substr(5);
   auto slash = rest.find('/');
@@ -742,9 +854,11 @@ std::optional<std::string> NixRunner::sdk_file(const std::string& path, std::opt
   for (const auto& [p, _, __] : job->files) listed |= p == path;
   if (!listed) return std::nullopt;
   if (rev && *rev != job->rev)
-    throw Failed(FailureKind::revision_conflict, "the SDK was prepared for revision " + std::to_string(job->rev) +
-                                                     "; prepare it again");
-  return fs::read_file(svc_.store().state_dir() / "sdk" / job->op_id / "files" / rest.substr(slash + 1));
+    throw Failed(FailureKind::revision_conflict,
+                 "the SDK was prepared for revision " +
+                     std::to_string(job->rev) + "; prepare it again");
+  return fs::read_file(svc_.store().state_dir() / "sdk" / job->op_id / "files" /
+                       rest.substr(slash + 1));
 }
 
 CacheClearOutcome NixRunner::clear_cache() {
@@ -755,8 +869,10 @@ CacheClearOutcome NixRunner::clear_cache() {
     if (!stdfs::exists(p, ec)) return;
     out.freed_bytes += fs::directory_size(p);
     stdfs::remove_all(p, ec);
-    if (ec) out.retained.push_back(label);
-    else out.deleted.push_back(label);
+    if (ec)
+      out.retained.push_back(label);
+    else
+      out.deleted.push_back(label);
   };
   // This project's GC roots: its builds become garbage for the shared store's
   // own cleanup (an app setting), which is never run from here.
@@ -773,12 +889,16 @@ CacheClearOutcome NixRunner::clear_cache() {
   remove(state / "sdk", "sdk");
   std::error_code ec;
   if (stdfs::is_directory(state / "runs", ec)) {
-    // A folder going away meanwhile (a run's files deleted) ends the listing, never the clearing.
+    // A folder going away meanwhile (a run's files deleted) ends the listing,
+    // never the clearing.
     for (const auto& run : stdfs::directory_iterator(state / "runs", ec)) {
-      remove(run.path() / "build", "runs/" + run.path().filename().string() + "/build");
-      remove(run.path() / "defs", "runs/" + run.path().filename().string() + "/defs");
+      remove(run.path() / "build",
+             "runs/" + run.path().filename().string() + "/build");
+      remove(run.path() / "defs",
+             "runs/" + run.path().filename().string() + "/defs");
       if (stdfs::exists(run.path() / "artifacts", ec))
-        out.retained.push_back("runs/" + run.path().filename().string() + "/artifacts");
+        out.retained.push_back("runs/" + run.path().filename().string() +
+                               "/artifacts");
     }
   }
   out.retained.push_back("history");

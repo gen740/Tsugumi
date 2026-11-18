@@ -32,7 +32,8 @@ TEST(HostStateFormat, AnotherFormatIsRefusedWithoutChangingState) {
     host::PrepareStateDirectory(state);
     FAIL() << "Another format must be refused";
   } catch (const host::StateFormatError& error) {
-    EXPECT_EQ(error.directory, std::filesystem::absolute(state).lexically_normal());
+    EXPECT_EQ(error.directory,
+              std::filesystem::absolute(state).lexically_normal());
   }
   EXPECT_EQ(fs::read_file_or_throw(state / "format"), "999999\n");
   EXPECT_EQ(fs::read_file_or_throw(state / "host.sqlite"),

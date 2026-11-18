@@ -16,11 +16,11 @@
 #include <utility>
 #include <vector>
 
-#include "model.hh"
 #include "log_policy.hh"
+#include "model.hh"
 #include "nix.hh"
-#include "tsugumi/workerd/worker_execution.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
 
@@ -66,7 +66,8 @@ struct ExecutionRequest {
   // required outputs, their types and their paths. Throws Failed on rejection.
   std::function<void(const ExecutionResult&)> validate = {};
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
-  std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)> transfer = {};
+  std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)>
+      transfer = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.
@@ -93,7 +94,8 @@ class ExecutionService {
   // Checks that the invocation can run here and configures the backend's
   // part of `build` (worker kind, target system and closure transport). Called
   // before the Card is evaluated, for every activation.
-  virtual auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  virtual auto prepare(const Node& node, const std::filesystem::path& directory,
+                       BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> = 0;
 };
 
@@ -102,7 +104,8 @@ class LocalExecutionService final : public ExecutionService {
   LocalExecutionService(Service& service, std::filesystem::path scratch_root);
 
   auto reuses_builds() const -> bool override { return true; }
-  auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  auto prepare(const Node& node, const std::filesystem::path& directory,
+               BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;
   // Runs the invocation directly on the connection workerd lends this Card.
   auto run(const ExecutionRequest& request) -> ExecutionResult;

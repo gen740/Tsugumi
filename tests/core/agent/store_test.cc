@@ -1,6 +1,7 @@
 #include "agent/store.hh"
 
 #include <gtest/gtest.h>
+
 #include <algorithm>
 #include <utility>
 
@@ -73,8 +74,8 @@ TEST_F(ConversationStoreTest,
   Create("nested");
   ModelServer model;
   host::Settings settings(
-      directory.path, [](const auto &, const auto &) {},
-      [](const auto &, auto) { return ""; }, [](const auto &) { return true; },
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
       nullptr, host::Settings::KeyStorage::Host);
   H::ProviderSetRequestT provider;
   provider.profile = "desktop";
@@ -84,7 +85,7 @@ TEST_F(ConversationStoreTest,
   provider.provider->model = "fixture";
   H::RequestT request;
   request.value.Set(std::move(provider));
-  WithRequest(request, [&](const auto &value) { settings.Handle(value, 1); });
+  WithRequest(request, [&](const auto& value) { settings.Handle(value, 1); });
   agent::Providers providers(gate, home.db, settings);
   providers.Configure(
       "nested",
@@ -94,10 +95,10 @@ TEST_F(ConversationStoreTest,
   std::condition_variable_any changed;
   host::Access access(
       gate, home.db, registry, *store, stopping,
-      {[](const auto &, const auto &) {}, [](const auto &, const auto &) {}});
+      {[](const auto&, const auto&) {}, [](const auto&, const auto&) {}});
   agent::Turns::Dependencies turn_dependencies;
   turn_dependencies.scrub = [](std::string text) { return text; };
-  turn_dependencies.event = [](const auto &, const auto &) {};
+  turn_dependencies.event = [](const auto&, const auto&) {};
   agent::Turns turns(gate, home.db, *store, providers, settings, shutdown,
                      stopping, changed, access, std::move(turn_dependencies));
   host::DemoReferences demos(directory.path / "demos");
@@ -106,20 +107,19 @@ TEST_F(ConversationStoreTest,
   size_t children_started = 0;
   agent::Tools::Dependencies dependencies;
   dependencies.scrub = [](std::string text) { return text; };
-  dependencies.event = [](const auto &, const auto &) {};
+  dependencies.event = [](const auto&, const auto&) {};
   dependencies.helper_result = agent::Helpers::HelperResult;
-  dependencies.run_helper = [&](const auto &conversation, const auto &call,
-                                size_t task, const auto &spec,
+  dependencies.run_helper = [&](const auto& conversation, const auto& call,
+                                size_t task, const auto& spec,
                                 std::stop_token stop,
-                                const auto &authorization) {
+                                const auto& authorization) {
     ++children_started;
     const auto result =
         helpers->RunHelper(conversation, call, task, spec, stop, authorization);
     // Inject the interruption at the exact durability boundary: the real
     // child's result is committed, but ExecuteTool has not returned it to the
     // parent's Runtime, so no tool_result can have been checkpointed there.
-    if (std::exchange(interrupt, false))
-      throw agent::Cancelled();
+    if (std::exchange(interrupt, false)) throw agent::Cancelled();
     return result;
   };
   agent::Tools tools(gate, home.db, *store, providers, settings, demos, turns,
@@ -127,7 +127,7 @@ TEST_F(ConversationStoreTest,
   helpers = std::make_unique<agent::Helpers>(
       gate, *store, providers, settings, tools, turns, access,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
-                                   [](const auto &, const auto &) {}});
+                                   [](const auto&, const auto&) {}});
   const auto parent = ::tsugumi::json::Object(
       R"({"read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1})");
   const auto boundary = [&] {
@@ -150,7 +150,8 @@ TEST_F(ConversationStoreTest,
   const auto saved = store->GetConversation("nested").messages;
   EXPECT_EQ(saved.find("tool_result"), std::string::npos);
   auto child = home.db.prepare(
-      "SELECT state,result,parent_call FROM helpers WHERE conversation='nested'");
+      "SELECT state,result,parent_call FROM helpers WHERE "
+      "conversation='nested'");
   ASSERT_TRUE(child.step());
   EXPECT_EQ(child.text(0), "completed");
   EXPECT_NE(child.text(1).find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
@@ -164,7 +165,7 @@ TEST_F(ConversationStoreTest,
   helpers = std::make_unique<agent::Helpers>(
       gate, *store, providers, settings, tools, turns, access,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
-                                    [](const auto&, const auto&) {}});
+                                   [](const auto&, const auto&) {}});
   messages = agent::ParseMessages(store->GetConversation("nested").messages);
   model.Queue(AnthropicTool("over-budget", "delegate", task));
   model.Queue(AnthropicText("Parent recovered and retained its count."));
@@ -564,11 +565,11 @@ TEST(AgentPresentation, GroupsRetriesAndKeepsTasksAndApprovalsAtTheirCall) {
   ASSERT_EQ(helper.children.size(), 2u);
   EXPECT_EQ(helper.children[0]->kind, "step");
   EXPECT_EQ(conversation.rows[2]->text, "Later answer");
-  conversation.helpers.front()->result_json = R"({"error":"Provider unavailable"})";
+  conversation.helpers.front()->result_json =
+      R"({"error":"Provider unavailable"})";
   const auto failed = agent::Presentation(conversation);
   EXPECT_EQ(failed[1]->failed, 1u);
   EXPECT_EQ(failed[1]->children[4]->state, "failed");
-
 }
 TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
@@ -594,21 +595,21 @@ TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
     A::ConversationT conversation;
     auto call = std::make_unique<A::ModelMessageT>();
     call->role = "assistant";
-    call->content_json =
-        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
-            ::tsugumi::json::Members{{"type", "\"tool_use\""},
-                                 {"id", "\"bad\""},
-                                 {"name", ::tsugumi::json::Quote(name)},
-                                 {"input", ::tsugumi::json::Quote(arguments)}})});
+    call->content_json = ::tsugumi::json::Encode(std::vector<std::string>{
+        ::tsugumi::json::Encode(::tsugumi::json::Members{
+            {"type", "\"tool_use\""},
+            {"id", "\"bad\""},
+            {"name", ::tsugumi::json::Quote(name)},
+            {"input", ::tsugumi::json::Quote(arguments)}})});
     conversation.archive.push_back(std::move(call));
     auto result = std::make_unique<A::ModelMessageT>();
     result->role = "user";
-    result->content_json =
-        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
-            ::tsugumi::json::Members{{"type", "\"tool_result\""},
-                                 {"tool_use_id", "\"bad\""},
-                                 {"is_error", "true"},
-                                 {"content", ::tsugumi::json::Quote(raw)}})});
+    result->content_json = ::tsugumi::json::Encode(std::vector<std::string>{
+        ::tsugumi::json::Encode(::tsugumi::json::Members{
+            {"type", "\"tool_result\""},
+            {"tool_use_id", "\"bad\""},
+            {"is_error", "true"},
+            {"content", ::tsugumi::json::Quote(raw)}})});
     conversation.messages.push_back(std::move(result));
     const auto rows = agent::Presentation(conversation);
     ASSERT_EQ(rows.size(), 1u);
@@ -646,7 +647,8 @@ TEST(AgentPresentation, PlainToolErrorsKeepTheirDiagnosticInTheSummary) {
   EXPECT_NE(row.summary_ja.find("PLAIN_DIAGNOSTIC"), std::string::npos);
 }
 
-TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveNames) {
+TEST(AgentPresentation,
+     DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveNames) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"user","display":"$review","content":[{"type":"text","text":"internal"}]},
     {"role":"assistant","content":[{"type":"text","text":"later"}]}],
@@ -656,7 +658,8 @@ TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveN
   EXPECT_EQ(conversation.rows[1]->name, "review");
   EXPECT_EQ(conversation.rows[1]->text, "findings");
   EXPECT_EQ(conversation.rows[2]->text, "later");
-  const auto queued = agent::wire::Conversation(R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"delegation","name":"delegate","input":"{\"tasks\":[{\"name\":\"Queued review\",\"instruction\":\"Read a\",\"read_cards\":[\"a\"],\"write_cards\":[],\"run_cards\":[]}]}"}]}]})");
+  const auto queued = agent::wire::Conversation(
+      R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"delegation","name":"delegate","input":"{\"tasks\":[{\"name\":\"Queued review\",\"instruction\":\"Read a\",\"read_cards\":[\"a\"],\"write_cards\":[],\"run_cards\":[]}]}"}]}]})");
   ASSERT_EQ(queued.rows.size(), 1u);
   ASSERT_EQ(queued.rows[0]->children.size(), 2u);
   EXPECT_EQ(queued.rows[0]->children[1]->name, "Queued review");
@@ -665,9 +668,10 @@ TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveN
 TEST(AgentPresentation, TasksOfADelegateThatEndedInAnErrorAreNotLeftQueued) {
   std::string tasks;
   for (int i = 0; i < 9; ++i)
-    tasks += std::string(i ? "," : "") + R"({\"name\":\"helper-)" +
-             std::to_string(i) +
-             R"(\",\"instruction\":\"Do a bounded task.\",\"read_cards\":[],\"write_cards\":[],\"run_cards\":[]})";
+    tasks +=
+        std::string(i ? "," : "") + R"({\"name\":\"helper-)" +
+        std::to_string(i) +
+        R"(\",\"instruction\":\"Do a bounded task.\",\"read_cards\":[],\"write_cards\":[],\"run_cards\":[]})";
   // Refused as a whole (over the limit of eight): no task ever started.
   const auto refused = agent::wire::Conversation(
       R"({"id":"s","messages":[
@@ -727,7 +731,8 @@ TEST(AgentPresentation, AHelpersCompactedOperationsStayInItsSteps) {
   EXPECT_EQ(helper.failed, 1u);
   EXPECT_EQ(helper.children[1]->text, "Reviewed");
   // What moves to the archive is exactly what a compaction displaced.
-  const auto message = [](std::string role, std::string type, bool summary = false) {
+  const auto message = [](std::string role, std::string type,
+                          bool summary = false) {
     agent::ContentBlock block;
     block.type = std::move(type);
     block.text = "text";
@@ -738,7 +743,7 @@ TEST(AgentPresentation, AHelpersCompactedOperationsStayInItsSteps) {
     return value;
   };
   const std::vector<agent::Message> before{
-      message("user", "text", true), message("assistant", "tool_use"),
+      message("user", "text", true),  message("assistant", "tool_use"),
       message("user", "tool_result"), message("assistant", "tool_use"),
       message("user", "tool_result"), message("assistant", "tool_use"),
       message("user", "tool_result")};
@@ -756,8 +761,8 @@ TEST(AgentPresentation, AHelpersCompactedOperationsStayInItsSteps) {
   longer.push_back(message("assistant", "text"));
   EXPECT_TRUE(agent::Helpers::Displaced(after, longer).empty());
   EXPECT_TRUE(agent::Helpers::Displaced(after, after).empty());
-  const auto shortened = agent::Helpers::Displaced(
-      before, {before.begin(), before.begin() + 4});
+  const auto shortened =
+      agent::Helpers::Displaced(before, {before.begin(), before.begin() + 4});
   ASSERT_EQ(shortened.size(), 3u);
   EXPECT_EQ(shortened[0].content[0].type, "tool_result");
   EXPECT_EQ(shortened[1].content[0].type, "tool_use");
@@ -787,18 +792,22 @@ TEST(AgentPresentation, AReadRetryAfterAnExplanationRecoversTheOriginalStep) {
   EXPECT_EQ(conversation.rows[0]->failed, 0u);
   EXPECT_EQ(conversation.rows[0]->recovered, 1u);
 }
-TEST(AgentPresentation, ExternalTasksApprovalsAndReceiptsDoNotRestoreAsAnEmptyPanel) {
-  const auto task = agent::wire::Conversation(R"({"id":"s","helpers":[{"call_id":"external","task":0,"anchor":0,"spec":{"name":"External review","instruction":"Review","read_cards":[],"write_cards":[],"run_cards":[]},"messages":[],"state":"running"}],"tools":[{"id":"approval:external","name":"operation_approval","state":"pending","result":"Awaiting approval"}]})");
+TEST(AgentPresentation,
+     ExternalTasksApprovalsAndReceiptsDoNotRestoreAsAnEmptyPanel) {
+  const auto task = agent::wire::Conversation(
+      R"({"id":"s","helpers":[{"call_id":"external","task":0,"anchor":0,"spec":{"name":"External review","instruction":"Review","read_cards":[],"write_cards":[],"run_cards":[]},"messages":[],"state":"running"}],"tools":[{"id":"approval:external","name":"operation_approval","state":"pending","result":"Awaiting approval"}]})");
   ASSERT_EQ(task.rows.size(), 2u);
   EXPECT_EQ(task.rows[0]->name, "External review");
   EXPECT_EQ(task.rows[1]->name, "operation_approval");
-  const auto receipt = agent::wire::Conversation(R"({"id":"s","tools":[{"id":"external","name":"core","state":"completed","result":"saved"}]})");
+  const auto receipt = agent::wire::Conversation(
+      R"({"id":"s","tools":[{"id":"external","name":"core","state":"completed","result":"saved"}]})");
   ASSERT_EQ(receipt.rows.size(), 1u);
   ASSERT_EQ(receipt.rows[0]->children.size(), 1u);
   EXPECT_EQ(receipt.rows[0]->children[0]->result, "saved");
 }
 TEST(AgentPresentation, ResultsKeepTheirCallIdsAcrossTheArchiveBoundary) {
-  const auto conversation = agent::wire::Conversation(R"({"id":"s","archive":[{"role":"assistant","content":[
+  const auto conversation = agent::wire::Conversation(
+      R"({"id":"s","archive":[{"role":"assistant","content":[
     {"type":"tool_use","id":"a","name":"project_file_read","input":"{\"path\":\"a\"}"},
     {"type":"tool_use","id":"b","name":"project_file_read","input":"{\"path\":\"b\"}"}]}],
     "messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"missing","content":"ignore"},
@@ -812,7 +821,8 @@ TEST(AgentPresentation, ResultsKeepTheirCallIdsAcrossTheArchiveBoundary) {
   EXPECT_EQ(conversation.rows[0]->children[1]->result, "B read");
   EXPECT_EQ(conversation.rows[0]->children[1]->state, "completed");
 }
-TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvocation) {
+TEST(AgentPresentation,
+     LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvocation) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":[\"outer\",\"a\"]}}"}]},
     {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"12\"}}}"}]},
@@ -823,14 +833,16 @@ TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvoc
   std::vector<std::string> run_links, log_links;
   for (const auto& link : calls[0]->links) run_links.push_back(link->url);
   for (const auto& link : calls[1]->links) log_links.push_back(link->url);
-  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "card:outer/a"), run_links.end());
+  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "card:outer/a"),
+            run_links.end());
   EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:12"),
             run_links.end());
   EXPECT_NE(std::find(log_links.begin(), log_links.end(),
                       "log:12/outer/a?invocation=2&stream=stderr&offset=16"),
             log_links.end());
 }
-TEST(AgentPresentation, InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSnapshot) {
+TEST(AgentPresentation,
+     InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSnapshot) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":null}}"},{"type":"tool_use","id":"save","name":"project_save","input":"{\"changes\":{}}"}]},
     {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"Invalid Card path","is_error":true},{"type":"tool_result","tool_use_id":"save","content":"Invalid changes","is_error":true}]}]})");
@@ -840,11 +852,14 @@ TEST(AgentPresentation, InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSna
   EXPECT_EQ(conversation.rows[0]->children[0]->result, "Invalid Card path");
   EXPECT_EQ(conversation.rows[0]->children[1]->result, "Invalid changes");
 }
-TEST(AgentPresentation, ProviderSearchSourcesStayReadableAndKeepTheirExactUrls) {
-  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"web_search","id":"search","query":"science","sources":[{"title":"Paper","url":"https://example.test/paper"}]}]}]})");
+TEST(AgentPresentation,
+     ProviderSearchSourcesStayReadableAndKeepTheirExactUrls) {
+  const auto conversation = agent::wire::Conversation(
+      R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"web_search","id":"search","query":"science","sources":[{"title":"Paper","url":"https://example.test/paper"}]}]}]})");
   ASSERT_EQ(conversation.rows.size(), 1u);
   ASSERT_EQ(conversation.rows[0]->children.size(), 1u);
-  EXPECT_EQ(conversation.rows[0]->children[0]->result, "Paper — https://example.test/paper");
+  EXPECT_EQ(conversation.rows[0]->children[0]->result,
+            "Paper — https://example.test/paper");
 }
 TEST(AgentPresentation, AccessGroupsKeepProjectChoicesAndRequiredOperation) {
   const std::vector<std::string> asked{

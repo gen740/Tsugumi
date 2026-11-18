@@ -37,7 +37,8 @@ struct ProjectRegistry {
       -> void;
   auto RegisterFolder(const Tsugumi::Host::RegisterFolderRequest& request)
       -> void;
-  auto AttachedRoot(const std::string& project, const std::string& folder) -> std::string;
+  auto AttachedRoot(const std::string& project, const std::string& folder)
+      -> std::string;
   auto RegisterReady(const Tsugumi::Host::EnvironmentStateT& state) -> void;
   auto UnregisterEnvironment(const std::string& key) -> void;
 

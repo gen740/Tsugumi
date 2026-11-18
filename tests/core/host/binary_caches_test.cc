@@ -1,19 +1,20 @@
 #include "host/binary_caches.hh"
 
-#include <cstdio>
-#include <cstdlib>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <signal.h>
 #include <unistd.h>
+
+#include <cstdio>
+#include <cstdlib>
 #ifdef __APPLE__
 #include <crt_externs.h>
 #endif
-#include "tsugumi/util/process.hh"
 #include <filesystem>
 
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/process.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -27,11 +28,11 @@ auto Cache(std::string url = "https://cache.example.org/team") -> j::Members {
           {"username", "\"\""},
           {"password", "\"\""}};
 }
-auto List(const j::Members &cache) -> std::string {
+auto List(const j::Members& cache) -> std::string {
   return j::Encode(std::vector<std::string>{j::Encode(cache)});
 }
 class BinaryCaches : public testing::Test {
-protected:
+ protected:
   void SetUp() override {
     std::string pattern =
         (std::filesystem::temp_directory_path() / "binary-caches-XXXXXX")
@@ -43,7 +44,7 @@ protected:
   std::filesystem::path root;
 };
 TEST_F(BinaryCaches, RejectsInjectedSettingsAndCredentials) {
-  for (const auto *url :
+  for (const auto* url :
        {"file:///tmp/cache", "https://user:secret@example.org",
         "https://example.org?token=x", "https://example.org\ntrusted-users = *",
         "https://example.org/#fragment"})
@@ -78,10 +79,10 @@ TEST_F(BinaryCaches, StoresPrivateSettingsAndFreezesBootSnapshot) {
   EXPECT_EQ(snapshot.configuration.find("secret-for-test"), std::string::npos);
   EXPECT_EQ(snapshot.netrc,
             "machine cache.example.org login token password secret-for-test\n");
-  EXPECT_EQ(std::filesystem::status(root / "binary-caches.json").permissions() &
-                std::filesystem::perms::mask,
-            std::filesystem::perms::owner_read |
-                std::filesystem::perms::owner_write);
+  EXPECT_EQ(
+      std::filesystem::status(root / "binary-caches.json").permissions() &
+          std::filesystem::perms::mask,
+      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
   SaveBinaryCaches(root, "[]");
   EXPECT_EQ(snapshot.netrc,
             "machine cache.example.org login token password secret-for-test\n");
@@ -95,7 +96,7 @@ TEST_F(BinaryCaches, InvalidSettingsApplyNothingAndNeverEchoCredentials) {
   auto bad = Cache("https://other.example.org/team");
   bad["id"] = j::Quote("01234567-89ab-cdef-0123-456789abcdee");
   bad["publicKey"] = j::Quote("research:not-a-key");
-  for (const auto &json :
+  for (const auto& json :
        {j::Encode(std::vector<std::string>{j::Encode(good), j::Encode(bad)}),
         std::string("{\"secret-for-test\":"), std::string("{}")}) {
     fs::write_atomic(root / "binary-caches.json", json, 0600);
@@ -108,8 +109,8 @@ TEST_F(BinaryCaches, InvalidSettingsApplyNothingAndNeverEchoCredentials) {
     EXPECT_EQ(snapshot.problem.find("secret-for-test"), std::string::npos);
   }
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
@@ -129,11 +130,11 @@ TEST_F(BinaryCaches, OneHostHasOneCredential) {
   second["password"] = first["password"];
   EXPECT_NO_THROW(ValidateBinaryCaches(list()));
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 #ifndef __APPLE__
-extern char **environ;
+extern char** environ;
 #endif
 namespace tsugumi::host {
 namespace {
@@ -150,12 +151,11 @@ TEST_F(BinaryCaches, NixDownloadsFromAPrivateCacheWithTheHostSnapshot) {
   proc::Spec spec;
   spec.argv = {"/usr/bin/env", "python3", TSUGUMI_CACHE_PROBE, "--interactive"};
 #ifdef __APPLE__
-  auto **environment = *_NSGetEnviron();
+  auto** environment = *_NSGetEnviron();
 #else
-  auto **environment = ::environ;
+  auto** environment = ::environ;
 #endif
-  for (; *environment; ++environment)
-    spec.env.emplace_back(*environment);
+  for (; *environment; ++environment) spec.env.emplace_back(*environment);
   spec.fds = {{0, input[0]}};
   spec.stdout_fd = output[1];
   spec.stderr_fd = stderr_fd;
@@ -174,8 +174,7 @@ TEST_F(BinaryCaches, NixDownloadsFromAPrivateCacheWithTheHostSnapshot) {
   } process{child};
   std::string offered;
   char byte;
-  while (::read(output[0], &byte, 1) == 1 && byte != '\n')
-    offered += byte;
+  while (::read(output[0], &byte, 1) == 1 && byte != '\n') offered += byte;
   ASSERT_FALSE(offered.empty()) << fs::read_file_or_throw(errors);
   auto cache = j::Object(offered);
   cache["id"] = Cache().at("id");
@@ -192,8 +191,7 @@ TEST_F(BinaryCaches, NixDownloadsFromAPrivateCacheWithTheHostSnapshot) {
             static_cast<ssize_t>(request.size()));
   ::close(input[1]);
   std::string rest;
-  while (::read(output[0], &byte, 1) == 1)
-    rest += byte;
+  while (::read(output[0], &byte, 1) == 1) rest += byte;
   ::close(output[0]);
   const auto status = proc::wait(child);
   process.pid = -1;
@@ -202,5 +200,5 @@ TEST_F(BinaryCaches, NixDownloadsFromAPrivateCacheWithTheHostSnapshot) {
       rest.find("private cache used only with the snapshot's credentials"),
       std::string::npos);
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host

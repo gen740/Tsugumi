@@ -2,10 +2,10 @@
 
 #include <algorithm>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;

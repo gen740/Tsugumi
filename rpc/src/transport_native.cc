@@ -1,4 +1,3 @@
-#include <span>
 #include <curl/curl.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -17,6 +16,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -590,7 +590,8 @@ class NativeTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport> {
   if (options.max_frame_bytes == 0 || options.max_frame_bytes > UINT32_MAX ||
       options.max_queued_bytes < options.max_frame_bytes ||
       options.connect_timeout.count() <= 0)

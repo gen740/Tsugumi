@@ -4,7 +4,6 @@
 
 #include "agent/context.hh"
 #include "agent/helper_scope.hh"
-#include "tsugumi/util/json_object.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
 #include "agent/tools.hh"
@@ -13,6 +12,7 @@
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 using host::Failure;
@@ -135,11 +135,10 @@ auto Helpers::RunHelper(const std::string& conversation,
                                      : std::vector<std::string>{authorization};
       messages.push_back(
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
-      auto insert =
-          conversations->ConversationDatabase(conversation)
-              .prepare(
-                  "INSERT INTO helpers "
-                  "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
+      auto insert = conversations->ConversationDatabase(conversation)
+                        .prepare(
+                            "INSERT INTO helpers "
+                            "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))

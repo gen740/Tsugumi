@@ -8,9 +8,9 @@
 #include <memory>
 
 #include "agent/catalog.hh"
-#include "tsugumi/util/json_object.hh"
 #include "host/layout_saving.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -35,17 +35,17 @@ TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
   }
 }
 
-auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
+auto SceneFixture(const ::tsugumi::json::Members& value) -> H::LayoutSceneT {
   namespace json = ::tsugumi::json;
   H::LayoutSceneT scene;
   scene.flow = json::Text(value, "flow");
   scene.grid = std::stod(json::Get(value, "grid", "0"));
   scene.snap = json::Bool(json::Get(value, "snap", "false"));
-  auto coordinate = [&](const auto &fields, const auto &key) {
+  auto coordinate = [&](const auto& fields, const auto& key) {
     return std::stod(json::Get(fields, key, "0"));
   };
-  auto ports = [&](const std::string &raw, auto &result) {
-    for (const auto &item : json::Array(raw)) {
+  auto ports = [&](const std::string& raw, auto& result) {
+    for (const auto& item : json::Array(raw)) {
       const auto fields = json::Object(item);
       auto port = std::make_unique<H::LayoutPortT>();
       port->name = json::Text(fields, "name");
@@ -54,7 +54,7 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
       result.push_back(std::move(port));
     }
   };
-  for (const auto &raw : json::Array(json::Get(value, "cards", "[]"))) {
+  for (const auto& raw : json::Array(json::Get(value, "cards", "[]"))) {
     const auto fields = json::Object(raw);
     auto card = std::make_unique<H::LayoutCardT>();
     card->id = json::Text(fields, "id");
@@ -67,7 +67,7 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
     ports(json::Get(fields, "outputs", "[]"), card->outputs);
     scene.cards.push_back(std::move(card));
   }
-  for (const auto &raw : json::Array(json::Get(value, "wires", "[]"))) {
+  for (const auto& raw : json::Array(json::Get(value, "wires", "[]"))) {
     const auto fields = json::Object(raw);
     auto wire = std::make_unique<H::LayoutWireT>();
     wire->from = json::Text(fields, "from");
@@ -76,8 +76,8 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
     wire->to_port = json::Text(fields, "toPort");
     scene.wires.push_back(std::move(wire));
   }
-  auto boxes = [&](const auto &field, auto &result) {
-    for (const auto &raw : json::Array(json::Get(value, field, "[]"))) {
+  auto boxes = [&](const auto& field, auto& result) {
+    for (const auto& raw : json::Array(json::Get(value, field, "[]"))) {
       const auto fields = json::Object(raw);
       auto box = std::make_unique<H::LayoutBoxT>();
       box->id = json::Text(fields, "id");
@@ -90,9 +90,8 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
   };
   boxes("frames", scene.frames);
   boxes("notes", scene.notes);
-  auto bar = [&](const auto &side, auto &result) {
-    if (!value.contains(side))
-      return;
+  auto bar = [&](const auto& side, auto& result) {
+    if (!value.contains(side)) return;
     result = std::make_unique<H::LayoutBarT>();
     const auto fields = json::Object(value.at(side));
     if (fields.contains("at")) {
@@ -100,7 +99,7 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
       result->x = coordinate(at, "x");
       result->y = coordinate(at, "y");
     }
-    for (const auto &raw : json::Array(json::Get(fields, "ends", "[]"))) {
+    for (const auto& raw : json::Array(json::Get(fields, "ends", "[]"))) {
       const auto end = json::Object(raw);
       auto item = std::make_unique<H::LayoutBarEndT>();
       item->name = json::Text(end, "name");
@@ -115,20 +114,20 @@ auto SceneFixture(const ::tsugumi::json::Members &value) -> H::LayoutSceneT {
 }
 TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
   namespace json = ::tsugumi::json;
-  for (const auto &raw : json::Array(fs::read_file_or_throw(
+  for (const auto& raw : json::Array(fs::read_file_or_throw(
            std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-golden.json"))) {
     const auto value = json::Object(raw);
     SCOPED_TRACE(json::Text(value, "name"));
     const auto scene =
         MeasuredScene(SceneFixture(json::Object(value.at("scene"))));
     std::vector<std::string> around;
-    for (const auto &id : json::Array(json::Get(value, "around", "[]")))
+    for (const auto& id : json::Array(json::Get(value, "around", "[]")))
       around.push_back(json::String(id));
     const auto proposal = json::Text(value, "request") == "arrange"
                               ? layout::arrange(scene)
                               : layout::untangle(scene, around);
     const auto expected = json::Object(value.at("expect"));
-    auto places = [&](const auto &got, const auto &field) {
+    auto places = [&](const auto& got, const auto& field) {
       const auto wanted = json::Array(expected.at(field));
       ASSERT_EQ(got.size(), wanted.size());
       for (size_t i = 0; i < got.size(); ++i) {
@@ -146,9 +145,9 @@ TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
     for (size_t i = 0; i < orders.size(); ++i) {
       const auto order = json::Object(orders[i]);
       EXPECT_EQ(proposal.port_orders[i].id, json::Text(order, "id"));
-      auto names = [&](const auto &side) {
+      auto names = [&](const auto& side) {
         std::vector<std::string> result;
-        for (const auto &port : json::Array(order.at(side)))
+        for (const auto& port : json::Array(order.at(side)))
           result.push_back(json::String(port));
         return result;
       };
@@ -185,8 +184,8 @@ TEST(HostLayout, SavingClientRemovesOnlyDeletedCardReferences) {
   EXPECT_TRUE(::tsugumi::json::Object(result.at("cards")).contains("ab"));
   EXPECT_TRUE(::tsugumi::json::Object(result.at("displays")).empty());
   EXPECT_TRUE(::tsugumi::json::Object(result.at("boundaries")).empty());
-  const auto group =
-      ::tsugumi::json::Object(::tsugumi::json::Array(result.at("groups")).at(0));
+  const auto group = ::tsugumi::json::Object(
+      ::tsugumi::json::Array(result.at("groups")).at(0));
   EXPECT_EQ(::tsugumi::json::Array(group.at("cards")).size(), 1u);
   EXPECT_EQ(::tsugumi::json::Array(group.at("outputs")).size(), 1u);
 }
@@ -263,8 +262,8 @@ TEST(HostLayoutSaving, RootCleanupIsPartOfTheSameSave) {
   ASSERT_EQ(changes.size(), 2u);
   const auto cleanup = ::tsugumi::json::Object(changes.at(1));
   EXPECT_EQ(::tsugumi::json::Text(cleanup, "value_type"), "SetLayout");
-  const auto layout = ::tsugumi::json::Object(
-      ::tsugumi::json::Text(::tsugumi::json::Object(cleanup.at("value")), "json"));
+  const auto layout = ::tsugumi::json::Object(::tsugumi::json::Text(
+      ::tsugumi::json::Object(cleanup.at("value")), "json"));
   EXPECT_TRUE(::tsugumi::json::Object(layout.at("cards")).empty());
 }
 
@@ -283,13 +282,15 @@ TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
   ASSERT_EQ(changes.size(), 2u);
   const auto cleanup = ::tsugumi::json::Object(
       ::tsugumi::json::Get(::tsugumi::json::Object(changes.at(1)), "value"));
-  EXPECT_EQ(::tsugumi::json::Text(cleanup, "path"), "externals/child/layout.json");
+  EXPECT_EQ(::tsugumi::json::Text(cleanup, "path"),
+            "externals/child/layout.json");
   EXPECT_EQ(::tsugumi::json::Text(cleanup, "base_hash"), "layout");
-  EXPECT_TRUE(::tsugumi::json::Object(
-                  ::tsugumi::json::Get(
-                      ::tsugumi::json::Object(::tsugumi::json::Text(cleanup, "bytes")),
-                      "cards"))
-                  .empty());
+  EXPECT_TRUE(
+      ::tsugumi::json::Object(
+          ::tsugumi::json::Get(
+              ::tsugumi::json::Object(::tsugumi::json::Text(cleanup, "bytes")),
+              "cards"))
+          .empty());
 }
 
 TEST(HostLayoutSaving, PatchesAreValidatedAndSourceLookalikesAreUnchanged) {
@@ -607,16 +608,17 @@ TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
       },
       {"tsugumi.json"}, [](const auto&, const auto&) { return false; }));
   EXPECT_EQ(::tsugumi::json::Array(saved.at("changes")).size(), 1u);
-  EXPECT_EQ(::tsugumi::json::Object(
-                ::tsugumi::json::Object(CompleteLayout(project, "{}")).at("cards"))
-                .size(),
-            2u);
+  EXPECT_EQ(
+      ::tsugumi::json::Object(
+          ::tsugumi::json::Object(CompleteLayout(project, "{}")).at("cards"))
+          .size(),
+      2u);
 }
 
 // Mac and Web both send LayoutCompleteRequest. Exercise that exact handler,
 // with separately serialized requests, rather than a UI stub's fixed answer.
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
@@ -695,12 +697,12 @@ TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
                          {"cards", ::tsugumi::json::Encode(instances)}})}});
       const auto completed = CompleteLayout(document, "{}", {});
       EXPECT_NO_THROW(ValidateLayout(completed));
-      const auto input =
-          SceneFixture({{"flow", ::tsugumi::json::Quote(flow)}, {"cards", cards}});
-      for (const auto &proposal :
+      const auto input = SceneFixture(
+          {{"flow", ::tsugumi::json::Quote(flow)}, {"cards", cards}});
+      for (const auto& proposal :
            {layout::arrange(MeasuredScene(input)),
             layout::untangle(MeasuredScene(input), {})}) {
-        for (const auto &card : proposal.cards) {
+        for (const auto& card : proposal.cards) {
           EXPECT_TRUE(std::isfinite(card.x));
           EXPECT_TRUE(std::isfinite(card.y));
         }

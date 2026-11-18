@@ -1,9 +1,10 @@
+#include "execution_service.hh"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstdlib>
 
-#include "execution_service.hh"
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
@@ -12,14 +13,19 @@
 namespace tsugumi {
 namespace {
 class NativeExecution : public testing::TestWithParam<bool> {};
-// A transfer error is not the Card's call failing: a living resident keeps its state.
+// A transfer error is not the Card's call failing: a living resident keeps its
+// state.
 TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   namespace stdfs = std::filesystem;
-  const auto root = stdfs::canonical(stdfs::temp_directory_path()) / ("tsugumi-transfer-" + crypto::uuid4());
+  const auto root = stdfs::canonical(stdfs::temp_directory_path()) /
+                    ("tsugumi-transfer-" + crypto::uuid4());
   stdfs::create_directories(root);
   struct Cleanup {
     stdfs::path root;
-    ~Cleanup() { std::error_code error; stdfs::remove_all(root, error); }
+    ~Cleanup() {
+      std::error_code error;
+      stdfs::remove_all(root, error);
+    }
   } cleanup{root};
   fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "layout.json", "{}");
@@ -38,7 +44,8 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   node.settings.sandbox = false;
   node.settings.reuse_worker = true;
   std::string error;
-  const auto type = types::compile("table Path { value:string; }", "Path", &error);
+  const auto type =
+      types::compile("table Path { value:string; }", "Path", &error);
   ASSERT_TRUE(type) << error;
   node.outputs.push_back({"out", PortKind::File, false, *type});
   CardBuild build;
@@ -46,17 +53,23 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   build.path = std::getenv("PATH") ? std::getenv("PATH") : "/usr/bin:/bin";
   for (size_t at = 0; build.shell.empty() && at <= build.path.size();) {
     const auto end = std::min(build.path.find(':', at), build.path.size());
-    const auto candidate = stdfs::path(build.path.substr(at, end - at)) / "bash";
+    const auto candidate =
+        stdfs::path(build.path.substr(at, end - at)) / "bash";
     if (stdfs::exists(candidate)) build.shell = candidate.string();
     at = end + 1;
   }
   ASSERT_FALSE(build.shell.empty());
   // The same build fails its first transfer and produces a real file next.
   // A worker can complete its ABI call even when its declared file is absent.
-  build.bash = "printf 'worker log\\n'\nif [ -f '" + (root / "called").string() + "' ]; then touch \"$TSUGUMI_OUTPUT_DIR/result\"; "
-               "else touch '" + (root / "called").string() + "'; " +
-               (GetParam() ? "ln -s /etc/passwd \"$TSUGUMI_OUTPUT_DIR/result\"; " : "") + "fi\n"
-               "printf '{\"out\":{\"value\":\"%s/result\"}}' \"$TSUGUMI_OUTPUT_DIR\" > \"$TSUGUMI_OUTPUT\"\n";
+  build.bash =
+      "printf 'worker log\\n'\nif [ -f '" + (root / "called").string() +
+      "' ]; then touch \"$TSUGUMI_OUTPUT_DIR/result\"; "
+      "else touch '" +
+      (root / "called").string() + "'; " +
+      (GetParam() ? "ln -s /etc/passwd \"$TSUGUMI_OUTPUT_DIR/result\"; " : "") +
+      "fi\n"
+      "printf '{\"out\":{\"value\":\"%s/result\"}}' \"$TSUGUMI_OUTPUT_DIR\" > "
+      "\"$TSUGUMI_OUTPUT\"\n";
   std::atomic<bool> stop{false};
   const std::vector<Value> inputs;
   const std::vector<InputSourceData> sources;
@@ -65,32 +78,56 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   summary.card = node.path;
   summary.invocation = 1;
   std::vector<std::pair<LogStream, std::string>> logs;
-  ExecutionRequest request{node, build, inputs, sources, summary, root / "invocation", stop,
-      [] { return false; }, stop, [&](auto stream, const auto& text) { logs.emplace_back(stream, text); }, [](const auto&) {},
-      [](auto, auto) {}, [](const auto&) {}, [] {}};
+  ExecutionRequest request{
+      node,
+      build,
+      inputs,
+      sources,
+      summary,
+      root / "invocation",
+      stop,
+      [] { return false; },
+      stop,
+      [&](auto stream, const auto& text) { logs.emplace_back(stream, text); },
+      [](const auto&) {},
+      [](auto, auto) {},
+      [](const auto&) {},
+      [] {}};
   request.log_limit_bytes = 1;
   EXPECT_THROW(execution.run(request), Failed);
   EXPECT_TRUE(std::ranges::any_of(logs, [](const auto& entry) {
-    return entry.first == LogStream::journal && entry.second.find("1-byte limit") != std::string::npos;
+    return entry.first == LogStream::journal &&
+           entry.second.find("1-byte limit") != std::string::npos;
   }));
-  EXPECT_FALSE(std::ranges::any_of(logs, [](const auto& entry) { return entry.first == LogStream::standard_output; }));
+  EXPECT_FALSE(std::ranges::any_of(logs, [](const auto& entry) {
+    return entry.first == LogStream::standard_output;
+  }));
   summary.invocation = 2;
   const auto result = execution.run(request);
   ASSERT_FALSE(result.outcome.failure);
   EXPECT_EQ(summary.worker_reused, true);
 }
-INSTANTIATE_TEST_SUITE_P(InvalidFile, NativeExecution, testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(InvalidFile, NativeExecution,
+                         testing::Values(false, true));
 }  // namespace
 }  // namespace tsugumi
 
 TEST(GraphLanguage, ArbitraryAndOmittedLanguagesRemainExecutable) {
   namespace ts = tsugumi;
-  const auto root = std::filesystem::temp_directory_path() / ("tsugumi-language-" + ts::crypto::uuid4());
-  struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove_all(path); } } cleanup{root};
-  ts::fs::write_atomic(root / "tsugumi.json", R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"card"}],"connections":[]}})");
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("tsugumi-language-" + ts::crypto::uuid4());
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{root};
+  ts::fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"card"}],"connections":[]}})");
   ts::fs::write_atomic(root / "layout.json", "{}");
-  ts::fs::write_atomic(root / "definitions/card/default.nix", "{pkgs,inputs,params}:{run=\"true\";}");
-  ts::fs::write_atomic(root / "definitions/card/_outputs.fbs", "table Outputs {} root_type Outputs;");
+  ts::fs::write_atomic(root / "definitions/card/default.nix",
+                       "{pkgs,inputs,params}:{run=\"true\";}");
+  ts::fs::write_atomic(root / "definitions/card/_outputs.fbs",
+                       "table Outputs {} root_type Outputs;");
   for (const auto* definition : {"{}", "{\"language\":\"custom-sdk\"}"}) {
     ts::fs::write_atomic(root / "definitions/card/_card.json", definition);
     ts::Store store({root, ""});

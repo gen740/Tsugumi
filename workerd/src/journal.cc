@@ -10,10 +10,10 @@
 #include <fstream>
 #include <set>
 
-#include "tsugumi/util/json.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json.hh"
 
 namespace tsugumi::workerd {
 namespace {
@@ -209,7 +209,8 @@ auto Journal::expire_core(std::string_view job, uint64_t now) -> void {
       // Divide instead of multiplying two uint32 settings and milliseconds.
       if (now < last || now - last < grace ||
           (now - last - grace) / 1000 / state.heartbeat_interval_seconds <
-                            state.missed_heartbeats) return;
+              state.missed_heartbeats)
+        return;
     }
     // Use precisely the ordinary cancellation transition and data policy.
     state.state = state.state == R::JobState::Running ||
@@ -405,8 +406,7 @@ auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
   bool claimed = false;
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
-    if (state.state != R::JobState::Queued)
-      return;
+    if (state.state != R::JobState::Queued) return;
     state.state = R::JobState::Running;
     state.pid = pid;
     state.start = start;

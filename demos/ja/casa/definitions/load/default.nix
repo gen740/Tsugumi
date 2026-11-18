@@ -1,4 +1,8 @@
-{ pkgs, inputs, params }:
+{
+  pkgs,
+  inputs,
+  params,
+}:
 # The observation is fixed like a package: fetched once by its hash from the
 # HEASARC mirror of the Chandra archive (explicit FTPS), then every run reads
 # the same file from the Nix store. Changing obsid, file or hash refetches.

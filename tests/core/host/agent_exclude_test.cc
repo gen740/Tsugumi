@@ -1,16 +1,17 @@
 #include "host/agent_exclude.hh"
 
-#include <algorithm>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "../agent_fixture_server.hh"
-#include "tsugumi/document/document.hh"
 #include "host/attached_folder.hh"
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/project_operations.hh"
 #include "host/projects.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -20,23 +21,23 @@ namespace H = Tsugumi::Host;
 using test::Read;
 using test::Write;
 class AgentExcludeTest : public testing::Test {
-protected:
+ protected:
   test::TemporaryDirectory temporary;
   const std::filesystem::path root = temporary.path / "project";
   auto SetUp() -> void override { std::filesystem::create_directories(root); }
-  auto Refused(const std::function<void()> &call,
-               const std::string &code = "not_found") -> void {
+  auto Refused(const std::function<void()>& call,
+               const std::string& code = "not_found") -> void {
     try {
       call();
       FAIL() << "expected refusal";
-    } catch (const Failure &error) {
+    } catch (const Failure& error) {
       EXPECT_EQ(error.code, code) << error.what();
     }
   }
 };
 TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
   AgentExclude defaults(root, "{}");
-  for (const auto *path : {".git", ".git/config", ".DS_Store"})
+  for (const auto* path : {".git", ".git/config", ".DS_Store"})
     EXPECT_TRUE(defaults.Contains(path));
   EXPECT_FALSE(defaults.Contains(".github/workflows/ci.yml"));
   EXPECT_FALSE(AgentExclude(root, R"({"agentExclude":[]})").Contains(".git"));
@@ -55,15 +56,21 @@ TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
   EXPECT_TRUE(absolute.Contains(outside / "new/file"));
 }
 TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
-  Write(root / "definitions/group/_link.json", R"({"external":"different-folder"})");
-  AgentExclude policy(root, R"({"agentExclude":["externals/different-folder/definitions/leaf"]})");
-  Refused([&] { policy.CheckRequest("run_record", {{"card", R"({"segments":["group","leaf"]})"}}); });
+  Write(root / "definitions/group/_link.json",
+        R"({"external":"different-folder"})");
+  AgentExclude policy(
+      root,
+      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})");
+  Refused([&] {
+    policy.CheckRequest("run_record",
+                        {{"card", R"({"segments":["group","leaf"]})"}});
+  });
 }
 TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
   AgentExclude policy(
       root,
       R"({"agentExclude":["definitions/hidden","definitions/public/_meta.json"]})");
-  for (const auto *tool : {"project_file_list", "project_file_read",
+  for (const auto* tool : {"project_file_list", "project_file_read",
                            "project_file_stat", "project_file_format"})
     Refused([&] {
       policy.CheckRequest(tool,
@@ -110,7 +117,7 @@ TEST_F(AgentExcludeTest, AttachmentsAndDemoToolsShareTheRealPathBoundary) {
   Refused([&] { references.Project("en/finished", &demo_policy); });
   EXPECT_NO_THROW(references.Read("en/draft/tsugumi.json", &demo_policy));
   EXPECT_NE(references.List().find("Finished"),
-            std::string::npos); // Human view.
+            std::string::npos);  // Human view.
 }
 TEST_F(AgentExcludeTest, SavesAndExpandedEditsCannotChangePolicyOrHiddenFiles) {
   const std::string project =
@@ -118,7 +125,7 @@ TEST_F(AgentExcludeTest, SavesAndExpandedEditsCannotChangePolicyOrHiddenFiles) {
   AgentExclude policy(root, project);
   SaveBase base;
   base.files["tsugumi.json"] = project;
-  auto plan = [](const std::string &kind, const j::Members &value) {
+  auto plan = [](const std::string& kind, const j::Members& value) {
     return j::Members{
         {"changes",
          j::Encode(std::vector<std::string>{j::Encode(j::Members{
@@ -160,8 +167,8 @@ TEST_F(AgentExcludeTest, SavesAndExpandedEditsCannotChangePolicyOrHiddenFiles) {
   edit->value.Set(std::move(text));
   edits.edits.push_back(std::move(edit));
   const auto expanded = PrepareProjectEdits(
-      edits, base,
-      [](const auto &) -> std::optional<std::string> { return {}; }, {});
+      edits, base, [](const auto&) -> std::optional<std::string> { return {}; },
+      {});
   Refused([&] { policy.CheckSave(expanded, base); }, "permission_denied");
 }
 TEST_F(AgentExcludeTest, ExclusionDoesNotIdentifyARun) {
@@ -174,19 +181,31 @@ TEST_F(AgentExcludeTest, ExclusionDoesNotIdentifyARun) {
   EXPECT_EQ(before->execution_fingerprint, after->execution_fingerprint);
 }
 TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
-  AgentExclude policy(root, R"({"agentExclude":["definitions/a/private.txt"]})");
+  AgentExclude policy(root,
+                      R"({"agentExclude":["definitions/a/private.txt"]})");
   SaveBase base;
   Refused([&] {
-    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a"}}]})"), base);
+    policy.CheckSave(
+        j::Object(
+            R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a"}}]})"),
+        base);
   });
-  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a-other"}}]})"), base));
-  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"a","card_json":"{}"}}]})"), base));
+  EXPECT_NO_THROW(policy.CheckSave(
+      j::Object(
+          R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a-other"}}]})"),
+      base));
+  EXPECT_NO_THROW(policy.CheckSave(
+      j::Object(
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"a","card_json":"{}"}}]})"),
+      base));
 }
 TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
   for (const auto& prefix : {std::string{}, std::string{"externals/nested/"}}) {
     const std::string project = j::Encode(j::Members{
-        {"agentExclude", j::Encode(std::vector<std::string>{j::Quote(prefix + "definitions/a/private.txt")})},
-        {"canvas", R"({"cards":[{"id":"a"},{"id":"public"}],"connections":[]})"}});
+        {"agentExclude", j::Encode(std::vector<std::string>{
+                             j::Quote(prefix + "definitions/a/private.txt")})},
+        {"canvas",
+         R"({"cards":[{"id":"a"},{"id":"public"}],"connections":[]})"}});
     AgentExclude policy(root, project);
     SaveBase base;
     base.files[prefix + "tsugumi.json"] = project;
@@ -194,45 +213,74 @@ TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
       auto changed = j::Object(project);
       changed["canvas"] = graph;
       const auto bytes = j::Encode(changed);
-      const auto value = prefix.empty()
-          ? j::Members{{"json", j::Quote(bytes)}}
-          : j::Members{{"path", j::Quote(prefix + "tsugumi.json")}, {"bytes", j::Quote(bytes)}};
-      return j::Members{{"changes", j::Encode(std::vector<std::string>{j::Encode(j::Members{
-          {"value_type", j::Quote(prefix.empty() ? "SetProject" : "PutSource")},
-          {"value", j::Encode(value)}})})}};
+      const auto value =
+          prefix.empty()
+              ? j::Members{{"json", j::Quote(bytes)}}
+              : j::Members{{"path", j::Quote(prefix + "tsugumi.json")},
+                           {"bytes", j::Quote(bytes)}};
+      return j::Members{
+          {"changes",
+           j::Encode(std::vector<std::string>{j::Encode(j::Members{
+               {"value_type",
+                j::Quote(prefix.empty() ? "SetProject" : "PutSource")},
+               {"value", j::Encode(value)}})})}};
     };
-    Refused([&] { policy.CheckSave(save(R"({"cards":[{"id":"public"}],"connections":[]})"), base); });
-    Refused([&] { policy.CheckSave(save(R"({"cards":[{"id":"renamed"},{"id":"public"}],"connections":[]})"), base); });
-    EXPECT_NO_THROW(policy.CheckSave(save(R"({"cards":[{"id":"a"}],"connections":[]})"), base));
+    Refused([&] {
+      policy.CheckSave(save(R"({"cards":[{"id":"public"}],"connections":[]})"),
+                       base);
+    });
+    Refused([&] {
+      policy.CheckSave(
+          save(
+              R"({"cards":[{"id":"renamed"},{"id":"public"}],"connections":[]})"),
+          base);
+    });
+    EXPECT_NO_THROW(policy.CheckSave(
+        save(R"({"cards":[{"id":"a"}],"connections":[]})"), base));
     // Subgraph conversion removes the selected Card from this graph too.
     const auto nested = MakeSubgraph(project, {"a"}, "group");
     Refused([&] {
-      policy.CheckSave(save(j::Get(j::Object(nested.project_json), "canvas")), base);
+      policy.CheckSave(save(j::Get(j::Object(nested.project_json), "canvas")),
+                       base);
     });
   }
 }
 TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
-  AgentExclude policy(root, R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
+  AgentExclude policy(
+      root,
+      R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
   SaveBase base;
   base.files["definitions/group/_link.json"] = R"({"external":"original"})";
   Refused([&] {
-    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"group"}}]})"), base);
+    policy.CheckSave(
+        j::Object(
+            R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"group"}}]})"),
+        base);
   });
   Refused([&] {
-    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"elsewhere\"}"}}]})"), base);
+    policy.CheckSave(
+        j::Object(
+            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"elsewhere\"}"}}]})"),
+        base);
   });
   Refused([&] {
-    policy.CheckSave(j::Object(R"({"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/group/_link.json"}}]})"), base);
+    policy.CheckSave(
+        j::Object(
+            R"({"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/group/_link.json"}}]})"),
+        base);
   });
-  EXPECT_NO_THROW(policy.CheckSave(j::Object(R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"original\"}"}}]})"), base));
+  EXPECT_NO_THROW(policy.CheckSave(
+      j::Object(
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"original\"}"}}]})"),
+      base));
 }
 TEST_F(AgentExcludeTest,
        DraftCreationResolvesBothCounterpartsAndKeepsDefaults) {
   const auto demos = temporary.path / "demos";
-  for (const auto *language : {"ja", "en"})
+  for (const auto* language : {"ja", "en"})
     Write(demos / language / "finished/tsugumi.json",
           initial_project_json("Finished"));
-  for (const auto *language : {"ja", "en"}) {
+  for (const auto* language : {"ja", "en"}) {
     Write(demos / language / "finished-draft/tsugumi.json",
           initial_project_json("Draft"));
     Write(
@@ -285,10 +333,10 @@ TEST_F(AgentExcludeTest,
   operation.body.Set(std::move(copy));
   OperationContext context;
   context.origin = "ui";
-  context.demo = [&](const auto &) { return demo; };
+  context.demo = [&](const auto&) { return demo; };
   std::string saved;
-  auto call = [&](const std::string &method,
-                  const j::Members &args) -> OperationReply {
+  auto call = [&](const std::string& method,
+                  const j::Members& args) -> OperationReply {
     std::string type;
     j::Members value;
     if (method == "operation_get") {
@@ -323,5 +371,5 @@ TEST_F(AgentExcludeTest,
   EXPECT_THROW(ProjectOperations().Execute("p", operation, context, call),
                Failure);
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host

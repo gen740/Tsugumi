@@ -137,7 +137,8 @@ class OAuthServer {
       const auto state =
           status.HostValue()->value_as_SignInStatus()->state()->str();
       if (state != "pending" && state != "committing") {
-        const auto exchange = URLFields("?" + server.Requests().at(first_request));
+        const auto exchange =
+            URLFields("?" + server.Requests().at(first_request));
         const auto& verifier = exchange.at("code_verifier");
         unsigned char digest[EVP_MAX_MD_SIZE];
         unsigned length = 0;

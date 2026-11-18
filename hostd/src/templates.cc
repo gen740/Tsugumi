@@ -9,11 +9,11 @@ extern const unsigned char tsugumi_host_templates[];
 extern const unsigned long tsugumi_host_templates_size;
 
 namespace tsugumi::host {
-auto WriteTemplate(const std::string &name, const std::string &id)
+auto WriteTemplate(const std::string& name, const std::string& id)
     -> DocumentTemplate {
   namespace json = ::tsugumi::json;
   static const auto catalog = json::Object(
-      std::string(reinterpret_cast<const char *>(tsugumi_host_templates),
+      std::string(reinterpret_cast<const char*>(tsugumi_host_templates),
                   tsugumi_host_templates_size));
   const auto found = catalog.find(name);
   if (found == catalog.end())
@@ -23,7 +23,7 @@ auto WriteTemplate(const std::string &name, const std::string &id)
   std::ranges::replace(ns, '.', '_');
   json::Members definition;
   DocumentTemplate result;
-  for (const auto &[path, raw] : json::Object(found->second)) {
+  for (const auto& [path, raw] : json::Object(found->second)) {
     auto text = json::String(raw);
     for (size_t pos = 0;
          (pos = text.find("@NAMESPACE@", pos)) != std::string::npos;
@@ -38,4 +38,4 @@ auto WriteTemplate(const std::string &name, const std::string &id)
   result.definition_json = json::Encode(definition);
   return result;
 }
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

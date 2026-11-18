@@ -1,9 +1,8 @@
 // One CLR per worker. The managed assembly and host library live until exit.
-#include <tsugumi/sdk/abi.h>
-
 #include <coreclr_delegates.h>
 #include <dlfcn.h>
 #include <hostfxr.h>
+#include <tsugumi/sdk/abi.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,24 +10,25 @@
 #include <cstdlib>
 
 namespace {
-using Entry = int (*)(const tsugumi_call *);
+using Entry = int (*)(const tsugumi_call*);
 load_assembly_and_get_function_pointer_fn g_load = nullptr;
 Entry g_main = nullptr;
 Entry g_run_start = nullptr;
-void *g_host = nullptr;
+void* g_host = nullptr;
 
 // The ABI structs as this compiler lays them out from abi.h. The managed
-// mirror (sdk/csharp/InvocationScope.cs) is checked against it before the first call
-// (Layout.cs), so a field added to abi.h without its C# counterpart
-// stops the Card at load with a layout error.
-// Every field of every struct the worker passes to the Card is listed.
+// mirror (sdk/csharp/InvocationScope.cs) is checked against it before the first
+// call (Layout.cs), so a field added to abi.h without its C# counterpart stops
+// the Card at load with a layout error. Every field of every struct the worker
+// passes to the Card is listed.
 struct Field {
-  const char *name;
+  const char* name;
   uint64_t offset;
   uint64_t size;
 };
-#define TSUGUMI_STRUCT(type) Field{#type, 0, sizeof(type)}
-#define TSUGUMI_FIELD(type, member)                                            \
+#define TSUGUMI_STRUCT(type) \
+  Field { #type, 0, sizeof(type) }
+#define TSUGUMI_FIELD(type, member) \
   Field { #type "." #member, offsetof(type, member), sizeof(type::member) }
 constexpr Field k_layout[] = {
     TSUGUMI_STRUCT(tsugumi_value),
@@ -81,10 +81,10 @@ constexpr Field k_layout[] = {
 };
 #undef TSUGUMI_FIELD
 #undef TSUGUMI_STRUCT
-using CheckLayout = int (*)(const Field *, size_t);
+using CheckLayout = int (*)(const Field*, size_t);
 
 auto load_entry(load_assembly_and_get_function_pointer_fn load,
-                const char *name, void **entry) -> bool {
+                const char* name, void** entry) -> bool {
   const int status = load(TSUGUMI_ASSEMBLY, "Tsugumi.Entry, Card", name,
                           UNMANAGEDCALLERSONLY_METHOD, nullptr, entry);
   if (status != 0)
@@ -92,7 +92,7 @@ auto load_entry(load_assembly_and_get_function_pointer_fn load,
                  name, status);
   return status == 0;
 }
-} // namespace
+}  // namespace
 
 extern "C" auto tsugumi_prepare() -> int {
   // A Card is not a debugging endpoint. No diagnostic socket is needed in its
@@ -110,8 +110,7 @@ extern "C" auto tsugumi_prepare() -> int {
       ::dlsym(g_host, "hostfxr_get_runtime_delegate"));
   const auto close =
       reinterpret_cast<hostfxr_close_fn>(::dlsym(g_host, "hostfxr_close"));
-  if (!initialize || !get_delegate || !close)
-    return 1;
+  if (!initialize || !get_delegate || !close) return 1;
   hostfxr_initialize_parameters options{sizeof(hostfxr_initialize_parameters),
                                         nullptr, TSUGUMI_DOTNET_ROOT};
   hostfxr_handle handle = nullptr;
@@ -123,36 +122,36 @@ extern "C" auto tsugumi_prepare() -> int {
         status);
     return 1;
   }
-  void *pointer = nullptr;
+  void* pointer = nullptr;
   const int delegate_status = get_delegate(
       handle, hdt_load_assembly_and_get_function_pointer, &pointer);
-  close(handle); // Closes configuration only, not the process-owned runtime.
-  if (delegate_status != 0 || !pointer)
-    return 1;
+  close(handle);  // Closes configuration only, not the process-owned runtime.
+  if (delegate_status != 0 || !pointer) return 1;
   g_load = reinterpret_cast<load_assembly_and_get_function_pointer_fn>(pointer);
   return 0;
 }
 
 extern "C" auto tsugumi_load(const tsugumi_call*) -> int {
   const auto load = g_load;
-  void *check = nullptr;
+  void* check = nullptr;
   if (!load_entry(load, "CheckLayout", &check) ||
       reinterpret_cast<CheckLayout>(check)(
           k_layout, sizeof k_layout / sizeof k_layout[0]) != 0) {
-    std::fprintf(stderr, "The C# SDK does not match this worker's Card ABI "
-                         "(tsugumi/sdk/abi.h); see above\n");
+    std::fprintf(stderr,
+                 "The C# SDK does not match this worker's Card ABI "
+                 "(tsugumi/sdk/abi.h); see above\n");
     return 1;
   }
-  return load_entry(load, "Execute", reinterpret_cast<void **>(&g_main)) &&
+  return load_entry(load, "Execute", reinterpret_cast<void**>(&g_main)) &&
                  load_entry(load, "RunStart",
-                            reinterpret_cast<void **>(&g_run_start))
+                            reinterpret_cast<void**>(&g_run_start))
              ? 0
              : 1;
 }
 
-extern "C" auto tsugumi_main(const tsugumi_call *call) -> int {
+extern "C" auto tsugumi_main(const tsugumi_call* call) -> int {
   return g_main ? g_main(call) : 1;
 }
-extern "C" auto tsugumi_run_start(const tsugumi_call *call) -> int {
+extern "C" auto tsugumi_run_start(const tsugumi_call* call) -> int {
   return g_run_start ? g_run_start(call) : 1;
 }

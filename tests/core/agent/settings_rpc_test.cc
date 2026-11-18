@@ -13,11 +13,13 @@ TEST_F(AgentFixture, AgentWorkAnimationDefaultsOnAndPersistsAsABoolean) {
     return std::string{};
   };
   EXPECT_EQ(animation(SettingsGet(*host)), "true");
-  EXPECT_FALSE(SettingsPatch(*host, "desktop",
-                             {{"agent.animateWork", Quote("false")}})
-                   .Code().empty());
+  EXPECT_FALSE(
+      SettingsPatch(*host, "desktop", {{"agent.animateWork", Quote("false")}})
+          .Code()
+          .empty());
   ASSERT_TRUE(SettingsPatch(*host, "desktop", {{"agent.animateWork", "false"}})
-                  .Code().empty());
+                  .Code()
+                  .empty());
   auto web = ConnectHost(true);
   EXPECT_EQ(animation(SettingsGet(*web)), "false");
   web.reset();
@@ -29,10 +31,9 @@ TEST_F(AgentFixture, AgentWorkAnimationDefaultsOnAndPersistsAsABoolean) {
   EXPECT_EQ(animation(SettingsGet(*host)), "false");
 }
 TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
-  const auto value = [](const Reply &reply, const std::string &key) {
-    for (const auto *entry : *reply.HostValue()->value_as_Settings()->values())
-      if (entry->key()->str() == key)
-        return entry->value_json()->str();
+  const auto value = [](const Reply& reply, const std::string& key) {
+    for (const auto* entry : *reply.HostValue()->value_as_Settings()->values())
+      if (entry->key()->str() == key) return entry->value_json()->str();
     return std::string{};
   };
   EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "false");
@@ -133,8 +134,7 @@ TEST_F(AgentFixture,
         p.api_key = key;
         return H::CreateProviderSetRequest(
                    b, b.CreateString("desktop"), b.CreateString("anthropic"),
-                   Tsugumi::Host::ProviderInput::Pack(b, &p), false,
-                   ephemeral)
+                   Tsugumi::Host::ProviderInput::Pack(b, &p), false, ephemeral)
             .Union();
       });
   ASSERT_TRUE(set.Code().empty());

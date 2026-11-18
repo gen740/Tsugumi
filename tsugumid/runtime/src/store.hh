@@ -2,8 +2,8 @@
 // Every public mutating member must be called from the mutation lane only.
 #pragma once
 
-#include <filesystem>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
+#include "model.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/graph.hh"
-#include "model.hh"
 
 namespace tsugumi {
 
@@ -25,13 +25,22 @@ struct SourcePatchIn {
 };
 
 struct ChangeIn {
-  enum class Kind { SetProject, SetLayout, PutDefinition, RemoveDefinition, PutSource, PatchSource, RemoveSource };
+  enum class Kind {
+    SetProject,
+    SetLayout,
+    PutDefinition,
+    RemoveDefinition,
+    PutSource,
+    PatchSource,
+    RemoveSource
+  };
   Kind kind;
-  std::string id;    // definitions
+  std::string id;  // definitions
   std::optional<std::string> link_json;
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
-  bool keep_meta = false;  // PutDefinition without meta_json keeps the current _meta.json
+  bool keep_meta =
+      false;  // PutDefinition without meta_json keeps the current _meta.json
   std::string path;   // sources
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
@@ -64,7 +73,8 @@ struct Receipt {
 
 struct StoreOptions {
   std::filesystem::path root;
-  // Fault injection for tests ("" disables): after_journal, partial_apply, before_commit.
+  // Fault injection for tests ("" disables): after_journal, partial_apply,
+  // before_commit.
   std::string fault;
 };
 
@@ -76,7 +86,8 @@ class Store {
   void open();
 
   DocumentPtr current() const;
-  auto allocate_card_id(const std::string& stem, const std::string& project_path) -> std::string;
+  auto allocate_card_id(const std::string& stem,
+                        const std::string& project_path) -> std::string;
   const std::filesystem::path& root() const { return opts_.root; }
   std::string project_id() const { return project_id_; }
 
@@ -94,8 +105,10 @@ class Store {
                const std::string& origin) const;
   auto stage_file(const std::filesystem::path& root, const std::string& from,
                   const std::optional<std::string>& expected_hash,
-                  const std::function<void()>& check_cancelled) const -> std::shared_ptr<SourceFile>;
-  Staged stage_reload(const std::string& op_id, const std::string& origin) const;
+                  const std::function<void()>& check_cancelled) const
+      -> std::shared_ptr<SourceFile>;
+  Staged stage_reload(const std::string& op_id,
+                      const std::string& origin) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
   // Resolves a staged document now (commit then reuses it).
@@ -103,14 +116,16 @@ class Store {
   // Reads the files of `doc`, with the writes of a staged save still `pending`;
   // nullopt for a file it does not have or whose bytes on disk are not its own.
   // Keep `doc` and `pending` alive while using it.
-  SourceReader reader(const Document& doc, const std::vector<FileOp>* pending = nullptr) const;
+  SourceReader reader(const Document& doc,
+                      const std::vector<FileOp>* pending = nullptr) const;
 
   // Persists a staged transaction atomically with its receipt. The
   // `make_receipt` callback receives the delta (with final revision numbers)
   // and returns the OperationReceipt bytes. Publishes the new document.
-  void commit(Staged& staged, const std::string& kind, const std::string& digest,
-              const std::function<std::string(const Delta*)>& make_receipt,
-              const std::function<void()>& check_cancelled = [] {});
+  void commit(
+      Staged& staged, const std::string& kind, const std::string& digest,
+      const std::function<std::string(const Delta*)>& make_receipt,
+      const std::function<void()>& check_cancelled = [] {});
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 
@@ -132,9 +147,12 @@ class Store {
   // which are read instead of the disk (they are applied after resolution).
   // Resolves the document (fingerprint, graph and types), reusing `base`'s
   // resolution when nothing it follows changed.
-  std::shared_ptr<Document> finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending = nullptr,
-                                     const Document* base = nullptr) const;
-  void check_disk_unchanged(const Document& base, const std::vector<FileOp>& ops) const;
+  std::shared_ptr<Document> finalize(
+      std::shared_ptr<Document> doc,
+      const std::vector<FileOp>* pending = nullptr,
+      const Document* base = nullptr) const;
+  void check_disk_unchanged(const Document& base,
+                            const std::vector<FileOp>& ops) const;
   void fault(const char* point) const;
 
   StoreOptions opts_;
@@ -142,7 +160,8 @@ class Store {
   mutable std::mutex mu_;
   DocumentPtr doc_;
   std::map<std::string, Receipt> receipts_;
-  std::deque<std::string> receipt_order_;  // op ids, oldest first (the compaction keeps the newest)
+  std::deque<std::string>
+      receipt_order_;  // op ids, oldest first (the compaction keeps the newest)
   int journal_fd_ = -1;
   bool halted_ = false;
 };

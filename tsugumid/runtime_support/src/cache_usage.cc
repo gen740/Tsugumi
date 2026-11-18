@@ -1,4 +1,3 @@
-#include "tsugumi/workerd/store.hh"
 #include "tsugumi/runtime_support/cache_usage.hh"
 
 #include <sys/stat.h>
@@ -11,13 +10,15 @@
 #include "tsugumi/runtime_support/scratch_usage.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
 namespace stdfs = std::filesystem;
 namespace R = Tsugumi::RPC;
 
-CacheUsage::CacheUsage(stdfs::path roots, stdfs::path scratch, stdfs::path single_roots,
-                       stdfs::path single_scratch, std::string single_id, stdfs::path publish)
+CacheUsage::CacheUsage(stdfs::path roots, stdfs::path scratch,
+                       stdfs::path single_roots, stdfs::path single_scratch,
+                       std::string single_id, stdfs::path publish)
     : roots_(std::move(roots)),
       scratch_(std::move(scratch)),
       single_roots_(std::move(single_roots)),
@@ -61,7 +62,8 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
       if (!stdfs::exists(base)) continue;
       for (const auto& entry : stdfs::directory_iterator(base)) {
         if (stopping_) return result;
-        if (stdfs::is_directory(entry.symlink_status())) ids.insert(entry.path().filename().string());
+        if (stdfs::is_directory(entry.symlink_status()))
+          ids.insert(entry.path().filename().string());
       }
     }
   std::vector<std::vector<std::string>> roots;
@@ -74,14 +76,16 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     project->name = id;
     try {
       std::string label;
-      fs::stream_beneath(folder, ".name", 4096, [&](std::string_view chunk) { label.append(chunk); });
+      fs::stream_beneath(folder, ".name", 4096,
+                         [&](std::string_view chunk) { label.append(chunk); });
       if (!label.empty()) project->name = std::move(label);
     } catch (const std::exception&) { /* A missing label does not hide usage. */
     }
     struct stat st{};
     int64_t last = 0;
     const auto used = [&](const stdfs::path& path) {
-      if (::lstat(path.c_str(), &st) == 0) last = std::max(last, static_cast<int64_t>(st.st_mtime) * 1000);
+      if (::lstat(path.c_str(), &st) == 0)
+        last = std::max(last, static_cast<int64_t>(st.st_mtime) * 1000);
     };
     used(folder);
     auto& paths = roots.emplace_back();
@@ -98,7 +102,8 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
       uint64_t bytes = 0;
       bool known = true;
       std::string unknown;
-      for (const auto& entry : measure_run_scratch(scratch, [this] { return stopping_.load(); })) {
+      for (const auto& entry :
+           measure_run_scratch(scratch, [this] { return stopping_.load(); })) {
         auto item = std::make_unique<R::RunScratchUsageT>();
         item->path = entry.path;
         item->bytes = entry.bytes.value_or(0);
@@ -108,8 +113,10 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
         bytes += entry.bytes.value_or(0);
         project->run_scratch.push_back(std::move(item));
       }
-      if (known) project->scratch_bytes = bytes;
-      else project->error = "Unknown scratch folder sizes: " + unknown;
+      if (known)
+        project->scratch_bytes = bytes;
+      else
+        project->error = "Unknown scratch folder sizes: " + unknown;
     } catch (const std::exception& e) {
       project->run_scratch.clear();
       project->error = e.what();
@@ -139,14 +146,18 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     result.store_capacity_bytes = disk.capacity;
     result.store_available_bytes = disk.available;
     result.threshold_bytes = cache_notice_threshold(disk.capacity);
-    result.large = result.build_bytes && cache_is_large(*result.build_bytes, disk.capacity);
+    result.large = result.build_bytes &&
+                   cache_is_large(*result.build_bytes, disk.capacity);
   } else if (result.error.empty())
     result.error = "Store disk usage unavailable: " + error.message();
   uint64_t scratch_bytes = 0;
   for (const auto& project : result.projects)
     scratch_bytes += project->scratch_bytes.value_or(0);
-  const auto scratch_disk = stdfs::space(single_id_.empty() ? scratch_ : single_scratch_, error);
-  if (!error) result.large = result.large || cache_is_large(scratch_bytes, scratch_disk.capacity);
+  const auto scratch_disk =
+      stdfs::space(single_id_.empty() ? scratch_ : single_scratch_, error);
+  if (!error)
+    result.large =
+        result.large || cache_is_large(scratch_bytes, scratch_disk.capacity);
   result.measured_at = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
@@ -170,14 +181,18 @@ auto CacheUsage::loop() -> void {
         flatbuffers::FlatBufferBuilder builder;
         builder.Finish(R::ProjectCacheUsageResult::Pack(builder, &next));
         fs::write_atomic(
-            publish_, {reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize()}, 0444);
+            publish_,
+            {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+             builder.GetSize()},
+            0444);
       } catch (const std::exception& e) {
         log::warn(std::string("cache usage: ") + e.what());
       }
     }
     lock.lock();
     result_ = std::move(next);
-    cv_.wait_for(lock, std::chrono::seconds(60), [this] { return stopping_ || refresh_; });
+    cv_.wait_for(lock, std::chrono::seconds(60),
+                 [this] { return stopping_ || refresh_; });
   }
 }
 

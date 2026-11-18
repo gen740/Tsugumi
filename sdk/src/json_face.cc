@@ -35,10 +35,13 @@ auto parser(const char* direction, const char* name) -> flatbuffers::Parser& {
   if (std::strcmp(direction, "params") == 0)
     root = "params.Params";
   else {
-    const auto* ports = std::strcmp(direction, "inputs") == 0 ? json_inputs : json_outputs;
+    const auto* ports =
+        std::strcmp(direction, "inputs") == 0 ? json_inputs : json_outputs;
     for (const auto* p = ports; p->name; ++p)
       if (name == std::string(p->name)) root = p->root;
-    if (root.empty()) throw std::runtime_error("unknown " + std::string(direction) + " port " + name);
+    if (root.empty())
+      throw std::runtime_error("unknown " + std::string(direction) + " port " +
+                               name);
   }
   const std::string key = std::string(direction) + ":" + root;
   if (auto it = parsers.find(key); it != parsers.end()) return *it->second;
@@ -48,9 +51,13 @@ auto parser(const char* direction, const char* name) -> flatbuffers::Parser& {
   options.output_default_scalars_in_json = true;
   options.indent_step = -1;
   auto value = std::make_unique<flatbuffers::Parser>(options);
-  std::ifstream file(std::string(TSUGUMI_JSON_CONTRACT) + "/_" + direction + ".bfbs", std::ios::binary);
+  std::ifstream file(
+      std::string(TSUGUMI_JSON_CONTRACT) + "/_" + direction + ".bfbs",
+      std::ios::binary);
   const std::string bytes((std::istreambuf_iterator<char>(file)), {});
-  if (bytes.empty() || !value->Deserialize(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()) ||
+  if (bytes.empty() ||
+      !value->Deserialize(reinterpret_cast<const uint8_t*>(bytes.data()),
+                          bytes.size()) ||
       !value->SetRootType(root.c_str()))
     throw std::runtime_error("cannot load port schema " + key);
   return *(parsers[key] = std::move(value));
@@ -62,13 +69,15 @@ extern "C" auto tsugumi_json_error() -> const char* { return error.c_str(); }
 
 // direction is "inputs" or "params" (name is then ignored). The returned text
 // is valid until the next call on this thread; NULL means tsugumi_json_error.
-extern "C" auto tsugumi_json_decode(const char* direction, const char* name, const uint8_t* bytes,
-                                    size_t size) -> const char* {
+extern "C" auto tsugumi_json_decode(const char* direction, const char* name,
+                                    const uint8_t* bytes, size_t size) -> const
+    char* {
   try {
     result.clear();
     if (!bytes || !size) return "{}";
     std::string text;
-    if (const char* why = tsugumi::message_json::gen_language_text(parser(direction, name), bytes, &text))
+    if (const char* why = tsugumi::message_json::gen_language_text(
+            parser(direction, name), bytes, &text))
       throw std::runtime_error(why);
     result = std::move(text);
     return result.c_str();
@@ -80,12 +89,14 @@ extern "C" auto tsugumi_json_decode(const char* direction, const char* name, con
 
 // Parses one output message against its schema (unknown fields, wrong types
 // and out-of-range numbers are errors) and hands it to the host.
-extern "C" auto tsugumi_json_emit(const tsugumi_call* call, const char* port, const char* json) -> int {
+extern "C" auto tsugumi_json_emit(const tsugumi_call* call, const char* port,
+                                  const char* json) -> int {
   try {
     auto& p = parser("outputs", port);
     if (!tsugumi::message_json::parse_json(p, json))
       throw std::runtime_error("output " + std::string(port) + ": " + p.error_);
-    if (call->emit_output(call->host, port, p.builder_.GetBufferPointer(), p.builder_.GetSize()) != 0)
+    if (call->emit_output(call->host, port, p.builder_.GetBufferPointer(),
+                          p.builder_.GetSize()) != 0)
       throw std::runtime_error("output " + std::string(port) + " was rejected");
     return 0;
   } catch (const std::exception& e) {

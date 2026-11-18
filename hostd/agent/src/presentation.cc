@@ -6,8 +6,8 @@
 #include <set>
 #include <tuple>
 
-#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 namespace A = Tsugumi::Agent;

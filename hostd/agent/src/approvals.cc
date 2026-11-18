@@ -68,7 +68,8 @@ auto Approvals::ApproveOperation(
     lock.unlock();
     preview = describe();
     lock.lock();
-    if (!access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Read))
+    if (!access_service.HasGrant(project, conversation,
+                                 Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Access was revoked while reading approval targets");
     conversations->RememberResource(conversation, project);
@@ -118,8 +119,10 @@ auto Approvals::ApproveOperation(
   lock.unlock();
   const auto current = describe();
   lock.lock();
-  if (!access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Read) ||
-      !access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Write))
+  if (!access_service.HasGrant(project, conversation,
+                               Tsugumi::Service::Access::Read) ||
+      !access_service.HasGrant(project, conversation,
+                               Tsugumi::Service::Access::Write))
     throw Failure("permission_denied",
                   "Project access was revoked before approval could be used");
   if (current != preview) {

@@ -8,10 +8,10 @@
 #include <fstream>
 #include <thread>
 
-#include "tsugumi/util/json_object.hh"
 #include "server.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace {
 namespace R = Tsugumi::RPC;
@@ -24,7 +24,8 @@ class Daemon final : public tsugumi::RequestSink {
   tsugumi::Server* server = nullptr;
   auto hello(const tsugumi::RequestIn& request)
       -> std::pair<std::string, bool> override {
-    const auto* input = project_request(request)->value_as_SessionHelloRequest();
+    const auto* input =
+        project_request(request)->value_as_SessionHelloRequest();
     const bool accepted =
         input && input->protocol() == 1 && input->client_id() &&
         tsugumi::crypto::is_uuid(input->client_id()->str()) && input->token() &&
@@ -45,12 +46,18 @@ class Daemon final : public tsugumi::RequestSink {
             true};
   }
   auto dispatch(tsugumi::RequestIn request) -> void override {
-    if (!project_request(request)->value_as_ProjectHostRequirementsRequest()) return;
+    if (!project_request(request)->value_as_ProjectHostRequirementsRequest())
+      return;
     flatbuffers::FlatBufferBuilder b;
     auto value = R::CreateProjectHostRequirements(b);
-    auto reply = R::CreateReply(b, R::ReplyPayload::ProjectHostRequirements, value.Union());
-    R::FinishMessageBuffer(b, R::CreateMessage(b, request.request_id, R::Payload::Reply, reply.Union()));
-    server->reply(request.conn, {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()});
+    auto reply = R::CreateReply(b, R::ReplyPayload::ProjectHostRequirements,
+                                value.Union());
+    R::FinishMessageBuffer(
+        b, R::CreateMessage(b, request.request_id, R::Payload::Reply,
+                            reply.Union()));
+    server->reply(
+        request.conn,
+        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()});
   }
   auto disconnected(tsugumi::ConnId) -> void override {}
 };

@@ -1,8 +1,9 @@
-#include "tsugumi/workerd/scratch_policy.hh"
 #include "run_scratch.hh"
 
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "tsugumi/workerd/scratch_policy.hh"
 #ifdef __linux__
 #include <linux/magic.h>
 #include <sys/vfs.h>
@@ -18,7 +19,8 @@
 namespace tsugumi {
 namespace {
 
-auto disk_scratch(const std::filesystem::path& directory, bool create) -> std::filesystem::path {
+auto disk_scratch(const std::filesystem::path& directory, bool create)
+    -> std::filesystem::path {
   const auto path = std::filesystem::absolute(directory).lexically_normal();
   // Walk from the filesystem root so a link in a parent cannot redirect us.
   std::filesystem::path part;
@@ -27,39 +29,54 @@ auto disk_scratch(const std::filesystem::path& directory, bool create) -> std::f
     part /= component;
     struct stat st{};
     if (::lstat(part.c_str(), &st) != 0) {
-      if (errno != ENOENT) throw std::runtime_error("cannot inspect scratch directory " + part.string());
+      if (errno != ENOENT)
+        throw std::runtime_error("cannot inspect scratch directory " +
+                                 part.string());
       if (!create) continue;
       // Another project's core may create the shared parent at the same moment.
-      if ((::mkdir(part.c_str(), 0700) != 0 && errno != EEXIST) || ::lstat(part.c_str(), &st) != 0)
-        throw std::runtime_error("cannot create scratch directory " + part.string());
+      if ((::mkdir(part.c_str(), 0700) != 0 && errno != EEXIST) ||
+          ::lstat(part.c_str(), &st) != 0)
+        throw std::runtime_error("cannot create scratch directory " +
+                                 part.string());
     }
     existing = part;
-    if (!S_ISDIR(st.st_mode)) throw std::runtime_error("scratch directory is not a folder: " + part.string());
+    if (!S_ISDIR(st.st_mode))
+      throw std::runtime_error("scratch directory is not a folder: " +
+                               part.string());
     if ((st.st_uid != 0 && st.st_uid != ::geteuid()) ||
         ((st.st_mode & 0022) != 0 && (st.st_mode & S_ISVTX) == 0))
-      throw std::runtime_error("scratch parent is not private: " + part.string());
-    if (part == path && (st.st_uid != ::geteuid() || ::chmod(part.c_str(), 0700) != 0))
-      throw std::runtime_error("scratch directory is not owned by this user: " + part.string());
+      throw std::runtime_error("scratch parent is not private: " +
+                               part.string());
+    if (part == path &&
+        (st.st_uid != ::geteuid() || ::chmod(part.c_str(), 0700) != 0))
+      throw std::runtime_error("scratch directory is not owned by this user: " +
+                               part.string());
   }
 #ifdef __linux__
   struct statfs disk{};
-  if (::statfs(existing.c_str(), &disk) != 0 || disk.f_type == TMPFS_MAGIC || disk.f_type == RAMFS_MAGIC)
-    throw std::runtime_error("run scratch must be on disk, not tmpfs: " + path.string());
+  if (::statfs(existing.c_str(), &disk) != 0 || disk.f_type == TMPFS_MAGIC ||
+      disk.f_type == RAMFS_MAGIC)
+    throw std::runtime_error("run scratch must be on disk, not tmpfs: " +
+                             path.string());
 #endif
   return path;
 }
 }  // namespace
 
-auto private_disk_scratch(const std::filesystem::path& directory) -> std::filesystem::path {
+auto private_disk_scratch(const std::filesystem::path& directory)
+    -> std::filesystem::path {
   return disk_scratch(directory, true);
 }
 
-auto disk_scratch_path(const std::filesystem::path& directory) -> std::filesystem::path {
+auto disk_scratch_path(const std::filesystem::path& directory)
+    -> std::filesystem::path {
   return disk_scratch(directory, false);
 }
 
-auto default_run_scratch(const std::filesystem::path& project) -> std::filesystem::path {
-  return run_scratch_root() / crypto::sha256_hex(project.string()).substr(0, 16);
+auto default_run_scratch(const std::filesystem::path& project)
+    -> std::filesystem::path {
+  return run_scratch_root() /
+         crypto::sha256_hex(project.string()).substr(0, 16);
 }
 
 auto remove_run_scratch(const std::filesystem::path& path) -> bool {
@@ -73,7 +90,8 @@ auto remove_run_scratch(const std::filesystem::path& path) -> bool {
     fs::permissions(path, fs::perms::owner_all, fs::perm_options::add, error);
     if (error) return false;
     std::vector<fs::path> children;
-    for (fs::directory_iterator it(path, error), end; !error && it != end; it.increment(error))
+    for (fs::directory_iterator it(path, error), end; !error && it != end;
+         it.increment(error))
       children.push_back(it->path());
     if (error) return false;
     for (const auto& child : children)

@@ -53,7 +53,8 @@ struct Project {
   Opt<"versionPaths", v::Array<v::String>> version_paths;
   // Host policy, carried without affecting execution.
   Opt<"agentExclude", v::Array<v::String>> agent_exclude;
-  // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
+  // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default
+  // true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
   // The ports this project has as a Card in Card (an external of another
@@ -61,7 +62,8 @@ struct Project {
   Opt<"boundary", Obj<Boundary>> boundary;
 };
 
-// ---- definitions/<id>/_card.json ---------------------------------------------
+// ---- definitions/<id>/_card.json
+// ---------------------------------------------
 
 struct ParamDef {
   Opt<"name", v::String> name;
@@ -103,14 +105,17 @@ struct CardDefinition {
   // default) or "eachInput" (once per arriving value).
   Opt<"trigger", v::String> trigger;
   Opt<"maxRuns", v::Uint64> max_runs;
-  Opt<"timeoutSeconds", Json> timeout_seconds;            // positive integer or null
-  Opt<"buildTimeoutSeconds", Json> build_timeout_seconds;  // positive integer or null
+  Opt<"timeoutSeconds", Json> timeout_seconds;  // positive integer or null
+  Opt<"buildTimeoutSeconds", Json>
+      build_timeout_seconds;  // positive integer or null
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;
   Opt<"sandbox", v::Bool> sandbox;
-  Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
-  Opt<"network", v::Bool> network;           // Experimental, default false
+  Opt<"reuseWorker", v::Bool>
+      reuse_worker;  // Keep worker state across invocations and runs. Default
+                     // false.
+  Opt<"network", v::Bool> network;  // Experimental, default false
   Opt<"executionService", v::String> execution_service;
   Opt<"workerCondition", Obj<WorkerConditionJson>> worker_condition;
   Opt<"executionResources", Obj<ExecutionResourcesJson>> execution_resources;
@@ -130,6 +135,5 @@ struct CardDefinition {
 struct CardLink {
   Opt<"external", v::String> external;
 };
-
 
 }  // namespace tsugumi::schema

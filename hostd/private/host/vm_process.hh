@@ -5,7 +5,7 @@
 namespace tsugumi::host {
 // One host policy drives the helper request and both clients' confirmation.
 auto VMResetPolicy() -> Tsugumi::VMHost::ResetT;
-auto DescribeVMReset(Tsugumi::Host::HostRuntimeT &runtime) -> void;
+auto DescribeVMReset(Tsugumi::Host::HostRuntimeT& runtime) -> void;
 
 struct VMProcessOptions {
   std::filesystem::path binary, support, image;

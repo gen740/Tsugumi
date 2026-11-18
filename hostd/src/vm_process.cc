@@ -1,5 +1,4 @@
 #include "host/vm_process.hh"
-#include "host/binary_caches.hh"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -16,6 +15,7 @@
 #include <set>
 #include <thread>
 
+#include "host/binary_caches.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -27,12 +27,11 @@ auto VMResetPolicy() -> V::ResetT {
   request.discard_other_files = true;
   return request;
 }
-auto DescribeVMReset(H::HostRuntimeT &runtime) -> void {
+auto DescribeVMReset(H::HostRuntimeT& runtime) -> void {
   const auto policy = VMResetPolicy();
   std::string kept;
-  for (const auto &name : policy.keep_files) {
-    if (!kept.empty())
-      kept += ", ";
+  for (const auto& name : policy.keep_files) {
+    if (!kept.empty()) kept += ", ";
     kept += name;
   }
   runtime.reset_confirmation_ja =
@@ -125,10 +124,16 @@ class VMProcess final : public EnvironmentProcess {
   explicit VMProcess(VMProcessOptions options) : options_(std::move(options)) {
     std::filesystem::create_directories(options_.support);
     const auto* root = std::getenv("TSUGUMI_SOCKET_DIR");
-    const auto prefix = root ? std::string("v-")
-                             : "tsugumi-vmhost-" + std::to_string(::getuid()) + "-";
+    const auto prefix =
+        root ? std::string("v-")
+             : "tsugumi-vmhost-" + std::to_string(::getuid()) + "-";
     path_ = (std::filesystem::path(root ? root : "/tmp") /
-             (prefix + crypto::sha256_hex(std::filesystem::canonical(options_.support).string()).substr(0, 24) + ".sock")).string();
+             (prefix +
+              crypto::sha256_hex(
+                  std::filesystem::canonical(options_.support).string())
+                  .substr(0, 24) +
+              ".sock"))
+                .string();
   }
   ~VMProcess() override { Shutdown(); }
   auto Shutdown() -> void override {
@@ -137,13 +142,15 @@ class VMProcess final : public EnvironmentProcess {
     // guest shutdown, even when earlier requests have become stuck.
     if (Socket socket{TryConnect()}; socket.fd >= 0) {
       timeval timeout{42, 0};
-      ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+      ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof timeout);
       try {
         H::HostRuntimeRequestT stop;
         stop.action = H::RuntimeAction::Shutdown;
         Send(socket.fd, stop);
         Read(socket.fd);
-      } catch (...) {}
+      } catch (...) {
+      }
     }
     watcher_.request_stop();
     {
@@ -242,10 +249,10 @@ class VMProcess final : public EnvironmentProcess {
         request.action == H::RuntimeAction::VerifyStore) {
       V::BootT boot;
       boot.broker_endpoint = options_.broker_endpoint;
-    const auto caches = PrepareBinaryCaches(options_.support);
-    boot.cache_configuration = caches.configuration;
-    boot.cache_netrc = caches.netrc;
-    boot.cache_problem = caches.problem;
+      const auto caches = PrepareBinaryCaches(options_.support);
+      boot.cache_configuration = caches.configuration;
+      boot.cache_netrc = caches.netrc;
+      boot.cache_problem = caches.problem;
       Call(std::move(boot));
     }
     auto reply = request.action == H::RuntimeAction::Reset

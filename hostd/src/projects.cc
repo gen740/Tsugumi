@@ -4,12 +4,12 @@
 #include <chrono>
 #include <fstream>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/wire.hh"
-#include "tsugumi/document/document.hh"
-#include "host/skills.hh"
 #include "host/agent_exclude.hh"
+#include "host/skills.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -88,18 +88,17 @@ auto Prepare(const f::path& destination) -> bool {
 // Both duplication and import use this traversal. Hidden definition files
 // are source data; only repository identity, run state and links are excluded.
 template <typename Directory, typename File>
-auto WalkProject(const f::path &source, const f::path &relative,
-                 const Directory &directory, const File &file) -> void {
+auto WalkProject(const f::path& source, const f::path& relative,
+                 const Directory& directory, const File& file) -> void {
   std::vector<f::directory_entry> entries;
-  for (const auto &entry : f::directory_iterator(source))
+  for (const auto& entry : f::directory_iterator(source))
     entries.push_back(entry);
-  std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+  std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
     return a.path().filename() < b.path().filename();
   });
-  for (const auto &entry : entries) {
+  for (const auto& entry : entries) {
     const auto name = entry.path().filename();
-    if (name == ".tsugumi" || name == ".git" || entry.is_symlink())
-      continue;
+    if (name == ".tsugumi" || name == ".git" || entry.is_symlink()) continue;
     const auto rel = relative / name;
     if (entry.is_directory()) {
       directory(rel);
@@ -110,15 +109,15 @@ auto WalkProject(const f::path &source, const f::path &relative,
   }
 }
 
-auto Copy(const f::path &source, const f::path &destination) -> void {
+auto Copy(const f::path& source, const f::path& destination) -> void {
   WalkProject(
       source, {},
-      [&](const auto &rel) {
+      [&](const auto& rel) {
         f::create_directory(destination / rel);
         f::permissions(destination / rel, f::perms::owner_all,
                        f::perm_options::add);
       },
-      [&](const auto &path, const auto &rel) {
+      [&](const auto& path, const auto& rel) {
         f::copy_file(path, destination / rel);
         f::permissions(destination / rel,
                        f::status(path).permissions() | f::perms::owner_write);
@@ -127,7 +126,7 @@ auto Copy(const f::path &source, const f::path &destination) -> void {
 }
 
 template <typename Write>
-auto Populate(const f::path &destination, Write write) -> std::string {
+auto Populate(const f::path& destination, Write write) -> std::string {
   const bool created = Prepare(destination);
   try {
     write();
@@ -148,8 +147,8 @@ auto Populate(const f::path &destination, Write write) -> std::string {
 }
 }  // namespace
 
-auto ReadProjectFiles(const std::string &path,
-                      const std::function<void(const std::string &)> &authorize)
+auto ReadProjectFiles(const std::string& path,
+                      const std::function<void(const std::string&)>& authorize)
     -> std::map<std::string, std::string> {
   const auto root = authorize ? Path(path) : f::canonical(Path(path));
   if (authorize) {
@@ -162,13 +161,11 @@ auto ReadProjectFiles(const std::string &path,
   constexpr uint64_t kLimit = 64 << 20;
   WalkProject(
       root, {},
-      [&](const auto &rel) {
-        if (authorize)
-          authorize((root / rel).string());
+      [&](const auto& rel) {
+        if (authorize) authorize((root / rel).string());
       },
-      [&](const auto &file, const auto &rel) {
-        if (authorize)
-          authorize(file.string());
+      [&](const auto& file, const auto& rel) {
+        if (authorize) authorize(file.string());
         if (f::file_size(file) > kLimit - total || files.size() >= 65536)
           throw ProjectFailure("project_too_large",
                                "The project exceeds the import limit");
@@ -239,7 +236,7 @@ auto Projects::Recents() const -> std::vector<std::string> {
   return entries;
 }
 
-auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
+auto Projects::Handle(const A::Request& request, uint64_t id) -> std::string {
   const auto raw = Apply(request);
   if (db_ &&
       (request.value_type() == A::RequestPayload::HostProjectCreateRequest ||
@@ -250,7 +247,7 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
   auto reply = [id](auto value) {
     return agent::wire::HostReply(id, std::move(value));
   };
-  auto recent = [](const std::string &raw) {
+  auto recent = [](const std::string& raw) {
     const auto o = json::Object(raw);
     auto entry = std::make_unique<A::RecentProjectT>();
     entry->path = json::Text(o, "path");
@@ -259,58 +256,58 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
     return entry;
   };
   switch (request.value_type()) {
-  case A::RequestPayload::HostProjectDefaultsRequest: {
-    A::ProjectDefaultsT value;
-    value.agent_exclude = AgentExclude::Defaults();
-    value.nixpkgs_pin = json::Text(json::Object(raw), "nixpkgsPin");
-    return reply(std::move(value));
-  }
-  case A::RequestPayload::HostProjectInfoRequest: {
-    const auto o = json::Object(raw);
-    A::ProjectInfoT value;
-    value.path = json::Text(o, "path");
-    value.name = json::Text(o, "name");
-    return reply(std::move(value));
-  }
-  case A::RequestPayload::HostProjectCreateRequest:
-  case A::RequestPayload::HostProjectDuplicateRequest:
-  case A::RequestPayload::HostDemoCopyRequest: {
-    A::ProjectLocationT value;
-    value.path = json::Text(json::Object(raw), "path");
-    return reply(std::move(value));
-  }
-  case A::RequestPayload::HostRecentRememberRequest:
-    return reply(std::move(*recent(raw)));
-  case A::RequestPayload::HostRecentListRequest: {
-    A::RecentListT value;
-    for (const auto &entry : json::Array(raw))
-      value.projects.push_back(recent(entry));
-    return reply(std::move(value));
-  }
-  case A::RequestPayload::HostDemoListRequest: {
-    A::DemoListT value;
-    for (const auto &entry : json::Array(raw)) {
-      const auto o = json::Object(entry);
-      auto demo = std::make_unique<A::DemoT>();
-      demo->id = json::Text(o, "id");
-      demo->path = json::Text(o, "path");
-      demo->title = json::Text(o, "title");
-      demo->description = json::Text(o, "description");
-      demo->field = json::Text(o, "field");
-      for (const auto &tag : json::Array(json::Get(o, "tags", "[]")))
-        demo->tags.push_back(json::String(tag));
-      value.demos.push_back(std::move(demo));
+    case A::RequestPayload::HostProjectDefaultsRequest: {
+      A::ProjectDefaultsT value;
+      value.agent_exclude = AgentExclude::Defaults();
+      value.nixpkgs_pin = json::Text(json::Object(raw), "nixpkgsPin");
+      return reply(std::move(value));
     }
-    return reply(std::move(value));
-  }
-  case A::RequestPayload::HostRecentForgetRequest:
-    return reply(Tsugumi::Service::AcknowledgementT{});
-  default:
-    throw ProjectFailure("invalid_request", "Unsupported host project reply");
+    case A::RequestPayload::HostProjectInfoRequest: {
+      const auto o = json::Object(raw);
+      A::ProjectInfoT value;
+      value.path = json::Text(o, "path");
+      value.name = json::Text(o, "name");
+      return reply(std::move(value));
+    }
+    case A::RequestPayload::HostProjectCreateRequest:
+    case A::RequestPayload::HostProjectDuplicateRequest:
+    case A::RequestPayload::HostDemoCopyRequest: {
+      A::ProjectLocationT value;
+      value.path = json::Text(json::Object(raw), "path");
+      return reply(std::move(value));
+    }
+    case A::RequestPayload::HostRecentRememberRequest:
+      return reply(std::move(*recent(raw)));
+    case A::RequestPayload::HostRecentListRequest: {
+      A::RecentListT value;
+      for (const auto& entry : json::Array(raw))
+        value.projects.push_back(recent(entry));
+      return reply(std::move(value));
+    }
+    case A::RequestPayload::HostDemoListRequest: {
+      A::DemoListT value;
+      for (const auto& entry : json::Array(raw)) {
+        const auto o = json::Object(entry);
+        auto demo = std::make_unique<A::DemoT>();
+        demo->id = json::Text(o, "id");
+        demo->path = json::Text(o, "path");
+        demo->title = json::Text(o, "title");
+        demo->description = json::Text(o, "description");
+        demo->field = json::Text(o, "field");
+        for (const auto& tag : json::Array(json::Get(o, "tags", "[]")))
+          demo->tags.push_back(json::String(tag));
+        value.demos.push_back(std::move(demo));
+      }
+      return reply(std::move(value));
+    }
+    case A::RequestPayload::HostRecentForgetRequest:
+      return reply(Tsugumi::Service::AcknowledgementT{});
+    default:
+      throw ProjectFailure("invalid_request", "Unsupported host project reply");
   }
 }
 
-auto Projects::Apply(const A::Request &request) -> std::string {
+auto Projects::Apply(const A::Request& request) -> std::string {
   try {
     switch (request.value_type()) {
       case A::RequestPayload::HostProjectDefaultsRequest: {
@@ -376,20 +373,26 @@ auto Projects::Apply(const A::Request &request) -> std::string {
             // is absolute, so moving the app after the copy makes the finished
             // version readable again. This assumes the app is not moved; no
             // countermeasure will be added.
-            const auto counterparts = json::Array(json::Get(value, "agentExclude", "[]"));
+            const auto counterparts =
+                json::Array(json::Get(value, "agentExclude", "[]"));
             if (!counterparts.empty()) {
-              auto document = json::Object(fs::read_file_or_throw(destination / "tsugumi.json"));
+              auto document = json::Object(
+                  fs::read_file_or_throw(destination / "tsugumi.json"));
               auto entries = AgentExclude::Entries(json::Encode(document));
               for (const auto& counterpart : counterparts) {
                 const auto relative = json::String(counterpart);
-                if (!fs::valid_relative_path(relative) || !fs::resolves_inside(demos_, demos_ / relative))
-                  throw ProjectFailure("demo_not_found", "Invalid demo counterpart");
+                if (!fs::valid_relative_path(relative) ||
+                    !fs::resolves_inside(demos_, demos_ / relative))
+                  throw ProjectFailure("demo_not_found",
+                                       "Invalid demo counterpart");
                 entries.push_back(f::canonical(demos_ / relative).string());
               }
               std::vector<std::string> encoded;
-              for (const auto& entry : entries) encoded.push_back(json::Quote(entry));
+              for (const auto& entry : entries)
+                encoded.push_back(json::Quote(entry));
               document["agentExclude"] = json::Encode(encoded);
-              fs::write_atomic(destination / "tsugumi.json", json::Encode(document) + '\n');
+              fs::write_atomic(destination / "tsugumi.json",
+                               json::Encode(document) + '\n');
             }
           });
         }
@@ -445,9 +448,9 @@ auto Projects::Apply(const A::Request &request) -> std::string {
     }
   } catch (const ProjectFailure&) {
     throw;
-  } catch (const DocumentError &e) {
+  } catch (const DocumentError& e) {
     throw ProjectFailure(e.code, e.what());
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     throw ProjectFailure("project_io_error", e.what());
   }
 }

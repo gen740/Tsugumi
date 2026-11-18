@@ -1,9 +1,9 @@
-#include <gtest/gtest.h>
+#include "tsugumi/workerd/worker_execution.hh"
 
 #include <fcntl.h>
+#include <gtest/gtest.h>
 #include <unistd.h>
 
-#include "tsugumi/workerd/worker_execution.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -14,15 +14,19 @@ namespace stdfs = std::filesystem;
 class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
  protected:
   auto SetUp() -> void override {
-    root_ = stdfs::canonical(stdfs::temp_directory_path()) / ("tsugumi-delivery-" + crypto::uuid4());
+    root_ = stdfs::canonical(stdfs::temp_directory_path()) /
+            ("tsugumi-delivery-" + crypto::uuid4());
     stdfs::create_directories(root_ / "worker/out");
     stdfs::create_directories(root_ / "worker/inputs");
     std::string error;
-    const auto compiled = types::compile("table Path { value:string; }", "Path", &error);
+    const auto compiled =
+        types::compile("table Path { value:string; }", "Path", &error);
     ASSERT_TRUE(compiled) << error;
     type_ = *compiled;
-    output_ = ::open((root_ / "worker/out").c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    input_ = ::open((root_ / "worker/inputs").c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    output_ = ::open((root_ / "worker/out").c_str(),
+                     O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    input_ = ::open((root_ / "worker/inputs").c_str(),
+                    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     ASSERT_GE(output_, 0);
     ASSERT_GE(input_, 0);
   }
@@ -32,17 +36,22 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
     std::error_code error;
     stdfs::remove_all(root_, error);
   }
-  auto value(const std::string& name, PortKind kind, const stdfs::path& path) -> Value {
+  auto value(const std::string& name, PortKind kind, const stdfs::path& path)
+      -> Value {
     std::string bytes, error;
-    EXPECT_TRUE(types::json_to_flatbuffer(*type_, R"({"value":"placeholder"})", &bytes, &error)) << error;
+    EXPECT_TRUE(types::json_to_flatbuffer(*type_, R"({"value":"placeholder"})",
+                                          &bytes, &error))
+        << error;
     return with_path({name, kind, type_, bytes, {}}, path.string());
   }
-  auto stage(WorkerOutcome& outcome, PortKind kind, const std::vector<Value>& inputs = {},
-               const std::vector<Value>& original = {}) -> void {
+  auto stage(WorkerOutcome& outcome, PortKind kind,
+             const std::vector<Value>& inputs = {},
+             const std::vector<Value>& original = {}) -> void {
     const std::atomic<bool> cancel{false};
     stage_outputs(outcome, {{"result", kind, false, type_}}, inputs, original,
-        output_, (root_ / "worker/out").string(), input_, root_ / "worker/inputs",
-        root_ / "result/files/out", GetParam(), cancel);
+                  output_, (root_ / "worker/out").string(), input_,
+                  root_ / "worker/inputs", root_ / "result/files/out",
+                  GetParam(), cancel);
   }
   stdfs::path root_;
   types::TypeRef type_;
@@ -53,20 +62,25 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
 TEST_P(WorkerDelivery, CopiesOnlyDeclaredFiles) {
   fs::write_atomic(root_ / "worker/out/declared", "declared");
   fs::write_atomic(root_ / "worker/out/unused", "unused");
-  const auto produced = value("result", PortKind::File, root_ / "worker/out/declared");
+  const auto produced =
+      value("result", PortKind::File, root_ / "worker/out/declared");
   WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
   stage(outcome, PortKind::File);
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/declared"), "declared");
   EXPECT_FALSE(stdfs::exists(root_ / "result/files/out/unused"));
-  const auto result = path_value(Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
-  EXPECT_EQ(result, GetParam() == OutputDelivery::local_paths ? (root_ / "worker/out/declared").string() : "out/declared");
+  const auto result = path_value(
+      Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
+  EXPECT_EQ(result, GetParam() == OutputDelivery::local_paths
+                        ? (root_ / "worker/out/declared").string()
+                        : "out/declared");
 }
 
 TEST_P(WorkerDelivery, CopiesDeclaredDirectoryAndMaterializesInternalLinks) {
   fs::write_atomic(root_ / "worker/out/tree/nested/file", "directory");
   stdfs::create_directories(root_ / "worker/out/tree/empty");
   stdfs::create_symlink("nested/file", root_ / "worker/out/tree/link");
-  const auto produced = value("result", PortKind::Directory, root_ / "worker/out/tree");
+  const auto produced =
+      value("result", PortKind::Directory, root_ / "worker/out/tree");
   WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
   stage(outcome, PortKind::Directory);
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/tree/link"), "directory");
@@ -75,17 +89,20 @@ TEST_P(WorkerDelivery, CopiesDeclaredDirectoryAndMaterializesInternalLinks) {
 }
 
 TEST_P(WorkerDelivery, TransferFailureDoesNotBecomeACardFailure) {
-  const auto produced = value("result", PortKind::File, root_ / "worker/out/missing");
+  const auto produced =
+      value("result", PortKind::File, root_ / "worker/out/missing");
   WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
   EXPECT_THROW(stage(outcome, PortKind::File), Failed);
   EXPECT_FALSE(outcome.failure);
-  EXPECT_TRUE(worker_disposition(true, true, true, false, outcome.failure).keep);
+  EXPECT_TRUE(
+      worker_disposition(true, true, true, false, outcome.failure).keep);
 }
 
 TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
   fs::write_atomic(root_ / "outside", "private");
   stdfs::create_symlink(root_ / "outside", root_ / "worker/out/link");
-  const auto produced = value("result", PortKind::File, root_ / "worker/out/link");
+  const auto produced =
+      value("result", PortKind::File, root_ / "worker/out/link");
   WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
   EXPECT_THROW(stage(outcome, PortKind::File), Failed);
   EXPECT_FALSE(outcome.failure);
@@ -94,11 +111,14 @@ TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
 
 TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
   fs::write_atomic(root_ / "worker/inputs/file", "forwarded");
-  const auto staged = value("input", PortKind::File, root_ / "worker/inputs/file");
-  const auto original = value("input", PortKind::File, root_ / "recorded/original");
+  const auto staged =
+      value("input", PortKind::File, root_ / "worker/inputs/file");
+  const auto original =
+      value("input", PortKind::File, root_ / "recorded/original");
   WorkerOutcome outcome{{{"result", staged.bytes}}, {}};
   stage(outcome, PortKind::File, {staged}, {original});
-  const auto delivered = path_value(Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
+  const auto delivered = path_value(
+      Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
   ASSERT_TRUE(delivered);
   if (GetParam() == OutputDelivery::local_paths) {
     EXPECT_EQ(*delivered, (root_ / "recorded/original").string());
@@ -110,30 +130,40 @@ TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
 }
 
 TEST_P(WorkerDelivery, FailedCardDoesNotTransferOutputs) {
-  const auto produced = value("result", PortKind::File, root_ / "worker/out/missing");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, FailureData::make(FailureKind::worker_failed)};
+  const auto produced =
+      value("result", PortKind::File, root_ / "worker/out/missing");
+  WorkerOutcome outcome{{{"result", produced.bytes}},
+                        FailureData::make(FailureKind::worker_failed)};
   EXPECT_NO_THROW(stage(outcome, PortKind::File));
   EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
-  EXPECT_FALSE(worker_disposition(true, true, true, false, outcome.failure).keep);
+  EXPECT_FALSE(
+      worker_disposition(true, true, true, false, outcome.failure).keep);
 }
 
 TEST_P(WorkerDelivery, InvalidOutputValidationRemainsWithItsCarrier) {
   WorkerOutcome outcome{{{"unknown", "invalid buffer"}}, {}};
-  if (GetParam() == OutputDelivery::local_paths) EXPECT_NO_THROW(stage(outcome, PortKind::File));
-  else EXPECT_THROW(stage(outcome, PortKind::File), Failed);
+  if (GetParam() == OutputDelivery::local_paths)
+    EXPECT_NO_THROW(stage(outcome, PortKind::File));
+  else
+    EXPECT_THROW(stage(outcome, PortKind::File), Failed);
 }
 
 INSTANTIATE_TEST_SUITE_P(Carriers, WorkerDelivery,
-    testing::Values(OutputDelivery::local_paths, OutputDelivery::transferred_files));
+                         testing::Values(OutputDelivery::local_paths,
+                                         OutputDelivery::transferred_files));
 
 // A supervised job already owns its scratch tree. Merely constructing the
 // one-shot pool must not remove it, including when acquire cannot construct a
 // worker. Ordinary pools retain their existing project-lifetime cleanup.
 TEST(WorkerPoolOwnership, OneShotLeavesJobScratchToTheWorkerAndSupervisor) {
-  const auto root = stdfs::canonical(stdfs::temp_directory_path()) / ("tsugumi-pool-" + crypto::uuid4());
+  const auto root = stdfs::canonical(stdfs::temp_directory_path()) /
+                    ("tsugumi-pool-" + crypto::uuid4());
   struct Cleanup {
     stdfs::path root;
-    ~Cleanup() { std::error_code error; stdfs::remove_all(root, error); }
+    ~Cleanup() {
+      std::error_code error;
+      stdfs::remove_all(root, error);
+    }
   } cleanup{root};
   const auto job = root / "job/scratch";
   fs::write_atomic(job / "work/partial", "job scratch");
@@ -152,9 +182,11 @@ TEST(WorkerPoolOwnership, OneShotLeavesJobScratchToTheWorkerAndSupervisor) {
 }
 
 TEST(WorkerDisposition, CardFailuresAndMissingRequiredOutputsDiscardResidents) {
-  for (const auto kind : {FailureKind::worker_failed, FailureKind::output_invalid,
-                          FailureKind::cancelled, FailureKind::timeout}) {
-    const auto result = worker_disposition(true, true, true, false, FailureData::make(kind));
+  for (const auto kind :
+       {FailureKind::worker_failed, FailureKind::output_invalid,
+        FailureKind::cancelled, FailureKind::timeout}) {
+    const auto result =
+        worker_disposition(true, true, true, false, FailureData::make(kind));
     EXPECT_FALSE(result.keep);
     EXPECT_FALSE(result.reason.empty());
   }

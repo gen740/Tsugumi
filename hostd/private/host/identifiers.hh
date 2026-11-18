@@ -10,12 +10,11 @@
 namespace tsugumi::host {
 // Call with the host StateGate held. Reservations survive deleted receipts and
 // conversations; they contain only the identifier itself, never an alias.
-inline auto
-AllocateId(sql::Db &db, const std::string &scope,
-           const std::function<std::string()> &generate = crypto::short_id)
-    -> std::string {
+inline auto AllocateId(sql::Db& db, const std::string& scope,
+                       const std::function<std::string()>& generate =
+                           crypto::short_id) -> std::string {
   auto id = crypto::unique_short_id(
-      [&](const auto &value) {
+      [&](const auto& value) {
         auto q = db.prepare("SELECT 1 FROM identifiers WHERE scope=? AND id=?");
         q.bind(1, scope).bind(2, value);
         return q.step();
@@ -29,12 +28,12 @@ AllocateId(sql::Db &db, const std::string &scope,
 }
 // Occupied document references and issued references use the same namespace.
 // The state gate serializes independent Mac/Web windows before their edits.
-inline auto ReserveOrdinal(sql::Db &db, const std::string &scope,
-                           const std::string &prefix,
-                           const std::vector<std::string> &occupied)
+inline auto ReserveOrdinal(sql::Db& db, const std::string& scope,
+                           const std::string& prefix,
+                           const std::vector<std::string>& occupied)
     -> std::string {
   auto reserve = db.prepare("INSERT OR IGNORE INTO identifiers VALUES(?,?)");
-  for (const auto &id : occupied) {
+  for (const auto& id : occupied) {
     reserve.bind(1, scope).bind(2, id).run();
     reserve.reset();
   }
@@ -45,9 +44,8 @@ inline auto ReserveOrdinal(sql::Db &db, const std::string &scope,
     const auto id = prefix + std::to_string(number);
     reserve.bind(1, scope).bind(2, id).run();
     reserve.reset();
-    if (db.changes())
-      return id;
+    if (db.changes()) return id;
   }
   throw std::runtime_error("annotation reference numbers exhausted");
 }
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

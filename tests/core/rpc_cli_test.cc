@@ -137,9 +137,9 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       directory.path / "project/tsugumi.json",
       R"({"name":"Before","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   Write(directory.path / "project/layout.json", "{}");
-  project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir", (directory.path / "scratch").string(),
-                                  "--run-scratch-dir", (directory.path / "run-scratch").string(),
-                                  "--project",
+  project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir",
+                 (directory.path / "scratch").string(), "--run-scratch-dir",
+                 (directory.path / "run-scratch").string(), "--project",
                  (directory.path / "project").string(), "--unix",
                  (directory.path / "project.sock").string(), "--listen",
                  "127.0.0.1:0", "--allow-missing-origin", "--control-dir",

@@ -1,4 +1,3 @@
-#include "runtime_schema.hh"
 #include "history.hh"
 
 #include <fcntl.h>
@@ -9,6 +8,7 @@
 #include <functional>
 #include <system_error>
 
+#include "runtime_schema.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -45,7 +45,8 @@ std::vector<WaitingInputData> waiting_from(const std::string& s) {
   for (const auto& wi : *list.items) {
     WaitingInputData w;
     w.port = *wi.port;
-    for (const auto& u : *wi.upstream) w.upstream.push_back({unkey(*u.card), *u.port});
+    for (const auto& u : *wi.upstream)
+      w.upstream.push_back({unkey(*u.card), *u.port});
     out.push_back(std::move(w));
   }
   return out;
@@ -71,9 +72,12 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.execution_service = s.execution_service;
   *d.execution_job_id = s.execution_job_id;
   *d.execution_system = s.execution_system;
-  *d.execution_cpu_millis = s.execution_resources ? s.execution_resources->cpu_millis : 0;
-  *d.execution_memory_bytes = s.execution_resources ? s.execution_resources->memory_bytes : 0;
-  *d.execution_state = s.execution_state ? static_cast<int64_t>(*s.execution_state) : -1;
+  *d.execution_cpu_millis =
+      s.execution_resources ? s.execution_resources->cpu_millis : 0;
+  *d.execution_memory_bytes =
+      s.execution_resources ? s.execution_resources->memory_bytes : 0;
+  *d.execution_state =
+      s.execution_state ? static_cast<int64_t>(*s.execution_state) : -1;
   *d.batch_activation = s.batch_activation.value_or(0);
   *d.batch_index = s.batch_index.value_or(0);
   *d.batch_size = s.batch_size.value_or(0);
@@ -94,26 +98,34 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
       if (*j.end >= 0) st.end = *j.end;
       s.stages.push_back(st);
     }
-  if (auto reused = d.worker_reused->value_or(-1); reused >= 0) s.worker_reused = reused == 1;
-  if (const auto* outputs = schema::get(d.outputs_sent)) s.outputs_sent = *outputs;
+  if (auto reused = d.worker_reused->value_or(-1); reused >= 0)
+    s.worker_reused = reused == 1;
+  if (const auto* outputs = schema::get(d.outputs_sent))
+    s.outputs_sent = *outputs;
   if (auto ready = d.ready_at->value_or(-1); ready >= 0) s.ready_at = ready;
   s.emulator = d.emulator->value_or("");
   s.environment_id = d.environment_id->value_or("");
   s.params_json = d.params->value_or("");
-  if (const auto* service = schema::get(d.execution_service)) s.execution_service = *service;
+  if (const auto* service = schema::get(d.execution_service))
+    s.execution_service = *service;
   s.execution_job_id = d.execution_job_id->value_or("");
   s.execution_system = d.execution_system->value_or("");
   const auto cpu = d.execution_cpu_millis->value_or(0);
   const auto memory = d.execution_memory_bytes->value_or(0);
   if (cpu > 0 && cpu <= UINT32_MAX && memory > 0)
-    s.execution_resources = ExecutionResources{static_cast<uint32_t>(cpu), memory};
+    s.execution_resources =
+        ExecutionResources{static_cast<uint32_t>(cpu), memory};
   const auto state = d.execution_state->value_or(-1);
-  if (state >= 0 && state <= static_cast<int64_t>(RemoteExecutionState::interrupted))
+  if (state >= 0 &&
+      state <= static_cast<int64_t>(RemoteExecutionState::interrupted))
     s.execution_state = static_cast<RemoteExecutionState>(state);
-  if (const auto activation = d.batch_activation->value_or(0); activation > 0) s.batch_activation = activation;
-  if (const auto index = d.batch_index->value_or(0); index > 0 && index <= UINT32_MAX)
+  if (const auto activation = d.batch_activation->value_or(0); activation > 0)
+    s.batch_activation = activation;
+  if (const auto index = d.batch_index->value_or(0);
+      index > 0 && index <= UINT32_MAX)
     s.batch_index = static_cast<uint32_t>(index);
-  if (const auto size = d.batch_size->value_or(0); size > 0 && size <= UINT32_MAX)
+  if (const auto size = d.batch_size->value_or(0);
+      size > 0 && size <= UINT32_MAX)
     s.batch_size = static_cast<uint32_t>(size);
   if (const auto implementation = d.implementation_index->value_or(0);
       implementation > 0 && implementation <= UINT32_MAX)
@@ -136,13 +148,16 @@ std::vector<InputSourceData> sources_from(const std::string& s) {
   std::vector<InputSourceData> out;
   schema::InputSourceList list;
   if (s.empty() || schema::decode(s, list)) return out;
-  for (const auto& x : *list.items) out.push_back({*x.port, unkey(*x.card), *x.invocation});
+  for (const auto& x : *list.items)
+    out.push_back({*x.port, unkey(*x.card), *x.invocation});
   return out;
 }
 
 void bind_failure(sql::Stmt& st, int i, const std::optional<FailureData>& f) {
-  if (f) st.bind_blob(i, f->to_bytes());
-  else st.bind_null(i);
+  if (f)
+    st.bind_blob(i, f->to_bytes());
+  else
+    st.bind_null(i);
 }
 
 std::optional<FailureData> col_failure(const sql::Stmt& st, int c) {
@@ -153,14 +168,20 @@ std::optional<FailureData> col_failure(const sql::Stmt& st, int c) {
 std::string put_schema(sql::Db& db, const types::Type& t) {
   // Types do not change: their hash is computed once, where they are made.
   std::string h = t.hash.empty() ? crypto::sha256_hex(t.bfbs) : t.hash;
-  db.prepare("INSERT OR IGNORE INTO schemas(hash, root_type, bfbs) VALUES(?,?,?)")
-      .bind(1, h).bind(2, t.root_type).bind_blob(3, t.bfbs).run();
+  db.prepare(
+        "INSERT OR IGNORE INTO schemas(hash, root_type, bfbs) VALUES(?,?,?)")
+      .bind(1, h)
+      .bind(2, t.root_type)
+      .bind_blob(3, t.bfbs)
+      .run();
   return h;
 }
 
 RunSummaryData run_row(const sql::Stmt& st) {
-  // Columns: run_id, state, rev, execution_rev, accepted_at, started_at, ended_at,
-  //          failure, source_hash, target, propagate, commit_id, partial_run, uses_partial_result
+  // Columns: run_id, state, rev, execution_rev, accepted_at, started_at,
+  // ended_at,
+  //          failure, source_hash, target, propagate, commit_id, partial_run,
+  //          uses_partial_result
   RunSummaryData s;
   s.status.run_id = st.text(0);
   s.status.state = static_cast<RunState>(st.i64(1));
@@ -180,13 +201,17 @@ RunSummaryData run_row(const sql::Stmt& st) {
 }
 
 constexpr const char* kRunCols =
-    "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
-    "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id), "
+    "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, "
+    "failure, source_hash, "
+    "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = "
+    "runs.run_id), "
     "partial_run, uses_partial_result";
 
-InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
-                              int detail_col = -1, int service_col = -1) {
-  // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting
+InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id,
+                              int cached_col = -1, int detail_col = -1,
+                              int service_col = -1) {
+  // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms,
+  // failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
   s.card = unkey(st.text(0));
@@ -198,9 +223,12 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, in
   s.duration_ms = st.opt_u64(6);
   s.failure = col_failure(st, 7);
   s.waiting = waiting_from(st.text(8));
-  if (cached_col >= 0 && !st.is_null(cached_col)) s.build_cached = st.i64(cached_col) != 0;
-  if (detail_col >= 0 && !st.is_null(detail_col)) detail_into(st.text(detail_col), s);
-  if (service_col >= 0 && !st.is_null(service_col)) s.execution_service = st.text(service_col);
+  if (cached_col >= 0 && !st.is_null(cached_col))
+    s.build_cached = st.i64(cached_col) != 0;
+  if (detail_col >= 0 && !st.is_null(detail_col))
+    detail_into(st.text(detail_col), s);
+  if (service_col >= 0 && !st.is_null(service_col))
+    s.execution_service = st.text(service_col);
   return s;
 }
 
@@ -283,10 +311,11 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-// Includes partial-run provenance, portable run commits and File content digests.
+// Includes partial-run provenance, portable run commits and File content
+// digests.
 constexpr int kHistoryVersion = 11;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char *kCopyVersion = "9";
+constexpr const char* kCopyVersion = "9";
 
 namespace stdfs = std::filesystem;
 
@@ -306,7 +335,9 @@ auto history_file(const stdfs::path& path, const char* suffix) -> stdfs::path {
 auto regular_history_file(const stdfs::path& path) -> bool {
   const auto status = stdfs::symlink_status(path);
   if (!stdfs::exists(status)) return false;
-  if (!stdfs::is_regular_file(status)) throw HistoryOpenError(HistoryOpenCode::NotRegular, "history is not a regular file: " + path.string());
+  if (!stdfs::is_regular_file(status))
+    throw HistoryOpenError(HistoryOpenCode::NotRegular,
+                           "history is not a regular file: " + path.string());
   return true;
 }
 
@@ -317,47 +348,69 @@ auto archive_intent(const stdfs::path& database) -> stdfs::path {
 auto read_archive_id(const stdfs::path& intent) -> std::string {
   // Read one UUID, with space for an extra byte to reject longer contents.
   char buffer[37];
-  const int fd = ::open(intent.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + intent.string());
+  const int fd =
+      ::open(intent.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  if (fd < 0)
+    throw std::system_error(errno, std::generic_category(),
+                            "open " + intent.string());
   ssize_t count;
-  do { count = ::read(fd, buffer, sizeof buffer); } while (count < 0 && errno == EINTR);
+  do {
+    count = ::read(fd, buffer, sizeof buffer);
+  } while (count < 0 && errno == EINTR);
   const int error = errno;
   ::close(fd);
-  if (count < 0) throw std::system_error(error, std::generic_category(), "read " + intent.string());
+  if (count < 0)
+    throw std::system_error(error, std::generic_category(),
+                            "read " + intent.string());
   const std::string id(buffer, static_cast<size_t>(count));
-  if (!crypto::is_uuid(id)) throw std::runtime_error("invalid history archive intent: " + intent.string());
+  if (!crypto::is_uuid(id))
+    throw std::runtime_error("invalid history archive intent: " +
+                             intent.string());
   return id;
 }
 
 auto sync_history_directory(const stdfs::path& directory) -> void {
   const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + directory.string());
+  if (fd < 0)
+    throw std::system_error(errno, std::generic_category(),
+                            "open " + directory.string());
   int result;
-  do { result = ::fsync(fd); } while (result < 0 && errno == EINTR);
+  do {
+    result = ::fsync(fd);
+  } while (result < 0 && errno == EINTR);
   const int error = errno;
   ::close(fd);
-  if (result < 0) throw std::system_error(error, std::generic_category(), "sync " + directory.string());
+  if (result < 0)
+    throw std::system_error(error, std::generic_category(),
+                            "sync " + directory.string());
 }
 
-auto history_archive(const stdfs::path& database, std::string id, bool pending) -> HistoryArchive {
+auto history_archive(const stdfs::path& database, std::string id, bool pending)
+    -> HistoryArchive {
   const auto directory = database.parent_path() / ("history-archive-" + id);
   const auto status = stdfs::symlink_status(directory);
   if (stdfs::exists(status) && (!pending || !stdfs::is_directory(status)))
-    throw std::runtime_error("invalid history archive directory: " + directory.string());
+    throw std::runtime_error("invalid history archive directory: " +
+                             directory.string());
   for (const auto* suffix : kHistorySuffixes) {
     const auto source = history_file(database, suffix);
     const auto destination = directory / source.filename();
     const bool has_source = regular_history_file(source);
     const bool has_destination = regular_history_file(destination);
     if (has_source && has_destination)
-      throw HistoryOpenError(HistoryOpenCode::ArchiveConflict, "history archive has both source and destination: " + source.string());
+      throw HistoryOpenError(
+          HistoryOpenCode::ArchiveConflict,
+          "history archive has both source and destination: " +
+              source.string());
     if (!*suffix && !has_source && !has_destination)
-      throw std::runtime_error("history archive is missing its database: " + database.string());
+      throw std::runtime_error("history archive is missing its database: " +
+                               database.string());
   }
   return {database, directory, std::move(id), pending};
 }
 
-auto finish_history_archive(const HistoryArchive& archive, std::string_view fault) -> void {
+auto finish_history_archive(const HistoryArchive& archive,
+                            std::string_view fault) -> void {
   const auto intent = archive_intent(archive.database);
   if (!archive.pending) {
     fs::write_atomic(intent, archive.id, 0600);
@@ -372,7 +425,8 @@ auto finish_history_archive(const HistoryArchive& archive, std::string_view faul
     if (!regular_history_file(source)) continue;
     const auto destination = archive.directory / source.filename();
     if (regular_history_file(destination))
-      throw std::runtime_error("history archive destination already exists: " + destination.string());
+      throw std::runtime_error("history archive destination already exists: " +
+                               destination.string());
     stdfs::rename(source, destination);
     if (!*suffix && fault == "history_archive_after_main") ::_exit(97);
   }
@@ -385,8 +439,11 @@ auto finish_history_archive(const HistoryArchive& archive, std::string_view faul
 
 }  // namespace
 
-History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
-    : path_(db_path), secret_(std::move(cursor_secret)), fault_(std::move(fault)) {
+History::History(const std::filesystem::path& db_path,
+                 std::string cursor_secret, std::string fault)
+    : path_(db_path),
+      secret_(std::move(cursor_secret)),
+      fault_(std::move(fault)) {
   if (std::filesystem::exists(path_)) check_version();
   writer_db_ = std::make_unique<sql::Db>(path_.string());
   // Single process owns the database (guarded by the project lock).
@@ -404,35 +461,45 @@ auto History::check_version() const -> void {
   auto version = db.prepare("PRAGMA user_version");
   const auto stored = version.step() ? version.i64(0) : 0;
   if (stored == kHistoryVersion) return;
-  auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+  auto tables =
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
   if (stored == 0 && !tables.step()) return;
-  throw IncompatibleHistory("the run history " + path_.string() + " has schema version " +
-                           std::to_string(stored) + ", but this Tsugumi requires " +
-                           std::to_string(kHistoryVersion) + ". The history file is kept as it is.",
-                           std::to_string(stored), std::to_string(kHistoryVersion), "local");
+  throw IncompatibleHistory(
+      "the run history " + path_.string() + " has schema version " +
+          std::to_string(stored) + ", but this Tsugumi requires " +
+          std::to_string(kHistoryVersion) +
+          ". The history file is kept as it is.",
+      std::to_string(stored), std::to_string(kHistoryVersion), "local");
 }
 
 auto History::prepare_storage(const stdfs::path& local, const stdfs::path& copy,
-                              bool archive_incompatible, std::string_view fault) -> void {
+                              bool archive_incompatible, std::string_view fault)
+    -> void {
   std::vector<HistoryArchive> archives;
   std::optional<IncompatibleHistory> first;
-  // Validate both databases before moving anything. Corruption is not a version mismatch.
+  // Validate both databases before moving anything. Corruption is not a version
+  // mismatch.
   for (const auto& path : {local, copy}) {
     const bool is_local = path == local;
-    const std::string expected = is_local ? std::to_string(kHistoryVersion) : kCopyVersion;
+    const std::string expected =
+        is_local ? std::to_string(kHistoryVersion) : kCopyVersion;
     const char* source = is_local ? "local" : "portable";
     const auto intent = archive_intent(path);
     if (regular_history_file(intent)) {
       archives.push_back(history_archive(path, read_archive_id(intent), true));
-      if (!first) first.emplace("the run history " + path.string() +
-          " has an unfinished archive. Resume the archive to open the project.", "pending", expected, source);
+      if (!first)
+        first.emplace("the run history " + path.string() +
+                          " has an unfinished archive. Resume the archive to "
+                          "open the project.",
+                      "pending", expected, source);
       continue;
     }
     const bool present = regular_history_file(path);
     for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
       const auto sidecar = history_file(path, suffix);
       if (regular_history_file(sidecar) && !present)
-        throw std::runtime_error("history sidecar has no database: " + sidecar.string());
+        throw std::runtime_error("history sidecar has no database: " +
+                                 sidecar.string());
     }
     if (!present) continue;
 
@@ -440,17 +507,21 @@ auto History::prepare_storage(const stdfs::path& local, const stdfs::path& copy,
     if (archive_incompatible) {
       auto check = db.prepare("PRAGMA quick_check");
       if (!check.step() || check.text(0) != "ok")
-        throw std::runtime_error("history integrity check failed: " + path.string());
+        throw std::runtime_error("history integrity check failed: " +
+                                 path.string());
     }
     std::string found;
     if (is_local) {
       auto version = db.prepare("PRAGMA user_version");
       const auto stored = version.step() ? version.i64(0) : 0;
-      auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
-      if (stored == kHistoryVersion || (stored == 0 && !tables.step())) continue;
+      auto tables =
+          db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+      if (stored == kHistoryVersion || (stored == 0 && !tables.step()))
+        continue;
       found = std::to_string(stored);
     } else {
-      auto version = db.prepare("SELECT key, value FROM meta WHERE key IN ('format','version')");
+      auto version = db.prepare(
+          "SELECT key, value FROM meta WHERE key IN ('format','version')");
       std::map<std::string, std::string> meta;
       while (version.step()) meta[version.text(0)] = version.text(1);
       if (meta["format"] != kCopyFormat || meta["version"].empty())
@@ -459,9 +530,12 @@ auto History::prepare_storage(const stdfs::path& local, const stdfs::path& copy,
       found = meta["version"];
     }
     archives.push_back(history_archive(path, crypto::uuid4(), false));
-    if (!first) first.emplace("the run history " + path.string() + " has schema version " + found +
-        ", but this Tsugumi requires " + expected + ". The history file is kept as it is.",
-        found, expected, source);
+    if (!first)
+      first.emplace("the run history " + path.string() +
+                        " has schema version " + found +
+                        ", but this Tsugumi requires " + expected +
+                        ". The history file is kept as it is.",
+                    found, expected, source);
   }
   if (!first) return;
   if (!archive_incompatible) throw *first;
@@ -540,7 +614,8 @@ void History::write_sync(const Work& work) {
   });
   std::unique_lock<std::mutex> l(m);
   cv.wait(l, [&] { return finished; });
-  if (!ok) throw Failed(FailureKind::persistence_failed, "history write failed");
+  if (!ok)
+    throw Failed(FailureKind::persistence_failed, "history write failed");
 }
 
 void History::writer_loop() {
@@ -563,7 +638,8 @@ void History::writer_loop() {
       for (auto& [work, _] : batch) work(*writer_db_);
       t.commit();
     } catch (const std::exception& e) {
-      log::error(std::string("history batch failed, retrying individually: ") + e.what());
+      log::error(std::string("history batch failed, retrying individually: ") +
+                 e.what());
       ok = false;
     }
     if (!ok) {
@@ -589,16 +665,16 @@ void History::writer_loop() {
   }
 }
 
-auto History::put_environment(sql::Db &db, const std::string &run_id,
-                              const BuildEnvironmentData &e) -> std::string {
-  auto existing = db.prepare("SELECT id FROM build_environments WHERE run_id=? "
-                             "AND derivation=? AND manifest=? AND system=?");
+auto History::put_environment(sql::Db& db, const std::string& run_id,
+                              const BuildEnvironmentData& e) -> std::string {
+  auto existing = db.prepare(
+      "SELECT id FROM build_environments WHERE run_id=? "
+      "AND derivation=? AND manifest=? AND system=?");
   existing.bind(1, run_id)
       .bind(2, e.derivation)
       .bind(3, e.manifest)
       .bind(4, e.system);
-  if (existing.step())
-    return existing.text(0);
+  if (existing.step()) return existing.text(0);
   auto count =
       db.prepare("SELECT count(*) FROM build_environments WHERE run_id=?");
   count.bind(1, run_id);
@@ -624,65 +700,111 @@ auto History::put_environment(sql::Db &db, const std::string &run_id,
   return id;
 }
 
-auto History::put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void {
-  auto insert = db.prepare("INSERT OR IGNORE INTO run_substituters VALUES(?,?,?)");
+auto History::put_substituters(sql::Db& db, const std::string& run_id,
+                               const std::vector<std::string>& urls) -> void {
+  auto insert =
+      db.prepare("INSERT OR IGNORE INTO run_substituters VALUES(?,?,?)");
   for (size_t i = 0; i < urls.size(); ++i) {
-    insert.bind(1, run_id).bind(2, static_cast<uint64_t>(i)).bind(3, urls[i]).run();
+    insert.bind(1, run_id)
+        .bind(2, static_cast<uint64_t>(i))
+        .bind(3, urls[i])
+        .run();
     insert.reset();
   }
 }
 
-auto History::next_run_id(sql::Db &db) -> std::string {
+auto History::next_run_id(sql::Db& db) -> std::string {
   db.exec("INSERT OR IGNORE INTO run_counter VALUES(1,0)");
-  auto q = db.prepare("UPDATE run_counter SET value=value+1 WHERE singleton=1 "
-                      "AND value<9223372036854775807 RETURNING value");
-  if (!q.step())
-    throw std::runtime_error("project run numbers exhausted");
+  auto q = db.prepare(
+      "UPDATE run_counter SET value=value+1 WHERE singleton=1 "
+      "AND value<9223372036854775807 RETURNING value");
+  if (!q.step()) throw std::runtime_error("project run numbers exhausted");
   return std::to_string(q.i64(0));
 }
 
-void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id) {
-  db.prepare("INSERT INTO runs(run_id, op_id, state, rev, execution_rev, accepted_at, started_at, "
-             "ended_at, failure, source_hash, target, propagate, local_run, partial_run, uses_partial_result) "
-             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)")
-      .bind(1, *s.status.run_id).bind(2, op_id).bind(3, static_cast<int>(s.status.state))
-      .bind(4, s.status.rev).bind(5, s.status.execution_rev).bind(6, s.status.accepted_at)
-      .bind(7, s.status.started_at).bind(8, s.status.ended_at)
+void History::insert_run(sql::Db& db, const RunSummaryData& s,
+                         const std::string& op_id) {
+  db.prepare(
+        "INSERT INTO runs(run_id, op_id, state, rev, execution_rev, "
+        "accepted_at, started_at, "
+        "ended_at, failure, source_hash, target, propagate, local_run, "
+        "partial_run, uses_partial_result) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)")
+      .bind(1, *s.status.run_id)
+      .bind(2, op_id)
+      .bind(3, static_cast<int>(s.status.state))
+      .bind(4, s.status.rev)
+      .bind(5, s.status.execution_rev)
+      .bind(6, s.status.accepted_at)
+      .bind(7, s.status.started_at)
+      .bind(8, s.status.ended_at)
       .bind_null(9)
-      .bind(10, s.source_hash).bind(11, key(s.target)).bind(12, s.propagate)
-      .bind(13, s.status.partial_run).bind(14, s.status.uses_partial_result)
+      .bind(10, s.source_hash)
+      .bind(11, key(s.target))
+      .bind(12, s.propagate)
+      .bind(13, s.status.partial_run)
+      .bind(14, s.status.uses_partial_result)
       .run();
   if (s.status.commit)
-    db.prepare("INSERT OR REPLACE INTO run_commits(run_id, commit_id) VALUES(?,?)").bind(1, *s.status.run_id).bind(2, *s.status.commit).run();
+    db.prepare(
+          "INSERT OR REPLACE INTO run_commits(run_id, commit_id) VALUES(?,?)")
+        .bind(1, *s.status.run_id)
+        .bind(2, *s.status.commit)
+        .run();
   if (s.status.failure) update_run(db, s.status);
 }
 
 void History::update_run(sql::Db& db, const RunStatusData& s) {
-  auto st = db.prepare("UPDATE runs SET state=?, started_at=?, ended_at=?, failure=?, "
-                       "partial_run=?, uses_partial_result=? WHERE run_id=?");
-  st.bind(1, static_cast<int>(s.state)).bind(2, s.started_at).bind(3, s.ended_at);
+  auto st = db.prepare(
+      "UPDATE runs SET state=?, started_at=?, ended_at=?, failure=?, "
+      "partial_run=?, uses_partial_result=? WHERE run_id=?");
+  st.bind(1, static_cast<int>(s.state))
+      .bind(2, s.started_at)
+      .bind(3, s.ended_at);
   bind_failure(st, 4, s.failure);
-  st.bind(5, s.partial_run).bind(6, s.uses_partial_result).bind(7, *s.run_id).run();
+  st.bind(5, s.partial_run)
+      .bind(6, s.uses_partial_result)
+      .bind(7, *s.run_id)
+      .run();
 }
 
 void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
   if (!s.environment_id.empty())
     db.prepare("INSERT OR REPLACE INTO active_environments VALUES(?,?,?,?)")
-        .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, s.environment_id).run();
+        .bind(1, s.run_id)
+        .bind(2, key(s.card))
+        .bind(3, s.invocation)
+        .bind(4, s.environment_id)
+        .run();
   auto st = db.prepare(
-      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at, execution_service, detail) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
-      "state=excluded.state, phase=excluded.phase, started_at=excluded.started_at, "
-      "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at, "
+      "INSERT INTO statuses(run_id, card, invocation, state, phase, "
+      "started_at, failure, waiting, updated_at, execution_service, detail) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO "
+      "UPDATE SET "
+      "state=excluded.state, phase=excluded.phase, "
+      "started_at=excluded.started_at, "
+      "failure=excluded.failure, waiting=excluded.waiting, "
+      "updated_at=excluded.updated_at, "
       "execution_service=excluded.execution_service, detail=excluded.detail");
-  st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
-  if (s.phase) st.bind(5, static_cast<int>(*s.phase));
-  else st.bind_null(5);
+  st.bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .bind(3, s.invocation)
+      .bind(4, static_cast<int>(s.state));
+  if (s.phase)
+    st.bind(5, static_cast<int>(*s.phase));
+  else
+    st.bind_null(5);
   st.bind(6, s.started_at);
   bind_failure(st, 7, s.failure);
-  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).bind(10, s.execution_service).bind(11, detail_json(s)).run();
+  st.bind(8, waiting_json(s.waiting))
+      .bind(9, now_ms())
+      .bind(10, s.execution_service)
+      .bind(11, detail_json(s))
+      .run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
-      .bind(1, s.run_id).bind(2, key(s.card)).run();
+      .bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .run();
 }
 
 auto History::put_batch(sql::Db& db, const RunBatchData& batch) -> void {
@@ -696,15 +818,29 @@ auto History::put_batch(sql::Db& db, const RunBatchData& batch) -> void {
   }
   const auto card = key(batch.card);
   db.prepare("INSERT OR REPLACE INTO run_batches VALUES(?,?,?,?,?,?,?,?)")
-      .bind(1, batch.run_id).bind(2, card).bind(3, batch.activation)
-      .bind(4, static_cast<uint64_t>(batch.invocation_count)).bind(5, batch.execution_list)
-      .bind(6, batch.complete).bind(7, batch.failed).bind(8, schema::encode(outputs)).run();
-  db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)").bind(1, batch.run_id).bind(2, card).run();
+      .bind(1, batch.run_id)
+      .bind(2, card)
+      .bind(3, batch.activation)
+      .bind(4, static_cast<uint64_t>(batch.invocation_count))
+      .bind(5, batch.execution_list)
+      .bind(6, batch.complete)
+      .bind(7, batch.failed)
+      .bind(8, schema::encode(outputs))
+      .run();
+  db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
+      .bind(1, batch.run_id)
+      .bind(2, card)
+      .run();
 }
 
-auto History::interrupt_batches(sql::Db& db, const std::string& run_id) -> void {
-  db.prepare("UPDATE run_batches SET complete=1, failed=1, outputs=? WHERE run_id=? AND complete=0")
-      .bind(1, schema::encode(schema::BatchOutputList{})).bind(2, run_id).run();
+auto History::interrupt_batches(sql::Db& db, const std::string& run_id)
+    -> void {
+  db.prepare(
+        "UPDATE run_batches SET complete=1, failed=1, outputs=? WHERE run_id=? "
+        "AND complete=0")
+      .bind(1, schema::encode(schema::BatchOutputList{}))
+      .bind(2, run_id)
+      .run();
 }
 
 auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
@@ -725,30 +861,54 @@ auto History::has_remote_jobs(sql::Db& db) -> bool {
   return st.step();
 }
 
-void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) const {
-  if (fault_ == "history_invocation") throw sql::Error("injected fault: invocation record write failed");
+void History::complete_invocation(sql::Db& db,
+                                  const InvocationRecordData& r) const {
+  if (fault_ == "history_invocation")
+    throw sql::Error("injected fault: invocation record write failed");
   const auto& s = r.summary;
   auto st = db.prepare(
-      "INSERT OR REPLACE INTO invocations(run_id, card, invocation, state, phase, started_at, ended_at, "
-      "duration_ms, failure, waiting, record_io, input_sources, display, build_cached, detail) "
+      "INSERT OR REPLACE INTO invocations(run_id, card, invocation, state, "
+      "phase, started_at, ended_at, "
+      "duration_ms, failure, waiting, record_io, input_sources, display, "
+      "build_cached, detail) "
       "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-  st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
-  if (s.phase) st.bind(5, static_cast<int>(*s.phase));
-  else st.bind_null(5);
+  st.bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .bind(3, s.invocation)
+      .bind(4, static_cast<int>(s.state));
+  if (s.phase)
+    st.bind(5, static_cast<int>(*s.phase));
+  else
+    st.bind_null(5);
   st.bind(6, s.started_at).bind(7, s.ended_at).bind(8, s.duration_ms);
   bind_failure(st, 9, s.failure);
-  st.bind(10, waiting_json(s.waiting)).bind(11, r.record_io).bind(12, sources_json(r.input_sources));
-  if (r.display) st.bind_blob(13, wire::standalone_display(*r.display));
-  else st.bind_null(13);
-  if (s.build_cached) st.bind(14, *s.build_cached);
-  else st.bind_null(14);
+  st.bind(10, waiting_json(s.waiting))
+      .bind(11, r.record_io)
+      .bind(12, sources_json(r.input_sources));
+  if (r.display)
+    st.bind_blob(13, wire::standalone_display(*r.display));
+  else
+    st.bind_null(13);
+  if (s.build_cached)
+    st.bind(14, *s.build_cached);
+  else
+    st.bind_null(14);
   st.bind(15, detail_json(s));
   st.run();
-  // The completion removes exactly this invocation's progress status, never a newer one.
-  db.prepare("DELETE FROM active_environments WHERE run_id=? AND card=? AND invocation=?")
-      .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
+  // The completion removes exactly this invocation's progress status, never a
+  // newer one.
+  db.prepare(
+        "DELETE FROM active_environments WHERE run_id=? AND card=? AND "
+        "invocation=?")
+      .bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .bind(3, s.invocation)
+      .run();
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
-      .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
+      .bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .bind(3, s.invocation)
+      .run();
   if (!s.execution_job_id.empty()) {
     auto pending = db.prepare(
         "SELECT server_id,instance,fingerprint FROM remote_jobs WHERE "
@@ -763,10 +923,14 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
           .bind(5, pending.text(2))
           .bind(6, !s.failure || s.failure->kind != FailureKind::interrupted)
           .run();
-    db.prepare("DELETE FROM remote_jobs WHERE job_id=?").bind(1, s.execution_job_id).run();
+    db.prepare("DELETE FROM remote_jobs WHERE job_id=?")
+        .bind(1, s.execution_job_id)
+        .run();
   }
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
-      .bind(1, s.run_id).bind(2, key(s.card)).run();
+      .bind(1, s.run_id)
+      .bind(2, key(s.card))
+      .run();
   if (r.record_io) {
     auto put = [&](const Value& v, int side) {
       std::string h = put_schema(db, *v.type);
@@ -780,12 +944,23 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
         file_content_hash = fs::sha256_file(*path);
       }
       auto ins = db.prepare(
-          "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, side, port, kind, schema_hash, "
-          "root_type, size, bytes, hash, artifact_id, file_content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
-      ins.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, side).bind(5, v.name)
-          .bind(6, static_cast<int>(v.kind)).bind(7, h).bind(8, v.type->root_type)
-          .bind(9, static_cast<uint64_t>(v.bytes.size())).bind_blob(10, v.bytes)
-          .bind(11, crypto::sha256_hex(v.bytes)).bind(12, v.artifact_id).bind(13, file_content_hash)
+          "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, side, "
+          "port, kind, schema_hash, "
+          "root_type, size, bytes, hash, artifact_id, file_content_hash) "
+          "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      ins.bind(1, s.run_id)
+          .bind(2, key(s.card))
+          .bind(3, s.invocation)
+          .bind(4, side)
+          .bind(5, v.name)
+          .bind(6, static_cast<int>(v.kind))
+          .bind(7, h)
+          .bind(8, v.type->root_type)
+          .bind(9, static_cast<uint64_t>(v.bytes.size()))
+          .bind_blob(10, v.bytes)
+          .bind(11, crypto::sha256_hex(v.bytes))
+          .bind(12, v.artifact_id)
+          .bind(13, file_content_hash)
           .run();
     };
     for (const auto& v : r.inputs) put(v, 0);
@@ -793,8 +968,10 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   }
 }
 
-auto History::put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
-                             uint64_t activation, const std::vector<SavedInputGroup>& groups) -> void {
+auto History::put_last_input(sql::Db& db, const CardPath& card,
+                             const std::string& run_id, uint64_t activation,
+                             const std::vector<SavedInputGroup>& groups)
+    -> void {
   schema::SavedInputList list;
   for (const auto& group : groups) {
     schema::SavedInputGroupJson entry;
@@ -811,8 +988,14 @@ auto History::put_last_input(sql::Db& db, const CardPath& card, const std::strin
     }
     list.groups->push_back(std::move(entry));
   }
-  db.prepare("INSERT OR REPLACE INTO last_inputs(card, run_id, invocation, inputs) VALUES(?,?,?,?)")
-      .bind(1, key(card)).bind(2, run_id).bind(3, activation).bind(4, schema::encode(list)).run();
+  db.prepare(
+        "INSERT OR REPLACE INTO last_inputs(card, run_id, invocation, inputs) "
+        "VALUES(?,?,?,?)")
+      .bind(1, key(card))
+      .bind(2, run_id)
+      .bind(3, activation)
+      .bind(4, schema::encode(list))
+      .run();
 }
 
 void History::put_artifact(sql::Db& db, const ArtifactData& a) {
@@ -824,35 +1007,61 @@ void History::put_artifact(sql::Db& db, const ArtifactData& a) {
     *j.hash = x.hash;
     m.items->push_back(std::move(j));
   }
-  db.prepare("INSERT INTO artifacts(artifact_id, run_id, card, invocation, output, kind, name, members) "
-             "VALUES(?,?,?,?,?,?,?,?)")
-      .bind(1, a.artifact_id).bind(2, a.run_id).bind(3, key(a.card)).bind(4, a.invocation)
-      .bind(5, a.output).bind(6, static_cast<int>(a.kind)).bind(7, a.name)
-      .bind(8, schema::encode(m)).run();
-  db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?").bind(1, a.run_id).run();
+  db.prepare(
+        "INSERT INTO artifacts(artifact_id, run_id, card, invocation, output, "
+        "kind, name, members) "
+        "VALUES(?,?,?,?,?,?,?,?)")
+      .bind(1, a.artifact_id)
+      .bind(2, a.run_id)
+      .bind(3, key(a.card))
+      .bind(4, a.invocation)
+      .bind(5, a.output)
+      .bind(6, static_cast<int>(a.kind))
+      .bind(7, a.name)
+      .bind(8, schema::encode(m))
+      .run();
+  db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
+      .bind(1, a.run_id)
+      .run();
 }
 
 void History::put_display(sql::Db& db, const DisplayData& d) {
-  db.prepare("INSERT OR REPLACE INTO displays(run_id, card, revision, data) VALUES(?,?,?,?)")
-      .bind(1, d.run_id).bind(2, key(d.card)).bind(3, d.revision)
-      .bind_blob(4, wire::standalone_display(d)).run();
+  db.prepare(
+        "INSERT OR REPLACE INTO displays(run_id, card, revision, data) "
+        "VALUES(?,?,?,?)")
+      .bind(1, d.run_id)
+      .bind(2, key(d.card))
+      .bind(3, d.revision)
+      .bind_blob(4, wire::standalone_display(d))
+      .run();
 }
 
-void History::put_receipt(sql::Db& db, const std::string& op_id, const std::string& kind,
-                          const std::string& digest, const std::string& bytes) {
-  db.prepare("INSERT OR REPLACE INTO receipts(op_id, kind, digest, result) VALUES(?,?,?,?)")
-      .bind(1, op_id).bind(2, kind).bind(3, digest).bind_blob(4, bytes).run();
+void History::put_receipt(sql::Db& db, const std::string& op_id,
+                          const std::string& kind, const std::string& digest,
+                          const std::string& bytes) {
+  db.prepare(
+        "INSERT OR REPLACE INTO receipts(op_id, kind, digest, result) "
+        "VALUES(?,?,?,?)")
+      .bind(1, op_id)
+      .bind(2, kind)
+      .bind(3, digest)
+      .bind_blob(4, bytes)
+      .run();
 }
 
-std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id, const CardPath& card,
-                                        uint64_t invocation, LogStream stream, const std::string& text) {
+std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
+                                        const CardPath& card,
+                                        uint64_t invocation, LogStream stream,
+                                        const std::string& text) {
   if (text.empty()) return {};
   int s = static_cast<int>(stream);
   std::string ck = key(card);
   std::string rk = "R|" + run_id + "|" + std::to_string(s);
   std::string kk = "C|" + run_id + "|" + ck + "|" + std::to_string(s);
-  std::string ik = "I|" + run_id + "|" + ck + "|" + std::to_string(invocation) + "|" + std::to_string(s);
-  auto load = [&](const std::string& k, const char* sql_text, bool with_card, bool with_inv) {
+  std::string ik = "I|" + run_id + "|" + ck + "|" + std::to_string(invocation) +
+                   "|" + std::to_string(s);
+  auto load = [&](const std::string& k, const char* sql_text, bool with_card,
+                  bool with_inv) {
     auto it = log_ends_.find(k);
     if (it != log_ends_.end()) return it->second;
     auto st = db.prepare(sql_text);
@@ -865,13 +1074,31 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id, 
     log_ends_[k] = v;
     return v;
   };
-  uint64_t r0 = load(rk, "SELECT MAX(run_off + length(data)) FROM logs WHERE run_id=? AND stream=?", false, false);
-  uint64_t c0 = load(kk, "SELECT MAX(card_off + length(data)) FROM logs WHERE run_id=? AND card=? AND stream=?", true, false);
-  uint64_t i0 = load(ik, "SELECT MAX(inv_off + length(data)) FROM logs WHERE run_id=? AND card=? AND invocation=? AND stream=?", true, true);
-  db.prepare("INSERT INTO logs(run_id, card, invocation, stream, run_off, card_off, inv_off, data) "
-             "VALUES(?,?,?,?,?,?,?,?)")
-      .bind(1, run_id).bind(2, ck).bind(3, invocation).bind(4, s).bind(5, r0).bind(6, c0).bind(7, i0)
-      .bind_blob(8, text).run();
+  uint64_t r0 = load(rk,
+                     "SELECT MAX(run_off + length(data)) FROM logs WHERE "
+                     "run_id=? AND stream=?",
+                     false, false);
+  uint64_t c0 = load(kk,
+                     "SELECT MAX(card_off + length(data)) FROM logs WHERE "
+                     "run_id=? AND card=? AND stream=?",
+                     true, false);
+  uint64_t i0 = load(ik,
+                     "SELECT MAX(inv_off + length(data)) FROM logs WHERE "
+                     "run_id=? AND card=? AND invocation=? AND stream=?",
+                     true, true);
+  db.prepare(
+        "INSERT INTO logs(run_id, card, invocation, stream, run_off, card_off, "
+        "inv_off, data) "
+        "VALUES(?,?,?,?,?,?,?,?)")
+      .bind(1, run_id)
+      .bind(2, ck)
+      .bind(3, invocation)
+      .bind(4, s)
+      .bind(5, r0)
+      .bind(6, c0)
+      .bind(7, i0)
+      .bind_blob(8, text)
+      .run();
   log_ends_[rk] = r0 + text.size();
   log_ends_[kk] = c0 + text.size();
   log_ends_[ik] = i0 + text.size();
@@ -879,7 +1106,8 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id, 
           {run_id, card, invocation, stream, i0 + text.size()}};
 }
 
-std::vector<LogEnd> History::append_run_journal(sql::Db& db, const std::string& run_id,
+std::vector<LogEnd> History::append_run_journal(sql::Db& db,
+                                                const std::string& run_id,
                                                 const std::string& text) {
   int s = static_cast<int>(LogStream::journal);
   std::string rk = "R|" + run_id + "|" + std::to_string(s);
@@ -888,19 +1116,32 @@ std::vector<LogEnd> History::append_run_journal(sql::Db& db, const std::string& 
   if (it != log_ends_.end()) {
     r0 = it->second;
   } else {
-    auto st = db.prepare("SELECT MAX(run_off + length(data)) FROM logs WHERE run_id=? AND stream=?");
+    auto st = db.prepare(
+        "SELECT MAX(run_off + length(data)) FROM logs WHERE run_id=? AND "
+        "stream=?");
     st.bind(1, run_id).bind(2, s);
     r0 = st.step() && !st.is_null(0) ? st.u64(0) : 0;
   }
-  db.prepare("INSERT INTO logs(run_id, card, invocation, stream, run_off, card_off, inv_off, data) "
-             "VALUES(?,?,?,?,?,0,0,?)")
-      .bind(1, run_id).bind(2, "").bind(3, 0).bind(4, s).bind(5, r0).bind_blob(6, text).run();
+  db.prepare(
+        "INSERT INTO logs(run_id, card, invocation, stream, run_off, card_off, "
+        "inv_off, data) "
+        "VALUES(?,?,?,?,?,0,0,?)")
+      .bind(1, run_id)
+      .bind(2, "")
+      .bind(3, 0)
+      .bind(4, s)
+      .bind(5, r0)
+      .bind_blob(6, text)
+      .run();
   log_ends_[rk] = r0 + text.size();
-  return {{run_id, std::nullopt, std::nullopt, LogStream::journal, r0 + text.size()}};
+  return {{run_id, std::nullopt, std::nullopt, LogStream::journal,
+           r0 + text.size()}};
 }
 
-std::optional<RunSummaryData> History::run(sql::Db& db, const std::string& run_id) {
-  auto st = db.prepare(std::string("SELECT ") + kRunCols + " FROM runs WHERE run_id=?");
+std::optional<RunSummaryData> History::run(sql::Db& db,
+                                           const std::string& run_id) {
+  auto st = db.prepare(std::string("SELECT ") + kRunCols +
+                       " FROM runs WHERE run_id=?");
   st.bind(1, run_id);
   if (!st.step()) return std::nullopt;
   return run_row(st);
@@ -908,84 +1149,109 @@ std::optional<RunSummaryData> History::run(sql::Db& db, const std::string& run_i
 
 std::optional<RunSummaryData> History::latest_run(sql::Db& db) {
   // Import sequence and clocks on other machines do not describe local scratch.
-  auto st = db.prepare(std::string("SELECT ") + kRunCols + " FROM runs WHERE local_run=1 ORDER BY seq DESC LIMIT 1");
+  auto st =
+      db.prepare(std::string("SELECT ") + kRunCols +
+                 " FROM runs WHERE local_run=1 ORDER BY seq DESC LIMIT 1");
   if (!st.step()) return std::nullopt;
   return run_row(st);
 }
 
-std::optional<History::ReceiptRow> History::receipt(sql::Db& db, const std::string& op_id) {
-  auto st = db.prepare("SELECT kind, digest, result FROM receipts WHERE op_id=?");
+std::optional<History::ReceiptRow> History::receipt(sql::Db& db,
+                                                    const std::string& op_id) {
+  auto st =
+      db.prepare("SELECT kind, digest, result FROM receipts WHERE op_id=?");
   st.bind(1, op_id);
   if (!st.step()) return std::nullopt;
   return ReceiptRow{st.text(0), st.text(1), st.blob(2)};
 }
 
-std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, const std::string& run_id) {
+std::vector<InvocationSummaryData> History::latest_invocations(
+    sql::Db& db, const std::string& run_id) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
-      "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, detail, execution_service "
-      "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM statuses WHERE run_id=?1 AND card=s.card) "
-      "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=s.card), 0) "
+      "SELECT card, invocation, state, phase, started_at, ended_at, "
+      "duration_ms, failure, waiting, build_cached, detail, NULL "
+      "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT "
+      "MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, "
+      "NULL, failure, waiting, NULL, detail, execution_service "
+      "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) "
+      "FROM statuses WHERE run_id=?1 AND card=s.card) "
+      "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations "
+      "WHERE run_id=?1 AND card=s.card), 0) "
       "ORDER BY card, invocation");
   st.bind(1, run_id);
   std::vector<InvocationSummaryData> out;
   while (st.step()) {
     auto row = inv_row(st, run_id, 9, 10, 11);
     // A status newer than the Card's last record is the one a client wants.
-    if (!out.empty() && out.back().card == row.card) out.back() = std::move(row);
-    else out.push_back(std::move(row));
+    if (!out.empty() && out.back().card == row.card)
+      out.back() = std::move(row);
+    else
+      out.push_back(std::move(row));
   }
   return out;
 }
 
 namespace {
 
-auto batch_row(const sql::Stmt& row, const std::string& run_id) -> RunBatchData {
+auto batch_row(const sql::Stmt& row, const std::string& run_id)
+    -> RunBatchData {
   RunBatchData batch;
   batch.run_id = run_id;
   batch.card = unkey(row.text(0));
   batch.activation = row.u64(1);
   const auto count = row.u64(2);
-  if (count > UINT32_MAX) throw std::runtime_error("invalid invocation count in run batch history");
+  if (count > UINT32_MAX)
+    throw std::runtime_error("invalid invocation count in run batch history");
   batch.invocation_count = static_cast<uint32_t>(count);
   batch.execution_list = row.i64(3) != 0;
   batch.complete = row.i64(4) != 0;
   batch.failed = row.i64(5) != 0;
   schema::BatchOutputList outputs;
-  if (schema::decode(row.text(6), outputs)) throw std::runtime_error("invalid outputs in run batch history");
+  if (schema::decode(row.text(6), outputs))
+    throw std::runtime_error("invalid outputs in run batch history");
   for (const auto& entry : *outputs.outputs) {
-    if (*entry.count > UINT32_MAX) throw std::runtime_error("invalid output count in run batch history");
-    batch.outputs.push_back({*entry.port, static_cast<uint32_t>(*entry.count), *entry.execution_list});
+    if (*entry.count > UINT32_MAX)
+      throw std::runtime_error("invalid output count in run batch history");
+    batch.outputs.push_back({*entry.port, static_cast<uint32_t>(*entry.count),
+                             *entry.execution_list});
   }
   return batch;
 }
 
 }  // namespace
 
-auto History::latest_batches(sql::Db& db, const std::string& run_id, const std::optional<CardPath>& card)
+auto History::latest_batches(sql::Db& db, const std::string& run_id,
+                             const std::optional<CardPath>& card)
     -> std::vector<RunBatchData> {
   auto st = db.prepare(
-      "SELECT card, activation, invocation_count, execution_list, complete, failed, outputs FROM run_batches b "
-      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND activation=(SELECT MAX(activation) FROM run_batches "
+      "SELECT card, activation, invocation_count, execution_list, complete, "
+      "failed, outputs FROM run_batches b "
+      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND activation=(SELECT "
+      "MAX(activation) FROM run_batches "
       "WHERE run_id=?1 AND card=b.card) ORDER BY card");
   st.bind(1, run_id);
-  if (card) st.bind(2, key(*card));
-  else st.bind_null(2);
+  if (card)
+    st.bind(2, key(*card));
+  else
+    st.bind_null(2);
   std::vector<RunBatchData> out;
   while (st.step()) out.push_back(batch_row(st, run_id));
   return out;
 }
 
-std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::string& run_id,
-                                                        const CardPath& card, uint64_t after,
-                                                        uint64_t limit) {
+std::vector<InvocationSummaryData> History::invocations(
+    sql::Db& db, const std::string& run_id, const CardPath& card,
+    uint64_t after, uint64_t limit) {
   // Completed records and in-progress statuses, ascending invocation number.
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
+      "SELECT card, invocation, state, phase, started_at, ended_at, "
+      "duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, detail, execution_service "
-      "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, "
+      "NULL, failure, waiting, NULL, detail, execution_service "
+      "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND "
+      "invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
@@ -994,11 +1260,13 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
   return out;
 }
 
-std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::string& run_id,
-                                                        const CardPath& card, uint64_t n) {
+std::optional<InvocationRecordData> History::invocation(
+    sql::Db& db, const std::string& run_id, const CardPath& card, uint64_t n) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
-      "record_io, input_sources, display, build_cached, detail FROM invocations WHERE run_id=? AND card=? AND invocation=?");
+      "SELECT card, invocation, state, phase, started_at, ended_at, "
+      "duration_ms, failure, waiting, "
+      "record_io, input_sources, display, build_cached, detail FROM "
+      "invocations WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   InvocationRecordData r;
@@ -1009,20 +1277,29 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
   return r;
 }
 
-std::optional<InvocationSummaryData> History::status(sql::Db& db, const std::string& run_id,
-                                                     const CardPath& card, uint64_t n) {
+std::optional<InvocationSummaryData> History::status(sql::Db& db,
+                                                     const std::string& run_id,
+                                                     const CardPath& card,
+                                                     uint64_t n) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, detail, execution_service "
+      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, "
+      "waiting, detail, execution_service "
       "FROM statuses WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   return inv_row(st, run_id, -1, 9, 10);
 }
 
-std::optional<uint64_t> History::latest_invocation(sql::Db& db, const std::string& run_id,
-                                                   const CardPath& card, bool include_status) {
-  std::string q = "SELECT MAX(invocation) FROM (SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2";
-  if (include_status) q += " UNION ALL SELECT invocation FROM statuses WHERE run_id=?1 AND card=?2";
+std::optional<uint64_t> History::latest_invocation(sql::Db& db,
+                                                   const std::string& run_id,
+                                                   const CardPath& card,
+                                                   bool include_status) {
+  std::string q =
+      "SELECT MAX(invocation) FROM (SELECT invocation FROM invocations WHERE "
+      "run_id=?1 AND card=?2";
+  if (include_status)
+    q += " UNION ALL SELECT invocation FROM statuses WHERE run_id=?1 AND "
+         "card=?2";
   q += ")";
   auto st = db.prepare(q);
   st.bind(1, run_id).bind(2, key(card));
@@ -1030,24 +1307,32 @@ std::optional<uint64_t> History::latest_invocation(sql::Db& db, const std::strin
   return st.u64(0);
 }
 
-std::optional<uint64_t> History::latest_completed(sql::Db& db, const std::string& run_id,
+std::optional<uint64_t> History::latest_completed(sql::Db& db,
+                                                  const std::string& run_id,
                                                   const CardPath& card) {
   return latest_invocation(db, run_id, card, false);
 }
 
-bool History::run_has_card(sql::Db& db, const std::string& run_id, const CardPath& card) {
-  auto st = db.prepare("SELECT 1 FROM run_cards WHERE run_id=? AND card=? UNION ALL "
-                       "SELECT 1 FROM runs WHERE run_id=? AND target=? LIMIT 1");
+bool History::run_has_card(sql::Db& db, const std::string& run_id,
+                           const CardPath& card) {
+  auto st = db.prepare(
+      "SELECT 1 FROM run_cards WHERE run_id=? AND card=? UNION ALL "
+      "SELECT 1 FROM runs WHERE run_id=? AND target=? LIMIT 1");
   st.bind(1, run_id).bind(2, key(card)).bind(3, run_id).bind(4, key(card));
   return st.step();
 }
 
-History::Aggregate History::aggregate(sql::Db& db, const std::string& run_id, const CardPath& card) {
+History::Aggregate History::aggregate(sql::Db& db, const std::string& run_id,
+                                      const CardPath& card) {
   auto st = db.prepare(
-      "SELECT COUNT(*), SUM(state=?3), SUM(state=?4), SUM(state=?5), COALESCE(SUM(duration_ms),0) "
+      "SELECT COUNT(*), SUM(state=?3), SUM(state=?4), SUM(state=?5), "
+      "COALESCE(SUM(duration_ms),0) "
       "FROM invocations WHERE run_id=?1 AND card=?2");
-  st.bind(1, run_id).bind(2, key(card)).bind(3, static_cast<int>(CardState::succeeded))
-      .bind(4, static_cast<int>(CardState::failed)).bind(5, static_cast<int>(CardState::cancelled));
+  st.bind(1, run_id)
+      .bind(2, key(card))
+      .bind(3, static_cast<int>(CardState::succeeded))
+      .bind(4, static_cast<int>(CardState::failed))
+      .bind(5, static_cast<int>(CardState::cancelled));
   Aggregate a;
   if (st.step()) {
     a.calls = st.u64(0);
@@ -1059,20 +1344,28 @@ History::Aggregate History::aggregate(sql::Db& db, const std::string& run_id, co
   return a;
 }
 
-std::optional<FailureData> History::latest_failure(sql::Db& db, const std::string& run_id,
+std::optional<FailureData> History::latest_failure(sql::Db& db,
+                                                   const std::string& run_id,
                                                    const CardPath& card) {
-  auto st = db.prepare("SELECT failure FROM invocations WHERE run_id=? AND card=? AND state=? "
-                       "ORDER BY invocation DESC LIMIT 1");
-  st.bind(1, run_id).bind(2, key(card)).bind(3, static_cast<int>(CardState::failed));
+  auto st = db.prepare(
+      "SELECT failure FROM invocations WHERE run_id=? AND card=? AND state=? "
+      "ORDER BY invocation DESC LIMIT 1");
+  st.bind(1, run_id)
+      .bind(2, key(card))
+      .bind(3, static_cast<int>(CardState::failed));
   if (!st.step()) return std::nullopt;
   return col_failure(st, 0);
 }
 
-std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string& run_id,
-                                                  const CardPath& card, uint64_t n, bool input) {
+std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
+                                                  const std::string& run_id,
+                                                  const CardPath& card,
+                                                  uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, v.hash, v.file_content_hash FROM ivalues v "
-      "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND card=? AND invocation=? AND side=? "
+      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, "
+      "v.hash, v.file_content_hash FROM ivalues v "
+      "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND card=? AND "
+      "invocation=? AND side=? "
       "ORDER BY v.port");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1);
   std::vector<StoredValueMeta> out;
@@ -1091,12 +1384,19 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string
   return out;
 }
 
-std::optional<History::ValuePage> History::value_page(sql::Db& db, const std::string& run_id, const CardPath& card,
-                                                      uint64_t n, bool input, const std::string& port, uint64_t offset,
-                                                      uint64_t limit) {
-  auto st = db.prepare("SELECT substr(bytes, ?, ?), size, hash FROM ivalues "
-                       "WHERE run_id=? AND card=? AND invocation=? AND side=? AND port=?");
-  st.bind(1, offset + 1).bind(2, limit).bind(3, run_id).bind(4, key(card)).bind(5, n).bind(6, input ? 0 : 1).bind(7, port);
+std::optional<History::ValuePage> History::value_page(
+    sql::Db& db, const std::string& run_id, const CardPath& card, uint64_t n,
+    bool input, const std::string& port, uint64_t offset, uint64_t limit) {
+  auto st = db.prepare(
+      "SELECT substr(bytes, ?, ?), size, hash FROM ivalues "
+      "WHERE run_id=? AND card=? AND invocation=? AND side=? AND port=?");
+  st.bind(1, offset + 1)
+      .bind(2, limit)
+      .bind(3, run_id)
+      .bind(4, key(card))
+      .bind(5, n)
+      .bind(6, input ? 0 : 1)
+      .bind(7, port);
   if (!st.step()) return std::nullopt;
   ValuePage p;
   if (!st.is_null(0)) p.bytes = st.blob(0);
@@ -1105,24 +1405,36 @@ std::optional<History::ValuePage> History::value_page(sql::Db& db, const std::st
   return p;
 }
 
-std::optional<std::string> History::value_bytes(sql::Db& db, const std::string& run_id,
-                                                const CardPath& card, uint64_t n, bool input,
+std::optional<std::string> History::value_bytes(sql::Db& db,
+                                                const std::string& run_id,
+                                                const CardPath& card,
+                                                uint64_t n, bool input,
                                                 const std::string& port) {
-  auto st = db.prepare("SELECT bytes FROM ivalues WHERE run_id=? AND card=? AND invocation=? AND side=? AND port=?");
-  st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1).bind(5, port);
+  auto st = db.prepare(
+      "SELECT bytes FROM ivalues WHERE run_id=? AND card=? AND invocation=? "
+      "AND side=? AND port=?");
+  st.bind(1, run_id)
+      .bind(2, key(card))
+      .bind(3, n)
+      .bind(4, input ? 0 : 1)
+      .bind(5, port);
   if (!st.step()) return std::nullopt;
   return st.blob(0);
 }
 
-auto History::put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t activation,
+auto History::put_last_port_input(sql::Db& db, const CardPath& card,
+                                  const std::string& run_id,
+                                  uint64_t activation,
                                   const SavedInputGroup& group) -> void {
-  // Stored beside the per-Card rows under "<card>#<port>" ('#' never appears in ids).
+  // Stored beside the per-Card rows under "<card>#<port>" ('#' never appears in
+  // ids).
   CardPath k = card;
   k.back() += "#" + group.port;
   put_last_input(db, k, run_id, activation, {group});
 }
 
-std::optional<History::LastInput> History::last_port_input(sql::Db& db, const CardPath& card, const std::string& port) {
+std::optional<History::LastInput> History::last_port_input(
+    sql::Db& db, const CardPath& card, const std::string& port) {
   CardPath k = card;
   k.back() += "#" + port;
   return last_input(db, k);
@@ -1151,12 +1463,20 @@ void History::overlay(InvocationSummaryData& s) {
 }
 
 void History::update_detail(sql::Db& db, const InvocationSummaryData& s) {
-  db.prepare("UPDATE invocations SET detail=? WHERE run_id=? AND card=? AND invocation=?")
-      .bind(1, detail_json(s)).bind(2, s.run_id).bind(3, key(s.card)).bind(4, s.invocation).run();
+  db.prepare(
+        "UPDATE invocations SET detail=? WHERE run_id=? AND card=? AND "
+        "invocation=?")
+      .bind(1, detail_json(s))
+      .bind(2, s.run_id)
+      .bind(3, key(s.card))
+      .bind(4, s.invocation)
+      .run();
 }
 
-std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPath& card) {
-  auto st = db.prepare("SELECT run_id, invocation, inputs FROM last_inputs WHERE card=?");
+std::optional<History::LastInput> History::last_input(sql::Db& db,
+                                                      const CardPath& card) {
+  auto st = db.prepare(
+      "SELECT run_id, invocation, inputs FROM last_inputs WHERE card=?");
   st.bind(1, key(card));
   if (!st.step()) return std::nullopt;
   LastInput li;
@@ -1166,12 +1486,14 @@ std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPat
   if (schema::decode(st.text(2), list)) return std::nullopt;
   std::map<std::pair<std::string, std::string>, types::TypeRef> loaded_types;
   for (const auto& entry : *list.groups) {
-    SavedInputGroup group{*entry.port, *entry.execution_list, {}, *entry.partial_result};
+    SavedInputGroup group{
+        *entry.port, *entry.execution_list, {}, *entry.partial_result};
     for (const auto& value : *entry.values) {
       Value v;
       v.name = group.port;
       v.kind = static_cast<PortKind>(*value.kind);
-      auto [type, inserted] = loaded_types.try_emplace(std::make_pair(*value.schema, *value.root_type));
+      auto [type, inserted] = loaded_types.try_emplace(
+          std::make_pair(*value.schema, *value.root_type));
       if (inserted) {
         auto schema_row = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
         schema_row.bind(1, *value.schema);
@@ -1204,65 +1526,87 @@ ArtifactData artifact_row(const sql::Stmt& st) {
   schema::MemberList list;
   if (!schema::decode(st.text(7), list))
     for (const auto& m : *list.items)
-      // A copied history may be another's: a member is a path inside its artifact.
-      if (fs::valid_relative_path(*m.path)) a.members.push_back({*m.path, *m.size, *m.hash});
+      // A copied history may be another's: a member is a path inside its
+      // artifact.
+      if (fs::valid_relative_path(*m.path))
+        a.members.push_back({*m.path, *m.size, *m.hash});
   return a;
 }
 }  // namespace
 
-std::optional<ArtifactData> History::artifact(sql::Db& db, const std::string& artifact_id) {
-  auto st = db.prepare("SELECT artifact_id, run_id, card, invocation, output, kind, name, members "
-                       "FROM artifacts WHERE artifact_id=?");
+std::optional<ArtifactData> History::artifact(sql::Db& db,
+                                              const std::string& artifact_id) {
+  auto st = db.prepare(
+      "SELECT artifact_id, run_id, card, invocation, output, kind, name, "
+      "members "
+      "FROM artifacts WHERE artifact_id=?");
   st.bind(1, artifact_id);
   if (!st.step()) return std::nullopt;
   return artifact_row(st);
 }
 
-std::vector<ArtifactData> History::artifacts(sql::Db& db, const std::string& run_id,
-                                             const std::optional<CardPath>& card,
-                                             std::optional<uint64_t> invocation,
-                                             const std::string& after, uint64_t limit) {
+std::vector<ArtifactData> History::artifacts(
+    sql::Db& db, const std::string& run_id, const std::optional<CardPath>& card,
+    std::optional<uint64_t> invocation, const std::string& after,
+    uint64_t limit) {
   std::string q =
-      "SELECT artifact_id, run_id, card, invocation, output, kind, name, members FROM artifacts "
-      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL OR invocation=?3) AND "
-      "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || output || '\x1f' || artifact_id) > ?4 "
+      "SELECT artifact_id, run_id, card, invocation, output, kind, name, "
+      "members FROM artifacts "
+      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL OR "
+      "invocation=?3) AND "
+      "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || output || "
+      "'\x1f' || artifact_id) > ?4 "
       "ORDER BY card, invocation, output, artifact_id LIMIT ?5";
   auto st = db.prepare(q);
   st.bind(1, run_id);
-  if (card) st.bind(2, key(*card));
-  else st.bind_null(2);
-  if (invocation) st.bind(3, *invocation);
-  else st.bind_null(3);
+  if (card)
+    st.bind(2, key(*card));
+  else
+    st.bind_null(2);
+  if (invocation)
+    st.bind(3, *invocation);
+  else
+    st.bind_null(3);
   st.bind(4, after).bind(5, limit);
   std::vector<ArtifactData> out;
   while (st.step()) out.push_back(artifact_row(st));
   return out;
 }
 
-std::optional<DisplayData> History::display(sql::Db& db, const std::string& run_id, const CardPath& card) {
+std::optional<DisplayData> History::display(sql::Db& db,
+                                            const std::string& run_id,
+                                            const CardPath& card) {
   auto st = db.prepare("SELECT data FROM displays WHERE run_id=? AND card=?");
   st.bind(1, run_id).bind(2, key(card));
   if (!st.step()) return std::nullopt;
   return wire::standalone_display(st.blob(0));
 }
 
-std::vector<RunSummaryData> History::runs_page(sql::Db& db, std::optional<CardPath> card,
-                                               bool artifacts_only, int64_t below_seq,
+std::vector<RunSummaryData> History::runs_page(sql::Db& db,
+                                               std::optional<CardPath> card,
+                                               bool artifacts_only,
+                                               int64_t below_seq,
                                                int64_t max_seq, uint64_t limit,
                                                std::vector<int64_t>* seqs) {
   std::string q = std::string("SELECT ") + kRunCols +
-                  ", seq FROM runs WHERE seq<=?1 AND seq<?2 AND (?3=0 OR has_artifacts=1) AND "
-                  "(?4 IS NULL OR target=?4 OR EXISTS(SELECT 1 FROM run_cards rc WHERE rc.run_id=runs.run_id AND rc.card=?4)) "
+                  ", seq FROM runs WHERE seq<=?1 AND seq<?2 AND (?3=0 OR "
+                  "has_artifacts=1) AND "
+                  "(?4 IS NULL OR target=?4 OR EXISTS(SELECT 1 FROM run_cards "
+                  "rc WHERE rc.run_id=runs.run_id AND rc.card=?4)) "
                   "ORDER BY seq DESC LIMIT ?5";
   auto st = db.prepare(q);
   st.bind(1, max_seq).bind(2, below_seq).bind(3, artifacts_only);
-  if (card) st.bind(4, key(*card));
-  else st.bind_null(4);
+  if (card)
+    st.bind(4, key(*card));
+  else
+    st.bind_null(4);
   st.bind(5, limit);
   std::vector<RunSummaryData> out;
   while (st.step()) {
     out.push_back(run_row(st));
-    if (seqs) seqs->push_back(st.i64(14));  // after kRunCols, including both partial-run flags
+    if (seqs)
+      seqs->push_back(
+          st.i64(14));  // after kRunCols, including both partial-run flags
   }
   return out;
 }
@@ -1275,16 +1619,19 @@ int64_t History::max_run_seq(sql::Db& db) {
 
 std::vector<std::string> History::unfinished_runs(sql::Db& db) {
   auto st = db.prepare("SELECT run_id FROM runs WHERE state IN (?,?,?,?)");
-  st.bind(1, static_cast<int>(RunState::queued)).bind(2, static_cast<int>(RunState::preparing))
-      .bind(3, static_cast<int>(RunState::running)).bind(4, static_cast<int>(RunState::cancelling));
+  st.bind(1, static_cast<int>(RunState::queued))
+      .bind(2, static_cast<int>(RunState::preparing))
+      .bind(3, static_cast<int>(RunState::running))
+      .bind(4, static_cast<int>(RunState::cancelling));
   std::vector<std::string> out;
   while (st.step()) out.push_back(st.text(0));
   return out;
 }
 
-LogRead History::read_log(sql::Db& db, const std::string& run_id, const std::optional<CardPath>& card,
-                          std::optional<uint64_t> invocation, LogStream stream, uint64_t offset,
-                          bool tail, uint64_t limit) {
+LogRead History::read_log(sql::Db& db, const std::string& run_id,
+                          const std::optional<CardPath>& card,
+                          std::optional<uint64_t> invocation, LogStream stream,
+                          uint64_t offset, bool tail, uint64_t limit) {
   int s = static_cast<int>(stream);
   const char* col = !card ? "run_off" : (invocation ? "inv_off" : "card_off");
   std::string where = "run_id=?1 AND stream=?2";
@@ -1297,20 +1644,27 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id, const std::opt
   };
   LogRead out;
   {
-    auto st = db.prepare(std::string("SELECT MAX(") + col + " + length(data)), COUNT(*) FROM logs WHERE " + where);
+    auto st = db.prepare(std::string("SELECT MAX(") + col +
+                         " + length(data)), COUNT(*) FROM logs WHERE " + where);
     bind(st);
     st.step();
     out.exists = st.i64(1) > 0;
     out.size = st.is_null(0) ? 0 : st.u64(0);
   }
-  if (tail) offset = out.size > limit ? out.size - limit : 0;
-  else if (offset > out.size) throw Failed(FailureKind::invalid_range, "offset is past the end of the log");
-  uint64_t end = std::min(out.size, offset + limit + 4);  // a few extra bytes to find boundaries
+  if (tail)
+    offset = out.size > limit ? out.size - limit : 0;
+  else if (offset > out.size)
+    throw Failed(FailureKind::invalid_range,
+                 "offset is past the end of the log");
+  uint64_t end = std::min(
+      out.size, offset + limit + 4);  // a few extra bytes to find boundaries
   std::string buf;
   uint64_t buf_start = offset;
   {
-    auto st = db.prepare(std::string("SELECT ") + col + ", data FROM logs WHERE " + where + " AND " + col +
-                         " + length(data) > ?5 AND " + col + " < ?6 ORDER BY " + col);
+    auto st =
+        db.prepare(std::string("SELECT ") + col + ", data FROM logs WHERE " +
+                   where + " AND " + col + " + length(data) > ?5 AND " + col +
+                   " < ?6 ORDER BY " + col);
     bind(st);
     st.bind(5, offset).bind(6, end);
     bool first = true;
@@ -1329,12 +1683,18 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id, const std::opt
     return static_cast<unsigned char>(buf[pos - buf_start]);
   };
   if (tail) {
-    while (offset < out.size && at(offset) >= 0 && !char_start(static_cast<unsigned char>(at(offset)))) ++offset;
-  } else if (offset < out.size && at(offset) >= 0 && !char_start(static_cast<unsigned char>(at(offset)))) {
-    throw Failed(FailureKind::invalid_range, "offset is not on a UTF-8 character boundary");
+    while (offset < out.size && at(offset) >= 0 &&
+           !char_start(static_cast<unsigned char>(at(offset))))
+      ++offset;
+  } else if (offset < out.size && at(offset) >= 0 &&
+             !char_start(static_cast<unsigned char>(at(offset)))) {
+    throw Failed(FailureKind::invalid_range,
+                 "offset is not on a UTF-8 character boundary");
   }
   uint64_t stop = std::min(out.size, offset + limit);
-  while (stop > offset && stop < out.size && at(stop) >= 0 && !char_start(static_cast<unsigned char>(at(stop)))) --stop;
+  while (stop > offset && stop < out.size && at(stop) >= 0 &&
+         !char_start(static_cast<unsigned char>(at(stop))))
+    --stop;
   if (offset >= buf_start && stop >= offset && buf.size() >= stop - buf_start)
     out.text = buf.substr(offset - buf_start, stop - offset);
   out.offset = offset;
@@ -1343,7 +1703,8 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id, const std::opt
   return out;
 }
 
-std::string History::make_cursor(const std::string& query_digest, int64_t hi, const std::string& after) const {
+std::string History::make_cursor(const std::string& query_digest, int64_t hi,
+                                 const std::string& after) const {
   schema::CursorJson c;
   *c.digest = query_digest;
   *c.hi = hi;
@@ -1354,19 +1715,24 @@ std::string History::make_cursor(const std::string& query_digest, int64_t hi, co
   return payload + "." + sig;
 }
 
-std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
-                                                     const std::string& query_digest) const {
+std::pair<int64_t, std::string> History::open_cursor(
+    const std::string& cursor, const std::string& query_digest) const {
   auto dot = cursor.rfind('.');
-  if (dot == std::string::npos) throw Failed(FailureKind::invalid_cursor, "malformed cursor");
+  if (dot == std::string::npos)
+    throw Failed(FailureKind::invalid_cursor, "malformed cursor");
   std::string payload = cursor.substr(0, dot);
-  if (!crypto::equal_secret(crypto::sha256_hex(secret_ + payload).substr(0, 32), cursor.substr(dot + 1)))
+  if (!crypto::equal_secret(crypto::sha256_hex(secret_ + payload).substr(0, 32),
+                            cursor.substr(dot + 1)))
     throw Failed(FailureKind::invalid_cursor, "cursor signature mismatch");
   std::string raw;
   schema::CursorJson c;
   if (!crypto::base64_decode(payload, raw) || schema::decode(raw, c))
     throw Failed(FailureKind::invalid_cursor, "malformed cursor");
-  if (*c.digest != query_digest) throw Failed(FailureKind::invalid_cursor, "cursor belongs to a different query");
-  if (*c.expires < now_ms()) throw Failed(FailureKind::invalid_cursor, "cursor expired");
+  if (*c.digest != query_digest)
+    throw Failed(FailureKind::invalid_cursor,
+                 "cursor belongs to a different query");
+  if (*c.expires < now_ms())
+    throw Failed(FailureKind::invalid_cursor, "cursor expired");
   return {*c.hi, *c.after};
 }
 
@@ -1375,11 +1741,12 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 
 namespace {
 
-
 // The copy: the run tables (same names and columns as the history, so runs
 // move between the two with the same column lists, kCopied) and its format.
 std::string copy_schema() {
-  return "CREATE TABLE IF NOT EXISTS ex.meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\n" + run_tables("ex.");
+  return "CREATE TABLE IF NOT EXISTS ex.meta(key TEXT PRIMARY KEY, value TEXT "
+         "NOT NULL);\n" +
+         run_tables("ex.");
 }
 
 struct Copied {
@@ -1389,29 +1756,42 @@ struct Copied {
   bool has_card = true;
 };
 // Parents first: a run is complete in the other database once it commits.
-// `schemas` is copied by hash below. The other local tables (active_environments,
-// statuses, remote_jobs, remote_releases, last_inputs, receipts) describe local
-// progress, recovery, rerun inputs or operations, rather than finished records.
+// `schemas` is copied by hash below. The other local tables
+// (active_environments, statuses, remote_jobs, remote_releases, last_inputs,
+// receipts) describe local progress, recovery, rerun inputs or operations,
+// rather than finished records.
 constexpr Copied kCopied[] = {
     {"runs",
-     "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
+     "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, "
+     "ended_at, failure, source_hash, "
      "target, propagate, has_artifacts, partial_run, uses_partial_result",
      "seq", false},
-    {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
-    {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
+    {"build_environments",
+     "run_id, id, derivation, manifest, system, path_count", "rowid", false},
+    {"environment_paths", "run_id, environment_id, position, path", "rowid",
+     false},
     {"run_substituters", "run_id, position, url", "rowid", false},
     {"run_commits", "run_id, commit_id", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
-    {"run_batches", "run_id, card, activation, invocation_count, execution_list, complete, failed, outputs", "rowid"},
+    {"run_batches",
+     "run_id, card, activation, invocation_count, execution_list, complete, "
+     "failed, outputs",
+     "rowid"},
     {"invocations",
-     "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
+     "run_id, card, invocation, state, phase, started_at, ended_at, "
+     "duration_ms, failure, waiting, "
      "record_io, input_sources, display, build_cached, detail",
      "rowid"},
     {"ivalues",
-     "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id, file_content_hash",
+     "run_id, card, invocation, side, port, kind, schema_hash, root_type, "
+     "size, bytes, hash, artifact_id, file_content_hash",
      "rowid"},
-    {"logs", "run_id, card, invocation, stream, run_off, card_off, inv_off, data", "id"},
-    {"artifacts", "artifact_id, run_id, card, invocation, output, kind, name, members", "rowid"},
+    {"logs",
+     "run_id, card, invocation, stream, run_off, card_off, inv_off, data",
+     "id"},
+    {"artifacts",
+     "artifact_id, run_id, card, invocation, output, kind, name, members",
+     "rowid"},
     {"displays", "run_id, card, revision, data", "rowid"},
 };
 
@@ -1425,12 +1805,15 @@ std::string finished_states() {
 // it lives on the project share, where the Mac (and other programs) read it
 // and cannot see this side's file locks, so a rollback journal left there
 // during a write would look like a crashed writer to them.
-std::filesystem::path staged(const std::filesystem::path& copy) { return copy.string() + ".new"; }
+std::filesystem::path staged(const std::filesystem::path& copy) {
+  return copy.string() + ".new";
+}
 
 // This database with a staged copy attached as `ex` (made from the copy, or
 // new when there is none). A copy written by a newer version is never
 // changed. `put_copy` puts the staged copy in place.
-std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const std::filesystem::path& copy) {
+std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path,
+                                   const std::filesystem::path& copy) {
   std::error_code ec;
   auto fresh = staged(copy);
   std::filesystem::remove(fresh, ec);
@@ -1445,20 +1828,27 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
     f.prepare("ATTACH DATABASE ? AS ex").bind(1, fresh.string()).run();
     f.exec("PRAGMA ex.journal_mode=DELETE");
     f.exec(copy_schema());
-    f.prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
-        .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
+    f.prepare(
+         "INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), "
+         "('version', ?)")
+        .bind(1, kCopyFormat)
+        .bind(2, kCopyVersion)
+        .run();
   }
   auto db = std::make_unique<sql::Db>(db_path.string());
   db->prepare("ATTACH DATABASE ? AS ex").bind(1, fresh.string()).run();
   {
-    auto st = db->prepare("SELECT 1 FROM ex.sqlite_master WHERE type='table' AND name='meta'");
+    auto st = db->prepare(
+        "SELECT 1 FROM ex.sqlite_master WHERE type='table' AND name='meta'");
     if (st.step()) {
-      auto v = db->prepare("SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
+      auto v = db->prepare(
+          "SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
       std::map<std::string, std::string> meta;
       while (v.step()) meta[v.text(0)] = v.text(1);
       if (meta["format"] != kCopyFormat || meta["version"] != kCopyVersion)
-        throw std::runtime_error(copy.string() + " is format " + meta["format"] + " version " + meta["version"] +
-                                 ", not " + kCopyFormat + " " + kCopyVersion);
+        throw std::runtime_error(
+            copy.string() + " is format " + meta["format"] + " version " +
+            meta["version"] + ", not " + kCopyFormat + " " + kCopyVersion);
     }
   }
   // A plain rollback journal: the copy lives on the project share, where
@@ -1466,8 +1856,12 @@ std::unique_ptr<sql::Db> with_copy(const std::filesystem::path& db_path, const s
   db->exec("PRAGMA ex.journal_mode=DELETE");
   db->exec("PRAGMA ex.synchronous=FULL");
   db->exec(copy_schema());
-  db->prepare("INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), ('version', ?)")
-      .bind(1, kCopyFormat).bind(2, kCopyVersion).run();
+  db->prepare(
+        "INSERT OR IGNORE INTO ex.meta(key, value) VALUES('format', ?), "
+        "('version', ?)")
+      .bind(1, kCopyFormat)
+      .bind(2, kCopyVersion)
+      .run();
   return db;
 }
 
@@ -1484,12 +1878,14 @@ void attach_copy(sql::Db& db, const std::filesystem::path& copy) {
     }
   }
   db.prepare("ATTACH DATABASE ? AS ex").bind(1, uri + "?mode=ro").run();
-  auto v = db.prepare("SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
+  auto v = db.prepare(
+      "SELECT key, value FROM ex.meta WHERE key IN ('format','version')");
   std::map<std::string, std::string> meta;
   while (v.step()) meta[v.text(0)] = v.text(1);
   if (meta["format"] != kCopyFormat || meta["version"] != kCopyVersion)
-    throw std::runtime_error(copy.string() + " is format " + meta["format"] + " version " + meta["version"] +
-                             ", not " + kCopyFormat + " " + kCopyVersion);
+    throw std::runtime_error(copy.string() + " is format " + meta["format"] +
+                             " version " + meta["version"] + ", not " +
+                             kCopyFormat + " " + kCopyVersion);
 }
 
 // Detaches the staged copy and puts it in place of the copy (one rename).
@@ -1522,17 +1918,23 @@ class Txn {
 
 // Copies the finished runs `from` has and `to` lacks; inside a transaction.
 // Canonical decimal run numbers cannot escape their directory.
-const std::string kRunPredicate = "run_id GLOB '[1-9]*' AND run_id NOT GLOB "
-                                  "'*[^0-9]*' AND length(run_id)<=19";
+const std::string kRunPredicate =
+    "run_id GLOB '[1-9]*' AND run_id NOT GLOB "
+    "'*[^0-9]*' AND length(run_id)<=19";
 
 size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   db.exec("INSERT INTO " + to + ".run_counter SELECT * FROM " + from +
           ".run_counter WHERE true ON CONFLICT(singleton) DO UPDATE SET "
           "value=max(value,excluded.value)");
-  db.exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
+  db.exec(
+      "CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE "
+      "FROM temp.moving");
   // A finished run can still have detached jobs to reconcile. Export only
   // after they have written their final invocation records.
-  const std::string pending = from == "main" ? " AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)" : "";
+  const std::string pending =
+      from == "main"
+          ? " AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)"
+          : "";
   db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from +
           ".runs WHERE state IN (" + finished_states() + ") AND " +
           kRunPredicate + " AND run_id NOT IN (SELECT run_id FROM " + to +
@@ -1540,10 +1942,13 @@ size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   size_t n = static_cast<size_t>(db.changes());
   if (n == 0) return 0;
   for (const auto& c : kCopied)
-    db.exec(std::string("INSERT OR IGNORE INTO ") + to + "." + c.table + "(" + c.cols + ") SELECT " + c.cols +
-            " FROM " + from + "." + c.table + " WHERE run_id IN (SELECT run_id FROM temp.moving) ORDER BY " + c.order);
-  db.exec("INSERT OR IGNORE INTO " + to + ".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM " + from +
-          ".schemas WHERE hash IN (SELECT schema_hash FROM " + from +
+    db.exec(std::string("INSERT OR IGNORE INTO ") + to + "." + c.table + "(" +
+            c.cols + ") SELECT " + c.cols + " FROM " + from + "." + c.table +
+            " WHERE run_id IN (SELECT run_id FROM temp.moving) ORDER BY " +
+            c.order);
+  db.exec("INSERT OR IGNORE INTO " + to +
+          ".schemas(hash, root_type, bfbs) SELECT hash, root_type, bfbs FROM " +
+          from + ".schemas WHERE hash IN (SELECT schema_hash FROM " + from +
           ".ivalues WHERE run_id IN (SELECT run_id FROM temp.moving))");
   auto artifacts =
       db.prepare("SELECT artifact_id FROM " + to +
@@ -1552,7 +1957,7 @@ size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   while (artifacts.step())
     if (!fs::valid_relative_path(artifacts.text(0)))
       invalid.push_back(artifacts.text(0));
-  for (const auto &id : invalid)
+  for (const auto& id : invalid)
     db.prepare("DELETE FROM " + to + ".artifacts WHERE artifact_id=?")
         .bind(1, id)
         .run();
@@ -1584,9 +1989,11 @@ size_t History::export_runs(const std::filesystem::path& copy) {
     attach_copy(probe, copy);
     bool none;
     {
-      auto st = probe.prepare("SELECT count(*) FROM main.runs WHERE state IN (" + finished_states() +
-                              ") AND run_id NOT IN (SELECT run_id FROM ex.runs) "
-                              "AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)");
+      auto st = probe.prepare(
+          "SELECT count(*) FROM main.runs WHERE state IN (" +
+          finished_states() +
+          ") AND run_id NOT IN (SELECT run_id FROM ex.runs) "
+          "AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)");
       none = st.step() && st.i64(0) == 0;
     }
     probe.exec("DETACH DATABASE ex");
@@ -1600,42 +2007,63 @@ size_t History::export_runs(const std::filesystem::path& copy) {
   return n;
 }
 
-std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before,
-                                             const std::optional<std::vector<std::string>>& run_ids) {
+std::vector<std::string> History::delete_runs(
+    const std::filesystem::path& copy, std::optional<int64_t> ended_before,
+    const std::optional<std::vector<std::string>>& run_ids) {
   std::lock_guard<std::mutex> l(copy_mu_);
   std::error_code ec;
   bool has_copy = std::filesystem::exists(copy, ec);
-  auto db = has_copy ? with_copy(path_, copy) : std::make_unique<sql::Db>(path_.string());
+  auto db = has_copy ? with_copy(path_, copy)
+                     : std::make_unique<sql::Db>(path_.string());
   std::vector<std::string> schemas = {"main"};
   if (has_copy) schemas.push_back("ex");
   std::vector<std::string> ids;
   {
     Txn t(*db);
-    db->exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
+    db->exec(
+        "CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); "
+        "DELETE FROM temp.moving");
     for (const auto& s : schemas) {
-      auto st = db->prepare("INSERT OR IGNORE INTO temp.moving SELECT run_id FROM " + s + ".runs WHERE state IN (" +
-                            finished_states() + ") AND (?1 IS NULL OR ended_at < ?1)");
+      auto st =
+          db->prepare("INSERT OR IGNORE INTO temp.moving SELECT run_id FROM " +
+                      s + ".runs WHERE state IN (" + finished_states() +
+                      ") AND (?1 IS NULL OR ended_at < ?1)");
       st.bind(1, ended_before).run();
     }
     if (run_ids) {
       db->exec("CREATE TEMP TABLE selected_runs(run_id TEXT PRIMARY KEY)");
       for (const auto& id : *run_ids)
-        db->prepare("INSERT OR IGNORE INTO temp.selected_runs VALUES(?)").bind(1, id).run();
-      db->exec("DELETE FROM temp.moving WHERE run_id NOT IN (SELECT run_id FROM temp.selected_runs)");
+        db->prepare("INSERT OR IGNORE INTO temp.selected_runs VALUES(?)")
+            .bind(1, id)
+            .run();
+      db->exec(
+          "DELETE FROM temp.moving WHERE run_id NOT IN (SELECT run_id FROM "
+          "temp.selected_runs)");
     }
-    db->exec("DELETE FROM temp.moving WHERE run_id IN (SELECT run_id FROM main.remote_jobs)");
+    db->exec(
+        "DELETE FROM temp.moving WHERE run_id IN (SELECT run_id FROM "
+        "main.remote_jobs)");
     auto st = db->prepare("SELECT run_id FROM temp.moving");
     while (st.step()) ids.push_back(st.text(0));
     for (const auto& s : schemas) {
       for (const auto& c : kCopied)
-        db->exec("DELETE FROM " + s + "." + c.table + " WHERE run_id IN (SELECT run_id FROM temp.moving)");
+        db->exec("DELETE FROM " + s + "." + c.table +
+                 " WHERE run_id IN (SELECT run_id FROM temp.moving)");
       if (s == "main") {
-        db->exec("DELETE FROM main.statuses WHERE run_id IN (SELECT run_id FROM temp.moving)");
-        db->exec("DELETE FROM main.active_environments WHERE run_id IN (SELECT run_id FROM temp.moving)");
+        db->exec(
+            "DELETE FROM main.statuses WHERE run_id IN (SELECT run_id FROM "
+            "temp.moving)");
+        db->exec(
+            "DELETE FROM main.active_environments WHERE run_id IN (SELECT "
+            "run_id FROM temp.moving)");
       }
     }
-    // Saved inputs here may still name types, so only the copy drops unused ones.
-    if (has_copy) db->exec("DELETE FROM ex.schemas WHERE hash NOT IN (SELECT schema_hash FROM ex.ivalues)");
+    // Saved inputs here may still name types, so only the copy drops unused
+    // ones.
+    if (has_copy)
+      db->exec(
+          "DELETE FROM ex.schemas WHERE hash NOT IN (SELECT schema_hash FROM "
+          "ex.ivalues)");
     t.commit();
   }
   if (!ids.empty()) {
@@ -1655,6 +2083,5 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
   if (has_copy) put_copy(*db, copy);
   return ids;
 }
-
 
 }  // namespace tsugumi

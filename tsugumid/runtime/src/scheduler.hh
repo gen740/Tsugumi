@@ -12,9 +12,9 @@
 #include <string>
 #include <thread>
 
-#include "tsugumi/document/graph.hh"
 #include "model.hh"
 #include "server.hh"
+#include "tsugumi/document/graph.hh"
 
 namespace tsugumi {
 
@@ -42,7 +42,8 @@ struct RunPlanData {
 
 struct RunParams {
   std::string op_id;
-  std::string commit;  // the project's version it starts from ("" when not versioned)
+  std::string
+      commit;  // the project's version it starts from ("" when not versioned)
   std::string digest;
   CardPath card;
   bool propagate = true;
@@ -59,7 +60,8 @@ class Scheduler {
   // Marks runs left unfinished by a previous process as failed/interrupted.
   void recover_interrupted();
   auto start_remote_cleanup() -> void;
-  static RunPlanData plan(const Resolution& res, const CardPath& card, bool propagate);
+  static RunPlanData plan(const Resolution& res, const CardPath& card,
+                          bool propagate);
   /// Drafts and the Cards that need their outputs (they do not run).
   static std::set<size_t> draft_waiting(const Resolution& res);
   // Accepts a run (durable before returning) and starts it. Returns the
@@ -88,7 +90,8 @@ class Scheduler {
   std::vector<std::thread> reapers_;
   std::atomic<bool> stop_cleanup_{false};
   std::thread remote_cleanup_;
-  std::map<std::string, DisplayData> displays_;  // latest per card key (any run)
+  std::map<std::string, DisplayData>
+      displays_;  // latest per card key (any run)
   // Cards that left the document, with what they were made of. Their name can
   // come back: the same Card (an undo, an older version) has its display again,
   // another Card under that name starts without one.

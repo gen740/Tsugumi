@@ -14,12 +14,16 @@ extern "C" {
 
 #define TSUGUMI_ABI_VERSION 6u
 
-enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
+enum tsugumi_port_kind {
+  TSUGUMI_FILE = 1,
+  TSUGUMI_DIRECTORY = 2,
+  TSUGUMI_FLATBUFFER = 3
+};
 
 typedef struct tsugumi_value {
-  const char* name;      /* port name */
-  uint32_t kind;         /* tsugumi_port_kind */
-  const uint8_t* data;   /* FlatBuffer of the port message */
+  const char* name;    /* port name */
+  uint32_t kind;       /* tsugumi_port_kind */
+  const uint8_t* data; /* FlatBuffer of the port message */
   size_t size;
 } tsugumi_value;
 
@@ -40,7 +44,7 @@ typedef struct tsugumi_blob {
 typedef struct tsugumi_call {
   uint32_t abi_version;
   const char* run_id;
-  const char* card;  /* full Card path joined with '/' */
+  const char* card; /* full Card path joined with '/' */
   uint64_t invocation;
   const tsugumi_value* inputs;
   size_t input_count;
@@ -51,10 +55,12 @@ typedef struct tsugumi_call {
   const char* output_directory;
   void* host;
   /* Emits one output port. Returns 0 on success. */
-  int (*emit_output)(void* host, const char* port, const uint8_t* data, size_t size);
+  int (*emit_output)(void* host, const char* port, const uint8_t* data,
+                     size_t size);
   int (*display_text)(void* host, const char* text);
   int (*display_scalar)(void* host, double value, const char* label);
-  int (*display_line_chart)(void* host, const tsugumi_series* series, size_t count);
+  int (*display_line_chart)(void* host, const tsugumi_series* series,
+                            size_t count);
   /* Writes a line to the invocation's stderr log. */
   void (*log)(void* host, const char* message);
   /* Non-zero once the invocation was cancelled. */
@@ -65,14 +71,17 @@ typedef struct tsugumi_call {
    * kind is a FailureKind name such as "worker_failed" or "output_invalid". */
   void (*fail)(void* host, const char* kind, const char* message);
   /* ABI 2. Table cells are row-major, column_count per row. */
-  int (*display_table)(void* host, const char* const* columns, size_t column_count, const char* const* cells,
+  int (*display_table)(void* host, const char* const* columns,
+                       size_t column_count, const char* const* cells,
                        size_t row_count);
   /* PNG or JPEG bytes; media_type is "image/png" or "image/jpeg". */
-  int (*display_image)(void* host, const char* media_type, const uint8_t* data, size_t size, const char* alt);
+  int (*display_image)(void* host, const char* media_type, const uint8_t* data,
+                       size_t size, const char* alt);
   /* colors (0xRRGGBB) may be NULL. */
-  int (*display_points)(void* host, const float* x, const float* y, const float* z, const uint32_t* colors,
-                        size_t count);
-  /* Immutable view identity (or a name declared in views), config and named bytes. */
+  int (*display_points)(void* host, const float* x, const float* y,
+                        const float* z, const uint32_t* colors, size_t count);
+  /* Immutable view identity (or a name declared in views), config and named
+   * bytes. */
   int (*display_module)(void* host, const char* module, const char* config_json,
                         const tsugumi_blob* blobs, size_t blob_count);
   /* ABI 3. Markdown text (with TeX math) shown as formatted text. */

@@ -1,4 +1,8 @@
-{ pkgs, inputs, params }:
+{
+  pkgs,
+  inputs,
+  params,
+}:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
 in
@@ -6,6 +10,10 @@ in
   run = inputs.tsugumi.pythonCard {
     inherit sdk;
     src = ./src;
-    packages = ps: [ ps.rdkit ps.numpy ps.matplotlib ];
+    packages = ps: [
+      ps.rdkit
+      ps.numpy
+      ps.matplotlib
+    ];
   };
 }

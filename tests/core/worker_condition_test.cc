@@ -1,5 +1,4 @@
 #include "tsugumi/document/worker_condition.hh"
-#include "worker_selection.hh"
 
 #include <gtest/gtest.h>
 
@@ -7,6 +6,8 @@
 #include <limits>
 #include <random>
 #include <string>
+
+#include "worker_selection.hh"
 
 namespace tsugumi::worker_condition {
 namespace {
@@ -146,8 +147,7 @@ constexpr auto kErrors = std::to_array<ErrorExample>({
     {"x << 64 == 0", 5, Code::ShiftLimit},
     {"x >> 0x40 == 0", 5, Code::ShiftLimit},
     {"x << (64) == 0", 6, Code::ShiftLimit},
-    {"x >> 18446744073709551615 == 0", 5,
-     Code::ShiftLimit},
+    {"x >> 18446744073709551615 == 0", 5, Code::ShiftLimit},
     {"x == 18446744073709551616", 5, Code::IntegerOverflow},
     {"x == 0x10000000000000000", 5, Code::IntegerOverflow},
     {"x == 0x", 5, Code::InvalidInteger},
@@ -172,8 +172,8 @@ constexpr auto kErrors = std::to_array<ErrorExample>({
     {"x == 日本語", 5, Code::UnexpectedCharacter},
 });
 
-auto expect_error(std::string_view expression, std::size_t position,
-                  Code code) -> void {
+auto expect_error(std::string_view expression, std::size_t position, Code code)
+    -> void {
   auto result = compile({"simple", expression});
   ASSERT_TRUE(std::holds_alternative<Diagnostic>(result)) << expression;
   const auto& diagnostic = std::get<Diagnostic>(result);
@@ -194,8 +194,7 @@ TEST(WorkerCondition, DispatchesByLanguageWithoutFallback) {
     auto result = compile({language, "x == 0"});
     ASSERT_TRUE(std::holds_alternative<Diagnostic>(result));
     EXPECT_EQ(std::get<Diagnostic>(result).position, 0u);
-    EXPECT_EQ(std::get<Diagnostic>(result).code,
-              Code::UnknownLanguage);
+    EXPECT_EQ(std::get<Diagnostic>(result).code, Code::UnknownLanguage);
   }
 }
 
@@ -355,10 +354,9 @@ TEST(WorkerCondition, SeededValidProgramsAgreeWithUnsignedOperations) {
 
 namespace tsugumi {
 TEST(WorkerSelection, LowestFreeGradeAndRegistrationOrder) {
-  std::array workers{WorkerCandidate{"first", 9, true},
-                     WorkerCandidate{"second", 3, true},
-                     WorkerCandidate{"third", 3, true},
-                     WorkerCandidate{"local", 0, false}};
+  std::array workers{
+      WorkerCandidate{"first", 9, true}, WorkerCandidate{"second", 3, true},
+      WorkerCandidate{"third", 3, true}, WorkerCandidate{"local", 0, false}};
   EXPECT_EQ(select_worker(workers, nullptr).index, 1);
   workers[1].free = false;
   EXPECT_EQ(select_worker(workers, nullptr).index, 2);
@@ -366,8 +364,10 @@ TEST(WorkerSelection, LowestFreeGradeAndRegistrationOrder) {
   EXPECT_EQ(select_worker(workers, nullptr).index, 3);
 }
 TEST(WorkerSelection, ConditionUsesAll64BitsAndSeparatesNoMatchFromBusy) {
-  auto compiled = worker_condition::compile({"simple", "x & 0x8000000000000000 != 0"});
-  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  auto compiled =
+      worker_condition::compile({"simple", "x & 0x8000000000000000 != 0"});
+  auto condition = std::move(
+      std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
   std::array workers{WorkerCandidate{"local", 0, true},
                      WorkerCandidate{"large", UINT64_MAX, false}};
   auto result = select_worker(workers, condition.get());
@@ -390,13 +390,18 @@ TEST(WorkerSelection, ResidentWaitsForItsOwnWorker) {
 }
 TEST(WorkerSelection, ChangedConditionDiscardsIneligibleResident) {
   auto compiled = worker_condition::compile({"simple", "x >= 10"});
-  auto condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  auto condition = std::move(
+      std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
   const std::array workers{WorkerCandidate{"local", 0, true},
                            WorkerCandidate{"remote", 10, true}};
   EXPECT_EQ(select_worker(workers, nullptr, "auto", "local").index, 0);
   EXPECT_EQ(select_worker(workers, condition.get(), "auto", "local").index, 1);
-  EXPECT_FALSE(select_worker(std::span(workers).first(1), condition.get(), "auto", "local").matches);
-  EXPECT_EQ(select_worker(workers, condition.get(), "auto", "removed-worker").index, 1);
+  EXPECT_FALSE(select_worker(std::span(workers).first(1), condition.get(),
+                             "auto", "local")
+                   .matches);
+  EXPECT_EQ(
+      select_worker(workers, condition.get(), "auto", "removed-worker").index,
+      1);
   EXPECT_EQ(select_worker(workers, nullptr, "remote", "local").index, 1);
 }
 }  // namespace tsugumi

@@ -51,17 +51,20 @@ class ScopedEnvironment {
 class JournalBroker : public testing::Test {
  protected:
   auto SetUp() -> void override {
-    previous_umask_ = ::umask(0077);  // Match the real listener's private state.
+    previous_umask_ =
+        ::umask(0077);  // Match the real listener's private state.
     root = std::filesystem::canonical(std::filesystem::temp_directory_path()) /
            ("lease-" + crypto::uuid4());
     std::filesystem::create_directories(root / "journal");
-    std::filesystem::permissions(root / "journal", std::filesystem::perms::owner_all);
+    std::filesystem::permissions(root / "journal",
+                                 std::filesystem::perms::owner_all);
     journal = std::make_unique<W::Journal>(root / "journal");
     fs::write_atomic(root / "capability", "test-capability", 0600);
-    endpoint = std::make_unique<ScopedEnvironment>("TSUGUMI_EXECUTION_BROKER",
-                                                   "unix:" + (root / "broker").string());
-    capability = std::make_unique<ScopedEnvironment>("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE",
-                                                     (root / "capability").string());
+    endpoint = std::make_unique<ScopedEnvironment>(
+        "TSUGUMI_EXECUTION_BROKER", "unix:" + (root / "broker").string());
+    capability = std::make_unique<ScopedEnvironment>(
+        "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE",
+        (root / "capability").string());
     socket_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
     ASSERT_GE(socket_, 0);
     sockaddr_un address{};
@@ -69,7 +72,9 @@ class JournalBroker : public testing::Test {
     const auto path = (root / "broker").string();
     ASSERT_LT(path.size(), sizeof address.sun_path);
     std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-    ASSERT_EQ(::bind(socket_, reinterpret_cast<sockaddr*>(&address), sizeof address), 0);
+    ASSERT_EQ(
+        ::bind(socket_, reinterpret_cast<sockaddr*>(&address), sizeof address),
+        0);
     ASSERT_EQ(::listen(socket_, 16), 0);
     thread_ = std::jthread([this] { Serve(); });
   }
@@ -86,10 +91,12 @@ class JournalBroker : public testing::Test {
     std::unique_lock lock(mutex_);
     return changed_.wait_for(lock, 60s, [&] { return probes_ >= count; });
   }
-  auto Submit(RemoteJobClient& client, const std::string& job, uint32_t missed = 1) -> std::string {
+  auto Submit(RemoteJobClient& client, const std::string& job,
+              uint32_t missed = 1) -> std::string {
     std::istringstream input("input");
     const auto digest = crypto::sha256_hex("input");
-    client.put_blob("worker", server, journal->instance(), job, digest, 5, input);
+    client.put_blob("worker", server, journal->instance(), job, digest, 5,
+                    input);
     R::JobSpecT spec;
     spec.system = "x86_64-linux";
     spec.derivation = "/nix/store/00000000000000000000000000000000-test.drv";
@@ -102,8 +109,11 @@ class JournalBroker : public testing::Test {
     spec.missed_heartbeats = missed;
     flatbuffers::FlatBufferBuilder b;
     b.Finish(R::JobSpec::Pack(b, &spec));
-    const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-    EXPECT_EQ(client.submit("worker", server, journal->instance(), job, bytes).state, "queued");
+    const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                            b.GetSize());
+    EXPECT_EQ(
+        client.submit("worker", server, journal->instance(), job, bytes).state,
+        "queued");
     return crypto::sha256_hex(bytes);
   }
   std::filesystem::path root;
@@ -138,7 +148,8 @@ class JournalBroker : public testing::Test {
         const auto size = W::frame_length(Read(fd, 4));
         const auto message = W::decode(Read(fd, size));
         const auto* broker = message->payload.AsBrokerRequest();
-        if (!broker || broker->capability != "test-capability" || !broker->request)
+        if (!broker || broker->capability != "test-capability" ||
+            !broker->request)
           throw std::runtime_error("invalid broker request");
         const auto& q = *broker->request;
         R::MessageT response;
@@ -158,14 +169,16 @@ class JournalBroker : public testing::Test {
           journal->put(q.job_id, *put, q.core_life_id);
           response = W::reply(R::AckT{});
         } else if (const auto* submit = q.body.AsSubmitRequest()) {
-          response = W::reply(journal
-                                  ->submit(q.job_id,
-                                           {reinterpret_cast<const char*>(submit->spec.data()),
-                                            submit->spec.size()},
-                                           q.core_life_id)
-                                  .status());
+          response = W::reply(
+              journal
+                  ->submit(q.job_id,
+                           {reinterpret_cast<const char*>(submit->spec.data()),
+                            submit->spec.size()},
+                           q.core_life_id)
+                  .status());
         } else if (const auto* cancel = q.body.AsCancelRequest()) {
-          response = W::reply(journal->cancel(q.job_id, cancel->fingerprint).status());
+          response =
+              W::reply(journal->cancel(q.job_id, cancel->fingerprint).status());
         } else if (const auto* release = q.body.AsReleaseRequest()) {
           journal->release(q.job_id, release->fingerprint);
           response = W::reply(R::AckT{});
@@ -173,10 +186,12 @@ class JournalBroker : public testing::Test {
           throw std::runtime_error("unexpected broker request");
         auto bytes = W::encode(std::move(response));
         bytes = W::length_prefix(static_cast<uint32_t>(bytes.size())) + bytes;
-        // The live client reads the whole response before it closes this socket.
+        // The live client reads the whole response before it closes this
+        // socket.
         size_t offset = 0;
         while (offset < bytes.size()) {
-          const auto n = ::write(fd, bytes.data() + offset, bytes.size() - offset);
+          const auto n =
+              ::write(fd, bytes.data() + offset, bytes.size() - offset);
           if (n <= 0) throw std::runtime_error("broker write failed");
           offset += static_cast<size_t>(n);
         }
@@ -203,7 +218,8 @@ class JournalBroker : public testing::Test {
   std::unique_ptr<ScopedEnvironment> endpoint, capability;
 };
 
-TEST_F(JournalBroker, OneMissedHeartbeatAllowsRealClientProbesAfterTheInterval) {
+TEST_F(JournalBroker,
+       OneMissedHeartbeatAllowsRealClientProbesAfterTheInterval) {
   RemoteJobClient client;
   client.probe("worker", server, 1);
   const std::string job(64, '1');
@@ -219,16 +235,19 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   std::map<std::string, std::string> fingerprints;
   for (const auto& job : {completed, queued, collected}) {
     fingerprints[job] = Submit(previous, job, 0);
-    fs::write_atomic(journal->job_path(job) / "work/result/output", "output", 0600);
+    fs::write_atomic(journal->job_path(job) / "work/result/output", "output",
+                     0600);
     fs::write_atomic(journal->job_path(job) / "supervisor.log", "log", 0600);
   }
   journal->claim(completed, 1, 1, "boot");
-  journal->finish(completed, R::JobState::Succeeded, crypto::sha256_hex("result"), {});
+  journal->finish(completed, R::JobState::Succeeded,
+                  crypto::sha256_hex("result"), {});
   ServiceOptions options;
   options.root = root / "project";
   std::filesystem::create_directories(options.root);
-  fs::write_atomic(options.root / "tsugumi.json",
-                   R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(
+      options.root / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   options.scratch_dir = root / "scratch";
   options.run_scratch_dir = root / "outputs";
   Service current(options);
@@ -248,9 +267,10 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   RemoteExecutionService cleanup(current, replacement);
   cleanup.release_completed();
   for (const auto& job : {completed, queued}) {
-    EXPECT_TRUE(
-        std::filesystem::exists(journal->job_path(job) / "blobs" / crypto::sha256_hex("input")));
-    EXPECT_EQ(fs::read_file(journal->job_path(job) / "work/result/output"), "output");
+    EXPECT_TRUE(std::filesystem::exists(journal->job_path(job) / "blobs" /
+                                        crypto::sha256_hex("input")));
+    EXPECT_EQ(fs::read_file(journal->job_path(job) / "work/result/output"),
+              "output");
     EXPECT_EQ(fs::read_file(journal->job_path(job) / "supervisor.log"), "log");
     EXPECT_FALSE(journal->claim(job, 2, 2, "boot"));
   }
@@ -258,8 +278,9 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   EXPECT_EQ(journal->status(queued).state, R::JobState::Cancelled);
   EXPECT_EQ(journal->status(collected).state, R::JobState::Released);
   EXPECT_FALSE(std::filesystem::exists(journal->job_path(collected) / "blobs"));
-  current.history().read(
-      [](sql::Db& db) { EXPECT_FALSE(db.prepare("SELECT 1 FROM remote_releases").step()); });
+  current.history().read([](sql::Db& db) {
+    EXPECT_FALSE(db.prepare("SELECT 1 FROM remote_releases").step());
+  });
 }
 }  // namespace
 }  // namespace tsugumi

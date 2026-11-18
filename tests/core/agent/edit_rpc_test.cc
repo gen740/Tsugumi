@@ -1,5 +1,4 @@
 #include "project_fixture.hh"
-
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
@@ -125,7 +124,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_NE(end, std::string::npos);
   const auto args = reference.substr(begin, end - begin);
   auto edits = json::Array(json::Get(json::Object(args), "edits"));
-  std::erase_if(edits, [](const auto &raw) {
+  std::erase_if(edits, [](const auto& raw) {
     return json::Text(json::Object(raw), "file_path") ==
            "definitions/plan/_meta.json";
   });

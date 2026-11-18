@@ -13,8 +13,8 @@
 #include <system_error>
 #include <thread>
 
-#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/util/sparse.hh"
+#include "tsugumi/workerd/staging.hh"
 
 namespace {
 namespace stdfs = std::filesystem;
@@ -29,9 +29,11 @@ auto expect(bool condition, const char* message) -> void {
 auto clear_staging(const stdfs::path& path) -> void {
   tsugumi::fs::clear_staging(path, [](int parent, const char* name) {
     struct stat status{};
-    expect(::fstatat(parent, name, &status, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(status.st_mode),
+    expect(::fstatat(parent, name, &status, AT_SYMLINK_NOFOLLOW) == 0 &&
+               S_ISDIR(status.st_mode),
            "recovery target is not a directory");
-    expect(::fchmodat(parent, name, status.st_mode | S_IRWXU, AT_SYMLINK_NOFOLLOW) == 0,
+    expect(::fchmodat(parent, name, status.st_mode | S_IRWXU,
+                      AT_SYMLINK_NOFOLLOW) == 0,
            "recover test directory permissions");
   });
 }
@@ -129,8 +131,10 @@ auto clean_unreadable_directories(const stdfs::path& root) -> void {
   const auto staging = root / "unreadable";
   stdfs::create_directories(staging / "private/nested");
   std::ofstream(staging / "private/nested/data") << "private";
-  expect(::chmod((staging / "private/nested").c_str(), 0000) == 0, "chmod nested 000");
-  expect(::chmod((staging / "private").c_str(), 0000) == 0, "chmod private 000");
+  expect(::chmod((staging / "private/nested").c_str(), 0000) == 0,
+         "chmod nested 000");
+  expect(::chmod((staging / "private").c_str(), 0000) == 0,
+         "chmod private 000");
   expect(::chmod(staging.c_str(), 0000) == 0, "chmod root 000");
   clear_staging(staging);
   expect(stdfs::is_empty(staging), "mode-000 staging was not cleared");
@@ -157,19 +161,23 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   ::close(directory);
   const auto check = [&](const stdfs::path& path) {
     struct stat status{};
-    expect(::stat(path.c_str(), &status) == 0 && status.st_size == size, "sparse copy size");
-    expect(status.st_blocks * 512 < 1024 * 1024, "sparse copy allocated its holes");
+    expect(::stat(path.c_str(), &status) == 0 && status.st_size == size,
+           "sparse copy size");
+    expect(status.st_blocks * 512 < 1024 * 1024,
+           "sparse copy allocated its holes");
     const int fd = ::open(path.c_str(), O_RDONLY);
     expect(fd >= 0, "open sparse copy");
     for (const off_t offset : {off_t{0}, size / 2, size - 131072}) {
       char data[4];
-      expect(::pread(fd, data, sizeof data, offset) == 4 && std::string_view(data, 4) == "data",
+      expect(::pread(fd, data, sizeof data, offset) == 4 &&
+                 std::string_view(data, 4) == "data",
              "sparse data changed");
     }
     for (const off_t offset : {off_t{65536}, size / 2 - 4, size - 4}) {
       char data[4];
       expect(::pread(fd, data, sizeof data, offset) == 4 &&
-                 std::string_view(data, 4).find_first_not_of('\0') == std::string_view::npos,
+                 std::string_view(data, 4).find_first_not_of('\0') ==
+                     std::string_view::npos,
              "sparse hole changed");
     }
     ::close(fd);
@@ -177,12 +185,15 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   check(output);
   // Input transfers additionally consume every logical byte for hashing.
   const auto input = root / "sparse-input";
-  const int destination = ::open(input.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+  const int destination =
+      ::open(input.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
   expect(destination >= 0, "open sparse input");
   uint64_t observed = 0;
-  const auto copied = tsugumi::fs::copy_sparse_file(file, destination, source, input,
+  const auto copied = tsugumi::fs::copy_sparse_file(
+      file, destination, source, input,
       [&](std::string_view bytes) { observed += bytes.size(); });
-  expect(copied == static_cast<uint64_t>(size) && observed == copied, "sparse callback lost logical bytes");
+  expect(copied == static_cast<uint64_t>(size) && observed == copied,
+         "sparse callback lost logical bytes");
   ::close(destination);
   ::close(file);
   check(input);
@@ -197,18 +208,22 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   const int zeros_root = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   expect(zeros_root >= 0, "open zero-block staging");
   const auto zeros_copy = root / "zero-block-copy";
-  tsugumi::fs::copy_staging_output(zeros_root, "allocated-zeros", zeros_copy, false, cancel);
+  tsugumi::fs::copy_staging_output(zeros_root, "allocated-zeros", zeros_copy,
+                                   false, cancel);
   ::close(zeros_root);
   struct stat zeros_status{};
-  expect(::stat(zeros_copy.c_str(), &zeros_status) == 0 && zeros_status.st_size == 4 * 1024 * 1024,
+  expect(::stat(zeros_copy.c_str(), &zeros_status) == 0 &&
+             zeros_status.st_size == 4 * 1024 * 1024,
          "zero-block copy size");
-  expect(zeros_status.st_blocks * 512 < 1024 * 1024, "allocated zero blocks were copied densely");
+  expect(zeros_status.st_blocks * 512 < 1024 * 1024,
+         "allocated zero blocks were copied densely");
 
   cancel = true;
   const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   bool cancelled = false;
   try {
-    tsugumi::fs::copy_staging_output(fd, "large", root / "sparse-cancelled", false, cancel);
+    tsugumi::fs::copy_staging_output(fd, "large", root / "sparse-cancelled",
+                                     false, cancel);
   } catch (const std::runtime_error&) {
     cancelled = true;
   }

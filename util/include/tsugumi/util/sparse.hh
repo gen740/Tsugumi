@@ -19,12 +19,13 @@ namespace tsugumi::fs {
 
 // The destination must be empty. on_chunk observes every logical byte,
 // including zeros in holes, for hashing and cancellation checks.
-inline auto copy_sparse_file(int source, int destination,
-                      const std::filesystem::path& source_path,
-                      const std::filesystem::path& destination_path,
-                      const std::function<void(std::string_view)>& on_chunk)
-    -> uint64_t {
-  const auto failed = [](const char* operation, const std::filesystem::path& path, int error = errno) -> void {
+inline auto copy_sparse_file(
+    int source, int destination, const std::filesystem::path& source_path,
+    const std::filesystem::path& destination_path,
+    const std::function<void(std::string_view)>& on_chunk) -> uint64_t {
+  const auto failed = [](const char* operation,
+                         const std::filesystem::path& path,
+                         int error = errno) -> void {
     throw std::system_error(error, std::generic_category(),
                             std::string(operation) + " " + path.string());
   };
@@ -49,7 +50,8 @@ inline auto copy_sparse_file(int source, int destination,
       } else {
         const off_t next = data < 0 ? size : std::min(data, size);
         while (offset < next) {
-          const auto count = static_cast<size_t>(std::min<off_t>(next - offset, zeros.size()));
+          const auto count =
+              static_cast<size_t>(std::min<off_t>(next - offset, zeros.size()));
           if (on_chunk) on_chunk(std::string_view(zeros.data(), count));
           offset += static_cast<off_t>(count);
         }
@@ -70,7 +72,8 @@ inline auto copy_sparse_file(int source, int destination,
     (void)seek_extents;
 #endif
     while (offset < end) {
-      const auto requested = static_cast<size_t>(std::min<off_t>(end - offset, buffer.size()));
+      const auto requested =
+          static_cast<size_t>(std::min<off_t>(end - offset, buffer.size()));
       const auto count = ::pread(source, buffer.data(), requested, offset);
       if (count < 0 && errno == EINTR) continue;
       if (count < 0) failed("pread", source_path);
@@ -82,8 +85,9 @@ inline auto copy_sparse_file(int source, int destination,
       if (chunk.find_first_not_of('\0') != std::string_view::npos) {
         ssize_t written = 0;
         while (written < count) {
-          const auto n = ::pwrite(destination, buffer.data() + written,
-                                   static_cast<size_t>(count - written), offset + written);
+          const auto n =
+              ::pwrite(destination, buffer.data() + written,
+                       static_cast<size_t>(count - written), offset + written);
           if (n < 0 && errno == EINTR) continue;
           if (n <= 0) failed("pwrite", destination_path, n == 0 ? EIO : errno);
           written += n;
@@ -97,11 +101,13 @@ inline auto copy_sparse_file(int source, int destination,
   struct stat final_status{};
   if (::fstat(source, &final_status) != 0) failed("fstat", source_path);
   if (final_status.st_size != size) {
-    const auto message = "source size changed during copy (expected " + std::to_string(size) +
-                         " bytes, found " + std::to_string(final_status.st_size) + ")";
+    const auto message = "source size changed during copy (expected " +
+                         std::to_string(size) + " bytes, found " +
+                         std::to_string(final_status.st_size) + ")";
     failed(message.c_str(), source_path, EIO);
   }
-  if (::ftruncate(destination, size) != 0) failed("ftruncate", destination_path);
+  if (::ftruncate(destination, size) != 0)
+    failed("ftruncate", destination_path);
   return static_cast<uint64_t>(size);
 }
 

@@ -86,8 +86,7 @@ auto validate_spec(const R::JobSpecT& s) -> void {
       unique.size() != s.input_blobs.size() ||
       !unique.contains(s.invocation_sha256) ||
       !std::ranges::all_of(s.input_blobs, digest) ||
-      !s.heartbeat_interval_seconds ||
-      !s.log_limit_bytes ||
+      !s.heartbeat_interval_seconds || !s.log_limit_bytes ||
       s.log_limit_bytes > remote::kMaxLogLimitBytes ||
       (s.cpu_millis == 0) != (s.memory_bytes == 0) || s.cpu_millis > 256000 ||
       s.memory_bytes > (uint64_t{1} << 40))

@@ -155,18 +155,23 @@ auto ProjectRegistry::RegisterFolder(
       .bind(4, Text(request.title()))
       .run();
 }
-auto ProjectRegistry::AttachedRoot(const std::string& project, const std::string& folder) -> std::string {
+auto ProjectRegistry::AttachedRoot(const std::string& project,
+                                   const std::string& folder) -> std::string {
   // Explicit registrations are local. Managed environments have an exact map,
   // persisted with the endpoint so a hostd restart cannot select a guest's
   // same-named directory before the environment is observed again.
-  auto managed = db.prepare("SELECT 1 FROM environment_projects WHERE project=?");
+  auto managed =
+      db.prepare("SELECT 1 FROM environment_projects WHERE project=?");
   managed.bind(1, project);
   if (!managed.step()) return folder;
   auto root = db.prepare(
-      "SELECT execution_path FROM project_attached_roots WHERE project=? AND path=?");
+      "SELECT execution_path FROM project_attached_roots WHERE project=? AND "
+      "path=?");
   root.bind(1, project).bind(2, folder);
   if (!root.step())
-    throw Failure("unavailable", "Attached folder is not mounted; restart the project environment");
+    throw Failure(
+        "unavailable",
+        "Attached folder is not mounted; restart the project environment");
   return root.text(0);
 }
 auto ProjectRegistry::RegisterReady(
@@ -188,8 +193,12 @@ auto ProjectRegistry::RegisterReady(
   auto clear = db.prepare("DELETE FROM project_attached_roots WHERE project=?");
   clear.bind(1, state.project_id).run();
   for (const auto& root : state.attached_roots) {
-    auto insert = db.prepare("INSERT INTO project_attached_roots VALUES(?,?,?)");
-    insert.bind(1, state.project_id).bind(2, root->host_path).bind(3, root->execution_path).run();
+    auto insert =
+        db.prepare("INSERT INTO project_attached_roots VALUES(?,?,?)");
+    insert.bind(1, state.project_id)
+        .bind(2, root->host_path)
+        .bind(3, root->execution_path)
+        .run();
   }
   transaction.commit();
 }

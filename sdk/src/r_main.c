@@ -1,10 +1,11 @@
 /* R's runtime is loaded once on the worker's main thread. Errors are caught
  * inside R before returning across the ABI; no R longjmp crosses host code. */
 #define R_NO_REMAP
-#include "native_host.h"
 #include <Rembedded.h>
 #include <Rinterface.h>
 #include <Rinternals.h>
+
+#include "native_host.h"
 // R_ext/Parse.h requires SEXP from Rinternals.h.
 #include <R_ext/Parse.h>
 #include <R_ext/Rdynload.h>
@@ -95,7 +96,9 @@ static SEXP host_remaining(void) {
   return Rf_ScalarReal((double)tsugumi_native_remaining_ms());
 }
 static SEXP host_log(SEXP message) {
-  if (current_call) current_call->log(current_call->host, Rf_translateCharUTF8(STRING_ELT(message, 0)));
+  if (current_call)
+    current_call->log(current_call->host,
+                      Rf_translateCharUTF8(STRING_ELT(message, 0)));
   return R_NilValue;
 }
 static SEXP host_fail(SEXP message) {
@@ -164,8 +167,10 @@ int tsugumi_prepare(void) {
   const char* home = getenv("HOME");
   if (home) setenv("TMPDIR", home, 1);
   int initialized = Rf_initEmbeddedR(6, argv);
-  if (saved_tmp) setenv("TMPDIR", saved_tmp, 1);
-  else unsetenv("TMPDIR");
+  if (saved_tmp)
+    setenv("TMPDIR", saved_tmp, 1);
+  else
+    unsetenv("TMPDIR");
   free(saved_tmp);
   if (initialized < 0) return 1;
   R_registerRoutines(R_getEmbeddingDllInfo(), NULL, methods, NULL, NULL);
@@ -173,7 +178,8 @@ int tsugumi_prepare(void) {
 }
 int tsugumi_load(const tsugumi_call* call) {
   current_call = call;
-  int error = eval("source(\"" TSUGUMI_R_SOURCE "/main.R\", keep.source=FALSE)");
+  int error =
+      eval("source(\"" TSUGUMI_R_SOURCE "/main.R\", keep.source=FALSE)");
   current_call = NULL;
   return error;
 }

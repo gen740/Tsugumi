@@ -9,7 +9,8 @@ namespace tsugumi {
 
 namespace stdfs = std::filesystem;
 
-WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits, WorkerPoolMode mode)
+WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits,
+                       WorkerPoolMode mode)
     : root_(std::move(scratch_root)), limits_(limits), mode_(mode) {
   if (mode_ == WorkerPoolMode::one_shot) return;
   std::error_code ec;
@@ -47,29 +48,37 @@ std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
     stdfs::permissions(root_, stdfs::perms::owner_all);
     sp.scratch = (root_ / ("w" + std::to_string(++seq_))).string();
   }
-  if (std::this_thread::get_id() == reaper_.get_id()) return std::make_unique<WorkerProc>(sp);
-  std::packaged_task<std::unique_ptr<WorkerProc>()> task([sp] { return std::make_unique<WorkerProc>(sp); });
+  if (std::this_thread::get_id() == reaper_.get_id())
+    return std::make_unique<WorkerProc>(sp);
+  std::packaged_task<std::unique_ptr<WorkerProc>()> task(
+      [sp] { return std::make_unique<WorkerProc>(sp); });
   auto result = task.get_future();
   {
     std::lock_guard<std::mutex> l(mu_);
-    if (stopping_) throw Failed(FailureKind::worker_failed, "the project is stopping");
+    if (stopping_)
+      throw Failed(FailureKind::worker_failed, "the project is stopping");
     spawns_.push_back(std::move(task));
   }
   cv_.notify_all();
   return result.get();
 }
 
-WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string& key, const WorkerSpawn& sp,
-                                      bool reuse) {
+WorkerPool::Lease WorkerPool::acquire(const std::string& card,
+                                      const std::string& key,
+                                      const WorkerSpawn& sp, bool reuse) {
   std::string standby_key = key;
   Lease lease;
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
     if (reuse) {
-      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end()) {
-        lease.replaced = previous->second == key ? "the resident worker died" : "the Card definition changed";
-        if (auto reason = resident_replacements_.find(card); reason != resident_replacements_.end()) {
+      if (auto previous = resident_keys_.find(card);
+          previous != resident_keys_.end()) {
+        lease.replaced = previous->second == key
+                             ? "the resident worker died"
+                             : "the Card definition changed";
+        if (auto reason = resident_replacements_.find(card);
+            reason != resident_replacements_.end()) {
           if (previous->second == key) lease.replaced = reason->second;
           resident_replacements_.erase(reason);
         }
@@ -98,8 +107,10 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
     }
     if (!lease.worker && !reuse) {
       if (auto it = standby_.find(standby_key); it != standby_.end()) {
-        if (it->second.worker->alive()) lease.worker = std::move(it->second.worker);
-        else ended.push_back(std::move(it->second.worker));
+        if (it->second.worker->alive())
+          lease.worker = std::move(it->second.worker);
+        else
+          ended.push_back(std::move(it->second.worker));
         standby_.erase(it);
       }
     }
@@ -114,15 +125,17 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   return lease;
 }
 
-void WorkerPool::release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker,
-                         bool keep, const std::string& reason) {
+void WorkerPool::release(const std::string& card, const std::string& key,
+                         std::unique_ptr<WorkerProc> worker, bool keep,
+                         const std::string& reason) {
   if (!worker) return;
   worker->set_logs(nullptr);
   keep = keep && worker->alive();
   if (!keep) {
     if (!reason.empty()) {
       std::lock_guard<std::mutex> l(mu_);
-      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end() && previous->second == key)
+      if (auto previous = resident_keys_.find(card);
+          previous != resident_keys_.end() && previous->second == key)
         resident_replacements_[card] = reason;
     }
     return;  // worker ends here
@@ -138,8 +151,8 @@ void WorkerPool::release(const std::string& card, const std::string& key, std::u
       } else {
         ++it;
       }
-    resident_.push_back({card, key, std::move(worker), std::chrono::steady_clock::now()});
-
+    resident_.push_back(
+        {card, key, std::move(worker), std::chrono::steady_clock::now()});
   }
 }
 
@@ -171,7 +184,9 @@ void WorkerPool::clear(bool residents) {
 void WorkerPool::reaper() {
   std::unique_lock<std::mutex> l(mu_);
   while (!stopping_) {
-    cv_.wait_for(l, std::chrono::seconds(30), [&] { return stopping_ || !pending_.empty() || !spawns_.empty(); });
+    cv_.wait_for(l, std::chrono::seconds(30), [&] {
+      return stopping_ || !pending_.empty() || !spawns_.empty();
+    });
     if (stopping_) break;
     // Workers a call waits for come first.
     while (!spawns_.empty()) {
@@ -194,7 +209,9 @@ void WorkerPool::reaper() {
       }
       l.lock();
       refilling_.erase(key);
-      if (w && !stopping_ && !standby_.count(key)) standby_[key] = {"", key, std::move(w), std::chrono::steady_clock::now()};
+      if (w && !stopping_ && !standby_.count(key))
+        standby_[key] = {"", key, std::move(w),
+                         std::chrono::steady_clock::now()};
       else if (w) {
         l.unlock();
         w.reset();
@@ -206,7 +223,8 @@ void WorkerPool::reaper() {
     auto now = std::chrono::steady_clock::now();
     for (auto it = standby_.begin(); it != standby_.end();)
       if (auto rss = it->second.worker->rss_bytes();
-          !it->second.worker->alive() || now - it->second.since > limits_.idle ||
+          !it->second.worker->alive() ||
+          now - it->second.since > limits_.idle ||
           (rss && *rss > limits_.max_rss_bytes)) {
         ended.push_back(std::move(it->second.worker));
         it = standby_.erase(it);

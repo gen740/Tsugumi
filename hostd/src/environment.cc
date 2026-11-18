@@ -1,4 +1,3 @@
-#include "tsugumi/workerd/scratch_policy.hh"
 #include "host/environment.hh"
 
 #include <signal.h>
@@ -7,17 +6,18 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <atomic>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <thread>
 
-#include "tsugumi/util/json_object.hh"
 #include "host/vm_process.hh"
 #include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
+#include "tsugumi/workerd/scratch_policy.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
@@ -112,7 +112,10 @@ struct Environments::Impl {
       }
       for (const auto& entry : snapshot) {
         std::lock_guard entry_lock(entry->mutex);
-        try { Stop(*entry); } catch (const std::exception&) {}
+        try {
+          Stop(*entry);
+        } catch (const std::exception&) {
+        }
       }
     }
   }
@@ -163,12 +166,13 @@ struct Environments::Impl {
         root->execution_path = "/run/tsugumi/chat/" + mount.name.substr(5);
         entry.state.attached_roots.push_back(std::move(root));
       }
-      if (!options.process->Guest()) for (const auto& folder : entry.folders) {
-        auto root = std::make_unique<H::AttachedRootT>();
-        root->host_path = folder;
-        root->execution_path = folder;
-        entry.state.attached_roots.push_back(std::move(root));
-      }
+      if (!options.process->Guest())
+        for (const auto& folder : entry.folders) {
+          auto root = std::make_unique<H::AttachedRootT>();
+          root->host_path = folder;
+          root->execution_path = folder;
+          entry.state.attached_roots.push_back(std::move(root));
+        }
     }
     changed(entry.state);
   }
@@ -242,7 +246,8 @@ struct Environments::Impl {
   }
   auto Failed(Entry& entry, const std::string& message,
               const EnvironmentFailure* failure = nullptr,
-              H::EnvironmentFailureCode code = H::EnvironmentFailureCode::LaunchFailed) -> void {
+              H::EnvironmentFailureCode code =
+                  H::EnvironmentFailureCode::LaunchFailed) -> void {
     RememberSecrets(entry);
     Revoke(entry);
     ClearEndpoint(entry);
@@ -276,8 +281,9 @@ struct Environments::Impl {
     const auto status = options.process->Poll(entry.pid, entry.child);
     if (!status) return false;
     if (entry.state.phase == H::EnvironmentPhase::Ready &&
-        (*status >= 0 && ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
-         (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM)))) {
+        (*status >= 0 &&
+         ((WIFEXITED(*status) && WEXITSTATUS(*status) == 0) ||
+          (WIFSIGNALED(*status) && WTERMSIG(*status) == SIGTERM)))) {
       Revoke(entry);
       ClearEndpoint(entry);
       entry.state.phase = H::EnvironmentPhase::Stopped;
@@ -317,13 +323,15 @@ struct Environments::Impl {
       if (options.process->Guest() && entry.mounted.empty()) {
         // Restore actual shares after a hostd restart, never guess from paths
         // currently present in either filesystem.
-        const auto saved = fs::read_file(
-            std::filesystem::path(entry.state.control_dir) / "mounted-folders.json");
+        const auto saved =
+            fs::read_file(std::filesystem::path(entry.state.control_dir) /
+                          "mounted-folders.json");
         if (!saved) return false;
         std::vector<EnvironmentMount> mounted;
         for (const auto& raw : json::Array(*saved)) {
           const auto mount = json::Object(raw);
-          mounted.push_back({json::Text(mount, "name"), json::Text(mount, "path"),
+          mounted.push_back({json::Text(mount, "name"),
+                             json::Text(mount, "path"),
                              json::Bool(json::Get(mount, "read_only"))});
         }
         entry.mounted = std::move(mounted);
@@ -370,7 +378,8 @@ struct Environments::Impl {
       if (entry.requirements)
         for (const auto& folder : entry.requirements->folders)
           if (std::filesystem::is_directory(folder->path))
-            host_folders[folder->path] = host_folders[folder->path] || folder->write;
+            host_folders[folder->path] =
+                host_folders[folder->path] || folder->write;
       for (const auto& [path, write] : host_folders)
         launch.mounts.push_back(
             {"host-" + crypto::sha256_hex(path).substr(0, 16), path, !write});
@@ -407,7 +416,8 @@ struct Environments::Impl {
     WriteFolders(entry, entry.folders);
     CheckDeath(entry);
     if (ReadReady(entry)) {
-      const auto previous = entry.mounted.empty() ? Plan(entry).mounts : entry.mounted;
+      const auto previous =
+          entry.mounted.empty() ? Plan(entry).mounts : entry.mounted;
       entry.requirements = options.process->Requirements(entry.state);
       const auto next = Plan(entry);
       // The guest keeps the folders of its start: replacing the shares of a
@@ -494,10 +504,12 @@ struct Environments::Impl {
       launch.authorization = Authorize(entry);
       std::vector<std::string> mounted;
       for (const auto& mount : launch.mounts)
-        mounted.push_back(json::Encode(json::Members{
-            {"name", json::Quote(mount.name)}, {"path", json::Quote(mount.path)},
-            {"read_only", mount.read_only ? "true" : "false"}}));
-      fs::write_atomic(control / "mounted-folders.json", json::Encode(mounted), 0600);
+        mounted.push_back(json::Encode(
+            json::Members{{"name", json::Quote(mount.name)},
+                          {"path", json::Quote(mount.path)},
+                          {"read_only", mount.read_only ? "true" : "false"}}));
+      fs::write_atomic(control / "mounted-folders.json", json::Encode(mounted),
+                       0600);
       // Recorded before the launch: a launch that fails after the process has
       // started (its reply was lost) leaves a process holding these mounts.
       entry.mounted = launch.mounts;
@@ -514,7 +526,9 @@ struct Environments::Impl {
           entry.requirements = std::move(accepted);
           const auto required = Plan(entry).mounts;
           if (options.process->Guest() && planned != required)
-            throw std::runtime_error("Host requirements changed during startup; retry the environment");
+            throw std::runtime_error(
+                "Host requirements changed during startup; retry the "
+                "environment");
           Notify(entry);
           return;
         }
@@ -522,11 +536,14 @@ struct Environments::Impl {
         std::this_thread::sleep_for(50ms);
       }
       Stop(entry);
-      Failed(entry, shutdown.stop_requested()
-                        ? "Environment start cancelled"
-                        : "tsugumid did not become ready within 60 seconds", nullptr,
-             shutdown.stop_requested() ? H::EnvironmentFailureCode::Cancelled
-                                       : H::EnvironmentFailureCode::ReadinessTimeout);
+      Failed(entry,
+             shutdown.stop_requested()
+                 ? "Environment start cancelled"
+                 : "tsugumid did not become ready within 60 seconds",
+             nullptr,
+             shutdown.stop_requested()
+                 ? H::EnvironmentFailureCode::Cancelled
+                 : H::EnvironmentFailureCode::ReadinessTimeout);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       Failed(entry, error.what(),
@@ -605,7 +622,8 @@ auto Environments::Busy() -> bool {
     std::unique_lock lock(entry->mutex, std::try_to_lock);
     if (!lock || entry->starting) return true;
     if (entry->pid && !impl_->CheckDeath(*entry) &&
-        impl_->options.process->Busy(entry->state)) return true;
+        impl_->options.process->Busy(entry->state))
+      return true;
   }
   return false;
 }
@@ -648,7 +666,8 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     }
     for (const auto& entry : entries) {
       std::lock_guard lock(entry->mutex);
-      if (impl_->options.process->Guest() && input.action != H::RuntimeAction::VerifyStore)
+      if (impl_->options.process->Guest() &&
+          input.action != H::RuntimeAction::VerifyStore)
         impl_->Revoke(*entry);
       else
         impl_->Stop(*entry);
@@ -656,7 +675,8 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
   }
   auto result = impl_->options.process->Runtime(input);
   if (impl_->options.process->Guest() &&
-      (input.action == H::RuntimeAction::Shutdown || input.action == H::RuntimeAction::Reset)) {
+      (input.action == H::RuntimeAction::Shutdown ||
+       input.action == H::RuntimeAction::Reset)) {
     // vmd stops all projects concurrently under the VM's one deadline. Do not
     // spend a separate stop deadline per project before asking it to power off.
     std::vector<std::shared_ptr<Impl::Entry>> snapshot;
@@ -791,7 +811,8 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   entry->state.project = std::filesystem::canonical(request.project).string();
   switch (request.action) {
     case H::EnvironmentAction::Start:
-      if (entry->state.phase != H::EnvironmentPhase::Ready) entry->requirements.reset();
+      if (entry->state.phase != H::EnvironmentPhase::Ready)
+        entry->requirements.reset();
       impl_->Start(*entry, request);
       break;
     case H::EnvironmentAction::Stop:
@@ -802,9 +823,11 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       PrivateDirectory(
           std::filesystem::path(entry->state.control_dir).parent_path());
       PrivateDirectory(entry->state.control_dir);
-      const auto previous = entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
+      const auto previous =
+          entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
       if (entry->state.phase == H::EnvironmentPhase::Ready)
-        entry->requirements = impl_->options.process->Requirements(entry->state);
+        entry->requirements =
+            impl_->options.process->Requirements(entry->state);
       auto folders = entry->folders;
       for (const auto& folder : request.folders) {
         const auto found = std::find(folders.begin(), folders.end(), folder);
@@ -830,7 +853,8 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       if (!impl_->CheckDeath(*entry)) {
         if (!entry->pid) {
           if (impl_->ReadReady(*entry)) {
-            entry->requirements = impl_->options.process->Requirements(entry->state);
+            entry->requirements =
+                impl_->options.process->Requirements(entry->state);
             impl_->Authorize(*entry);
             impl_->Notify(*entry);
           } else if (entry->state.phase == H::EnvironmentPhase::Stopped) {

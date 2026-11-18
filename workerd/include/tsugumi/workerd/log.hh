@@ -1,13 +1,13 @@
 #pragma once
 
-#include <functional>
 #include <cstdint>
+#include <functional>
 #include <ostream>
 #include <string>
 #include <string_view>
 
-#include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
+#include "tsugumi/workerd/invocation.hh"
 
 namespace tsugumi::workerd {
 
@@ -15,12 +15,14 @@ namespace tsugumi::workerd {
 class InvocationLog {
  public:
   InvocationLog(std::ostream& output, uint64_t log_limit_bytes)
-      : InvocationLog([&output](uint64_t stream, const std::string& text) {
-          remote::LogJson entry;
-          *entry.stream = stream;
-          *entry.text = text;
-          output << schema::encode(entry) << '\n';
-        }, log_limit_bytes) {}
+      : InvocationLog(
+            [&output](uint64_t stream, const std::string& text) {
+              remote::LogJson entry;
+              *entry.stream = stream;
+              *entry.text = text;
+              output << schema::encode(entry) << '\n';
+            },
+            log_limit_bytes) {}
 
   using Sink = std::function<void(uint64_t, const std::string&)>;
   InvocationLog(Sink sink, uint64_t log_limit_bytes)
@@ -51,7 +53,8 @@ class InvocationLog {
     // Keep the notice outside the budget so even a one-byte limit is explicit.
     remote::LogJson entry;
     *entry.stream = static_cast<uint64_t>(Tsugumi::Data::LogStream::journal);
-    *entry.text = "\n[Log output truncated at the " + std::to_string(log_limit_bytes_) + "-byte limit.]\n";
+    *entry.text = "\n[Log output truncated at the " +
+                  std::to_string(log_limit_bytes_) + "-byte limit.]\n";
     sink_(*entry.stream, *entry.text);
     notice_written_ = true;
   }

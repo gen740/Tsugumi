@@ -1,5 +1,5 @@
-#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -11,7 +11,9 @@ TEST_F(AgentProjectFixture,
   Write(
       directory.path / "project/definitions/plan/_meta.json",
       R"({"description":"Plan","content":"Keep these words","comments":[{"id":"c1","text":"Ask","author":"user"}]})");
-  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  StartProject(
+      false,
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -285,8 +287,7 @@ TEST_F(AgentProjectFixture,
     const auto envelope = json::Object(raw);
     if (json::Text(envelope, "reply") != "Failure") continue;
     const auto failure = json::Object(json::Get(envelope, "value", "{}"));
-    if (json::Text(failure, "kind") == "permission_denied")
-      scope_denied = true;
+    if (json::Text(failure, "kind") == "permission_denied") scope_denied = true;
   }
   EXPECT_TRUE(scope_denied) << history.View();
   EXPECT_EQ(Read(source), "original\n");

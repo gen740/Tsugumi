@@ -33,10 +33,10 @@
 #include <vector>
 
 #include "journal.hh"
-#include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/workerd/invocation.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
@@ -303,7 +303,8 @@ class Daemon {
       case R::RequestBody::StatusRequest: {
         auto status = journal->status(q.job_id).status();
         if (status.state == R::JobState::Running) {
-          const auto bytes = fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
+          const auto bytes =
+              fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
           remote::TransferJson progress;
           if (bytes && !schema::decode(*bytes, progress)) {
             status.transfer_name = *progress.name;
@@ -558,8 +559,10 @@ auto unix_listener(const stdfs::path& path) -> int {
   sockaddr_un address{};
   const auto text = path.string();
   if (!path.is_absolute() || text.size() >= sizeof address.sun_path)
-    throw std::runtime_error("Unix socket path must be absolute and shorter than " +
-                             std::to_string(sizeof address.sun_path) + " bytes (choose one with --socket): " + text);
+    throw std::runtime_error(
+        "Unix socket path must be absolute and shorter than " +
+        std::to_string(sizeof address.sun_path) +
+        " bytes (choose one with --socket): " + text);
   // The singleton lock owns this private endpoint; never unlink arbitrary
   // files.
   struct stat st{};
@@ -635,7 +638,8 @@ auto run(Config config) -> int {
   Fd tcpfd(tcp_listener(config));
   fs::write_atomic(config.root / "worker.ready.json",
                    "{\"port\":" + std::to_string(config.port) +
-                       ",\"pid\":" + std::to_string(::getpid()) + "}", 0600);
+                       ",\"pid\":" + std::to_string(::getpid()) + "}",
+                   0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);

@@ -2,45 +2,45 @@
 
 #include <map>
 
-#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
 namespace j = ::tsugumi::json;
 class AgentExclusionRPC : public AgentProjectFixture {
-protected:
- auto RegisterAttached(const std::filesystem::path& folder) -> void {
-   ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
-                    [&](Builder& b) {
-                      return H::CreateRegisterFolderRequest(
-                                 b, b.CreateString(project_id),
-                                 b.CreateString("folder:copy"),
-                                 b.CreateString(folder.string()))
-                          .Union();
-                    })
-                   .Code()
-                   .empty());
- }
- auto Attach(const std::string& conversation,
-             const std::filesystem::path& folder) -> void {
-   RegisterAttached(folder);
-   const auto pending =
-       Tool(conversation, "attached_folder_read",
-            j::Encode(j::Members{{"folder", Quote(folder.string())}}));
-   ASSERT_EQ(pending.Code(), "grant_required");
-   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                    [&](Builder& b) {
-                      return A::CreateAccessResolveRequest(
-                                 b, b.CreateString(pending.RequestId()), true)
-                          .Union();
-                    })
-                   .Code()
-                   .empty());
- }
-  auto CopyAttached(const std::string &conversation,
-                    const std::filesystem::path &folder) -> Reply {
+ protected:
+  auto RegisterAttached(const std::filesystem::path& folder) -> void {
+    ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
+                     [&](Builder& b) {
+                       return H::CreateRegisterFolderRequest(
+                                  b, b.CreateString(project_id),
+                                  b.CreateString("folder:copy"),
+                                  b.CreateString(folder.string()))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+  }
+  auto Attach(const std::string& conversation,
+              const std::filesystem::path& folder) -> void {
+    RegisterAttached(folder);
+    const auto pending =
+        Tool(conversation, "attached_folder_read",
+             j::Encode(j::Members{{"folder", Quote(folder.string())}}));
+    ASSERT_EQ(pending.Code(), "grant_required");
+    ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                     [&](Builder& b) {
+                       return A::CreateAccessResolveRequest(
+                                  b, b.CreateString(pending.RequestId()), true)
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+  }
+  auto CopyAttached(const std::string& conversation,
+                    const std::filesystem::path& folder) -> Reply {
     return Tool(conversation, "project_copy",
                 j::Encode(j::Members{{"source", Quote("attached")},
                                      {"folder", Quote(folder.string())},
@@ -61,19 +61,17 @@ protected:
                                      {"y", "240"},
                                      {"base_rev", Quote("0")}}));
   }
-  auto Error(const Reply &reply) -> std::string {
-    if (!reply.Code().empty())
-      return reply.Code();
+  auto Error(const Reply& reply) -> std::string {
+    if (!reply.Code().empty()) return reply.Code();
     const auto raw = JsonString(reply.View(), "/text");
-    if (!raw.starts_with('{'))
-      return {};
+    if (!raw.starts_with('{')) return {};
     return j::Text(j::Object(j::Get(j::Object(raw), "value", "{}")), "kind");
   }
   auto Diagnostic(const Reply& reply) -> std::string {
     return reply.Code().empty() ? JsonString(reply.View(), "/text")
                                 : reply.Failure()->message()->str();
   }
-  auto Open(const std::vector<std::string> &excluded, bool shell = false)
+  auto Open(const std::vector<std::string>& excluded, bool shell = false)
       -> std::string {
     Write(directory.path / "project/definitions/public/_card.json",
           R"({"template":"draft"})");
@@ -82,8 +80,7 @@ protected:
     Write(directory.path / "project/definitions/hidden/src/secret.txt",
           "EXCLUDED_CONTENT_SENTINEL");
     std::vector<std::string> entries;
-    for (const auto &path : excluded)
-      entries.push_back(Quote(path));
+    for (const auto& path : excluded) entries.push_back(Quote(path));
     StartProject(shell, j::Encode(j::Members{
                             {"name", "\"Project\""},
                             {"pkgsPath", "\"tsugumi:default\""},
@@ -348,7 +345,7 @@ TEST_F(AgentExclusionRPC,
   Write(folder / "note.txt", "Attached source bytes");
   const auto c = Open({".git"});
   Attach(c, folder);
-  for (const auto *to : {"definitions", "definitions/public/",
+  for (const auto* to : {"definitions", "definitions/public/",
                          "definitions/public/_card.json"}) {
     const auto result =
         Tool(c, "project_copy",
@@ -458,7 +455,7 @@ TEST_F(AgentExclusionRPC, AttachedAliasesCannotReadOrCopyExcludedSources) {
   Write(attached / "secret.txt", "EXCLUDED_ATTACHMENT");
   const auto c = Open({(attached / "secret.txt").string()});
   ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return H::CreateRegisterFolderRequest(
                                 b, b.CreateString(project_id),
                                 b.CreateString("folder:excluded"),
@@ -472,7 +469,7 @@ TEST_F(AgentExclusionRPC, AttachedAliasesCannotReadOrCopyExcludedSources) {
   const auto pending = Tool(c, "attached_folder_read", args);
   ASSERT_EQ(pending.Code(), "grant_required");
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true)
                          .Union();
@@ -497,7 +494,8 @@ TEST_F(AgentExclusionRPC, AttachedAliasesCannotReadOrCopyExcludedSources) {
 // Keep it separate from the other host tests so it can be selected explicitly.
 TEST_F(AgentExclusionRPC,
        ShellProfileDeniesExcludedProjectDemoAndMountedPaths) {
-  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  if (::geteuid() == 0)
+    GTEST_SKIP() << "Shell commands require an unprivileged project user";
   const auto demo = directory.path / "demos/en/finished";
   Write(demo / "secret.txt", "EXCLUDED_DEMO");
   Write(directory.path / "project/.git/config", "EXCLUDED_GIT");
@@ -509,7 +507,7 @@ TEST_F(AgentExclusionRPC,
   // workspace-only allowlist. The explicit deny must survive this mount.
   const auto attached = directory.path;
   ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return H::CreateRegisterFolderRequest(
                                 b, b.CreateString(project_id),
                                 b.CreateString("folder:root"),
@@ -524,7 +522,7 @@ TEST_F(AgentExclusionRPC,
                                 {"path", Quote("")}}));
   ASSERT_EQ(pending.Code(), "grant_required");
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder &b) {
+                   [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true)
                          .Union();
@@ -544,5 +542,5 @@ TEST_F(AgentExclusionRPC,
       JsonString(JsonString(result.View(), "/text"), "/value/stdout_bytes");
   EXPECT_EQ(output.find("EXCLUDED_"), std::string::npos);
 }
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

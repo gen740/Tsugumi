@@ -10,8 +10,8 @@
 #include "agent/runtime.hh"
 #include "host/registry.hh"
 #include "host/state_gate.hh"
-#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/protocol/agent_generated.h"
+#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::agent {

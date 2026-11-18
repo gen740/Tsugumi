@@ -11,9 +11,9 @@
 #include "agent/wire.hh"
 #include "host/service.hh"
 #include "host/state_format.hh"
-#include "tsugumi/rpc/lanes.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/client/client.hh"
+#include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/fs.hh"
 
 namespace tsugumi::test {
@@ -30,16 +30,23 @@ class RuntimeDouble final : public host::EnvironmentProcess {
   bool terminal_started = false, release_terminal = false;
   auto Busy(const H::EnvironmentStateT&) -> bool override { return busy; }
   auto Requirements(const H::EnvironmentStateT&)
-      -> Tsugumi::RPC::ProjectHostRequirementsT override { return {}; }
+      -> Tsugumi::RPC::ProjectHostRequirementsT override {
+    return {};
+  }
   auto Launch(const host::EnvironmentLaunch& launch) -> int64_t override {
     // The ready file must report the identity assigned by hostd, matching the
     // real daemon. A made-up id fails registration before activity is queried.
-    const auto id = fs::read_file(std::filesystem::path(launch.project) / ".tsugumi/project-id");
+    const auto id = fs::read_file(std::filesystem::path(launch.project) /
+                                  ".tsugumi/project-id");
     if (!id) throw std::runtime_error("Host did not prepare project identity");
-    fs::write_atomic(std::filesystem::path(launch.control) / "server.ready",
+    fs::write_atomic(
+        std::filesystem::path(launch.control) / "server.ready",
         "{\"protocol\":1,\"pid\":42,\"endpoint\":\"ws://localhost:1/rpc\","
-        "\"token\":\"fixture\",\"project_id\":\"" + *id + "\","
-        "\"server_instance_id\":\"fixture\",\"unix_socket\":\"fixture\"}", 0600);
+        "\"token\":\"fixture\",\"project_id\":\"" +
+            *id +
+            "\","
+            "\"server_instance_id\":\"fixture\",\"unix_socket\":\"fixture\"}",
+        0600);
     running = true;
     return 42;
   }
@@ -51,7 +58,10 @@ class RuntimeDouble final : public host::EnvironmentProcess {
   auto Shutdown() -> void override {
     stopped = true;
     running = false;
-    { std::lock_guard lock(mutex); release_terminal = true; }
+    {
+      std::lock_guard lock(mutex);
+      release_terminal = true;
+    }
     changed.notify_all();
   }
   auto Terminal(const H::HostTerminalRequestT&) -> H::HostTerminalT override {
@@ -109,16 +119,22 @@ class VMLifetime : public ::testing::Test {
   }
   template <class T>
   auto Call(client::Connection& connection, T value) -> client::Bytes {
-    auto result = connection.Call([value = std::move(value)](uint64_t id) mutable {
-      H::RequestT request;
-      request.value.Set(value);
-      H::MessageT message;
-      message.request_id = id;
-      message.payload.Set(std::move(request));
-      flatbuffers::FlatBufferBuilder b;
-      H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
-      return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
-    }, 2s).get();
+    auto result =
+        connection
+            .Call(
+                [value = std::move(value)](uint64_t id) mutable {
+                  H::RequestT request;
+                  request.value.Set(value);
+                  H::MessageT message;
+                  message.request_id = id;
+                  message.payload.Set(std::move(request));
+                  flatbuffers::FlatBufferBuilder b;
+                  H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
+                  return client::Bytes(b.GetBufferPointer(),
+                                       b.GetBufferPointer() + b.GetSize());
+                },
+                2s)
+            .get();
     if (result.error) throw std::runtime_error(result.error.message);
     const auto* reply = H::GetMessage(result.bytes.data())->payload_as_Reply();
     if (const auto* failure = reply->value_as_Failure())
@@ -127,7 +143,8 @@ class VMLifetime : public ::testing::Test {
   }
   auto Connect() -> std::unique_ptr<client::Connection> {
     auto connection = std::make_unique<client::Connection>(options);
-    if (auto error = connection->Start().get()) throw std::runtime_error(error.message);
+    if (auto error = connection->Start().get())
+      throw std::runtime_error(error.message);
     S::HelloRequestT hello;
     hello.token = "user";
     hello.client_id = "vm-lifetime-test";
@@ -137,19 +154,26 @@ class VMLifetime : public ::testing::Test {
   }
   auto Busy(client::Connection& connection) -> bool {
     const auto bytes = Call(connection, H::HostActivityRequestT{});
-    return H::GetMessage(bytes.data())->payload_as_Reply()->value_as_HostActivity()->busy();
+    return H::GetMessage(bytes.data())
+        ->payload_as_Reply()
+        ->value_as_HostActivity()
+        ->busy();
   }
   auto Start(client::Connection& connection) -> void {
     H::EnvironmentRequestT start;
     start.project = (directory / "project").string();
     start.action = H::EnvironmentAction::Start;
     const auto bytes = Call(connection, start);
-    ASSERT_EQ(H::GetMessage(bytes.data())->payload_as_Reply()->value_as_EnvironmentState()->phase(),
+    ASSERT_EQ(H::GetMessage(bytes.data())
+                  ->payload_as_Reply()
+                  ->value_as_EnvironmentState()
+                  ->phase(),
               H::EnvironmentPhase::Ready);
   }
 };
 
-TEST_F(VMLifetime, IdleConnectionsDoNotCountAsWorkAndObservationDoesNotStopRuntime) {
+TEST_F(VMLifetime,
+       IdleConnectionsDoNotCountAsWorkAndObservationDoesNotStopRuntime) {
   auto app = Connect(), other = Connect();
   EXPECT_FALSE(Busy(*app));
   Start(*other);
@@ -180,7 +204,8 @@ TEST_F(VMLifetime, RunningHostRequestCountsAfterItsQueueIsEmpty) {
   });
   {
     std::unique_lock lock(runtime->mutex);
-    ASSERT_TRUE(runtime->changed.wait_for(lock, 2s, [&] { return runtime->terminal_started; }));
+    ASSERT_TRUE(runtime->changed.wait_for(
+        lock, 2s, [&] { return runtime->terminal_started; }));
   }
   EXPECT_TRUE(Busy(*app));
   service->Shutdown();
@@ -207,7 +232,10 @@ TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
   EXPECT_FALSE(lane.idle());
   EXPECT_TRUE(lane.submit([](bool) {}));
   EXPECT_EQ(lane.pending(), 2);
-  { std::lock_guard lock(mutex); release = true; }
+  {
+    std::lock_guard lock(mutex);
+    release = true;
+  }
   changed.notify_all();
   lane.stop();
   EXPECT_TRUE(lane.idle());

@@ -1,7 +1,7 @@
 #include "shell.hh"
 
-#include <gtest/gtest.h>
 #include <fcntl.h>
+#include <gtest/gtest.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -51,7 +51,8 @@ TEST_F(ShellTest, ChildSetupFailuresReportTheOperationPathAndErrno) {
   const auto diagnostic = root / "setup-error";
   const auto missing = (root / "missing").string();
   for (const bool missing_cwd : {true, false}) {
-    const int fd = ::open(diagnostic.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    const int fd = ::open(diagnostic.c_str(),
+                          O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     ASSERT_GE(fd, 0);
     proc::Spec spec;
     spec.argv = {missing};

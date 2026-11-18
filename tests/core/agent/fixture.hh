@@ -35,82 +35,82 @@ struct Reply {
     if (!reply) throw std::runtime_error("Agent returned no reply payload");
     return reply;
   }
-  auto HostValue() const -> const H::Reply * {
+  auto HostValue() const -> const H::Reply* {
     return H::GetMessage(bytes.data())->payload_as_Reply();
   }
-  auto Failure() const -> const Tsugumi::Service::Failure * {
+  auto Failure() const -> const Tsugumi::Service::Failure* {
     return H::MessageBufferHasIdentifier(bytes.data())
                ? HostValue()->value_as_Failure()
                : Value()->value_as_Failure();
   }
   auto Code() const -> std::string {
-    const auto *f = Failure();
+    const auto* f = Failure();
     return f ? f->code()->str() : "";
   }
   auto RequestId() const -> std::string {
-    const auto *f = Failure();
+    const auto* f = Failure();
     return f && f->request_id() ? f->request_id()->str() : "";
   }
   auto View() const -> std::string {
-    if (const auto *f = Failure())
+    if (const auto* f = Failure())
       throw std::runtime_error(f->code()->str() + ": " + f->message()->str());
     if (H::MessageBufferHasIdentifier(bytes.data())) {
-      const auto *r = HostValue();
+      const auto* r = HostValue();
       switch (r->value_type()) {
-      case H::ReplyPayload::DemoPaths:
-        return test::View(r->value_as_DemoPaths());
-      case H::ReplyPayload::TextResult:
-        return test::View(r->value_as_TextResult());
-      case H::ReplyPayload::HelloResult:
-        return test::View(r->value_as_HelloResult());
-      case H::ReplyPayload::Acknowledgement:
-        return test::View(r->value_as_Acknowledgement());
-      case H::ReplyPayload::ProjectDefaults:
-        return test::View(r->value_as_ProjectDefaults());
-      case H::ReplyPayload::ProjectInfo:
-        return test::View(r->value_as_ProjectInfo());
-      case H::ReplyPayload::ProjectLocation:
-        return test::View(r->value_as_ProjectLocation());
-      case H::ReplyPayload::RecentProject:
-        return test::View(r->value_as_RecentProject());
-      case H::ReplyPayload::RecentList:
-        return test::View(r->value_as_RecentList()->projects());
-      case H::ReplyPayload::DemoList:
-        return test::View(r->value_as_DemoList()->demos());
-      case H::ReplyPayload::ModelList:
-        return test::View(r->value_as_ModelList()->models());
-      default:
-        throw std::runtime_error("Unexpected typed Host reply");
+        case H::ReplyPayload::DemoPaths:
+          return test::View(r->value_as_DemoPaths());
+        case H::ReplyPayload::TextResult:
+          return test::View(r->value_as_TextResult());
+        case H::ReplyPayload::HelloResult:
+          return test::View(r->value_as_HelloResult());
+        case H::ReplyPayload::Acknowledgement:
+          return test::View(r->value_as_Acknowledgement());
+        case H::ReplyPayload::ProjectDefaults:
+          return test::View(r->value_as_ProjectDefaults());
+        case H::ReplyPayload::ProjectInfo:
+          return test::View(r->value_as_ProjectInfo());
+        case H::ReplyPayload::ProjectLocation:
+          return test::View(r->value_as_ProjectLocation());
+        case H::ReplyPayload::RecentProject:
+          return test::View(r->value_as_RecentProject());
+        case H::ReplyPayload::RecentList:
+          return test::View(r->value_as_RecentList()->projects());
+        case H::ReplyPayload::DemoList:
+          return test::View(r->value_as_DemoList()->demos());
+        case H::ReplyPayload::ModelList:
+          return test::View(r->value_as_ModelList()->models());
+        default:
+          throw std::runtime_error("Unexpected typed Host reply");
       }
     }
-    const auto *r = Value();
+    const auto* r = Value();
     switch (r->value_type()) {
-    case A::ReplyPayload::HelloResult:
-      return test::View(r->value_as_HelloResult());
-    case A::ReplyPayload::Acknowledgement:
-      return test::View(r->value_as_Acknowledgement());
-    case A::ReplyPayload::ConversationResult:
-      return test::View(r->value_as_ConversationResult());
-    case A::ReplyPayload::ConversationList:
-      return test::View(r->value_as_ConversationList()->conversations());
-    case A::ReplyPayload::SearchResult:
-      return test::View(r->value_as_SearchResult()->matches());
-    case A::ReplyPayload::EventsPage:
-      return test::View(r->value_as_EventsPage());
-    case A::ReplyPayload::ToolCatalog:
-      return test::View(r->value_as_ToolCatalog()->tools());
-    case A::ReplyPayload::ToolResult:
-      return test::View(r->value_as_ToolResult());
-    case A::ReplyPayload::CallId:
-      return test::View(r->value_as_CallId());
-    case A::ReplyPayload::AccessResult:
-      return test::View(r->value_as_AccessResult());
-    case A::ReplyPayload::AccessList:
-      return test::View(r->value_as_AccessList());
-    case A::ReplyPayload::TextResult:
-      return test::View(r->value_as_TextResult());
-    default:
-      throw std::runtime_error("Unexpected typed Agent reply");
+      case A::ReplyPayload::HelloResult:
+        return test::View(r->value_as_HelloResult());
+      case A::ReplyPayload::Acknowledgement:
+        return test::View(r->value_as_Acknowledgement());
+      case A::ReplyPayload::ConversationResult:
+        return test::View(r->value_as_ConversationResult());
+      case A::ReplyPayload::ConversationList:
+        return test::View(r->value_as_ConversationList()->conversations());
+      case A::ReplyPayload::SearchResult:
+        return test::View(r->value_as_SearchResult()->matches());
+      case A::ReplyPayload::EventsPage:
+        return test::View(r->value_as_EventsPage());
+      case A::ReplyPayload::ToolCatalog:
+        return test::View(r->value_as_ToolCatalog()->tools());
+      case A::ReplyPayload::ToolResult:
+        return test::View(r->value_as_ToolResult());
+      case A::ReplyPayload::CallId:
+        return test::View(r->value_as_CallId());
+      case A::ReplyPayload::AccessResult:
+        return test::View(r->value_as_AccessResult());
+      case A::ReplyPayload::AccessList:
+        return test::View(r->value_as_AccessList());
+      case A::ReplyPayload::TextResult:
+        return test::View(r->value_as_TextResult());
+      default:
+        throw std::runtime_error("Unexpected typed Agent reply");
     }
   }
 };
@@ -137,8 +137,8 @@ inline auto Call(client::Connection& connection, A::RequestPayload type,
   return {std::move(result.bytes)};
 }
 
-inline auto Call(client::Connection &connection, H::RequestPayload type,
-                 const Build &build) -> Reply {
+inline auto Call(client::Connection& connection, H::RequestPayload type,
+                 const Build& build) -> Reply {
   auto result =
       connection
           .Call(
@@ -146,9 +146,9 @@ inline auto Call(client::Connection &connection, H::RequestPayload type,
                 Builder b;
                 const auto value = build(b);
                 const auto request = H::CreateRequest(b, type, value);
-                H::FinishMessageBuffer(b, H::CreateMessage(b, id,
-                                                           H::Payload::Request,
-                                                           request.Union()));
+                H::FinishMessageBuffer(
+                    b, H::CreateMessage(b, id, H::Payload::Request,
+                                        request.Union()));
                 return client::Bytes(b.GetBufferPointer(),
                                      b.GetBufferPointer() + b.GetSize());
               },
@@ -162,8 +162,9 @@ inline auto Call(client::Connection &connection, H::RequestPayload type,
 class AgentFixture : public ::testing::Test {
  protected:
   auto SetUp() -> void override {
-    Write(directory.path / "demos/ja/index.json",
-          R"({"demos":[{"path":"example","title":"Example","description":"A bundled demo."}]})");
+    Write(
+        directory.path / "demos/ja/index.json",
+        R"({"demos":[{"path":"example","title":"Example","description":"A bundled demo."}]})");
     Write(directory.path / "demos/ja/example.json",
           R"({"example":"BUNDLED_DEMO"})");
     Write(directory.path / "private.json",
@@ -184,12 +185,22 @@ class AgentFixture : public ::testing::Test {
 
   auto StartHost() -> void {
     std::filesystem::remove(directory.path / "state/host.ready");
-    std::vector<std::string> arguments{TSUGUMI_HOST_BINARY, "--state-dir",
-         (directory.path / "state").string(), "--unix",
-         (directory.path / "agent.sock").string(), "--socket-dir", (directory.path / "broker").string(),
-         "--usage-scratch-dir", (directory.path / "run-scratch").string(), "--demos-dir",
-         (directory.path / "demos").string(), "--listen", "127.0.0.1:0"};
-    arguments.insert(arguments.end(), extra_host_arguments.begin(), extra_host_arguments.end());
+    std::vector<std::string> arguments{
+        TSUGUMI_HOST_BINARY,
+        "--state-dir",
+        (directory.path / "state").string(),
+        "--unix",
+        (directory.path / "agent.sock").string(),
+        "--socket-dir",
+        (directory.path / "broker").string(),
+        "--usage-scratch-dir",
+        (directory.path / "run-scratch").string(),
+        "--demos-dir",
+        (directory.path / "demos").string(),
+        "--listen",
+        "127.0.0.1:0"};
+    arguments.insert(arguments.end(), extra_host_arguments.begin(),
+                     extra_host_arguments.end());
     service.Start(arguments, directory.path / "host.log");
     ready = Readiness(service, directory.path / "state/host.ready",
                       directory.path / "host.log");
@@ -211,7 +222,7 @@ class AgentFixture : public ::testing::Test {
       throw std::runtime_error("Agent connection did not open");
     if (auto error = opened.get()) throw std::runtime_error(error.message);
     auto hello =
-        Call(*connection, A::RequestPayload::HelloRequest, [&](Builder &b) {
+        Call(*connection, A::RequestPayload::HelloRequest, [&](Builder& b) {
           return Tsugumi::Service::CreateHelloRequest(
                      b,
                      b.CreateString(JsonString(
@@ -235,7 +246,7 @@ class AgentFixture : public ::testing::Test {
     if (auto error = connection->Start().get())
       throw std::runtime_error(error.message);
     const auto hello =
-        Call(*connection, H::RequestPayload::HelloRequest, [&](Builder &b) {
+        Call(*connection, H::RequestPayload::HelloRequest, [&](Builder& b) {
           return Tsugumi::Service::CreateHelloRequest(
                      b,
                      b.CreateString(JsonString(
@@ -286,7 +297,8 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto Grant(const std::string& conversation,
-             Tsugumi::Service::Access access = Tsugumi::Service::Access::Read) -> std::string {
+             Tsugumi::Service::Access access = Tsugumi::Service::Access::Read)
+      -> std::string {
     auto ask =
         Call(*external, A::RequestPayload::AccessRequest, [&](Builder& b) {
           return A::CreateAccessRequest(

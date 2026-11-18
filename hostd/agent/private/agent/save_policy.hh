@@ -14,7 +14,7 @@ struct AgentSave {
   json::Members arguments;
   std::string comments;
 };
-auto PrepareAgentSave(json::Members arguments, const ProjectRead &read,
-                      const host::comments::ReserveComment &reserve = {})
+auto PrepareAgentSave(json::Members arguments, const ProjectRead& read,
+                      const host::comments::ReserveComment& reserve = {})
     -> AgentSave;
 }  // namespace tsugumi::agent

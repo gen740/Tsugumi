@@ -3,7 +3,6 @@
 // Open replies, DocPatched and run events correctly sequenced per peer.
 #pragma once
 
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -12,14 +11,13 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <optional>
-#include <string>
+#include <set>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <variant>
 #include <vector>
-
 
 namespace tsugumi {
 
@@ -40,7 +38,10 @@ struct PendingMessage {
   std::function<std::string()> build;
   size_t approx_bytes = 256;
 };
-struct FrameInfo { uint64_t request_id; bool hello; };
+struct FrameInfo {
+  uint64_t request_id;
+  bool hello;
+};
 enum class AdmissionFailure { AlreadyHello, Unauthenticated, Busy };
 struct FrameCodec {
   std::function<std::optional<FrameInfo>(std::string_view, uint32_t)> inspect;
@@ -60,8 +61,8 @@ struct RequestIn {
 class RequestSink {
  public:
   virtual ~RequestSink() = default;
-  // Called on the loop thread for SessionHello; must be quick. Returns reply bytes
-  // and whether the connection is now authenticated.
+  // Called on the loop thread for SessionHello; must be quick. Returns reply
+  // bytes and whether the connection is now authenticated.
   virtual std::pair<std::string, bool> hello(const RequestIn& req) = 0;
   // Called on the loop thread for every other request after Hello.
   virtual void dispatch(RequestIn req) = 0;
@@ -71,12 +72,12 @@ class RequestSink {
 struct ServerOptions {
   FrameCodec codec;
   std::string subprotocol;
-  std::string unix_path;           // empty: no Unix socket
+  std::string unix_path;  // empty: no Unix socket
   // WebSocket on a Unix socket (0600): the shared VM's projects, reached by
   // vmd only, so that nothing listens on the VM's loopback.
   std::string ws_unix_path;
   std::string tcp_host = "0.0.0.0";
-  int tcp_port = -1;               // <0: no WebSocket listener
+  int tcp_port = -1;  // <0: no WebSocket listener
   std::vector<std::string> allowed_origins;
   // Launcher-owned control file lets another UI attach to a resident project.
   std::string origins_file;

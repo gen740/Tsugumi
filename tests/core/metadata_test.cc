@@ -8,7 +8,7 @@
 namespace tsugumi {
 namespace {
 class OpaqueMetadata : public ::testing::Test {
-protected:
+ protected:
   std::filesystem::path root = std::filesystem::temp_directory_path() /
                                ("opaque-meta-" + crypto::uuid4());
   auto SetUp() -> void override {
@@ -20,10 +20,10 @@ protected:
     fs::write_atomic(root / "layout.json", "{}");
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
-  auto commit(Store &store, std::vector<ChangeIn> changes) -> DocumentPtr {
+  auto commit(Store& store, std::vector<ChangeIn> changes) -> DocumentPtr {
     auto staged = store.stage(changes, crypto::uuid4(), "agent");
     store.commit(staged, "save", "digest",
-                 [](const Delta *) { return "receipt"; });
+                 [](const Delta*) { return "receipt"; });
     return store.current();
   }
 };
@@ -50,13 +50,15 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
 }
 TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
-  // A wire to an undeclared input of a code Card and an unknown param type: each
-  // message carries the fix (the inputs entry, the valid types) on one line.
+  // A wire to an undeclared input of a code Card and an unknown param type:
+  // each message carries the fix (the inputs entry, the valid types) on one
+  // line.
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
-  fs::write_atomic(root / "definitions/b/_card.json",
-                   R"({"language":"python","params":[{"name":"x","type":"float","data":1}]})");
+  fs::write_atomic(
+      root / "definitions/b/_card.json",
+      R"({"language":"python","params":[{"name":"x","type":"float","data":1}]})");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();
@@ -70,11 +72,13 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
   EXPECT_TRUE(port);
   EXPECT_TRUE(param);
 }
-TEST_F(OpaqueMetadata, AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
+TEST_F(OpaqueMetadata,
+       AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
-  fs::write_atomic(root / "definitions/b/_card.json", R"({"language":"python"})");
+  fs::write_atomic(root / "definitions/b/_card.json",
+                   R"({"language":"python"})");
   Store store({root, ""});
   store.open();
   const auto* node = store.current()->resolution->find({"b"});
@@ -83,7 +87,8 @@ TEST_F(OpaqueMetadata, AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry
   for (const auto& d : node->diags)
     if (d.code == "unknown_port") {
       port = true;
-      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos) << d.message;
+      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos)
+          << d.message;
     }
   EXPECT_TRUE(port);
 }
@@ -125,7 +130,7 @@ TEST_F(OpaqueMetadata,
   EXPECT_EQ(after->execution_rev, before->execution_rev);
 }
 TEST_F(OpaqueMetadata, MetadataMustStillBeABoundedJsonObject) {
-  for (const auto &bad : {"[]", "null", "{", "{\"x\":NaN}"})
+  for (const auto& bad : {"[]", "null", "{", "{\"x\":NaN}"})
     EXPECT_THROW(check_meta_json(bad), DocumentError);
   EXPECT_THROW(
       check_meta_json("{\"x\":\"" + std::string(1u << 20, 'a') + "\"}"),
@@ -148,7 +153,7 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   Store store({root, ""});
   store.open();
   const auto before = store.current();
-  auto put = [&](const std::string &path, const std::string &bytes) {
+  auto put = [&](const std::string& path, const std::string& bytes) {
     ChangeIn c{};
     c.kind = ChangeIn::Kind::PutSource;
     c.path = path;
@@ -385,5 +390,5 @@ TEST_F(OpaqueMetadata, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
     EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
 }
-} // namespace
-} // namespace tsugumi
+}  // namespace
+}  // namespace tsugumi

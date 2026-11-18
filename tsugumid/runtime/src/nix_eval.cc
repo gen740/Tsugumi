@@ -1,7 +1,6 @@
 // Built as C++23 (the Nix headers require it); the rest of the core is C++20
 // and never includes a Nix header.
 #include "nix_eval.hh"
-#include "tsugumi/workerd/store.hh"
 
 #include <fcntl.h>
 #include <pthread.h>
@@ -14,10 +13,6 @@
 #include <fstream>
 #include <future>
 #include <mutex>
-#include <set>
-#include <sstream>
-#include <thread>
-
 #include <nix/expr/eval-gc.hh>
 #include <nix/expr/eval-settings.hh>
 #include <nix/expr/eval.hh>
@@ -28,8 +23,8 @@
 #include <nix/flake/flake.hh>
 #include <nix/flake/flakeref.hh>
 #include <nix/flake/settings.hh>
-#include <nix/store/derived-path.hh>
 #include <nix/store/derivations.hh>
+#include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/indirect-root-store.hh>
 #include <nix/store/store-api.hh>
@@ -38,6 +33,11 @@
 #include <nix/util/serialise.hh>
 #include <nix/util/signals.hh>
 #include <nix/util/terminal.hh>
+#include <set>
+#include <sstream>
+#include <thread>
+
+#include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
 
@@ -59,14 +59,17 @@ class SinkLogger : public nix::Logger {
     nix::showErrorInfo(os, ei, false);
     emit(os.str());
   }
-  void startActivity(nix::ActivityId, nix::Verbosity lvl, nix::ActivityType, const std::string& s, const Fields&,
+  void startActivity(nix::ActivityId, nix::Verbosity lvl, nix::ActivityType,
+                     const std::string& s, const Fields&,
                      nix::ActivityId) override {
-    // "building '/nix/store/...drv'", "copying path ... from 'https://cache.nixos.org'"
+    // "building '/nix/store/...drv'", "copying path ... from
+    // 'https://cache.nixos.org'"
     if (lvl <= nix::lvlInfo && !s.empty()) emit(s);
   }
-  void result(nix::ActivityId, nix::ResultType type, const Fields& fields) override {
-    if ((type == nix::resBuildLogLine || type == nix::resPostBuildLogLine) && !fields.empty() &&
-        fields[0].type == Field::tString)
+  void result(nix::ActivityId, nix::ResultType type,
+              const Fields& fields) override {
+    if ((type == nix::resBuildLogLine || type == nix::resPostBuildLogLine) &&
+        !fields.empty() && fields[0].type == Field::tString)
       emit(fields[0].s);
   }
 
@@ -88,7 +91,8 @@ class EvaluationReads : public nix::SourceAccessor {
       : next_(std::move(next)) {}
   bool reusable = true;
   // Collected in filesystem callbacks, rooted only after evaluation returns:
-  // a callback may be serializing a source on an already-locked store connection.
+  // a callback may be serializing a source on an already-locked store
+  // connection.
   std::set<std::string> store_roots;
   std::function<bool(const nix::CanonPath&)> allowed_path;
 
@@ -115,9 +119,9 @@ class EvaluationReads : public nix::SourceAccessor {
   }
   auto readDirectory(const nix::CanonPath& p) -> DirEntries override {
     auto result = next_->readDirectory(p);
-    const bool filtered = std::any_of(result.begin(), result.end(), [&](const auto& item) {
-      return !allowed_path(p / item.first);
-    });
+    const bool filtered = std::any_of(
+        result.begin(), result.end(),
+        [&](const auto& item) { return !allowed_path(p / item.first); });
     // A store tree is immutable, but the allow-list's view of an ancestor
     // can grow when another evaluation grants an additional store path.
     remember('d', p, directory_digest(p, result), filtered);
@@ -132,8 +136,10 @@ class EvaluationReads : public nix::SourceAccessor {
       -> std::optional<std::filesystem::path> override {
     // A consumer could read this path without going through the accessor.
     // Store contents are immutable; other physical reads cannot be tracked.
-    if (!store_path(p)) reusable = false;
-    else remember('s', p, stat_text(next_->maybeLstat(p)));
+    if (!store_path(p))
+      reusable = false;
+    else
+      remember('s', p, stat_text(next_->maybeLstat(p)));
     return next_->getPhysicalPath(p);
   }
 
@@ -167,8 +173,11 @@ class EvaluationReads : public nix::SourceAccessor {
                 std::to_string(type ? static_cast<int>(*type) : -1) + ";";
     return digest(result);
   }
-  auto directory_digest(const nix::CanonPath& p, DirEntries entries) -> std::string {
-    std::erase_if(entries, [&](const auto& item) { return !allowed_path(p / item.first); });
+  auto directory_digest(const nix::CanonPath& p, DirEntries entries)
+      -> std::string {
+    std::erase_if(entries, [&](const auto& item) {
+      return !allowed_path(p / item.first);
+    });
     return directory_text(entries);
   }
   auto file_digest(const nix::CanonPath& p) -> std::string {
@@ -207,15 +216,18 @@ class EvaluationReads : public nix::SourceAccessor {
     }
     return "unknown";
   }
-  auto remember(char op, const nix::CanonPath& p, const std::string& value, bool filtered = false)
-      -> void {
+  auto remember(char op, const nix::CanonPath& p, const std::string& value,
+                bool filtered = false) -> void {
     if (!reusable) return;
     if (store_path(p)) {
       const auto end = p.abs().find('/', std::string("/nix/store/").size());
       const auto root = p.abs().substr(0, end);
-      if (!store_roots.contains(root) && next_->maybeLstat(nix::CanonPath(root))) {
-        if (store_roots.size() >= 8192) reusable = false;
-        else store_roots.insert(root);
+      if (!store_roots.contains(root) &&
+          next_->maybeLstat(nix::CanonPath(root))) {
+        if (store_roots.size() >= 8192)
+          reusable = false;
+        else
+          store_roots.insert(root);
       }
       if (store_roots.contains(root) && !filtered) return;
     }
@@ -236,7 +248,9 @@ SinkLogger* g_logger = nullptr;
 
 void on_usr1(int) {}  // interrupts a blocking read of the daemon connection
 
-std::string message(const nix::BaseError& e) { return nix::filterANSIEscapes(e.what(), true); }
+std::string message(const nix::BaseError& e) {
+  return nix::filterANSIEscapes(e.what(), true);
+}
 
 }  // namespace
 
@@ -267,7 +281,8 @@ struct NixEvaluator::Impl {
   std::unique_ptr<nix::EvalSettings> flake_eval_settings;
   std::unique_ptr<nix::flake::Settings> flake_settings;
   std::shared_ptr<nix::EvalState> flake_state;
-  std::map<std::string, FlakeInfo> flakes;  // by the ref asked for and the locked one
+  std::map<std::string, FlakeInfo>
+      flakes;  // by the ref asked for and the locked one
   std::shared_ptr<nix::Store> store;
   std::shared_ptr<nix::EvalState> state;
   std::shared_ptr<EvaluationReads> reads;
@@ -348,12 +363,16 @@ struct NixEvaluator::Impl {
       } catch (const nix::Interrupted&) {
         bool timed_out = false;
         interrupted(call, &timed_out);
-        throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
+        throw NixInterrupted(timed_out, timed_out
+                                            ? "Nix exceeded buildTimeoutSeconds"
+                                            : "Nix cancelled");
       } catch (const nix::BaseError& e) {
         if (interrupted(call, nullptr)) {
           bool timed_out = false;
           interrupted(call, &timed_out);
-          throw NixInterrupted(timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
+          throw NixInterrupted(
+              timed_out,
+              timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled");
         }
         throw std::runtime_error(message(e));
       }
@@ -371,7 +390,8 @@ struct NixEvaluator::Impl {
     nix::loadConfFile(*eval_settings);
     eval_settings->restrictEval = true;
     eval_settings->enableImportFromDerivation = false;
-    eval_settings->allowedUris = nix::Strings{"https://github.com/NixOS/nixpkgs/archive/"};
+    eval_settings->allowedUris =
+        nix::Strings{"https://github.com/NixOS/nixpkgs/archive/"};
     eval_settings->nixPath = nix::Strings{};
     if (!fetch_settings) {
       fetch_settings = std::make_unique<nix::fetchers::Settings>();
@@ -387,7 +407,9 @@ struct NixEvaluator::Impl {
           "restricted evaluator has no filesystem access control");
     reads = std::make_shared<EvaluationReads>(access->next);
     access->next = nix::ref<nix::SourceAccessor>(reads);
-    reads->allowed_path = [ptr = access.get()](const nix::CanonPath& path) { return ptr->isAllowed(path); };
+    reads->allowed_path = [ptr = access.get()](const nix::CanonPath& path) {
+      return ptr->isAllowed(path);
+    };
     // Preserve the original evaluator constant when filesystem changes require
     // a fresh import/source-to-store cache. getEnv is masked by restrictEval.
     auto& time = state->getBuiltin("currentTime");
@@ -436,23 +458,33 @@ struct NixEvaluator::Impl {
     auto& exists = state->getBuiltin("pathExists");
     path_exists = *exists.primOp();
     auto tracked_exists = *path_exists;
-    tracked_exists.impl = [this](nix::EvalState& st, nix::PosIdx pos, nix::Value** args, nix::Value& out) {
+    tracked_exists.impl = [this](nix::EvalState& st, nix::PosIdx pos,
+                                 nix::Value** args, nix::Value& out) {
       path_exists->impl(st, pos, args, out);
       // Successful lookups already reached the accessor. Only a negative
       // answer can have been hidden by the allow-list.
       if (out.boolean()) return;
       nix::NixStringContext context;
-      const auto path = st.coerceToPath(pos, *args[0], context, "while recording a path existence check");
+      const auto path = st.coerceToPath(
+          pos, *args[0], context, "while recording a path existence check");
       const bool directory = args[0]->type() == nix::nString &&
-          (args[0]->string_view().ends_with("/") || args[0]->string_view().ends_with("/."));
-      const auto key = std::to_string(path.accessor->number) + ":" + path.path.abs() + (directory ? "/" : "");
-      if (existence_checks.size() >= 8192) reads->reusable = false;
-      else existence_checks.try_emplace(key, nix::allocRootValue(args[0]), out.boolean());
+                             (args[0]->string_view().ends_with("/") ||
+                              args[0]->string_view().ends_with("/."));
+      const auto key = std::to_string(path.accessor->number) + ":" +
+                       path.path.abs() + (directory ? "/" : "");
+      if (existence_checks.size() >= 8192)
+        reads->reusable = false;
+      else
+        existence_checks.try_emplace(key, nix::allocRootValue(args[0]),
+                                     out.boolean());
     };
     install(exists, std::move(tracked_exists));
     for (const auto& p : allowed) state->allowPathLegacy(p);
     auto* v = state->allocValue();
-    state->eval(state->parseExprFromString(entry_text, state->rootPath(nix::CanonPath(allowed.back()))), *v);
+    state->eval(
+        state->parseExprFromString(
+            entry_text, state->rootPath(nix::CanonPath(allowed.back()))),
+        *v);
     entry = nix::allocRootValue(v);
   }
 
@@ -491,33 +523,41 @@ struct NixEvaluator::Impl {
       }
       return q + "\"";
     };
-    std::string expr = "import (builtins.fetchTarball { url = " + quote(c.pin_url) + "; sha256 = " +
-                       quote(c.pin_hash) + "; }) { system = " +
-                       quote(c.system) +
-                       "; config = { }; overlays = [ ]; }";
+    std::string expr =
+        "import (builtins.fetchTarball { url = " + quote(c.pin_url) +
+        "; sha256 = " + quote(c.pin_hash) +
+        "; }) { system = " + quote(c.system) +
+        "; config = { }; overlays = [ ]; }";
     auto* v = state->allocValue();
-    state->eval(state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))), *v);
+    state->eval(
+        state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))),
+        *v);
     state->forceValue(*v, nix::noPos);
     return **(pkgs[key] = nix::allocRootValue(v));
   }
 
   void open_flakes() {
     if (!state) open();
-    nix::experimentalFeatureSettings.set("extra-experimental-features", "flakes");
-    if (!flake_settings) flake_settings = std::make_unique<nix::flake::Settings>();
+    nix::experimentalFeatureSettings.set("extra-experimental-features",
+                                         "flakes");
+    if (!flake_settings)
+      flake_settings = std::make_unique<nix::flake::Settings>();
     flake_eval_settings = std::make_unique<nix::EvalSettings>(read_only);
     nix::loadConfFile(*flake_eval_settings);
     flake_eval_settings->pureEval = true;
     flake_eval_settings->enableImportFromDerivation = false;
     flake_eval_settings->nixPath = nix::Strings{};
     flake_settings->configureEvalSettings(*flake_eval_settings);
-    flake_state = std::make_shared<nix::EvalState>(nix::LookupPath{}, nix::ref<nix::Store>(store), *fetch_settings,
-                                                   *flake_eval_settings);
+    flake_state = std::make_shared<nix::EvalState>(
+        nix::LookupPath{}, nix::ref<nix::Store>(store), *fetch_settings,
+        *flake_eval_settings);
   }
 
-  // Every .drv of a remembered result is still there, and stays while this process does.
+  // Every .drv of a remembered result is still there, and stays while this
+  // process does.
   bool hold(const FlakeInfo& info) {
-    for (const auto& [attr, p] : nlohmann::json::parse(info.json).at("packages").items()) {
+    for (const auto& [attr, p] :
+         nlohmann::json::parse(info.json).at("packages").items()) {
       auto drv = store->parseStorePath(p.at("drv").get<std::string>());
       if (!store->isValidPath(drv)) return false;
       store->addTempRoot(drv);
@@ -536,11 +576,14 @@ struct NixEvaluator::Impl {
       }
     } done{this};
     if (!flake_state) open_flakes();
-    std::string system = c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
+    std::string system =
+        c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
     const auto customization = "|" + c.source_overrides;
-    if (auto it = flakes.find(ref + "|" + system + customization); it != flakes.end()) {
+    if (auto it = flakes.find(ref + "|" + system + customization);
+        it != flakes.end()) {
       if (hold(it->second)) return it->second;
-      // Collected since: this state remembers derivations it would not write again.
+      // Collected since: this state remembers derivations it would not write
+      // again.
       flakes.clear();
       open_flakes();
     }
@@ -553,11 +596,15 @@ struct NixEvaluator::Impl {
       return q + "\"";
     };
     auto input = nix::parseFlakeRef(*fetch_settings, ref);
-    auto locked = nix::flake::getFlake(*flake_state, input, nix::fetchers::UseRegistries::No).lockedRef.to_string();
+    auto locked = nix::flake::getFlake(*flake_state, input,
+                                       nix::fetchers::UseRegistries::No)
+                      .lockedRef.to_string();
     std::string expr = R"(
       let
-        f = builtins.getFlake )" + quote(locked) + R"(;
-        custom = builtins.fromJSON )" + quote(c.source_overrides) + R"(;
+        f = builtins.getFlake )" +
+                       quote(locked) + R"(;
+        custom = builtins.fromJSON )" +
+                       quote(c.source_overrides) + R"(;
         # JSON values only: no caller-provided expression runs in the source evaluator.
         convert = v:
           if builtins.isList v then map convert v
@@ -587,7 +634,8 @@ struct NixEvaluator::Impl {
           out = plain d.outPath;
           output = d.outputName or "out";
         });
-        packages = f.packages.)" + quote(system) + R"( or { };
+        packages = f.packages.)" +
+                       quote(system) + R"( or { };
         missing = builtins.filter (name: !(builtins.hasAttr name packages)) (builtins.attrNames custom);
         all = if missing != [] then throw "nixSources overrides: unknown package ${builtins.head missing}"
           else builtins.mapAttrs (name: package:
@@ -597,7 +645,8 @@ struct NixEvaluator::Impl {
                     out = plain d.outPath; output = d.outputName or "out"; }; }
             else read package) packages;
       in {
-        ref = )" + quote(locked) + R"(;
+        ref = )" + quote(locked) +
+                       R"(;
         rev = f.rev or "";
         narHash = f.narHash or "";
         packages = builtins.listToAttrs (builtins.concatMap
@@ -606,14 +655,18 @@ struct NixEvaluator::Impl {
       }
     )";
     auto* v = flake_state->allocValue();
-    flake_state->eval(flake_state->parseExprFromString(expr, flake_state->rootPath(nix::CanonPath("/"))), *v);
+    flake_state->eval(flake_state->parseExprFromString(
+                          expr, flake_state->rootPath(nix::CanonPath("/"))),
+                      *v);
     nix::NixStringContext context;
-    auto json = nix::printValueAsJSON(*flake_state, true, *v, nix::noPos, context, false);
+    auto json = nix::printValueAsJSON(*flake_state, true, *v, nix::noPos,
+                                      context, false);
     FlakeInfo info;
     info.ref = locked;
     info.rev = json.at("rev").get<std::string>();
     info.nar_hash = json.at("narHash").get<std::string>();
-    for (const auto& [attr, p] : json.at("packages").items()) info.packages.push_back(attr);
+    for (const auto& [attr, p] : json.at("packages").items())
+      info.packages.push_back(attr);
     info.json = json.dump();
     hold(info);
     flakes[ref + "|" + system + customization] = info;
@@ -636,20 +689,31 @@ struct NixEvaluator::Impl {
     if (c.on_phase) c.on_phase(false);
     auto& vpkgs = pkgs_for(c);
     auto* vargs = state->allocValue();
-    state->eval(state->parseExprFromString(c.args, state->rootPath(nix::CanonPath("/"))), *vargs);
+    state->eval(state->parseExprFromString(
+                    c.args, state->rootPath(nix::CanonPath("/"))),
+                *vargs);
     auto* partial = state->allocValue();
     state->callFunction(**entry, vpkgs, *partial, nix::noPos);
     auto* vres = state->allocValue();
     state->callFunction(*partial, *vargs, *vres, nix::noPos);
-    state->forceAttrs(*vres, nix::noPos, "while evaluating the Card execution plan");
+    state->forceAttrs(*vres, nix::noPos,
+                      "while evaluating the Card execution plan");
     auto attr = [&](const char* name) -> nix::Value& {
-      return *state->getAttr(state->symbols.create(name), vres->attrs(), "while reading the Card execution plan")->value;
+      return *state
+                  ->getAttr(state->symbols.create(name), vres->attrs(),
+                            "while reading the Card execution plan")
+                  ->value;
     };
     NixResult r;
-    r.execution_list = state->forceBool(attr("executionList"), nix::noPos, "while reading the Card run shape");
-    const auto count = state->forceInt(attr("implementationCount"), nix::noPos, "while counting Card implementations").value;
+    r.execution_list = state->forceBool(attr("executionList"), nix::noPos,
+                                        "while reading the Card run shape");
+    const auto count = state
+                           ->forceInt(attr("implementationCount"), nix::noPos,
+                                      "while counting Card implementations")
+                           .value;
     if (count < 0 || count > c.max_implementations)
-      throw NixImplementationLimit("input and run list expansion exceeds 256 combinations");
+      throw NixImplementationLimit(
+          "input and run list expansion exceeds 256 combinations");
     r.implementation_count = static_cast<uint32_t>(count);
     auto& manifest = attr("manifest");
     state->forceValue(manifest, nix::noPos);
@@ -657,9 +721,11 @@ struct NixEvaluator::Impl {
     if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
     auto out = drv->queryOutPath();
     auto drv_path = drv->requireDrvPath();
-    r.derivation = {store->printStorePath(drv_path), store->printStorePath(out), c.system};
+    r.derivation = {store->printStorePath(drv_path), store->printStorePath(out),
+                    c.system};
     if (store->readDerivation(drv_path).platform != c.system)
-      throw std::runtime_error("Card derivation does not target system " + c.system);
+      throw std::runtime_error("Card derivation does not target system " +
+                               c.system);
     store->addTempRoot(drv_path);
     if (reads->reusable) {
       for (const auto& path : reads->store_roots) {
@@ -680,14 +746,16 @@ struct NixEvaluator::Impl {
     store->addTempRoot(out);
     if (!store->isValidPath(out)) {
       if (c.on_phase) c.on_phase(true);
-      store->buildPaths({nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv_path),
-                                                 .outputs = nix::OutputsSpec::All{}}});
+      store->buildPaths({nix::DerivedPath::Built{
+          .drvPath = nix::makeConstantStorePathRef(drv_path),
+          .outputs = nix::OutputsSpec::All{}}});
       r.built = true;
     }
     nix::StorePathSet closure;
     r.closure.clear();
     store->computeFSClosure(out, closure);
-    for (const auto& path : closure) r.closure.push_back(store->printStorePath(path));
+    for (const auto& path : closure)
+      r.closure.push_back(store->printStorePath(path));
     std::sort(r.closure.begin(), r.closure.end());
     if (!c.root_dir.empty()) {
       r.root = c.root_dir / (c.root_prefix + std::string(out.to_string()));
@@ -714,7 +782,8 @@ struct NixEvaluator::Impl {
     if (!l.starts_with("/nix/var/nix/gcroots/")) {
       // Outside the GC root folder (a project on a development host): the
       // daemon records it as an indirect root.
-      if (auto* ir = dynamic_cast<nix::IndirectRootStore*>(store.get())) ir->addIndirectRoot(link);
+      if (auto* ir = dynamic_cast<nix::IndirectRootStore*>(store.get()))
+        ir->addIndirectRoot(link);
     }
   }
 };
@@ -723,12 +792,15 @@ FlakeInfo NixEvaluator::flake(const NixCall& call, const std::string& ref) {
   return impl_->guarded(call, [&] { return impl_->flake(call, ref); });
 }
 
-NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed) : impl_(std::make_unique<Impl>()) {
+NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed)
+    : impl_(std::make_unique<Impl>()) {
   impl_->entry_text = std::move(entry);
   impl_->allowed = std::move(allowed);
   pthread_attr_t attr;
   pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 64u << 20);  // deep evaluations (nixpkgs); max-call-depth bounds them
+  pthread_attr_setstacksize(
+      &attr,
+      64u << 20);  // deep evaluations (nixpkgs); max-call-depth bounds them
   if (pthread_create(&impl_->thread, &attr, &Impl::main, impl_.get()) != 0)
     throw std::runtime_error("cannot start the Nix evaluator thread");
   pthread_attr_destroy(&attr);
@@ -755,7 +827,8 @@ NixEvaluator::~NixEvaluator() {
 }
 
 auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
-  if (call.system.empty()) throw std::runtime_error("execution target system is unknown");
+  if (call.system.empty())
+    throw std::runtime_error("execution target system is unknown");
   return impl_->guarded(call, [&] { return impl_->evaluate(call); });
 }
 
@@ -812,7 +885,8 @@ auto NixEvaluator::make_available(const NixCall& call,
   });
 }
 
-auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixResult {
+auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
+    -> NixResult {
   return impl_->guarded(call, [&] {
     impl_->current = &call;
     g_logger->set(call.log);
@@ -831,13 +905,12 @@ bool NixEvaluator::valid(const std::string& store_path) {
   return impl_->run([&]() -> bool {
     try {
       if (!impl_->store) impl_->open();
-      return impl_->store->isValidPath(impl_->store->parseStorePath(store_path));
+      return impl_->store->isValidPath(
+          impl_->store->parseStorePath(store_path));
     } catch (const nix::BaseError&) {
       return false;
     }
   });
 }
-
-
 
 }  // namespace tsugumi

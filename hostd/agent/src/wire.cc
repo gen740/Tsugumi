@@ -1,19 +1,18 @@
 #include "agent/wire.hh"
 
-
-#include "tsugumi/util/json_object.hh"
 #include "agent/presentation.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent::wire {
 namespace A = Tsugumi::Agent;
 namespace {
-auto Text(const flatbuffers::String *value) -> std::string {
+auto Text(const flatbuffers::String* value) -> std::string {
   return value ? value->str() : "";
 }
 auto Messages(std::string_view stored)
     -> std::vector<std::unique_ptr<A::ModelMessageT>> {
   std::vector<std::unique_ptr<A::ModelMessageT>> out;
-  for (const auto &raw : json::Array(stored)) {
+  for (const auto& raw : json::Array(stored)) {
     const auto o = json::Object(raw);
     auto m = std::make_unique<A::ModelMessageT>();
     m->role = json::Text(o, "role");
@@ -27,7 +26,7 @@ auto Messages(std::string_view stored)
   }
   return out;
 }
-} // namespace
+}  // namespace
 
 auto ProviderJson(const Tsugumi::Host::ProviderInput& p) -> std::string {
   json::Members values{{"model", json::Quote(Text(p.model()))},
@@ -73,8 +72,9 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
   }
   out.archive = Messages(json::Get(o, "archive", "[]"));
   out.summary = json::Text(o, "summary");
-  out.usage = std::make_unique<Tsugumi::Service::UsageT>(Usage(json::Get(o, "usage", "{}")));
-  for (const auto &raw : json::Array(json::Get(o, "tools", "[]"))) {
+  out.usage = std::make_unique<Tsugumi::Service::UsageT>(
+      Usage(json::Get(o, "usage", "{}")));
+  for (const auto& raw : json::Array(json::Get(o, "tools", "[]"))) {
     const auto t = json::Object(raw);
     auto tool = std::make_unique<A::ToolRecordT>();
     tool->id = json::Text(t, "id");
@@ -86,7 +86,7 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
     tool->is_error = json::Bool(json::Get(t, "isError"));
     out.tools.push_back(std::move(tool));
   }
-  for (const auto &raw : json::Array(json::Get(o, "helpers", "[]"))) {
+  for (const auto& raw : json::Array(json::Get(o, "helpers", "[]"))) {
     const auto h = json::Object(raw);
     auto helper = std::make_unique<A::HelperT>();
     helper->call_id = json::Text(h, "call_id");
@@ -105,8 +105,7 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
       helper->messages.push_back(std::move(streamed));
     }
     const auto result = json::Get(h, "result", "null");
-    if (result != "null")
-      helper->result_json = result;
+    if (result != "null") helper->result_json = result;
     helper->state = json::Text(h, "state");
     helper->spec_json = json::Get(h, "spec", "{}");
     helper->anchor = json::UInt(json::Get(h, "anchor"));
@@ -126,11 +125,11 @@ auto Event(std::string_view stored) -> A::EventT {
   out.name = json::Text(o, "name");
   out.ok = json::Bool(json::Get(o, "ok", "true"));
   out.index = json::UInt(json::Get(o, "index"));
-  for (const auto &raw : json::Array(json::Get(o, "asked", "[]")))
+  for (const auto& raw : json::Array(json::Get(o, "asked", "[]")))
     out.asked.push_back(json::String(raw));
   out.groups = AccessGroups(out.asked);
   if (o.contains("event"))
     out.event = std::make_unique<A::EventT>(Event(json::Get(o, "event")));
   return out;
 }
-} // namespace tsugumi::agent::wire
+}  // namespace tsugumi::agent::wire

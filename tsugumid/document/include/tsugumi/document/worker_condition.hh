@@ -14,7 +14,21 @@ struct Text {
   std::string_view expression;
 };
 
-enum class Code { UnexpectedToken, BooleanRequired, IntegerOverflow, InvalidInteger, UnexpectedCharacter, ExpressionExpected, NestingLimit, CloseExpected, BooleanOperand, IntegerOperand, ShiftLimit, SizeLimit, UnknownLanguage };
+enum class Code {
+  UnexpectedToken,
+  BooleanRequired,
+  IntegerOverflow,
+  InvalidInteger,
+  UnexpectedCharacter,
+  ExpressionExpected,
+  NestingLimit,
+  CloseExpected,
+  BooleanOperand,
+  IntegerOperand,
+  ShiftLimit,
+  SizeLimit,
+  UnknownLanguage
+};
 
 struct Diagnostic {
   Code code;

@@ -14,9 +14,9 @@
 #include <thread>
 #include <vector>
 
+#include "model.hh"
 #include "nix_eval.hh"
 #include "tsugumi/document/graph.hh"
-#include "model.hh"
 
 namespace tsugumi {
 
@@ -24,16 +24,19 @@ class Service;
 class NixEvaluator;
 
 struct CardBuild {
-  // The body (`run`): a package with lib/main.so or lib/tsugumi-runtime naming an SDK artifact, or a bash script.
+  // The body (`run`): a package with lib/main.so or lib/tsugumi-runtime naming
+  // an SDK artifact, or a bash script.
   std::optional<std::string> package;
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
   // The shell of the bash steps and the PATH of the Card's processes, both
-  // from the Card's own nixpkgs (the manifest), never from this build of the core.
+  // from the Card's own nixpkgs (the manifest), never from this build of the
+  // core.
   std::string shell;
   std::string path;
-  std::string views;  // JSON mapping of the view module names the worker may show
+  std::string
+      views;  // JSON mapping of the view module names the worker may show
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.
   std::string emulator;
@@ -42,8 +45,9 @@ struct CardBuild {
   std::string worker;
   WorkerDerivation derivation;
   BuildEnvironmentData environment;
-  std::string key;      // the manifest's store path
-  uint64_t preparation_ms = 0;  // evaluation/build time, excluding closure transport
+  std::string key;  // the manifest's store path
+  uint64_t preparation_ms =
+      0;                // evaluation/build time, excluding closure transport
   bool cached = false;  // the store already had the result: nothing was built
   uint32_t implementation_index = 1;
 };
@@ -66,7 +70,8 @@ struct BuildRequest {
   const DerivationClosureTransport* transport = nullptr;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
-  std::function<void(Phase)> on_phase;          // evaluate, then build (only when the store lacks the result)
+  std::function<void(Phase)>
+      on_phase;  // evaluate, then build (only when the store lacks the result)
 };
 
 struct CacheClearOutcome {
@@ -80,7 +85,8 @@ struct SDKJob {
   CardPath card;
   uint64_t rev = 0;
   enum class State { Pending, Ready, Failed } state = State::Pending;
-  std::vector<std::tuple<std::string, std::string, uint64_t>> files;  // path, hash, size
+  std::vector<std::tuple<std::string, std::string, uint64_t>>
+      files;  // path, hash, size
   std::optional<FailureData> failure;
 };
 
@@ -106,10 +112,12 @@ class NixRunner {
   bool sdk_jobs_active();
   // Bytes of a published SDK file (".sdk/<op_id>/<name>"). With `rev`, throws
   // revision_conflict when the job was prepared for another revision.
-  std::optional<std::string> sdk_file(const std::string& path, std::optional<uint64_t> rev = std::nullopt);
+  std::optional<std::string> sdk_file(
+      const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
-  // A flake to opt in to, as the settings ask for it: a flake reference or a GitHub page's URL.
+  // A flake to opt in to, as the settings ask for it: a flake reference or a
+  // GitHub page's URL.
   FlakeInfo resolve_flake(const std::string& ref);
 
  private:
@@ -120,11 +128,13 @@ class NixRunner {
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
   std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
-  std::filesystem::path content_dir(const char* kind, const std::string& digest,
-                                    const std::function<std::map<std::string, std::string>()>& files);
+  std::filesystem::path content_dir(
+      const char* kind, const std::string& digest,
+      const std::function<std::map<std::string, std::string>()>& files);
 
   Service& svc_;
-  std::filesystem::path eval_dir_;  // local folder: definitions and generated files by content
+  std::filesystem::path
+      eval_dir_;  // local folder: definitions and generated files by content
   std::filesystem::path sdk_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;

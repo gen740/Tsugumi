@@ -732,8 +732,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
             const auto defaults = Defaults();
-            if (!defaults.contains(key) &&
-                key != "agent.drawThoughts" &&
+            if (!defaults.contains(key) && key != "agent.drawThoughts" &&
                 key != "agent.drawThoughtsAsked" &&
                 key != "agent.thoughtModel" &&
                 key != "agent.thoughtModel.openai" &&
@@ -783,7 +782,8 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               for (const auto& kind : j::Array(value))
                 if (j::String(kind).empty())
                   throw std::runtime_error("Invalid permission kind");
-            if (key == "versions.noteMode" && j::String(value) != "mechanical" && j::String(value) != "agent")
+            if (key == "versions.noteMode" &&
+                j::String(value) != "mechanical" && j::String(value) != "agent")
               throw std::runtime_error("Unknown version note mode");
             if ((key == "agent.webSearch" || key == "agent.drawThoughts" ||
                  key == "agent.drawThoughtsAsked" ||
@@ -1003,7 +1003,8 @@ auto Settings::Language(const std::string& profile) -> std::string {
 
 auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
   std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(profile).second, "versions.noteMode", "mechanical");
+  return j::Text(state_->Values(profile).second, "versions.noteMode",
+                 "mechanical");
 }
 
 auto Settings::ModelSelection(const std::string& profile,
@@ -1067,8 +1068,10 @@ auto Settings::ModelSelection(const std::string& profile,
   return out;
 }
 
-auto Settings::VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
-                                   const std::string& openai_keys) -> agent::ProviderConfig {
+auto Settings::VersionNoteProvider(const std::string& profile,
+                                   const std::string& anthropic_keys,
+                                   const std::string& openai_keys)
+    -> agent::ProviderConfig {
   const auto selected = ModelSelection(profile, "summary");
   return Resolve({{"profile", j::Quote(profile)},
                   {"purpose", j::Quote("summary")},

@@ -2,10 +2,10 @@
 #include <regex>
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "oauth_fixture.hh"
 #include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -1116,9 +1116,10 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   };
   const std::vector<std::string> expected{"1", "2", "3"};
   EXPECT_EQ(calls(state), expected) << state;
-  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
-                .find("Inspect the demos three times."),
-            0u);
+  EXPECT_EQ(
+      JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+          .find("Inspect the demos three times."),
+      0u);
   EXPECT_EQ(
       JsonString(state,
                  "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
@@ -1598,7 +1599,7 @@ TEST_F(AgentFixture,
       "2");
   EXPECT_EQ(second.find(provider_id), std::string::npos);
   const auto reserved =
-      Call(*external, A::RequestPayload::CallIdRequest, [&](Builder &b) {
+      Call(*external, A::RequestPayload::CallIdRequest, [&](Builder& b) {
         return A::CreateCallIdRequest(b, b.CreateString(conversation)).Union();
       });
   ASSERT_TRUE(reserved.Code().empty());
@@ -1614,7 +1615,7 @@ TEST_F(AgentProjectFixture,
   model.Queue(AnthropicText("Inspected."));
   Configure(model);
   const auto created = Call(
-      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder &b) {
+      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
         return A::CreateConversationCreateRequest(b, 0,
                                                   b.CreateString(project_id))
             .Union();

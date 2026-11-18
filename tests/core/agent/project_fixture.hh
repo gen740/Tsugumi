@@ -14,17 +14,18 @@ class AgentProjectFixture : public AgentFixture {
     const auto pending = Tool(conversation, name, arguments, id);
     if (pending.Code() != "grant_required" || pending.RequestId().empty())
       throw std::runtime_error("expected a per-call approval for " + name);
-    const auto resolved = Call(*human, A::RequestPayload::AccessResolveRequest,
-                              [&](Builder& b) {
-      return A::CreateAccessResolveRequest(
-                 b, b.CreateString(pending.RequestId()), true).Union();
-    });
+    const auto resolved =
+        Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+          return A::CreateAccessResolveRequest(
+                     b, b.CreateString(pending.RequestId()), true)
+              .Union();
+        });
     if (!resolved.Code().empty()) throw std::runtime_error(resolved.Code());
     return Tool(conversation, name, arguments, id);
   }
 
-  auto Delegate(const std::string &conversation, const std::string &arguments,
-                const std::string &operation) -> Reply {
+  auto Delegate(const std::string& conversation, const std::string& arguments,
+                const std::string& operation) -> Reply {
     // This call runs all descendants and several isolated commands. The
     // ordinary fixture's five-second RPC budget is for a single operation.
     auto result =
@@ -46,8 +47,7 @@ class AgentProjectFixture : public AgentFixture {
                 },
                 30s)
             .get();
-    if (result.error)
-      throw std::runtime_error(result.error.message);
+    if (result.error) throw std::runtime_error(result.error.message);
     return {std::move(result.bytes)};
   }
 
@@ -58,39 +58,42 @@ class AgentProjectFixture : public AgentFixture {
 
   auto StartProject(
       bool shell = false,
-      const std::string &document =
+      const std::string& document =
           R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})",
-      const std::string& layout = "{}")
-      -> void {
+      const std::string& layout = "{}") -> void {
     Write(directory.path / "project/tsugumi.json", document);
     Write(directory.path / "project/layout.json", layout);
-    std::vector<std::string> args{"/usr/bin/env",
-                                  "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),
-                                  TSUGUMI_PROJECT_BINARY,
-                                  "--scratch-dir", (directory.path / "scratch").string(),
-                                  "--run-scratch-dir", (directory.path / "run-scratch").string(),
-                                  "--project",
-                                  (directory.path / "project").string(),
-                                  "--unix",
-                                  (directory.path / "project.sock").string(),
-                                  "--listen",
-                                  "127.0.0.1:0",
-                                  "--control-dir",
-                                  (directory.path / "project-control").string(),
-                                  "--worker",
-                                  TSUGUMI_WORKER_BINARY,
-                                  "--sdk-dir",
-                                  TSUGUMI_TEST_SDK};
+    std::vector<std::string> args{
+        "/usr/bin/env",
+        "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),
+        TSUGUMI_PROJECT_BINARY,
+        "--scratch-dir",
+        (directory.path / "scratch").string(),
+        "--run-scratch-dir",
+        (directory.path / "run-scratch").string(),
+        "--project",
+        (directory.path / "project").string(),
+        "--unix",
+        (directory.path / "project.sock").string(),
+        "--listen",
+        "127.0.0.1:0",
+        "--control-dir",
+        (directory.path / "project-control").string(),
+        "--worker",
+        TSUGUMI_WORKER_BINARY,
+        "--sdk-dir",
+        TSUGUMI_TEST_SDK};
     if (!project_fault.empty())
-      args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1", "TSUGUMI_FAULT=" + project_fault});
+      args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1",
+                                     "TSUGUMI_FAULT=" + project_fault});
     if (shell) args.push_back("--project-shell");
     project.Start(args, directory.path / "project.log");
     project_ready =
         Readiness(project, directory.path / "project-control/server.ready",
                   directory.path / "project.log");
     project_id = JsonString(project_ready, "/project_id");
-    auto reply = Call(
-        *host, H::RequestPayload::RegisterProjectRequest, [&](Builder &b) {
+    auto reply =
+        Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
           return H::CreateRegisterProjectRequest(
                      b, b.CreateString(project_id),
                      b.CreateString("unix:" +

@@ -90,7 +90,7 @@ struct EnvironmentOptions {
   std::chrono::milliseconds start_timeout{60000};
   std::chrono::milliseconds stop_timeout{20000};
   std::shared_ptr<EnvironmentProcess> process;
-  std::function<void(const std::filesystem::path &)> prepare_project_identity =
+  std::function<void(const std::filesystem::path&)> prepare_project_identity =
       {};
 };
 

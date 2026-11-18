@@ -52,7 +52,7 @@ TEST(ShortIdentifiers, AlphabetAndDirectoryNamesHaveNoCaseAliases) {
   std::set<std::string> ids;
   for (int i = 0; i < 256; ++i) {
     const auto id = crypto::unique_short_id(
-        [&](const auto &value) { return ids.contains(value); });
+        [&](const auto& value) { return ids.contains(value); });
     ASSERT_TRUE(crypto::is_short_id(id));
     ASSERT_EQ(id.find_first_of("01iloOIL/+=\\\"' ."), id.npos);
     ASSERT_TRUE(std::all_of(id.begin(), id.end(), [](char c) {
@@ -63,7 +63,7 @@ TEST(ShortIdentifiers, AlphabetAndDirectoryNamesHaveNoCaseAliases) {
     EXPECT_EQ(fs::read_file_or_throw(directory.path / id / "value"), id);
     ids.insert(id);
   }
-  for (const auto *invalid :
+  for (const auto* invalid :
        {"", "0", "01", "-1", "../1", "1/2", "9223372036854775808"})
     EXPECT_FALSE(crypto::is_run_id(invalid)) << invalid;
   EXPECT_TRUE(crypto::is_run_id("12"));
@@ -76,7 +76,7 @@ TEST(ShortIdentifiers,
              copy = directory.path / "runs.sqlite";
   {
     History history(local, "test-secret");
-    history.write_sync([](sql::Db &db) {
+    history.write_sync([](sql::Db& db) {
       EXPECT_EQ(History::next_run_id(db), "1");
       EXPECT_EQ(History::next_run_id(db), "2");
       db.exec("DELETE FROM runs");
@@ -85,11 +85,11 @@ TEST(ShortIdentifiers,
   }
   History restarted(local, "test-secret");
   restarted.write_sync(
-      [](sql::Db &db) { EXPECT_EQ(History::next_run_id(db), "3"); });
+      [](sql::Db& db) { EXPECT_EQ(History::next_run_id(db), "3"); });
   History imported(directory.path / "imported.sqlite", "test-secret");
   EXPECT_EQ(imported.import_runs(copy), 0u);
   imported.write_sync(
-      [](sql::Db &db) { EXPECT_EQ(History::next_run_id(db), "3"); });
+      [](sql::Db& db) { EXPECT_EQ(History::next_run_id(db), "3"); });
 }
 
 TEST(ShortIdentifiers, ModelMetadataPreservesIntegrityContentAndGitPrefixes) {
@@ -110,5 +110,5 @@ TEST(ShortIdentifiers, ModelMetadataPreservesIntegrityContentAndGitPrefixes) {
   EXPECT_EQ(j::Text(result, "commit"), commit.substr(0, 12));
   EXPECT_EQ(j::Text(result, "artifact_id"), "12/lorenz/1/image");
 }
-} // namespace
-} // namespace tsugumi
+}  // namespace
+}  // namespace tsugumi
