@@ -14,7 +14,7 @@ inline constexpr uint32_t kMaxFrame = 2 << 20;
 inline constexpr uint32_t kChunkBytes = 1 << 20;
 inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
-inline constexpr uint32_t kContract = 8;
+inline constexpr uint32_t kContract = 9;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -36,6 +36,8 @@ auto reply(T value) -> R::MessageT {
   return message;
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT;
+// Decodes a packed spec. Apply admission policy when accepting a new job.
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT>;
+auto validate_log_limit(const R::JobSpecT& spec) -> void;
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

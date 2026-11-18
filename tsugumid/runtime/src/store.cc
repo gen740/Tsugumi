@@ -189,7 +189,6 @@ auto Store::allocate_card_id(const std::string& stem,
     auto key = project_path + id;
     auto dir = project_path + def_dir(id);
     bool exists = issued.count(fold(key)) || canvas_ids.count(id) ||
-                  (project_path.empty() && doc->definitions.count(id)) ||
                   stdfs::exists(opts_.root / dir) ||
                   stdfs::exists(opts_.root / project_path / "externals" / id);
     auto source = doc->sources.lower_bound(dir);
@@ -697,10 +696,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
       case K::PutSource:
       case K::PatchSource:
       case K::RemoveSource: {
-        if (!fs::valid_relative_path(c.path))
+        const auto area = Document::classify_source_path(c.path);
+        if (area == Document::SourcePath::Invalid)
           throw Failed(FailureKind::invalid_path, "invalid path " + c.path,
                        {{"path", c.path}});
-        if (!Document::is_source_area(c.path))
+        if (area == Document::SourcePath::Protected)
           throw Failed(FailureKind::permission_denied,
                        c.path + " cannot be changed through source operations",
                        {{"path", c.path}});

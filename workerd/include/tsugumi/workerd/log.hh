@@ -5,6 +5,7 @@
 #include <string>
 
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/values.hh"
 
 namespace tsugumi::workerd {
 
@@ -13,12 +14,12 @@ class InvocationLog {
  public:
   explicit InvocationLog(uint64_t limit_bytes) : limit_bytes_(limit_bytes) {}
 
-  auto append(uint64_t stream, const std::string& text)
+  auto append(LogStream stream, const std::string& text)
       -> std::optional<std::string> {
     if (truncated_) return std::nullopt;
     if (text.size() < limit_bytes_ - logged_) {
       remote::LogJson entry;
-      *entry.stream = stream;
+      *entry.stream = static_cast<uint64_t>(stream);
       *entry.text = text;
       auto encoded = schema::encode(entry);
       if (encoded.size() < limit_bytes_ - logged_) {

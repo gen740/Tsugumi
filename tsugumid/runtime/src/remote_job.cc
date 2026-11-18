@@ -171,28 +171,14 @@ auto connect_broker(std::string_view endpoint,
 
 template <typename T>
 auto command(T body, std::string_view service = {},
-             std::string_view server = {}, std::string_view instance = {},
-             std::string_view job = {}) -> R::RequestT {
+             std::string_view instance = {}, std::string_view job = {})
+    -> R::RequestT {
   R::RequestT q;
   q.service = service;
-  q.server_id = server;
   q.instance_id = instance;
   q.job_id = job;
   q.body.Set(std::move(body));
   return q;
-}
-auto checked_capabilities(const R::CapabilitiesT* c)
-    -> const R::CapabilitiesT& {
-  if (!c || c->worker_contract != workerd::kContract)
-    throw Failed(FailureKind::unsupported,
-                 "Rebuild the remote worker with this Tsugumi revision.");
-  if (!crypto::is_sha256_hex(c->server_id) || c->native_system.empty() ||
-      std::ranges::find(c->systems, c->native_system) == c->systems.end() ||
-      !c->max_jobs)
-    throw Failed(FailureKind::unsupported,
-                 "The remote worker did not report a valid system or "
-                 "concurrent job limit.");
-  return *c;
 }
 auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   const auto* j = reply.body.AsJobStatus();
@@ -275,32 +261,28 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   if (!catalog) throw BrokerDisconnected("expected execution broker catalog");
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
-    if (!t->capabilities)
-      throw BrokerDisconnected("missing target capabilities");
     const auto& c = *t->capabilities;
-    targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                       t->available, c.resource_limits, c.max_jobs, t->grade,
+    targets.push_back({t->id, c.native_system, c.systems, t->available,
+                       c.resource_limits, c.max_jobs, t->grade,
                        t->unavailable_reason});
   }
   return targets;
 }
-auto RemoteJobClient::probe(std::string_view service,
-                            std::string_view registered_server) const
-    -> RemoteProbe {
-  auto reply = request(command(R::ProbeRequestT{}, service, registered_server));
-  const auto& c = checked_capabilities(reply.body.AsCapabilities());
-  if (c.server_id != registered_server)
-    throw Failed(FailureKind::unsupported,
-                 "The remote worker's server ID changed. Verify the registered "
-                 "endpoint.");
-  if (!crypto::is_sha256_hex(c.instance_id))
+auto RemoteJobClient::probe(std::string_view service) const -> RemoteProbe {
+  R::ReplyT reply;
+  try {
+    reply = request(command(R::ProbeRequestT{}, service));
+  } catch (const BrokerRequestRejected& error) {
+    throw Failed(FailureKind::unsupported, error.what());
+  }
+  const auto* c = reply.body.AsCapabilities();
+  if (!c || !crypto::is_sha256_hex(c->instance_id))
     throw BrokerDisconnected(
         "remote worker did not identify its project journal");
-  return {c.native_system,   c.instance_id, c.server_id,  c.systems,
-          c.resource_limits, c.max_jobs,    c.active_jobs};
+  return {c->native_system,   c->instance_id, c->systems,
+          c->resource_limits, c->max_jobs,    c->active_jobs};
 }
 auto RemoteJobClient::put_blob(std::string_view service,
-                               std::string_view server,
                                std::string_view instance, std::string_view job,
                                std::string_view digest, uint64_t size,
                                std::istream& contents,
@@ -325,16 +307,16 @@ auto RemoteJobClient::put_blob(std::string_view service,
         throw std::runtime_error("truncated upload");
     }
     offset += chunk.bytes.size();
-    require_ack(request(
-        command(std::move(chunk), service, server, instance, job), cancel));
+    require_ack(
+        request(command(std::move(chunk), service, instance, job), cancel));
     if (progress) progress(offset, size);
   } while (offset < size);
 }
 auto RemoteJobClient::get_blob(std::string_view service,
-                               std::string_view server,
                                std::string_view instance, std::string_view job,
                                std::string_view digest,
                                std::ostream& destination, uint64_t limit,
+                               std::optional<uint64_t> expected_size,
                                const std::atomic<bool>* stop,
                                const TransferProgress& progress) const -> void {
   crypto::Sha256 hash;
@@ -345,12 +327,13 @@ auto RemoteJobClient::get_blob(std::string_view service,
     chunk.digest = digest;
     chunk.offset = offset;
     chunk.limit = workerd::kChunkBytes;
-    auto reply = request(
-        command(std::move(chunk), service, server, instance, job), stop);
+    auto reply =
+        request(command(std::move(chunk), service, instance, job), stop);
     const auto* body = reply.body.AsBlobChunk();
     if (!body || body->digest != digest || body->offset != offset ||
-        body->total > limit || (offset && body->total != total) ||
-        body->offset > body->total ||
+        (offset ? body->total != total
+                : expected_size ? body->total != *expected_size
+                                : body->total > limit) ||
         body->bytes.size() > body->total - offset ||
         body->bytes.size() > workerd::kChunkBytes ||
         (body->bytes.empty() && offset < body->total))
@@ -367,35 +350,32 @@ auto RemoteJobClient::get_blob(std::string_view service,
   if (hash.finish_hex() != digest)
     throw std::runtime_error("remote blob failed SHA-256 verification");
 }
-auto RemoteJobClient::submit(std::string_view service, std::string_view server,
+auto RemoteJobClient::submit(std::string_view service,
                              std::string_view instance, std::string_view job,
                              std::string_view spec) const -> RemoteJobState {
   R::SubmitRequestT body;
   body.spec.assign(spec.begin(), spec.end());
-  return job_state(
-      request(command(std::move(body), service, server, instance, job)));
+  return job_state(request(command(std::move(body), service, instance, job)));
 }
-auto RemoteJobClient::status(std::string_view service, std::string_view server,
+auto RemoteJobClient::status(std::string_view service,
                              std::string_view instance,
                              std::string_view job) const -> RemoteJobState {
   return job_state(
-      request(command(R::StatusRequestT{}, service, server, instance, job)));
+      request(command(R::StatusRequestT{}, service, instance, job)));
 }
-auto RemoteJobClient::cancel(std::string_view service, std::string_view server,
+auto RemoteJobClient::cancel(std::string_view service,
                              std::string_view instance, std::string_view job,
                              std::string_view fingerprint) const
     -> RemoteJobState {
   R::CancelRequestT body;
   body.fingerprint = fingerprint;
-  return job_state(
-      request(command(std::move(body), service, server, instance, job)));
+  return job_state(request(command(std::move(body), service, instance, job)));
 }
-auto RemoteJobClient::release(std::string_view service, std::string_view server,
+auto RemoteJobClient::release(std::string_view service,
                               std::string_view instance, std::string_view job,
                               std::string_view fingerprint) const -> void {
   R::ReleaseRequestT body;
   body.fingerprint = fingerprint;
-  require_ack(
-      request(command(std::move(body), service, server, instance, job)));
+  require_ack(request(command(std::move(body), service, instance, job)));
 }
 }  // namespace tsugumi

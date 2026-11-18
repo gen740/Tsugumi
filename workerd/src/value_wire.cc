@@ -109,8 +109,6 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
 
 DisplayData display(const D::Display* d, std::string_view buffer) {
   DisplayData out;
-  if (!d->card() || !d->run_id())
-    throw Failed(FailureKind::output_invalid, "display needs card and run_id");
   out.card = path(d->card());
   out.run_id = d->run_id()->str();
   out.invocation = d->invocation().value_or(0);
@@ -153,11 +151,7 @@ std::optional<DisplayData> standalone_display(const std::string& bytes) {
                           bytes.size());
   if (bytes.size() > (16u << 20) || !v.VerifyBuffer<D::Display>(nullptr))
     return std::nullopt;
-  try {
-    return display(flatbuffers::GetRoot<D::Display>(bytes.data()), bytes);
-  } catch (const Failed&) {
-    return std::nullopt;
-  }
+  return display(flatbuffers::GetRoot<D::Display>(bytes.data()), bytes);
 }
 
 }  // namespace wire

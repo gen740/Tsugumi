@@ -118,4 +118,11 @@ struct NixImplementationLimit : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+inline auto enforce_implementation_limit(uint64_t count, uint32_t limit)
+    -> void {
+  if (count > limit)
+    throw NixImplementationLimit(
+        "input and run list expansion exceeds 256 combinations");
+}
+
 }  // namespace tsugumi

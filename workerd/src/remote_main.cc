@@ -250,9 +250,6 @@ class Daemon {
     if (q.body.type == R::RequestBody::ProbeRequest) {
       return reply(capabilities(journal->instance()));
     }
-    if (q.body.type != R::RequestBody::CancelRequest &&
-        q.body.type != R::RequestBody::ReleaseRequest)
-      journal->require_owner(q.job_id, q.core_life_id);
     const auto with_log_status = [&](R::JobStatusT status) {
       std::error_code ec;
       status.log_truncated = std::filesystem::is_regular_file(
@@ -264,12 +261,14 @@ class Daemon {
         journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
         return reply(R::AckT{});
       case R::RequestBody::GetBlobRequest:
-        return reply(journal->get(q.job_id, *q.body.AsGetBlobRequest()));
+        return reply(
+            journal->get(q.job_id, *q.body.AsGetBlobRequest(), q.core_life_id));
       case R::RequestBody::SubmitRequest: {
         const auto& bytes = q.body.AsSubmitRequest()->spec;
         const std::string_view data(reinterpret_cast<const char*>(bytes.data()),
                                     bytes.size());
         const auto spec = parse_spec(data);
+        validate_log_limit(*spec);
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
@@ -280,10 +279,12 @@ class Daemon {
           throw Error(R::ErrorCode::Rejected,
                       "hard limits require a delegated cgroup v2 subtree and "
                       "at least one page of memory");
-        return reply(journal->submit(q.job_id, data, q.core_life_id).status());
+        return reply(
+            journal->submit(q.job_id, data, *spec, q.core_life_id).status());
       }
       case R::RequestBody::StatusRequest: {
-        auto status = with_log_status(journal->status(q.job_id).status());
+        auto status =
+            with_log_status(journal->status(q.job_id, q.core_life_id).status());
         if (status.state == R::JobState::Running) {
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
@@ -468,8 +469,9 @@ auto supervise(const std::string& self, const stdfs::path& root,
   try {
     journal.supervisor_identity(job, static_cast<uint64_t>(::getpid()),
                                 process_start(::getpid()), boot());
-    const auto spec = parse_spec(journal.spec(job));
-    fs::write_atomic(work / "spec.fb", journal.spec(job), 0600);
+    const auto bytes = journal.spec(job);
+    const auto spec = parse_spec(bytes);
+    fs::write_atomic(work / "spec.fb", bytes, 0600);
     if (spec->cpu_millis) {
       if (cgroup_root.empty())
         throw std::runtime_error("resource limits require a delegated cgroup");

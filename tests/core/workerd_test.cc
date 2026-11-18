@@ -59,23 +59,28 @@ auto log_test() -> void {
   // Fill the shared budget with entries that can be uploaded verbatim.
   const std::string block((1 << 20) - 23, 'x');
   for (uint64_t total = 0; total < kInvocationLogLimitBytes; total += 1 << 20) {
-    const auto entry = maximum.append(1, block);
+    const auto entry = maximum.append(LogStream::standard_output, block);
     expect(entry && entry->size() + 1 == (1 << 20),
            "boundary entry did not fill its part of the budget");
   }
   expect(!maximum.truncated(), "an exact fit was marked truncated");
-  expect(!maximum.append(2, "overflow") && maximum.truncated(),
+  expect(!maximum.append(LogStream::standard_error, "overflow") &&
+             maximum.truncated(),
          "omitted entry was not marked truncated");
-  expect(!maximum.append(3, "journal"), "wrote an entry after truncation");
+  expect(!maximum.append(LogStream::journal, "journal"),
+         "wrote an entry after truncation");
 
   // A newline fits as raw text, but its JSON escaping and framing do not.
   InvocationLog escaped(23);
-  expect(!escaped.append(1, "\n") && escaped.truncated(),
-         "budget did not account for JSON escaping");
+  expect(
+      !escaped.append(LogStream::standard_output, "\n") && escaped.truncated(),
+      "budget did not account for JSON escaping");
 
   InvocationLog combined(30);
-  expect(combined.append(4, "build").has_value(), "build entry omitted");
-  expect(!combined.append(2, "error") && combined.truncated(),
+  expect(combined.append(LogStream::build, "build").has_value(),
+         "build entry omitted");
+  expect(!combined.append(LogStream::standard_error, "error") &&
+             combined.truncated(),
          "combined stream budget was not enforced");
 }
 auto protocol_test() -> void {
@@ -87,7 +92,6 @@ auto protocol_test() -> void {
           kInvocationLogLimitBytes,
       "remote worker refused the shared limit");
   R::RequestT q;
-  q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');
   auto c = chunk(std::string("binary\0payload", 14));
   q.body.Set(c);
@@ -102,7 +106,7 @@ auto protocol_test() -> void {
   auto restored = decode(bytes);
   const auto* request = restored->payload.AsRequest();
   expect(request && request->body.AsPutBlobRequest()->bytes == c.bytes &&
-             request->server_id == q.server_id,
+             request->project_scope == q.project_scope,
          "protocol roundtrip");
   for (const auto& data :
        {std::string{}, bytes.substr(0, 11), std::string(32, '\0')})
@@ -128,13 +132,13 @@ auto journal_test(const stdfs::path& root) -> void {
   const auto fingerprint = crypto::sha256_hex(bytes);
   expect(j.status(job).state == R::JobState::Missing,
          "unknown job must be missing");
-  rejected([&] { j.submit(job, bytes, core); });
+  rejected([&] { j.submit(job, bytes, *parse_spec(bytes), core); });
   j.put(job, p, core);
   j.put(job, p, core);
   R::GetBlobRequestT get;
   get.digest = p.digest;
-  expect(j.get(job, get).bytes == p.bytes, "blob roundtrip");
-  rejected([&] { other.get(job, get); });
+  expect(j.get(job, get, core).bytes == p.bytes, "blob roundtrip");
+  rejected([&] { other.get(job, get, core); });
   auto corrupt = p;
   corrupt.digest = std::string(64, 'a');
   rejected([&] { j.put(job, corrupt, core); });
@@ -154,16 +158,19 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(job, tail, core);
   get.digest = large.digest;
   get.offset = kChunkBytes;
-  expect(j.get(job, get).bytes == tail.bytes, "chunked binary transfer");
+  expect(j.get(job, get, core).bytes == tail.bytes, "chunked binary transfer");
   get.limit = kChunkBytes + 1;
-  rejected([&] { j.get(job, get); });
-  auto accepted = j.submit(job, bytes, core);
+  rejected([&] { j.get(job, get, core); });
+  auto accepted = j.submit(job, bytes, *parse_spec(bytes), core);
   expect(accepted.state == R::JobState::Queued &&
              accepted.fingerprint == fingerprint,
          "submit receipt");
-  expect(j.submit(job, bytes, core).fingerprint == accepted.fingerprint,
+  expect(j.submit(job, bytes, *parse_spec(bytes), core).fingerprint ==
+             accepted.fingerprint,
          "resubmission changed the receipt");
-  rejected([&] { j.submit(job, spec(p.digest, 61), core); });
+  rejected([&] {
+    j.submit(job, spec(p.digest, 61), *parse_spec(spec(p.digest, 61)), core);
+  });
   rejected([&] { j.cancel(job, std::string(64, 'f')); });
   rejected([&] { j.put(job, p, core); });
   rejected([&] { j.release(job, fingerprint); });
@@ -189,14 +196,19 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(std::distance(stdfs::directory_iterator(j.job_path(job)),
                        stdfs::directory_iterator{}) == 1,
          "tombstone kept payload");
-  expect(j.submit(job, bytes, core).state == R::JobState::Released,
+  expect(j.submit(job, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Released,
          "release allowed a late replay");
   j.cancel(cancelled, fingerprint);
-  expect(j.submit(cancelled, bytes, core).state == R::JobState::Cancelled,
+  expect(j.submit(cancelled, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Cancelled,
          "cancel-before-submit allowed execution");
-  rejected([&] { j.submit(cancelled, spec(p.digest, 62), core); });
+  rejected([&] {
+    j.submit(cancelled, spec(p.digest, 62), *parse_spec(spec(p.digest, 62)),
+             core);
+  });
   j.put(second, p, core);
-  j.submit(second, bytes, core);
+  j.submit(second, bytes, *parse_spec(bytes), core);
   Journal reopened(root / "a");
   expect(reopened.status(second).state == R::JobState::Queued,
          "queue lost on reopen");
@@ -207,7 +219,7 @@ auto journal_test(const stdfs::path& root) -> void {
          "interrupted invocation was rerun");
   const std::string result_job(64, '7');
   j.put(result_job, p, core);
-  j.submit(result_job, bytes, core);
+  j.submit(result_job, bytes, *parse_spec(bytes), core);
   j.claim(result_job, 100, 1, "boot");
   const auto output = j.job_path(result_job) / "work/result";
   private_directory(output);
@@ -230,7 +242,7 @@ auto journal_test(const stdfs::path& root) -> void {
   const auto result = j.import_results(result_job);
   R::GetBlobRequestT manifest_request;
   manifest_request.digest = result;
-  auto manifest_data = j.get(result_job, manifest_request);
+  auto manifest_data = j.get(result_job, manifest_request, core);
   flatbuffers::Verifier verifier(manifest_data.bytes.data(),
                                  manifest_data.bytes.size());
   expect(verifier.VerifyBuffer<R::ResultManifest>(nullptr),
@@ -256,7 +268,7 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(interrupted_upload, suffix, core);
   R::GetBlobRequestT repaired;
   repaired.digest = partial.digest;
-  expect(j.get(interrupted_upload, repaired).bytes == partial.bytes,
+  expect(j.get(interrupted_upload, repaired, core).bytes == partial.bytes,
          "last-chunk retry did not publish the blob");
   // A crashed release leaves the tombstone before payload deletion; recovery
   // completes it. No run data are promoted into the persistent store.
@@ -286,7 +298,8 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   journal.clean_released(job);
   expect(journal.status(job).state == R::JobState::Uploading,
          "cleanup discarded a staged upload");
-  expect(journal.submit(job, bytes, core).state == R::JobState::Queued,
+  expect(journal.submit(job, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Queued,
          "submission did not queue the job");
   expect(journal.claim(job, 1, 1, "boot"),
          "queue consumed a Card or build budget");

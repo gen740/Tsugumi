@@ -97,6 +97,7 @@ TEST_F(NativeContract, CombinedOutputsMustFitOneResultFrame) {
   const std::string value(8u << 20, 'a');
   receive_json("{\"first\":{\"value\":\"" + value +
                "\"},\"second\":{\"value\":\"" + value + "\"}}");
+  (void)finish_outputs(call);
   ASSERT_TRUE(call.failure);
   EXPECT_EQ(call.failure->kind, D::FailureKind::output_invalid);
 }
@@ -126,7 +127,8 @@ TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   FILE* capture = std::tmpfile();
   ASSERT_NE(capture, nullptr);
   ASSERT_EQ(::dup2(::fileno(capture), kData), kData);
-  reply(call);
+  flatbuffers::FlatBufferBuilder result;
+  reply(call, result);
   if (saved >= 0) {
     EXPECT_EQ(::dup2(saved, kData), kData);
     ::close(saved);
@@ -173,7 +175,8 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   options.bash = host_bash();
   options.run = base + "/body";
   options.post = base + "/post";
-  execute(options, call);
+  flatbuffers::FlatBufferBuilder result;
+  execute(options, call, result);
   EXPECT_TRUE(call.failure);
   EXPECT_EQ(read_text(base + "/failed"), "1");
   ::unlink((base + "/body").c_str());
@@ -189,6 +192,12 @@ TEST_F(NativeContract, MalformedDisplaysAreRejectedSynchronously) {
                          reinterpret_cast<const uint8_t*>("invalid"), 7, ""),
       0);
   EXPECT_NE(display_table_impl(nullptr, nullptr, 0, nullptr, 0), 0);
+  const std::vector<uint8_t> oversized((8u << 20) + 1);
+  const tsugumi_blob blob{"points", oversized.data(), oversized.size()};
+  EXPECT_NE(display_module_impl(
+                nullptr, "/nix/store/00000000000000000000000000000000-view",
+                "{}", &blob, 1),
+            0);
 }
 }  // namespace
 

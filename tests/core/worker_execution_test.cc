@@ -48,10 +48,15 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
              const std::vector<Value>& inputs = {},
              const std::vector<Value>& original = {}) -> void {
     const std::atomic<bool> cancel{false};
-    stage_outputs(outcome, {{"result", kind, false, type_}}, inputs, original,
-                  output_, (root_ / "worker/out").string(), input_,
+    if (outcome.failure) return;
+    const std::vector<types::PortType> ports{{"result", kind, false, type_}};
+    auto outputs = accept_outputs(outcome.outputs, ports);
+    stage_outputs(outputs, inputs, original, output_,
+                  (root_ / "worker/out").string(), input_,
                   root_ / "worker/inputs", root_ / "result/files/out",
                   GetParam(), cancel);
+    for (size_t i = 0; i < outputs.size(); ++i)
+      outcome.outputs[i].second = std::move(outputs[i].bytes);
   }
   stdfs::path root_;
   types::TypeRef type_;
@@ -140,12 +145,9 @@ TEST_P(WorkerDelivery, FailedCardDoesNotTransferOutputs) {
       worker_disposition(true, true, true, false, outcome.failure).keep);
 }
 
-TEST_P(WorkerDelivery, InvalidOutputValidationRemainsWithItsCarrier) {
+TEST_P(WorkerDelivery, InvalidOutputIsRejectedBeforeTransfer) {
   WorkerOutcome outcome{{{"unknown", "invalid buffer"}}, {}};
-  if (GetParam() == OutputDelivery::local_paths)
-    EXPECT_NO_THROW(stage(outcome, PortKind::File));
-  else
-    EXPECT_THROW(stage(outcome, PortKind::File), Failed);
+  EXPECT_THROW(stage(outcome, PortKind::File), Failed);
 }
 
 INSTANTIATE_TEST_SUITE_P(Carriers, WorkerDelivery,

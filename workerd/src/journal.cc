@@ -10,7 +10,6 @@
 #include <fstream>
 #include <set>
 
-#include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -42,6 +41,10 @@ auto bounded_file(const stdfs::path& path, uint64_t limit) -> std::string {
   if (stdfs::file_size(path) > limit)
     throw Error(R::ErrorCode::Invalid, "file exceeds size limit");
   return fs::read_file_or_throw(path);
+}
+auto require_owner(const Record& state, std::string_view core) -> void {
+  if (!state.core_life_id.empty() && state.core_life_id != core)
+    throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
 }
 }  // namespace
 
@@ -149,19 +152,17 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
   *s.core_life_id = r.core_life_id;
   fs::write_atomic(directory / "state", schema::encode(s), 0600);
 }
-auto Journal::status(std::string_view job) const -> Record {
+auto Journal::status(std::string_view job,
+                     std::optional<std::string_view> core) const -> Record {
   Record result;
-  locked(job, [&](const auto& directory) { result = read(directory); });
+  locked(job, [&](const auto& directory) {
+    result = read(directory);
+    if (core) require_owner(result, *core);
+  });
   return result;
 }
 auto Journal::spec(std::string_view job) const -> std::string {
   return bounded_file(job_path(job) / "spec.fb", kMaxSpec);
-}
-auto Journal::require_owner(std::string_view job, std::string_view core) const
-    -> void {
-  const auto state = status(job);
-  if (!state.core_life_id.empty() && state.core_life_id != core)
-    throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
 }
 
 auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
@@ -172,8 +173,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     throw Error(R::ErrorCode::Invalid, "invalid blob chunk bounds");
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
-    if (!state.core_life_id.empty() && state.core_life_id != core)
-      throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
+    require_owner(state, core);
     state.core_life_id = core;
     if (state.state != R::JobState::Missing &&
         state.state != R::JobState::Uploading)
@@ -243,12 +243,13 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     }
   });
 }
-auto Journal::get(std::string_view job, const R::GetBlobRequestT& r) const
-    -> R::BlobChunkT {
+auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
+                  std::string_view core) const -> R::BlobChunkT {
   if (!r.limit || r.limit > kChunkBytes)
     throw Error(R::ErrorCode::Invalid, "invalid chunk limit");
   R::BlobChunkT result;
   locked(job, [&](const auto& dir) {
+    require_owner(read(dir), core);
     const auto file = dir / "blobs" / r.digest;
     if (!stdfs::is_regular_file(stdfs::symlink_status(file)))
       throw Error(R::ErrorCode::NotFound, "job blob not found");
@@ -265,21 +266,19 @@ auto Journal::get(std::string_view job, const R::GetBlobRequestT& r) const
   return result;
 }
 auto Journal::submit(std::string_view job, std::string_view bytes,
-                     std::string_view core) -> Record {
+                     const R::JobSpecT& spec, std::string_view core) -> Record {
   const auto fingerprint = crypto::sha256_hex(bytes);
   Record result;
   locked(job, [&](const auto& dir) {
     result = read(dir);
-    if (!result.core_life_id.empty() && result.core_life_id != core)
-      throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
+    require_owner(result, core);
     if (result.state != R::JobState::Missing &&
         result.state != R::JobState::Uploading) {
       if (result.fingerprint != fingerprint)
         throw Error(R::ErrorCode::Rejected, "job fingerprint conflict");
       return;
     }
-    const auto s = parse_spec(bytes);
-    for (const auto& blob : s->input_blobs) {
+    for (const auto& blob : spec.input_blobs) {
       const auto file = dir / "blobs" / blob;
       if (!stdfs::is_regular_file(stdfs::symlink_status(file)))
         throw Error(R::ErrorCode::Rejected, "verified input blob is missing");
@@ -414,11 +413,6 @@ auto Journal::import_results(std::string_view job) -> std::string {
     total += size;
     const auto digest = file_digest(file);
     if (name == "worker.fb") {
-      auto bytes = bounded_file(file, 16 << 20);
-      flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(bytes.data()),
-                              bytes.size());
-      if (!Tsugumi::Worker::VerifyWorkerMessageBuffer(v))
-        throw std::runtime_error("invalid worker result");
       manifest.invocation_result_sha256 = digest;
     } else {
       auto entry = std::make_unique<R::ResultFileT>();

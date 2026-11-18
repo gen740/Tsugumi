@@ -231,8 +231,6 @@ auto unique_short_id(const std::function<bool(const std::string&)>& exists,
     -> std::string {
   for (;;) {
     auto value = generate();
-    if (!is_short_id(value))
-      throw std::runtime_error("invalid short identifier generator");
     if (!exists(value)) return value;
   }
 }

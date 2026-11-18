@@ -130,7 +130,6 @@ class EnvironmentFixture : public AgentFixture {
     };
     W::RequestT request;
     request.service = "worker";
-    request.server_id = "missing-worker";
     request.body.Set(W::ProbeRequestT{});
     W::BrokerRequestT broker;
     broker.capability = capability;

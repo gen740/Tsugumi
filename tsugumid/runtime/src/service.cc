@@ -405,14 +405,14 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
         lock.unlock();
         RemoteProbe live;
         try {
-          live = remote_jobs_.probe(target.id, target.server_id);
+          live = remote_jobs_.probe(target.id);
         } catch (...) {
           lock.lock();
           throw;
         }
         lock.lock();
-        if (live.max_jobs && (live.active_jobs >= live.max_jobs ||
-                              worker_slots_[target.id] >= live.max_jobs)) {
+        if (live.active_jobs >= live.max_jobs ||
+            worker_slots_[target.id] >= live.max_jobs) {
           candidates[*choice.index].free = false;
           continue;
         }
@@ -1317,12 +1317,9 @@ std::vector<ChangeIn> decode_changes(
   return out;
 }
 
-void require_mutation(std::optional<uint64_t> base_rev,
-                      const flatbuffers::String* op_id) {
+auto require_base_rev(std::optional<uint64_t> base_rev) -> void {
   if (!base_rev)
     throw Failed(FailureKind::invalid_request, "base_rev is required");
-  if (!crypto::is_operation_id(op_id->str()))
-    throw Failed(FailureKind::invalid_request, "invalid op_id");
 }
 
 auto RequireApprovedPermissions(
@@ -1368,7 +1365,7 @@ void Service::save(RequestIn& req) {
                      "the save was cancelled before committing");
     };
     check_cancelled();
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto changes = decode_changes(r->changes());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
@@ -1473,7 +1470,7 @@ void Service::reload(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict,
@@ -1565,8 +1562,6 @@ auto Service::version_operation(RequestIn& req,
   const auto digest = request_digest(request);
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_operation_id(op_id))
-      throw Failed(FailureKind::invalid_request, "invalid op_id");
     const auto commit = operation();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) {
@@ -1590,7 +1585,7 @@ void Service::version_checkout(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict,

@@ -218,8 +218,9 @@ public actor RPCClient {
     let offset = Tsugumi_RPC_Message.pack(&builder, obj: &object)
     Tsugumi_RPC_Message.finish(&builder, end: offset)
     let data = try await exchange(builder.data, timeout: timeout)
+    // The native connection verifies replies before delivering their bytes.
     var buffer = ByteBuffer(data: data)
-    let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+    let root: Tsugumi_RPC_Message = getRoot(byteBuffer: &buffer)
     guard let reply = Message(root).payload?.value as? Tsugumi_RPC_ReplyT else {
       throw RPCError.unexpectedReply("no reply value")
     }
@@ -233,7 +234,8 @@ public actor RPCClient {
     guard !closed else { return }
     do {
       var buffer = ByteBuffer(data: data)
-      let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+      let root: Tsugumi_RPC_Message = getRoot(byteBuffer: &buffer)
+      // The native connection verifies and classifies notifications.
       let message = Message(root)
       guard message.payload?.type == .notification,
             let note = message.payload?.value as? Tsugumi_RPC_NotificationT,

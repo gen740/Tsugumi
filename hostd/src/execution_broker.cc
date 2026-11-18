@@ -207,19 +207,17 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   c->worker_contract = entry.capabilities.worker_contract;
   return value;
 }
-auto CheckCapabilities(const R::CapabilitiesT* c) -> void {
-  Require(
-      c && crypto::is_sha256_hex(c->server_id) && c->max_jobs &&
-          c->worker_contract == W::kContract &&
-          std::ranges::find(c->systems, c->native_system) != c->systems.end() &&
-          std::ranges::all_of(c->systems,
-                              [](const auto& s) {
-                                return s == "aarch64-linux" ||
-                                       s == "x86_64-linux";
-                              }),
-      "Rebuild the remote worker with this Tsugumi revision (invalid "
-      "capabilities)");
+auto ValidCapabilities(const R::CapabilitiesT* c) -> bool {
+  return c && crypto::is_sha256_hex(c->server_id) && c->max_jobs &&
+         c->worker_contract == W::kContract &&
+         std::ranges::find(c->systems, c->native_system) != c->systems.end() &&
+         std::ranges::all_of(c->systems, [](const auto& s) {
+           return s == "aarch64-linux" || s == "x86_64-linux";
+         });
 }
+constexpr auto kInvalidCapabilities =
+    "Rebuild the remote worker with this Tsugumi revision (invalid "
+    "capabilities)";
 }  // namespace
 
 struct ExecutionBroker::State {
@@ -304,7 +302,10 @@ struct ExecutionBroker::State {
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
-      auto message = W::decode(q.blob(4));
+      const auto bytes = q.blob(4);
+      Require(bytes.size() <= W::kMaxFrame,
+              "Invalid stored worker capabilities");
+      auto message = W::decode(bytes);
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
@@ -443,7 +444,6 @@ struct ExecutionBroker::State {
           Require(request->body.type != R::RequestBody::NONE,
                   "Missing worker request");
           entry = *found;
-          request->server_id = entry.capabilities.server_id;
         }
       }
       if (catalog_reply) {
@@ -453,9 +453,15 @@ struct ExecutionBroker::State {
       forwarding = true;
       const bool probing = request->body.AsProbeRequest() != nullptr;
       auto response = Remote(entry, std::move(*request));
-      if (probing) {
-        if (const auto* live =
-                response.payload.AsReply()->body.AsCapabilities()) {
+      if (probing && !response.payload.AsReply()->body.AsFailure()) {
+        const auto* live = response.payload.AsReply()->body.AsCapabilities();
+        if (!ValidCapabilities(live))
+          throw W::Error(R::ErrorCode::Rejected, kInvalidCapabilities);
+        if (live->server_id != entry.capabilities.server_id)
+          throw W::Error(R::ErrorCode::Rejected,
+                         "The remote worker's server ID changed. Verify the "
+                         "registered endpoint.");
+        {
           auto cached = *live;
           cached.instance_id.clear();
           std::lock_guard lock(mutex);
@@ -619,7 +625,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         if (reply->body.AsFailure())
           throw std::runtime_error(
               "The remote worker rejected the registration");
-        CheckCapabilities(reply->body.AsCapabilities());
+        Require(ValidCapabilities(reply->body.AsCapabilities()),
+                kInvalidCapabilities);
         entry.capabilities = *reply->body.AsCapabilities();
         entry.capabilities.instance_id.clear();
       }

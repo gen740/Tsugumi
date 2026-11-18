@@ -136,7 +136,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             previous = external_authorized.read_text() if external_authorized.exists() else ""
             added_key = public
             external_authorized.write_text(previous.rstrip("\n") + "\n" + public + "\n")
-        entries = host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
+        host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
                             endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True)
 
         def authorize(folder, name):
@@ -149,8 +149,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
 
         ready = {"endpoint": host.ready["execution_broker"],
                  "capability": authorize(project, "control"),
-                 "copyCapability": authorize(copy, "copy-control"),
-                 "serverId": R.string(next(e for e in entries.services if R.string(e.id) == "remote-test").capabilities.serverId)}
+                 "copyCapability": authorize(copy, "copy-control")}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", ready["capability"])
         yield ready
@@ -162,9 +161,9 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             external_authorized.write_text("".join(line for line in lines if line.strip() != added_key))
 
 
-def broker_request(endpoint, capability_file, server_id, body_type, body, **routing):
+def broker_request(endpoint, capability_file, body_type, body, **routing):
     envelope = R.broker_request(Path(capability_file).read_text().strip(), body_type, body,
-                                service="remote-test", serverId=server_id, **routing)
+                                service="remote-test", **routing)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
         connection.connect(endpoint.removeprefix("unix:"))
@@ -175,11 +174,11 @@ def broker_request(endpoint, capability_file, server_id, body_type, body, **rout
 
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
-    endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability", "serverId"))
+    endpoint, original, copy = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability"))
     # Keep the life ID identical to check project scoping independently of job ownership.
     core_life = secrets.token_hex(32)
-    first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
-    second = broker_request(endpoint, copy, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
+    first = broker_request(endpoint, original, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
+    second = broker_request(endpoint, copy, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
     assert first.bodyType == R.ReplyBody.Capabilities, vars(first.body)
     assert second.bodyType == R.ReplyBody.Capabilities, vars(second.body)
     first, second = first.body, second.body
@@ -187,15 +186,15 @@ def test_remote_broker_isolates_copies_of_a_project(remote_broker):
     value = b"private to the original project\n"
     digest = hashlib.sha256(value).hexdigest()
     job = "8" * 64
-    uploaded = broker_request(endpoint, original, server_id, R.RequestBody.PutBlobRequest,
+    uploaded = broker_request(endpoint, original, R.RequestBody.PutBlobRequest,
         R.PutBlobRequestT(digest=digest, total=len(value), bytes=value), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
     assert uploaded.bodyType == R.ReplyBody.Ack
-    accepted = broker_request(endpoint, original, server_id, R.RequestBody.GetBlobRequest,
+    accepted = broker_request(endpoint, original, R.RequestBody.GetBlobRequest,
         R.GetBlobRequestT(digest=digest), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
     assert accepted.bodyType == R.ReplyBody.BlobChunk and bytes(accepted.body.bytes) == value
     for instance, code in ((first.instanceId, R.ErrorCode.InstanceChanged),
                            (second.instanceId, R.ErrorCode.NotFound)):
-        refused = broker_request(endpoint, copy, server_id, R.RequestBody.GetBlobRequest,
+        refused = broker_request(endpoint, copy, R.RequestBody.GetBlobRequest,
             R.GetBlobRequestT(digest=digest), instanceId=instance, jobId=job, coreLifeId=core_life)
         assert refused.bodyType == R.ReplyBody.Failure
         assert refused.body.code == code, R.string(refused.body.message)

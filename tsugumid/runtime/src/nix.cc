@@ -251,7 +251,7 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
+static auto nixpkgs_pin(const std::string& pkgs) -> schema::NixpkgsPin {
   std::string url;
   std::string hash;
   if (pkgs == "tsugumi:default") {
@@ -275,7 +275,7 @@ std::string NixRunner::nixpkgs_pin_json(const std::string& pkgs) const {
   schema::NixpkgsPin pin;
   *pin.url = url;
   *pin.nar_hash = hash;
-  return schema::encode(pin);
+  return pin;
 }
 
 types::TypeRef NixRunner::params_type(const Node& node) {
@@ -513,7 +513,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
           {{"system", node.settings.system}});
   }
   auto files = with_sources(node);
-  files["nixpkgs.json"] = nixpkgs_pin_json(node.pkgs_path);
+  const auto pin = nixpkgs_pin(node.pkgs_path);
+  files["nixpkgs.json"] = schema::encode(pin);
   // Only wired, guaranteed producers can supply Nix exports.
   const auto& graph = *req.doc->resolution;
   std::set<size_t> allowed;
@@ -559,9 +560,6 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   });
   auto gen = generated_dir(files);
   auto def = definition_dir(node.def_dir);
-  schema::NixpkgsPin pin;
-  if (auto err = schema::decode(files["nixpkgs.json"], pin))
-    throw Failed(FailureKind::internal_error, err->message);
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
@@ -606,9 +604,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     if (call.on_phase) call.on_phase(false);
     if (earlier && evaluator().reuse(call, *earlier)) {
       res = std::move(*earlier);
-      if (res.implementation_count > call.max_implementations)
-        throw NixImplementationLimit(
-            "input and run list expansion exceeds 256 combinations");
+      enforce_implementation_limit(res.implementation_count,
+                                   call.max_implementations);
       res.built = false;
     } else {
       uint64_t count = 0;

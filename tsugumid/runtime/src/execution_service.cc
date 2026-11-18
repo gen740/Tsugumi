@@ -200,11 +200,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     if (request.transfer)
       request.transfer("copy", name.generic_string(), done, total);
   };
-  return workerd::run_invocation(
+  auto completed = workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
+  return {
+      std::move(completed.outputs), std::move(completed.failure), {}, false};
 }
 
 }  // namespace tsugumi

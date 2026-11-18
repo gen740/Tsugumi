@@ -94,8 +94,7 @@ class JournalBroker : public testing::Test {
   auto Submit(RemoteJobClient& client, const std::string& job) -> std::string {
     std::istringstream input("input");
     const auto digest = crypto::sha256_hex("input");
-    client.put_blob("worker", server, journal->instance(), job, digest, 5,
-                    input);
+    client.put_blob("worker", journal->instance(), job, digest, 5, input);
     R::JobSpecT spec;
     spec.system = "x86_64-linux";
     spec.derivation = "/nix/store/00000000000000000000000000000000-test.drv";
@@ -108,9 +107,8 @@ class JournalBroker : public testing::Test {
     b.Finish(R::JobSpec::Pack(b, &spec));
     const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
                             b.GetSize());
-    EXPECT_EQ(
-        client.submit("worker", server, journal->instance(), job, bytes).state,
-        "queued");
+    EXPECT_EQ(client.submit("worker", journal->instance(), job, bytes).state,
+              "queued");
     return crypto::sha256_hex(bytes);
   }
   std::filesystem::path root;
@@ -165,13 +163,14 @@ class JournalBroker : public testing::Test {
           journal->put(q.job_id, *put, q.core_life_id);
           response = W::reply(R::AckT{});
         } else if (const auto* submit = q.body.AsSubmitRequest()) {
-          response = W::reply(
-              journal
-                  ->submit(q.job_id,
-                           {reinterpret_cast<const char*>(submit->spec.data()),
-                            submit->spec.size()},
-                           q.core_life_id)
-                  .status());
+          const std::string_view bytes(
+              reinterpret_cast<const char*>(submit->spec.data()),
+              submit->spec.size());
+          response =
+              W::reply(journal
+                           ->submit(q.job_id, bytes, *W::parse_spec(bytes),
+                                    q.core_life_id)
+                           .status());
         } else if (const auto* cancel = q.body.AsCancelRequest()) {
           response =
               W::reply(journal->cancel(q.job_id, cancel->fingerprint).status());
@@ -239,13 +238,12 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   current.open();
   current.history().write_sync([&](sql::Db& db) {
     for (const auto& [job, fingerprint] : fingerprints)
-      db.prepare("INSERT INTO remote_releases VALUES(?,?,?,?,?,?)")
+      db.prepare("INSERT INTO remote_releases VALUES(?,?,?,?,?)")
           .bind(1, job)
           .bind(2, "worker")
-          .bind(3, server)
-          .bind(4, journal->instance())
-          .bind(5, fingerprint)
-          .bind(6, job == collected)
+          .bind(3, journal->instance())
+          .bind(4, fingerprint)
+          .bind(5, job == collected)
           .run();
   });
   RemoteJobClient replacement;

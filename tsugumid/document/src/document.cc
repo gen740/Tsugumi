@@ -71,22 +71,28 @@ bool Document::is_document_file(const std::string& rel) {
 }
 
 bool Document::is_source_area(const std::string& rel) {
-  if (!fs::valid_relative_path(rel)) return false;
-  if (is_document_file(rel)) return false;
-  if (rel.starts_with(".tsugumi/") || rel == ".tsugumi") return false;
-  if (rel.find(".tsugumi-tmp-") != std::string::npos) return false;
+  return classify_source_path(rel) == SourcePath::Source;
+}
+
+auto Document::classify_source_path(const std::string& rel) -> SourcePath {
+  if (!fs::valid_relative_path(rel)) return SourcePath::Invalid;
+  if (is_document_file(rel) || rel.starts_with(".tsugumi/") ||
+      rel == ".tsugumi" || rel.find(".tsugumi-tmp-") != std::string::npos)
+    return SourcePath::Protected;
   if (rel.starts_with("definitions/")) {
     auto rest = rel.substr(12);
     auto slash = rest.find('/');
-    return slash != std::string::npos && slash > 0 &&
-           valid_id(rest.substr(0, slash));
+    if (slash != std::string::npos && slash > 0 &&
+        valid_id(rest.substr(0, slash)))
+      return SourcePath::Source;
   }
-  // externals/<project>/...: whole projects for Card in Card, read here as
-  // sources (their own .tsugumi is never part of it).
-  if (rel.starts_with("externals/"))
-    return rel.find("/.tsugumi/") == std::string::npos &&
-           !rel.ends_with("/.tsugumi");
-  return rel.starts_with("skills/");
+  // Nested projects are sources, excluding their runtime state.
+  if (rel.starts_with("externals/") &&
+      rel.find("/.tsugumi/") == std::string::npos &&
+      !rel.ends_with("/.tsugumi"))
+    return SourcePath::Source;
+  return rel.starts_with("skills/") ? SourcePath::Source
+                                    : SourcePath::Protected;
 }
 
 auto Document::valid_version_path(const std::string& rel) -> bool {

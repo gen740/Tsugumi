@@ -106,8 +106,7 @@ TEST(RemoteExecutionLifetime,
           invocation.execution_service = "unreachable-worker";
           invocation.execution_job_id = crypto::sha256_hex(id);
           invocation.execution_state = RemoteExecutionState::running;
-          History::put_remote_job(db, {invocation, std::string(64, 'a'),
-                                       std::string(64, 'b'), "spec"});
+          History::put_remote_job(db, {invocation, std::string(64, 'a'), "spec"});
         }
         History::put_status(db, invocation);
       }

@@ -114,7 +114,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=8)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=9)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -122,8 +122,7 @@ class Gateway(socketserver.UnixStreamServer):
             caps.systems = [self.catalog_system]
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
                 grade=self.grade)]))
-        assert R.string(q.serverId) == self.server_id
-        if R.string(q.serverId) != self.registered_server:
+        if self.server_id != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
         if kind == R.RequestBody.ProbeRequest:
             self.probe_count += 1
@@ -131,6 +130,9 @@ class Gateway(socketserver.UnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
+            if (caps.workerContract != 9 or caps.serverId != self.registered_server
+                    or caps.nativeSystem not in caps.systems or not caps.maxJobs):
+                return R.failure(R.ErrorCode.Rejected, "incompatible worker capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance
         if kind == R.RequestBody.PutBlobRequest:

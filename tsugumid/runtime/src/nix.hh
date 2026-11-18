@@ -123,7 +123,6 @@ class NixRunner {
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
-  std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
   std::filesystem::path content_dir(
       const char* kind, const std::string& digest,

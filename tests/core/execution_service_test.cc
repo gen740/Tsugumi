@@ -100,7 +100,7 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   }));
   summary.invocation = 2;
   const auto result = execution.run(request);
-  ASSERT_FALSE(result.outcome.failure);
+  ASSERT_FALSE(result.failure);
   EXPECT_EQ(summary.worker_reused, true);
 }
 INSTANTIATE_TEST_SUITE_P(InvalidFile, NativeExecution,
