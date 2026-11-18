@@ -31,11 +31,11 @@ def display_graph(project, schema, source_script=None, *, payload=None, display_
             {"name": "payload", "type": "string", "data": payload.hex()},
         ]}, outputs=schema, sources={
             "default.nix": PYTHON_NIX % "",
-            "src/main.py": ("from tsugumi import contract\n\n"
-                            '''def main(inputs, report):
-'''
-                            '''    yield {'out': bytes.fromhex(contract.params_object(inputs).payload)}
-'''),
+            "src/main.py": """from tsugumi import contract
+
+def main(inputs, report):
+    return {"out": bytes.fromhex(contract.params_object(inputs).payload)}
+""",
         })
     definition = json.loads((DEFINITION / "_card.json").read_text())
     for param in definition["params"]:
