@@ -44,7 +44,7 @@ const host = encodeRequest('HostRecentListRequest', {}, 1n, true)
 assert.equal(HostMessage.bufferHasIdentifier(new fb.ByteBuffer(host)), true)
 assert.equal(Message.bufferHasIdentifier(new fb.ByteBuffer(host)), false)
 assert.equal(hostMethod('RegisterProjectRequest'), true)
-assert.throws(() => encodeRequest('RegisterProjectRequest', {}, 1n, false), /Unknown Agent/)
+assert.throws(() => encodeRequest('RegisterProjectRequest', {}, 1n, false))
 
 function reply(type: ReplyPayload, value: ReplyT['value']) {
   const b = new fb.Builder()
@@ -76,7 +76,7 @@ for (const [method, fields] of [
   const bytes = encodeRequest(method, fields, 2n, true)
   const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
   assert.equal(request.requestId, 2n)
-  assert.throws(() => encodeRequest(method, fields, 2n, false), /Unknown Agent/)
+  assert.throws(() => encodeRequest(method, fields, 2n, false))
 }
 console.log('Execution service settings: Host RPC adapters passed')
 
@@ -185,7 +185,7 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
     const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack()
     const value = (request.payload as any).value
     for (const [key, field] of Object.entries(fields)) assert.equal(value[key === 'from_commit' ? 'fromCommit' : key], field)
-    assert.throws(() => encodeRequest(method, fields, 7n, false), /Unknown Agent/)
+    assert.throws(() => encodeRequest(method, fields, 7n, false))
   }
   const { FileFormatResult } = await import('../shared/gen/tsugumi/host/file-format-result')
   const b = new fb.Builder()
@@ -210,7 +210,7 @@ for (const c of serviceVectors.requests) {
     : Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
   const golden = native(Buffer.from(c.hex, 'hex'))
   assert.deepEqual(native(encodeRequest(c.method, c.fields, 7n, c.host)), golden, c.method)
-  assert.throws(() => encodeRequest(c.method, c.fields, 7n, !c.host), /Unknown/)
+  assert.throws(() => encodeRequest(c.method, c.fields, 7n, !c.host))
 }
 for (const c of serviceVectors.replies) {
   const decoded = decodeReply(Buffer.from(c.hex, 'hex'), c.host).value
@@ -274,7 +274,8 @@ const { ExecutionServicesT } = await import('../shared/gen/tsugumi/host/executio
 for (const language of ['ja', 'en'] as const) {
   setLanguage(language)
   const text = hostProjectErrorText('conversation_identity_mismatch')
-  assert.ok(text.includes('agent.sqlite') && text.includes('.tsugumi'))
+  assert.ok(text.trim())
+  assert.notEqual(text, hostProjectErrorText('stale_project'))
   assert.notEqual(text, hostProjectErrorText('unknown'))
   assert.notEqual(hostProjectErrorText('stale_project'), hostProjectErrorText('unknown'))
 }

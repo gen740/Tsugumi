@@ -236,10 +236,13 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
             originals.at("externals/inner/"));
   EXPECT_EQ(exts.at("externals/target/externals/copy/externals/grand/"),
             originals.at("externals/inner/externals/grand/"));
-  ASSERT_EQ(edit.files.size(), 2);
-  EXPECT_EQ(edit.files[0].to, "externals/target/externals/copy/asset.bin");
-  EXPECT_EQ(edit.files[1].to,
-            "externals/target/externals/copy/externals/grand/data.bin");
+  std::set<std::string> destinations;
+  for (const auto& file : edit.files)
+    EXPECT_TRUE(destinations.insert(file.to).second);
+  EXPECT_EQ(destinations,
+            (std::set<std::string>{
+                "externals/target/externals/copy/asset.bin",
+                "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
       CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");
   EXPECT_EQ(external.files.size(), 2);
@@ -290,11 +293,23 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
     EXPECT_EQ(before.at(field), inner.at(field));
     EXPECT_EQ(before.at(field), outer.at(field));
   }
-  const auto old_graph = json::Object(before.at("canvas"));
   const auto graph = json::Object(inner.at("canvas"));
   const auto cards = json::Array(graph.at("cards"));
-  const auto originals = json::Array(old_graph.at("cards"));
-  EXPECT_EQ(cards, (std::vector<std::string>{originals[0], originals[1]}));
+  std::map<std::string, json::Members> selected;
+  for (const auto& raw : cards) {
+    auto card = json::Object(raw);
+    const auto id = json::Text(card, "id");
+    EXPECT_TRUE(selected.emplace(id, std::move(card)).second);
+  }
+  ASSERT_TRUE(selected.contains("a"));
+  EXPECT_FALSE(json::Bool(
+      json::Get(json::Object(selected.at("a").at("settings")), "sandbox")));
+  const auto params = json::Array(selected.at("a").at("params"));
+  ASSERT_EQ(params.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(params.front()), "name"), "value");
+  EXPECT_EQ(json::UInt(json::Object(params.front()).at("data")), 7u);
+  EXPECT_TRUE(selected.contains("b"));
+  EXPECT_FALSE(selected.contains("c"));
   EXPECT_EQ(json::Array(graph.at("connections")).size(), 1);
   const auto boundary = json::Object(inner.at("boundary"));
   EXPECT_EQ(json::Object(boundary.at("inputs")).size(), 1);
@@ -341,21 +356,16 @@ TEST(DocumentSubgraph, RejectsInvalidSelectionAndIdWithoutPartialEdits) {
 }  // namespace
 }  // namespace tsugumi::host
 
-TEST(HostPermissionKinds, SuppliesIdenticalIdsAndLocalizedDescriptions) {
-  const auto ja = tsugumi::host::PermissionKinds("ja");
-  const auto en = tsugumi::host::PermissionKinds("en");
-  ASSERT_EQ(ja.kinds.size(), en.kinds.size());
-  bool execution = false;
-  for (size_t i = 0; i < ja.kinds.size(); ++i) {
-    EXPECT_EQ(ja.kinds[i]->id, en.kinds[i]->id);
-    EXPECT_EQ(ja.kinds[i]->icon, en.kinds[i]->icon);
-    EXPECT_FALSE(ja.kinds[i]->label.empty());
-    EXPECT_FALSE(en.kinds[i]->label.empty());
-    EXPECT_NE(ja.kinds[i]->label, en.kinds[i]->label);
-    if (en.kinds[i]->id == "execution_service") {
-      execution = true;
-      EXPECT_NE(en.kinds[i]->label.find("data"), std::string::npos);
+TEST(HostPermissionKinds, SuppliesLabelsForTheSamePermissionsInBothLanguages) {
+  const auto named = [](const auto& reply) {
+    std::set<std::string> ids;
+    for (const auto& kind : reply.kinds) {
+      EXPECT_FALSE(kind->label.empty()) << kind->id;
+      EXPECT_TRUE(ids.insert(kind->id).second) << kind->id;
     }
-  }
-  EXPECT_TRUE(execution);
+    return ids;
+  };
+  const auto en = named(tsugumi::host::PermissionKinds("en"));
+  EXPECT_EQ(en, named(tsugumi::host::PermissionKinds("ja")));
+  EXPECT_TRUE(en.contains("execution_service"));
 }

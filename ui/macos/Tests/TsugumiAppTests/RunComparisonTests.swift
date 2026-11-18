@@ -17,7 +17,7 @@ import Testing
     #expect(RunComparison.scope(left, right).difference == .same)
   }
 
-  @Test func parametersAlignByNameAndRetainMissingSides() {
+  @Test func parametersAlignByNameAndRetainMissingSides() throws {
     func record(_ json: String) -> ComparedRunCard {
       let result = Tsugumi_RPC_RecordResultT()
       result.record = Tsugumi_RPC_InvocationRecordT()
@@ -26,11 +26,12 @@ import Testing
     }
     let a = record(#"{"low":600,"boundary":1650}"#), b = record(#"{"boundary":1800,"low":600,"added":true}"#)
     let fields = RunComparison.params(a, b)
-    #expect(fields.map(\.name) == ["added", "boundary", "low"])
-    #expect(fields.map(\.changed) == [true, true, false])
-    #expect(fields[0].left == nil)
-    #expect(fields[1].left == "1650" && fields[1].right == "1800")
-    #expect(a.record?.record?.paramsJson == #"{"low":600,"boundary":1650}"#)
+    let added = try #require(fields.first { $0.name == "added" })
+    let boundary = try #require(fields.first { $0.name == "boundary" })
+    let low = try #require(fields.first { $0.name == "low" })
+    #expect(added.changed && added.left == nil && added.right == "true")
+    #expect(boundary.changed && boundary.left == "1650" && boundary.right == "1800")
+    #expect(!low.changed && low.left == "600" && low.right == "600")
   }
 
   @Test func executionServiceAndMethodComeFromTheInvocation() {

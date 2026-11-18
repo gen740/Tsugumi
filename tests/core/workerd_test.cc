@@ -55,14 +55,15 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   return p;
 }
 auto log_test() -> void {
-  InvocationLog maximum(kInvocationLogLimitBytes);
-  // Fill the shared budget with entries that can be uploaded verbatim.
-  const std::string block((1 << 20) - 23, 'x');
-  for (uint64_t total = 0; total < kInvocationLogLimitBytes; total += 1 << 20) {
-    const auto entry = maximum.append(LogStream::standard_output, block);
-    expect(entry && entry->size() + 1 == (1 << 20),
-           "boundary entry did not fill its part of the budget");
-  }
+  InvocationLog sample(kInvocationLogLimitBytes);
+  const auto build = sample.append(LogStream::build, "build");
+  const auto error = sample.append(LogStream::standard_error, "\n");
+  expect(build && error, "sample entries omitted");
+  const auto build_size = build->size() + 1;
+  const auto error_size = error->size() + 1;
+  InvocationLog maximum(build_size + error_size);
+  expect(maximum.append(LogStream::build, "build").has_value(), "build entry omitted");
+  expect(maximum.append(LogStream::standard_error, "\n").has_value(), "exact fit was rejected");
   expect(!maximum.truncated(), "an exact fit was marked truncated");
   expect(!maximum.append(LogStream::standard_error, "overflow") &&
              maximum.truncated(),
@@ -70,17 +71,13 @@ auto log_test() -> void {
   expect(!maximum.append(LogStream::journal, "journal"),
          "wrote an entry after truncation");
 
-  // A newline fits as raw text, but its JSON escaping and framing do not.
-  InvocationLog escaped(23);
-  expect(
-      !escaped.append(LogStream::standard_output, "\n") && escaped.truncated(),
-      "budget did not account for JSON escaping");
+  InvocationLog escaped(error_size - 1);
+  expect(!escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
+         "budget did not account for JSON escaping and the line ending");
 
-  InvocationLog combined(30);
-  expect(combined.append(LogStream::build, "build").has_value(),
-         "build entry omitted");
-  expect(!combined.append(LogStream::standard_error, "error") &&
-             combined.truncated(),
+  InvocationLog combined(build_size + error_size - 1);
+  expect(combined.append(LogStream::build, "build").has_value(), "build entry omitted");
+  expect(!combined.append(LogStream::standard_error, "\n") && combined.truncated(),
          "combined stream budget was not enforced");
 }
 auto protocol_test() -> void {

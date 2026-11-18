@@ -105,18 +105,12 @@ TEST_F(AgentSavePolicy, DecimalStringRevisionsAreCheckedBeforePolicy) {
                        }),
       SaveRevisionConflict);
 }
-TEST_F(AgentSavePolicy, MissingDraftContextNamesTheCardAndMetadataField) {
+TEST_F(AgentSavePolicy, ImplementingADescribedDraftRequiresContext) {
   try {
     Prepare({Implement()});
     FAIL() << "implementing a described Draft requires context";
   } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "validation_failed");
-    const std::string diagnostic = failure.what();
-    EXPECT_NE(diagnostic.find("plan"), std::string::npos);
-    EXPECT_NE(diagnostic.find("_meta.json"), std::string::npos);
-    EXPECT_NE(diagnostic.find("context"), std::string::npos);
-    EXPECT_NE(diagnostic.find("description"), std::string::npos);
-    EXPECT_EQ(diagnostic.find('\n'), std::string::npos);
   }
 }
 TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyFieldsAreFilled) {

@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { CoreHost, CoreHostError } from '../server/coreHost'
-import { setLanguage } from '../server/i18n'
 import type { Environments } from '../server/environment'
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-host-readiness-'))
@@ -17,16 +16,13 @@ try {
   process.env.TSUGUMI_HOST_STATE = state
   fs.mkdirSync(state)
   fs.writeFileSync(path.join(state, 'host.sqlite'), 'must stay untouched')
-  for (const language of ['ja', 'en'] as const) {
-    setLanguage(language)
-    const host = new CoreHost(directory, directory, {} as Environments)
-    await assert.rejects(host.ready(), (error: Error) => {
-      assert.ok(error instanceof CoreHostError)
-      assert.equal(error.code, "startup_exit")
-      assert.equal(error.path, path.join(state, 'host.log'))
-      return true
-    })
-  }
+  const host = new CoreHost(directory, directory, {} as Environments)
+  await assert.rejects(host.ready(), (error: Error) => {
+    assert.ok(error instanceof CoreHostError)
+    assert.equal(error.code, 'startup_exit')
+    assert.equal(error.path, path.join(state, 'host.log'))
+    return true
+  })
   assert.equal(fs.readFileSync(path.join(state, 'host.sqlite'), 'utf8'), 'must stay untouched')
   // A missing state folder must be left for the service to create and number.
   process.env.TSUGUMI_HOST_STATE = path.join(directory, 'fresh')
@@ -52,9 +48,8 @@ port1.on('message', () => {});
   try {
     assert.match(fs.readFileSync(path.join(process.env.TSUGUMI_HOST_STATE, 'host.log'), 'utf8'), /fresh host startup/)
   } finally { process.kill(ready.pid, 'SIGTERM') }
-  console.log('host startup refusal and localized recovery: passed')
+  console.log('host startup readiness and recovery: passed')
 } finally {
-  setLanguage('ja')
   if (previous.binary === undefined) delete process.env.TSUGUMI_HOSTD
   else process.env.TSUGUMI_HOSTD = previous.binary
   if (previous.state === undefined) delete process.env.TSUGUMI_HOST_STATE

@@ -17,7 +17,11 @@ final class ServiceWireTests: XCTestCase {
       let method = try XCTUnwrap(c["method"] as? String), host = try XCTUnwrap(c["host"] as? Bool)
       var fields = try XCTUnwrap(c["fields"] as? [String: Any])
       // Requests that Swift callers make with the generated object API have no dictionary form.
-      if host && !ServiceWire.hostMethod(method, fields) { continue }
+      if method == "VersionNoteRequest" {
+        XCTAssertFalse(ServiceWire.hostMethod(method, fields), method)
+        XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 7, host: host))
+        continue
+      }
       if let raw = fields["provider"] as? [String: Any] {
         let provider = Tsugumi_Service_ProviderSelectionT()
         provider.profile = try XCTUnwrap(raw["profile"] as? String)
@@ -27,22 +31,62 @@ final class ServiceWireTests: XCTestCase {
       XCTAssertEqual(ServiceWire.hostMethod(method, fields), host, method)
       let encoded = try ServiceWire.encode(method, fields: fields, id: 7, host: host)
       let golden = bytes(try XCTUnwrap(c["hex"] as? String))
-      func object(_ data: Data) throws -> [UInt8] {
-        var builder = FlatBufferBuilder(initialSize: 256)
-        var b = ByteBuffer(data: data)
-        if host {
-          let m: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSH1")
-          var native: Tsugumi_Host_MessageT? = Tsugumi_Host_MessageT(m)
-          builder.finish(offset: Tsugumi_Host_Message.pack(&builder, obj: &native))
-          return builder.sizedByteArray
+      if host {
+        func request(_ data: Data) throws -> Tsugumi_Host_RequestPayloadUnion {
+          var buffer = ByteBuffer(data: data)
+          let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+          let native = Tsugumi_Host_MessageT(message)
+          XCTAssertEqual(native.requestId, 7)
+          return try XCTUnwrap((native.payload?.value as? Tsugumi_Host_RequestT)?.value)
         }
-        let m: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSA1")
-        var native: Tsugumi_Agent_MessageT? = Tsugumi_Agent_MessageT(m)
-        builder.finish(offset: Tsugumi_Agent_Message.pack(&builder, obj: &native))
-        return builder.sizedByteArray
+        let actual = try request(encoded), expected = try request(golden)
+        XCTAssertEqual(actual.type, expected.type, method)
+        switch (actual.value, expected.value) {
+        case (_ as Tsugumi_Host_DemoListRequestT, _ as Tsugumi_Host_DemoListRequestT),
+             (_ as Tsugumi_Host_ProjectPermissionsRequestT, _ as Tsugumi_Host_ProjectPermissionsRequestT):
+          break
+        case let (a as Tsugumi_Host_DemoReadRequestT, b as Tsugumi_Host_DemoReadRequestT):
+          XCTAssertEqual(a.path, b.path)
+        case let (a as Tsugumi_Host_IdentifierReserveRequestT, b as Tsugumi_Host_IdentifierReserveRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.kind, b.kind)
+          XCTAssertEqual(a.scope, b.scope)
+          XCTAssertEqual(Set(a.occupied.compactMap { $0 }), Set(b.occupied.compactMap { $0 }))
+        case let (a as Tsugumi_Host_ProjectPermissionSetRequestT, b as Tsugumi_Host_ProjectPermissionSetRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.resourceId, b.resourceId)
+          XCTAssertEqual(a.access, b.access)
+          XCTAssertEqual(a.allow, b.allow)
+        default:
+          XCTFail("Unexpected Host request for \(method)")
+        }
+      } else {
+        func request(_ data: Data) throws -> Tsugumi_Agent_RequestPayloadUnion {
+          var buffer = ByteBuffer(data: data)
+          let message: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSA1")
+          let native = Tsugumi_Agent_MessageT(message)
+          XCTAssertEqual(native.requestId, 7)
+          return try XCTUnwrap((native.payload?.value as? Tsugumi_Agent_RequestT)?.value)
+        }
+        let actual = try request(encoded), expected = try request(golden)
+        XCTAssertEqual(actual.type, expected.type, method)
+        switch (actual.value, expected.value) {
+        case let (a as Tsugumi_Agent_CallIdRequestT, b as Tsugumi_Agent_CallIdRequestT):
+          XCTAssertEqual(a.conversationId, b.conversationId)
+        case let (a as Tsugumi_Agent_ConversationSummarizeRequestT, b as Tsugumi_Agent_ConversationSummarizeRequestT):
+          XCTAssertEqual(a.conversationId, b.conversationId)
+          let provider = try XCTUnwrap(a.provider), expectedProvider = try XCTUnwrap(b.provider)
+          XCTAssertEqual(provider.profile, expectedProvider.profile)
+          XCTAssertEqual(provider.purpose, expectedProvider.purpose)
+        case let (a as Tsugumi_Agent_AccessRequestT, b as Tsugumi_Agent_AccessRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.conversationId, b.conversationId)
+          XCTAssertEqual(a.access, b.access)
+          XCTAssertEqual(a.reason, b.reason)
+        default:
+          XCTFail("Unexpected Agent request for \(method)")
+        }
       }
-      // Decode the same fields with the generated object API on both paths.
-      XCTAssertEqual(try object(encoded), try object(golden), method)
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 7, host: !host))
     }
     for c in try XCTUnwrap(fixture["replies"] as? [[String: Any]]) {
@@ -255,15 +299,16 @@ final class ServiceWireTests: XCTestCase {
   }
 
   func testEnvironmentRequestsAndTopLevelReplies() throws {
-    let fields: [String: Any] = ["project": "/project", "action": Tsugumi_Host_EnvironmentAction.start, "archive_incompatible_history": true]
+    let fields: [String: Any] = ["project": "/project", "action": Tsugumi_Host_EnvironmentAction.start,
+                                 "origins": ["http://localhost:1234"], "folders": ["/data/reference"]]
     XCTAssertTrue(ServiceWire.hostMethod("EnvironmentRequest", fields))
     let bytes = try ServiceWire.encode("EnvironmentRequest", fields: fields, id: 4, host: true)
     var buffer = ByteBuffer(data: bytes)
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let request = try XCTUnwrap((Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_EnvironmentRequestT)
     XCTAssertEqual(request.action, .start)
-    XCTAssertTrue(request.origins.isEmpty)
-    XCTAssertTrue(request.folders.isEmpty)
+    XCTAssertEqual(request.origins.compactMap { $0 }, ["http://localhost:1234"])
+    XCTAssertEqual(request.folders.compactMap { $0 }, ["/data/reference"])
     let state = Tsugumi_Host_EnvironmentStateT(); state.project = "/project"; state.key = "key"; state.phase = .ready; state.endpoint = "ws://localhost:1/rpc"
     let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(state, type: .environmentstate)
     let message = Tsugumi_Host_MessageT(); message.requestId = 4; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)

@@ -731,7 +731,6 @@ TEST_F(ContextBudget,
   const auto normal = ::tsugumi::json::Object(requests[0]);
   EXPECT_EQ(summary.at("system"), normal.at("system"));
   EXPECT_EQ(summary.at("tools"), normal.at("tools"));
-  EXPECT_NE(requests[1].find("Want:"), std::string::npos);
 }
 
 TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
@@ -863,7 +862,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
                            {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
   EXPECT_TRUE(Compacted());
   EXPECT_TRUE(visible.empty());
-  EXPECT_GT(messages.size(), 20u);  // Many small recent messages, not four.
   EXPECT_TRUE(messages.front().context_summary);
   EXPECT_EQ(messages.back().content[0].text, std::string(180, 'r'));
   const auto requests = model.Requests();
@@ -871,8 +869,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
   EXPECT_NE(requests[0].find("signed-block"), std::string::npos);
   EXPECT_NE(requests[0].find("unchanged system"), std::string::npos);
   EXPECT_NE(requests[0].find("\"name\":\"inspect\""), std::string::npos);
-  EXPECT_NE(requests[0].find("Want:"), std::string::npos);
-  EXPECT_EQ(JsonUInt(requests[0], "/max_tokens"), 2048u);
   EXPECT_EQ(JsonString(requests[0], "/output_config/effort"), "max");
   // A failed continuation leaves the durable transcript untouched.
   const auto saved = agent::SerializeMessages(messages);

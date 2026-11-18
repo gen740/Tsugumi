@@ -191,16 +191,22 @@ import TsugumiTestSupport
     }
 
     func finished() async throws -> Tsugumi_Agent_ConversationResultT {
-      // Agent exposes conversation status via snapshot and EventsRequest reads.
-      // There is no push notification for a conversation becoming idle.
-      let deadline = Date().addingTimeInterval(30)
-      var result = try await snapshot()
-      while result.busy, Date() < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-        result = try await snapshot()
+      // The host exposes the cursor and busy state together on EventsRequest.
+      var after: UInt64 = 0
+      while true {
+        try Task.checkCancellation()
+        let page: Tsugumi_Agent_EventsPageT = try await CoreHostClient.shared.agentCall("EventsRequest",
+          ["conversation_id": conversationID, "after_seq": after])
+        if !page.busy {
+          let result = try await snapshot()
+          try #require(!result.busy)
+          return result
+        }
+        after = page.nextSeq
+        if page.events.isEmpty {
+          try await Task.sleep(for: .milliseconds(20))
+        }
       }
-      try #require(!result.busy)
-      return result
     }
 
     func stop() async {

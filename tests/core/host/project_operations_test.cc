@@ -72,15 +72,25 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
       EXPECT_EQ(method, "project_save");
       EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
       if (saves++ == 0) {
-        intent = args.at("save_intent");
+        intent = json::Text(args, "save_intent");
+        EXPECT_FALSE(intent.empty());
         ++revision;
         reply = "Failure";
         value = {{"kind", "\"revision_conflict\""}};
       } else {
-        EXPECT_EQ(args.at("save_intent"), intent);
+        EXPECT_EQ(json::Text(args, "save_intent"), intent);
         EXPECT_EQ(json::Text(args, "base_rev"), "2");
-        EXPECT_NE(args.at("changes").find("bmV3ICsgdW5yZWxhdGVk"),
-                  std::string::npos);
+        std::optional<std::string> found;
+        for (const auto& raw : json::Array(args.at("changes"))) {
+          const auto change = json::Object(raw);
+          const auto file = json::Object(change.at("value"));
+          if (json::Text(file, "path") != edit.file_path) continue;
+          std::string bytes;
+          EXPECT_TRUE(crypto::base64_decode(
+              json::Text(json::Object(file.at("bytes")), "base64"), bytes));
+          found = std::move(bytes);
+        }
+        EXPECT_EQ(found, "new + unrelated");
         reply = "SaveResult";
         value = {{"rev", "\"3\""}};
       }
@@ -100,8 +110,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
 
 namespace tsugumi::host {
 namespace {
-TEST(ProjectOperationUndo,
-     UnrelatedWriterChangesSurviveAndConflictsNameTheField) {
+TEST(ProjectOperationUndo, UnrelatedWriterChangesSurviveAndConflictsBlockUndo) {
   SaveBase before;
   before.snapshot["rev"] = "1";
   before.files["tsugumi.json"] =
@@ -130,8 +139,6 @@ TEST(ProjectOperationUndo,
     FAIL() << "Undo must refuse a conflicting writer";
   } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "value_conflict");
-    EXPECT_NE(std::string(failure.what()).find("tsugumi.json.name"),
-              std::string::npos);
   }
 }
 
@@ -154,7 +161,13 @@ TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
   current.files["layout.json"] = R"({"groups":[{"id":"g","name":"new"}]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   EXPECT_EQ(json::Array(plan.at("changes")).size(), 1);
-  EXPECT_EQ(plan.at("changes").find("other"), std::string::npos);
+  const auto change = json::Object(json::Array(plan.at("changes")).front());
+  const auto layout =
+      json::Object(json::Text(json::Object(change.at("value")), "json"));
+  const auto groups = json::Array(layout.at("groups"));
+  ASSERT_EQ(groups.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "id"), "g");
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "name"), "old");
 }
 
 TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {

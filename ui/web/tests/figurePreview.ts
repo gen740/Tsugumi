@@ -255,44 +255,43 @@ assert.equal(figureMode('smooth'), 'update')
   const req = (json: string): ThumbnailRequest => ({ key: json, name: 'plotly', json, width: 16, height: 16 })
   try {
     const renderer = new FrameRenderer(async () => 'export function initialise() {}')
+    const frameFor = (request: string) => {
+      const frame = frames.find(candidate => candidate.contentWindow.posted.some(message => message.json === request))
+      assert.ok(frame, `The ${request} request was sent to a frame`)
+      return frame
+    }
+    const ready = async () => {
+      const frame = frames.find(candidate => !candidate.removed)
+      assert.ok(frame)
+      send(frame, { tsugumi: 'ready' })
+      await tick()
+    }
     const first = renderer.draw(req('first'))
-    send(frames[0], { tsugumi: 'ready' })
-    const rejected = assert.rejects(first, /closed/)
-    await tick()
+    const rejected = assert.rejects(first)
+    await ready()
+    const firstFrame = frameFor('first')
+    const id1 = firstFrame.contentWindow.posted[0].requestId
     renderer.close()
     await rejected
-    const id1 = frames[0].contentWindow.posted[0].requestId
+    assert.ok(firstFrame.removed)
     let settled: unknown = 'pending'
-    const second = renderer.draw(req('second')).then(v => (settled = v), e => (settled = e))
-    send(frames[1], { tsugumi: 'ready' })
-    await tick()
-    const id2 = frames[1].contentWindow.posted[0].requestId
-    assert.notEqual(id1, id2)
-    send(frames[0], { tsugumi: 'state', state: 'ready', requestId: id1, image: png('late') })
-    await tick()
-    assert.equal(settled, 'pending', 'the late reply from the closed frame answers nothing')
-    send(frames[1], { tsugumi: 'state', state: 'ready', requestId: id2, image: png('second') })
-    await second
-    assert.deepEqual(settled, { image: png('second'), pixelBytes: 4 * 2 * 4 })
-
-    // The queue closes a renderer that failed: the next request gets a new
-    // frame, and whatever the old one still says is not this one's answer.
-    renderer.close()
-    assert.equal(frames[1].removed, true)
-    settled = 'pending'
-    const third = renderer.draw(req('third')).then(v => (settled = v), e => (settled = e))
-    assert.equal(frames.length, 3)
-    send(frames[0], { tsugumi: 'ready' })
-    send(frames[2], { tsugumi: 'ready' })
-    await tick()
-    const id3 = frames[2].contentWindow.posted[0].requestId
-    send(frames[0], { tsugumi: 'state', state: 'ready', requestId: id3, image: png('old-frame') })
-    await tick()
-    assert.equal(settled, 'pending', 'a closed frame cannot answer')
-    send(frames[2], { tsugumi: 'state', state: 'ready', requestId: id3, image: png('third') })
-    await third
-    assert.deepEqual(settled, { image: png('third'), pixelBytes: 32 })
-    renderer.close()
+    for (const [request, tag] of [['second', 'late'], ['third', 'old-frame']]) {
+      const pending = renderer.draw(req(request)).then(v => (settled = v), e => (settled = e))
+      send(firstFrame, { tsugumi: 'ready' })
+      await ready()
+      const frame = frameFor(request)
+      const id = frame.contentWindow.posted[0].requestId
+      assert.notEqual(id, id1)
+      send(firstFrame, { tsugumi: 'state', state: 'ready', requestId: id, image: png(tag) })
+      await tick()
+      assert.equal(settled, 'pending', 'a closed frame cannot answer even with the current request ID')
+      send(frame, { tsugumi: 'state', state: 'ready', requestId: id, image: png(request) })
+      await pending
+      assert.deepEqual(settled, { image: png(request), pixelBytes: 4 * 2 * 4 })
+      renderer.close()
+      assert.ok(frame.removed)
+      settled = 'pending'
+    }
     assert.equal(listeners.size, 0)
   } finally {
     win.addEventListener = before.add; win.removeEventListener = before.remove

@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <iostream>
 #include <numeric>
 #include <thread>
@@ -36,13 +37,13 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
                true);
   constexpr int kCalls = 40;
   int calls = 0;
+  std::atomic<bool> compacting{false};
   std::jthread scripted([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
       if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
-      if (::tsugumi::json::UInt(::tsugumi::json::Get(
-              ::tsugumi::json::Object(request), "max_tokens")) == 2048) {
+      if (compacting.exchange(false)) {
         model.Queue(AnthropicText(
             "Want: inspect all results. Decisions: read only. Done: earlier "
             "inspections. Failures: none. Left: continue.",
@@ -67,6 +68,9 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   config.model = "fixture";
   config.context_limit_tokens = 200000;
   agent::RuntimeHooks hooks;
+  hooks.event = [&](const auto& event) {
+    if (event.kind == "compacting") compacting.store(true);
+  };
   hooks.authorize_context = [](const auto&) {};
   hooks.checkpoint = [&](const auto& saved) {
     store.SaveMessages("measure", saved);

@@ -1,4 +1,5 @@
 #include "project_fixture.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -282,6 +283,7 @@ TEST_F(AgentRunWaitFixture, StatusReturnsEarlyWhenTheRunEnds) {
   auto pending = std::async(std::launch::async, [&] {
     return Tool(conversation, "run_status", WaitArguments(run, 300));
   });
+  ToolStarted(conversation);
   Release();
 
   const auto reply = pending.get();
@@ -307,7 +309,7 @@ TEST_F(AgentRunWaitFixture,
       EXPECT_TRUE(JsonBool(text, "/still_running"));
       EXPECT_EQ(JsonString(text, "/wait_reason"), "timeout");
     } else {
-      EXPECT_EQ(text.find("\"wait_reason\""), std::string::npos);
+      EXPECT_FALSE(::tsugumi::json::Object(text).contains("wait_reason"));
     }
   }
   Release();

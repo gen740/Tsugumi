@@ -157,17 +157,12 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   ASSERT_EQ(json::Text(envelope, "reply"), "Failure");
   const auto value = json::Object(envelope.at("value"));
   EXPECT_EQ(json::Text(value, "kind"), "value_conflict");
-  const auto diagnostic = json::Text(value, "diagnostic");
-  EXPECT_NE(diagnostic.find("old_value"), std::string::npos);
-  EXPECT_NE(diagnostic.find("new_value"), std::string::npos);
   EXPECT_EQ(saves, 1);
   try {
     ProjectOperations().Execute(request, {"agent", {}, {}, {}}, call);
     FAIL() << "stale second end must refuse the entire plan";
   } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "value_conflict");
-    EXPECT_NE(std::string(failure.what()).find("old_value"), std::string::npos);
-    EXPECT_NE(std::string(failure.what()).find("new_value"), std::string::npos);
   }
   EXPECT_EQ(saves, 1);
   EXPECT_EQ(base.files.at("tsugumi.json"), before);

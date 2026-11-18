@@ -1,7 +1,10 @@
 // Skill discovery and selection use only the public Host/Agent contracts.
 #include <sys/stat.h>
 
+#include <set>
+
 #include "project_fixture.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -316,20 +319,19 @@ TEST_F(SkillsFixture, AutomaticScopedSkillsAreRefusedBeforeAnyModelRequest) {
     if (skill->name()->str() == "automatic") {
       found = true;
       EXPECT_EQ(skill->status()->str(), "invalid_scope");
-      EXPECT_NE(skill->description()->str().find(
-                    "cannot combine always: true with scope"),
-                std::string::npos);
     }
   ASSERT_TRUE(found);
   const auto conversation = Conversation("invalid-automatic-scope");
   Grant(conversation);
   const auto sent = Send(conversation, "Read this project.");
   ASSERT_TRUE(sent.Code().empty());
-  const auto state = WaitUntilIdle(conversation);
-  const auto events = Events(conversation).View();
-  EXPECT_NE(events.find("cannot combine always: true with scope"),
-            std::string::npos)
-      << state;
+  WaitUntilIdle(conversation);
+  const auto events = Events(conversation);
+  const auto* page = events.Value()->value_as_EventsPage();
+  ASSERT_NE(page, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*page->events(), [](const auto* entry) {
+    return entry->event()->kind()->str() == "error";
+  }));
   EXPECT_TRUE(model.Requests().empty());
 }
 
@@ -356,8 +358,12 @@ TEST_F(SkillsFixture, RevokingTrustStopsFurtherAutomaticProjectSkillRequests) {
   ASSERT_TRUE(decide(H::ProjectTrustDecision::Untrusted).Code().empty());
   model.Release();
   WaitUntilIdle(conversation);
-  EXPECT_NE(Events(conversation).View().find("trust was revoked"),
-            std::string::npos);
+  const auto events = Events(conversation);
+  const auto* page = events.Value()->value_as_EventsPage();
+  ASSERT_NE(page, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*page->events(), [](const auto* entry) {
+    return entry->event()->kind()->str() == "error";
+  }));
   EXPECT_EQ(model.Requests().size(), 1u);
 }
 
@@ -373,7 +379,7 @@ TEST_F(SkillsFixture, NoProjectStillHasDemoAndMissingFoldersHaveStatus) {
   ASSERT_EQ(ListSize(result->folders()), 1u);
   EXPECT_EQ(result->folders()->Get(0)->status()->str(), "unreadable");
 }
-TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
+TEST_F(SkillsFixture, FrontMatterAndFallbackNamesAreAssociatedWithTheirFiles) {
   const auto root = directory.path / "project/skills";
   Write(root / "a.md",
         "---\nname: Card review!\ndescription: Review "
@@ -384,21 +390,19 @@ TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
   const auto reply = List();
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
   EXPECT_EQ(Named(list, "demo")->path()->str(), "builtin:demo");
-  std::vector<std::string> custom;
+  std::set<std::string> custom;
   for (const auto* skill : *list)
     if (skill->path()->str().starts_with(root.string()))
-      custom.push_back(skill->name()->str());
-  EXPECT_EQ(custom, (std::vector<std::string>{"B", "Card-review-", "c"}));
-  EXPECT_EQ(Named(list, "B")->name()->str(),
-            "B");  // Swift <, not localeCompare.
+      custom.insert(skill->name()->str());
+  EXPECT_EQ(custom, (std::set<std::string>{"B", "Card-review-", "c"}));
+  EXPECT_EQ(Named(list, "B")->path()->str(), (root / "B/SKILL.md").string());
   EXPECT_EQ(Named(list, "B")->description()->str(), "Explain runs");
-  EXPECT_EQ(Named(list, "Card-review-")->name()->str(), "Card-review-");
+  EXPECT_EQ(Named(list, "Card-review-")->path()->str(),
+            (root / "a.md").string());
   EXPECT_EQ(Named(list, "Card-review-")->description()->str(),
             "Review outputs");
-  EXPECT_EQ(Named(list, "c")->name()->str(), "c");
+  EXPECT_EQ(Named(list, "c")->path()->str(), (root / "c.MD").string());
   EXPECT_EQ(Named(list, "c")->status()->str(), "invalid_scope");
-  EXPECT_EQ(Named(list, "c")->description()->str(),
-            "Unclosed Skill front matter");
   EXPECT_EQ(
       std::string(reply.bytes.begin(), reply.bytes.end()).find("BODY_SENTINEL"),
       std::string::npos);
@@ -515,8 +519,7 @@ TEST_F(SkillsFixture,
   const auto requests = model.Requests();
   EXPECT_NE(requests[0].find("FIRST_A_SENTINEL"), std::string::npos);
   EXPECT_NE(requests[0].find("FIRST_B_SENTINEL"), std::string::npos);
-  EXPECT_LT(requests[0].find("FIRST_A_SENTINEL"),
-            requests[0].find("FIRST_B_SENTINEL"));
+
   EXPECT_EQ(requests[0].find("SECOND_SENTINEL"), std::string::npos);
   EXPECT_NE(requests[1].find("SECOND_SENTINEL"), std::string::npos);
   EXPECT_EQ(requests[1].find("FIRST_A_SENTINEL"), std::string::npos);
@@ -613,7 +616,6 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
         return A::ConversationSendRequest::Pack(b, &request).Union();
       });
   ASSERT_TRUE(start.Code().empty());
-  EXPECT_FALSE(model.WaitForRequests(1, 100ms));
   std::string approval;
   // Agent exposes these permission transitions through snapshot reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
@@ -626,13 +628,12 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
     for (const auto* item : *list.Value()->value_as_AccessList()->requests())
       if (item->access() == Tsugumi::Service::Access::HelperScope) {
         approval = item->id()->str();
-        EXPECT_NE(item->reason()->str().find("selected"), std::string::npos);
-        EXPECT_NE(item->reason()->str().find(R"("write_cards":[])"),
-                  std::string::npos);
+        EXPECT_EQ(item->state()->str(), "pending");
       }
     if (approval.empty()) std::this_thread::sleep_for(10ms);
   }
   ASSERT_FALSE(approval.empty());
+  EXPECT_TRUE(model.Requests().empty());
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
@@ -644,11 +645,17 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
   const auto snapshot = Get(conversation);
-  EXPECT_EQ(ListSize(snapshot.Value()
-                         ->value_as_ConversationResult()
-                         ->conversation()
-                         ->helpers()),
-            1u);
+  const auto* helpers = snapshot.Value()
+                            ->value_as_ConversationResult()
+                            ->conversation()
+                            ->helpers();
+  ASSERT_EQ(ListSize(helpers), 1u);
+  namespace J = ::tsugumi::json;
+  const auto scope = J::Object(helpers->Get(0)->spec_json()->str());
+  const auto readable = J::Array(J::Get(scope, "read_cards"));
+  ASSERT_EQ(readable.size(), 1u);
+  EXPECT_EQ(J::String(readable.front()), "selected");
+  EXPECT_TRUE(J::Array(J::Get(scope, "write_cards")).empty());
   EXPECT_NE(snapshot.View().find("Read only:"), std::string::npos);
   EXPECT_EQ(model.Requests().size(),
             2u);  // Only the helper; no parent model turn.

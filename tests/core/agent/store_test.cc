@@ -17,6 +17,7 @@
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "host/store.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -632,7 +633,7 @@ TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
       EXPECT_NE(summary->find(name), std::string::npos);
       EXPECT_NE(summary->find("definitions/share/_outputs.fbs"),
                 std::string::npos);
-      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL…"), std::string::npos);
+      EXPECT_NE(summary->find("DIAGNOSTIC_SENTINEL"), std::string::npos);
       // Only the reason: the rest of the diagnostic stays in the result.
       EXPECT_EQ(summary->find("second line"), std::string::npos);
       EXPECT_EQ(summary->find('\n'), std::string::npos);
@@ -665,15 +666,12 @@ TEST(AgentPresentation, LongToolErrorsShowAShortReason) {
                                      first + R"(\nTRACE_LINE"}]}]})");
   const auto& row = *conversation.rows[0]->children[0];
   EXPECT_EQ(row.state, "failed");
-  EXPECT_NE(row.result.find("TRACE_LINE"), std::string::npos);
+  EXPECT_EQ(row.result, "\n  " + first + "\nTRACE_LINE");
   for (const auto* summary : {&row.summary_ja, &row.summary_en}) {
     EXPECT_EQ(summary->find("TRACE_LINE"), std::string::npos);
     EXPECT_NE(summary->find("失敗失敗"), std::string::npos);
-    EXPECT_TRUE(summary->ends_with("…"));
-    EXPECT_LT(summary->size(), 220u);
-    // Cut between characters, not inside one.
-    const auto body = summary->substr(0, summary->size() - std::string("…").size());
-    EXPECT_TRUE(body.ends_with("失") || body.ends_with("敗"));
+    EXPECT_LT(summary->size(), first.size());
+    EXPECT_TRUE(::tsugumi::text::valid_utf8(*summary));
   }
 }
 

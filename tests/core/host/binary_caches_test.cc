@@ -104,8 +104,7 @@ TEST_F(BinaryCaches, InvalidSettingsApplyNothingAndNeverEchoCredentials) {
     const auto snapshot = PrepareBinaryCaches(root);
     EXPECT_TRUE(snapshot.configuration.empty());
     EXPECT_TRUE(snapshot.netrc.empty());
-    EXPECT_NE(snapshot.problem.find("Only the default caches are used"),
-              std::string::npos);
+    EXPECT_FALSE(snapshot.problem.empty());
     EXPECT_EQ(snapshot.problem.find("secret-for-test"), std::string::npos);
   }
 }

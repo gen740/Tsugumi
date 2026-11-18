@@ -70,11 +70,9 @@ try {
   const s = { pid: process.pid, port: 1234, agentKey: 'a'.repeat(64), build: identity }
   fs.writeFileSync(file, JSON.stringify(s))
   assert.deepEqual(readServer(dir), s)
-  await assert.rejects(runningServer(dir, 'b'.repeat(64)), /different Tsugumi build.*Stop that host/)
+  await assert.rejects(runningServer(dir, 'b'.repeat(64)), Error)
+  assert.deepEqual(readServer(dir), s)
   const originalFetch = globalThis.fetch
-  const originalTimeout = AbortSignal.timeout
-  const timeouts = []
-  AbortSignal.timeout = (ms) => { timeouts.push(ms); return originalTimeout(ms) }
   const requests = []
   globalThis.fetch = async (url, options) => {
     requests.push({ url, options })
@@ -82,17 +80,24 @@ try {
   }
   try {
     assert.deepEqual(await runningServer(dir, identity), s)
-    await serverRequest(s, '/api/page/open', { path: '/project with spaces' })
+    const opened = await serverRequest(s, '/api/page/open', { path: '/project with spaces' })
+    assert.equal(opened.status, 200)
     assert.deepEqual(JSON.parse(requests.at(-1).options.body), { path: '/project with spaces' })
     assert.equal(requests.at(-1).options.headers['x-tsugumi-agent'], s.agentKey)
-    assert.equal(requests.at(-1).options.signal, undefined)
     const cancel = new AbortController()
-    await serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, cancel.signal)
-    assert.equal(requests.at(-1).options.signal, cancel.signal)
-    assert.deepEqual(timeouts, [])
+    globalThis.fetch = async (_url, options) => {
+      assert.ok(options.signal, 'an in-flight request can be cancelled')
+      return new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true })
+      })
+    }
+    const pending = serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, cancel.signal)
+    const cancelled = new Error('caller cancelled')
+    cancel.abort(cancelled)
+    await assert.rejects(pending, error => error === cancelled)
     globalThis.fetch = async () => { throw new Error('unreachable') }
     assert.deepEqual(await runningServer(dir, identity), s)
-  } finally { globalThis.fetch = originalFetch; AbortSignal.timeout = originalTimeout }
+  } finally { globalThis.fetch = originalFetch }
   fs.appendFileSync(bundle, '\n// rebuilt')
   assert.notEqual(serverBuild(bundle), identity)
   console.log('host startup and discovery: passed')

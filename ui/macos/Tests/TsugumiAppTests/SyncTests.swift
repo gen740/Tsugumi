@@ -219,7 +219,7 @@ import TsugumiTestSupport
     #expect(s.position(renamed) == CGPoint(x: 700, y: 500))
     #expect(s.layout["displays"]?["b"]?["width"]?.double == 300)
     #expect(s.displayName(b) == "renamed")
-    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a", "b"])
+    #expect(Set(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.compactMap(\.string) ?? []) == ["a", "b"])
     #expect(!s.dirty)
 
     let again = try await s.rpc!.inspect()
@@ -234,7 +234,7 @@ import TsugumiTestSupport
                               changes: [FixtureChange.setProject(left.serialized()), FixtureChange.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     try await waitForModel { !(s.resolution[renamed] != nil) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
-    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
+    #expect(Set(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.compactMap(\.string) ?? []) == ["a"])
   }
 
   /// A project no window shows any more is closed: its connection ends and it
@@ -560,10 +560,10 @@ import TsugumiTestSupport
     let plan = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
     try await s.addComment(plan, "単位を考える")
     #expect(s.cardsWithOpenComments(in: []).contains(plan))
-    // What the core recorded of the Agent reads back, in the words the screen uses.
+    // Restoring a comment preserves the actor and its resolution state.
     let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))
-    #expect(agent[0].cards == ["p", "q"] && agent[0].author == "agent")
-    #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
+    #expect(Set(agent[0].cards) == ["p", "q"] && agent[0].author == "agent")
+    #expect(agent[0].resolved && agent[0].stateBy == "agent")
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
     await s.save()
@@ -608,7 +608,8 @@ import TsugumiTestSupport
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
     for k in [a, b, c] {
-      #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.message.contains("port") }, "\(k)")
+      #expect(ports(k) == [[], []])
+      #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.code == "unknown_port" }, "\(k)")
     }
     s.removeConnection(at: 0, in: [])
     #expect(ports(a) == [[], []] && ports(b) == [[], []])

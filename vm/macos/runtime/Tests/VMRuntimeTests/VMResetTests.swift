@@ -15,7 +15,7 @@ final class VMResetTests: XCTestCase {
     try FileManager.default.createDirectory(at: directory.appendingPathComponent("image"), withIntermediateDirectories: true)
     let report = try VMReset.apply(directory: directory, keepFiles: ["operator-chosen.img", "absent"], discardOtherFiles: true)
     XCTAssertEqual(report.kept, ["operator-chosen.img"])
-    XCTAssertEqual(report.discarded, [".lock", "image", "scratch.img", "store.img"])
+    XCTAssertEqual(Set(report.discarded), [".lock", "image", "scratch.img", "store.img"])
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["operator-chosen.img"])
     XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("operator-chosen.img"), encoding: .utf8), "operator-chosen.img")
   }

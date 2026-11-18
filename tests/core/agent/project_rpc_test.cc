@@ -835,7 +835,7 @@ TEST_F(AgentProjectFixture,
       R"({"command":"sed -i.bak 's/before/after/' definitions/edit/src/data.txt; rm definitions/edit/src/data.txt.bak; printf scratch-data > scratch/from-shell"})");
   ASSERT_TRUE(edited.Code().empty()) << edited.View();
   const auto text = JsonString(edited.View(), "/text");
-  ASSERT_NE(text.find("\"exit_code\":0"), std::string::npos) << text;
+  ASSERT_EQ(JsonUInt(text, "/value/exit_code"), 0u);
   EXPECT_EQ(JsonString(text, "/value/save/delta/origin"), "agent");
   EXPECT_EQ(Read(directory.path / "project/definitions/edit/src/data.txt"),
             "after\n");
@@ -1786,6 +1786,24 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
 }
 
+auto AnthropicReadResult(std::string_view request) -> json::Members {
+  std::string call;
+  for (const auto& message :
+       json::Array(json::Get(json::Object(request), "messages"))) {
+    for (const auto& raw :
+         json::Array(json::Get(json::Object(message), "content"))) {
+      const auto block = json::Object(raw);
+      if (json::Text(block, "type") == "tool_use" &&
+          json::Text(block, "name") == "project_file_read")
+        call = json::Text(block, "id");
+      if (!call.empty() && json::Text(block, "type") == "tool_result" &&
+          json::Text(block, "tool_use_id") == call)
+        return block;
+    }
+  }
+  return {};
+}
+
 TEST_F(AgentProjectFixture, AuthorizedProjectImagesReachTheModelAsImages) {
   ModelServer model;
   model.Queue(AnthropicTool("read-image", "project_file_read",
@@ -1800,14 +1818,24 @@ TEST_F(AgentProjectFixture, AuthorizedProjectImagesReachTheModelAsImages) {
   const auto state = WaitUntilIdle(conversation);
   ASSERT_NE(state.find("I received the project image."), std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_EQ(requests[0].find("iVBORw0KGgo"), std::string::npos);
-  EXPECT_NE(requests[1].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(requests[1].find("\"media_type\":\"image/png\""),
-            std::string::npos);
-  EXPECT_NE(requests[1].find("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD"
-                             "UlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="),
-            std::string::npos);
-  EXPECT_NE(requests[1].find("shown with this result"), std::string::npos);
+  EXPECT_TRUE(AnthropicReadResult(requests[0]).empty());
+  const auto result = AnthropicReadResult(requests[1]);
+  ASSERT_FALSE(result.empty());
+  EXPECT_FALSE(json::Bool(json::Get(result, "is_error")));
+  const auto content = json::Array(json::Get(result, "content"));
+  bool found = false;
+  for (const auto& raw : content) {
+    const auto block = json::Object(raw);
+    if (json::Text(block, "type") != "image") continue;
+    found = true;
+    const auto source = json::Object(json::Get(block, "source"));
+    EXPECT_EQ(json::Text(source, "media_type"), "image/png");
+    std::string image;
+    ASSERT_TRUE(crypto::base64_decode(json::Text(source, "data"), image));
+    EXPECT_EQ(image, Read(directory.path /
+                          "project/definitions/picture/src/pixel.png"));
+  }
+  EXPECT_TRUE(found);
 }
 
 TEST_F(AgentProjectFixture,
@@ -1878,10 +1906,12 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(Send(conversation, "Read the picture.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
-  const auto request = model.Requests()[1];
-  EXPECT_EQ(request.find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(request.find("incomplete or invalid image"), std::string::npos);
-  EXPECT_EQ(request.find("iVBORw0KGgo"), std::string::npos);
+  const auto result = AnthropicReadResult(model.Requests()[1]);
+  ASSERT_FALSE(result.empty());
+  EXPECT_FALSE(json::Bool(json::Get(result, "is_error")));
+  const auto summary = json::Text(result, "content");
+  EXPECT_EQ(json::Text(json::Object(summary), "reply"), "FileContent");
+  EXPECT_EQ(summary.find("iVBORw0KGgo"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture, AModelThatRejectsImagesCanContinueWithTheToolText) {
@@ -1901,10 +1931,29 @@ TEST_F(AgentProjectFixture, AModelThatRejectsImagesCanContinueWithTheToolText) {
                 .find("I continued with the image description."),
             std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[1].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_EQ(requests[2].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(requests[2].find("model rejected this image"), std::string::npos);
-  EXPECT_NE(Events(conversation).View().find("retrying"), std::string::npos);
+  const auto initial = AnthropicReadResult(requests[1]);
+  const auto replay = AnthropicReadResult(requests[2]);
+  ASSERT_FALSE(initial.empty());
+  ASSERT_FALSE(replay.empty());
+  EXPECT_EQ(json::Text(initial, "tool_use_id"),
+            json::Text(replay, "tool_use_id"));
+  const auto blocks = json::Array(json::Get(initial, "content"));
+  EXPECT_TRUE(std::ranges::any_of(blocks, [](const auto& raw) {
+    return json::Text(json::Object(raw), "type") == "image";
+  }));
+  const auto text = std::ranges::find_if(blocks, [](const auto& raw) {
+    return json::Text(json::Object(raw), "type") == "text";
+  });
+  ASSERT_NE(text, blocks.end());
+  const auto original = json::Text(json::Object(*text), "text");
+  ASSERT_FALSE(original.empty());
+  EXPECT_TRUE(json::Text(replay, "content").starts_with(original));
+  const auto events = Events(conversation);
+  const auto* page = events.Value()->value_as_EventsPage();
+  ASSERT_NE(page, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*page->events(), [](const auto* entry) {
+    return entry->event()->kind()->str() == "retrying";
+  }));
 }
 
 TEST_F(AgentProjectFixture,
@@ -2019,7 +2068,7 @@ TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
   EXPECT_EQ(JsonString(text, "/value/stdout_bytes"), "allowed");
   EXPECT_EQ(JsonString(text, "/value/stderr_bytes"), "diagnostic");
-  EXPECT_NE(text.find("\"exit_code\":3"), std::string::npos);
+  EXPECT_EQ(JsonUInt(text, "/value/exit_code"), 3u);
 }
 
 TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
@@ -2272,11 +2321,10 @@ TEST_F(AgentProjectFixture,
           " && test ! -r " + quote(marker.string()) +
           " && printf private > \"$TMPDIR/diagnostic\" && cat "
           "\"$TMPDIR/diagnostic\"");
-  EXPECT_NE(private_tmp.find("\"exit_code\":0"), std::string::npos)
-      << private_tmp;
+  EXPECT_EQ(JsonUInt(private_tmp, "/value/exit_code"), 0u);
   EXPECT_EQ(JsonString(private_tmp, "/value/stdout_bytes"), "private");
   const auto next = run("test ! -e \"$TMPDIR/diagnostic\"");
-  EXPECT_NE(next.find("\"exit_code\":0"), std::string::npos) << next;
+  EXPECT_EQ(JsonUInt(next, "/value/exit_code"), 0u);
   const auto result =
       run("TSUGUMI_SHELL_PROBE_ENDPOINT=" + quote("unix:" + socket) +
           " TSUGUMI_SHELL_PROBE_PROJECT=" + quote(project_id) +
@@ -2284,7 +2332,7 @@ TEST_F(AgentProjectFixture,
           quote(JsonString(project_ready, "/token")) + " " +
           quote(probe.filename().string()) +
           " --gtest_filter=AgentShellProbe.DirectProjectRequest");
-  EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
+  EXPECT_EQ(JsonUInt(result, "/value/exit_code"), 0u);
   EXPECT_NE(
       JsonString(result, "/value/stdout_bytes").find("DIRECT_RPC_BLOCKED"),
       std::string::npos);
@@ -2422,8 +2470,20 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
   ASSERT_EQ(next.Code(), "grant_required");
   ASSERT_FALSE(next.RequestId().empty());
   EXPECT_NE(next.RequestId(), pending.RequestId());
-  EXPECT_NE(next.Failure()->message()->str().find("sandbox_off work"),
-            std::string::npos);
+  const auto access =
+      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& builder) {
+        return A::CreateAccessListRequest(builder,
+                                          builder.CreateString(conversation))
+            .Union();
+      });
+  const auto* requests = access.Value()->value_as_AccessList()->requests();
+  ASSERT_NE(requests, nullptr);
+  const auto asked = std::ranges::find_if(*requests, [&](const auto* item) {
+    return item->id()->str() == next.RequestId();
+  });
+  ASSERT_NE(asked, requests->end());
+  EXPECT_EQ((*asked)->access(), Tsugumi::Service::Access::CardPermissions);
+  EXPECT_EQ((*asked)->state()->str(), "pending");
   EXPECT_EQ(
       Tool(conversation, "project_reload", arguments, "reload-b").RequestId(),
       next.RequestId());
@@ -2444,8 +2504,16 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       Tool(conversation, "project_reload", arguments, "reload-b");
   ASSERT_TRUE(reloaded.Code().empty());
   ASSERT_FALSE(JsonBool(reloaded.View(), "/isError")) << reloaded.View();
-  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").View(),
-            reloaded.View());
+  const auto accepted = JsonString(
+      JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
+  EXPECT_NE(accepted, JsonString(snapshot, "/value/rev"));
+  const auto replay =
+      Tool(conversation, "project_reload", arguments, "reload-b");
+  ASSERT_TRUE(replay.Code().empty());
+  EXPECT_FALSE(JsonBool(replay.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
+                       "/value/rev"),
+            accepted);
 }
 
 TEST_F(AgentProjectFixture,
@@ -2520,10 +2588,33 @@ TEST_F(AgentProjectFixture,
     EXPECT_EQ(Tool(conversation, name, arguments, call_id + "-new").Code(),
               "grant_required");
   }
-  const auto recorded = Get(conversation).View();
-  EXPECT_NE(recorded.find("operation_approval"), std::string::npos);
-  EXPECT_NE(recorded.find("Declined; nothing changed"), std::string::npos);
-  EXPECT_NE(recorded.find("Approved; outcome:"), std::string::npos);
+  const auto recorded = Get(conversation);
+  const auto* tools =
+      recorded.Value()->value_as_ConversationResult()->conversation()->tools();
+  ASSERT_NE(tools, nullptr);
+  for (const auto& operation : operations) {
+    for (const bool denied : {false, true}) {
+      const auto call = (denied ? "approval:decline-" : "approval:approve-") +
+                        operation.first;
+      const auto found = std::ranges::find_if(
+          *tools, [&](const auto* tool) { return tool->id()->str() == call; });
+      ASSERT_NE(found, tools->end()) << call;
+      EXPECT_EQ((*found)->name()->str(), "operation_approval");
+      EXPECT_EQ((*found)->state()->str(), "completed");
+      EXPECT_EQ((*found)->is_error(), denied);
+    }
+  }
+  const auto versions = Tool(conversation, "version_graph", "{}");
+  namespace J = ::tsugumi::json;
+  const auto graph_value = J::Object(
+      J::Get(J::Object(JsonString(versions.View(), "/text")), "value"));
+  const auto commits = J::Array(J::Get(graph_value, "commits"));
+  EXPECT_TRUE(std::ranges::any_of(commits, [](const auto& commit) {
+    const auto tags = J::Array(J::Get(J::Object(commit), "tags", "[]"));
+    return std::ranges::any_of(tags, [](const auto& tag) {
+      return J::String(tag) == "approved-version";
+    });
+  }));
 }
 
 TEST_F(AgentProjectFixture,

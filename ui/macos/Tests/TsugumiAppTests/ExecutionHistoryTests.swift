@@ -242,7 +242,7 @@ extension ChatResumeTests {
     host.layoutSubtreeIfNeeded()
     try await waitForModel {
       Set(measurement.frames.keys).isSuperset(of: ["runs", "detail", "header"]) &&
-        Set(measurement.controls.keys) == ["label", "invocation"]
+        Set(measurement.controls.keys).isSuperset(of: ["label", "invocation"])
     }
     func rect(_ name: String) throws -> CGRect {
       let view = try #require(frames[name])
@@ -253,7 +253,6 @@ extension ChatResumeTests {
       #expect(rect.minX >= 160 && rect.maxX <= width + 1)
       #expect(rect.minY >= -1 && rect.maxY <= 501)
     }
-    #expect(Set(controlFrames.keys) == ["label", "invocation"])
     for rect in controlFrames.values {
       #expect(rect.minX >= -1 && rect.maxX <= headerRect.width + 1, "A history control is clipped")
       #expect(rect.height <= 30, "A history control must stay on one line")
@@ -326,11 +325,15 @@ private struct HistoryMeasuredBounds: PreferenceKey {
 /// (a progress meter) and read again with what follows it.
 @Test func logReaderKeepsWholeLinesAndRedrawsTheLastOne() {
   let first = LogStreamReader.parse("one\ntwo 10%\rtwo 50%", form: .terminal)
-  #expect(first == .init(lines: "one\n", rest: "two 10%\rtwo 50%", shownRest: "two 50%"))
+  #expect(first.lines == "one\n" && first.shownRest == "two 50%")
   let next = LogStreamReader.parse(first.rest + "\rtwo 100%\nthree", form: .terminal)
-  #expect(next == .init(lines: "two 100%\n", rest: "three", shownRest: "three"))
-  let journal = LogStreamReader.parse(#"{"phase":"save","event":"stored","message":"m"}"# + "\n"
-                                        + #"{"phase":"execute","event":"x"}"# + "\n" + #"{"pha"#,
+  #expect(next.lines == "two 100%\n" && next.shownRest == "three")
+  let journal = LogStreamReader.parse(#"{"phase":"save","event":"stored","message":"FIRST_RECORD"}"# + "\n"
+                                        + #"{"phase":"execute","event":"x","message":"FILTERED_RECORD"}"# + "\n" + #"{"pha"#,
                                       form: .journal(["validate", "save"]))
-  #expect(journal == .init(lines: "save · stored: m\n", rest: #"{"pha"#, shownRest: ""))
+  #expect(journal.lines.contains("FIRST_RECORD") && !journal.lines.contains("FILTERED_RECORD"))
+  #expect(journal.shownRest.isEmpty)
+  let completed = LogStreamReader.parse(journal.rest + #"se":"validate","event":"finished","message":"NEXT_RECORD"}"# + "\n",
+                                        form: .journal(["validate", "save"]))
+  #expect(completed.lines.contains("NEXT_RECORD"))
 }
