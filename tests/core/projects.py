@@ -145,6 +145,11 @@ def wait_run(c, run_id: str, *, timeout=None):
     status = c.call("RunStatusRequest", runId=run_id)
     if status.state in ENDED:
         return status
+    return wait_run_notification(c, run_id, timeout=timeout)
+
+
+def wait_run_notification(c, run_id: str, *, timeout=None):
+    """Wait for a terminal status event on an existing subscription."""
     note = c.wait_notification(
         lambda n: n.valueType == NotificationPayload.RunEvent
         and text(n.value.runId) == run_id

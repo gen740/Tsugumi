@@ -12,7 +12,7 @@ import pytest
 
 from harness.daemon import Daemon
 from harness.values import recorded_input_json
-from projects import SINK, card, card_in_card, conn, run_and_wait, write
+from projects import SINK, card, card_in_card, conn, run_and_wait, wait_run, wait_run_notification, write
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -74,6 +74,24 @@ def env(tmp_path: Path):
             return stack.enter_context(Daemon(root)).connect()
 
         yield make
+
+
+def test_run_can_start_on_terminal_status_notification(env):
+    c = env([card("start", "trigger")], [])
+    c.ensure_subscription()
+    rev = c.call("ProjectInspectRequest").rev
+
+    def start():
+        result = c.call("RunRequest", baseRev=rev, opId=new_id(), origin="test",
+                        card=path("start"), propagate=True)
+        return text(result.run.runId)
+
+    first = start()
+    status = wait_run_notification(c, first)
+    second = start()
+    assert second != first
+    assert status.state == RunState.succeeded
+    assert wait_run(c, second).state == RunState.succeeded
 
 
 def test_any_consumes_in_arrival_order_without_loss_or_duplicates(env, tmp_path):

@@ -241,20 +241,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return summary_.status;
   }
 
-  std::string note_record() {
-    std::lock_guard<std::mutex> l(mu_);
-    return note_record_;
-  }
-
   RunStatusData request_cancel(bool interrupted) {
     std::lock_guard<std::mutex> l(mu_);
     // Once finalize() has taken the final status it is on its way to the
     // history: a "cancelling" written now would land after it and stay as the
     // run's state.
     if (interrupted) detaching_.store(true);
-    if (!interrupted && !summary_.status.terminal() && !finishing_)
-      explicit_cancel_.store(true);
-    if (!summary_.status.terminal() && !cancel_ && !finishing_) {
+    if (!interrupted && !finishing_) explicit_cancel_.store(true);
+    if (!cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
       for (auto& node : nodes_)
@@ -2191,15 +2185,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (n.last_inputs)
         save_last_inputs(*n.node, n.last_inputs->first, n.last_inputs->second,
                          n.last_port_inputs);
-    // The terminal state is computed here but becomes visible (RunStatus,
-    // notifications) only after every record above is committed.
+    // Include any failures writing the final invocation records or inputs.
     svc_.history().flush();
     RunSummaryData sum;
     {
       std::lock_guard<std::mutex> l(mu_);
       finishing_ = true;
       sum = summary_;
-      note_record_ = record(final);
     }
     auto& st = sum.status;
     if (cancel_ && interrupted_) {
@@ -2238,38 +2230,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (auto& n : nodes_)
       if (n.display) displays.push_back(*n.display);
     for (const auto& d : displays) svc_.server()->broadcast(display_note(d));
-    auto self = shared_from_this();
-    svc_.history().submit(
-        [sum, displays](sql::Db& db) {
-          for (const auto& d : displays) History::put_display(db, d);
-          History::update_run(db, sum.status);
-          History::interrupt_batches(db, *sum.status.run_id);
-          // Detached external invocations are still pending after the local
-          // graph ends. Startup records interruption before remote cleanup.
-          db.prepare(
-                "DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
-                "SELECT 1 FROM remote_jobs AS j WHERE "
-                "j.run_id=statuses.run_id AND j.card=statuses.card "
-                "AND j.invocation=statuses.invocation)")
-              .bind(1, *sum.status.run_id)
-              .run();
-        },
-        [self, sum](bool ok) mutable {
-          if (!ok && sum.status.state == RunState::succeeded) {
-            // The success itself could not be recorded: never report it.
-            sum.status.state = RunState::failed;
-            sum.status.failure =
-                FailureData::make(FailureKind::persistence_failed,
-                                  "saving the run result failed");
-          }
-          {
-            std::lock_guard<std::mutex> l(self->mu_);
-            self->summary_ = sum;
-          }
-          self->svc_.server()->broadcast(status_note(sum.status, false));
-          self->svc_.server()->broadcast(finished_note(sum));
-          self->sched_.finished(self.get());
-        });
+    sched_.finished(std::move(sum), displays, record(final));
   }
 
   Service& svc_;
@@ -2278,7 +2239,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   RunParams p_;
   RunSummaryData summary_;
   const RunPlanData plan_;
-  std::string note_record_;  // neutral run facts, for the commit's note
   std::string run_id_;
   stdfs::path run_dir_;
   std::thread thread_;
@@ -2388,7 +2348,7 @@ void Scheduler::recover_interrupted() {
 
 auto Scheduler::start_remote_cleanup() -> void {
   remote_cleanup_ = std::thread([this] {
-    while (!stop_cleanup_.load()) {
+    while (!stopping_.load()) {
       try {
         svc_.remote_execution().release_completed();
       } catch (const std::exception& error) {
@@ -2581,6 +2541,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
 
 std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   std::lock_guard<std::mutex> l(mu_);
+  if (stopping_.load())
+    throw Failed(FailureKind::interrupted, "the project is shutting down");
   if (active_)
     throw Failed(FailureKind::busy, "another run is active",
                  {{"run_id", *active_->status().run_id}});
@@ -2644,14 +2606,11 @@ std::optional<RunStatusData> Scheduler::active_status() {
 }
 
 RunStatusData Scheduler::cancel(const std::string& run_id) {
-  std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
-    if (active_ && active_->status().run_id == run_id) exec = active_;
+    if (active_ && active_->status().run_id == run_id)
+      return active_->request_cancel(false);
   }
-  std::optional<RunStatusData> active;
-  if (exec) active = exec->request_cancel(false);
-  if (active) return *active;
   auto r = svc_.history().read(
       [&](sql::Db& db) { return History::run(db, run_id); });
   if (!r)
@@ -2756,34 +2715,55 @@ std::optional<Note> Scheduler::latest_display_note(
   return display_note(*d);
 }
 
-void Scheduler::finished(RunExec* exec) {
-  std::lock_guard<std::mutex> l(mu_);
-  std::shared_ptr<RunExec> done;
-  if (active_.get() == exec) done = std::move(active_);
-  if (done) {
-    // The run thread finishes on its own; reap it off the callback thread.
-    reapers_.emplace_back([this, done] {
-      done->join();
-      svc_.note_run_end(done->status(), done->note_record());
+auto Scheduler::finished(RunSummaryData sum,
+                         const std::vector<DisplayData>& displays,
+                         std::string record) -> void {
+  std::lock_guard lock(mu_);
+  // Release the slot before the terminal status can appear in history. Keep
+  // admission locked until the result commits and both events are queued.
+  auto done = std::move(active_);
+  try {
+    svc_.history().write_sync([&](sql::Db& db) {
+      for (const auto& d : displays) History::put_display(db, d);
+      History::update_run(db, sum.status);
+      History::interrupt_batches(db, *sum.status.run_id);
+      // Detached external invocations are still pending after the local
+      // graph ends. Startup records interruption before remote cleanup.
+      db.prepare(
+            "DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
+            "SELECT 1 FROM remote_jobs AS j WHERE "
+            "j.run_id=statuses.run_id AND j.card=statuses.card "
+            "AND j.invocation=statuses.invocation)")
+          .bind(1, *sum.status.run_id)
+          .run();
     });
+  } catch (const Failed&) {
+    if (sum.status.state == RunState::succeeded) {
+      sum.status.state = RunState::failed;
+      sum.status.failure = FailureData::make(FailureKind::persistence_failed,
+                                             "saving the run result failed");
+    }
   }
+  svc_.server()->broadcast(status_note(sum.status, false));
+  svc_.server()->broadcast(finished_note(sum));
+  reapers_.emplace_back([this, done = std::move(done), status = sum.status,
+                         record = std::move(record)] {
+    done->join();
+    svc_.note_run_end(status, record);
+  });
+  finished_.notify_all();
 }
 
 void Scheduler::shutdown() {
-  stop_cleanup_.store(true);
-  std::shared_ptr<RunExec> exec;
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    exec = active_;
-  }
-  if (exec) exec->request_cancel(true);
-  if (remote_cleanup_.joinable()) remote_cleanup_.join();
-  if (exec) exec->join();
   std::vector<std::thread> reapers;
   {
-    std::lock_guard<std::mutex> l(mu_);
+    std::unique_lock lock(mu_);
+    stopping_.store(true);
+    if (active_) active_->request_cancel(true);
+    finished_.wait(lock, [this] { return !active_; });
     reapers.swap(reapers_);
   }
+  if (remote_cleanup_.joinable()) remote_cleanup_.join();
   for (auto& t : reapers)
     if (t.joinable()) t.join();
 }

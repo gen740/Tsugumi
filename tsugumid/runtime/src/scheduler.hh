@@ -77,18 +77,18 @@ class Scheduler {
 
   // Called by RunExec.
   void publish_display(const DisplayData& d);
-  void finished(RunExec* exec);
+  auto finished(RunSummaryData sum, const std::vector<DisplayData>& displays,
+                std::string record) -> void;
 
  private:
   Service& svc_;
-  // Lock order: mu_ -> History::write_sync() only in accept(), with no active_
-  // run. History writer callbacks may take mu_ while active_ is set, so
-  // finished() must not reacquire mu_ after clearing active_: reaper
-  // registration belongs in the same locked section.
+  // Admission and terminal publication share this lock. History writer
+  // callbacks must not acquire it.
   std::mutex mu_;
+  std::condition_variable finished_;
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;
-  std::atomic<bool> stop_cleanup_{false};
+  std::atomic<bool> stopping_{false};
   std::thread remote_cleanup_;
   std::map<std::string, DisplayData>
       displays_;  // latest per card key (any run)
