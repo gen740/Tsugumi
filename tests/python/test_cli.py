@@ -658,7 +658,12 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
         "agent.provider": "openai", "agent.model.openai": "from-the-app",
         "agent.permissions.allowed": ["network", "nix_source"],
     })
-    s = api(port, cookie, "GET", "/api/settings")
+    # The page's host reloads its settings when the core announces the change.
+    for _ in range(50):
+        s = api(port, cookie, "GET", "/api/settings")
+        if s["provider"] == "openai":
+            break
+        time.sleep(0.1)
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)

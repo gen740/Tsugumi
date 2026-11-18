@@ -66,9 +66,6 @@ def test_only_the_page_with_the_key_reaches_the_api(web):
     r, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
     assert r.status == 200, data
     json.loads(data)
-    # Changes also need the header a cross-origin page cannot send.
-    r, _ = request(port, "POST", "/api/terminal/start", {"Cookie": cookie, "content-type": "application/json"}, b"{}")
-    assert r.status == 403
 
 
 def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(web):

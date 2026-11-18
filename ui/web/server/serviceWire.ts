@@ -180,7 +180,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
     case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
-    case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? null)
+    case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
