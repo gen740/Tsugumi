@@ -69,6 +69,10 @@ struct ServiceOptions {
   // per line, written by a launcher whose daemon reads settings this process
   // cannot see (the shared VM). Empty: this process's own Nix configuration.
   std::filesystem::path substituters_file;
+  // Builds made ahead (--prepare-cards output). When set, no Card is
+  // evaluated: each uses its prepared build, and a Card without one, or
+  // whose definition changed since, fails.
+  std::filesystem::path prepared_cards;
   TransportLimits limits;
 };
 

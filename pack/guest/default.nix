@@ -1,18 +1,21 @@
-# The guest of exported apps and of tsugumi-pack itself (aarch64-linux).
+# The guests of tsugumi-pack and of the apps it exports (aarch64-linux).
 #
 #   $out/vmlinux       the shared VM's kernel (vm/guest/kernel.nix)
-#   $out/rootfs.erofs  /init, Nix, tsugumid and what export and run need
-#   $out/identity      names this image (its /init); an app records it
+#   $out/export.erofs  the exporter: Nix and tsugumid, network on
+#   $out/run.erofs     an app's runner: tsugumid and its run tools, no Nix
+#   $out/identity      names this pair (the runner's /init); an app records it
 #
-# One image, two modes, chosen on the kernel command line (tsugumi.pack=):
+# export  /dev/vdb is the exporter's store disk (ext4, kept between exports);
+#         virtiofs "pack" holds project/ and receives out/ (payload.erofs).
+#         Every Card is evaluated and built here, and only here. See export.sh.
+# run     no network device at all; /dev/vdb is the app's payload.erofs, laid
+#         over the image's store (overlay); /dev/vdc is a scratch disk for the
+#         run's work folder; virtiofs "pack" holds request.json and receives
+#         result/. tsugumid runs the builds prepared at export and evaluates
+#         nothing, so this image has no Nix, nixpkgs or derivations. See run.py.
 #
-#   export  network on; /dev/vdb is the exporter's store disk (ext4, kept
-#           between exports); virtiofs "pack" holds project/ and receives out/
-#           (payload.erofs). See export.sh.
-#   run     no network device at all; /dev/vdb is the app's payload.erofs, its
-#           store over the image's (overlay); /dev/vdc is a scratch disk for
-#           the store's writes and the run's work folder; virtiofs
-#           "pack" holds request.json and receives result/. See run.py.
+# Both use /work as the work folder: the Cards' evaluation keys name folders
+# under /work/scratch, and a run checks each Card's key against the export's.
 #
 # The console (hvc0) carries the log, with "PACK-STAGE <name>" lines for the
 # Mac side's progress. The guest powers off when done; /pack/<mode>.status
@@ -52,9 +55,26 @@ let
     mkdir -p $out
     flatc -b --schema --bfbs-builtins -I ${tsugumid.src}/protocol -o $out ${tsugumid.src}/protocol/tsugumi.fbs
   '';
-  etc = buildEnv {
-    name = "tsugumi-pack-etc";
-    paths = [
+  baseEtc = [
+    (writeTextDir "etc/hosts" "127.0.0.1 localhost\n")
+    (writeTextDir "etc/nsswitch.conf" "hosts: files dns\n")
+  ];
+  runEtc = buildEnv {
+    name = "tsugumi-pack-run-etc";
+    paths = baseEtc ++ [
+      (writeTextDir "etc/passwd" ''
+        root:x:0:0:root:/root:/bin/sh
+        nobody:x:65534:65534:nobody:/var/empty:/bin/false
+      '')
+      (writeTextDir "etc/group" ''
+        root:x:0:
+        nobody:x:65534:
+      '')
+    ];
+  };
+  exportEtc = buildEnv {
+    name = "tsugumi-pack-export-etc";
+    paths = baseEtc ++ [
       (writeTextDir "etc/nix/nix.conf" ''
         build-users-group = nixbld
         sandbox = true
@@ -81,25 +101,25 @@ let
         nixbld:x:30000:${lib.concatMapStringsSep "," (i: "nixbld${i}") nixbld}
         nobody:x:65534:
       '')
-      (writeTextDir "etc/hosts" "127.0.0.1 localhost\n")
-      (writeTextDir "etc/nsswitch.conf" "hosts: files dns\n")
     ];
   };
-  tools = [
-    nix
+  runTools = [
     bashInteractive
     coreutils
-    findutils
-    gnugrep
-    gnused
-    gnutar
-    gzip
     util-linux
     e2fsprogs
+    gnused
     gawk
+    python3Minimal
+  ];
+  exportTools = runTools ++ [
+    nix
+    findutils
+    gnugrep
+    gnutar
+    gzip
     jq
     erofs-utils
-    python3Minimal
   ];
   udhcpc = writeShellScript "tsugumi-pack-udhcpc" ''
     PATH=${busybox}/bin
@@ -114,14 +134,14 @@ let
         ;;
     esac
   '';
-  init = writeShellScript "tsugumi-pack-init" ''
+  # What both modes do before and after their own part.
+  boot = mode: tools: body: ''
     export PATH=${lib.makeBinPath tools}
-    export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
-    export SSL_CERT_FILE=$NIX_SSL_CERT_FILE HOME=/root TMPDIR=/tmp USER=root
+    export HOME=/root TMPDIR=/tmp USER=root
     export TSUGUMID=${tsugumid}/bin/tsugumid TSUGUMI_RPC=${tsugumid}/bin/tsugumi-rpc
     export TSUGUMI_SCHEMA=${schema}/tsugumi.bfbs FLATC=${flatbuffers}/bin/flatc
-    export CARD_NIXPKGS_REV=${cardNixpkgs.rev} CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}
     exec </dev/console >/dev/console 2>&1
+    mode=${mode}
     stage() { echo "PACK-STAGE $*"; }
     off() { sync; ${busybox}/bin/poweroff -f; }
     fail() { echo "PACK-FAILED $*"; [ -d /pack ] && echo 1 > "/pack/$mode.status"; off; }
@@ -138,91 +158,104 @@ let
     mount -t tmpfs -o mode=755 tmpfs /run
     mount -t tmpfs -o mode=1777 tmpfs /tmp
     mount -t tmpfs -o mode=700 tmpfs /root
-    cp -a /etc /run/etc && mount --bind /run/etc /etc
-    mode=$(sed -n 's/.*tsugumi\.pack=\([a-z]*\).*/\1/p' /proc/cmdline)
-    mount -t virtiofs pack /pack || fail "cannot mount the pack folder"
-    stage boot "$mode" "$(nproc) CPUs" "$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) MiB"
-
-    # /nix: the image's store, under the payload's (run) or with the
-    # exporter's store disk as the writable layer (export).
     mount -t tmpfs -o mode=755 tmpfs /mnt
-    lower=/nix
-    case "$mode" in
-    export)
-      if ! blkid -p /dev/vdb >/dev/null 2>&1; then
-        mkfs.ext4 -q -F -L tsugumi-pack-store /dev/vdb || fail "cannot format the store disk"
-      fi
-      mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
-      upper=/persist/nix ;;
-    run)
-      mkdir -p /mnt/payload
-      mount -t erofs -o ro /dev/vdb /mnt/payload || fail "cannot mount the payload"
-      lower=/mnt/payload/nix:/nix
-      # /dev/vdc: this run's scratch disk (sparse, removed by the app after
-      # the run). tsugumid keeps run scratch on a disk, not in memory.
-      mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 /dev/vdc || fail "cannot format the scratch disk"
-      mount -t ext4 -o noatime /dev/vdc /persist || fail "cannot mount the scratch disk"
-      mkdir -p /persist/work
-      mount --bind /persist/work /work
-      upper=/persist/nix ;;
-    *) fail "unknown mode '$mode'" ;;
-    esac
-    mkdir -p $upper/upper $upper/work
-    mount -t overlay overlay -o lowerdir=$lower,upperdir=$upper/upper,workdir=$upper/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix \
-      || fail "cannot mount the Nix store"
-    nix-store --load-db < /registration || fail "cannot register the image store"
-    if [ "$mode" = run ]; then
-      nix-store --load-db < /mnt/payload/registration || fail "cannot register the payload"
-    fi
-    mkdir -p /nix/var/nix/gcroots /nix/var/nix/daemon-socket
-    nix-daemon --daemon >/run/nix-daemon.log 2>&1 &
-    for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.05; done
-    [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start"
-    export NIX_REMOTE=daemon
+    cp -a /etc /run/etc && mount --bind /run/etc /etc
+    mount -t virtiofs pack /pack || fail "cannot mount the pack folder"
     ${busybox}/bin/ip link set lo up
-
+    stage boot "$mode" "$(nproc) CPUs" "$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) MiB"
     status=0
-    case "$mode" in
-    export)
-      stage network
-      ${busybox}/bin/udhcpc -i eth0 -s ${udhcpc} -q -f -n -t 20 -T 1 >/dev/null || fail "no network (DHCP failed)"
-      bash ${./export.sh} 2>&1 | tee /pack/export.log
-      status=''${PIPESTATUS[0]} ;;
-    run)
-      mkdir -p /pack/result
-      cp -a /mnt/payload/project /work/project
-      chmod -R u+w /work/project
-      PACK_WORK=/work python3 ${./run.py} /work/project /pack/request.json /pack/result 2>&1 | tee /pack/result/run.log
-      status=''${PIPESTATUS[0]} ;;
-    esac
+    ${body}
     echo "$status" > "/pack/$mode.status"
     stage done "$status"
     off
   '';
-  runtime = tools ++ [
+  exportInit = writeShellScript "tsugumi-pack-export-init" (
+    boot "export" exportTools ''
+      export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
+      export CARD_NIXPKGS_REV=${cardNixpkgs.rev} CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}
+      # What an app's runner image already holds: the payload leaves it out.
+      export RUN_STORE_PATHS=${runRegistration}/store-paths
+      if ! blkid -p /dev/vdb >/dev/null 2>&1; then
+        mkfs.ext4 -q -F -L tsugumi-pack-store /dev/vdb || fail "cannot format the store disk"
+      fi
+      mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
+      mkdir -p /persist/nix/upper /persist/nix/work /persist/export
+      mount -t overlay overlay -o lowerdir=/nix,upperdir=/persist/nix/upper,workdir=/persist/nix/work,index=off,redirect_dir=off,metacopy=off,xino=off /nix \
+        || fail "cannot mount the Nix store"
+      mount --bind /persist/export /work
+      nix-store --load-db < /registration || fail "cannot register the image store"
+      mkdir -p /nix/var/nix/gcroots /nix/var/nix/daemon-socket
+      nix-daemon --daemon >/run/nix-daemon.log 2>&1 &
+      for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.05; done
+      [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start"
+      export NIX_REMOTE=daemon
+      stage network
+      ${busybox}/bin/udhcpc -i eth0 -s ${udhcpc} -q -f -n -t 20 -T 1 >/dev/null || fail "no network (DHCP failed)"
+      bash ${./export.sh} 2>&1 | tee /pack/export.log
+      status=''${PIPESTATUS[0]}
+    ''
+  );
+  runInit = writeShellScript "tsugumi-pack-run-init" (
+    boot "run" runTools ''
+      mkdir -p /mnt/payload
+      mount -t erofs -o ro /dev/vdb /mnt/payload || fail "cannot mount the payload"
+      mount -t overlay overlay -o ro,lowerdir=/mnt/payload/nix:/nix /nix || fail "cannot mount the store"
+      # /dev/vdc: this run's scratch disk (sparse, removed by the app after
+      # the run). tsugumid keeps run scratch on a disk, not in memory.
+      mkfs.ext4 -q -F -E lazy_itable_init=1,lazy_journal_init=1 /dev/vdc || fail "cannot format the scratch disk"
+      mount -t ext4 -o noatime /dev/vdc /work || fail "cannot mount the scratch disk"
+      mkdir -p /pack/result
+      cp -a /mnt/payload/project /work/project
+      chmod -R u+w /work/project
+      PACK_WORK=/work PACK_PREPARED=/mnt/payload/cards.jsonl \
+        python3 ${./run.py} /work/project /pack/request.json /pack/result 2>&1 | tee /pack/result/run.log
+      status=''${PIPESTATUS[0]}
+    ''
+  );
+  base = [
     tsugumid
     schema
     flatbuffers
-    cacert
     busybox
-    etc
-    init
   ];
-  registration = closureInfo { rootPaths = runtime; };
+  runRegistration = closureInfo { rootPaths = base ++ runTools ++ [ runEtc ]; };
+  runImage = closureInfo {
+    rootPaths =
+      base
+      ++ runTools
+      ++ [
+        runEtc
+        runInit
+      ];
+  };
+  exportImage = closureInfo {
+    rootPaths =
+      base
+      ++ exportTools
+      ++ [
+        cacert
+        exportEtc
+        exportInit
+      ];
+  };
+  image = name: registration: etc: init: ''
+    root=$TMPDIR/${name}
+    mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,pack,work,var/empty,bin,mnt}
+    for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
+    cp ${registration}/registration $root/registration
+    cp ${registration}/store-paths $root/store-paths
+    cp -rL ${etc}/etc $root/etc
+    chmod -R u+w $root/etc
+    ln -s /run/resolv.conf $root/etc/resolv.conf
+    ln -s ${bashInteractive}/bin/sh $root/bin/sh
+    ln -s ${init} $root/init
+    mkfs.erofs -zlz4hc -T0 --all-root $out/${name}.erofs $root
+  '';
 in
 runCommand "tsugumi-pack-guest" { nativeBuildInputs = [ erofs-utils ]; } ''
-  root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,pack,work,var/empty,bin,mnt}
-  for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
-  cp ${registration}/registration $root/registration
-  cp ${registration}/store-paths $root/store-paths
-  cp -rL ${etc}/etc $root/etc
-  chmod -R u+w $root/etc
-  ln -s /run/resolv.conf $root/etc/resolv.conf
-  ln -s ${bashInteractive}/bin/sh $root/bin/sh
-  ln -s ${init} $root/init
   mkdir -p $out
-  mkfs.erofs -zlz4hc -T0 --all-root $out/rootfs.erofs $root
+  ${image "export" exportImage exportEtc exportInit}
+  ${image "run" runImage runEtc runInit}
   cp ${kernel}/vmlinux $out/vmlinux
-  echo ${baseNameOf (toString init)} > $out/identity
+  echo ${baseNameOf (toString runInit)} > $out/identity
 ''

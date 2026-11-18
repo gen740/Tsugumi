@@ -20,29 +20,35 @@ come later.
 
 1. **Stage the Project.** Its files are copied without `.tsugumi/` (run
    history, versions) or `.git`: what a run produced stays with the author.
-2. **Build every Card in the pack guest.** `tsugumi-pack` boots the pack guest
-   (below) in *export* mode, with the network on and a store disk that is kept
-   between exports (`~/Library/Caches/tsugumi-pack/store.img`, sparse).
+2. **Evaluate and build every Card, once, at export.** `tsugumi-pack` boots
+   the export guest (below) with the network on and a store disk that is
+   kept between exports (`~/Library/Caches/tsugumi-pack/store.img`, sparse).
    There `tsugumid --prepare-cards` opens the Project and, for every Code
    Card, performs exactly the evaluation and build a run of that Card would
    perform on the local service (`NixRunner::build`), whether or not a run
-   would reach it. A Card that does not build fails the export and is named.
-3. **Write the payload.** Each Card's runtime closure, its derivations, and
-   the nixpkgs sources the Cards are evaluated with, minus what the base image
-   already holds, go into `payload.erofs` with their Nix registration and the
-   staged Project.
+   would reach it. For each Card it records the evaluation key (the nixpkgs
+   pin, the system and the content-addressed definition, contract,
+   parameter and upstream folders) and the build: manifest, closure and run
+   list shape. A Card that does not build fails the export and is named.
+3. **Write the payload.** The Cards' runtime closures, minus what the app's
+   runner image already holds, go into `payload.erofs` with those records
+   (`cards.jsonl`) and the staged Project. No nixpkgs sources, derivations
+   or Nix database: nothing in the app evaluates.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
-   `rootfs.erofs` (the pack guest), `payload.erofs` and `pack.json` (the
+   `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
    triggers and each Card's parameters, with those that change the build
    marked fixed).
 
-The app, when run, boots the same guest in *run* mode with **no network
-device**. The payload's store is laid over the image's (overlayfs, writes to
-a sparse scratch disk the app removes afterwards: tsugumid keeps run scratch
-on a disk), the recipient's parameter values and files are written into a
-copy of the Project, and `tsugumid` runs the Workflow from its trigger
-through the same RPC the apps use. Every Card's outputs (raw FlatBuffers
+The app, when run, boots the runner image with **no network device**. The
+payload's store is laid over the image's (a read-only overlay), the
+recipient's parameter values and files are written into a copy of the
+Project on a sparse scratch disk the app removes afterwards, and `tsugumid
+--prepared-cards` runs the Workflow from its trigger through the same RPC
+the apps use. For each Card it computes the evaluation key as it would
+before evaluating, and uses the recorded build only if the key is the
+export's; a Card without a record, or one that changed, fails with that
+reason instead of being evaluated. Every Card's outputs (raw FlatBuffers
 bytes, JSON, and the content of File and Directory values), display (PNG,
 text, table) and logs are written under the results folder. `summary.json`
 lists every invocation and, under `results`, the outputs no other Card
@@ -51,28 +57,33 @@ and removes the run's temporary folder and scratch disk.
 
 ## Choices and why
 
-- **The run is an ordinary tsugumid run.** Scheduling, workers, sandboxing,
-  batches, branches and failures are tsugumid's own; nothing in `pack/`
-  schedules Cards. The price is that the guest carries Nix and the nixpkgs
-  sources, and every run evaluates its Cards again (offline, finding every
-  derivation and output already present). A tsugumid that could accept its
-  build plans as data would remove that evaluation; it is not needed for the
-  outcome and is left for a measured follow-up.
-- **`--prepare-cards` in tsugumid instead of a build in `pack/`.** Which files
-  a Card's evaluation sees (generated contracts, parameters, upstream exports,
-  sources) is tsugumid's logic. Duplicating it in the exporter would let the
-  app's builds drift from the Workflow's; one flag reuses it, and also covers
-  branches a run would not take, which a recorded run cannot.
-- **A guest, not `nix bundle`.** The Cards are Linux programs with absolute
-  `/nix/store` paths. A minimal Linux guest with the closure placed directly
-  in a read-only image runs them unmodified; bundling and unpacking them again
-  on macOS would need a writable `/nix` there, which a recipient's Mac does
-  not have.
-- **One guest image for export and run.** The exporter needs a Linux Nix
-  with network to build; the app needs the same core offline. One image with
-  two modes keeps the builder and the runner identical, and makes
-  `tsugumi-pack` need nothing but Virtualization.framework on the author's
-  Mac. The kernel is the shared VM's (`vm/guest/kernel.nix`).
+- **The run is an ordinary tsugumid run, without evaluation.** Scheduling,
+  workers, sandboxing, batches, branches and failures are tsugumid's own;
+  nothing in `pack/` schedules Cards. Only the step from a Card's definition
+  to its build is replaced: in an app the definitions are fixed, so
+  evaluating them again could only give the same builds. The first version
+  of this tool did evaluate in the app (offline, with nixpkgs and every
+  derivation shipped); dropping that took 156 MiB off cell-count's app and
+  the first result from 2.2 s to 0.9 s.
+- **`--prepare-cards` and `--prepared-cards` in tsugumid, not a build in
+  `pack/`.** Which files a Card's evaluation sees (generated contracts,
+  parameters, upstream exports) is tsugumid's logic, and so is the key that
+  says two evaluations are the same. The exporter reuses both, so an app's
+  builds cannot drift from the Workflow's; it also covers branches a run
+  would not take, which a recorded run cannot. Both modes use `/work` as the
+  work folder because the key names folders under its `scratch/`.
+- **A guest, with the closure placed in an image.** The Cards are Linux
+  programs with absolute `/nix/store` paths, so they need a Linux kernel;
+  a minimal guest with the closure in a read-only image runs them
+  unmodified. `nix bundle`'s default bundler would put the same files in a
+  self-extracting archive that unpacks them at every start, and still needs
+  a Linux kernel to run them.
+- **Two images from one definition.** The export image has Nix, a CA bundle
+  and the tools that write the payload; the runner image has tsugumid, its
+  run driver and the few tools `/init` uses, and no Nix. Both carry the same
+  tsugumid, so the keys computed in both match. `tsugumi-pack` needs nothing
+  but Virtualization.framework on the author's Mac. The kernel is the shared
+  VM's (`vm/guest/kernel.nix`).
 - **One executable for exporter and launcher.** It is the only program that
   needs the virtualization entitlement; inside an app it finds `pack.json`
   and becomes that app's launcher. The launcher only boots the guest, hands
@@ -92,16 +103,20 @@ and removes the run's temporary folder and scratch disk.
 - **Values are recorded in the app.** Record I/O is off by default, which
   would leave the recipient with displays only. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
-- **Size.** The nixpkgs sources are 130 MiB of every payload (191 MiB
-  unpacked) and, with the derivations, are there only for the run's
-  evaluation: a one-Card Python Project's payload is 223 MiB, cell-count's
-  544 MiB. Removing that evaluation (above) would remove them.
+- **Size.** What remains is what the Cards and tsugumid need to run.
+  Cell-count's payload (402 MiB) is its Cards' closures: Python 147 MiB,
+  SciPy 135, BLAS and LAPACK 55 each, NumPy 51, matplotlib 44, scikit-image
+  34 (unpacked). The runner image (155 MiB; 335 unpacked) is mostly glibc
+  47, ICU 40 (linked by tsugumid), python3-minimal 32 (the run driver),
+  tsugumid 28, util-linux 30 and Boost 18 (through the Nix libraries
+  tsugumid links). Smaller apps now depend on the Cards' own environments
+  and on a tsugumid build without the evaluator for the runner.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| [guest/default.nix](guest/default.nix) | The pack guest (`packages.aarch64-linux.pack-guest`): `/init` for both modes |
+| [guest/default.nix](guest/default.nix) | The export and runner images (`packages.aarch64-linux.pack-guest`) and their `/init` |
 | [guest/export.sh](guest/export.sh) | Export mode: build every Card, write `payload.erofs` |
 | [guest/run.py](guest/run.py) | Run mode: apply the request, run from the trigger, write the results |
 | [launcher/](launcher/) | `tsugumi-pack` (Swift): exporter and app launcher |
@@ -126,16 +141,21 @@ run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
 
 | | |
 | --- | --- |
-| Export, store disk warm / first export | 58 s / 77 s (builds: 5 s / 28 s, the rest is writing the payload) |
-| App size | 728 MiB on disk: payload 544 MiB (4,804 store paths), guest image 170 MiB, kernel 14 MiB, launcher 0.25 MiB |
-| Download (`ditto -c -k` zip) | 466 MiB |
-| Boot to tsugumid ready | 1.9 s |
-| First Code Card result (`mitosis`) / first figure (`generate`) | 2.2–2.6 s / 3.6 s after launch |
-| Whole Workflow, results written | 23.8–24.8 s (the parameter sweep is 18 s of it) |
+| | Now | Evaluating in the app (first version) |
+| --- | --- | --- |
+| Export, store disk warm | 22 s | 58 s |
+| App size | 586 MiB: payload 402 (104 store paths), runner image 155, kernel 14 | 728 MiB: payload 544 (4,804 paths), image 170, kernel 14 |
+| Download (`ditto -c -k` zip) | 396 MiB | 466 MiB |
+| Boot to tsugumid ready | 0.6 s | 1.9 s |
+| First Code Card result (`mitosis`) / first figure (`generate`) | 0.9 s / 1.7 s | 2.2–2.6 s / 3.6 s |
+| Whole Workflow, results written | 21.8 s | 23.8–24.8 s |
 
-**Offline.** The app's guest has no network device at all, so nothing in it
-can reach the network; the run still evaluated and started every Card, which
-shows the payload is complete. (The Mac's own network was left on: this Mac is
+The first export with an empty store disk took 77 s (builds 28 s). The
+parameter sweep is 18 s of every run.
+
+**Offline.** The app's guest has no network device at all, and its image
+has no Nix, so nothing in it can download or build; tsugumid's log records
+no evaluation. Every Card still ran, which shows the payload is complete. (The Mac's own network was left on: this Mac is
 shared, and the guest's isolation does not depend on it.)
 
 **Same results as the Workflow in Tsugumi.** The reference is the same
@@ -150,9 +170,10 @@ refused with its reason.
 
 **A recipient's file.** A three-Card Project (trigger, an input Card with a
 text file, a Python Card that counts lines and words and writes the text
-upper-cased as a File) exported to a 407 MiB app. With `--file
-text=mine.txt` the app returned `counts.json` (3 lines, 6 words) and
-`upper/upper.txt` for the given file in 1.9 s, identical to the reference
+upper-cased as a File) exported to a 268 MiB app (payload 98 MiB; 407 MiB
+when the app evaluated). With `--file text=mine.txt` the app returned
+`counts.json` (3 lines, 6 words) and `upper/upper.txt` for the given file in
+1.8 s, identical to the reference
 run given the same file (the File value's JSON names the copy, not the
 guest's path).
 
@@ -177,4 +198,6 @@ shared, so nothing was brought to the front).
 - Distribution signing: an app signed with a development certificate runs on
   this Mac; another Mac needs Developer ID signing and notarization.
 - Cards built for x86_64-linux (Rosetta in the guest) and remote execution
-  services are not exported.
+  services are not exported. Cards that use `nixSources` are refused by the
+  app's tsugumid: their source lookups are evaluations too, and the records
+  do not carry them yet.

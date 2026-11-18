@@ -145,7 +145,9 @@ def start_core(project, work):
     process = subprocess.Popen(
         [os.environ["TSUGUMID"], "--project", str(project), "--unix", str(socket),
          "--control-dir", str(control), "--cpus", str(os.cpu_count() or 2),
-         "--scratch-dir", str(work / "scratch"), "--run-scratch-dir", str(work / "run-scratch")],
+         "--scratch-dir", str(work / "scratch"), "--run-scratch-dir", str(work / "run-scratch")]
+        # The builds made at export: no Card is evaluated in the app.
+        + (["--prepared-cards", os.environ["PACK_PREPARED"]] if os.environ.get("PACK_PREPARED") else []),
         stdout=log, stderr=subprocess.STDOUT)
     ready = control / "server.ready"
     for _ in range(600):

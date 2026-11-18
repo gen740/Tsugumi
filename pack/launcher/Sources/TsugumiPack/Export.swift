@@ -20,7 +20,7 @@ struct Export {
     Builds every Card implementation of PROJECT for the pack guest and writes an
     app that runs the Workflow offline, with no Tsugumi or Nix installed.
 
-      --guest DIR       the pack guest (vmlinux, rootfs.erofs); default: next to
+      --guest DIR       the pack guest (vmlinux, export.erofs, run.erofs); default: next to
                         this command (../share/tsugumi-pack/guest) or $TSUGUMI_PACK_GUEST
       --cache DIR       the exporter's work folder and store disk, kept between
                         exports (default ~/Library/Caches/tsugumi-pack)
@@ -79,7 +79,7 @@ struct Export {
     guard fm.fileExists(atPath: project.appendingPathComponent("tsugumi.json").path) else {
       throw PackError("\(project.path) is not a Tsugumi Project (no tsugumi.json)")
     }
-    for name in ["vmlinux", "rootfs.erofs"] where !fm.fileExists(atPath: guest.appendingPathComponent(name).path) {
+    for name in ["vmlinux", "export.erofs", "run.erofs"] where !fm.fileExists(atPath: guest.appendingPathComponent(name).path) {
       throw PackError("the pack guest is missing \(name) in \(guest.path) (build it: pack/build.sh)")
     }
     try fm.createDirectory(at: cache, withIntermediateDirectories: true)
@@ -95,7 +95,7 @@ struct Export {
     let console = work.appendingPathComponent("console.log")
     print("tsugumi-pack: building \(project.lastPathComponent) in the pack guest (\(cpus) CPUs, \(memoryGiB) GiB)")
     let boot = GuestBoot(mode: .export, kernel: guest.appendingPathComponent("vmlinux"),
-                         rootfs: guest.appendingPathComponent("rootfs.erofs"), disk: store, diskReadOnly: false,
+                         rootfs: guest.appendingPathComponent("export.erofs"), disk: store, diskReadOnly: false,
                          share: work, network: true, cpus: cpus, memoryGiB: memoryGiB, consoleLog: console)
     try boot.run { line in
       if verbose || line.hasPrefix("PACK-") || line.hasPrefix("payload") || line.hasPrefix("built ")
@@ -137,9 +137,8 @@ struct Export {
     try fm.createDirectory(at: macos, withIntermediateDirectories: true)
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     try fm.copyItem(at: executable, to: macos.appendingPathComponent(name))
-    for file in ["vmlinux", "rootfs.erofs"] {
-      try fm.copyItem(at: guest.appendingPathComponent(file), to: resources.appendingPathComponent(file))
-    }
+    try fm.copyItem(at: guest.appendingPathComponent("vmlinux"), to: resources.appendingPathComponent("vmlinux"))
+    try fm.copyItem(at: guest.appendingPathComponent("run.erofs"), to: resources.appendingPathComponent("rootfs.erofs"))
     try fm.moveItem(at: payload, to: resources.appendingPathComponent("payload.erofs"))
     try writeManifest(to: resources.appendingPathComponent("pack.json"), name: name, export: export)
     let identifier = "org.tsugumi.pack." + name.lowercased().filter { $0.isLetter || $0.isNumber }

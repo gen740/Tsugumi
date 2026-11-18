@@ -152,6 +152,21 @@ struct CardJournalLine {
   t::String<"message"> message;
 };
 
+// One Card evaluated and built ahead of its runs (tsugumid --prepare-cards);
+// a core started with --prepared-cards uses it instead of evaluating.
+struct PreparedCard {
+  Opt<"card", v::String> card;
+  Opt<"error", v::String> error;
+  // The evaluation key, as the core would compute it again for this Card.
+  Opt<"key", v::String> key;
+  Opt<"derivation", v::String> derivation;
+  Opt<"manifest", v::String> manifest;
+  Opt<"system", v::String> system;
+  Opt<"execution_list", v::Bool> execution_list;
+  Opt<"implementations", v::Uint64> implementations;
+  Opt<"closure", v::Array<v::String>> closure;
+};
+
 struct NixpkgsPin {
   t::String<"url"> url;
   t::String<"narHash"> nar_hash;

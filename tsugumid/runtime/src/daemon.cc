@@ -51,6 +51,7 @@ struct Options {
   bool project_shell = false;
   stdfs::path substituters_file;
   stdfs::path prepare_cards;
+  stdfs::path prepared_cards;
   std::string fault;
 };
 
@@ -69,7 +70,8 @@ void usage() {
       "                [--host-folders DIR] [--substituters-file FILE]\n"
       "       tsugumid --project DIR --prepare-cards FILE [options]\n"
       "                builds every Code Card without running any, writes one\n"
-      "                JSON line per Card to FILE and exits\n");
+      "                JSON line per Card to FILE and exits\n"
+      "       --prepared-cards FILE  runs those builds; evaluates no Card\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -127,6 +129,8 @@ std::optional<Options> parse(int argc, char** argv) {
       o.substituters_file = next();
     else if (a == "--prepare-cards")
       o.prepare_cards = next();
+    else if (a == "--prepared-cards")
+      o.prepared_cards = next();
     else if (a == "--help")
       return std::nullopt;
     else
@@ -236,6 +240,7 @@ int run_daemon(int argc, char** argv) {
   so.host_folders = opt.host_folders;
   so.project_shell = opt.project_shell;
   so.substituters_file = opt.substituters_file;
+  so.prepared_cards = opt.prepared_cards;
   if (!so.scratch_dir.empty()) {
     // Evaluator downloads and subprocess temporaries belong to the selected
     // work area too, rather than a second implicit global temporary root.

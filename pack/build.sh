@@ -3,7 +3,7 @@
 #
 #   bin/tsugumi-pack                  the exporter and app launcher (signed, with
 #                                     the virtualization entitlement)
-#   share/tsugumi-pack/guest/         vmlinux, rootfs.erofs, identity
+#   share/tsugumi-pack/guest/         vmlinux, export.erofs, run.erofs, identity
 #
 # The guest is packages.aarch64-linux.pack-guest. It needs an aarch64-linux
 # Nix builder: a Linux host, a configured remote builder, or
@@ -35,7 +35,7 @@ else
 fi
 rm -rf "$guest.new"
 mkdir -p "$guest.new"
-for f in vmlinux rootfs.erofs identity; do "${copy[@]}" "$source_dir/$f" "$guest.new/$f"; done
+for f in vmlinux export.erofs run.erofs identity; do "${copy[@]}" "$source_dir/$f" "$guest.new/$f"; done
 chmod -R u+w "$guest.new"
 rm -rf "$guest"
 mv "$guest.new" "$guest"

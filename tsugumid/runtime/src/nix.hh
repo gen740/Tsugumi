@@ -16,6 +16,7 @@
 
 #include "model.hh"
 #include "nix_eval.hh"
+#include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
 
 namespace tsugumi {
@@ -54,6 +55,9 @@ struct CardBuild {
 
 struct CardBuildPlan {
   CardBuild common;
+  // What identifies the evaluation (pin, system, arguments), for builds
+  // prepared ahead of their runs.
+  std::string evaluation_key;
   std::vector<schema::ManifestRun> implementations;
   bool execution_list = false;
   auto implementation(size_t index) const -> CardBuild;
@@ -128,6 +132,10 @@ class NixRunner {
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
   std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
+  // The prepared build of `card` (--prepared-cards), checked against the
+  // evaluation the core would run now.
+  auto prepared(const std::string& card, const std::string& key) const
+      -> NixResult;
   std::filesystem::path content_dir(
       const char* kind, const std::string& digest,
       const std::function<std::map<std::string, std::string>()>& files);
@@ -141,6 +149,7 @@ class NixRunner {
   // Serialized by the Nix lane. Retain at most one evaluation per Card,
   // capped at 256 Cards; edits replace entries, and deleted Cards are pruned.
   std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
+  std::optional<std::map<std::string, schema::PreparedCard>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;
