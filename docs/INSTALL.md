@@ -22,7 +22,7 @@ Releases are signed ad hoc (with the virtualization entitlement needed to run th
 xattr -dr com.apple.quarantine /Applications/Tsugumi.app
 ```
 
-From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The ChatGPT button is text only because permission to redistribute the logo in an open-source repository could not be established. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
+From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want to try, and once the first preparation is done, press "Run" at the top of the screen. On first start, connect the Agent with an Anthropic or OpenAI API key, or choose "Continue with ChatGPT" to use your ChatGPT plan. Plan usage is separate from API key billing; Tsugumi charges nothing. You can also choose "Skip and Start" and connect later under "API" in Settings. In the Web UI, ChatGPT sign-in is available only when the page is opened at localhost or 127.0.0.1 in a browser on the server’s machine; use an API key from a non-local page. The basic operations are in the [README](../README.md#following-an-experiment-on-screen) and [Usage](Usage.md); what data is sent to outside models is in [Security and isolation](security.md#what-is-sent-to-the-model).
 
 ### Automatic updates
 
@@ -63,7 +63,7 @@ tsugumi update
 ```
 
 - **What is installed**: only the command (`~/.local/bin/tsugumi`) and what it runs (`~/.local/share/tsugumi/<version>.<generation>/`). If `~/.local/bin` is not on `PATH`, it says so; it does not change your shell's settings. `tsugumi update` or installing again replaces it with a new version (it does not update itself). To remove it, see [Uninstalling](#uninstalling).
-- **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes Node.js and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The first start takes a few minutes while Tsugumi is assembled inside the VM. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](WebUI.md#the-tsugumi-command).
+- **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes Node.js and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The release-built image starts the bundled Tsugumi runtime; first boot initializes its persistent disks. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](WebUI.md#the-tsugumi-command).
 - **Linux (x86_64 / aarch64)**: needs [Nix](https://nixos.org/download). It fetches the source, `tsugumi-linux.tar.gz`, and builds it with Nix (the first time takes a few minutes; how it works is in [Web UI](WebUI.md#the-tsugumi-command)).
 - **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
 - Each installation, including the same version again, gets a separate runtime directory. The installer checks the checksum (`.sha256`), builds or unpacks there, and runs `tsugumi --version` before atomically switching `current`. A failed build or version check leaves the current command usable. Old runtimes stay available because a running host can still read their assets; stop hosts and use `tsugumi uninstall --yes` to remove installer-marked generations. Foreign directories under the install root are preserved. To choose a version, use the environment variable `TSUGUMI_VERSION`.
@@ -78,14 +78,14 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 
 - Nix (with flakes enabled)
 - Xcode or the Command Line Tools
-- Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
+- For development image cache downloads: authenticated `gh` (`gh auth login`). If no artifact matches the current definition: a Linux Nix builder, or Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [vm/guest/versions.env](../vm/guest/versions.env); after `container system start`)
 
-Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
+Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../ui/macos/Package.swift) and the relevant package lock files.
 
 ### Minimal steps
 
 ```bash
-macOS/build-app.sh
+ui/macos/build-app.sh
 ```
 
 ```bash
@@ -106,19 +106,30 @@ cmake -S . -B build -G Ninja && ninja -C build
 
 On Linux, the same CMake build also produces the remote listener `build/workerd/tsugumi-workerd`. The packaged listener is available as `nix build .#workerd`; see [Remote execution](RemoteExecution.md) for installation and registration.
 
-The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
+The shared VM's release-built guest contains a kernel, read-only rootfs, Tsugumi,
+the worker and project tools in one `dist/tsugumi-vm/tsugumi-vm.tar.gz` payload.
+The resolver evaluates the full guest definition and verifies local artifacts
+before reuse; otherwise it downloads an exact-identity artifact from successful
+Actions runs with `gh`, or builds the same output locally with Nix/Apple container.
+First boot registers the shipped store and starts the prebuilt supervisor,
+without a source share or Tsugumi compilation:
 
 ```bash
-macOS/Container/build-image.sh --vm
+vm/guest/build-image.sh --vm
 ```
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
-`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it. For development signing and release channels, see [Releasing](../RELEASING.md). If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Releasing](../RELEASING.md)).
+`ui/macos/build-app.sh` packages the app into `dist/Tsugumi.app`, including the shared
+module host, demos, guest archive/manifest, then
+signs it. It resolves the current guest on every build. Set `TSUGUMI_VM_BUILD=1`
+to force a local guest build, or `TSUGUMI_VM_NIX_BUILDERS` to use a configured
+Linux builder. For release artifact requirements and signing, see
+[Releasing](../RELEASING.md). `--check` and `--kernel` remain local builder tools.
 
-Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `macOS/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `macOS/tools/build-vmctl.sh`.
+Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `ui/macos/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `vm/macos/tools/build-vmctl.sh`.
 
-The app icon `macOS/Resources/AppIcon.icns` is generated from `docs/assets/tsugumi-icon.svg` and committed. After changing the SVG, regenerate it with `swift macOS/Resources/tools/make_icon.swift`.
+The app icon `ui/macos/Resources/AppIcon.icns` is generated from `docs/assets/tsugumi-icon.svg` and committed. After changing the SVG, regenerate it with `swift ui/macos/Resources/tools/make_icon.swift`.
 
 ## Checking after building
 

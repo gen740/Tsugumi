@@ -1,14 +1,14 @@
 # Builds the app for a version and publishes it as a GitHub release:
 # Tsugumi.zip (the app, ad-hoc signed, `build-app.sh --release`) and
 # Tsugumi.zip.sha256, which installed release builds read to update themselves
-# (macOS/Sources/App/Model/Updater.swift), Tsugumi.dmg, for people installing it
+# (ui/macos/Sources/App/Model/Updater.swift), Tsugumi.dmg, for people installing it
 # from a browser, and the `tsugumi` command (macOS, Linux, Windows through WSL):
 # install.sh and install.ps1 (cli/) with
 # the files they take, tsugumi-macos-arm64.tar.gz and tsugumi-linux.tar.gz.
 #
 # Started by a tag v<major.minor.patch> or v<major.minor.patch>-rc.<number>.
 # The numeric version must match VERSION. An RC tag publishes a prerelease.
-# (macOS/tools/release.sh makes and pushes one), or by hand with a version:
+# (cli/release.sh makes and pushes one), or by hand with a version:
 # VERSION on main must already be that version; it is tagged here.
 name: Release
 on:
@@ -23,10 +23,13 @@ permissions:
   contents: write
 concurrency: release
 jobs:
-  app:
-    name: Build and publish the app (macOS)
-    runs-on: macos-26
-    timeout-minutes: 120
+  resolve:
+    name: Resolve immutable release revision
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.resolved.outputs.tag }}
+      version: ${{ steps.resolved.outputs.version }}
+      revision: ${{ steps.resolved.outputs.revision }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,24 +47,63 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # main takes changes only through pull requests.
-          [ "$(cat VERSION)" = "$v" ] || { echo "VERSION on main is $(cat VERSION), not $v: set it with a pull request first (macOS/tools/release.sh $v opens one)" >&2; exit 1; }
+          [ "$(cat VERSION)" = "$v" ] || { echo "VERSION on main is $(cat VERSION), not $v: set it with a pull request first (cli/release.sh $v opens one)" >&2; exit 1; }
           git tag -a "v$v" -m "Tsugumi $v"
           git push origin "refs/tags/v$v"
           echo "TAG=v$v" >> "$GITHUB_ENV"
-      - name: The tag is the version in VERSION
+      - id: resolved
+        name: The tag is the version in VERSION
         run: |
           tag="${TAG:-$GITHUB_REF_NAME}"
           [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[1-9][0-9]*)?$ ]] || { echo "not a release tag: $tag" >&2; exit 1; }
           version="${BASH_REMATCH[1]}"
           test "$(cat VERSION)" = "$version"
-          echo "TAG=$tag" >> "$GITHUB_ENV"
-          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: resolve
+    uses: ./.github/workflows/vm-image.yml
+    with:
+      revision: ${{ needs.resolve.outputs.revision }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+  app:
+    name: Build and package the app (macOS)
+    needs: [resolve, image]
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      PACKAGE_VERSION: ${{ needs.resolve.outputs.version }}
+      TSUGUMI_VM_ARTIFACT_ONLY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.revision }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.image.outputs.artifact }}
+          path: dist/tsugumi-vm
       - uses: ./.github/actions/setup-nix
         with:
           cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      # The VM boot disk is downloaded from its vm-<hash> release of this repository.
       - name: Build the app
-        run: macOS/build-app.sh --release
+        run: ui/macos/build-app.sh --release
+      - name: Exercise the downloaded guest with the existing VM suite
+        env:
+          TSUGUMI_TEST_CONTAINER: '1'
+          TSUGUMI_VM_IMAGE: ${{ github.workspace }}/dist/tsugumi-vm
+          TSUGUMI_VMHOST: ${{ github.workspace }}/dist/Tsugumi.app/Contents/MacOS/tsugumi-vmhost
+          TSUGUMI_HOSTD: ${{ github.workspace }}/dist/Tsugumi.app/Contents/MacOS/tsugumi-hostd
+          TSUGUMI_PY_BINDINGS: ${{ github.workspace }}/build-host/generated/python
+          TSUGUMI_CLIENT_LIB_DIR: ${{ github.workspace }}/build-host/client
+        run: |
+          set -euo pipefail
+          controller=$(vm/macos/tools/build-vmctl.sh | tail -n 1)
+          TSUGUMI_VMCTL="$controller" nix develop -c python3 tests/run-isolated.py python3 -m pytest -q tests/python/test_shared_vm.py -k 'projects_share_the_store or stopping_one_project'
       - name: Check and package the app
         run: |
           set -euo pipefail
@@ -86,6 +128,36 @@ jobs:
           codesign --verify --strict dist/check/tsugumi/bin/tsugumi-vmhost
           codesign -d --entitlements - dist/check/tsugumi/bin/tsugumi-vmhost 2>/dev/null | grep -q com.apple.security.virtualization
           rm -rf dist/check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-app
+          path: |
+            dist/Tsugumi.zip
+            dist/Tsugumi.zip.sha256
+            dist/Tsugumi.dmg
+            dist/tsugumi-*.tar.gz
+            dist/tsugumi-*.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, image, app]
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.revision }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-app
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.image.outputs.artifact }}
+          path: dist/tsugumi-vm
+      - name: Verify the same image before publication
+        run: python3 vm/guest/tools/vm-artifact.py verify dist/tsugumi-vm '${{ needs.image.outputs.identity }}' --revision '${{ needs.resolve.outputs.revision }}'
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,7 +194,8 @@ jobs:
           ```
           NOTES
           fi
-          gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg cli/install.sh cli/install.ps1 \
+          gh release create "$TAG" LICENSE dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg cli/install.sh cli/install.ps1 \
             dist/tsugumi-macos-arm64.tar.gz dist/tsugumi-macos-arm64.tar.gz.sha256 \
             dist/tsugumi-linux.tar.gz dist/tsugumi-linux.tar.gz.sha256 \
+            dist/tsugumi-vm/tsugumi-vm.tar.gz dist/tsugumi-vm/vm-manifest.json dist/tsugumi-vm/SHA256SUMS \
             --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes ${release_flags[@]+"${release_flags[@]}"}

@@ -31,7 +31,7 @@ from test_claude_code_plugin import isolated_environment, stop_resident_services
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
 SERVER = WEB_DIST / "server.js"
-needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and web/dist (cd web && npm run build)")
+needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and ui/web/dist (cd ui/web && npm run build)")
 
 
 def executable(path: Path, text: str):
@@ -391,7 +391,7 @@ def vm_server(tmp_path):
     write_project(project)
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
-    env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
+    env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
                TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
@@ -687,7 +687,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
+    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
     p = subprocess.Popen(["node", str(root / "web" / "dist" / "server.js"), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r":(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())

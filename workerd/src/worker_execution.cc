@@ -11,8 +11,8 @@
 
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/staging.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::workerd {
 namespace stdfs = std::filesystem;

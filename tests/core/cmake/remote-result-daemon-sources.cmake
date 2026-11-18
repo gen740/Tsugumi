@@ -1,0 +1,11 @@
+set(_tsugumi_remote_result_daemon_sources
+  shell_test.cc
+  collect_value_test.cc
+  history_copy_test.cc
+  metadata_test.cc
+  layout_boundary_test.cc
+  doubles/nix_eval.cc
+  remote_execution_test.cc
+  remote_lifetime_test.cc
+  host_requirements_test.cc
+)

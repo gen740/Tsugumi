@@ -54,8 +54,8 @@ TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   EXPECT_THROW(credentials.Get("absent"), host::Failure);
   credentials.Import(
       "account",
-      agent::json::Object(
-          R"({"access_token":"current","refresh_token":"refresh","id_token":"identity","expires_at_ms":9999999999999,"scope":"metadata"})"));
+      ::tsugumi::json::Object(
+          R"({"access_token":"current","refresh_token":"refresh","id_token":"identity","expires_at_ms":9999999999999,"scope":"chatgpt.tokens.use.direct"})"));
   EXPECT_EQ(credentials.AccessToken("account", ""), "current");
   // Another caller already replaced the rejected token: return the saved one
   // even if expired, exactly as the original refresh recheck did.
@@ -70,6 +70,163 @@ TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
     std::lock_guard lock(gate.mutex);
     EXPECT_EQ(credentials.Get("account"), expired);
   }
+}
+class CredentialRefreshTest : public testing::Test {
+ protected:
+  TemporaryDirectory directory;
+  host::HostStore store{directory.path};
+  host::StateGate gate;
+  ModelServer endpoint;
+  host::Credentials credentials{gate, store.db, {}};
+  host::Settings settings{directory.path,
+                          [](const auto&, const auto&) {},
+                          [&](const auto& id, auto stale) {
+                            return credentials.AccessToken(id, stale);
+                          },
+                          [](const auto&) { return true; },
+                          nullptr,
+                          host::Settings::KeyStorage::Host};
+
+  std::function<std::string(std::string_view)> access_token;
+  sql::Db settings_db{(directory.path / "host-settings.sqlite").string()};
+
+  CredentialRefreshTest() {
+    auto value = ::tsugumi::json::Object(
+        R"({"access_token":"old-access","refresh_token":"old-refresh","id_token":"old-id","scope":"openid chatgpt.tokens.use.direct","expires_at_ms":0,"resource":"https://api.openai.com/v1"})");
+    value["token_endpoint"] = Quote(endpoint.URL());
+    credentials.Import("account", value);
+    settings_db.exec(
+        R"(INSERT INTO accounts VALUES('desktop','account','{"active":true,"signed_in":true,"plan_enabled":true}'))");
+    access_token =
+        settings.Resolve({{"provider_id", Quote("chatgpt")}}).access_token;
+  }
+  auto Account() -> ::tsugumi::json::Members {
+    auto q =
+        settings_db.prepare("SELECT json FROM accounts WHERE id='account'");
+    if (!q.step()) throw std::runtime_error("missing test account");
+    return ::tsugumi::json::Object(q.text(0));
+  }
+  auto Status() -> std::unique_ptr<Tsugumi::Host::ProviderStatusT> {
+    namespace H = Tsugumi::Host;
+    flatbuffers::FlatBufferBuilder b;
+    auto value = H::CreateProviderStatusRequest(b, b.CreateString("desktop"),
+                                                b.CreateString("chatgpt"));
+    auto request = H::CreateRequest(b, H::RequestPayload::ProviderStatusRequest,
+                                    value.Union());
+    H::FinishMessageBuffer(
+        b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
+    const auto reply = settings.Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+    return std::unique_ptr<H::ProviderStatusT>(H::GetMessage(reply.data())
+                                                   ->payload_as_Reply()
+                                                   ->value_as_ProviderStatus()
+                                                   ->UnPack());
+  }
+};
+TEST_F(CredentialRefreshTest,
+       NarrowedScopePersistsAllRotatedTokensBeforeRefusal) {
+  endpoint.QueueHTTP(
+      R"({"access_token":"rotated-access","refresh_token":"rotated-refresh","id_token":"rotated-id","expires_in":7200,"scope":"openid"})");
+  EXPECT_THROW(access_token(""), agent::ProviderError);
+  const auto saved = credentials.Get("account");
+  EXPECT_EQ(::tsugumi::json::Text(saved, "access_token"), "rotated-access");
+  EXPECT_EQ(::tsugumi::json::Text(saved, "refresh_token"), "rotated-refresh");
+  EXPECT_EQ(::tsugumi::json::Text(saved, "id_token"), "rotated-id");
+  EXPECT_GT(::tsugumi::json::UInt(::tsugumi::json::Get(saved, "expires_at_ms")),
+            0u);
+  EXPECT_EQ(::tsugumi::json::Text(saved, "scope"), "openid");
+  EXPECT_TRUE(
+      ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "signed_in")));
+  EXPECT_FALSE(
+      ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "plan_enabled")));
+  EXPECT_FALSE(Status()->configured);
+  EXPECT_EQ(Status()->message,
+            "The ChatGPT plan is not enabled for this registration");
+  EXPECT_THROW(access_token(""), agent::ProviderError);
+  EXPECT_EQ(endpoint.Requests().size(), 1u);
+}
+TEST_F(CredentialRefreshTest,
+       OmittedScopeInheritsAndUsesReplacementOnNextRefresh) {
+  endpoint.QueueHTTP(
+      R"({"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":0})");
+  EXPECT_EQ(access_token(""), "rotated-access");
+  EXPECT_EQ(::tsugumi::json::Text(credentials.Get("account"), "scope"),
+            "openid chatgpt.tokens.use.direct");
+  endpoint.QueueHTTP(R"({"access_token":"latest-access","expires_in":3600})");
+  EXPECT_EQ(access_token(""), "latest-access");
+  ASSERT_EQ(endpoint.Requests().size(), 2u);
+  EXPECT_NE(endpoint.Requests()[1].find("refresh_token=rotated-refresh"),
+            std::string::npos);
+  EXPECT_EQ(::tsugumi::json::Text(credentials.Get("account"), "id_token"),
+            "old-id");
+  EXPECT_TRUE(Status()->configured);
+}
+TEST_F(CredentialRefreshTest, ExplicitEmptyScopeDisablesPlanAndKeepsTokens) {
+  endpoint.QueueHTTP(
+      R"({"access_token":"rotated-access","refresh_token":"rotated-refresh","scope":""})");
+  EXPECT_THROW(access_token(""), agent::ProviderError);
+  EXPECT_EQ(::tsugumi::json::Text(credentials.Get("account"), "refresh_token"),
+            "rotated-refresh");
+  EXPECT_EQ(::tsugumi::json::Text(credentials.Get("account"), "scope"), "");
+  EXPECT_FALSE(Status()->configured);
+}
+TEST_F(CredentialRefreshTest,
+       TerminalCodesRequireSignInAndNeverRetryConsumedTokens) {
+  for (const auto* code :
+       {"invalid_grant", "invalid_refresh_token", "token_expired",
+        "refresh_token_expired", "refresh_token_invalidated",
+        "refresh_token_reused", "refresh_token_revoked"}) {
+    SCOPED_TRACE(code);
+    auto value = credentials.Get("account");
+    value["refresh_token"] = Quote("old-refresh");
+    credentials.Import("account", value);
+    endpoint.QueueHTTP("{\"error\":{\"code\":" + Quote(code) +
+                           ",\"message\":\"old-refresh\"}}",
+                       400);
+    testing::internal::CaptureStderr();
+    try {
+      access_token("");
+      ADD_FAILURE() << "Terminal refresh was accepted";
+    } catch (const agent::ProviderError& error) {
+      EXPECT_EQ(std::string(error.what()), "Sign in to ChatGPT again");
+      EXPECT_EQ(error.code, code);
+      EXPECT_FALSE(error.retryable);
+    }
+    const auto log = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(log.find("old-refresh"), std::string::npos);
+    EXPECT_NE(log.find(code), std::string::npos);
+    EXPECT_NE(log.find("auth=chatgpt"), std::string::npos);
+    EXPECT_FALSE(
+        ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "signed_in")));
+    EXPECT_FALSE(Status()->configured);
+    EXPECT_EQ(Status()->message, "Sign in to ChatGPT again");
+    const auto requests = endpoint.Requests().size();
+    EXPECT_THROW(access_token(""), agent::ProviderError);
+    EXPECT_EQ(endpoint.Requests().size(), requests);
+  }
+}
+TEST_F(CredentialRefreshTest,
+       TemporaryFailuresKeepCredentialsAndConfiguration) {
+  const auto before = credentials.Get("account");
+  for (const auto status : {503, 429}) {
+    endpoint.QueueHTTP(
+        R"({"error":"invalid_grant","error_description":"temporarily unavailable old-refresh"})",
+        status);
+    try {
+      access_token("");
+      ADD_FAILURE() << "Temporary refresh was accepted";
+    } catch (const agent::ProviderError& error) {
+      EXPECT_TRUE(error.retryable);
+      EXPECT_EQ(error.status, status);
+    }
+    EXPECT_EQ(credentials.Get("account"), before);
+    EXPECT_TRUE(Status()->configured);
+    EXPECT_TRUE(
+        ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "signed_in")));
+  }
+  endpoint.QueueHTTP(
+      R"({"access_token":"recovered","refresh_token":"replacement"})");
+  EXPECT_EQ(access_token(""), "recovered");
 }
 TEST(HostComponents, DemoReferencesKeepTheConfiguredRootAndReadLimit) {
   host::DemoReferences absent({});
@@ -110,9 +267,9 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());
   EXPECT_EQ(providers.Profile("absent"), "desktop");
-  const auto selection = agent::json::Object(
+  const auto selection = ::tsugumi::json::Object(
       R"({"profile":"alternate","provider_id":"fixture","model":"selected"})");
-  providers.Configure("conversation", agent::json::Encode(selection));
+  providers.Configure("conversation", ::tsugumi::json::Encode(selection));
   EXPECT_EQ(providers.Selection("conversation"), selection);
   EXPECT_EQ(providers.Profile("conversation"), "alternate");
   const auto config = providers.ForConversation("conversation");

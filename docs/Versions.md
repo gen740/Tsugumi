@@ -19,7 +19,7 @@ Choosing data here fixes it as part of the computation's definition. Removing a 
 
 ## The results of runs
 
-Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `core/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
+Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `tsugumid/runtime/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
 
 Automatic commit messages are JSON records with `tsugumi: "commit"`, `kind` (`create`, `run`, `checkout`) and a Card ID. User-written messages and imported demo messages remain opaque text. Neither writing nor reading a project RPC selects a language; `SessionHello` has no language field.
 
@@ -61,6 +61,8 @@ Choose **Change record** or **Agent summary** beside the version history. This s
 
 - **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
 - **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.
+
+The project RPC returns typed commit, run and change facts. Its Git note JSON format stays private to the project daemon; the host formats the public facts for both clients and tools.
 
 The clients request a note when a version is hovered or selected, and display the returned text. The host Agent service chooses the mode and model, reads the authorized diff, generates the summary when needed and saves it. Requests from multiple windows for the same project and version share a gate: the saved Agent note is checked before any model call. A successful note is reused across windows and service restarts. Failed requests can be retried. Runs with no open version history do not request model summaries.
 

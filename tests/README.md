@@ -4,7 +4,7 @@ Run commands from the repository root. Build instructions are in [Installing and
 
 Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix check, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
 
-Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path macOS`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and names the new entries left in `/tmp`, `/var/tmp` and the shared scratch root (not the per-user temporary folder of macOS, where system services create entries of their own): on a dedicated machine (`CI` set, or inside a Nix build) that fails the run; elsewhere it is a report, because entries made by other work on the same machine cannot be told apart. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Killing the runner itself with SIGKILL cannot execute cleanup.
+Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path ui/macos`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and names the new entries left in `/tmp`, `/var/tmp` and the shared scratch root (not the per-user temporary folder of macOS, where system services create entries of their own): on a dedicated machine (`CI` set, or inside a Nix build) that fails the run; elsewhere it is a report, because entries made by other work on the same machine cannot be told apart. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Killing the runner itself with SIGKILL cannot execute cleanup.
 
 ### Secret-store isolation
 
@@ -20,7 +20,7 @@ by injecting a fake command runner, `KeychainStore` runner, or `MemorySecrets`.
 This prevents accidental use of these production adapters; it is not an OS
 sandbox for arbitrary malicious test code.
 
-`web/scripts/test.mjs` forces the switch before importing tests and creates a
+`ui/web/scripts/test.mjs` forces the switch before importing tests and creates a
 private HOME/support root when run standalone. It also records and rejects any
 `security` subprocess across the suite and requires the record to stay empty. Pytest's
 `tests/conftest.py` forces it and requires the isolated wrapper. Both Swift test
@@ -32,15 +32,15 @@ Audited paths (2026-11-16):
 
 | Suite / entry | Route to a secret store before isolation |
 | --- | --- |
-| `web/tests/thoughts.ts` | `chatRoutes` → `CoreHost.summarize/provider` → default `ProviderKeys.provision` → `keychainReader` → `security find-generic-password` (attributes and `-w`). RPC doubles did not replace this command runner. |
-| `web/tests/providerKeys.ts` | `source/provision/save/delete` exercise find, interactive add and delete commands, already with an explicit fake runner. `keychainReader` itself requires an injected runner. |
-| Other Web adapter tests (`settings`, `modelMenu`, `folderAttachments`, `agentRealCheck`, `hostReadiness`) | Construct `CoreHost`/`chatRoutes`; current cases replace settings/models, use ChatGPT rather than API-key selection, or exercise startup only. The default adapter remains attached, so a new API-key path would reach the same commands. `web/scripts/test.mjs` previously set no refusal switch. |
+| `ui/web/tests/thoughts.ts` | `chatRoutes` → `CoreHost.summarize/provider` → default `ProviderKeys.provision` → `keychainReader` → `security find-generic-password` (attributes and `-w`). RPC doubles did not replace this command runner. |
+| `ui/web/tests/providerKeys.ts` | `source/provision/save/delete` exercise find, interactive add and delete commands, already with an explicit fake runner. `keychainReader` itself requires an injected runner. |
+| Other Web adapter tests (`settings`, `modelMenu`, `folderAttachments`, `agentRealCheck`, `hostReadiness`) | Construct `CoreHost`/`chatRoutes`; current cases replace settings/models, use ChatGPT rather than API-key selection, or exercise startup only. The default adapter remains attached, so a new API-key path would reach the same commands. `ui/web/scripts/test.mjs` previously set no refusal switch. |
 | `tests/python/test_web_server.py`, `test_claude_code_plugin.py`, `test_cli.py` | Start the actual bundled server (MCP can start it detached). Settings key-status/catalog, models, API-key conversations, summaries and version notes can call the same default adapter. Their shared `isolated_environment` now forces the switch and a private HOME as well. |
-| `macOS/Tests` | App/session startup, chat/model availability (`ChatResumeTests`, `GuideTests`, `SyncTests`) and version-note requests can reach `CoreHostClient.provider/usable/models/versionNote` → `Keychain.load/loadWithoutAsking` → `SecItemCopyMatching`. Save/delete APIs also reach `SecItemUpdate/Add/Delete`; `exists` reads attributes. All now pass through `runSystemKeychain`. Without a support override, `CoreHostClient.stateDirectory` also selects `~/Library/Application Support/Tsugumi[-dev]/host-core/host.sqlite`; the mandatory wrapper supplies private support storage. |
-| `macOS/CoreTests` | `AuthenticationTests` uses a local provider and explicit ephemeral fixture keys through Host RPC; it does not directly read Keychain. The package links the same adapter, so it needs the same startup protection. `SecretStoreTests` covers all Mac adapter operations with recording/refusing doubles. |
+| `ui/macos/Tests` | App/session startup, chat/model availability (`ChatResumeTests`, `GuideTests`, `SyncTests`) and version-note requests can reach `CoreHostClient.provider/usable/models/versionNote` → `Keychain.load/loadWithoutAsking` → `SecItemCopyMatching`. Save/delete APIs also reach `SecItemUpdate/Add/Delete`; `exists` reads attributes. All now pass through `runSystemKeychain`. Without a support override, `CoreHostClient.stateDirectory` also selects `~/Library/Application Support/Tsugumi[-dev]/host-core/host.sqlite`; the mandatory wrapper supplies private support storage. |
+| `ui/macos/CoreTests` | `AuthenticationTests` uses a local provider and explicit ephemeral fixture keys through Host RPC; it does not directly read Keychain. The package links the same adapter, so it needs the same startup protection. `SecretStoreTests` covers all Mac adapter operations with recording/refusing doubles. |
 | Core host tests | `tests/core/host/components_test.cc` and Agent settings/auth tests use explicit temporary state roots: `host.sqlite` holds OAuth credentials and host secrets (`SqlSecrets`). `settings_store_test.cc` injects `MemorySecrets`. `harness/host.py` and C++ host fixtures always pass `--state-dir`; hostd requires it. No `SecItem*`, `security`, or import from `~/.codex/auth.json` / Claude credentials exists in these adapters. |
 
-`web/tests/secretStore.mjs` bundles the actual default `CoreHost` adapter with a
+`ui/web/tests/secretStore.mjs` bundles the actual default `CoreHost` adapter with a
 recording/refusing `child_process` replacement, exercises read/status/save/delete,
 and asserts an empty OS-command record for both the standalone switch and the
 wrapper marker with the switch disabled. `SecretStoreTests.swift` records the Mac
@@ -61,15 +61,15 @@ Prose and `README.md` run the documentation build/tests; `docs/features.md` also
 | --- | --- |
 | [tests/core/](core/README.md) | Core behavior, public RPC and integration tests |
 | `tests/python/` | SDKs, examples, demos, CLI/plugin/Web adapters and host/VM integration |
-| `tests/static/` | Repository contracts, packaging, release, licenses and generated-file consistency |
+| `tests/static/` | Repository contracts, packaging, release and generated-file consistency |
 | `tests/remote/` | C++ remote worker admission, scoping, transfers, same-core reconnects and core-lifetime expiry on Linux |
-| `macOS/CoreTests/`, `macOS/Tests/` | Agent, RPC and app behavior |
-| `web/` | Browser UI type checks and behavior contracts |
+| `ui/macos/CoreTests/`, `ui/macos/Tests/` | Agent, RPC and app behavior |
+| `ui/web/` | Browser UI type checks and behavior contracts |
 | `tests/prompt/` | Offline prompt probe scoring |
 
 The build generates C++/Python/Swift/TypeScript bindings and BFBS with `flatc`; these stay in build outputs and are not committed.
 
-Web gesture, source editing, template and undo fixtures call the production host operation executor through `tsugumi_document_edit_driver`, with a controllable in-memory core transport. The Nix Web check builds only that driver against the installed production host archives. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
+Web gesture, source editing, template and undo fixtures call the production host operation executor through `tsugumi_document_edit_driver`, with a controllable in-memory core transport. The Nix Web check builds only that driver against the installed production host archives. For local `npm --prefix ui/web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
 
 CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web checks run on Linux; Swift and Seatbelt checks run on macOS. Real remote execution using `tsugumi-workerd` runs on x86_64 Linux through `tests/ci-remote-worker.sh`. The socket-free thought scheduler test is part of `tsugumi_host_settings_tests` in the Agent RPC job.
 
@@ -82,42 +82,42 @@ TSUGUMI_TEST_DEMO_RUNS=1 nix develop -c python3 tests/run-isolated.py python3 -m
 The shared-VM suites also require an explicit opt-in on an Apple silicon Mac with the VM image installed. Build the signed controller first, then run:
 
 ```sh
-macOS/tools/build-vmctl.sh
+vm/macos/tools/build-vmctl.sh
 TSUGUMI_TEST_CONTAINER=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
   tests/python/test_shared_vm.py tests/python/test_cards_container.py tests/python/test_workers.py
 ```
 
 The VM support directory and its store are disposable and removed at session end. `TSUGUMI_VM_X86=qemu` selects QEMU instead of Rosetta for x86_64 Linux Cards. These VM suites do not run in CI.
 
-`tests/core/agent/environment_rpc_test.cc` exercises Host environment requests against hostd and an external fake `tsugumid` with authenticated project RPC. It covers readiness/registration, concurrent starts and aliases, process death and retry, resident-process adoption, explicit history recovery, folder withdrawal, stop and broker capability revocation. `environment_adapter_test.cc` supplies a narrow helper double to the same lifecycle service. The RPC scenarios use Unix sockets; the helper-double scenarios run without sockets. Neither launches a VM or invokes Nix. Build `tsugumi_agent_rpc_tests` and `tsugumi_host_settings_tests`; run them with `--gtest_filter='EnvironmentFixture.*'` and `--gtest_filter='EnvironmentAdapterTest.*'`, respectively. The CLI start/origins/failure scenarios in `tests/python/test_cli.py` run the Web host through hostd against `vm_helper_double.py`, a private FlatBuffers adapter with a native project daemon. `test_web_server.py` verifies environment residency and stop/restart through the same Host requests. `web/tests/environmentHost.ts` and Swift `ServiceWireTests` check request encoding, events and omitted vectors without sockets. Mount selection and folder withdrawal are tested with the C++ helper double; Swift keeps no second mount-selection implementation.
+`tests/core/agent/environment_rpc_test.cc` exercises Host environment requests against hostd and an external fake `tsugumid` with authenticated project RPC. It covers readiness/registration, concurrent starts and aliases, process death and retry, resident-process adoption, explicit history recovery, folder withdrawal, stop and broker capability revocation. `environment_adapter_test.cc` supplies a narrow helper double to the same lifecycle service. The RPC scenarios use Unix sockets; the helper-double scenarios run without sockets. Neither launches a VM or invokes Nix. Build `tsugumi_agent_rpc_tests` and `tsugumi_host_settings_tests`; run them with `--gtest_filter='EnvironmentFixture.*'` and `--gtest_filter='EnvironmentAdapterTest.*'`, respectively. The CLI start/origins/failure scenarios in `tests/python/test_cli.py` run the Web host through hostd against `vm_helper_double.py`, a private FlatBuffers adapter with a native project daemon. `test_web_server.py` verifies environment residency and stop/restart through the same Host requests. `ui/web/tests/environmentHost.ts` and Swift `ServiceWireTests` check request encoding, events and omitted vectors without sockets. Mount selection and folder withdrawal are tested with the C++ helper double; Swift keeps no second mount-selection implementation.
 
-`tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Text is evaluated with real models rather than phrase assertions. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `macOS/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
+`tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Text is evaluated with real models rather than phrase assertions. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `ui/macos/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
 
-Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`) and settings validation in `tsugumi_host_settings_tests --gtest_filter='HostSettingsStore.VersionNotes*'`. `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request, core model selection, concurrent windows, persistence across restart, mode switching, failure/retry and empty diffs (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`). Those RPC scenarios need Unix sockets and a local model fixture. `web/tests/versions.ts` checks the presentation request, settings, retries and late responses without a browser.
+Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`) and settings validation in `tsugumi_host_settings_tests --gtest_filter='HostSettingsStore.VersionNotes*'`. `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request, core model selection, concurrent windows, persistence across restart, mode switching, failure/retry and empty diffs (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`). Those RPC scenarios need Unix sockets and a local model fixture. `ui/web/tests/versions.ts` checks the presentation request, settings, retries and late responses without a browser.
 
-For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Without Nix, site and Web builds and Web tests generate the player from `web/node_modules` and `web/src/gen`.
+For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Without Nix, site and Web builds and Web tests generate the player from `ui/web/node_modules` and `ui/web/shared/gen`.
 
 ## Manual tools
 
-- `python3 macOS/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
+- `python3 ui/macos/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
 - `tests/ci-remote-worker.sh`: run Cards through hostd's Host RPC, mutual-TLS broker and packaged `tsugumi-workerd` on Linux; requires listeners and Nix builds. The script name describes the remote worker scenario.
 - `nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift`: probe WebGPU and adapter availability in an offscreen WKWebView.
-- `python3 sdk/codegen/scaffold_go.py`: synchronize the host Go scaffold in `ui/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
-- `python3 sdk/codegen/scaffold_rust.py`: synchronize the host Rust scaffold in `ui/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
+- `python3 sdk/codegen/scaffold_go.py`: synchronize the host Go scaffold in `ui/shared/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
+- `python3 sdk/codegen/scaffold_rust.py`: synchronize the host Rust scaffold in `ui/shared/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
 
 The host state format checks need no sockets: `tests/static/test_host_state_format.py`
 compares all host database table/index definitions (including shared conversation
-tables) with the digest beside `kStateFormat` in `core/src/host/state_format.hh`.
+tables) with the digest beside `kStateFormat` in `hostd/private/host/state_format.hh`.
 Raise the number and record the new digest when changing those definitions.
 `HostStateFormat.*` in `tsugumi_host_settings_tests` covers fresh state, incompatible
 or missing numbers, preservation of existing databases and concurrent creation.
-Native readiness/Home tests and `web/tests/hostReadiness.ts` check that a format
+Native readiness/Home tests and `ui/web/tests/hostReadiness.ts` check that a format
 refusal reaches the person with the folder path and recovery instructions.
 
 Scripted Mac trials can register a trusted root before the first project opens:
 
 ```sh
-TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials macOS/tools/run-ui.sh dist/Tsugumi.app /absolute/trial.script /absolute/output /absolute/trials/project
+TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials ui/macos/tools/run-ui.sh dist/Tsugumi.app /absolute/trial.script /absolute/output /absolute/trials/project
 ```
 
 Like the script's `setting` command, this registers a host setting, which remains until removed in Settings. Supply `TSUGUMI_HOST_STATE` to select an isolated host for a trial when needed. A direct scripted launch can use: `open -g -n --env TSUGUMI_UI_SCRIPT=/absolute/trial.script --env TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials --env TSUGUMI_HOST_STATE=/absolute/output/host-core dist/Tsugumi.app`. The trust input is ignored without a readable UI script and is never read from a project. Scripts and smoke runs leave the app in the background, including when an existing project window is selected.
@@ -178,7 +178,7 @@ waits subscribe to Observation rather than exhausting a fixed number of ticks.
 Real process/socket startup polls wait for an actual readiness record and retain
 watchdogs. Deliberate performance checks are opt-in:
 
-- `TSUGUMI_WIRE_BENCH=1 npm --prefix web test` runs [bench/wire-frames.ts](bench/wire-frames.ts).
+- `TSUGUMI_WIRE_BENCH=1 npm --prefix ui/web test` runs [bench/wire-frames.ts](bench/wire-frames.ts).
 - `TSUGUMI_HEARTBEAT_BENCH=1 build-ci/bin/tsugumi-test-env python3 -m pytest -q tests/core/test_remote_recovery.py -k registered_heartbeat` enables [bench/heartbeat.py](bench/heartbeat.py).
 
 The complete 340-case layout golden oracle remains in

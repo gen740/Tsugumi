@@ -1,0 +1,66 @@
+import { hostEdits } from './cardIds'
+import assert from 'node:assert/strict'
+import { Builder, ByteBuffer } from 'flatbuffers'
+import { R, RPCClient, RequestPayload, s as text } from '../src/wire/rpc'
+import { clone, get, parse, serialize } from '../shared/json'
+
+const { ProjectSession } = await import('../src/model/session')
+const requests: { name: string; prefix: string }[] = []
+const ids = ['aggregate-7k2q', 'aggregate-9m3r', 'inside-8p4s', 'child-6t5v']
+const allocator = new RPCClient({ close() {}, async call(frame) {
+  const message = R.Message.getRootAsMessage(new ByteBuffer(frame)).unpack()
+  const request = message.payload as R.RequestT
+  assert.equal(request.valueType, RequestPayload.CardIdRequest)
+  const value = request.value as R.CardIdRequestT
+  requests.push({ name: text(value.stem), prefix: text(value.projectPath) })
+  const result = new R.CardIdResultT(ids[requests.length - 1])
+  const reply = new R.MessageT(message.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.CardIdResult, result))
+  const builder = new Builder(512)
+  builder.finish(reply.pack(builder), 'TSG1')
+  return builder.asUint8Array().slice()
+} })
+const session = hostEdits(new ProjectSession('/p', 'k', 'p'))
+session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+session.confirmedProject = clone(session.project)
+session.layout = parse('{}')
+session.confirmedLayout = parse('{}')
+let saves = 0
+const operate = session.operateProject
+session.operateProject = async request => { saves++; return operate(request) }
+Object.assign((session as any).client, { cardId: allocator.cardId.bind(allocator) })
+session.connected = true
+const a = await session.addCard('draft', [], { x: 0, y: 0 }, 'Aggregate')
+const b = await session.addCard('draft', [], { x: 400, y: 0 }, 'Aggregate')
+assert.equal(a, ids[0]); assert.equal(b, ids[1])
+assert.notEqual(a, b)
+assert.equal(session.displayName(a), session.displayName(b))
+await session.connect([a, 'out'], [b, 'in'], [])
+await session.save()
+const project = serialize(session.project), layout = serialize(session.layout), dir = session.definitionDir(a)
+session.displays.set(a, { runId: 'past', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'kept' } })
+await session.applyMutation(x => x.updateMeta(a, m => m.set('name', '集計 / 同じ名前')))
+assert.equal(session.displayName(a), '集計 / 同じ名前')
+assert.equal(session.nodeData(a).title, '集計 / 同じ名前')
+assert.equal(session.nodeData(a, { meta: parse('{"name":"Preview"}') }).title, 'Preview')
+assert.equal(session.nodeData(a, { meta: parse('{"name":""}') }).title, a)
+assert.equal(serialize(session.project), project)
+assert.equal(serialize(session.layout), layout)
+assert.equal(session.definitionDir(a), dir)
+assert.equal(session.displays.get(a)?.runId, 'past')
+assert.equal(text(requests[0].name), 'aggregate')
+assert.ok(saves >= 2)
+
+// Nested scopes use the same allocator through the operation transport.
+session.confirmedLinks.set('outer', parse('{"external":"nested"}'))
+session.confirmedDefinitionMeta.set('outer', parse('{"name":"Outer"}'))
+const projectValue = JSON.parse(serialize(session.project))
+projectValue.canvas.cards.push({ id: 'outer' })
+session.project = parse(JSON.stringify(projectValue))
+session.externals.set('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
+const inner = await session.addCard('draft', ['outer'], { x: 0, y: 0 }, 'Inside')
+await new Promise<void>(resolve => setImmediate(resolve)) // Read the external documents from the confirmed delta.
+assert.equal(inner, `outer/${ids[3]}`)
+assert.deepEqual(requests[3], { name: 'inside', prefix: 'externals/nested/' })
+assert.equal(session.displayPath(['outer', ids[3]]), 'Outer/Inside')
+assert.equal(get(session.cardMeta(inner), 'name'), 'Inside')
+console.log('Card identity: core ids, duplicate names, name-only edits, exact wires and nested scopes passed')

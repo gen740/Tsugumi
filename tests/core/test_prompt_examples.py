@@ -7,7 +7,7 @@ import subprocess
 import textwrap
 
 ROOT = Path(__file__).resolve().parents[2]
-PROMPT = ROOT / 'agent/Shared/system-prompt.md'
+PROMPT = ROOT / 'hostd/agent/Shared/system-prompt.md'
 
 
 def test_flatbuffer_examples_compile(tmp_path):

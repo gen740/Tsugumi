@@ -1,11 +1,11 @@
-"""The English UI strings (macOS/Resources/tools/en_strings.py)."""
+"""The English UI strings (ui/macos/Resources/tools/en_strings.py)."""
 import importlib.util
 import json
 import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TOOL = ROOT / "macOS/Resources/tools/en_strings.py"
+TOOL = ROOT / "ui/macos/Resources/tools/en_strings.py"
 
 
 def load():
@@ -34,19 +34,19 @@ def test_the_bundled_strings_are_the_generated_ones():
     # Exactly the generated text: build-app.sh regenerates the file from EN, so a string
     # added only to Localizable.strings (not EN) would be lost, untranslated, in the built app.
     en = load()
-    text = (ROOT / "macOS/Resources/en.lproj/Localizable.strings").read_text(encoding="utf-8")
+    text = (ROOT / "ui/macos/Resources/en.lproj/Localizable.strings").read_text(encoding="utf-8")
     assert text == en.render()
 
 
-# ---- The Web UI: L('…') in web/src and web/server, web/src/i18n/en.json ----
+# ---- The Web UI: L('…') in ui/web/src and ui/web/server, ui/web/shared/i18n/en.json ----
 
-WEB_TABLE = ROOT / "web/src/i18n/en.json"
+WEB_TABLE = ROOT / "ui/web/shared/i18n/en.json"
 
 
 def web_keys() -> set[str]:
     """The first argument of every L('…') call (single-quoted, as the code writes them)."""
     keys = set()
-    for p in [*(ROOT / "web/src").rglob("*.ts"), *(ROOT / "web/src").rglob("*.tsx"), *(ROOT / "web/server").rglob("*.ts")]:
+    for p in [*(ROOT / "ui/web/src").rglob("*.ts"), *(ROOT / "ui/web/src").rglob("*.tsx"), *(ROOT / "ui/web/server").rglob("*.ts")]:
         if "/gen/" in str(p):
             continue
         for m in re.finditer(r"\bL\('((?:[^'\\\n]|\\.)*)'", p.read_text(encoding="utf-8")):
@@ -56,7 +56,7 @@ def web_keys() -> set[str]:
 
 
 def control_labels() -> list[str]:
-    agent = json.loads((ROOT / "agent/Shared/agent.json").read_text(encoding="utf-8"))
+    agent = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text(encoding="utf-8"))
     return [c["label"] for c in agent["guide"]["controls"]]
 
 
@@ -71,8 +71,8 @@ def test_every_web_string_has_its_english():
     table = json.loads(WEB_TABLE.read_text(encoding="utf-8"))
     keys = web_keys()
     assert keys, "no L('…') found"
-    assert not sorted(keys - table.keys()), "missing from web/src/i18n/en.json"
-    assert not sorted(table.keys() - keys), "no longer used: remove from web/src/i18n/en.json"
+    assert not sorted(keys - table.keys()), "missing from ui/web/shared/i18n/en.json"
+    assert not sorted(table.keys() - keys), "no longer used: remove from ui/web/shared/i18n/en.json"
 
 
 def test_web_translations_put_in_the_same_values():

@@ -13,7 +13,7 @@ OUT = ROOT / "docs" / "Protocol.md"
 
 GROUPS = [
     ("Connection", ["SessionHello", "ProjectActivity"]),
-    ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
+    ("Projects and saving", ["ProjectOpen", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "InputTypes", "OutputTypes", "NixSourceResolve"]),
@@ -130,7 +130,7 @@ def render() -> str:
     for n in union_members(text, "RunEventValue"):
         out.append(f"- `{n}`")
     out += ["", "## Host and Agent service contracts", "",
-            "Both services include [service_common.fbs](../protocol/service_common.fbs): Hello, Failure, Acknowledgement, ProviderSelection, Access, GrantScope, PermissionKind, Usage and TextResult have one definition. Secret ProviderInput belongs only to Host.", "",
+            "Both services include [service_common.fbs](../protocol/service_common.fbs): Hello, Failure, Acknowledgement, ProviderSelection, Access, PermissionKind, Usage and TextResult have one definition. Secret ProviderInput belongs only to Host.", "",
             "Agent keeps conversations, turns, tools and conversation access prompts. Host keeps shared operations, including reference demos and version notes; model use does not decide the contract. External Agents read demos through ToolCall (demo_list/demo_read), not direct Host RPC.", ""]
     common = tables((ROOT / "protocol/service_common.fbs").read_text())
     for service, identifier, principals in [("agent", "TSA1", "user and external"), ("host", "TSH1", "user only")]:

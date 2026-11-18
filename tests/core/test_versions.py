@@ -63,7 +63,8 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert st.state == RunState.succeeded and not st.commit
     init = c.call("VersionInitRequest", opId=new_id(), origin="test")
     first = text(init.commit)
-    assert text(graph(c).commits[0].message) == '{"tsugumi":"commit","kind":"create","card":""}'
+    created = graph(c).commits[0]
+    assert not created.message and text(created.facts.kind) == "create" and not created.facts.card
     g = graph(c)
     assert g.enabled and text(g.head) == first and not g.dirty
     # A run after a change commits it; a run without one shares the commit.
@@ -242,7 +243,14 @@ def summary_of(c, st) -> dict:
             break
         time.sleep(0.1)
     run = next(r for r in runs if text(r.runId) == text(st.runId))
-    return json.loads(text(run.summary))
+    facts = run.facts
+    assert facts is not None
+    assert not run.summary
+    return {"whole": facts.whole, "card": text(facts.card), "propagate": facts.propagate,
+            "saved_inputs": facts.savedInputs,
+            "ran": [{"card": text(x.card), "count": x.count} for x in facts.ran or []],
+            "failures": [{"card": text(x.card), "kind": text(x.kind)} for x in facts.failures or []],
+            "never": [text(x) for x in facts.never or []]}
 
 
 def run_facts(*, whole=False, card="", propagate=True, saved=False, ran=(), failed=(), never=()):
@@ -269,13 +277,15 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
-    assert text(graph(c).commits[0].message) == '{"tsugumi":"commit","kind":"create","card":""}'
+    created = graph(c).commits[0]
+    assert not created.message and text(created.facts.kind) == "create" and not created.facts.card
     _, st = run_and_wait(c, "both")
     assert summary_of(c, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
     set_text(c, "second")
     _, st = run_and_wait(c, "start")
     assert summary_of(c, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
-    assert text(next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit)).message) == '{"tsugumi":"commit","kind":"run","card":"start"}'
+    committed = next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit))
+    assert not committed.message and text(committed.facts.kind) == "run" and text(committed.facts.card) == "start"
     _, st = run_and_wait(c, "split")
     assert summary_of(c, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
     _, st = run_and_wait(c, "sink", propagate=False)
@@ -285,7 +295,8 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     set_text(j, "third")
     _, st = run_and_wait(j, "start")
     assert summary_of(j, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
-    assert text(next(entry for entry in graph(j).commits if text(entry.id) == text(st.commit)).message) == '{"tsugumi":"commit","kind":"run","card":"start"}'
+    committed = next(entry for entry in graph(j).commits if text(entry.id) == text(st.commit))
+    assert not committed.message and text(committed.facts.kind) == "run" and text(committed.facts.card) == "start"
 
 
 
@@ -381,7 +392,11 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
     assert placed["src"]["y"] == 7 and placed["out"]["x"] == 200
     # Core records neutral kinds without parameter or source values.
     factual = c.call("VersionNoteRequest", commit=second)
-    record = json.loads(text(factual.recordJson))
+    facts = factual.changes
+    record = {"added": [text(x) for x in facts.added or []],
+              "removed": [text(x) for x in facts.removed or []],
+              "changed": [{"card": text(x.card), "kinds": [text(k) for k in x.kinds or []]} for x in facts.changed or []],
+              "workflow": facts.workflow}
     assert record == {"added": [], "removed": [], "changed": [{"card": "src", "kinds": ["parameters"]}], "workflow": False}
     assert json.loads(git(root, "notes", "--ref=tsugumi-record", "show", second)) == record
     notes(c, second, 1)

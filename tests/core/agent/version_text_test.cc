@@ -3,9 +3,10 @@
 #include <gtest/gtest.h>
 #include <map>
 
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 #include "version_record.hh"
+#include "version_facts.hh"
 #include "versions.hh"
 
 namespace tsugumi {
@@ -73,7 +74,7 @@ TEST_F(VersionNote, FullTreesDistinguishParametersDefinitionsSourceWiringAndMemb
   host::StoreSummary(root, change, true, "An Agent note");
   EXPECT_EQ(host::ReadSummary(root, change, true), "An Agent note");
   EXPECT_TRUE(host::ReadSummary(root, change, false).empty());
-  EXPECT_EQ(host::ChangeText(versions.note(change).record_json, true).find("SENTINEL"), std::string::npos);
+  EXPECT_EQ(host::ChangeText(version_facts::changes(versions.note(change).record_json), true).find("SENTINEL"), std::string::npos);
   Put("layout.json", R"({"cards":{"a":{"x":42,"y":1}}})");
   Put("definitions/a/data/data.csv", "PRIVATE_DATA_SENTINEL");
   change = versions.commit_all("Layout and data");
@@ -138,6 +139,23 @@ TEST_F(VersionNote, HostDiffComparesTheChosenVersionsWithoutChangingGit) {
   EXPECT_FALSE(versions.graph(1).dirty);
   EXPECT_THROW(host::VersionDiff(root, third, std::string(40, '0')), std::exception);
 
+}
+TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
+  auto commit = version_facts::commit(version_record::commit("run", "card"));
+  ASSERT_NE(commit, nullptr);
+  EXPECT_EQ(commit->kind, "run");
+  EXPECT_EQ(host::CommitText(*commit, true), "Run: card");
+  EXPECT_EQ(version_facts::commit("A human message"), nullptr);
+  version_record::Run persisted;
+  *persisted.whole = true;
+  auto facts = version_facts::run(schema::encode(persisted));
+  ASSERT_NE(facts, nullptr);
+  EXPECT_TRUE(facts->whole);
+  EXPECT_EQ(host::RunText(*facts, true), "whole");
+  EXPECT_EQ(version_facts::run(""), nullptr);
+  auto changes = version_facts::changes(schema::encode(version_record::Changes{}));
+  EXPECT_TRUE(changes.added.empty());
+  EXPECT_EQ(host::ChangeText(changes, true), "No Card definition, source, parameter or wiring changes");
 }
 TEST(VersionText, ModelReadPolicyLivesOnTheHost) {
   EXPECT_TRUE(host::SummaryReads("externals/p/definitions/a/src/main.py"));

@@ -1,6 +1,6 @@
 """Visualization templates: the generated Card sources, run as they are.
 
-Each test runs a template's generated src/main.py (ui/templates/visualization.py)
+Each test runs a template's generated src/main.py (ui/shared/templates/visualization.py)
 in a fresh interpreter with the real SDK helper, FlatBuffers bindings and
 plotting libraries; only the worker host is replaced. No UI process, browser or
 daemon is started here (tests/python/test_demo_visualization.py runs one).
@@ -23,7 +23,7 @@ FILES = {'matplotlib': {'plot.png', 'plot.svg', 'plot.pdf'}, 'plotly': {'plot.js
 
 
 def generator():
-    spec = importlib.util.spec_from_file_location('visualization_templates', ROOT / 'ui/templates/visualization.py')
+    spec = importlib.util.spec_from_file_location('visualization_templates', ROOT / 'ui/shared/templates/visualization.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

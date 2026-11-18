@@ -8,7 +8,7 @@
 
 #include "../agent_fixture_server.hh"
 #include "host/environment.hh"
-#include "host_requirements.hh"
+#include "tsugumi/document/host_requirements.hh"
 
 namespace tsugumi::test {
 namespace {

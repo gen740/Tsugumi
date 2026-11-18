@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "../agent_fixture_server.hh"
 #include "agent/catalog.hh"
 #include "agent/runtime.hh"
@@ -62,6 +64,109 @@ protected:
     hooks.checkpoint = [](const auto &) {};
   }
 };
+TEST_F(ToolArguments, RetryTextPreservesTheActualProviderError) {
+  model.QueueHTTP(
+      R"({"error":{"code":"overloaded_error","message":"Capacity exhausted"}})",
+      503);
+  model.Queue(AnthropicText("Recovered."));
+  std::string retry;
+  hooks.event = [&](const auto &event) {
+    if (event.kind == "retrying") retry = event.text;
+  };
+  const auto result =
+      agent::Runtime().Run(config, "system", messages, {}, {}, hooks);
+  EXPECT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
+  EXPECT_NE(retry.find("Capacity exhausted"), std::string::npos);
+  EXPECT_NE(retry.find("overloaded_error"), std::string::npos);
+  EXPECT_NE(retry.find("retry 1"), std::string::npos);
+}
+TEST_F(ToolArguments, HttpErrorsLogTheReasonWithoutEchoedContextOrCredentials) {
+  config.credential = "API_KEY_SENTINEL";
+  config.auth = agent::ProviderAuth::ApiKey;
+  agent::ContentBlock question;
+  question.text = "MESSAGE_SENTINEL";
+  agent::ContentBlock call;
+  call.type = "tool_use";
+  call.id = "call-one";
+  call.name = "inspect";
+  call.input = R"({"name":"ARGUMENT_SENTINEL"})";
+  messages.push_back(
+      {"assistant", {call}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  agent::ContentBlock result;
+  result.type = "tool_result";
+  result.id = "call-one";
+  result.text = "RESULT_SENTINEL";
+  messages.push_back({"user",
+                      {question, result},
+                      {},
+                      {},
+                      agent::ProviderAPI::AnthropicMessages});
+  model.QueueHTTP(
+      R"({"detail":"Region unavailable API_KEY_SENTINEL INSTRUCTION_SENTINEL MESSAGE_SENTINEL RESULT_SENTINEL ARGUMENT_SENTINEL"})",
+      403);
+  testing::internal::CaptureStderr();
+  try {
+    agent::StreamReply(config, "INSTRUCTION_SENTINEL", messages, {}, {}, {});
+    ADD_FAILURE() << "Refused model call was accepted";
+  } catch (const agent::ProviderError &error) {
+    EXPECT_EQ(error.status, 403);
+    EXPECT_FALSE(error.retryable);
+    EXPECT_NE(std::string(error.what()).find("Region unavailable"),
+              std::string::npos);
+  }
+  const auto log = testing::internal::GetCapturedStderr();
+  EXPECT_NE(log.find("Region unavailable"), std::string::npos);
+  EXPECT_NE(log.find("http_status=403 curl_code=0"), std::string::npos);
+  for (const auto *secret :
+       {"API_KEY_SENTINEL", "INSTRUCTION_SENTINEL", "MESSAGE_SENTINEL",
+        "RESULT_SENTINEL", "ARGUMENT_SENTINEL"})
+    EXPECT_EQ(log.find(secret), std::string::npos) << log;
+}
+TEST_F(ToolArguments, NullableErrorCodeKeepsTheActualReason) {
+  model.QueueHTTP(
+      R"({"error":{"code":null,"type":"invalid_request_error","message":"This model is unavailable"}})",
+      400);
+  try {
+    agent::StreamReply(config, "system", messages, {}, {}, {});
+    FAIL() << "Refused model call was accepted";
+  } catch (const agent::ProviderError &error) {
+    EXPECT_EQ(error.code, "invalid_request_error");
+    EXPECT_NE(std::string(error.what()).find("This model is unavailable"),
+              std::string::npos);
+  }
+}
+TEST_F(ToolArguments, EmptyTerminalOutputKeepsTheStreamedCall) {
+  // ChatGPT ends its streams with an empty terminal output.
+  config.api = agent::ProviderAPI::OpenAIResponses;
+  config.auth = agent::ProviderAuth::ApiKey;
+  config.credential = "key";
+  const auto event = [](const std::string &json) {
+    return "data: " + json + "\n\n";
+  };
+  model.Queue(
+      event(
+          R"({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"inspect","namespace":"tsugumi","call_id":"call-one","arguments":""}})") +
+      event(
+          R"({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"})") +
+      event(
+          R"({"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"})") +
+      event(
+          R"({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":"inspect","namespace":"tsugumi","call_id":"call-one","arguments":"{}"}})") +
+      event(R"({"type":"response.completed","response":{"output":[]}})"));
+  agent::ContentBlock question;
+  question.text = "question";
+  messages.push_back(
+      {"user", {question}, {}, {}, agent::ProviderAPI::OpenAIResponses});
+  const auto reply = agent::StreamReply(config, "system", messages, {}, {}, {});
+  EXPECT_EQ(reply.stop_reason, "tool_use");
+  const auto call = std::find_if(
+      reply.message.content.begin(), reply.message.content.end(),
+      [](const auto &block) { return block.type == "tool_use"; });
+  ASSERT_NE(call, reply.message.content.end());
+  EXPECT_EQ(call->id, "call-one");
+  EXPECT_EQ(call->name, "inspect");
+  EXPECT_EQ(call->input, "{}");
+}
 TEST_F(ToolArguments, MalformedToolArgumentsReportReceivedBytesAndOutputLimit) {
   config.max_tokens = 4321;
   const std::string arguments = "{\"edits\":[";

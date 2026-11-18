@@ -1,0 +1,21 @@
+set(_tsugumi_host_agent_sources
+  ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
+  ${_agent_prompts}
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/catalog.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/provider.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/providers.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/store.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/runtime.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/context.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/tool_images.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/wire.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/presentation.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/save_policy.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/helpers.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/approvals.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools_files.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools_edit.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/turns.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/helper_scope.cc
+)

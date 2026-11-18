@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "node",
+      "@webgpu/types"
+    ]
+  },
+  "include": [
+    "src",
+    "server",
+    "shared"
+  ]
+}

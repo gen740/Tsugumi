@@ -3,14 +3,14 @@
 #include <string>
 #include <vector>
 
-#include "agent/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "host/project_operations.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 #include <algorithm>
 #include <map>
 
 namespace {
-namespace json = tsugumi::agent::json;
+namespace json = tsugumi::json;
 namespace crypto = tsugumi::crypto;
 using tsugumi::host::OperationReply;
 class ProjectFixture {
@@ -124,7 +124,7 @@ public:
 } // namespace
 
 auto main() -> int {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   try {
     std::string raw((std::istreambuf_iterator<char>(std::cin)), {});
     const auto request = json::Object(raw);

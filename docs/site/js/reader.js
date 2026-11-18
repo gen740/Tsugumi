@@ -1,7 +1,7 @@
 // The story pages: one thread runs down the page, out of a temari, through a
 // needle hole at each paragraph and through the figures, drawn down to the
 // reading line with the tsugumi at its end (ported from the app's
-// macOS/Sources/App/Explainer/ExplainerView.swift). A figure stays on screen
+// ui/macos/Sources/App/Explainer/ExplainerView.swift). A figure stays on screen
 // while it plays: it sticks in place, whole, and scrolling runs it. Or, in card
 // mode, a paragraph at a time beside its figure (ExplainerCards.swift). Scroll
 // back and it all goes back.

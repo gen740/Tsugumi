@@ -33,7 +33,7 @@ for arg in sys.argv:
     output = tmp_path / 'output'
     env = {**os.environ, 'PATH': f'{commands}:{os.environ["PATH"]}', 'LAUNCH_RECORD': str(record),
            'TSUGUMI_UI_TRUSTED_FOLDER': str(tmp_path), 'TSUGUMI_HOST_STATE': str(tmp_path / 'host-core'), 'TSUGUMI_UI_SECONDS': '1', 'LAUNCH_RESULT': launch_result}
-    result = subprocess.run(['bash', str(ROOT / 'macOS/tools/run-ui.sh'), str(tmp_path / 'Tsugumi.app'), str(script), str(output)],
+    result = subprocess.run(['bash', str(ROOT / 'ui/macos/tools/run-ui.sh'), str(tmp_path / 'Tsugumi.app'), str(script), str(output)],
                    env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == (0 if launch_result == "done" else 1)
     args = record.read_text().splitlines()

@@ -39,7 +39,7 @@ class Host:
         self.request_id = 0
         try:
             self.process = subprocess.Popen([
-                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core/tsugumi-hostd")),
+                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "hostd/tsugumi-hostd")),
                 "--state-dir", str(self.directory), "--no-websocket",
                 "--socket-dir", str(Path(self.socket_directory.name) / "b"),
                 "--usage-scratch-dir", str(self.directory / "run-scratch"),

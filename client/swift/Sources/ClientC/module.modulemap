@@ -1,0 +1,6 @@
+module TsugumiClientC [system] {
+  header "../../../include/tsugumi/client/client.h"
+  link "tsugumi_client"
+  link "tsugumi_client_transport"
+  export *
+}

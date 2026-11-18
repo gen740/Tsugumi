@@ -25,7 +25,7 @@ TEST(HostSkillRead,
   EXPECT_THROW(host::ReadSkill(root, root / "boundary.md"), std::runtime_error);
 }
 TEST(HostSkillScope, DeclarationBuildsAnExactImmutableBoundaryForDirectStarts) {
-  using agent::json::Object;
+  using ::tsugumi::json::Object;
   const auto text = "---\nname: custom\nscope: [read, run]\n---\nRead and run "
                     "the selection.\n";
   const auto task =

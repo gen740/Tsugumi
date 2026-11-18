@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "../agent_fixture_server.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::test {
 TEST(HostStateFormat, FreshFolderIsNumberedAndCanBeReopened) {

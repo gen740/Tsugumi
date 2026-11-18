@@ -3,8 +3,8 @@
 #include <gtest/gtest.h>
 
 #include "agent/helpers.hh"
-#include "agent/json.hh"
-#include "util/text.hh"
+#include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::agent {
 namespace {

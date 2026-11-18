@@ -128,7 +128,7 @@ TEST_F(ConversationStoreTest,
       gate, *store, providers, settings, tools, turns, access,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
                                    [](const auto &, const auto &) {}});
-  const auto parent = agent::json::Object(
+  const auto parent = ::tsugumi::json::Object(
       R"({"read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1})");
   const auto boundary = [&] {
     auto result = std::make_shared<agent::HelperScope>(parent);
@@ -503,12 +503,12 @@ TEST_F(ConversationStoreTest, RecreatedFolderReplacesEvenAnOpenedIdentity) {
 }
 
 TEST_F(ConversationStoreTest,
-       DeletionCommitsHostRevocationBeforeProjectDeletion) {
+       DeletionPreservesProjectGrantsAndRemovesConversationProviders) {
   std::lock_guard lock(gate.mutex);
   Register("project");
   Create("conversation", "project");
   home.db.exec(
-      "INSERT INTO grants VALUES('grant','project','conversation',0,1);"
+      "INSERT INTO grants VALUES('grant','project',0,1);"
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
@@ -516,9 +516,8 @@ TEST_F(ConversationStoreTest,
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
   EXPECT_THROW(store->Delete("conversation"), sql::Error);
-  auto grant =
-      home.db.prepare("SELECT 1 FROM grants WHERE conversation='conversation'");
-  EXPECT_FALSE(grant.step());
+  auto grant = home.db.prepare("SELECT 1 FROM grants WHERE project='project'");
+  EXPECT_TRUE(grant.step());
   auto provider = home.db.prepare(
       "SELECT 1 FROM providers WHERE conversation='conversation'");
   EXPECT_FALSE(provider.step());
@@ -586,9 +585,9 @@ TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
 TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
   for (const auto& name :
        {"project_file_read", "run", "project_save", "project_shell"}) {
-    const auto arguments = agent::json::Encode(agent::json::Members{
-        {"path", agent::json::Quote("definitions/share/_outputs.fbs")}});
-    const auto raw = agent::json::Encode(agent::json::Members{
+    const auto arguments = ::tsugumi::json::Encode(::tsugumi::json::Members{
+        {"path", ::tsugumi::json::Quote("definitions/share/_outputs.fbs")}});
+    const auto raw = ::tsugumi::json::Encode(::tsugumi::json::Members{
         {"reply", "\"Failure\""},
         {"value",
          R"({"kind":"not_found","args":[{"key":"path","value":"definitions/share/_outputs.fbs"}],"diagnostic":"DIAGNOSTIC_SENTINEL\nsecond line","current_rev":null})"}});
@@ -596,20 +595,20 @@ TEST(AgentPresentation, FailedToolsHaveReadableSummariesAndSeparateRawDetails) {
     auto call = std::make_unique<A::ModelMessageT>();
     call->role = "assistant";
     call->content_json =
-        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
-            agent::json::Members{{"type", "\"tool_use\""},
+        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
+            ::tsugumi::json::Members{{"type", "\"tool_use\""},
                                  {"id", "\"bad\""},
-                                 {"name", agent::json::Quote(name)},
-                                 {"input", agent::json::Quote(arguments)}})});
+                                 {"name", ::tsugumi::json::Quote(name)},
+                                 {"input", ::tsugumi::json::Quote(arguments)}})});
     conversation.archive.push_back(std::move(call));
     auto result = std::make_unique<A::ModelMessageT>();
     result->role = "user";
     result->content_json =
-        agent::json::Encode(std::vector<std::string>{agent::json::Encode(
-            agent::json::Members{{"type", "\"tool_result\""},
+        ::tsugumi::json::Encode(std::vector<std::string>{::tsugumi::json::Encode(
+            ::tsugumi::json::Members{{"type", "\"tool_result\""},
                                  {"tool_use_id", "\"bad\""},
                                  {"is_error", "true"},
-                                 {"content", agent::json::Quote(raw)}})});
+                                 {"content", ::tsugumi::json::Quote(raw)}})});
     conversation.messages.push_back(std::move(result));
     const auto rows = agent::Presentation(conversation);
     ASSERT_EQ(rows.size(), 1u);
@@ -847,14 +846,13 @@ TEST(AgentPresentation, ProviderSearchSourcesStayReadableAndKeepTheirExactUrls) 
   ASSERT_EQ(conversation.rows[0]->children.size(), 1u);
   EXPECT_EQ(conversation.rows[0]->children[0]->result, "Paper — https://example.test/paper");
 }
-TEST(AgentPresentation, AccessGroupsKeepRawChoicesAndDifferentDurations) {
+TEST(AgentPresentation, AccessGroupsKeepProjectChoicesAndRequiredOperation) {
   const std::vector<std::string> asked{
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","scope":"Conversation","needed_now":true})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","scope":"Conversation","needed_now":false})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","scope":"Conversation","needed_now":false})"};
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","needed_now":true})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","needed_now":false})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","needed_now":false})"};
   auto groups = agent::AccessGroups(asked);
   ASSERT_EQ(groups.size(), 1u);
-  EXPECT_EQ(groups[0]->scope, "Conversation");
   ASSERT_EQ(groups[0]->lines.size(), 3u);
   EXPECT_EQ(groups[0]->lines[0]->request, asked[0]);
   EXPECT_TRUE(groups[0]->lines[0]->needed_now);
@@ -862,11 +860,10 @@ TEST(AgentPresentation, AccessGroupsKeepRawChoicesAndDifferentDurations) {
   EXPECT_FALSE(groups[0]->lines[2]->needed_now);
   auto mixed = asked;
   mixed.push_back(
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell","scope":"Server"})");
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell"})");
   groups = agent::AccessGroups(mixed);
   ASSERT_EQ(groups.size(), 1u);
-  EXPECT_TRUE(groups[0]->scope.empty());
-  EXPECT_EQ(groups[0]->lines[3]->scope, "Server");
+  EXPECT_EQ(groups[0]->lines[3]->operation, "Shell");
 }
 TEST_F(ConversationStoreTest,
        LiveProjectionKeepsStreamingTextAcrossCheckpointsAndRestore) {

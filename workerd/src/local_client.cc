@@ -4,7 +4,7 @@
 #include <unistd.h>
 
 #include "tsugumi/workerd/local.hh"
-#include "util/process.hh"
+#include "tsugumi/util/process.hh"
 
 namespace tsugumi::workerd {
 namespace L = Tsugumi::LocalWorker;

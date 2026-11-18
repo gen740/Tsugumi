@@ -9,8 +9,8 @@
 #include "agent/catalog.hh"
 #include "agent/context.hh"
 #include "input.hh"
-#include "input_types.hh"
-#include "util/crypto.hh"
+#include "tsugumi/document/input_types.hh"
+#include "tsugumi/util/crypto.hh"
 #include "wire.hh"
 
 namespace tsugumi {

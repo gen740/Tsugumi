@@ -5,13 +5,13 @@
 #include <gtest/gtest.h>
 #include <set>
 
-#include "agent/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "host/permission_kinds.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 
 auto Normalized(const std::string &value) -> std::string {
   const auto raw = schema::text(schema::capture(value));
@@ -117,9 +117,9 @@ TEST(DocumentTemplate,
       EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
     if (std::string_view(name) == "input") {
       ASSERT_EQ(reply.files.size(), 1);
-      EXPECT_NE(reply.files[0]->text.find("namespace new_card_2;"),
+      EXPECT_NE(reply.files[0].text.find("namespace new_card_2;"),
                 std::string::npos);
-      EXPECT_EQ(reply.files[0]->text.find("@NAMESPACE@"), std::string::npos);
+      EXPECT_EQ(reply.files[0].text.find("@NAMESPACE@"), std::string::npos);
     }
   }
   for (const auto *name : {"python", "go", "rust", "ruby", "cpp", "csharp"}) {
@@ -130,11 +130,11 @@ TEST(DocumentTemplate,
     EXPECT_EQ(json::Array(card.at("inputs")).size(), 1);
     std::set<std::string> paths;
     for (const auto &file : reply.files) {
-      paths.insert(file->path);
-      EXPECT_FALSE(file->path.starts_with('/'));
-      EXPECT_EQ(file->text.find("@NAMESPACE@"), std::string::npos);
-      if (file->path == "src/main.py")
-        EXPECT_NE(file->text.find("outputs.out.new_card_2.Text"),
+      paths.insert(file.path);
+      EXPECT_FALSE(file.path.starts_with('/'));
+      EXPECT_EQ(file.text.find("@NAMESPACE@"), std::string::npos);
+      if (file.path == "src/main.py")
+        EXPECT_NE(file.text.find("outputs.out.new_card_2.Text"),
                   std::string::npos);
     }
     EXPECT_TRUE(paths.contains("_outputs.fbs"));
@@ -163,7 +163,7 @@ TEST(DocumentTemplate,
     EXPECT_EQ(json::Text(card, "artifactOutput"), plot ? "figure" : "report");
     std::set<std::string> files;
     for (const auto &file : reply.files)
-      files.insert(file->path);
+      files.insert(file.path);
     EXPECT_TRUE(files.contains("default.nix"));
     EXPECT_TRUE(files.contains("_outputs.fbs"));
     if (std::string_view(name) == "marimo") {
@@ -207,8 +207,8 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   EXPECT_EQ(json::Text(comment, "author"), "user");
   EXPECT_EQ(comment.at("resolved"), "true");
   ASSERT_EQ(edit.files.size(), 1);
-  EXPECT_EQ(edit.files[0]->from, "definitions/a/src/asset.bin");
-  EXPECT_EQ(edit.files[0]->to, "definitions/copy/src/asset.bin");
+  EXPECT_EQ(edit.files[0].from, "definitions/a/src/asset.bin");
+  EXPECT_EQ(edit.files[0].to, "definitions/copy/src/asset.bin");
 }
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
@@ -238,8 +238,8 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   EXPECT_EQ(exts.at("externals/target/externals/copy/externals/grand/"),
             originals.at("externals/inner/externals/grand/"));
   ASSERT_EQ(edit.files.size(), 2);
-  EXPECT_EQ(edit.files[0]->to, "externals/target/externals/copy/asset.bin");
-  EXPECT_EQ(edit.files[1]->to,
+  EXPECT_EQ(edit.files[0].to, "externals/target/externals/copy/asset.bin");
+  EXPECT_EQ(edit.files[1].to,
             "externals/target/externals/copy/externals/grand/data.bin");
   const auto external =
       CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");

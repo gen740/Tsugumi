@@ -1,4 +1,4 @@
-#include "cache_usage.hh"
+#include "tsugumi/runtime_support/cache_usage.hh"
 
 #include <gtest/gtest.h>
 #include <sys/stat.h>
@@ -7,7 +7,7 @@
 #include <fstream>
 
 #include "run_scratch.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi {
 namespace {

@@ -18,7 +18,7 @@ from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 opt_in = pytest.mark.skipif(os.environ.get('TSUGUMI_TEST_DEMO_RUNS') != '1', reason='Runs Nix-backed Visualization Cards')
-TEMPLATES = ROOT / 'ui/templates/visualization.json'
+TEMPLATES = ROOT / 'ui/shared/templates/visualization.json'
 VALIDATION_FAILED = 17
 EDIT = ('library="matplotlib", kind=kind', 'library="matplotlib", edited="through a project save", kind=kind')
 

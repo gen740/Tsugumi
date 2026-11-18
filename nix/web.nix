@@ -20,18 +20,27 @@ buildNpmPackage {
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
-      ../web/package.json
-      ../web/package-lock.json
-      ../web/scripts/build.mjs
-      ../web/scripts/build-client.sh
-      ../web/scripts/gen.sh
-      ../web/server
-      ../web/src
-      ../web/tsconfig.json
-      ../agent/Shared/agent.json
-      ../agent/Shared/demo-skill.md
-      ../ui/modules
-      ../ui/templates
+      ../ui/web/package.json
+      ../ui/web/package-lock.json
+      ../ui/web/scripts/check-boundaries.mjs
+      ../ui/web/scripts/build.mjs
+      ../ui/web/scripts/build-client.sh
+      ../ui/web/scripts/gen.sh
+      ../ui/web/server
+      ../ui/web/src
+      ../ui/web/shared
+      ../ui/web/third-party
+      ../third-party/emscripten
+      ../third-party/flatbuffers
+      ../ui/web/tsconfig.json
+      ../ui/web/tsconfig.base.json
+      ../ui/web/tsconfig.shared.json
+      ../ui/web/tsconfig.browser.json
+      ../ui/web/tsconfig.server.json
+      ../hostd/agent/Shared/agent.json
+      ../hostd/agent/Shared/demo-skill.md
+      ../ui/shared/modules
+      ../ui/shared/templates
       ../protocol/remote_worker.fbs
       ../protocol/local_worker.fbs
       ../protocol/service_common.fbs
@@ -42,7 +51,6 @@ buildNpmPackage {
       ../protocol/tsugumi_enums.fbs
       ../protocol/data.fbs
       ../demos
-      ../sdk
       ../flake.lock
       ../VERSION
       ../docs/site/player/build.mjs
@@ -53,8 +61,8 @@ buildNpmPackage {
     ];
   };
   inherit nodejs;
-  npmRoot = "web";
-  npmDeps = importNpmLock { npmRoot = ../web; };
+  npmRoot = "ui/web";
+  npmDeps = importNpmLock { npmRoot = ../ui/web; };
   npmConfigHook = importNpmLock.npmConfigHook;
   nativeBuildInputs = [
     flatbuffers
@@ -63,26 +71,25 @@ buildNpmPackage {
   TSUGUMI_WASM_CLIENT_DIR = "${client-wasm}/share/tsugumi/client";
   buildPhase = ''
     runHook preBuild
-    (cd web && npm run gen)
+    (cd ui/web && npm run gen)
     # Build once with this package's pinned dependencies and generated bindings.
     # The site, thumbnails and tests all consume this same output.
     node docs/site/player/build.mjs --out-dir "$sitePlayer"
     export TSUGUMI_SITE_PLAYER_DIR="$sitePlayer"
-    (cd web && npm run build)
+    (cd ui/web && npm run build)
     runHook postBuild
   '';
   dontNpmInstall = true;
   installPhase = ''
     runHook preInstall
     share=$out/share/tsugumi
-    mkdir -p $share/web $share/agent $testSupport
-    cp -R web/dist $share/web/dist
+    mkdir -p $share/ui/web $testSupport
+    cp -R ui/web/dist $share/ui/web/dist
     cp -R demos flake.lock VERSION $share/
-    cp -R sdk $share/sdk
     # Checks reuse installation and generated bindings, without putting the
     # development tools in the distributed Web output's runtime closure.
-    cp -R web/node_modules $testSupport/node_modules
-    cp -R web/src/gen $testSupport/gen
+    cp -R ui/web/node_modules $testSupport/node_modules
+    cp -R ui/web/shared/gen $testSupport/gen
     runHook postInstall
   '';
   meta.description = "Tsugumi Web UI and platform host adapter";

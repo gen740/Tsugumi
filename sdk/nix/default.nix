@@ -134,7 +134,12 @@ let
     pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
       mkdir -p $out/src $out/lib
       cp ${sdkRoot}/rust/Cargo.toml $out/Cargo.toml
-      cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers $out/flatbuffers
+      mkdir -p $out/flatbuffers
+      cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers/src $out/flatbuffers/src
+      cp ${pkgs.flatbuffers.src}/rust/flatbuffers/build.rs $out/flatbuffers/build.rs
+      # Cargo needs the package identity and dependency/feature declarations only.
+      sed '/^authors =/d; /^license =/d; /^description =/d; /^homepage =/d; /^repository =/d; /^keywords =/d; /^categories =/d' \
+        ${pkgs.flatbuffers.src}/rust/flatbuffers/Cargo.toml > $out/flatbuffers/Cargo.toml
       cp ${sdkRoot}/rust/src/runtime.rs $out/src/runtime.rs
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --rust --gen-object-api -o $out/src ${dir}/$f.fbs
@@ -157,7 +162,7 @@ let
       cp ${sdkRoot}/include/tsugumi/sdk/abi.h $out/abi.h
       cp ${sdkRoot}/src/go_host.c $out/host.c
       cp ${pkgs.flatbuffers.src}/go/*.go $out/flatbuffers/
-      rm -f $out/flatbuffers/*_test.go
+      rm -f $out/flatbuffers/*_test.go $out/flatbuffers/doc.go
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --go --gen-object-api --go-import tsugumi/flatbuffers --go-module-name tsugumi -o $out ${dir}/$f.fbs
       done
@@ -218,8 +223,8 @@ let
         flatc --cpp --scoped-enums --gen-mutable --keep-prefix --include-prefix tsugumi/protocol \
           -I worker/protocol -o gen/tsugumi/protocol worker/protocol/*.fbs
         # hosq is a system header there too: its warnings are not the worker's.
-        $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/core -isystem worker/include -Igen \
-          worker/src/native_main.cc worker/core/schema.cc worker/core/util/text.cc \
+        $CXX -std=c++20 -O2 -Wall -Iinclude -Iworker/util/include -isystem worker/include -Igen \
+          worker/src/native_main.cc worker/util/src/json.cc worker/util/src/text.cc \
           -lflatbuffers -lpthread -ldl -o tsugumi-worker
       '';
       installPhase = ''
@@ -354,7 +359,7 @@ rec {
       '';
       buildPhase = ''
         runHook preBuild
-        go build -mod=readonly -buildmode=c-shared -ldflags="-buildid=" -o main.so .
+        go build -mod=readonly -buildmode=c-shared -ldflags="-s -w -buildid=" -o main.so .
         ${checkLock}
         runHook postBuild
       '';
@@ -421,6 +426,7 @@ rec {
       dontConfigure = true;
       # A panic must unwind to the SDK's catch_unwind, never across C.
       CARGO_PROFILE_RELEASE_PANIC = "unwind";
+      CARGO_PROFILE_RELEASE_STRIP = "debuginfo";
       doCheck = true;
       postPatch = ''
         if [ -e tsugumi ]; then
@@ -565,6 +571,7 @@ rec {
             --disable-pip-version-check --target $out "''${files[@]}"
         fi
         rm -rf $out/bin
+        python ${sdkRoot}/codegen/trim_packages.py $out
       '';
       passthru = { inherit wheels; };
     };
@@ -604,7 +611,7 @@ rec {
     assert lib.assertMsg (lock == null || builtins.pathExists pyproject)
       "pythonCard: no pyproject.toml beside the lock. uv.lock is made from it: keep both in the Card's folder";
     let
-      env = python.withPackages (ps: [ ps.flatbuffers ] ++ packages ps);
+      env = python.withPackages packages;
       locked =
         lib.optionalString (lock != null)
           "${
@@ -644,7 +651,9 @@ rec {
         installPhase = ''
           mkdir -p $out/lib/python
           cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
-          cp -r --no-preserve=mode ${sdkRoot}/python/tsugumi $out/lib/python/
+          mkdir -p $out/lib/python/tsugumi $out/lib/python/flatbuffers
+          cp ${sdkRoot}/python/tsugumi/*.py $out/lib/python/tsugumi/
+          cp ${pkgs.flatbuffers.src}/python/flatbuffers/*.py $out/lib/python/flatbuffers/
           # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
           for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
             find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
@@ -724,6 +733,7 @@ rec {
         nativeBuildInputs = [
           ruby
           pkgs.pkg-config
+          pkgs.python3
         ];
         inherit buildInputs;
         dontUnpack = true;
@@ -738,6 +748,9 @@ rec {
             echo "rubyCard: a gem in Gemfile.lock is not among the fetched gems; update the lock and hash together" >&2
             exit 1
           }
+          rm -rf $out/vendor $out/installed/ruby/*/cache $out/installed/ruby/*/doc
+          python3 ${sdkRoot}/codegen/trim_packages.py $out/installed
+          ruby ${sdkRoot}/ruby/trim-gems.rb $out/installed
         '';
         dontInstall = true;
       };
@@ -759,7 +772,7 @@ rec {
           $CC -O2 -fPIC -c ${sdkRoot}/src/ruby_main.c -o $NIX_BUILD_TOP/ruby_main.o \
             -I${sdkRoot}/include $(pkg-config --cflags ruby-${ruby.version.majMin}) \
             -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
-            -DTSUGUMI_RUBY_SDK='"${sdkRoot}/ruby"' \
+            -DTSUGUMI_RUBY_SDK='"'$out'/lib"' \
             -DTSUGUMI_RUBY_CARD='"${source}"' \
             -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
             -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
@@ -772,6 +785,7 @@ rec {
         '';
         installPhase = ''
           mkdir -p $out/lib
+          cp ${sdkRoot}/ruby/tsugumi.rb $out/lib/tsugumi.rb
           cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
         '';
       };

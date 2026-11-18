@@ -5,9 +5,9 @@
 #include <cstring>
 #include <iostream>
 
-#include "agent/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "agent/context.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 #include "project_fixture.hh"
 
 #ifndef __APPLE__
@@ -22,6 +22,87 @@ namespace {
 
 class CancelledCopy : public AgentProjectFixture,
                       public ::testing::WithParamInterface<bool> {};
+TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
+  StartProject();
+  const auto first = Conversation("settings-first");
+  const auto second = Conversation("settings-second");
+  const auto list = [&] {
+    return Call(*host, H::RequestPayload::ProjectPermissionsRequest,
+                [](Builder& b) {
+                  return H::CreateProjectPermissionsRequest(b).Union();
+                });
+  };
+  const auto set = [&](const std::string& resource,
+                       Tsugumi::Service::Access access, bool allow) {
+    return Call(*host, H::RequestPayload::ProjectPermissionSetRequest,
+                [&](Builder& b) {
+                  return H::CreateProjectPermissionSetRequest(
+                             b, b.CreateString(project_id),
+                             b.CreateString(resource), access, allow)
+                      .Union();
+                });
+  };
+  const auto initial = list();
+  ASSERT_TRUE(initial.Code().empty());
+  const auto* projects =
+      initial.HostValue()->value_as_ProjectPermissionList()->projects();
+  ASSERT_EQ(projects->size(), 1u);
+  ASSERT_EQ(projects->Get(0)->permissions()->size(), 4u);
+  for (const auto* permission : *projects->Get(0)->permissions())
+    EXPECT_FALSE(permission->allowed());
+  for (const auto access :
+       {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
+        Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
+    ASSERT_TRUE(set(project_id, access, true).Code().empty());
+  EXPECT_TRUE(Inspect(first).Code().empty());
+  EXPECT_TRUE(Inspect(second).Code().empty());
+  EXPECT_EQ(
+      set(project_id, Tsugumi::Service::Access::CardPermissions, true).Code(),
+      "invalid_request");
+  EXPECT_EQ(set("other-project", Tsugumi::Service::Access::Read, true).Code(),
+            "not_found");
+  const auto folder = directory.path / "attached-settings";
+  Write(folder / "data.txt", "Shared project folder grant");
+  const auto registered =
+      Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
+        return H::CreateRegisterFolderRequest(b, b.CreateString(project_id),
+                                              b.CreateString("folder:settings"),
+                                              b.CreateString(folder.string()),
+                                              b.CreateString("Attached data"))
+            .Union();
+      });
+  ASSERT_TRUE(registered.Code().empty()) << registered.View();
+  EXPECT_TRUE(set("folder:settings", Tsugumi::Service::Access::Read, true)
+                  .Code()
+                  .empty());
+  const auto arguments =
+      "{\"folder\":" + Quote(folder.string()) + ",\"path\":\"data.txt\"}";
+  EXPECT_TRUE(Tool(first, "attached_folder_read", arguments).Code().empty());
+  EXPECT_TRUE(Tool(second, "attached_folder_read", arguments).Code().empty());
+  EXPECT_EQ(
+      set("folder:settings", Tsugumi::Service::Access::Write, true).Code(),
+      "invalid_request");
+  const auto with_folder = list();
+  const auto* permissions = with_folder.HostValue()
+                                ->value_as_ProjectPermissionList()
+                                ->projects()
+                                ->Get(0)
+                                ->permissions();
+  ASSERT_EQ(permissions->size(), 5u);
+  EXPECT_TRUE(permissions->Get(4)->allowed());
+  EXPECT_TRUE(set("folder:settings", Tsugumi::Service::Access::Read, false)
+                  .Code()
+                  .empty());
+  EXPECT_EQ(Tool(first, "attached_folder_read", arguments).Code(),
+            "grant_required");
+  EXPECT_EQ(Tool(second, "attached_folder_read", arguments).Code(),
+            "grant_required");
+  ASSERT_TRUE(
+      set(project_id, Tsugumi::Service::Access::Read, false).Code().empty());
+  EXPECT_EQ(Inspect(first).Code(), "grant_required");
+  EXPECT_EQ(Inspect(second).Code(), "grant_required");
+  EXPECT_NO_THROW(ConnectHost(false, false, false));
+}
 TEST_F(AgentProjectFixture,
        MissingForkSchemaKeepsTypedFailureAndAddsCardContext) {
   Write(directory.path / "project/definitions/share/_card.json",
@@ -57,13 +138,13 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
   project_fault = "transfer_gate";
   StartProject();
   const auto conversation = Conversation("cancel-copy");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto folder = directory.path / "attached";
   Write(folder / "large.csv", "x");
   std::filesystem::resize_file(folder / "large.csv", 2u << 16);
@@ -116,7 +197,7 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
   const auto conversation = Conversation("cancel-shell-import");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   auto saving = std::async(std::launch::async, [&] {
     return Tool(conversation, "project_shell",
         R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=1 2>/dev/null"})");
@@ -149,7 +230,7 @@ TEST_F(AgentProjectFixture, CopyRefusesAnAttachedRootReplacedAfterItsReadGrant) 
   StartProject();
   const auto conversation = Conversation("replaced-root");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto folder = directory.path / "attached";
   Write(folder / "data.csv", "allowed");
   Write(directory.path / "other-project/data.csv", "PRIVATE");
@@ -220,7 +301,7 @@ TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath
   const auto conversation = Conversation("private-helper-shell");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto root =
       directory.path / "project/.tsugumi/agent-files" / conversation;
   Write(root / "scratch/secret", "PARENT_SCRATCH_SENTINEL");
@@ -245,12 +326,12 @@ TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath
 }
 
 TEST_F(AgentProjectFixture, HelpersCannotCopyParentOrSiblingScratch) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json", R"({"template":"draft"})");
   StartProject();
   const auto conversation = Conversation("private-helper-scratch");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto private_root =
       directory.path / "project/.tsugumi/agent-files" / conversation;
   Write(private_root / "scratch/parent.csv", "PARENT_PRIVATE");
@@ -285,7 +366,7 @@ using NestedFileFixture = AgentProjectFixture;
 // Exercise real nested Helpers::RunHelper boundaries, not synthetic scopes.
 TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
   if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
   StartProject(true);
@@ -293,7 +374,7 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
         Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto root =
       directory.path / "project/.tsugumi/agent-files" / conversation;
   const auto outer = std::string("scratch-tree.0.");
@@ -411,7 +492,7 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
 }
 
 TEST_F(NestedFileFixture, NestedCopyUsesItsOwnScratchAndCannotWidenCardSets) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/other/_card.json",
@@ -421,8 +502,7 @@ TEST_F(NestedFileFixture, NestedCopyUsesItsOwnScratchAndCannotWidenCardSets) {
   StartProject();
   const auto conversation = Conversation("nested-copy-scratch");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto root =
       directory.path / "project/.tsugumi/agent-files" / conversation;
   const auto parent = std::string("nested-copy.0.");
@@ -522,12 +602,12 @@ TEST_F(AgentProjectFixture, DirectAttachedFolderToolsNeedRegistrationAndTheirOwn
 }
 
 TEST_F(AgentProjectFixture, CopyMovesLargeAttachedBytesThroughASaveWithoutContentInResults) {
-  namespace json = tsugumi::agent::json;
+  namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
   StartProject();
   const auto conversation = Conversation("copy-large");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto folder = directory.path / "attached";
   // Eighty MiB exceeds both the model context and the 16 MiB RPC frame.
   const std::string marker = "LARGE_COPY_CONTENT_MUST_NOT_ENTER_THE_CONVERSATION";
@@ -608,7 +688,7 @@ TEST_F(AgentProjectFixture, ShellEditsAreAgentSavesAndFailedCommandsDoNotApplySo
   const auto conversation = Conversation("shell-edit");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto edited = Tool(conversation, "project_shell", R"({"command":"sed -i.bak 's/before/after/' definitions/edit/src/data.txt; rm definitions/edit/src/data.txt.bak; printf scratch-data > scratch/from-shell"})");
   ASSERT_TRUE(edited.Code().empty()) << edited.View();
   const auto text = JsonString(edited.View(), "/text");
@@ -643,7 +723,7 @@ TEST_F(AgentProjectFixture, CancelledShellAndConcurrentExternalEditsNeverOverwri
   const auto conversation = Conversation("shell-atomic");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto source = directory.path / "project/definitions/edit/src/data.txt";
   for (bool cancel : {true, false}) {
     auto pending = std::async(std::launch::async, [&] {
@@ -690,7 +770,7 @@ TEST_F(AgentProjectFixture, ShellAttachedMountsNeedReadAndRemainReadOnly) {
   const auto conversation = Conversation("shell-attached");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto folder = directory.path / "attached";
   Write(folder / "note.txt", "attached-original");
   const auto resource = "folder:" + project_id + ":shell";
@@ -739,9 +819,9 @@ auto NestedHelperFiles::CheckFileScope(bool shell) -> void {
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
         Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   ModelServer model;
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   auto tasks = json::Object(
       R"({"tasks":[{"name":"files","instruction":"Exercise file boundaries.","read_cards":["own"],"write_cards":["own","writer"],"run_cards":[]}]})");
   std::vector<std::string> delegates;
@@ -882,7 +962,6 @@ TEST_F(AgentProjectFixture, LiveAndRestoredAccessRequestsDescribeTheSameNamedFol
   EXPECT_EQ(JsonString(fields, "/title"), "Private project");
   EXPECT_EQ(JsonString(fields, "/path"), (directory.path / "project").string());
   EXPECT_EQ(JsonString(fields, "/access"), "Read");
-  EXPECT_EQ(JsonString(fields, "/scope"), "Conversation");
   const auto events = Events(conversation, true);
   const auto* event = events.Value()->value_as_EventsPage()->events()->Get(0)->event();
   ASSERT_EQ(event->kind()->str(), "permission");
@@ -1081,8 +1160,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("operation-lookup");
   Grant(conversation);
-  const auto write_grant =
-      Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  const auto write_grant = Grant(conversation, Tsugumi::Service::Access::Write);
   Revoke(write_grant);
   const auto unknown =
       Tool(conversation, "operation_get",
@@ -1110,7 +1188,7 @@ TEST_F(AgentProjectFixture,
   Grant(conversation);
   EXPECT_EQ(Tool(conversation, "project_cache_clear", "{}").Code(),
             "grant_required");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto pending =
       Tool(conversation, "project_cache_clear", "{}", "clear-once");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -1138,35 +1216,35 @@ TEST_F(AgentProjectFixture,
   Grant(conversation);
   EXPECT_EQ(Tool(conversation, "card_id", R"({"name":"Reserved"})").Code(),
             "grant_required");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto saved = Tool(conversation, "card_id", R"({"name":"Reserved"})");
   ASSERT_TRUE(saved.Code().empty());
   EXPECT_FALSE(JsonBool(saved.View(), "/isError"));
   EXPECT_EQ(JsonString(JsonString(saved.View(), "/text"), "/reply"),
             "CardIdResult");
   for (const auto *name :
-       {"view_save", "view_set_visible", "project_open", "project_close"})
+       {"view_save", "view_set_visible", "project_open"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
 TEST_F(AgentProjectFixture,
-       ConversationGrantsDoNotLeakIntoAnotherSessionAndCanBeRevoked) {
+       ProjectGrantsApplyToEveryConversationAndCanBeRevoked) {
   StartProject();
   const auto first = Conversation("first");
   const auto second = Conversation("second");
   const auto grant = Grant(first);
   EXPECT_TRUE(Inspect(first).Code().empty());
-  EXPECT_EQ(Inspect(second).Code(), "grant_required");
+  EXPECT_TRUE(Inspect(second).Code().empty());
   Revoke(grant);
   EXPECT_EQ(Inspect(first).Code(), "grant_required");
 }
 
 TEST_F(AgentProjectFixture,
-       ServerScopedAccessRequiresApprovalAndCanBeRevokedAcrossSessions) {
+       ProjectAccessRequiresApprovalAndCanBeRevokedAcrossSessions) {
   StartProject();
   const auto first = Conversation("first");
   const auto second = Conversation("second");
-  const auto grant = Grant(first, Tsugumi::Service::GrantScope::Server);
+  const auto grant = Grant(first);
   EXPECT_TRUE(Inspect(first).Code().empty());
   EXPECT_TRUE(Inspect(second).Code().empty());
   Revoke(grant);
@@ -1452,7 +1530,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("durable-model-write");
   const auto read_grant = Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto original = JsonString(Inspect(conversation).View(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
@@ -1636,12 +1714,12 @@ TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
   StartProject(true);
   const auto conversation = Conversation("shell-permission");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto denied =
       Tool(conversation, "project_shell", R"({"command":"printf allowed"})");
   EXPECT_EQ(denied.Code(), "grant_required");
   EXPECT_NE(Events(conversation).View().find("Shell"), std::string::npos);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Shell);
+  Grant(conversation, Tsugumi::Service::Access::Shell);
   const auto result =
       Tool(conversation, "project_shell",
            R"({"command":"printf allowed; printf diagnostic >&2; exit 3"})");
@@ -1659,7 +1737,7 @@ TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
   const auto conversation = Conversation("shell-history");
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   ModelServer model;
   model.Queue(AnthropicFamilyTool("shell", "files", "shell",
                             R"({"command":"printf shell-history-output"})"));
@@ -1682,7 +1760,7 @@ TEST_F(AgentProjectFixture, LargeShellOutputIsShapedOnceWithAUsableContinuation)
   const auto conversation = Conversation("large-shell-continuation");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
                       Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   ModelServer model;
   model.Queue(AnthropicFamilyTool("large-shell", "files", "shell",
       R"({"command":"printf 'SHELL_HEAD%0300000dSHELL_TAIL' 0"})"));
@@ -1724,7 +1802,7 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   const auto conversation = Conversation("shell-cancel");
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   ModelServer model;
   model.Queue(AnthropicFamilyTool(
       "shell", "files", "shell",
@@ -1757,7 +1835,7 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("external-shell-cancel");
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   auto pending = std::async(std::launch::async, [&] {
     return Tool(
         conversation, "project_shell",
@@ -1789,9 +1867,8 @@ TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
   StartProject(true);
   const auto conversation = Conversation("external-shell-revoke");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
-  const auto grant =
-      Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Shell);
+    Grant(conversation, access);
+  const auto grant = Grant(conversation, Tsugumi::Service::Access::Shell);
   auto pending = std::async(std::launch::async, [&] {
     return Tool(
         conversation, "project_shell",
@@ -1815,7 +1892,7 @@ TEST_F(AgentProjectFixture, ShellOriginAndApprovalsCannotBeSuppliedByTheModel) {
   const auto conversation = Conversation("shell-read-only");
   for (auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto before = Read(directory.path / "project/tsugumi.json");
   const auto result = Tool(
       conversation, "project_shell",
@@ -1835,7 +1912,7 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
   ASSERT_EQ(::setenv("PATH", inherited.c_str(), 1), 0);
   const auto conversation = Conversation("shell-isolation");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto quote = [](const std::string& value) {
     std::string result = "'";
     for (const auto c : value) result += c == '\'' ? "'\\''" : std::string(1, c);
@@ -1887,9 +1964,9 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("card-permission-approvals");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   // General grants must never substitute for approval of a particular save.
-  Grant(conversation, Tsugumi::Service::GrantScope::Server, Tsugumi::Service::Access::CardPermissions);
+  Grant(conversation, Tsugumi::Service::Access::CardPermissions);
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(snapshot, "/value/rev");
   const auto document =
@@ -1947,7 +2024,7 @@ TEST_F(AgentProjectFixture, DiagnosticShellSupportsPythonAsyncioWhenAvailable) {
   StartProject(true);
   const auto conversation = Conversation("shell-asyncio");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+    Grant(conversation, access);
   const auto result = Tool(
       conversation, "project_shell",
       R"({"command":"if command -v python3 >/dev/null 2>&1; then python3 -c 'import asyncio; asyncio.run(asyncio.sleep(0))'; else printf PYTHON_UNAVAILABLE; fi"})");
@@ -1965,7 +2042,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
   StartProject();
   const auto conversation = Conversation("reload-permission-set");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto arguments =
       "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}";
@@ -2020,9 +2097,9 @@ TEST_F(AgentProjectFixture,
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("operation-approvals");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
-  // Even a server-wide CardPermissions grant cannot authorize these acts.
-  Grant(conversation, Tsugumi::Service::GrantScope::Server, Tsugumi::Service::Access::CardPermissions);
+  Grant(conversation, Tsugumi::Service::Access::Write);
+  // Even a project-wide CardPermissions grant cannot authorize these acts.
+  Grant(conversation, Tsugumi::Service::Access::CardPermissions);
   auto resolve = [&](const Reply &pending, bool allow) {
     EXPECT_EQ(pending.Code(), "grant_required");
     EXPECT_FALSE(pending.RequestId().empty());
@@ -2096,7 +2173,7 @@ TEST_F(AgentProjectFixture,
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("deleted-approval");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto pending = Tool(conversation, "version_init", "{}", "pending-init");
   ASSERT_EQ(pending.Code(), "grant_required");
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationDeleteRequest, [&](Builder& b) {
@@ -2112,10 +2189,10 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("spoofed-approval");
   const auto reply =
-      Call(*external, A::RequestPayload::AccessRequest, [&](Builder &b) {
+      Call(*external, A::RequestPayload::AccessRequest, [&](Builder& b) {
         return A::CreateAccessRequest(
                    b, b.CreateString(project_id), b.CreateString(conversation),
-                   Tsugumi::Service::Access::Write, Tsugumi::Service::GrantScope::Server,
+                   Tsugumi::Service::Access::Write,
                    b.CreateString("operation_approval\nproject_cache_"
                                   "clear\nOnly this call"))
             .Union();
@@ -2127,7 +2204,7 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("changed-approval-targets");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto pending =
       Tool(conversation, "version_init", "{}", "changing-target");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -2159,7 +2236,7 @@ TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   StartProject();
   const auto conversation = Conversation("unlisted-tools");
   for (const auto *name : {"view_save", "view_set_visible", "project_open",
-                           "project_close", "session_hello"})
+                           "session_hello"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
@@ -2190,7 +2267,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("helper-card-scope");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto before =
       Read(directory.path / "project/definitions/secret/_card.json");
   ModelServer model;
@@ -2250,7 +2327,7 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   StartProject();
   const auto conversation = Conversation("helper-created-card");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto rev = JsonString(JsonString(Inspect(conversation).View(), "/text"),
                               "/value/rev");
   ModelServer model;
@@ -2353,5 +2430,5 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(reserve(*host, "comment", "lorenz", {}), "3");
 }
 
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

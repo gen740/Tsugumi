@@ -7,9 +7,6 @@ const ROOT = process.env.TSUGUMI_DOCS_ROOT ?? fileURLToPath(new URL('../../../..
 const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
-/** Documents an agent can skip when it needs less context ("Optional" in llms.txt). */
-const SECONDARY = ['docs/LicenseAudit.md']
-
 /** Pages read with the thread and the moving figures, in the order the slide show goes through them. */
 const STORY = [
   {
@@ -144,7 +141,6 @@ function pageMap(groups) {
   map.set('README.md', 'pages/readme.html')  // the whole README; pages/problem.html is its story
   map.set('docs/README.md', 'pages/documents.html')
   for (const g of groups) for (const d of g.docs) if (!map.has(d)) map.set(d, outName(d))
-  map.set('THIRD_PARTY_NOTICES.md', outName('THIRD_PARTY_NOTICES.md'))
   return map
 }
 
@@ -235,14 +231,12 @@ function llmsTxt(groups, mdPages, tagline) {
     '## Overview', '', `- [README](${SITE}index.md): the problem, how to use it, and the real screens explained`, '',
   ]
   for (const g of groups) {
-    const docs = g.docs.filter((d) => !SECONDARY.includes(d))
-    out.push(`## ${g.title}`, '', ...docs.map(item), '')
+    out.push(`## ${g.title}`, '', ...g.docs.map(item), '')
   }
   out.push('## Repository', '',
     `- [AGENTS.md](${RAW}/AGENTS.md): a map and instructions for agents working in this repository`,
     `- [The Card specification](${RAW}/docs/CardGuide.md): Card contracts and per-language SDK APIs`,
     `- [The RPC contract](${RAW}/protocol/tsugumi.fbs): the source of the contract the UI, the Web and the Agent use`, '')
-  out.push('## Optional', '', ...SECONDARY.map(item), '')
   return out.join('\n')
 }
 

@@ -32,7 +32,7 @@ def consumers(path):
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
         return ALL
-    if path in {"README.md", "THIRD_PARTY_NOTICES.md", "tests/README.md"}:
+    if path in {"README.md", "tests/README.md"}:
         return {"docs"}
     if path.startswith("docs/"):
         jobs = {"docs"}
@@ -50,29 +50,33 @@ def consumers(path):
         if path == "docs/features.md":
             jobs.add("prompt")
         return jobs
-    if path == "macOS/tools/bundle-docs.sh":
+    if path == "ui/macos/tools/bundle-docs.sh":
         return {"docs", "swift"}
-    if path.startswith("macOS/Container/"):
+    if path.startswith("vm/guest/") or path in {
+        "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
+    }:
         return {"swift", "vm", "sdk", "host"}
-    if path.startswith("macOS/"):
+    if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/macos/")):
         return {"swift"}
-    if path.startswith("web/"):
+    if path.startswith("ui/web/"):
         return WEB
     if path.startswith("demos/"):
         # ci-core installs demos for Guide RPC; Swift also reads the sources.
         return WEB | {"sdk", "agent-rpc"}
-    if path.startswith("ui/"):
-        return WEB | {"sdk"}
+    if path.startswith("ui/shared/"):
+        return CORE | WEB
     if path.startswith("sdk/"):
         # The native runtime installs the SDK; C++ and host tests use it too.
         return CORE | WEB
     if path.startswith("client/"):
         # Shared native client, Swift C interface and the browser Wasm build.
         return CORE | WEB
-    if path.startswith(("core/", "workerd/", "tests/core/")):
-        return CORE
-    if path.startswith("agent/"):
+    if path.startswith(("util/", "rpc/", "tsugumid/document/")):
+        return CORE | WEB
+    if path.startswith("hostd/agent/"):
         return ALL
+    if path.startswith(("tsugumid/", "hostd/", "workerd/", "tests/core/")):
+        return CORE
     if path.startswith("cli/"):
         return {"adapters", "swift"}
     if path.startswith("plugins/") or path in ADAPTER_TESTS:

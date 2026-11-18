@@ -1,62 +1,15 @@
-# The native binary deliberately has no dependency on Nix or remote reception.
-add_library(tsugumi_worker_protocol STATIC src/protocol.cc)
-target_include_directories(tsugumi_worker_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tsugumi_worker_protocol PUBLIC tsugumi_protocol flatbuffers::flatbuffers)
+add_subdirectory(nix)
+include(cmake/protocol.cmake)
+include(cmake/support.cmake)
+include(cmake/runtime.cmake)
+include(cmake/native.cmake)
+include(cmake/service.cmake)
+include(cmake/nix.cmake)
+include(cmake/sdk-install.cmake)
 
-add_library(tsugumi_workerd_support STATIC src/journal.cc src/paths.cc
-  ${PROJECT_SOURCE_DIR}/core/src/util/crypto.cc ${PROJECT_SOURCE_DIR}/core/src/util/fs.cc
-  src/staging.cc)
-target_include_directories(tsugumi_workerd_support PRIVATE ${PROJECT_SOURCE_DIR}/core/src
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tsugumi_workerd_support PUBLIC tsugumi_worker_protocol tsugumi_json)
-if(NOT APPLE)
-  target_link_libraries(tsugumi_workerd_support PRIVATE PkgConfig::CRYPTO)
-endif()
-
-set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
-
-# One implementation of worker ownership and invocation, shared by the core and
-# remote launcher. Embed these objects in the core archive for installed users;
-# the engine does not link back to the core's scheduling or service layer.
-add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc src/worker_execution.cc src/local_transport.cc src/local_client.cc)
-target_include_directories(tsugumi_worker_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-  PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_workerd_support Threads::Threads)
-target_compile_definitions(tsugumi_worker_runtime PRIVATE TSUGUMI_BWRAP="${TSUGUMI_BWRAP}")
-target_compile_options(tsugumi_worker_runtime PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-
-add_executable(tsugumi-worker src/native_main.cc)
-target_include_directories(tsugumi-worker PRIVATE ${PROJECT_SOURCE_DIR}/sdk/include ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tsugumi-worker PRIVATE tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads ${CMAKE_DL_LIBS})
-install(TARGETS tsugumi-worker RUNTIME DESTINATION bin)
-
-add_executable(tsugumi-workerd src/main.cc src/local_service.cc)
-target_include_directories(tsugumi-workerd PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-target_link_libraries(tsugumi-workerd PRIVATE tsugumi_core)
-target_compile_options(tsugumi-workerd PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-install(TARGETS tsugumi-workerd RUNTIME DESTINATION bin)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_library(tsugumi_remote_store STATIC src/nix_store.cc)
-  target_compile_features(tsugumi_remote_store PRIVATE cxx_std_23)
-  target_include_directories(tsugumi_remote_store PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX tsugumi_core)
-  target_sources(tsugumi-workerd PRIVATE src/remote_main.cc src/invocation.cc)
-  target_compile_definitions(tsugumi-workerd PRIVATE _GNU_SOURCE)
-  target_include_directories(tsugumi-workerd PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-  target_link_libraries(tsugumi-workerd PRIVATE tsugumi_core tsugumi_nix_eval tsugumi_workerd_support tsugumi_remote_store)
-endif()
-
-# Cross-system Cards rebuild this light worker with their own nixpkgs/libc.
-install(FILES src/native_main.cc DESTINATION share/tsugumi/sdk/worker/src)
-install(FILES ${PROJECT_SOURCE_DIR}/core/src/schema.hh ${PROJECT_SOURCE_DIR}/core/src/schema.cc
-  DESTINATION share/tsugumi/sdk/worker/core)
-install(FILES ${PROJECT_SOURCE_DIR}/core/src/util/text.hh ${PROJECT_SOURCE_DIR}/core/src/util/text.cc
-  DESTINATION share/tsugumi/sdk/worker/core/util)
-install(FILES ${TSUGUMI_PROTOCOL_DIR}/worker.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs
-  ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs DESTINATION share/tsugumi/sdk/worker/protocol)
-install(DIRECTORY ${HOSQ_INCLUDE_DIR}/hosq DESTINATION share/tsugumi/sdk/worker/include)
-install(FILES ${HOSQ_INCLUDE_DIR}/../LICENSE DESTINATION share/tsugumi/sdk/worker/include/hosq RENAME LICENSE OPTIONAL)
-
-install(FILES include/tsugumi/workerd/frame.hh include/tsugumi/workerd/display.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/workerd)
+add_library(tsugumi_worker_authorization STATIC src/authorized_keys.cc)
+target_include_directories(tsugumi_worker_authorization PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(tsugumi_worker_authorization PUBLIC tsugumi_peer_tls)
+target_link_libraries(tsugumi-workerd PRIVATE tsugumi_worker_authorization tsugumi_peer_tls)
+add_library(tsugumi_launch_paths STATIC src/scratch_policy.cc)
+target_include_directories(tsugumi_launch_paths PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

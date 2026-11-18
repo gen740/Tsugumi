@@ -3,7 +3,7 @@
 #include "agent/catalog.hh"
 #include "host/save.hh"
 #include "agent/save_policy.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 #include <git2.h>
 #include "host/failure.hh"
 
@@ -14,7 +14,7 @@ using agent::AgentSave;
 using agent::PrepareAgentSave;
 using agent::SaveRevisionConflict;
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 class AgentSavePolicy : public ::testing::Test {
 protected:
   comments::Files files{

@@ -1,0 +1,16 @@
+set(_tsugumi_host_rpc_host_sources
+  agent/conversation_store_rpc_test.cc
+  agent/rpc_test.cc
+  agent/host_rpc_test.cc
+  agent/skills_rpc_test.cc
+  agent/models_rpc_test.cc
+  agent/guide_rpc_test.cc
+  agent/project_rpc_test.cc
+  agent/exclude_rpc_test.cc
+  agent/run_wait_rpc_test.cc
+  agent/save_rpc_test.cc
+  agent/layout_rpc_test.cc
+  agent/edit_rpc_test.cc
+  agent/mnist_save_rpc_test.cc
+  agent_fixture_server.cc
+)

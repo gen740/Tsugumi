@@ -1,0 +1,5 @@
+add_library(tsugumi_client_transport STATIC src/transport_wasm.cc)
+target_include_directories(tsugumi_client_transport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(tsugumi_client_transport PRIVATE -fexceptions)
+
+target_link_options(tsugumi_client_transport INTERFACE -fexceptions -sDISABLE_EXCEPTION_CATCHING=0 -lwebsocket.js)

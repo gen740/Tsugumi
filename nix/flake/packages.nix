@@ -19,8 +19,12 @@ in
       libgit2-local = pkgs.callPackage ../libgit2-local.nix { };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
-      kernel = pkgs.callPackage ../../macOS/Container/kernel.nix { };
-      vm-boot = pkgs.callPackage ../../macOS/Container/vm-boot.nix { inherit kernel; };
+      kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
+      vm-system = pkgs.callPackage ../../vm/guest/vm-system.nix {
+        # Formatting runs on the host; guest binaries need no formatter paths.
+        tsugumid = core.override { withFormatters = false; };
+      };
+      vm-boot = pkgs.callPackage ../../vm/guest/vm-boot.nix { inherit kernel vm-system; };
     in
     {
       packages = {
@@ -36,21 +40,32 @@ in
         tsugumid = core;
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        inherit kernel vm-boot;
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
-        # Tsugumi in the shared VM: built inside the VM at boot from this source.
-        vm-system = pkgs.callPackage ../../macOS/Container/vm-system.nix { tsugumid = core; };
         # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
         cli = pkgs.callPackage ../cli.nix {
           tsugumid = core;
           inherit web;
         };
-        # What the app bundles: the boot disk (kernel and a small rootfs with Nix).
-        vm = pkgs.runCommand "tsugumi-vm" { } ''
-          mkdir -p $out
-          ln -s ${vm-boot}/vmlinux ${vm-boot}/rootfs.erofs $out/
-          echo ${baseNameOf vm-boot} > $out/vm-version
-        '';
+      }
+      // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
+        inherit kernel vm-boot vm-system;
+        # One distributable image; the helper extracts its VZ attachments.
+        vm =
+          pkgs.runCommand "tsugumi-vm"
+            {
+              nativeBuildInputs = [
+                pkgs.gnutar
+                pkgs.gzip
+              ];
+            }
+            ''
+              mkdir -p $out image
+              cp ${vm-boot}/vmlinux ${vm-boot}/rootfs.erofs image/
+              echo ${baseNameOf vm-boot} > image/vm-version
+              tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+                -C image -cf - vmlinux rootfs.erofs vm-version | gzip -n > $out/tsugumi-vm.tar.gz
+              cp image/vm-version $out/
+            '';
       };
     };
 }

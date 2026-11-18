@@ -20,6 +20,7 @@
   ruff,
   nixfmt,
   shfmt,
+  withFormatters ? true,
 }:
 # Clang on Linux too (with GCC's libstdc++, as the Nix libraries linked here):
 # GCC 16 did not finish compiling one of the core's files.
@@ -41,21 +42,35 @@ clangStdenv.mkDerivation {
       ../CMakeLists.txt
       ../cmake
       ../workerd
-      ../core
-      ../client
+      ../util
+      ../rpc
+      ../tsugumid
+      ../hostd/CMakeLists.txt
+      ../hostd/cmake
+      ../hostd/src
+      ../hostd/private
+      ../hostd/agent/src
+      ../hostd/agent/private
+      ../vm/guest/CMakeLists.txt
+      ../vm/guest/src
+      ../client/CMakeLists.txt
+      ../client/cmake
+      ../client/include
+      ../client/src
       ../sdk
-      (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/templates)
+      (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
       # Documentation tooling does not affect the native runtime.
+      ../protocol/CMakeLists.txt
       (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
-      ../agent/Shared/system-prompt.md
-      ../agent/Shared/guide-prompt.md
-      ../agent/Shared/demo-skill.md
-      ../agent/Shared/helpers-skill.md
-      ../agent/Shared/review-skill.md
-      ../agent/Shared/rerun-compare-skill.md
-      ../agent/Shared/agent.json
-      ../agent/Shared/guide-script.json
-      ../agent/Shared/guide-script.en.json
+      ../hostd/agent/Shared/system-prompt.md
+      ../hostd/agent/Shared/guide-prompt.md
+      ../hostd/agent/Shared/demo-skill.md
+      ../hostd/agent/Shared/helpers-skill.md
+      ../hostd/agent/Shared/review-skill.md
+      ../hostd/agent/Shared/rerun-compare-skill.md
+      ../hostd/agent/Shared/agent.json
+      ../hostd/agent/Shared/guide-script.json
+      ../hostd/agent/Shared/guide-script.en.json
     ];
   };
   nativeBuildInputs = [
@@ -78,20 +93,23 @@ clangStdenv.mkDerivation {
     nix.libs.nix-util
   ]
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
-  cmakeFlags = [
-    "-DTSUGUMI_FORMAT_CLANG=${llvmPackages.clang-unwrapped}/bin/clang-format"
-    "-DTSUGUMI_FORMAT_RUFF=${ruff}/bin/ruff"
-    "-DTSUGUMI_FORMAT_NIX=${nixfmt}/bin/nixfmt"
-    "-DTSUGUMI_FORMAT_SH=${shfmt}/bin/shfmt"
-    "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
-    "-DHOSQ_INCLUDE_DIR=${hosq}/include"
-    "-DTSUGUMI_BUILD_TESTS=OFF"
-    "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
-    "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"
-    "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
-    "-DTSUGUMI_BASH=${bash}/bin/bash"
-  ]
-  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
+  cmakeFlags =
+    lib.optionals withFormatters [
+      "-DTSUGUMI_FORMAT_CLANG=${llvmPackages.clang-unwrapped}/bin/clang-format"
+      "-DTSUGUMI_FORMAT_RUFF=${ruff}/bin/ruff"
+      "-DTSUGUMI_FORMAT_NIX=${nixfmt}/bin/nixfmt"
+      "-DTSUGUMI_FORMAT_SH=${shfmt}/bin/shfmt"
+    ]
+    ++ [
+      "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
+      "-DHOSQ_INCLUDE_DIR=${hosq}/include"
+      "-DTSUGUMI_BUILD_TESTS=OFF"
+      "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
+      "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"
+      "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
+      "-DTSUGUMI_BASH=${bash}/bin/bash"
+    ]
+    ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
   # What the dev shell's own CMake configuration needs of the above.
   passthru.devEnv = {
     TSUGUMI_FORMAT_CLANG = "${llvmPackages.clang-unwrapped}/bin/clang-format";

@@ -9,7 +9,7 @@ TEMPLATE = ROOT / 'sdk/rust/template'
 
 def generate(check=False):
     files = {str(p.relative_to(TEMPLATE)): p.read_text() for p in sorted(TEMPLATE.rglob('*')) if p.is_file()}
-    path = ROOT / 'ui/templates/rust.json'
+    path = ROOT / 'ui/shared/templates/rust.json'
     template = json.loads(path.read_text())
     template = {name: text for name, text in template.items() if not name.startswith('src/')}
     template.update({'src/' + name: text for name, text in files.items()})

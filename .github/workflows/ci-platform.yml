@@ -210,7 +210,7 @@ jobs:
         run: nix build --no-link .#cli
       - name: Adapter behavior
         env:
-          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/web/dist
+          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/ui/web/dist
         run: bash tests/ci/run-suite.sh adapters '${{ inputs.system }}'
 
   sdk:
@@ -271,36 +271,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            macOS/.build
-            macOS/CoreTests/.build
-          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('macOS/Sources/**', 'macOS/Tests/**', 'macOS/CoreTests/Tests/**', 'macOS/Resources/**', 'macOS/Plugins/**', 'agent/Shared/**', 'protocol/**', 'client/include/**') }}
+            ui/macos/.build
+            client/swift/.build
+            vm/macos/runtime/.build
+            cli/macos/.build
+            ui/macos/CoreTests/.build
+          key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('client/swift/Package.resolved', 'vm/macos/runtime/Package.resolved', 'client/swift/Package.swift', 'vm/macos/runtime/Package.swift', 'cli/macos/Package.swift', 'ui/macos/Package.resolved', 'ui/macos/CoreTests/Package.resolved', 'ui/macos/Package.swift', 'ui/macos/CoreTests/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('ui/macos/Sources/**', 'ui/macos/Tests/**', 'ui/macos/CoreTests/Tests/**', 'ui/macos/Resources/**', 'client/swift/Sources/**', 'client/swift/Plugins/**', 'vm/macos/runtime/Sources/**', 'vm/macos/runtime/Tests/**', 'hostd/agent/Shared/**', 'protocol/**', 'client/include/**') }}
           restore-keys: |
-            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'flake.lock') }}-
+            swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('client/swift/Package.resolved', 'vm/macos/runtime/Package.resolved', 'client/swift/Package.swift', 'vm/macos/runtime/Package.swift', 'cli/macos/Package.swift', 'ui/macos/Package.resolved', 'ui/macos/CoreTests/Package.resolved', 'ui/macos/Package.swift', 'ui/macos/CoreTests/Package.swift', 'flake.lock') }}-
       - name: Build-tool plugin warnings
-        run: bash macOS/tools/check-plugin-warnings.sh
+        run: bash ui/macos/tools/check-plugin-warnings.sh
       - name: Swift platform adapter tests
-        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos/CoreTests'
+      - name: Independent VM adapter tests
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path vm/macos/runtime'
       - name: Build the application help
         run: nix run .#build-doc
       - name: Application behavior
-        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS'
+        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos'
 
   vm:
-    name: VM runtime package
+    name: Release-built guest closure
     if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks).vm }}
     needs: native
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-core
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-      - name: Build or fetch the VM runtime
-        run: nix build --no-link .#vm-system
+    uses: ./.github/workflows/vm-image.yml
+    with:
+      revision: ${{ github.sha }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}

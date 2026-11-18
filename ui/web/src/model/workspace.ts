@@ -1,0 +1,184 @@
+import { Observable } from './observable'
+import type { Stage } from './canvasKit'
+import { D, uuid } from '../wire/rpc'
+import { CardKey, ProjectSession } from './session'
+import { L } from '../i18n'
+
+export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
+export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
+  general: { title: L('一般'), icon: 'slider.horizontal.3' },
+  comments: { title: L('コメント'), icon: 'bubble.left' },
+  nix: { title: L('Nix 定義'), icon: 'snowflake' },
+  source: { title: L('ソース'), icon: 'doc.text' },
+  ports: { title: L('入出力'), icon: 'arrow.left.arrow.right' },
+  executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
+  artifacts: { title: L('成果物'), icon: 'shippingbox' },
+  context: { title: L('追加コンテキスト'), icon: 'text.bubble' },
+}
+
+/** One tab of the workbench: a scope (the root workflow or a child workflow)
+ *  with its own selection and back history. */
+export class WorkflowTab extends Observable {
+  readonly id = uuid()
+  back: string[][] = []
+  selectedConnection?: number
+  showNixReferences = false
+  showNixList = false
+  selectedNixReference?: string
+  hoveredNixCard?: CardKey
+  toggleNixReferences() {
+    this.showNixReferences = !this.showNixReferences
+    this.hoveredNixCard = undefined
+    this.changed()
+  }
+  /** A link picked on the canvas is the selected row of the reference list. */
+  selectNixReference(id: string) {
+    this.selectedNixReference = id
+    this.showNixList = true
+    this.changed()
+  }
+  hoverNixCard(card: CardKey | undefined) {
+    if (!this.showNixReferences) card = undefined
+    if (this.hoveredNixCard === card) return
+    this.hoveredNixCard = card
+    this.changed()
+  }
+  /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
+  selectedNotes = new Set<string>()
+  selectedFrames = new Set<CardKey>()
+
+  constructor(public scope: string[], public selection = new Set<CardKey>()) {
+    super()
+  }
+
+  /** Choosing Cards anew lets go of the notes and frames, which come from a marquee. */
+  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = []) {
+    this.selection = new Set(s)
+    this.selectedNotes = new Set(notes)
+    this.selectedFrames = new Set(frames)
+    this.changed()
+  }
+
+  /** Switches the edited scope; the previous one goes on the back stack. */
+  enter(s: string[]) {
+    if (s.join('/') === this.scope.join('/')) return
+    this.back.push(this.scope)
+    this.scope = s
+    this.setSelection([])
+    this.selectedConnection = undefined
+    this.changed()
+  }
+
+  goBack() {
+    const s = this.back.pop()
+    if (!s) return
+    this.scope = s
+    this.setSelection([])
+    this.selectedConnection = undefined
+    this.changed()
+  }
+}
+
+export type BottomPanel = 'log' | 'timeline' | 'terminal'
+export const BOTTOM_PANELS: BottomPanel[] = ['log', 'timeline', 'terminal']
+export const BOTTOM_TITLES: Record<BottomPanel, string> = { log: L('ログ'), timeline: L('タイムライン'), terminal: L('ターミナル') }
+export const BOTTOM_ICONS: Record<BottomPanel, string> = { log: 'text.alignleft', timeline: 'chart.bar.xaxis', terminal: 'terminal' }
+
+/** State of one main window: which project is open, its tabs and panels. */
+export class Workspace extends Observable {
+  session?: ProjectSession
+  tabs: WorkflowTab[] = []
+  activeTab?: string
+  showChat = true
+  /** The sidebar column (NavigationSplitView's columns: all / detail only). */
+  showSidebar = true
+  showBottom = false
+  bottomPanel: BottomPanel = 'log'
+  /** Log filter chosen from elsewhere (an issue, a Card menu, a stage icon). */
+  logCard?: CardKey
+  logRunId?: string
+  logInvocation?: bigint
+  logStream: D.LogStream = D.LogStream.journal
+  /** Stage whose log section to open (a click on a stage icon). */
+  logStage?: Stage
+  /** Leaves the project for Home (set by the main window; undefined in a
+   *  window that shows a child workflow only). */
+  switchProject?: () => void
+
+  get active(): WorkflowTab | undefined {
+    return this.tabs.find((t) => t.id === this.activeTab) ?? this.tabs[0]
+  }
+
+  open(s: ProjectSession, scope?: string[]) {
+    if (this.session !== s) {
+      this.logRunId = undefined
+      this.logInvocation = undefined
+    }
+    this.session = s
+    const tab = new WorkflowTab(scope ?? s.initialScope, scope ? new Set() : new Set(s.initialSelection))
+    this.tabs = [tab]
+    this.activeTab = tab.id
+    this.changed()
+  }
+
+  close() {
+    this.session = undefined
+    this.tabs = []
+    this.activeTab = undefined
+    this.changed()
+  }
+
+  /** Opens a scope in a tab, reusing a tab that already shows it. */
+  openTab(scope: string[]) {
+    const t = this.tabs.find((t) => t.scope.join('/') === scope.join('/'))
+    if (t) {
+      this.activeTab = t.id
+    } else {
+      const n = new WorkflowTab(scope)
+      this.tabs = [...this.tabs, n]
+      this.activeTab = n.id
+    }
+    this.changed()
+  }
+
+  closeTab(id: string) {
+    const i = this.tabs.findIndex((t) => t.id === id)
+    if (this.tabs.length <= 1 || i < 0) return
+    this.tabs = this.tabs.filter((t) => t.id !== id)
+    if (this.activeTab === id) this.activeTab = this.tabs[Math.max(0, i - 1)].id
+    this.changed()
+  }
+
+  selectTab(id: string) {
+    this.activeTab = id
+    this.changed()
+  }
+
+  set<K extends 'showChat' | 'showSidebar' | 'showBottom' | 'bottomPanel' | 'logCard' | 'logRunId' | 'logInvocation' | 'logStream' | 'logStage'>(k: K, v: Workspace[K]) {
+    ;(this as Workspace)[k] = v
+    this.changed()
+  }
+
+  /** The log / timeline / terminal icons: a click opens that panel, or closes
+   *  it when it is already the one shown. */
+  togglePanel(p: BottomPanel) {
+    if (this.showBottom && this.bottomPanel === p) this.showBottom = false
+    else {
+      this.bottomPanel = p
+      this.showBottom = true
+    }
+    this.changed()
+  }
+
+  /** Opens the log of a Card (or of the whole run), at a stage's section. */
+  showLog(card: CardKey | undefined, stage?: Stage, invocation?: bigint, runId?: string) {
+    if (runId !== undefined) this.logRunId = runId
+    this.logCard = card
+    this.logInvocation = invocation
+    this.logStage = stage
+    if (card === undefined) this.logStream = D.LogStream.journal
+    this.bottomPanel = 'log'
+    this.showBottom = true
+    this.changed()
+  }
+}

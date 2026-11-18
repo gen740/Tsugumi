@@ -45,7 +45,7 @@
             ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ];
           MACOSX_DEPLOYMENT_TARGET = "26.0";
           # The Mac host service links this instead of the core's libgit2
-          # (macOS/tools/build-host.sh).
+          # (hostd/tools/build-macos.sh).
           TSUGUMI_HOST_LIBGIT2_PKGCONFIG = "${config.packages.libgit2-local.dev}/lib/pkgconfig";
         }
         // core.devEnv

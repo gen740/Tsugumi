@@ -5,14 +5,14 @@
 //   docs/assets/casa-window.svg    Cas A in a drawing of the Mac app's window, laid out as the README's screenshot
 //   docs/assets/casa-{source,timeline,guide}.svg, collatz-subworkflow.svg   the README's other screenshots of the window, moving
 //   node docs/site/player/svg.mjs [<id> …]        (default: all of them)
-// Every frame of the player's replay (framesOf in web/src/ui/demoPlayer.tsx) is drawn
+// Every frame of the player's replay (framesOf in ui/web/src/ui/demoPlayer.tsx) is drawn
 // by the player's own Canvas and RunControl with React's static renderer, from the same
 // player-data/<id>.json, with the player's own stylesheet (site/player.css). The Cards,
 // wires, output frames and the run control are kept once per distinct drawing, each shown
 // during the frames that drew it. Chrome (headless) lays that HTML out and dom-to-svg turns
 // it into plain SVG (`render`), the animations staying on its elements' classes. Images come
 // from player-data/assets/ as data: URIs (a tile's shrunk with sips, macOS, as harvest.py does).
-// Builds its data first; needs web/node_modules, web/src/gen and
+// Builds its data first; needs ui/web/node_modules, ui/web/shared/gen and
 // Chrome (/Applications/Google Chrome.app, or TSUGUMI_CHROME). Run on a Mac; the SVGs are committed.
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -24,7 +24,7 @@ import { preparePlayer, finalsFromRun, flowOf, readJson, readProject, stepsFromR
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
 const ROOT = path.resolve(SITE, '..', '..')
-const WEB = path.join(ROOT, 'web')
+const WEB = path.join(ROOT, 'ui', 'web')
 const PLAYER = preparePlayer()
 const DATA = path.join(PLAYER, 'player-data')
 const OUT = path.join(ROOT, 'docs', 'assets')
@@ -533,7 +533,7 @@ function tileSvg(id) {
 
 // ---- The Mac app's window -----------------------------------------------------------------
 
-/** The window of the README's screenshots (docs/assets/screenshots, macOS/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
+/** The window of the README's screenshots (docs/assets/screenshots, ui/macos/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
 const WIN = { width: 1440, height: 900, bar: 52, chat: 344 }
 /** Where the Cas A Canvas has the Cards, output frames and the note: the screenshots' arrangement (Cards in one row, the
  *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (ciao, and the forks begin and share). */
@@ -542,7 +542,7 @@ const WINDOW_LAYOUT = {
   displays: { spectrum: [760, 0, 680, 400], bands: [500, 650, 340, 150], rgb: [880, 650, 420, 440] },
   note: [0, 0, 700, 430],
 }
-/** The shell's colors the player's stylesheet has not (web/src/styles/shell.css, dark). */
+/** The shell's colors the player's stylesheet has not (ui/web/src/styles/shell.css, dark). */
 const SHELL_VARS = '--indigo:#5e5ce6;--cyan:#64d2ff;--mint:#63e6e2;--teal:#40c8e0;--tertiary:rgba(235,235,245,.32);--tsugumi-cream:#f6ead2;--tsugumi-rufous:#c97d3d'
 /** The Web UI's rules for the shell, the guide and its helpers, without comments (usedCss keeps those the drawing uses). */
 const webCss = ['styles.css', 'styles/shell.css', 'styles/guide.css'].map((f) => fs.readFileSync(path.join(WEB, 'src', f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n')
@@ -550,7 +550,7 @@ const webCss = ['styles.css', 'styles/shell.css', 'styles/guide.css'].map((f) =>
 
 const chromeIcon = (name, size, color) => xhtml(player.icon(name, size, color))
 
-/** The guide's bird (GuideBird in web/src/ui/guide.tsx): the icon's bird with its wing, the polygons of the icon's perch above the branch. */
+/** The guide's bird (GuideBird in ui/web/src/ui/guide.tsx): the icon's bird with its wing, the polygons of the icon's perch above the branch. */
 function guideBirdDef() {
   const icon = fs.readFileSync(path.join(OUT, 'tsugumi-icon.svg'), 'utf8')
   const group = (id) => split(icon.slice(icon.indexOf(`<g id="${id}">`)))
@@ -669,7 +669,7 @@ function windowSvg() {
 
 // ---- Timeline: which Card ran when, filled in as the run goes --------------------------------
 
-/** The timeline panel (RunTimelineView in web/src/ui/logs.tsx: a row per Card, a bar per invocation split into its stages), from the
+/** The timeline panel (RunTimelineView in ui/web/src/ui/logs.tsx: a row per Card, a bar per invocation split into its stages), from the
  *  recorded invocations. Its right edge follows the replay: real time maps onto each step's frames. */
 const STAGE_COLOR = { prepare: 'var(--indigo)', evaluate: 'var(--cyan)', build: 'var(--blue)', execute: 'var(--green)', validate: 'var(--mint)', save: 'var(--teal)' }
 const TIMELINE = { top: 697, label: 170, row: 18 }
@@ -830,7 +830,7 @@ function guideSvg() {
 
 // ---- Card settings: reading a Card's code ---------------------------------------------------
 
-/** The code editor's standard colors in dark (EditorTheme.standard in macOS/Sources/App/Settings/AppPreferences.swift). */
+/** The code editor's standard colors in dark (EditorTheme.standard in ui/macos/Sources/App/Settings/AppPreferences.swift). */
 const SYNTAX = { comment: '#30d158', string: '#ff453a', number: '#bf5af2', keyword: '#ff375f', function: '#0a84ff', type: '#40c8e0', constant: '#ff9f0a', property: '#64d2ff' }
 const PY_KEYWORDS = new Set(['and', 'as', 'assert', 'class', 'def', 'elif', 'else', 'except', 'False', 'for', 'from', 'if', 'import', 'in', 'is', 'lambda', 'None', 'not', 'or', 'pass', 'raise', 'return', 'True', 'try', 'while', 'with', 'yield'])
 

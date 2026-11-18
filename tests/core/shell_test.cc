@@ -8,8 +8,8 @@
 #include <cerrno>
 #include <cstring>
 
-#include "util/fs.hh"
-#include "util/process.hh"
+#include "tsugumi/util/fs.hh"
+#include "tsugumi/util/process.hh"
 
 namespace tsugumi::shell {
 namespace {

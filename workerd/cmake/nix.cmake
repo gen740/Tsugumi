@@ -1,0 +1,8 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(tsugumi_remote_store STATIC src/nix_store.cc)
+  target_compile_features(tsugumi_remote_store PRIVATE cxx_std_23)
+  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX tsugumi_worker_values tsugumi_nix_store)
+  target_sources(tsugumi-workerd PRIVATE src/remote_main.cc src/invocation.cc)
+  target_compile_definitions(tsugumi-workerd PRIVATE _GNU_SOURCE)
+  target_link_libraries(tsugumi-workerd PRIVATE tsugumi_worker_values tsugumi_nix_store tsugumi_workerd_support tsugumi_remote_store)
+endif()

@@ -5,8 +5,8 @@
 # cache). Node comes from PATH, else from the checkout's Nix dev shell.
 here=$(cd "$(dirname "$0")" && pwd)
 for repo in "$1" "$here/../../.."; do
-  if [ -n "$repo" ] && [ -f "$repo/web/dist/mcp.js" ]; then
-    mcp="$repo/web/dist/mcp.js"
+  if [ -n "$repo" ] && [ -f "$repo/ui/web/dist/mcp.js" ]; then
+    mcp="$repo/ui/web/dist/mcp.js"
     break
   fi
 done

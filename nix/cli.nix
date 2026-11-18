@@ -19,15 +19,18 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
     };
   }
   ''
-    mkdir -p $out/bin $out/share
+    mkdir -p $out/bin $out/share/licenses/node
+    cp -R ${../third-party}/. $out/share/licenses/
+    cp ${../cli/third-party/node-linux/LICENSE} $out/share/licenses/node/LICENSE
     ln -s ${web}/share/tsugumi $out/share/tsugumi
     makeWrapper ${nodejs}/bin/node $out/bin/tsugumi \
-      --add-flags "${web}/share/tsugumi/web/dist/server.js --open --reuse" \
+      --add-flags "${web}/share/tsugumi/ui/web/dist/server.js --open --reuse" \
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
         ]
       } \
+      --set-default TSUGUMI_REPO ${web}/share/tsugumi \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_HOSTD ${tsugumid}/bin/tsugumi-hostd \
       --set-default TSUGUMI_WORKER ${tsugumid}/bin/tsugumi-worker \

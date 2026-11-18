@@ -4,7 +4,7 @@
 include "host.fbs";
 namespace Tsugumi.VMHost;
 table Watch {}
-table Boot { key:string; broker_endpoint:string (required); }
+table Boot { key:string; broker_endpoint:string (required); cache_configuration:string; cache_netrc:string; cache_problem:string; }
 table Mount { name:string (required); path:string (required); read_only:bool; }
 table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); archive_incompatible_history:bool; }
 enum ProcessAction:ubyte { Poll, Stop }

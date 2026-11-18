@@ -1,4 +1,4 @@
-// Standalone test: swiftc -parse-as-library macOS/Sources/Launcher/VMShutdown.swift
+// Standalone test: swiftc -parse-as-library vm/macos/runtime/Sources/VMRuntime/VMShutdown.swift
 // tests/swift/vm_shutdown_test.swift -o /tmp/vm-shutdown-test && /tmp/vm-shutdown-test
 import Foundation
 

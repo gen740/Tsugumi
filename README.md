@@ -200,4 +200,4 @@ For remote execution, start `tsugumi-workerd` on a Linux remote worker machine (
 
 ## License
 
-Tsugumi's own code is under the MIT License ([LICENSE](LICENSE)). External code, fonts and data are under their own licenses, whose full texts ship with the app and the `tsugumi` command. The list of dependencies is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); what the distributions include and how the VM's corresponding source is provided are in the [Licenses and distribution](docs/LicenseAudit.md).
+Tsugumi is under the MIT License ([LICENSE](LICENSE)).

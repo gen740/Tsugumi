@@ -223,7 +223,7 @@ Validation (macOS, staged Git copies; no app launch):
 - Swift app package compiled, and 9 selected evidence/finding, comment, note,
   group, undo and marquee tests passed. SwiftPM build-tool sandboxing alone was
   disabled because nested Seatbelt execution is denied; product sandboxing was
-  not changed. `macOS/CoreTests` service adapter tests: 21 passed, including
+  not changed. `ui/macos/CoreTests` service adapter tests: 21 passed, including
   the shared flatc goldens for both new requests/replies and omitted Host vectors.
 - Final public Agent RPC checks: 9 passed, including Unix/WebSocket annotation
   allocation across restart, call counters, helpers and the model-facing

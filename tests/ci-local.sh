@@ -37,7 +37,7 @@ linux_job() {
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   local web system sdk_python
   web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
-  export TSUGUMI_WEB_DIST="$web/share/tsugumi/web/dist"
+  export TSUGUMI_WEB_DIST="$web/share/tsugumi/ui/web/dist"
   step "Public Agent RPC tests"
   agent_checks
   step "Public core and CLI RPC tests"
@@ -84,7 +84,7 @@ linux_in_container() {
 
 mac_job() {
   step "Build-tool plugin warnings"
-  bash macOS/tools/check-plugin-warnings.sh
+  bash ui/macos/tools/check-plugin-warnings.sh
   step "Build or fetch the native runtime and public RPC tests"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   step "Public Agent RPC tests"
@@ -93,12 +93,13 @@ mac_job() {
   core_checks
   step "Card isolation on a Mac host (Seatbelt)"
   core_run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
-  step "Model, RPC, Agent and launcher (macOS/CoreTests)"
-  core_run /usr/bin/swift test --package-path macOS/CoreTests
+  step "Model, RPC, Agent and launcher (ui/macos/CoreTests)"
+  core_run /usr/bin/swift test --package-path ui/macos/CoreTests
+  core_run /usr/bin/swift test --package-path vm/macos/runtime
   step "Build the application help"
   nix --extra-experimental-features 'nix-command flakes' run .#build-doc
-  step "App logic (macOS/Tests)"
-  core_run /usr/bin/swift test --package-path macOS
+  step "App logic (ui/macos/Tests)"
+  core_run /usr/bin/swift test --package-path ui/macos
 }
 
 case "${1:-all}" in

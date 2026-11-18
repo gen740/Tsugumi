@@ -7,14 +7,12 @@
 .tsugumi/
 __pycache__/
 *.pyc
-/macOS/.build/
-/macOS/.swiftpm/
-/macOS/CoreTests/.build/
-/macOS/CoreTests/.swiftpm/
+/ui/macos/.build/
+/ui/macos/.swiftpm/
+/ui/macos/CoreTests/.build/
+/ui/macos/CoreTests/.swiftpm/
 /dist/
 .DS_Store
-/agent/.build/
-/agent/.swiftpm/
 /.cache/
 /.build/
 
@@ -22,3 +20,10 @@ __pycache__/
 /docs/site/js/player.js
 /docs/site/player.css
 /docs/site/player-data/*.json
+
+/client/swift/.build/
+/client/swift/.swiftpm/
+/vm/macos/runtime/.build/
+/vm/macos/runtime/.swiftpm/
+/cli/macos/.build/
+/cli/macos/.swiftpm/

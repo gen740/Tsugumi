@@ -65,7 +65,7 @@ def test_the_mnist_draft_is_work_for_helpers_that_meets_again():
     wires = {(w["from"]["card"], w["to"]["card"]) for w in doc["canvas"]["connections"]}
     assert not {w for w in wires if w[0] in classifiers and w[1] in classifiers}
     assert {("share", m) for m in classifiers} | {(m, "compare") for m in classifiers} <= wires
-    limit = json.loads((ROOT / "agent" / "Shared" / "agent.json").read_text())["delegateTool"]
+    limit = json.loads((ROOT / "hostd" / "agent" / "Shared" / "agent.json").read_text())["delegateTool"]
     assert "maxItems" not in limit["inputSchema"]["properties"]["tasks"]
     # The type of the finished demo, the one compare reads.
     finished = (ROOT / "demos" / "ja" / "mnist-classifiers" / "definitions" / "knn" / "_outputs.fbs").read_text()

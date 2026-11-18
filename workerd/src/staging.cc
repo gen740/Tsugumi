@@ -1,6 +1,6 @@
 #include "tsugumi/workerd/staging.hh"
 
-#include "util/sparse.hh"
+#include "tsugumi/util/sparse.hh"
 
 #include <dirent.h>
 #include <fcntl.h>

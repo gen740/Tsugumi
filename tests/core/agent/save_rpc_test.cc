@@ -1,9 +1,9 @@
-#include "agent/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
 
 namespace tsugumi::test {
 namespace {
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 TEST_F(AgentProjectFixture,
        AgentSavePolicyIsAppliedByTheHostAndItsReceiptSurvivesRestart) {
   Write(directory.path / "project/definitions/plan/_card.json",
@@ -14,8 +14,7 @@ TEST_F(AgentProjectFixture,
   StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   auto inspect = [&] {
     return json::Object(json::Get(
         json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -115,8 +114,7 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   StartProject();
   const auto conversation = Conversation("stale-save");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -168,8 +166,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("pending-alias");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   auto inspect = [&] {
     return json::Object(json::Get(
         json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -302,7 +299,7 @@ TEST_F(AgentProjectFixture,
 namespace tsugumi::test {
 namespace {
 TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
-  namespace json = agent::json;
+  namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
       R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":{},"outputs":{}},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
@@ -312,8 +309,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
   StartProject();
   const auto conversation = Conversation("nested-creator");
   Grant(conversation);
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto initial = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -445,8 +441,7 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
   const auto refused = Tool(conversation, tool, args, "no-write");
   EXPECT_EQ(refused.Code(), "grant_required");
   EXPECT_EQ(Read(root / "layout.json"), "{}");
-  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
-        Tsugumi::Service::Access::Write);
+  Grant(conversation, Tsugumi::Service::Access::Write);
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool("save", tool, args));

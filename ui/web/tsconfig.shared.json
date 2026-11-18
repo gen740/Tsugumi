@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022"
+    ],
+    "types": [],
+    "composite": true,
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": ".types/shared",
+    "tsBuildInfoFile": ".types/shared.tsbuildinfo"
+  },
+  "include": [
+    "shared",
+    "../../hostd/agent/Shared/agent.json"
+  ]
+}

@@ -15,12 +15,13 @@ runCommand "tsugumi-web-checks"
     testSources = lib.fileset.toSource {
       root = ../.;
       fileset = lib.fileset.unions [
-        ../web/scripts/test.mjs
-        ../web/tests
+        ../ui/web/scripts/test.mjs
+        ../ui/web/tests
+        ../sdk/views
         ../tests/bench/wire-frames.ts
         ../tests/fixtures
-        ../agent/Shared/system-prompt.md
-        ../agent/Shared/mcp-transport.md
+        ../hostd/agent/Shared/system-prompt.md
+        ../hostd/agent/Shared/mcp-transport.md
       ];
     };
   }
@@ -29,11 +30,11 @@ runCommand "tsugumi-web-checks"
     cp -R ${web.src} source
     chmod -R u+w source
     cp -R $testSources/. source/
-    ln -s ${web.testSupport}/node_modules source/web/node_modules
-    cp -R ${web.testSupport}/gen source/web/src/gen
+    ln -s ${web.testSupport}/node_modules source/ui/web/node_modules
+    cp -R ${web.testSupport}/gen source/ui/web/shared/gen
     export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
     export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/bin/tsugumi_document_edit_driver
-    cd source/web
+    cd source/ui/web
     npm run typecheck
     npm test
     touch $out

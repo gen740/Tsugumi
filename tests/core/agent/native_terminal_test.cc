@@ -14,7 +14,7 @@
 
 namespace tsugumi::test {
 namespace H = Tsugumi::Host;
-TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
+TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   TemporaryDirectory directory;
   const auto home = directory.path / "empty home";
   std::filesystem::create_directory(home);
@@ -107,16 +107,11 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
     }));
     ASSERT_FALSE(closed);
   }
-  request.action = H::TerminalAction::Resize;
-  request.rows = 31;
-  request.cols = 23;
-  EXPECT_NO_THROW(service.Handle(request));
   request.action = H::TerminalAction::Input;
   const std::string command =
       "unset HISTFILE; printf '\\0BEGIN\\0'; "
       "for name in $(compgen -e); do "
       "printf '%s=%s\\0' \"$name\" \"${!name}\"; done; "
-      "printf 'size=%s\\0' \"$(stty size)\"; "
       "shopt -q login_shell; printf 'login=%s\\0' \"$?\"; "
       "printf '\\0END\\0'; exit\n";
   request.data.assign(command.begin(), command.end());
@@ -202,8 +197,6 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
       for (const auto& [name, value] : *environment)
         EXPECT_EQ(value.find("MUST_NOT_CROSS"), value.npos) << name;
     }
-    ASSERT_TRUE(actual.contains("size"));
-    EXPECT_EQ(actual.at("size"), "31 23");
     ASSERT_TRUE(actual.contains("login"));
     EXPECT_EQ(actual.at("login"), "0");
   }

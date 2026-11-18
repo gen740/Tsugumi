@@ -41,8 +41,8 @@ def test_demos_cover_guide_rpc_sdk_web_and_swift_without_unrelated_core_tests():
 
 
 @pytest.mark.parametrize("path", [
-    "web/src/ui/demoPlayer.tsx", "docs/site/player/build.mjs",
-    "docs/site/player-data/assets/casa.run.json", "ui/templates/marimo.json",
+    "ui/web/src/ui/demoPlayer.tsx", "docs/site/player/build.mjs",
+    "docs/site/player-data/assets/casa.run.json", "ui/shared/templates/marimo.json",
     "sdk/python/tsugumi/contract.py", "client/src/client.cc",
 ])
 def test_generated_player_consumers_run_together(path):
@@ -53,7 +53,7 @@ def test_generated_player_consumers_run_together(path):
 
 
 def test_swift_and_tooling_select_only_their_platform_dependencies():
-    assert checks(["macOS/Sources/App/Home/DemoThumbnail.swift"]) == {
+    assert checks(["ui/macos/Sources/App/Home/DemoThumbnail.swift"]) == {
         "aarch64-darwin": {"native", "swift"},
     }
     assert checks(["plugins/tsugumi/bin/tsugumi-mcp"]) == {
@@ -64,7 +64,7 @@ def test_swift_and_tooling_select_only_their_platform_dependencies():
 
 @pytest.mark.parametrize("path", [
     "protocol/host.fbs", "flake.lock", "flake.nix", "nix/core.nix", "CMakeLists.txt",
-    "core/CMakeLists.txt", "sdk/CMakeLists.txt", "tests/core/cmake/installed-core.cmake",
+    "tsugumid/CMakeLists.txt", "sdk/CMakeLists.txt", "tests/core/cmake/installed-core.cmake",
     ".github/workflows/docs.yml", ".github/actions/setup-nix/action.yml",
     "tests/ci/select_jobs.py", "tests/conftest.py", "tests/fixtures/agent-contract.json",
     "unknown/new-file", "docs-with-a-new-name/Usage.md",
@@ -74,19 +74,29 @@ def test_shared_or_unclassified_paths_run_everything(path):
 
 
 def test_native_changes_cover_all_platform_runtime_consumers():
-    for path in ("core/src/service.cc", "workerd/src/native_main.cc"):
+    for path in ("tsugumid/runtime/src/service.cc", "workerd/src/native_main.cc"):
         result = checks([path])
         assert result["x86_64-linux"] >= {"rpc", "host", "remote-execution", "sdk", "adapters"}
         assert "vm" in result["aarch64-linux"]
         assert "swift" in result["aarch64-darwin"]
 
 
+@pytest.mark.parametrize("path", [
+    "vm/guest/tools/vm-artifact.py", "vm/guest/tools/vm-download.py", "vm/guest/tools/vm-snapshot.py",
+    "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
+])
+def test_guest_artifact_changes_select_the_image_and_its_consumers(path):
+    result = checks([path])
+    assert result["aarch64-linux"] >= {"native", "vm", "host", "sdk"}
+    assert result["aarch64-darwin"] >= {"native", "swift"}
+
+
 def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms():
     paths = list(selection.ADAPTER_TESTS) + [
         "README.md", "docs/CardGuide.md", "docs/site/src/content.config.ts",
-        "macOS/Container/vm-system.nix", "macOS/Package.swift", "web/package.json",
-        "demos/en/index.json", "ui/modules/viewer.js", "sdk/src/card_runtime.cc",
-        "client/src/client.cc", "core/src/service.cc", "agent/Shared/agent.json",
+        "vm/guest/vm-system.nix", "ui/macos/Package.swift", "ui/web/package.json",
+        "demos/en/index.json", "ui/shared/modules/viewer.js", "sdk/src/card_runtime.cc",
+        "client/src/client.cc", "tsugumid/runtime/src/service.cc", "hostd/agent/Shared/agent.json",
         "cli/install.ps1", "plugins/tsugumi/bin/tsugumi-mcp", "tests/python/conftest.py",
         "tests/remote/test_worker.py", "tests/prompt/inspect_probe.py", "new-path",
     ]

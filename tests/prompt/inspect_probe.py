@@ -89,11 +89,11 @@ def summarize(case, stdout, process_error=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("case", choices=CASES)
-    parser.add_argument("--prompt", type=Path, default=ROOT / "agent/Shared/system-prompt.md")
+    parser.add_argument("--prompt", type=Path, default=ROOT / "hostd/agent/Shared/system-prompt.md")
     parser.add_argument("--model", default="gpt-6.1-sol")
     parser.add_argument("--codex", default=os.environ.get("CODEX_BIN", "codex"))
     args = parser.parse_args()
-    note = json.loads((ROOT / "agent/Shared/agent.json").read_text())["guide"]["chatNote"]
+    note = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())["guide"]["chatNote"]
     with tempfile.TemporaryDirectory() as tmp:
         cwd = Path(tmp) / "empty"
         cwd.mkdir()

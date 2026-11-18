@@ -1,9 +1,9 @@
 """The shared VM's nix.conf with the launcher's binary cache snapshot.
 
-The guest's Nix configuration (macOS/Container/vm-boot.nix) includes the
-snapshot `BinaryCaches.prepare` writes. Nix itself is asked what it would use,
+The guest's Nix configuration (vm/guest/vm-boot.nix) includes the
+snapshot `host::PrepareBinaryCaches` writes. Nix itself is asked what it would use,
 with the snapshot at a temporary path: no VM, store or network is involved.
-What the launcher writes is covered by macOS/CoreTests (BinaryCacheTests.swift);
+What the host writes is covered by tests/core/host/binary_caches_test.cc;
 a boot of the VM by tests/python/test_shared_vm.py."""
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(shutil.which("nix") is None, reason="needs nix")
 
 
 def guest_conf() -> str:
-    source = (ROOT / "macOS/Container/vm-boot.nix").read_text()
+    source = (ROOT / "vm/guest/vm-boot.nix").read_text()
     found = re.search(r'writeTextDir "etc/nix/nix\.conf" \'\'\n(.*?)\n  \'\';', source, re.S)
     assert found, "vm-boot.nix no longer defines etc/nix/nix.conf this way"
     conf = textwrap.dedent(found.group(1)) + "\n"
@@ -83,7 +83,7 @@ def test_a_snapshot_nix_cannot_parse_is_detected_before_the_daemon_starts(tmp_pa
     """/init asks `nix config show` first: a broken snapshot fails there, and is then left out."""
     code, _, error = effective(tmp_path, "extra-substituters https://cache.example.org/team\n")
     assert code != 0 and "nix.conf" in error
-    init = (ROOT / "macOS/Container/vm-boot.nix").read_text()
+    init = (ROOT / "vm/guest/vm-boot.nix").read_text()
     check = init.index("nix config show substituters >/dev/null")
     assert init.index("mount -t virtiofs -o ro tsugumi-binary-caches") < check < init.index("nix-daemon --daemon")
     assert "umount /run/tsugumi/binary-caches" in init[check:init.index("nix-daemon --daemon")]

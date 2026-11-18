@@ -14,7 +14,7 @@
 #include <thread>
 #include <vector>
 
-#include "model.hh"
+#include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
 

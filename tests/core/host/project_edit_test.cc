@@ -1,17 +1,17 @@
 #include "host/project_edit.hh"
 
-#include "graph.hh"
+#include "tsugumi/document/graph.hh"
 
 #include <gtest/gtest.h>
 
 #include "host/failure.hh"
 #include "host/project_operations.hh"
-#include "util/crypto.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
-namespace json = agent::json;
+namespace json = ::tsugumi::json;
 auto Field(std::vector<std::string> fields, std::string old_value,
            std::string new_value) -> H::ProjectFieldEditT {
   H::ProjectFieldEditT edit;

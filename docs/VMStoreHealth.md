@@ -50,12 +50,6 @@ A failed history/overlay remount or pre-unlink backing sync keeps the marker.
 SIGKILL, power loss and an expired shutdown
 deadline cannot be made orderly; they cause a content check on the next boot.
 
-`fsync-store-paths = true` and `fsync-metadata = true` address the separate window
-between Nix registering a path and its file data reaching persistent storage.
-The persistent private remote-worker store and image-builder store use the same
-settings. This protects durable registration; it does not restore already
-corrupt paths or repair physical storage failure.
-
 Boot writes and syncs the marker before store registration. A dirty marker,
 a missing health version (including **existing disks on the first new image
 boot**), or a changed boot closure runs root's
@@ -71,14 +65,15 @@ No run history or artifacts are deleted by these checks.
 Rebuild the boot image; rebuilding only the C++/Swift source is insufficient:
 
 ```sh
-TSUGUMI_VM_BUILD=1 macOS/Container/build-image.sh --vm
-TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh
+TSUGUMI_VM_BUILD=1 vm/guest/build-image.sh --vm
+TSUGUMI_CODESIGN_IDENTITY="Apple Development" ui/macos/build-app.sh
 ```
 
-The first command writes `dist/tsugumi-vm`; the second bundles it and the changed
-Tsugumi source. `SharedVM.installImage` replaces the copied boot image when its
-`vm-version` changes, retaining `store.img` and `history.img`. The guest rebuilds
-vm-system from the bundled source hash. For a development session that still
+The first command writes the verified artifact set to `dist/tsugumi-vm`; the
+second bundles its single guest archive and manifest. `SharedVM.installImage`
+extracts the kernel/rootfs in private support when the manifest identity changes
+or extracted contents are incomplete, retaining `store.img` and `history.img`.
+The image already contains vm-system; the guest starts it after store checks. For a development session that still
 runs the **old** helper, use the existing runtime Shutdown (or vmctl `quit`)
 first; do not kill that old helper directly. Then end its host service and
 launch the rebuilt app in the background. The new image's missing health version

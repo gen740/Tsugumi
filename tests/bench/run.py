@@ -336,7 +336,7 @@ def main():
                 result = {"path": mode, "scenario": scenario, "runs": [], "bundles": [], "summary": {}}
                 report["results"].append(result)
                 if mode == "remote" and scenario == "value-resident-50":
-                    result.update(status="unavailable", error="Current contract rejects remote reuseWorker (core/src/graph.cc); no fresh-worker substitution was made.",
+                    result.update(status="unavailable", error="Current contract rejects remote reuseWorker (tsugumid/document/src/graph.cc); no fresh-worker substitution was made.",
                                   smallest_change="Remote resident slots and a reuse request/result contract are required; outside this measurement-only step.")
                     continue
                 try:

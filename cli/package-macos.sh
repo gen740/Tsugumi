@@ -1,38 +1,41 @@
 #!/usr/bin/env bash
 # Builds dist/tsugumi-macos-arm64.tar.gz and its checksum, what cli/install.sh
-# installs on a Mac: the server of web/ with Node.js, hostd and OpenSSL,
+# installs on a Mac: the server of ui/web/ with Node.js, hostd and OpenSSL,
 # tsugumi-vmhost, the shared
-# VM's boot disk and the source the VM builds Tsugumi from (the same two as the
-# app: dist/tsugumi-vm, macOS/Container/vm-source.txt).
+# release-built guest archive (the same payload as the app).
 #
 #   cli/package-macos.sh
 #
 # tsugumi-vmhost is signed ad-hoc with the virtualization entitlement, unless
 # TSUGUMI_CODESIGN_IDENTITY names a certificate.
 set -euo pipefail
+# Runtime files carry no Finder resource forks or AppleDouble sidecars.
+export COPYFILE_DISABLE=1
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$repo/dist"
 tree="$dist/cli/tsugumi"
 source "$repo/cli/node-version.env"
 
 vm="$dist/tsugumi-vm"
-[ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
+"$repo/vm/guest/build-image.sh" --vm
 
 # The Web UI, built from the pinned packages.
-nix develop "$repo" -c bash -c "cd '$repo/web' && npm ci --ignore-scripts && npm run gen && npm run build"
+nix develop "$repo" -c bash -c "cd '$repo/ui/web' && npm ci --ignore-scripts && npm run gen && npm run build"
 
-"$repo/macOS/tools/build-host.sh"
+"$repo/hostd/tools/build-macos.sh"
 
 # As for the app: Apple's toolchain in a clean environment, only flatc from Nix.
-flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
+flatc_bin="$("$repo/ui/macos/tools/flatc-bin.sh")"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 build_opts=(-c release --build-system swiftbuild --arch arm64)
-(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
-bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
+(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
+bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$dist/cli"
-mkdir -p "$tree/bin" "$tree/web" "$tree/licenses" "$tree/Frameworks"
+mkdir -p "$tree/bin" "$tree/ui/web" "$tree/Frameworks"
 cp "$repo/VERSION" "$tree/"
+mkdir -p "$tree/licenses"
+cp -R "$repo/third-party/". "$repo/cli/third-party/node" "$tree/licenses/"
 install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 
 # Node.js: the official build, checked against the pinned checksum.
@@ -42,46 +45,28 @@ mkdir -p "$cache"
 [ -f "$cache/$node_tar" ] || curl -fsSL -o "$cache/$node_tar" "https://nodejs.org/dist/v$NODE_VERSION/$node_tar"
 echo "$NODE_SHA256_DARWIN_ARM64  $cache/$node_tar" | shasum -a 256 -c - >/dev/null
 tar -xzf "$cache/$node_tar" -C "$tree/bin" --strip-components=2 "node-v$NODE_VERSION-darwin-arm64/bin/node"
-tar -xzf "$cache/$node_tar" -C "$tree/licenses" --strip-components=1 "node-v$NODE_VERSION-darwin-arm64/LICENSE"
-mv "$tree/licenses/LICENSE" "$tree/licenses/node.LICENSE"
 
-cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-hostd" "$tree/bin/"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 
 for library in "$tree/Frameworks/"*.dylib; do
+  /usr/bin/strip -S "$library"
   codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$library"
 done
+for binary in "$tree/bin/"*; do
+  /usr/bin/strip -S "$binary"
+done
+codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/node"
 codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-hostd"
-codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
+codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
-# The server finds these from web/dist/server.js, as in the repository.
-cp -R "$repo/web/dist" "$tree/web/dist"
-find "$tree/web/dist" -name '*.map' -delete
+# The server finds these from ui/web/dist/server.js, as in the repository.
+cp -R "$repo/ui/web/dist" "$tree/ui/web/dist"
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 
-cp -R "$vm" "$tree/vm"
-src="$tree/vm-source"
-mkdir -p "$src"
-grep -v '^#' "$repo/macOS/Container/vm-source.txt" | while read -r entry; do
-  [ -n "$entry" ] || continue
-  mkdir -p "$src/$(dirname "$entry")"
-  cp -R "$repo/$entry" "$src/$entry"
-done
-
-# Licenses: ours, the packages bundled into the server and the page, FlatBuffers
-# in tsugumi-vmhost, OpenSSL, and the boot disk's (from its release, publish-vm.sh).
-cp "$repo/LICENSE" "$repo/THIRD_PARTY_NOTICES.md" "$tree/licenses/"
-nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" --all "$tree/licenses/npm"
-mkdir -p "$tree/licenses/openssl"
-openssl_source="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#openssl.src)"
-openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
-[ -n "$openssl_license" ] || { echo "OpenSSL license is missing" >&2; exit 1; }
-tar -xOf "$openssl_source" "$openssl_license" > "$tree/licenses/openssl/LICENSE.txt"
-mkdir -p "$tree/licenses/swift-packages/flatbuffers"
-cp "$repo/macOS/.build/checkouts/flatbuffers/LICENSE"* "$tree/licenses/swift-packages/flatbuffers/"
-vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
-curl -fsSL "$vm_licenses" | tar -xz -C "$tree/licenses" || echo "warning: no licenses of the boot disk at $vm_licenses" >&2
+mkdir -p "$tree/vm"
+cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$tree/vm/"
 
 tar -czf "$dist/tsugumi-macos-arm64.tar.gz" -C "$dist/cli" tsugumi
 (cd "$dist" && shasum -a 256 tsugumi-macos-arm64.tar.gz > tsugumi-macos-arm64.tar.gz.sha256)

@@ -1,3 +1,5 @@
+# TODO(#316): build a 3D SDK (primitives, camera, typed array inputs) on these
+# WebAssembly/WebGPU views; only a test fixture uses them today.
 # One Emscripten main module for every Card; each Card supplies only a side module.
 { pkgs }:
 let
@@ -16,10 +18,9 @@ let
   # Use the standard webgpu-headers snapshot already pinned by nixpkgs, without
   # building wgpu-native's Rust library. The port's own extensions stay private.
   headers = pkgs.runCommand "tsugumi-view-headers" { } ''
-    mkdir -p $out/include/webgpu $out/include/tsugumi $out/share/licenses
+    mkdir -p $out/include/webgpu $out/include/tsugumi
     cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/webgpu.h $out/include/webgpu/
     cp ${../include/tsugumi/view.h} $out/include/tsugumi/view.h
-    cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/LICENSE $out/share/licenses/webgpu-headers
   '';
   template =
     pkgs.runCommand "tsugumi-wasm-view-template"
@@ -46,11 +47,7 @@ let
           -o runtime.js
         cp ${source}/index.js index.js
         esbuild index.js --bundle --format=esm --platform=browser --target=es2022 \
-          --minify --outfile=$out/index.js
-        # Keep upstream license notices alongside the shared implementation.
-        cp ${port}/webgpu/src/LICENSE $out/LICENSE.emdawnwebgpu
-        cp ${pkgs.emscripten}/share/emscripten/LICENSE $out/LICENSE.emscripten
-        wc -c < $out/index.js > $out/size-bytes
+          --minify --legal-comments=none --outfile=$out/index.js
       '';
 in
 {
@@ -80,6 +77,5 @@ in
         -sEXPORTED_FUNCTIONS='["_tsugumi_view_initialise","_tsugumi_view_update","_tsugumi_view_resize","_tsugumi_view_dispose"]' \
         -o $out/view.wasm
       ln -s ${template}/index.js $out/index.js
-      wc -c < $out/view.wasm > $out/size-bytes
     '';
 }

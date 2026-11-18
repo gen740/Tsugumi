@@ -11,10 +11,10 @@
 #include "agent/wire.hh"
 #include "host/service.hh"
 #include "host/state_format.hh"
-#include "lanes.hh"
-#include "server.hh"
+#include "tsugumi/rpc/lanes.hh"
+#include "host/wire_endpoint.hh"
 #include "tsugumi/client/client.hh"
-#include "util/fs.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -67,7 +67,7 @@ class VMLifetime : public ::testing::Test {
  protected:
   std::shared_ptr<RuntimeDouble> runtime = std::make_shared<RuntimeDouble>();
   std::unique_ptr<host::Service> service;
-  std::unique_ptr<Server> server;
+  std::unique_ptr<TransportServer> server;
   std::filesystem::path directory;
   client::Options options;
   auto SetUp() -> void override {
@@ -92,11 +92,11 @@ class VMLifetime : public ::testing::Test {
     config.environment.process = runtime;
     service = std::make_unique<host::Service>(config);
     ServerOptions listen;
-    listen.protocol = ServerOptions::Protocol::Host;
+    HostEndpoint(listen);
     listen.unix_path = (directory / "s").string();
     options.endpoint = "unix:" + listen.unix_path;
     options.protocol = client::Protocol::Host;
-    server = std::make_unique<Server>(listen, service.get());
+    server = std::make_unique<TransportServer>(listen, service.get());
     service->Attach(nullptr, server.get());
     server->start();
   }

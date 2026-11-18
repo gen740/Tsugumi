@@ -3,7 +3,7 @@
 #include <map>
 
 #include "../agent_fixture_server.hh"
-#include "document.hh"
+#include "tsugumi/document/document.hh"
 #include "host/projects.hh"
 #include "host/vm_process.hh"
 

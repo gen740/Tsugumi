@@ -3,9 +3,9 @@
 #include <git2.h>
 #include <gtest/gtest.h>
 
-#include "document.hh"
-#include "util/crypto.hh"
-#include "util/fs.hh"
+#include "tsugumi/document/document.hh"
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 
 namespace tsugumi {
 namespace {

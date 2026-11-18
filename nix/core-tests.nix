@@ -35,8 +35,9 @@ clangStdenv.mkDerivation {
     # Python cases run from the checkout. Editing a scenario does not rebuild
     # the production core or any cached C++ test executable.
     fileset = lib.fileset.unions [
-      ../agent/Shared/guide-script.json
-      ../agent/Shared/guide-script.en.json
+      ../hostd/agent/Shared/guide-script.json
+      ../hostd/agent/Shared/guide-script.en.json
+      ../hostd/tools/test-binary-cache.py
       ../demos
       ../tests/run-isolated.py
       ../tests/fixtures/subgraph-edits.json
