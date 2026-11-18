@@ -40,17 +40,17 @@ let package = Package(
       name: "TsugumiAgentClient",
       dependencies: [.product(name: "TsugumiVMTypes", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiKeychainUI", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/AgentClient",
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
     // The file-based Keychain has no supported replacement for its UI switch.
     // The bridge leaves that one deprecated call visible as a warning.
     .target(
       name: "TsugumiKeychainUI", path: "Sources/KeychainUI",
-      cSettings: [.treatAllWarnings(as: .error)]),
+      cSettings: [.treatAllWarnings(as: .error, .when(configuration: .debug))]),
     .target(
       name: "TsugumiLauncher",
       dependencies: [.product(name: "TsugumiVMTypes", package: "TsugumiVM"), "TsugumiAgentClient", .product(name: "TsugumiRPC", package: "swift"), .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/Launcher",
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
     // Grammars with no Swift package of their own (Sources/Grammars/README.md).
     .target(
       name: "TreeSitterNix", path: "Sources/Grammars/TreeSitterNix",
@@ -95,16 +95,16 @@ let package = Package(
       path: "Sources/App",
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
     .target(name: "TsugumiSecretStoreIsolation", path: "Tests/SecretStoreIsolation"),
     .target(name: "TsugumiTestSupport", dependencies: ["TsugumiSecretStoreIsolation"], path: "Tests/Support",
-            swiftSettings: [.treatAllWarnings(as: .error)]),
+            swiftSettings: [.treatAllWarnings(as: .error, .when(configuration: .debug))]),
     // The app's own logic. The model, RPC, Agent and launcher tests are the
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
       dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport"],
       path: "Tests/TsugumiAppTests",
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
   ]
 )

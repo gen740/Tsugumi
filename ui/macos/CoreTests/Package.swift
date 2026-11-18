@@ -26,6 +26,6 @@ let package = Package(
         .product(name: "TsugumiAgentClient", package: "TsugumiUI"),
       ],
       path: "Tests/CoreTests",
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
   ]
 )
