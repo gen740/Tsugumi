@@ -14,7 +14,7 @@ export async function api<T = any>(path: string, body?: unknown, signal?: AbortS
     ? { signal }
     : { signal, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`))
+  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
@@ -36,7 +36,7 @@ export function reportPageProject(project?: string) {
   void api('/api/page', { page: page(), project }).catch(() => {})
 }
 
-/** This page left a project: its environment and chat stop unless another page shows it. */
+/** This page left a project. The last page releases chat observation and terminals. */
 export function closePageProject(project: string) {
   reported = undefined
   return api('/api/project/close', { page: page(), path: project })

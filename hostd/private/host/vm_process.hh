@@ -9,7 +9,7 @@ auto DescribeVMReset(Tsugumi::Host::HostRuntimeT& runtime) -> void;
 
 struct VMProcessOptions {
   std::filesystem::path binary, support, image;
-  std::string broker_endpoint;
+  std::string broker_socket;
   // The size the next VM start uses (read at every Boot).
   std::function<Tsugumi::Host::VMResourcesT()> resources;
   std::function<void(const Tsugumi::VMHost::ProgressT&)> progress;

@@ -270,12 +270,12 @@ for (const beginPending of [false, true]) {
   model.setState({ ...model.state, accounts: [{ ...account, signedIn: false }] })
   const html = renderToStaticMarkup(<ChatGPTSettings controller={model} onConnected={() => {}} />)
   assert.match(html, /ChatGPT にもう一度サインインしてください。/)
-  assert.equal(modelErrorMessage('Sign in to ChatGPT again'), 'ChatGPT にもう一度サインインしてください。')
+  assert.equal(modelErrorMessage('Credentials expired', 'chatgpt_sign_in_required'), 'ChatGPT にもう一度サインインしてください。')
   assert.equal(modelErrorMessage('model returned HTTP 503: Capacity exhausted'), 'model returned HTTP 503: Capacity exhausted')
 }
 {
   const original = globalThis.fetch
-  globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Sign in to ChatGPT again' }) })) as typeof fetch
+  globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Credentials expired', code: 'chatgpt_sign_in_required' }) })) as typeof fetch
   try {
     await assert.rejects(api('/api/settings/models'), { message: 'ChatGPT にもう一度サインインしてください。' })
   } finally { globalThis.fetch = original }

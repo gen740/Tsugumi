@@ -54,13 +54,12 @@ enum UpdateCheck {
     return ReleaseOffer(version: version, zip: zip.browser_download_url, checksum: sum.browser_download_url)
   }
 
-  /// The SHA-256 a `shasum -a 256` line gives for `name` (or a lone hash).
+  /// The SHA-256 a `shasum -a 256` line gives for `name`.
   static func checksum(in text: String, for name: String) -> String? {
     for line in text.split(whereSeparator: \.isNewline) {
       let fields = line.split(separator: " ", omittingEmptySubsequences: true)
       guard let hash = fields.first, hash.count == 64, hash.allSatisfy(\.isHexDigit) else { continue }
-      let file = fields.dropFirst().first.map { $0.hasPrefix("*") ? String($0.dropFirst()) : String($0) }
-      if file == nil || file == name { return hash.lowercased() }
+      if let file = fields.dropFirst().first, file == name { return hash.lowercased() }
     }
     return nil
   }

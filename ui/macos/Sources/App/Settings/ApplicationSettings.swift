@@ -885,9 +885,9 @@ private struct EnvironmentStorageSettings: View {
     message = nil
     Task {
       do {
-        let r = try await model.environments.cleanupStore()
+        try await model.environments.cleanupStore()
         failed = false
-        message = String(localized: "\(r.paths) 件を削除し、\(ByteCountFormatter.string(fromByteCount: Int64(r.bytes), countStyle: .file)) を解放しました。")
+        message = String(localized: "Nix store を掃除しました。")
       } catch {
         failed = true
         message = String(localized: "掃除できませんでした: ") + "\(error)"

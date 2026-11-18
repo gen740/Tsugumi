@@ -211,12 +211,12 @@ final class GuideController {
   @ObservationIgnored private var observed: String?
   @ObservationIgnored private var highlightTask: Task<Void, Never>?
 
-  @ObservationIgnored private let availability: () async throws -> (usable: Bool, message: String?)
+  @ObservationIgnored private let availability: () async throws -> (usable: Bool, code: String?)
   @ObservationIgnored private var availabilityTask: Task<Bool, Never>?
   @ObservationIgnored private var availabilityRevision = 0
   @ObservationIgnored private var connectionMessage: String?
 
-  init(availability: @escaping () async throws -> (usable: Bool, message: String?) = {
+  init(availability: @escaping () async throws -> (usable: Bool, code: String?) = {
     try await CoreHostClient.shared.availability(await AgentSettings.guide())
   }, observeHost: Bool = true) {
     self.availability = availability
@@ -252,8 +252,7 @@ final class GuideController {
         do {
           let result = try await availability()
           guard revision == availabilityRevision else { return false }
-          connectionMessage = result.message == "Sign in to ChatGPT again"
-            ? String(localized: "ChatGPT にもう一度サインインしてください。") : nil
+          connectionMessage = ChatGPTError.providerMessage(result.code)
           apply(result.usable)
           return true
         } catch {
@@ -603,7 +602,7 @@ final class GuideController {
     case .discardText:
       if let last = items.last, last.role == "assistant" { items.removeLast() }
     case .retrying(let s):
-      status = String(localized: "再試行中: \(ChatGPTError.localizedMessage(s))")
+      status = String(localized: "再試行中: \(s)")
     case .presentation, .modelAccepted, .compacting, .compacted, .helper, .helperStarted:
       break
     case .finished:
@@ -614,14 +613,21 @@ final class GuideController {
     case .interrupted:
       ended()
       queued = []
-    case .error(let s):
-      ended()
-      bubble = nil
-      queued = []
-      failed = s != "cancelled"
-      status = s == "cancelled" ? String(localized: "回答を止めました。") : String(localized: "うまく答えられませんでした: \(ChatGPTError.localizedMessage(s))")
-      if s != "cancelled" { refreshAvailability(fresh: true) }
+    case .cancelled:
+      endWithMessage(String(localized: "回答を止めました。"), failed: false)
+    case .error(let message, let code):
+      let text = ChatGPTError.localizedMessage(message, code: code)
+      endWithMessage(String(localized: "うまく答えられませんでした: \(text)"), failed: true)
+      refreshAvailability(fresh: true)
     }
+  }
+
+  private func endWithMessage(_ message: String, failed: Bool) {
+    ended()
+    bubble = nil
+    queued = []
+    self.failed = failed
+    status = message
   }
 
   private func ended() {

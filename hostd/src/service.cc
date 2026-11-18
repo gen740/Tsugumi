@@ -225,7 +225,7 @@ struct Service::State {
       execution_broker = std::make_unique<host::ExecutionBroker>(
           options.state_dir, options.broker_socket);
     if (!options.vm.binary.empty()) {
-      options.vm.broker_endpoint = execution_broker->endpoint();
+      options.vm.broker_socket = execution_broker->socket_path();
       options.vm.resources = [this] { return host_settings->VMResources(); };
       options.vm.progress = [this](const Tsugumi::VMHost::ProgressT& value) {
         H::EnvironmentProgressT progress;
@@ -900,6 +900,10 @@ auto Service::dispatch(RequestIn request) -> void {
     } catch (const Failure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);
+    } catch (const agent::ProviderError& e) {
+      const auto code = e.reason_code();
+      bytes = fail(request.request_id, code.empty() ? "invalid_request" : code,
+                   state_->Scrub(e.what()), {});
     } catch (const std::exception& e) {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});

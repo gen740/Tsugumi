@@ -41,7 +41,7 @@ table ProviderStatusRequest { profile:string (required); id:string (required); k
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; }
+table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
 table SignInBegin { attempt_id:string (required); url:string (required); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -100,7 +100,7 @@ table HostTerminal { session:ulong; }
 table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
 table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
   virtualization_supported:bool; image_available:bool; image_version:string;
-  stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
+  stage:string; message:string; console:[string];
   environments:uint; vm_removed:bool;
   // Host-authored confirmation of the same policy sent to the VM helper.
   reset_confirmation_ja:string; reset_confirmation_en:string;

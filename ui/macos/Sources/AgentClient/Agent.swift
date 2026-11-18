@@ -56,7 +56,8 @@ public enum AgentEvent: Sendable {
   /// The text streamed so far in this reply is dropped: the reply is asked
   /// again (a connection or provider error in the middle of it).
   case discardText
-  case error(String)
+  case error(String, code: String? = nil)
+  case cancelled
   case finished
   /// Observation found a core-owned interruption; work stays stopped.
   case interrupted
@@ -88,12 +89,10 @@ public actor Agent {
   public private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
   private var answeredAccess: [String: Bool] = [:]
   private let client = CoreHostClient.shared
-  private let request: (String, [String: Any]) async throws -> [String: Any]
-
-  public static let contextFullText = "the conversation no longer fits the model's context"
+  private let request: (String, [String: Any]) async throws -> NativeObject
 
   public init(id: String, transport: ToolTransport, provider: ProviderConfig, role: Role = .worker) {
-    self.request = { try await CoreHostClient.shared.call($0, $1) }
+    self.request = { try await CoreHostClient.shared.agentReply($0, $1) }
     self.id = id
     self.transport = transport
     self.provider = provider
@@ -102,7 +101,7 @@ public actor Agent {
   }
 
   init(id: String, transport: ToolTransport, provider: ProviderConfig,
-       request: @escaping (String, [String: Any]) async throws -> [String: Any]) {
+       request: @escaping (String, [String: Any]) async throws -> NativeObject) {
     self.id = id
     self.transport = transport
     self.provider = provider
@@ -114,33 +113,40 @@ public actor Agent {
   public func setProvider(_ config: ProviderConfig) { provider = config }
   public func setApprover(_ handler: Approver?) { approver = handler }
 
+  private func reply<T: NativeObject>(_ method: String, _ fields: [String: Any]) async throws -> T {
+    guard let value = try await request(method, fields) as? T else {
+      throw RPCError.unexpectedReply(method)
+    }
+    return value
+  }
+
+  private func view(_ method: String, _ fields: [String: Any]) async throws -> [String: Any] {
+    try await ServiceWire.replyView(request(method, fields))
+  }
+
   public func open() async throws {
     var fields: [String: Any] = ["conversation_id": id, "role": role.rawValue]
     if let project = try await transport.project() {
       fields["project_id"] = project.id
     }
-    let result = try await self.request("ConversationCreateRequest", fields)
+    let result: Tsugumi_Agent_ConversationResultT = try await reply("ConversationCreateRequest", fields)
     try adopt(result)
-    if !opened { sequence = result["event_seq"] as? UInt64 ?? 0 }
+    if !opened { sequence = result.eventSeq }
     opened = true
   }
 
-  private func adopt(_ result: [String: Any]) throws {
-    guard let value = result["conversation"] as? Tsugumi_Agent_ConversationT, value.id == id else {
-      throw CoreHostFailure(code: "invalid_reply", message: "The host returned a different conversation", requestID: nil)
-    }
-    let snapshot = try ServiceWire.conversation(value)
-    conversation = snapshot
-    busy = result["busy"] as? Bool ?? false
-    resumable = result["resumable"] as? Bool ?? false
-    canContinue = result["continuable"] as? Bool ?? false
-    interruptedOperation = result["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT
-    modelBinding = result["model_binding"] as? Tsugumi_Agent_ModelBindingT
+  private func adopt(_ result: Tsugumi_Agent_ConversationResultT) throws {
+    conversation = try ServiceWire.conversation(result.conversation)
+    busy = result.busy
+    resumable = result.resumable
+    canContinue = result.continuable
+    interruptedOperation = result.interruptedOperation
+    modelBinding = result.modelBinding
   }
 
   public func refresh() async throws {
     if !opened { return try await open() }
-    try adopt(try await self.request("ConversationGetRequest", ["conversation_id": id]))
+    try adopt(try await reply("ConversationGetRequest", ["conversation_id": id]))
   }
 
   /// Leaving a window detaches observation; it does not stop server work.
@@ -155,10 +161,10 @@ public actor Agent {
       _ = try? await previous?.value
       _ = try await self.request("ConversationCancelRequest", ["conversation_id": id])
       while true {
-        let result = try await self.request("ConversationGetRequest", ["conversation_id": id])
+        let result: Tsugumi_Agent_ConversationResultT = try await self.reply("ConversationGetRequest", ["conversation_id": id])
         try adopt(result)
         if !busy {
-          sequence = result["event_seq"] as? UInt64 ?? sequence
+          sequence = result.eventSeq
           break
         }
         try await Task.sleep(for: .milliseconds(20))
@@ -169,10 +175,10 @@ public actor Agent {
   }
 
   private func beginTurn() async throws {
-    let result = try await self.request("ConversationGetRequest", ["conversation_id": id])
+    let result: Tsugumi_Agent_ConversationResultT = try await self.reply("ConversationGetRequest", ["conversation_id": id])
     try Task.checkCancellation()
     try adopt(result)
-    sequence = result["event_seq"] as? UInt64 ?? sequence
+    sequence = result.eventSeq
   }
 
   public func reset() async throws {
@@ -229,7 +235,7 @@ public actor Agent {
         try await AgentObservation.read { try await self.refresh() }
         try Task.checkCancellation()
         events(.modelAccepted)
-        let access = try await AgentObservation.read { try await self.request("AccessListRequest", ["conversation_id": self.id]) }
+        let access = try await AgentObservation.read { try await self.view("AccessListRequest", ["conversation_id": self.id]) }
         try Task.checkCancellation()
         for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
           guard let requestID = request["id"] as? String else { continue }
@@ -237,12 +243,11 @@ public actor Agent {
           _ = try await answerAccess(requestID, asked: asked, groups: request["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
         }
         while !Task.isCancelled {
-          let result = try await AgentObservation.read { try await self.request("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
+          let result: Tsugumi_Agent_EventsPageT = try await AgentObservation.read { try await self.reply("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
           try Task.checkCancellation()
           var refreshed = false
-          for item in result["events"] as? [[String: Any]] ?? [] {
-            sequence = max(sequence, item["seq"] as? UInt64 ?? sequence)
-            guard let event = item["event"] as? [String: Any] else { continue }
+          for item in result.events.compactMap({ $0 }) {
+            let event = try ServiceWire.replyView(item.event)
             if event["kind"] as? String == "permission", let request = event["id"] as? String {
               let asked = event["asked"] as? [String] ?? ["project_access Project content"]
               _ = try await answerAccess(request, asked: asked, groups: event["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
@@ -253,9 +258,9 @@ public actor Agent {
               else { events(event) }
             }
           }
-          if let rows = result["rows"] as? [ChatRow] { events(.presentation(rows)) }
-          sequence = max(sequence, result["next_seq"] as? UInt64 ?? sequence)
-          busy = result["busy"] as? Bool ?? false
+          if result.hasRows { events(.presentation(result.rows.compactMap { $0.map(ServiceWire.chatRow) })) }
+          sequence = result.nextSeq
+          busy = result.busy
           if !busy {
             if !refreshed { try await AgentObservation.read { try await self.refresh() } }
             try Task.checkCancellation()
@@ -270,7 +275,7 @@ public actor Agent {
           // updates the controls without sending an action.
           try? await AgentObservation.read { try await self.refresh() }
           if !Task.isCancelled {
-            events(resumable ? .interrupted : .error(String(describing: error)))
+            events(resumable ? .interrupted : .error(String(describing: error), code: (error as? CoreHostFailure)?.code))
           }
         }
       }
@@ -279,7 +284,7 @@ public actor Agent {
 
   private func answerAccess(_ request: String, asked: [String], groups: [Tsugumi_Agent_AccessGroupT]) async throws -> Bool {
     if let answer = answeredAccess[request] { return answer }
-    let access = try await self.request("AccessListRequest", ["conversation_id": id])
+    let access = try await self.view("AccessListRequest", ["conversation_id": id])
     if let state = (access["requests"] as? [[String: Any]])?.first(where: { $0["id"] as? String == request })?["state"] as? String,
        state != "pending" {
       answeredAccess[request] = state == "allowed"
@@ -297,7 +302,7 @@ public actor Agent {
     }
     var allowed = false
     do {
-      let result = try await self.request("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": selected])
+      let result = try await self.view("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": selected])
       allowed = result["accepted"] as? Bool ?? false
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
@@ -320,8 +325,9 @@ public actor Agent {
     case "compacted": return .compacted
     case "retrying": return .retrying(value["message"] as? String ?? text)
     case "discardText": return .discardText
-    case "error": return .error(value["message"] as? String ?? text)
-    case "finished", "cancelled": return .finished
+    case "error": return .error(value["message"] as? String ?? text, code: value["code"] as? String)
+    case "cancelled": return .cancelled
+    case "finished": return .finished
     case "helperStarted": return .helperStarted(text)
     case "helper":
       guard let nested = value["event"] as? [String: Any], let event = event(nested) else { return nil }

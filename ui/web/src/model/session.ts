@@ -2289,7 +2289,6 @@ export class ProjectSession extends Observable {
    *  run from there opens a branch, and nothing later is lost. */
   async startFrom(commit: string) {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    if (this.runActive) throw new Error(L('実行中は別の版に移れません。'))
     if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()

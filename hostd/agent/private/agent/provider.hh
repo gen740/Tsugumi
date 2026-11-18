@@ -117,6 +117,7 @@ class ProviderError final : public std::runtime_error {
   std::string code;
   int curl_code;
   bool sign_in_required = false;
+  auto reason_code() const -> std::string;
 };
 
 // Runs one HTTP streaming request on the caller's worker thread. The callback

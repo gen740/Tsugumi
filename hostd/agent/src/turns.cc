@@ -621,6 +621,7 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       final_state = "failed";
       dependencies.event(id, json::Encode(json::Members{
                                  {"kind", json::Quote("error")},
+                                 {"code", json::Quote(RuntimeErrorCode(error))},
                                  {"message", json::Quote(error.what())}}));
     }
     std::lock_guard lock(mutex);

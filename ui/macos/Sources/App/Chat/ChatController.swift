@@ -371,9 +371,7 @@ final class ChatController {
     Task {
       do {
         guard let project = try await RPCToolTransport(session: session).project() else { return }
-        let reply = try await CoreHostClient.shared.call("ConversationCreateRequest", ["project_id": project.id])
-        guard let conversation = reply["conversation"] as? Tsugumi_Agent_ConversationT else { return }
-        select(conversation.id)
+        select(try await CoreHostClient.shared.createConversation(projectID: project.id))
         refreshSessions()
       } catch { status = String(describing: error) }
     }
@@ -735,8 +733,10 @@ final class ChatController {
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
     case .finished:
       bird.turnEnded(.done)
-    case .error(let s):
-      bird.turnEnded(s == "cancelled" ? .stopped : .failed)
+    case .cancelled:
+      bird.turnEnded(.stopped)
+    case .error:
+      bird.turnEnded(.failed)
     default:
       break
     }
@@ -748,6 +748,14 @@ final class ChatController {
   @ObservationIgnored private(set) var answer = 0
   @ObservationIgnored private var contentRevision = 0
   @ObservationIgnored private var turnAccepted = false
+
+  private func endFailedOrCancelledTurn(_ outcome: AgentPresence.Outcome) {
+    loading = false
+    GuideController.shared.chatTurnEnded(self, reply: lastReply)
+    busy = false
+    session.presence.turnEnded(outcome)
+    refreshAfterTurn()
+  }
 
   func handle(_ e: AgentEvent, of number: Int) {
     guard number == answer else { return }
@@ -800,24 +808,26 @@ final class ChatController {
     case .retrying(let s):
       // The reply is asked again from its beginning.
       session.presence.toolInputEnded(ok: false)
-      status = String(localized: "再試行中: \(ChatGPTError.localizedMessage(s))")
+      status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       session.presence.toolInputEnded(ok: false)
-    case .error(let s):
-      loading = false
-      GuideController.shared.chatTurnEnded(self, reply: lastReply)
-      if s == "cancelled" { notes = [] }
-      busy = false
-      session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
-      failed = s != "cancelled"
-      usageLimited = s == ChatGPTError.usageLimitText
-      contextFull = s == Agent.contextFullText
-      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
-        : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+    case .cancelled:
+      canContinue = true
+      notes = []
+      failed = false
+      usageLimited = false
+      contextFull = false
+      status = String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
+      endFailedOrCancelledTurn(.stopped)
+    case .error(let message, let code):
+      failed = true
+      usageLimited = code == "subscription_sharing_usage_limit_exceeded"
+      contextFull = code == "context_full"
+      status = usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
-        : String(localized: "エラー: \(ChatGPTError.localizedMessage(s))")
-      refreshAfterTurn()
+        : String(localized: "エラー: \(ChatGPTError.localizedMessage(message, code: code))")
+      endFailedOrCancelledTurn(.failed)
     case .interrupted:
       busy = false
       session.presence.turnEnded(.stopped)

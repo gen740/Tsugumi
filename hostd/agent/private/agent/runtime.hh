@@ -36,7 +36,10 @@ struct RuntimeEvent {
   bool ok = true;
   uint32_t index = 0;
   Usage usage;
+  std::string code{};
 };
+
+auto RuntimeErrorCode(const std::exception& error) -> std::string;
 
 struct RuntimeHooks {
   // Durable service-owned sequence, including across transcript compaction.

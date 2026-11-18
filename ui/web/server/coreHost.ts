@@ -342,9 +342,9 @@ export class RemoteAgent {
         if (identity !== this.observationID) return
         if (result.events.some((e) => e.event.kind === 'finished')) await this.refresh()
         if (identity !== this.observationID) return
-        for (const e of result.events) { this.seq = e.seq > this.seq ? e.seq : this.seq; this.listener?.(e.event) }
+        for (const e of result.events) this.listener?.(e.event)
         if (result.hasRows) this.listener?.({ kind: 'presentation', rows: result.rows })
-        this.seq = result.next_seq > this.seq ? result.next_seq : this.seq
+        this.seq = result.next_seq
         const wasBusy = this.busy
         this.busy = result.busy
         if (wasBusy && !this.busy) await this.refresh()

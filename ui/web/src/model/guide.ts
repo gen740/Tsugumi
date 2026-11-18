@@ -552,7 +552,7 @@ export class GuideController extends Observable {
   retry() {
     if (!this.connected || this.busy) return
     this.begin()
-    void api('/api/guide/retry', {})
+    void api('/api/guide/retry', {}).catch((e) => this.handle({ kind: 'error', message: e.message }))
   }
 
   /** A new conversation (the old one is gone; the tour stays). */
@@ -603,19 +603,20 @@ export class GuideController extends Observable {
         if (this.items[this.items.length - 1]?.role === 'assistant') this.items.pop()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
+        this.status = L('再試行中: {0}', e.message)
         break
       case 'finished':
         this.ended()
         this.flush()
         break
+      case 'cancelled':
       case 'error':
         this.ended()
         this.bubble = undefined
         this.queued = []
-        this.failed = e.message !== 'cancelled'
-        this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message))
-        if (e.message !== 'cancelled') void this.refresh(true)
+        this.failed = e.kind === 'error'
+        this.status = e.kind === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message, e.code))
+        if (e.kind === 'error') void this.refresh(true)
         break
       default:
         return

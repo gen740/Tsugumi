@@ -249,7 +249,7 @@ class VMProcess final : public EnvironmentProcess {
   auto Boot(const std::string& key) -> V::BootT {
     V::BootT boot;
     boot.key = key;
-    boot.broker_endpoint = options_.broker_endpoint;
+    boot.broker_socket = options_.broker_socket;
     const auto caches = PrepareBinaryCaches(options_.support);
     boot.cache_configuration = caches.configuration;
     boot.cache_netrc = caches.netrc;

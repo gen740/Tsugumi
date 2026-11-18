@@ -58,12 +58,19 @@ async function host(): Promise<ServerInfo> {
   return starting
 }
 
+class HttpError extends Error {
+  constructor(message: string, readonly code?: string) { super(message) }
+}
+
 async function api<T>(route: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const s = await host()
   signal?.throwIfAborted()
   const r = await request(s, route, body, signal)
   const v = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error((v as { error?: string }).error ?? `${route}: HTTP ${r.status}`)
+  if (!r.ok) {
+    const failure = v as { code?: string; error?: string }
+    throw new HttpError(failure.error ?? `${route}: HTTP ${r.status}`, failure.code)
+  }
   return v as T
 }
 
@@ -75,12 +82,15 @@ const text = (t: string, isError = false): Result => ({ content: [{ type: 'text'
 async function open(args: { folder?: unknown; create?: unknown; browser?: unknown }): Promise<Result> {
   if (typeof args.folder !== 'string' || !args.folder.trim()) return text('folder is required', true)
   const dir = path.resolve(process.env.CLAUDE_PROJECT_DIR ?? process.cwd(), args.folder)
-  let folder = dir
-  if (!fs.existsSync(path.join(dir, 'tsugumi.json'))) {
-    if (args.create !== true) return text(`${dir} is not a Tsugumi project (no tsugumi.json). Pass create: true to make a new one there.`, true)
-    folder = (await api<{ path: string }>('/api/project/create', { parent: path.dirname(dir), name: path.basename(dir) })).path
+  let info: { path: string }
+  try {
+    info = await api('/api/project/open', { path: dir })
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.code !== 'invalid_project') throw error
+    if (args.create !== true) return text(`${error.message} Pass create: true to make a new project there.`, true)
+    const created = await api<{ path: string }>('/api/project/create', { parent: path.dirname(dir), name: path.basename(dir) })
+    info = await api('/api/project/open', { path: created.path })
   }
-  const info = await api<{ path: string }>('/api/project/open', { path: folder })
   current = info.path
   // The host opens the page itself: its key (which answers approvals) is not the plugin's.
   const shown = await api<{ shown: boolean; opened: boolean }>('/api/agent/open', { path: current, browser: args.browser !== false })

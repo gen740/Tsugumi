@@ -38,7 +38,6 @@
 "%@（接続未確認）" = "%@ (connection unverified)";
 "%lld 件" = "%lld items";
 "%lld 件のモデルを取得しました。" = "Fetched %lld models.";
-"%lld 件を削除し、%@ を解放しました。" = "Deleted %lld and freed %@.";
 "%lld 分前" = "%lld min ago";
 "%lld 日前" = "%lld days ago";
 "%lld 時間前" = "%lld h ago";
@@ -169,6 +168,7 @@
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）" = "Checking and repairing Nix store contents (first boot and after a VM image update)";
 "Nix store の検査・修復が完了しました。" = "Nix store checking and repair completed.";
+"Nix store を掃除しました。" = "Cleaned up the Nix store.";
 "Nix store: 最大 %lld GiB" = "Nix store: up to %lld GiB";
 "Nix を準備しています" = "Preparing Nix";
 "Nix 参照" = "Nix references";
@@ -1059,7 +1059,6 @@
 "実行中は Card を変更できません" = "Cards cannot be changed while running";
 "実行中は Card を変更できません。実行が終わってから適用してください。" = "Cards cannot change while running. Apply after the run ends.";
 "実行中はプロジェクトを切り替えられません。停止するか終了を待ってください。" = "Projects cannot be switched while running. Stop the run or wait for it to end.";
-"実行中は別の版に移れません。" = "You cannot move to another version while a run is in progress.";
 "実行中は変更できません" = "Cannot change while running";
 "実行中は変更を適用できません" = "Changes cannot be applied while running";
 "実行中・SDK 準備中は削除できません。" = "Cannot delete while a run or SDK preparation is active.";
@@ -1078,7 +1077,6 @@
 "実行時の依存パス" = "Runtime dependencies";
 "実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
-"実行環境からの状態の応答が不正です。" = "The execution environment returned an invalid status reply.";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境に接続していません" = "Not connected to the environment";
 "実行環境に接続できませんでした" = "Could not connect to the environment";
