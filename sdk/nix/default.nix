@@ -61,14 +61,38 @@ let
     '';
   };
 
-  # A package names its SDK-built adapter explicitly. This is data, not a
-  # preload permission: the worker reads it only after an invocation starts.
-  runtimePackage =
-    name: adapter:
-    pkgs.runCommand name { } ''
-      mkdir -p $out/lib
-      printf '%s\n' '${adapter}/lib/runtime.so' > $out/lib/tsugumi-runtime
-    '';
+  # Keep the worker's interpreter preparation and lifetime environment.
+  # The descriptor names the Card's own entry, which links a shared build of
+  # the language startup code and a small object containing the Card paths.
+  linkAdapter =
+    {
+      name,
+      layer,
+      paths,
+      flags,
+      setup ? "",
+      buildInputs ? [ ],
+      nativeBuildInputs ? [ ],
+    }:
+    pkgs.runCommandCC name
+      {
+        inherit buildInputs nativeBuildInputs;
+        passthru.language = layer;
+      }
+      ''
+        mkdir -p $out/lib
+        ${setup}
+        cat > card.c <<EOF
+        ${lib.concatStringsSep "\n" (
+          lib.mapAttrsToList (
+            symbol: value: "const char tsugumi_${symbol}[] = ${builtins.toJSON value};"
+          ) paths
+        )}
+        EOF
+        $CC -fPIC -fvisibility=hidden -c card.c -o card.o
+        $CXX -shared card.o ${layer}/lib/start.o ${flags} -o $out/lib/main.so
+        printf '%s\n' "$out/lib/main.so" > $out/lib/tsugumi-runtime
+      '';
 
   cardSource =
     name: src:
@@ -76,6 +100,93 @@ let
       mkdir -p $out
       cp -r --no-preserve=mode ${src}/. $out/
     '';
+
+  pythonLayer =
+    python:
+    pkgs.runCommandCC "tsugumi-python-layer" { } ''
+      mkdir -p $out/lib/python/tsugumi $out/lib/python/flatbuffers
+      $CC -O2 -fPIC -c ${../src/python_main.c} -o $out/lib/start.o \
+        -I${abiHeaders} -I${python}/include/python${python.pythonVersion} \
+        -DTSUGUMI_PY_HOME='"${python}"' \
+        -DTSUGUMI_LIBPYTHON='"${python}/lib/libpython${python.pythonVersion}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"'
+      cp ${
+        lib.fileset.toSource {
+          root = ../python/tsugumi;
+          fileset = lib.fileset.fileFilter (file: file.hasExt "py") ../python/tsugumi;
+        }
+      }/*.py $out/lib/python/tsugumi/
+      cp ${pkgs.flatbuffers.src}/python/flatbuffers/*.py $out/lib/python/flatbuffers/
+    '';
+
+  rubyLayer =
+    ruby:
+    pkgs.runCommandCC "tsugumi-ruby-layer"
+      {
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [
+          ruby
+          pkgs.flatbuffers
+        ];
+      }
+      ''
+        mkdir -p $out/lib
+        cp ${../ruby/tsugumi.rb} $out/lib/tsugumi.rb
+        libruby=$(${ruby}/bin/ruby -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
+        $CC -O2 -fPIC -c ${../src/ruby_main.c} -o $out/lib/start.o \
+          -I${abiHeaders} $(pkg-config --cflags ruby-${ruby.version.majMin}) \
+          -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
+          -DTSUGUMI_RUBY_SDK='"${placeholder "out"}/lib"' \
+          -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"'
+        $CXX -std=c++20 -O2 -fPIC -c ${../src/json_face.cc} -o $out/lib/json_face.o \
+          -I${abiHeaders} -I${
+            lib.fileset.toSource {
+              root = ../include;
+              fileset = ../include/tsugumi/message_json.hh;
+            }
+          }
+      '';
+
+  nativeHeaders = lib.fileset.toSource {
+    root = ../src;
+    fileset = ../src/native_host.h;
+  };
+
+  # macOS host development avoids Julia's expensive upstream install tests.
+  juliaBase =
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      pkgs.julia-bin.overrideAttrs { doInstallCheck = false; }
+    else
+      pkgs.julia-bin;
+
+  interpreterLayers = {
+    r = pkgs.runCommandCC "tsugumi-r-layer" { } ''
+      mkdir -p $out/lib
+      cp ${../r/tsugumi.R} $out/lib/tsugumi.R
+      $CC -O2 -fPIC -c -Wall -Wextra -Werror ${../src/r_main.c} -o $out/lib/start.o \
+        -I${nativeHeaders} -I${abiHeaders} -I${pkgs.R}/lib/R/include \
+        -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+        -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_SDK='"${placeholder "out"}/lib/tsugumi.R"'
+    '';
+
+    julia = pkgs.runCommandCC "tsugumi-julia-layer" { } ''
+      mkdir -p $out/lib
+      cp ${../julia/tsugumi.jl} $out/lib/tsugumi.jl
+      $CC -O2 -fPIC -c -Wall -Wextra -Werror ${../src/julia_main.c} -o $out/lib/start.o \
+        -I${nativeHeaders} -I${abiHeaders} -isystem ${juliaBase}/include/julia \
+        -DTSUGUMI_LIBJULIA='"${juliaBase}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+        -DTSUGUMI_JULIA_SDK='"${placeholder "out"}/lib/tsugumi.jl"'
+    '';
+
+    juliaEnvironment =
+      julia:
+      pkgs.runCommand "tsugumi-julia-environment" { } ''
+        # Keep only wrapper settings, never a builder's HOME or temporary depot.
+        JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
+          for key in ["JULIA_DEPOT_PATH", "JULIA_PROJECT", "JULIA_LOAD_PATH", "LD_LIBRARY_PATH", "FONTCONFIG_FILE", "PYTHONHOME", "PYTHONPATH", "PYTHON", "JULIA_PYTHONCALL_EXE", "JULIA_CONDAPKG_OFFLINE", "JULIA_CONDAPKG_BACKEND"]
+            haskey(ENV, key) && println(key, "=", ENV[key])
+          end' > $out
+      '';
+  };
 
   # The contract files under their fixed names (flatc names its output after them).
   contractDir =
@@ -130,41 +241,130 @@ let
       python3 ${../codegen/card_json.py} ${dir}/_contract.json $out
     '';
 
+  rustFlatbuffers = pkgs.runCommand "tsugumi-rust-flatbuffers-source" { } ''
+    mkdir -p $out
+    cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers/src $out/src
+    cp ${pkgs.flatbuffers.src}/rust/flatbuffers/build.rs $out/build.rs
+    # Cargo needs the package identity and dependency/feature declarations only.
+    sed '/^authors =/d; /^license =/d; /^description =/d; /^homepage =/d; /^repository =/d; /^keywords =/d; /^categories =/d' \
+      ${pkgs.flatbuffers.src}/rust/flatbuffers/Cargo.toml > $out/Cargo.toml
+  '';
+
+  rustTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+  rustBuildInputs = [
+    pkgs.cargo
+    pkgs.rustc
+  ];
+  rustEnvironment = vendor: ''
+    export CARGO_HOME="$TMPDIR/cargo-home"
+    mkdir -p "$CARGO_HOME"
+    cat > "$CARGO_HOME/config.toml" <<'EOF'
+    [source.crates-io]
+    replace-with = "vendored-sources"
+    [source.vendored-sources]
+    directory = "${vendor}"
+    EOF
+  '';
+
+  rustLayer = pkgs.runCommandCC "tsugumi-rust-layer" { nativeBuildInputs = rustBuildInputs; } ''
+    ${rustEnvironment (pkgs.rustPlatform.importCargoLock { lockFile = ../rust/sdk-crates.lock; })}
+    export RUSTFLAGS="-C embed-bitcode=yes -L native=$PWD"
+    mkdir -p src $out/lib
+    cp ${../rust/src/runtime.rs} src/lib.rs
+    ln -s ${rustFlatbuffers} flatbuffers
+    $CC -std=c11 -O2 -fPIC -Wall -Wextra -Werror -I${abiHeaders} \
+      -c ${../src/rust_host.c} -o host.o
+    $AR rcs libtsugumi_rust_host.a host.o
+    cat > Cargo.toml <<'EOF'
+    [package]
+    name = "tsugumi_runtime"
+    version = "0.1.0"
+    edition = "2024"
+
+    [dependencies]
+    flatbuffers = { path = "flatbuffers" }
+    EOF
+    # Pin the registry dependencies even when the vendor directory gains versions.
+    cp ${../rust/sdk-crates.lock} Cargo.lock
+    chmod u+w Cargo.lock
+    cargo build --offline --release --target ${rustTarget}
+    cp target/${rustTarget}/release/deps/*.rlib $out/lib/
+  '';
+
   rustFace =
     dir:
-    pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      mkdir -p $out/src $out/lib
-      cp ${../rust/Cargo.toml} $out/Cargo.toml
-      mkdir -p $out/flatbuffers
-      cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers/src $out/flatbuffers/src
-      cp ${pkgs.flatbuffers.src}/rust/flatbuffers/build.rs $out/flatbuffers/build.rs
-      # Cargo needs the package identity and dependency/feature declarations only.
-      sed '/^authors =/d; /^license =/d; /^description =/d; /^homepage =/d; /^repository =/d; /^keywords =/d; /^categories =/d' \
-        ${pkgs.flatbuffers.src}/rust/flatbuffers/Cargo.toml > $out/flatbuffers/Cargo.toml
-      cp ${../rust/src/runtime.rs} $out/src/runtime.rs
+    pkgs.runCommand "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out/src
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --rust --gen-object-api -o $out/src ${dir}/$f.fbs
       done
       python3 ${../codegen/card_rust.py} ${dir}/_contract.json $out
-      $CC -std=c11 -O2 -fPIC -Wall -Wextra -Werror -I${abiHeaders} \
-        -c ${../src/rust_host.c} -o host.o
-      $AR rcs $out/lib/libtsugumi_rust_host.a host.o
-      cat > $out/build.rs <<EOF
-      fn main() { println!("cargo:rustc-link-search=native=$out/lib"); }
-      EOF
     '';
+
+  goSources = pkgs.runCommand "tsugumi-go-sources" { } ''
+    mkdir -p $out/internal/host $out/flatbuffers
+    cp ${../go/go.mod} $out/go.mod
+    cp ${../go/runtime.go} $out/internal/host/runtime.go
+    cp ${../go/host.h} $out/internal/host/host.h
+    cp ${../include/tsugumi/sdk/abi.h} $out/internal/host/abi.h
+    cp ${../src/go_host.c} $out/internal/host/host.c
+    for f in ${pkgs.flatbuffers.src}/go/*.go; do
+      case "$f" in *_test.go|*/doc.go) continue;; esac
+      cp "$f" $out/flatbuffers/
+    done
+  '';
+
+  goBuildAttrs = {
+    nativeBuildInputs = [ pkgs.go ];
+    env = {
+      inherit (pkgs.go) GOOS GOARCH;
+      GOTOOLCHAIN = "local";
+      CGO_ENABLED = "1";
+      GOFLAGS = "-trimpath";
+    };
+  };
+
+  goBuildEnvironment = ''
+    export GOPATH=$TMPDIR/go GOSUMDB=off
+    if [ -f "$NIX_CC_FOR_TARGET/nix-support/dynamic-linker" ]; then
+      export GO_LDSO=$(cat "$NIX_CC_FOR_TARGET/nix-support/dynamic-linker")
+    fi
+  '';
+
+  goLayer = pkgs.runCommandCC "tsugumi-go-layer" goBuildAttrs ''
+    ${goBuildEnvironment}
+    export GOCACHE=$out/gocache GOPROXY=off
+    mkdir -p "$GOCACHE" warm
+    cd warm
+    # Match the production import paths, module replacement and build mode.
+    cp -r --no-preserve=mode ${goSources} tsugumi
+    cat > go.mod <<'EOF'
+    module tsugumi-warm
+    go 1.26
+    require tsugumi v0.0.0
+    replace tsugumi => ./tsugumi
+    EOF
+    cat > main.go <<'EOF'
+    package main
+    import "C"
+    import (
+      _ "tsugumi/internal/host"
+      _ "tsugumi/flatbuffers"
+    )
+    func main() {}
+    EOF
+    # Go internal imports must originate in the SDK module.
+    mkdir -p tsugumi/cmd/warm
+    mv main.go tsugumi/cmd/warm/
+    go build -mod=readonly -buildmode=c-shared -ldflags="-s -w -buildid=" -o warm.so tsugumi/cmd/warm
+    # go test still runs in step 2, with a second set of compiler options.
+    go test -mod=readonly tsugumi/internal/host tsugumi/flatbuffers
+  '';
 
   goFace =
     dir:
     pkgs.runCommand "tsugumi-card-sdk-go" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      mkdir -p $out/flatbuffers
-      cp ${../go/go.mod} $out/go.mod
-      cp ${../go/runtime.go} $out/runtime.go
-      cp ${../go/host.h} $out/host.h
-      cp ${../include/tsugumi/sdk/abi.h} $out/abi.h
-      cp ${../src/go_host.c} $out/host.c
-      cp ${pkgs.flatbuffers.src}/go/*.go $out/flatbuffers/
-      rm -f $out/flatbuffers/*_test.go $out/flatbuffers/doc.go
+      mkdir -p $out
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --go --gen-object-api --go-import tsugumi/flatbuffers --go-module-name tsugumi -o $out ${dir}/$f.fbs
       done
@@ -178,8 +378,7 @@ let
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --csharp --gen-object-api --cs-global-alias -o $out ${dir}/$f.fbs
       done
-      python3 ${../codegen/card_csharp.py} ${dir}/_contract.json $out/CardBindings.cs \
-        ${../include/tsugumi/sdk/abi.h}
+      python3 ${../codegen/card_csharp.py} ${dir}/_contract.json $out/CardBindings.cs
     '';
 
   languagesKnown = [
@@ -274,7 +473,14 @@ rec {
       ruby = if want "ruby" then jsonFace dir else null;
     };
 
-  csharpCard = import ./csharp.nix { inherit pkgs abiHeaders foreign; };
+  csharpCard = import ./csharp.nix {
+    inherit
+      pkgs
+      abiHeaders
+      foreign
+      linkAdapter
+      ;
+  };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.
@@ -287,12 +493,14 @@ rec {
       cxxflags ? [ ],
     }:
     assert lib.assertMsg (sdk.cpp != null) "cppCard: the SDK was made without \"cpp\" in languages";
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
-      buildInputs = [ pkgs.flatbuffers ] ++ buildInputs;
-      dontConfigure = true;
-      buildPhase = ''
-        runHook preBuild
+    pkgs.runCommandCC name
+      {
+        buildInputs = [ pkgs.flatbuffers ] ++ buildInputs;
+        passthru.language = runtime;
+      }
+      ''
+        mkdir -p $out/lib
+        cd ${src}
         sources=$(find . -name '*.cc' | sort)
         if [ -z "$sources" ]; then echo "no .cc sources in src" >&2; exit 1; fi
         # Optional role overloads are weak imports; Mach-O leaves missing ones for the loader.
@@ -300,14 +508,8 @@ rec {
           -I${sdk.cpp}/include -I${runtime}/include ${lib.escapeShellArgs cxxflags} \
           $sources ${sdk.cpp}/src/card_adapter.cc \
           ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "-Wl,-undefined,dynamic_lookup"} \
-          -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib -o main.so
-        runHook postBuild
+          -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib -o $out/lib/main.so
       '';
-      installPhase = ''
-        mkdir -p $out/lib
-        cp main.so $out/lib/main.so
-      '';
-    };
 
   # Go's runtime stays in the worker process until the process exits. Remote
   # modules use the Card's explicit go.sum and hash of its module cache.
@@ -326,15 +528,6 @@ rec {
       (lock == null) == (hash == null)
     ) "goCard: give `lock = ./src/go.sum;` and `hash` together for external modules";
     let
-      # Invalidate the module cache when either Go dependency file changes.
-      cacheKey = lib.optionalString (lock != null) (
-        "-"
-        + builtins.substring 0 16 (
-          builtins.hashString "sha256" (
-            builtins.hashFile "sha256" lock + builtins.hashFile "sha256" (src + "/go.mod")
-          )
-        )
-      );
       checkLock = lib.optionalString (lock != null) ''
         if ! cmp -s go.sum ${lock}; then
           echo "goCard: go.sum is stale. Regenerate the Card's lock and update hash." >&2
@@ -342,41 +535,62 @@ rec {
         fi
       '';
     in
-    pkgs.buildGoModule {
-      inherit src buildInputs nativeBuildInputs;
-      name = name + cacheKey;
-      vendorHash = hash;
-      proxyVendor = true;
-      env.CGO_ENABLED = 1;
-      modPostBuild = checkLock;
-      postPatch = ''
+    pkgs.runCommandCC name
+      (
+        goBuildAttrs
+        // {
+          inherit buildInputs;
+          nativeBuildInputs = goBuildAttrs.nativeBuildInputs ++ nativeBuildInputs;
+          passthru.language = goLayer;
+        }
+      )
+      ''
+        mkdir -p card $out/lib
+        cp -r --no-preserve=mode ${src}/. card/
+        cd card
         if [ -e tsugumi ] || [ -e tsugumi_adapter.go ]; then
           echo "src/tsugumi and src/tsugumi_adapter.go are reserved for the generated SDK" >&2
           exit 1
         fi
         ${lib.optionalString (lock != null) "install -m 0644 ${lock} go.sum"}
-        cp -r --no-preserve=mode ${sdk.go} tsugumi
-        cp tsugumi/adapter.go.in tsugumi_adapter.go
-      '';
-      buildPhase = ''
-        runHook preBuild
+        cp -r --no-preserve=mode ${goSources} tsugumi
+        cp -r --no-preserve=mode ${sdk.go}/. tsugumi/
+        mv tsugumi/adapter.go.in tsugumi_adapter.go
+        ${goBuildEnvironment}
+        export GOCACHE=$TMPDIR/go-cache GOPROXY=${
+          if lock == null then
+            "off"
+          else
+            "file://${
+              (pkgs.buildGoModule {
+                # Invalidate the module cache when either Go dependency file changes.
+                name =
+                  name
+                  + "-"
+                  + (builtins.substring 0 16 (
+                    builtins.hashString "sha256" (
+                      builtins.hashFile "sha256" lock + builtins.hashFile "sha256" (lib.path.append src "go.mod")
+                    )
+                  ));
+                src = pkgs.runCommand "tsugumi-go-lock" { } ''
+                  mkdir -p $out/tsugumi
+                  cp ${lib.path.append src "go.mod"} $out/go.mod
+                  cp ${lock} $out/go.sum
+                  cp ${../go/go.mod} $out/tsugumi/go.mod
+                '';
+                vendorHash = hash;
+                proxyVendor = true;
+                modPostBuild = checkLock;
+              }).goModules
+            }"
+        }
+        cp -r --no-preserve=mode ${goLayer}/gocache "$GOCACHE"
         go build -mod=readonly -buildmode=c-shared -ldflags="-s -w -buildid=" -o main.so .
         ${checkLock}
-        runHook postBuild
-      '';
-      checkPhase = ''
-        runHook preCheck
         go test -mod=readonly ./...
         ${checkLock}
-        runHook postCheck
+        cp main.so $out/lib/
       '';
-      installPhase = ''
-        runHook preInstall
-        mkdir -p $out/lib
-        cp main.so $out/lib/main.so
-        runHook postInstall
-      '';
-    };
 
   # The SDK uses the FlatBuffers runtime source that comes with flatc. A
   # Card that needs registry crates supplies its own lock and vendor hash.
@@ -394,15 +608,14 @@ rec {
     assert lib.assertMsg ((lock == null) == (hash == null))
       "rustCard: give `lock = ./src/Cargo.lock;` and the vendor directory `hash` together for external crates";
     let
-      manifest = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
+      manifest = builtins.fromTOML (builtins.readFile (lib.path.append src "Cargo.toml"));
       library = manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] manifest.package.name);
-      sdkCrates = pkgs.rustPlatform.importCargoLock { lockFile = ../rust/sdk-crates.lock; };
       lockedCrates = pkgs.rustPlatform.importCargoLock { lockFile = lock; };
       # Match the cached path to the lock that produced it, even if an old
       # hash was left in the Card. Keep all output paths inside the archive.
       vendor =
         if lock == null then
-          sdkCrates
+          pkgs.rustPlatform.importCargoLock { lockFile = ../rust/sdk-crates.lock; }
         else
           pkgs.runCommand "tsugumi-rust-vendor-${builtins.substring 0 16 (builtins.hashFile "sha256" lock)}"
             {
@@ -414,54 +627,39 @@ rec {
               mkdir -p "$out"
               cp -rL ${lockedCrates}/. "$out"
             '';
-      target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
       lockFlag = lib.optionalString (lock != null) "--locked";
     in
-    pkgs.stdenv.mkDerivation {
-      inherit name src buildInputs;
-      nativeBuildInputs = [
-        pkgs.cargo
-        pkgs.rustc
-      ]
-      ++ nativeBuildInputs;
-      dontConfigure = true;
-      # A panic must unwind to the SDK's catch_unwind, never across C.
-      CARGO_PROFILE_RELEASE_PANIC = "unwind";
-      CARGO_PROFILE_RELEASE_STRIP = "debuginfo";
-      doCheck = true;
-      postPatch = ''
+    pkgs.runCommandCC name
+      {
+        inherit buildInputs;
+        nativeBuildInputs = rustBuildInputs ++ nativeBuildInputs;
+        # A panic must unwind to the SDK's catch_unwind, never across C.
+        CARGO_PROFILE_RELEASE_PANIC = "unwind";
+        CARGO_PROFILE_RELEASE_STRIP = "debuginfo";
+        passthru.language = rustLayer;
+      }
+      ''
+        mkdir -p card $out/lib
+        cp -r --no-preserve=mode ${src}/. card/
+        cd card
         if [ -e tsugumi ]; then
           echo "src/tsugumi is reserved for the generated Card SDK" >&2
           exit 1
         fi
         cp -r --no-preserve=mode ${sdk.rust} tsugumi
-        ${if lock == null then "rm -f Cargo.lock" else "install -m 0644 ${lock} Cargo.lock"}
-      '';
-      buildPhase = ''
-        runHook preBuild
-        export CARGO_HOME="$TMPDIR/cargo-home"
-        mkdir -p "$CARGO_HOME"
-        cat > "$CARGO_HOME/config.toml" <<'EOF'
-        [source.crates-io]
-        replace-with = "vendored-sources"
-        [source.vendored-sources]
-        directory = "${vendor}"
+        cp ${../rust/Cargo.toml} tsugumi/Cargo.toml
+        ln -s ${rustFlatbuffers} tsugumi/flatbuffers
+        cat > tsugumi/build.rs <<'EOF'
+        fn main() {
+            println!("cargo:rustc-link-search=all=${rustLayer}/lib");
+        }
         EOF
-        cargo build --offline ${lockFlag} --release --target ${target}
-        runHook postBuild
+        ${if lock == null then "rm -f Cargo.lock" else "install -m 0644 ${lock} Cargo.lock"}
+        ${rustEnvironment vendor}
+        cargo build --offline ${lockFlag} --release --target ${rustTarget}
+        cargo test --offline ${lockFlag} --release --target ${rustTarget}
+        cp target/${rustTarget}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
       '';
-      checkPhase = ''
-        runHook preCheck
-        cargo test --offline ${lockFlag} --release --target ${target}
-        runHook postCheck
-      '';
-      installPhase = ''
-        runHook preInstall
-        mkdir -p $out/lib
-        cp target/${target}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
-        runHook postInstall
-      '';
-    };
 
   # The Python of Python Cards: nixpkgs' python3, except that the plotting
   # packages below are built without their test suites. They are often not in
@@ -597,7 +795,7 @@ rec {
       packages ? (ps: [ ]),
       lock ? null,
       hash ? null,
-      pyproject ? (if lock == null then null else dirOf lock + "/pyproject.toml"),
+      pyproject ? (if lock == null then null else lib.path.append (dirOf lock) "pyproject.toml"),
       libraries ? [ ],
       fonts ? null,
     }:
@@ -634,41 +832,22 @@ rec {
         cp -r --no-preserve=mode ${src}/. $out/card/
         touch $out/card/__init__.py
       '';
-      adapter = pkgs.stdenv.mkDerivation {
-        name = "${name}-runtime";
-        dontUnpack = true;
-        dontConfigure = true;
-        buildPhase = ''
-          runHook preBuild
-          $CC -O2 -fPIC -shared ${../src/python_main.c} -o $NIX_BUILD_TOP/runtime.so \
-            -I${abiHeaders} -I${python}/include/python${python.pythonVersion} \
-            -L${python}/lib -lpython${python.pythonVersion} \
-            -Wl,-rpath,${python}/lib \
-            -DTSUGUMI_PY_HOME='"${python}"' \
-            -DTSUGUMI_LIBPYTHON='"${python}/lib/libpython${python.pythonVersion}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-            -DTSUGUMI_PY_PATH='"'$out'/lib/python:${source}:${locked}${env}/${python.sitePackages}"'
-          runHook postBuild
-        '';
-        installPhase = ''
-          mkdir -p $out/lib/python
-          cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
-          mkdir -p $out/lib/python/tsugumi $out/lib/python/flatbuffers
-          cp ${
-            lib.fileset.toSource {
-              root = ../python/tsugumi;
-              fileset = lib.fileset.fileFilter (file: file.hasExt "py") ../python/tsugumi;
-            }
-          }/*.py $out/lib/python/tsugumi/
-          cp ${pkgs.flatbuffers.src}/python/flatbuffers/*.py $out/lib/python/flatbuffers/
-          # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
-          for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
-            find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
-          done > $out/lib/python/tsugumi/_fonts.txt
-          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-        '';
-      };
     in
-    runtimePackage name adapter;
+    linkAdapter {
+      inherit name;
+      layer = pythonLayer python;
+      paths.python_path = "$out/lib/python:${source}:${locked}${env}/${python.sitePackages}";
+      flags = "-L${python}/lib -lpython${python.pythonVersion} -Wl,-rpath,${python}/lib";
+      setup = ''
+        mkdir -p $out/lib/python
+        cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
+        cp -r --no-preserve=mode ${pythonLayer python}/lib/python/. $out/lib/python/
+        # The fallback fonts' files stay in the closure.
+        for f in ${lib.escapeShellArgs (map toString fallbackFonts)}; do
+          find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
+        done > $out/lib/python/tsugumi/_fonts.txt
+      '';
+    };
 
   # A Ruby Card: a separately built MRI adapter, on the JSON face.
   #
@@ -693,7 +872,7 @@ rec {
     assert lib.assertMsg ((lock == null) == (hash == null))
       "rubyCard: gems need both `lock = ./Gemfile.lock;` and `hash = \"sha256-...\";` (or neither, for no gems)";
     assert lib.assertMsg (
-      lock == null || builtins.pathExists (dirOf lock + "/Gemfile")
+      lock == null || builtins.pathExists (lib.path.append (dirOf lock) "Gemfile")
     ) "rubyCard: `lock` needs its Gemfile in the same directory";
     let
       bundle = ''
@@ -703,7 +882,7 @@ rec {
       '';
       # The .gem files Gemfile.lock names, as source gems whatever the
       # platform, so the hash is the same on every system that builds the Card.
-      gemfile = dirOf lock + "/Gemfile";
+      gemfile = lib.path.append (dirOf lock) "Gemfile";
       lockKey = builtins.substring 0 16 (
         builtins.hashString "sha256" (builtins.hashFile "sha256" lock + builtins.hashFile "sha256" gemfile)
       );
@@ -761,47 +940,25 @@ rec {
         dontInstall = true;
       };
       source = cardSource name src;
-      adapter = pkgs.stdenv.mkDerivation {
-        name = "${name}-runtime";
-        dontUnpack = true;
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [
-          ruby
-          pkgs.flatbuffers
-        ]
-        ++ buildInputs;
-        dontConfigure = true;
-        buildPhase = ''
-          runHook preBuild
-          ruby_config=${ruby}/bin/ruby
-          libruby=$($ruby_config -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
-          $CC -O2 -fPIC -c ${../src/ruby_main.c} -o $NIX_BUILD_TOP/ruby_main.o \
-            -I${abiHeaders} $(pkg-config --cflags ruby-${ruby.version.majMin}) \
-            -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
-            -DTSUGUMI_RUBY_SDK='"'$out'/lib"' \
-            -DTSUGUMI_RUBY_CARD='"${source}"' \
-            -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
-            -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
-          $CXX -std=c++20 -O2 -fPIC -c ${../src/json_face.cc} -o $NIX_BUILD_TOP/json_face.o \
-            -I${abiHeaders} -I${
-              lib.fileset.toSource {
-                root = ../include;
-                fileset = ../include/tsugumi/message_json.hh;
-              }
-            } -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
-          $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/runtime.so \
-            $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
-            -Wl,-rpath,${ruby}/lib
-          runHook postBuild
-        '';
-        installPhase = ''
-          mkdir -p $out/lib
-          cp ${../ruby/tsugumi.rb} $out/lib/tsugumi.rb
-          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-        '';
-      };
     in
-    runtimePackage name adapter;
+    linkAdapter {
+      inherit name;
+      layer = rubyLayer ruby;
+      nativeBuildInputs = [ pkgs.pkg-config ];
+      buildInputs = [
+        ruby
+        pkgs.flatbuffers
+      ]
+      ++ buildInputs;
+      paths = {
+        ruby_card = "${source}";
+        ruby_gemfile = lib.optionalString (lock != null) "${gems}/Gemfile";
+        ruby_bundle_path = lib.optionalString (lock != null) "${gems}/installed";
+        ruby_bundle_config = lib.optionalString (lock != null) "${gems}/no-config";
+        json_contract = "${sdk.ruby}";
+      };
+      flags = "-fPIC -fvisibility=hidden ${sdk.ruby}/json_ports.cc ${rubyLayer ruby}/lib/json_face.o $(pkg-config --libs ruby-${ruby.version.majMin}) -lflatbuffers -Wl,-rpath,${ruby}/lib";
+    };
 
   # R and Julia Cards embed one interpreter in the resident ABI worker.
   # Their list/Dict API uses the worker's in-memory FlatBuffers JSON adapter.
@@ -815,38 +972,22 @@ rec {
         pkgs.ipaexfont
       ],
     }:
-    let
-      source = cardSource name src;
-      adapter = pkgs.stdenv.mkDerivation {
-        name = "${name}-runtime";
-        dontUnpack = true;
-        buildInputs = [
-          pkgs.R
-          pkgs.rPackages.jsonlite
-        ]
-        ++ pkgs.rWrapper.recommendedPackages
-        ++ packages pkgs.rPackages;
-        dontConfigure = true;
-        buildPhase = ''
-          runHook preBuild
-          cp ${../src/native_host.h} native_host.h
-          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${../src/r_main.c} -o $NIX_BUILD_TOP/runtime.so \
-            -I${abiHeaders} -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
-            -Wl,-rpath,${pkgs.R}/lib/R/lib \
-            -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-            -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_LIBS='"'"$R_LIBS_SITE"'"' \
-            -DTSUGUMI_R_FONTS='"${pkgs.makeFontsConf { fontDirectories = fonts; }}"' \
-            -DTSUGUMI_R_SDK='"'$out'/lib/tsugumi.R"' -DTSUGUMI_R_SOURCE='"${source}"'
-          runHook postBuild
-        '';
-        installPhase = ''
-          mkdir -p $out/lib
-          cp ${../r/tsugumi.R} $out/lib/tsugumi.R
-          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-        '';
+    linkAdapter {
+      inherit name;
+      layer = interpreterLayers.r;
+      buildInputs = [
+        pkgs.R
+        pkgs.rPackages.jsonlite
+      ]
+      ++ pkgs.rWrapper.recommendedPackages
+      ++ packages pkgs.rPackages;
+      paths = {
+        r_libs = "$R_LIBS_SITE";
+        r_fonts = "${pkgs.makeFontsConf { fontDirectories = fonts; }}";
+        r_source = "${cardSource name src}/main.R";
       };
-    in
-    runtimePackage name adapter;
+      flags = "-L${pkgs.R}/lib/R/lib -lR -Wl,-rpath,${pkgs.R}/lib/R/lib";
+    };
 
   # Static R Markdown / Quarto reports use a separate process per invocation.
   # HTML embeds its resources so history previews do not depend on live paths.
@@ -896,44 +1037,18 @@ rec {
       name ? "tsugumi-julia-card",
       packages ? [ ],
     }:
-    let
-      # macOS host development avoids Julia’s expensive upstream install tests.
-      base =
-        if pkgs.stdenv.hostPlatform.isDarwin then
-          pkgs.julia-bin.overrideAttrs { doInstallCheck = false; }
-        else
-          pkgs.julia-bin;
-      julia = if packages == [ ] then base else base.withPackages packages;
-      source = cardSource name src;
-      adapter = pkgs.stdenv.mkDerivation {
-        name = "${name}-runtime";
-        dontUnpack = true;
-        dontConfigure = true;
-        # Runtime headers are external; keep warnings fatal for our shim.
-        buildPhase = ''
-          runHook preBuild
-          cp ${../src/native_host.h} native_host.h
-          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${../src/julia_main.c} -o $NIX_BUILD_TOP/runtime.so \
-            -I${abiHeaders} -isystem ${base}/include/julia -L${base}/lib -ljulia \
-            -Wl,-rpath,${base}/lib \
-            -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-            -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/runtime.so"' \
-            -DTSUGUMI_JULIA_SDK='"'$out'/lib/tsugumi.jl"' -DTSUGUMI_JULIA_SOURCE='"${source}"'
-          # Keep only wrapper settings, never a builder's HOME or temporary depot.
-          JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
-            for key in ["JULIA_DEPOT_PATH", "JULIA_PROJECT", "JULIA_LOAD_PATH", "LD_LIBRARY_PATH", "FONTCONFIG_FILE", "PYTHONHOME", "PYTHONPATH", "PYTHON", "JULIA_PYTHONCALL_EXE", "JULIA_CONDAPKG_OFFLINE", "JULIA_CONDAPKG_BACKEND"]
-              haskey(ENV, key) && println(key, "=", ENV[key])
-            end' > $NIX_BUILD_TOP/julia-env
-          runHook postBuild
-        '';
-        installPhase = ''
-          mkdir -p $out/lib
-          cp ${../julia/tsugumi.jl} $out/lib/tsugumi.jl
-          cp $NIX_BUILD_TOP/runtime.so $NIX_BUILD_TOP/julia-env $out/lib/
-        '';
+    linkAdapter {
+      inherit name;
+      layer = interpreterLayers.julia;
+      paths = {
+        julia_env = "${interpreterLayers.juliaEnvironment (
+          if packages == [ ] then juliaBase else juliaBase.withPackages packages
+        )}";
+        julia_library = "$out/lib/main.so";
+        julia_source = "${cardSource name src}/main.jl";
       };
-    in
-    runtimePackage name adapter;
+      flags = "-L${juliaBase}/lib -ljulia -Wl,-rpath,${juliaBase}/lib";
+    };
 
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.

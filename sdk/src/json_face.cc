@@ -22,9 +22,14 @@
 #include <string>
 #include <utility>
 
-#include "json_contract.hh"
 #include "tsugumi/message_json.hh"
 #include "tsugumi/sdk/abi.h"
+
+extern "C" {
+extern const char tsugumi_json_contract[];
+extern const char* const tsugumi_json_inputs[][2];
+extern const char* const tsugumi_json_outputs[][2];
+}
 
 namespace {
 thread_local std::string result, error;
@@ -35,10 +40,11 @@ auto parser(const char* direction, const char* name) -> flatbuffers::Parser& {
   if (std::strcmp(direction, "params") == 0)
     root = "params.Params";
   else {
-    const auto* ports =
-        std::strcmp(direction, "inputs") == 0 ? json_inputs : json_outputs;
-    for (const auto* p = ports; p->name; ++p)
-      if (name == std::string(p->name)) root = p->root;
+    const auto* ports = std::strcmp(direction, "inputs") == 0
+                            ? tsugumi_json_inputs
+                            : tsugumi_json_outputs;
+    for (const auto* p = ports; (*p)[0]; ++p)
+      if (name == std::string((*p)[0])) root = (*p)[1];
     if (root.empty())
       throw std::runtime_error("unknown " + std::string(direction) + " port " +
                                name);
@@ -52,7 +58,7 @@ auto parser(const char* direction, const char* name) -> flatbuffers::Parser& {
   options.indent_step = -1;
   auto value = std::make_unique<flatbuffers::Parser>(options);
   std::ifstream file(
-      std::string(TSUGUMI_JSON_CONTRACT) + "/_" + direction + ".bfbs",
+      std::string(tsugumi_json_contract) + "/_" + direction + ".bfbs",
       std::ios::binary);
   const std::string bytes((std::istreambuf_iterator<char>(file)), {});
   if (bytes.empty() ||

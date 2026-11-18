@@ -140,7 +140,7 @@ impl Call<'_> {
         unsafe { tsugumi_rs_invocation(self.raw) }
     }
 
-    pub(crate) fn input_bytes(&self, port: &str) -> Result<Option<&[u8]>> {
+    pub fn input_bytes(&self, port: &str) -> Result<Option<&[u8]>> {
         let port = string(port)?;
         let mut size = 0;
         // SAFETY: Call is made only for a validated live host call; the host owns its slices.
@@ -151,7 +151,7 @@ impl Call<'_> {
             Some(unsafe { std::slice::from_raw_parts(bytes, size) })
         })
     }
-    pub(crate) fn params_bytes(&self) -> &[u8] {
+    pub fn params_bytes(&self) -> &[u8] {
         let mut size = 0;
         let bytes = unsafe { tsugumi_rs_params(self.raw, &mut size) };
         if bytes.is_null() {
@@ -172,7 +172,7 @@ impl Call<'_> {
         unsafe { tsugumi_rs_log(self.raw, text.as_ptr()) };
         Ok(())
     }
-    pub(crate) fn emit(&self, port: &str, bytes: &[u8]) -> Result<()> {
+    pub fn emit(&self, port: &str, bytes: &[u8]) -> Result<()> {
         let port = string(port)?;
         accepted(unsafe { tsugumi_rs_emit(self.raw, port.as_ptr(), bytes.as_ptr(), bytes.len()) })
     }
@@ -274,7 +274,7 @@ impl Call<'_> {
 /// # Safety
 /// `raw` must be the host's valid call pointer for the duration of this function.
 #[doc(hidden)]
-pub unsafe fn invoke(raw: *const c_void, body: impl FnOnce(&Call<'_>) -> Result<()>) -> c_int {
+pub unsafe fn invoke(raw: *const c_void, body: &mut dyn FnMut(&Call<'_>) -> Result<()>) -> c_int {
     // SAFETY: caller is the worker; C checks the version before accessing further fields.
     if unsafe { tsugumi_rs_check(raw) } == 0 {
         return 1;

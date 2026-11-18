@@ -6,6 +6,10 @@
 
 #include "native_host.h"
 
+extern const char tsugumi_julia_env[];
+extern const char tsugumi_julia_library[];
+extern const char tsugumi_julia_source[];
+
 static int check_exception(void) {
   if (!jl_exception_occurred()) return 0;
   fprintf(stderr, "Julia initialization failed: %s\n",
@@ -19,7 +23,7 @@ int tsugumi_prepare(void) {
   }
   /* Capture only the pinned wrapper's runtime settings at build time. No
    * user environment or mutable package resolution is persisted here. */
-  FILE* file = fopen(TSUGUMI_JULIA_ENV, "r");
+  FILE* file = fopen(tsugumi_julia_env, "r");
   if (!file) return 1;
   char* line = NULL;
   size_t capacity = 0;
@@ -44,19 +48,25 @@ int tsugumi_prepare(void) {
   snprintf(depot, depot_size, "%s/.julia:%s", home, pinned ? pinned : "");
   setenv("JULIA_DEPOT_PATH", depot, 1);
   free(depot);
-  setenv("TSUGUMI_NATIVE_LIBRARY", TSUGUMI_SHIM, 1);
+  setenv("TSUGUMI_NATIVE_LIBRARY", tsugumi_julia_library, 1);
   jl_init();
   if (check_exception()) return 1;
   jl_eval_string("try; include(\"" TSUGUMI_JULIA_SDK
                  "\"); using .Tsugumi; catch error; showerror(stderr, error, "
                  "catch_backtrace()); println(stderr); rethrow(); end");
+  if (check_exception()) return 1;
+  jl_eval_string("function _tsugumi_load_card(path); try; include(path); "
+                 "catch error; showerror(stderr, error, catch_backtrace()); "
+                 "println(stderr); rethrow(); end; end");
   return check_exception();
 }
 int tsugumi_load(const tsugumi_call* call) {
   current_call = call;
-  jl_eval_string("try; include(\"" TSUGUMI_JULIA_SOURCE
-                 "/main.jl\"); catch error; showerror(stderr, error, "
-                 "catch_backtrace()); println(stderr); rethrow(); end");
+  jl_value_t* load = jl_get_function(jl_main_module, "_tsugumi_load_card");
+  jl_value_t* path = jl_cstr_to_string(tsugumi_julia_source);
+  JL_GC_PUSH1(&path);
+  jl_call1(load, path);
+  JL_GC_POP();
   int error = check_exception();
   current_call = NULL;
   return error;

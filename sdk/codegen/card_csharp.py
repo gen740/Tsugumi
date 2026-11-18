@@ -52,6 +52,4 @@ if __name__=='__main__':
         text = re.sub(r"(namespace |global::)([A-Za-z_][\w.]*)",
                       lambda match: match[1] + ".".join("@" + part for part in match[2].split(".")), text)
         generated.write_text(text)
-    version = re.search(r"#define TSUGUMI_ABI_VERSION (\d+)u", Path(sys.argv[3]).read_text())[1]
-    (output.parent / "AbiVersion.cs").write_text(f"namespace Tsugumi; internal static class Abi {{ internal const uint Version = {version}; }}\n")
     output.write_text(generate(json.loads(Path(sys.argv[1]).read_text())))

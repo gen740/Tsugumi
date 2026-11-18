@@ -8,6 +8,15 @@ using System.Threading.Tasks;
 
 namespace Tsugumi;
 
+public interface ICard {
+    ValueTask<Outputs> RunAsync(Inputs inputs) => throw Entry.MissingRunAsync(this);
+    ValueTask<Outputs> RunAsync(Inputs inputs, Report report) => RunAsync(inputs);
+    ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) => RunAsync(inputs, report);
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs) => ValueTask.FromResult(new Outputs());
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
+}
+
 public static class Entry {
     private static ICard? card;
 

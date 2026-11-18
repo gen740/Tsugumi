@@ -9,6 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+extern "C" {
+extern const char tsugumi_csharp_assembly[];
+extern const char tsugumi_csharp_runtimeconfig[];
+}
+
 namespace {
 using Entry = int (*)(const tsugumi_call*);
 load_assembly_and_get_function_pointer_fn g_load = nullptr;
@@ -85,7 +90,7 @@ using CheckLayout = int (*)(const Field*, size_t);
 
 auto load_entry(load_assembly_and_get_function_pointer_fn load,
                 const char* name, void** entry) -> bool {
-  const int status = load(TSUGUMI_ASSEMBLY, "Tsugumi.Entry, Card", name,
+  const int status = load(tsugumi_csharp_assembly, "Tsugumi.Entry, Card", name,
                           UNMANAGEDCALLERSONLY_METHOD, nullptr, entry);
   if (status != 0)
     std::fprintf(stderr, "Cannot load C# entry %s (hostfxr status 0x%x)\n",
@@ -114,7 +119,8 @@ extern "C" auto tsugumi_prepare() -> int {
   hostfxr_initialize_parameters options{sizeof(hostfxr_initialize_parameters),
                                         nullptr, TSUGUMI_DOTNET_ROOT};
   hostfxr_handle handle = nullptr;
-  const int status = initialize(TSUGUMI_RUNTIMECONFIG, &options, &handle);
+  const int status =
+      initialize(tsugumi_csharp_runtimeconfig, &options, &handle);
   if (status < 0 || !handle) {
     std::fprintf(
         stderr,

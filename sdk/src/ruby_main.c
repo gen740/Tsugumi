@@ -8,6 +8,11 @@
 
 #include "tsugumi/sdk/abi.h"
 
+extern const char tsugumi_ruby_card[];
+extern const char tsugumi_ruby_gemfile[];
+extern const char tsugumi_ruby_bundle_path[];
+extern const char tsugumi_ruby_bundle_config[];
+
 const char* tsugumi_json_decode(const char*, const char*, const uint8_t*,
                                 size_t);
 const char* tsugumi_json_error(void);
@@ -309,10 +314,10 @@ static int ensure_ruby(void) {
    * only the gems that come with this Ruby. */
   setenv("GEM_HOME", TSUGUMI_RUBY_GEMS, 1);
   setenv("GEM_PATH", TSUGUMI_RUBY_GEMS, 1);
-  if (TSUGUMI_RUBY_BUNDLE[0]) {
-    setenv("BUNDLE_GEMFILE", TSUGUMI_RUBY_BUNDLE "/Gemfile", 1);
-    setenv("BUNDLE_PATH", TSUGUMI_RUBY_BUNDLE "/installed", 1);
-    setenv("BUNDLE_APP_CONFIG", TSUGUMI_RUBY_BUNDLE "/no-config", 1);
+  if (tsugumi_ruby_gemfile[0]) {
+    setenv("BUNDLE_GEMFILE", tsugumi_ruby_gemfile, 1);
+    setenv("BUNDLE_PATH", tsugumi_ruby_bundle_path, 1);
+    setenv("BUNDLE_APP_CONFIG", tsugumi_ruby_bundle_config, 1);
     setenv("BUNDLE_FROZEN", "true", 1);
     setenv("BUNDLE_FORCE_RUBY_PLATFORM", "true", 1);
     setenv("BUNDLE_DISABLE_VERSION_CHECK", "true", 1);
@@ -381,8 +386,8 @@ static int call_ruby(const tsugumi_call* call, const char* method) {
 
 int tsugumi_prepare(void) { return call_ruby(NULL, NULL); }
 static VALUE load_card(VALUE ignored) {
-  if (TSUGUMI_RUBY_BUNDLE[0]) rb_require("bundler/setup");
-  return rb_funcall(sdk, rb_intern("_load"), 1, string(TSUGUMI_RUBY_CARD));
+  if (tsugumi_ruby_gemfile[0]) rb_require("bundler/setup");
+  return rb_funcall(sdk, rb_intern("_load"), 1, string(tsugumi_ruby_card));
 }
 int tsugumi_load(const tsugumi_call* call) {
   current = call;

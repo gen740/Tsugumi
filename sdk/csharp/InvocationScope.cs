@@ -14,15 +14,6 @@ public sealed class Failure : Exception {
     public Failure(string kind, string message) : base(message) => Kind = kind;
 }
 
-public interface ICard {
-    ValueTask<Outputs> RunAsync(Inputs inputs) => throw Entry.MissingRunAsync(this);
-    ValueTask<Outputs> RunAsync(Inputs inputs, Report report) => RunAsync(inputs);
-    ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) => RunAsync(inputs, report);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs) => ValueTask.FromResult(new Outputs());
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
-}
-
 public enum PortKind : uint { File = 1, Directory = 2, FlatBuffer = 3 }
 
 // NativeValue, NativeSeries and NativeCall mirror sdk/include/tsugumi/sdk/abi.h

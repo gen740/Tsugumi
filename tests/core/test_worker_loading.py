@@ -237,15 +237,18 @@ raise RuntimeError("import stopped")
             if source_failure else 'raise RuntimeError("import stopped")'))
     defines = {
         "TSUGUMI_PY_HOME": sys.base_prefix,
-        "TSUGUMI_PY_PATH": str(ROOT / "sdk/python") + ":" + str(source),
         "TSUGUMI_LIBPYTHON": str(libdir / sysconfig.get_config_var("LDLIBRARY")),
     }
+    entry = tmp_path / "entry.c"
+    paths = str(ROOT / "sdk/python") + ":" + str(source)
+    entry.write_text(f"const char tsugumi_python_path[] = {json.dumps(paths)};\n")
+    library = tmp_path / "lib/main.so"
     subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "sdk/include"), "-I", str(include),
                     *["-D" + k + "=" + json.dumps(v) for k, v in defines.items()],
-                    str(ROOT / "sdk/src/python_main.c"), "-L", str(libdir),
+                    str(ROOT / "sdk/src/python_main.c"), str(entry), "-L", str(libdir),
                     "-lpython" + sysconfig.get_config_var("LDVERSION"), "-Wl,-rpath," + str(libdir),
-                    "-o", str(tmp_path / "lib/runtime.so")], check=True)
-    (tmp_path / "lib/tsugumi-runtime").write_text(str(tmp_path / "lib/runtime.so") + "\n")
+                    "-o", str(library)], check=True)
+    (tmp_path / "lib/tsugumi-runtime").write_text(str(library) + "\n")
     # Production WorkerProc drains logs while waiting for the result. A file
     # gives this direct socket fixture the same absence of pipe backpressure.
     with (tmp_path / "python.log").open("wb") as log, worker(tmp_path, stderr=log) as (p, data, _):

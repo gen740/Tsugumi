@@ -18,7 +18,8 @@ def test_native_callbacks_reject_expired_and_background_calls(tmp_path):
         pytest.skip('C compiler and Python development headers are required')
     source = tmp_path / 'host.c'
     source.write_text('''#define TSUGUMI_PY_HOME ""
-#define TSUGUMI_PY_PATH ""
+#define TSUGUMI_LIBPYTHON ""
+const char tsugumi_python_path[] = "";
 #include "python_main.c"
 #include <assert.h>
 static int cancelled(void* host) { (void)host; return 0; }

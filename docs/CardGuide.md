@@ -477,7 +477,7 @@ See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks
 
 Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call always discards its resident worker in every language; the next invocation starts fresh and logs the reason, as it does after a crash or definition change. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 
-Standby preparation starts only the worker executable. The SDK builds language adapters separately from Card source or assemblies and names the runtime artifact explicitly. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A filename such as `runtime.so` never authorizes execution before a call. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
+Standby preparation starts only the worker executable. The SDK compiles interpreter startup code once per language version and links it into each Card's `lib/main.so` with the Card's source or assembly paths. The package names that entry in `lib/tsugumi-runtime`. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
 
 ```python
 import os
@@ -602,8 +602,8 @@ in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
 
 `src/Cargo.toml` declares a `cdylib` and `tsugumi = { path = "tsugumi" }`.
 That path is reserved for the crate generated from the Card's contract. The
-SDK includes the Rust runtime source of the same FlatBuffers version as
-`flatc`. A Card without a lock builds offline using the SDK's own crates.
+SDK builds its Rust runtime and the FlatBuffers crate matching `flatc`
+once per toolchain. A Card without a lock builds offline using the SDK's own crates.
 
 To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
 use the human Terminal panel with Cargo on PATH. Build the FlatBuffers source from

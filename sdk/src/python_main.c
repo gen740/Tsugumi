@@ -383,14 +383,14 @@ static struct PyModuleDef host_module = {PyModuleDef_HEAD_INIT,
 
 static PyObject* init_host(void) { return PyModule_Create(&host_module); }
 
+extern const char tsugumi_python_path[];
+
 static int ensure_python(void) {
   static int ready = 0;
   if (ready) return 1;
-#ifdef TSUGUMI_LIBPYTHON
-  /* The worker loads runtime.so with RTLD_LOCAL; extension modules need the
+  /* The worker loads main.so with RTLD_LOCAL; extension modules need the
    * interpreter's symbols globally visible. */
   if (!dlopen(TSUGUMI_LIBPYTHON, RTLD_NOW | RTLD_GLOBAL)) return 0;
-#endif
   if (PyImport_AppendInittab("_tsugumi_host", init_host) != 0) return 0;
   /* UTF-8 mode: text I/O and file names are UTF-8 regardless of the locale. */
   PyPreConfig pre;
@@ -408,7 +408,7 @@ static int ensure_python(void) {
   if (PyStatus_Exception(st)) return 0;
   /* sys.path: SDK, generated bindings, the Card and its packages. */
   PyObject* sys_path = PySys_GetObject("path");
-  const char* paths = TSUGUMI_PY_PATH;
+  const char* paths = tsugumi_python_path;
   const char* p = paths;
   Py_ssize_t pos = 0;
   while (*p) {

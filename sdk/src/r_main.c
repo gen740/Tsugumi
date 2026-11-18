@@ -7,7 +7,6 @@
 
 #include "native_host.h"
 // R_ext/Parse.h requires SEXP from Rinternals.h.
-#include <R_ext/Parse.h>
 #include <R_ext/Rdynload.h>
 #include <ctype.h>
 #include <dlfcn.h>
@@ -135,15 +134,18 @@ static const R_CallMethodDef methods[] = {
 #pragma GCC diagnostic pop
 #endif
 
-static int eval(const char* code) {
-  ParseStatus status;
-  SEXP text = PROTECT(Rf_mkString(code));
-  SEXP parsed = PROTECT(R_ParseVector(text, -1, &status, R_NilValue));
-  int error = status != PARSE_OK;
-  if (!error)
-    for (R_xlen_t i = 0; i < XLENGTH(parsed) && !error; ++i)
-      R_tryEval(VECTOR_ELT(parsed, i), R_GlobalEnv, &error);
-  UNPROTECT(2);
+extern const char tsugumi_r_libs[];
+extern const char tsugumi_r_fonts[];
+extern const char tsugumi_r_source[];
+
+static int source(const char* path) {
+  SEXP file = PROTECT(Rf_mkString(path));
+  SEXP keep_source = PROTECT(Rf_ScalarLogical(FALSE));
+  SEXP expr = PROTECT(Rf_lang3(Rf_install("source"), file, keep_source));
+  SET_TAG(CDDR(expr), Rf_install("keep.source"));
+  int error = 0;
+  R_tryEval(expr, R_GlobalEnv, &error);
+  UNPROTECT(3);
   return error;
 }
 
@@ -154,8 +156,8 @@ int tsugumi_prepare(void) {
     return 1;
   }
   setenv("R_HOME", TSUGUMI_R_HOME, 1);
-  setenv("R_LIBS_SITE", TSUGUMI_R_LIBS, 1);
-  setenv("FONTCONFIG_FILE", TSUGUMI_R_FONTS, 1);
+  setenv("R_LIBS_SITE", tsugumi_r_libs, 1);
+  setenv("FONTCONFIG_FILE", tsugumi_r_fonts, 1);
   R_SignalHandlers = 0;
   char* argv[] = {"tsugumi",      "--silent",       "--no-save",
                   "--no-restore", "--no-site-file", "--no-init-file"};
@@ -174,12 +176,11 @@ int tsugumi_prepare(void) {
   free(saved_tmp);
   if (initialized < 0) return 1;
   R_registerRoutines(R_getEmbeddingDllInfo(), NULL, methods, NULL, NULL);
-  return eval("source(\"" TSUGUMI_R_SDK "\", keep.source=FALSE)");
+  return source(TSUGUMI_R_SDK);
 }
 int tsugumi_load(const tsugumi_call* call) {
   current_call = call;
-  int error =
-      eval("source(\"" TSUGUMI_R_SOURCE "/main.R\", keep.source=FALSE)");
+  int error = source(tsugumi_r_source);
   current_call = NULL;
   return error;
 }

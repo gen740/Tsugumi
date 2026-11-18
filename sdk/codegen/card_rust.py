@@ -30,7 +30,8 @@ def main(contract_path, out):
     contract = json.load(open(contract_path))
     os.makedirs(os.path.join(out, 'src'), exist_ok=True)
     lines = ['// Generated from this Card\'s FlatBuffers contract. Do not edit.',
-             'extern crate alloc;', 'mod runtime;', 'pub use runtime::{Report, Run, Error, Result};', 'pub use flatbuffers;',
+             'extern crate alloc;', 'extern crate tsugumi_runtime as runtime;',
+             'pub use runtime::{Report, Run, Error, Result};', 'pub extern crate flatbuffers;',
              '#[doc(hidden)] pub use runtime::{invoke as __invoke, Call as __Call};',
              '#[allow(warnings)] #[path="_inputs_generated.rs"] pub mod input_types;',
              '#[allow(warnings)] #[path="_outputs_generated.rs"] pub mod output_types;',
@@ -79,7 +80,7 @@ macro_rules! export {
     (@body |$i:ident, $p:ident, $r:ident| $body:expr, |$si:pat_param, $sp:pat_param, $sr:pat_param| $start:expr) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn tsugumi_main(raw: *const std::ffi::c_void) -> std::ffi::c_int {
-            unsafe { $crate::__invoke(raw, |call| {
+            unsafe { $crate::__invoke(raw, &mut |call| {
                 let $i = $crate::Inputs::read(call)?;
                 let $p = &$crate::Report::from_call(call);
                 let $r = &$crate::Run::from_call(call);
@@ -89,7 +90,7 @@ macro_rules! export {
         }
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn tsugumi_run_start(raw: *const std::ffi::c_void) -> std::ffi::c_int {
-            unsafe { $crate::__invoke(raw, |call| {
+            unsafe { $crate::__invoke(raw, &mut |call| {
                 let $si = $crate::Inputs::read(call)?;
                 let $sp = &$crate::Report::from_call(call);
                 let $sr = &$crate::Run::from_call(call);
