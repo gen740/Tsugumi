@@ -541,6 +541,9 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   execution_service_.reset();  // the project's resident and standby workers end
+  // Queued history writes announce themselves through the server, which
+  // outlives the service only until it is closed.
+  if (history_) history_->flush();
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
   cache_usage_.reset();
