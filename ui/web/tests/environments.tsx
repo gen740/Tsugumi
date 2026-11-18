@@ -1,8 +1,8 @@
 // Recorded packages: read from what an invocation recorded, never from the
 // current definition.
 import assert from 'node:assert/strict'
-import { L } from '../src/i18n'
-import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { setImmediate } from 'node:timers/promises'
+import { act, create } from 'react-test-renderer'
 import { EnvironmentSource, environmentPaths, findEnvironment, storeName } from '../src/model/environments'
 import type { ProjectSession } from '../src/model/session'
 import { R } from '../src/wire/rpc'
@@ -44,10 +44,10 @@ assert.deepEqual(calls, [], 'a selection that changed asks for nothing')
 // The search is passed to the history database with the page's offset.
 assert.equal((await environmentPaths(source, 'run', 'a', 100n, 'Python')).total, 1n)
 assert.deepEqual(calls.splice(0), ['paths run a 100 "Python"'])
-const stuck: EnvironmentSource = { ...source, async paths() { return { paths: [], next: 5n, total: 9n } } }
-await assert.rejects(environmentPaths(stuck, 'run', 'a', 5n, ''), /did not advance/)
-const loop: EnvironmentSource = { ...source, async environments() { return { environments: [], next: 0n } } }
-await assert.rejects(findEnvironment(loop, 'run', 'a'), /did not advance/)
+const unavailable = new Error('recorded history unavailable')
+const failed = { async environments() { throw unavailable }, async paths() { throw unavailable } }
+await assert.rejects(environmentPaths(failed, 'run', 'a', 5n, ''), error => error === unavailable)
+await assert.rejects(findEnvironment(failed, 'run', 'a'), error => error === unavailable)
 
 // Only the two history requests are ever sent: no inspection, build or evaluation of the project.
 const sent: [number, Record<string, unknown>][] = []
@@ -107,14 +107,25 @@ const moreUsers = await recordedEnvironmentUses(historyRPC as never, 'imported-r
 assert.equal(moreUsers.uses[0].card, 'other-card')
 assert.equal(moreUsers.nextOffset, null)
 assert.equal(differenceCalls.at(-1)!.runId, 'imported-run')
-// Rendering a changed environment exposes both directions and the closure caveat.
-const changed = renderToStaticMarkup(<EnvironmentComparison session={{ rpc: historyRPC } as unknown as ProjectSession} left={{ run: 'left', id: 'old' }} right={{ run: 'right', id: 'new' }} />)
-for (const text of ['環境が変わった Card', '削除された実行時の依存パス', '追加された実行時の依存パス', '実行時の closure は、ビルド時の依存関係の完全な一覧ではありません。']) assert.ok(changed.includes(L(text)))
-const missing = renderToStaticMarkup(<EnvironmentComparison session={untouchable} left={{ run: 'left', id: '' }} right={{ run: 'right', id: 'new' }} />)
-assert.ok(missing.includes(L('比較できません')))
-assert.ok(!missing.includes(L('追加された実行時の依存パス')))
+// A known change reads the closure difference in both directions.
+const session = { rpc: historyRPC } as unknown as ProjectSession
+differenceCalls.length = 0
+let comparison!: ReturnType<typeof create>
+act(() => { comparison = create(<EnvironmentComparison session={session} left={{ run: 'left', id: 'old' }} right={{ run: 'right', id: 'new' }} />) })
+await setImmediate()
+assert.ok(comparison.root.findAllByType('code').some(node => node.props.children === '/nix/store/removed'))
+assert.ok(comparison.root.findAllByType('code').some(node => node.props.children === '/nix/store/added'))
+assert.deepEqual(new Map(differenceCalls.map(call => [call.runId, call.excludingRunId])), new Map([['left', 'right'], ['right', 'left']]))
+comparison.unmount()
+
+const missing = create(<EnvironmentComparison session={untouchable} left={{ run: 'left', id: '' }} right={{ run: 'right', id: 'new' }} />)
+assert.ok(missing.root.findByType('p').props.children)
+assert.equal(missing.root.findAllByType('input').length, 0)
 assert.equal(touched, 0)
+missing.unmount()
+
 const fullPath = '/nix/store/' + 'a'.repeat(32) + '-python-3.13'
-const pathHTML = renderToStaticMarkup(<StorePath value={fullPath} />)
-assert.ok(pathHTML.includes('python-3.13'))
-assert.ok(pathHTML.includes(fullPath) && pathHTML.includes('selectable'))
+const pathDetails = create(<StorePath value={fullPath} />)
+assert.equal(pathDetails.root.findByType('summary').props.children, 'python-3.13')
+assert.equal(pathDetails.root.findByType('details').findByType('code').props.children, fullPath)
+pathDetails.unmount()

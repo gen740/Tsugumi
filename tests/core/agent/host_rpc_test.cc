@@ -148,7 +148,9 @@ TEST_F(HostProjectsFixture,
       });
   EXPECT_EQ(JsonString(list.View(), "/0/id"), "sample");
   EXPECT_EQ(JsonString(list.View(), "/0/description"), "");
-  EXPECT_NE(list.View().find("\"tags\":[]"), std::string::npos);
+  const auto* demos = list.HostValue()->value_as_DemoList()->demos();
+  ASSERT_EQ(ListSize(demos), 1u);
+  EXPECT_EQ(ListSize(demos->Get(0)->tags()), 0u);
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(source))
     std::filesystem::permissions(entry.path(),
@@ -228,7 +230,9 @@ TEST_F(HostProjectsFixture,
   auto list = Recents().View();
   EXPECT_EQ(JsonString(list, "/0/name"), "recent-31");
   EXPECT_EQ(JsonString(list, "/29/name"), "recent-2");
-  EXPECT_EQ(list.find("recent-1\""), std::string::npos);
+  for (const auto& project : ::tsugumi::json::Array(list))
+    EXPECT_NE(::tsugumi::json::Text(::tsugumi::json::Object(project), "name"),
+              "recent-1");
   EXPECT_THROW((void)JsonString(list, "/30/name"), std::runtime_error);
   ASSERT_TRUE(Remember(directory.path / "recent-4").Code().empty());
   list = Recents().View();

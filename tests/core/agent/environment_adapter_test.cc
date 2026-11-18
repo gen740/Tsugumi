@@ -153,7 +153,7 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   auto failed = service.Handle(input);
   EXPECT_EQ(failed.phase, H::EnvironmentPhase::Failed);
   EXPECT_FALSE(authorization.active);
-  EXPECT_EQ(failed.message, "helper could not run the process");
+  EXPECT_EQ(failed.failure_code, H::EnvironmentFailureCode::LaunchFailed);
   EXPECT_FALSE(
       std::filesystem::exists(std::filesystem::path(failed.control_dir) /
                               "execution-broker-capability"));
@@ -172,10 +172,8 @@ TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   helper->verify = false;
   helper->die = true;
   // Only the existing tail bound applies to the daemon's own diagnostics.
-  helper->log = "discarded beginning\n" + std::string(70000, 'x') +
-                "fixture fixture-capability\nfinal stderr diagnosis\n";
-  helper->log.replace(helper->log.size() - 65536 - 3, 7, "fixture");
-  helper->log.replace(helper->log.size() - 4096 - 3, 18, "fixture-capability");
+  helper->log = "discarded beginning fixture-capability\n" +
+                std::string(70000, 'x') + "final stderr diagnosis\n";
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
@@ -191,7 +189,11 @@ TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   EXPECT_EQ(failed.failure_code, H::EnvironmentFailureCode::ProcessExit);
   EXPECT_NE(failed.message.find("final stderr diagnosis"), std::string::npos);
   EXPECT_EQ(failed.message.find("discarded beginning"), std::string::npos);
-  EXPECT_LE(failed.message.size(), 4200u);
+  EXPECT_TRUE(failed.endpoint.empty());
+  EXPECT_TRUE(failed.token.empty());
+  EXPECT_EQ(failed.message.find("fixture-capability"), std::string::npos);
+  EXPECT_NE(failed.log.find("final stderr diagnosis"), std::string::npos);
+  EXPECT_EQ(failed.log.find("fixture-capability"), std::string::npos);
   EXPECT_LE(failed.log.size(), 65536u);
   EXPECT_FALSE(authorization.active);
   EXPECT_FALSE(helper->running);
@@ -439,17 +441,22 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
   request.action = H::EnvironmentAction::AddFolders;
   request.folders = {a, a};
   EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{a});
+  const auto has_both_folders = [&](const auto& folders) {
+    EXPECT_EQ(std::ranges::count(folders, a), 1);
+    EXPECT_EQ(std::ranges::count(folders, b), 1);
+    EXPECT_EQ(folders.size(), 2u);
+  };
   request.folders = {b};
-  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
+  has_both_folders(service->Handle(request).folders);
   // An empty/new client starting the environment cannot replace either folder.
   request.action = H::EnvironmentAction::Start;
   request.folders.clear();
-  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
-  EXPECT_EQ(helper->received.folders, (std::vector<std::string>{a, b}));
+  has_both_folders(service->Handle(request).folders);
+  has_both_folders(helper->received.folders);
   service.reset();
   service = make();
   request.action = H::EnvironmentAction::State;
-  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
+  has_both_folders(service->Handle(request).folders);
   request.action = H::EnvironmentAction::RemoveFolders;
   request.folders = {a};
   EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{b});

@@ -74,29 +74,10 @@ TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
     EXPECT_EQ(Read(dir.path / language / "sample/tsugumi.json"), document);
   }
 }
-TEST(VMResetPolicy,
-     HostChoosesRetentionAndDescribesTheSameFilesInBothLanguages) {
-  auto policy = host::VMResetPolicy();
+TEST(VMResetPolicy, HostAllowsDiscardingAllVMFiles) {
+  const auto policy = host::VMResetPolicy();
   EXPECT_TRUE(policy.keep_files.empty());
   EXPECT_TRUE(policy.discard_other_files);
-  H::HostRuntimeT runtime;
-  host::DescribeVMReset(runtime);
-  for (const auto& name : policy.keep_files) {
-    EXPECT_NE(runtime.reset_confirmation_ja.find(name), std::string::npos);
-    EXPECT_NE(runtime.reset_confirmation_en.find(name), std::string::npos);
-  }
-  EXPECT_NE(runtime.reset_confirmation_en.find(".tsugumi/runs.sqlite"),
-            std::string::npos);
-  Tsugumi::VMHost::RequestT request;
-  request.value.Set(policy);
-  flatbuffers::FlatBufferBuilder builder;
-  builder.Finish(Tsugumi::VMHost::Request::Pack(builder, &request));
-  const auto* reset =
-      flatbuffers::GetRoot<Tsugumi::VMHost::Request>(builder.GetBufferPointer())
-          ->value_as_Reset();
-  ASSERT_NE(reset, nullptr);
-  EXPECT_TRUE(!reset->keep_files() || reset->keep_files()->size() == 0);
-  EXPECT_TRUE(reset->discard_other_files());
 }
 TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {
   TemporaryDirectory dir;

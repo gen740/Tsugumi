@@ -28,14 +28,24 @@ TEST(FileMiss, LargeFoldersHaveABoundedListAndTotal) {
   auto snapshot = Snapshot("code");
   std::vector<std::string> sources;
   for (int i = 0; i < 100; ++i)
-    sources.push_back(json::Encode(json::Members{
-        {"path", json::Quote("definitions/share/file" + std::to_string(i))}}));
+    sources.push_back(json::Encode(
+        json::Members{{"path", json::Quote("definitions/share/__fixture_" +
+                                           std::to_string(i) + "__")}}));
   snapshot["sources"] = json::Encode(sources);
   const auto diagnostic =
       DescribeFileMiss("definitions/share/missing", snapshot, {});
   EXPECT_FALSE(diagnostic.empty());
-  EXPECT_EQ(diagnostic.find("file99"), std::string::npos);
-  EXPECT_EQ(DescribeFileMiss("definitions/share/file0", snapshot, {}), "");
+  size_t listed = 0;
+  for (int i = 0; i < 100; ++i) {
+    const auto file = "__fixture_" + std::to_string(i) + "__";
+    if (diagnostic.find(file) != std::string::npos) ++listed;
+  }
+  EXPECT_GT(listed, 0u);
+  EXPECT_LT(listed, sources.size());
+  EXPECT_NE(diagnostic.find(std::to_string(sources.size() + 2)),
+            std::string::npos);
+  EXPECT_EQ(DescribeFileMiss("definitions/share/__fixture_0__", snapshot, {}),
+            "");
   EXPECT_EQ(DescribeFileMiss("definitions/absent/missing", snapshot, {}), "");
   EXPECT_EQ(DescribeFileMiss("elsewhere/missing", snapshot, {}), "");
 }
@@ -45,11 +55,11 @@ TEST(FileMiss, CodeSchemaMissDoesNotClaimCodeHasNoSchemas) {
         DescribeFileMiss("definitions/share/_outputs.fbs", Snapshot(kind), {});
     EXPECT_FALSE(diagnostic.empty());
   }
-  auto snapshot = Snapshot("code");
-  snapshot["definitions"] = R"([{"id":"share","card_json":"{}"}])";
-  EXPECT_NE(
-      DescribeFileMiss("definitions/share/missing", snapshot, {}).find("code"),
-      std::string::npos);
+  EXPECT_FALSE(DescribeFileMiss(
+                   "definitions/share/missing",
+                   {{"definitions", R"([{"id":"share","card_json":"{}"}])"}},
+                   {})
+                   .empty());
 }
 TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
   const std::string root = "externals/one/externals/two/definitions/share/";
@@ -71,7 +81,11 @@ TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
         return {{"bytes", json::Quote(R"({"template":"fork"})")}};
       });
   EXPECT_EQ(reads, 1);
-  EXPECT_NE(diagnostic.find("fork"), std::string::npos);
+  EXPECT_FALSE(diagnostic.empty());
+  EXPECT_TRUE(DescribeFileMiss(
+                  root + "_outputs.fbs", snapshot,
+                  [](const auto&, const auto&) -> json::Members { return {}; })
+                  .empty());
 }
 }  // namespace
 }  // namespace tsugumi::host

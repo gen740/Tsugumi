@@ -254,6 +254,40 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     assert error.value.kind == "not_found"
 
 
+@pytest.mark.parametrize(("method", "statement", "needs_environment"), [
+    ("RunEnvironmentsRequest",
+     "UPDATE build_environments SET manifest=? WHERE run_id=?", False),
+    ("RunEnvironmentPathsRequest",
+     "UPDATE environment_paths SET path=? WHERE run_id=?", True),
+    ("RunEnvironmentUsesRequest",
+     "UPDATE invocations SET card=? WHERE run_id=?", True),
+])
+def test_oversized_history_rows_fail_instead_of_returning_a_stalled_cursor(
+        core_factory, project, tmp_path, method, statement, needs_environment):
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    environment_id, _ = inventory(client, run_id)
+    daemon.stop()
+
+    # Simulate an oversized row in recorded history. It must fail even when
+    # the first row alone exceeds the response budget.
+    db = sqlite3.connect(project / ".tsugumi" / "runs.sqlite")
+    try:
+        with db:
+            updated = db.execute(statement, ("/nix/store/" + "x" * (2 << 20), run_id))
+            assert updated.rowcount
+    finally:
+        db.close()
+    daemon.start()
+    fields = {"environmentId": environment_id} if needs_environment else {}
+    with pytest.raises(RpcFailure) as error:
+        daemon.connect().call(method, runId=run_id, **fields)
+    assert error.value.kind == "resource_limit"
+
+
 def test_build_failure_has_no_claimed_environment(core_factory, project):
     """A Card that never obtained a build does not claim an execution environment."""
     client = core_factory(mocked_builds=True).connect()

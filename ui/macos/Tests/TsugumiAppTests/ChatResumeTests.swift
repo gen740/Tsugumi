@@ -191,16 +191,23 @@ import TsugumiTestSupport
     }
 
     func finished() async throws -> [String: Any] {
-      // Agent exposes conversation status via snapshot and EventsRequest reads.
-      // There is no push notification for a conversation becoming idle.
-      let deadline = Date().addingTimeInterval(30)
-      var result = try await snapshot()
-      while result["busy"] as? Bool == true, Date() < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-        result = try await snapshot()
+      // The host exposes the cursor and busy state together on EventsRequest.
+      var after: UInt64 = 0
+      while true {
+        try Task.checkCancellation()
+        let page = try await CoreHostClient.shared.call("EventsRequest",
+          ["conversation_id": conversationID, "after_seq": after])
+        let busy = try #require(page["busy"] as? Bool)
+        if !busy {
+          let result = try await snapshot()
+          try #require(result["busy"] as? Bool == false)
+          return result
+        }
+        after = try #require(page["next_seq"] as? UInt64)
+        if (page["events"] as? [[String: Any]])?.isEmpty != false {
+          try await Task.sleep(for: .milliseconds(20))
+        }
       }
-      try #require(result["busy"] as? Bool == false)
-      return result
     }
 
     func stop() async {

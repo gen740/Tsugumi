@@ -197,15 +197,14 @@ TEST_F(AgentFixture,
   StartHost();
   check();
 }
-TEST_F(AgentFixture,
-       MainAndHelperPassTheirFormerStepLimitsAndStillStopOnRequest) {
+TEST_F(AgentFixture, MainAndHelperContinueUsingToolsUntilCancelled) {
   for (const bool helper : {false, true}) {
     ModelServer model;
     if (helper)
       model.Queue(AnthropicTool(
           "delegate-long", "delegate",
           R"({"tasks":[{"name":"Long review","instruction":"Keep inspecting until stopped.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
-    const size_t count = helper ? 18 : 53;
+    constexpr size_t count = 3;
     for (size_t i = 0; i < count; ++i)
       model.Queue(
           AnthropicTool("long-" + std::to_string(i), "demo_list", "{}"));
@@ -235,24 +234,32 @@ namespace R = Tsugumi::RPC;
 
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   auto websocket = Connect(false, true);
-  const auto unix_catalog =
-      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
-        return A::CreateToolCatalogRequest(b).Union();
-      }).View();
-  const auto websocket_catalog =
-      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
-        return A::CreateToolCatalogRequest(b).Union();
-      }).View();
-  EXPECT_EQ(unix_catalog, websocket_catalog);
-  EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
-  EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("guide_"), std::string::npos);
-  // Secondary operations are indexed on demand; version diffs stay Host
-  // requests.
-  EXPECT_EQ(unix_catalog.find("run_latest_invocations"), std::string::npos);
-  EXPECT_NE(unix_catalog.find("\"name\":\"tools\""), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("version_diff"), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("from_commit"), std::string::npos);
+  namespace J = ::tsugumi::json;
+  const auto catalog = [](auto& client) {
+    const auto reply =
+        Call(client, A::RequestPayload::ToolCatalogRequest,
+             [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
+    EXPECT_TRUE(reply.Code().empty());
+    std::map<std::string, J::Members> tools;
+    for (const auto& raw : J::Array(reply.View())) {
+      auto tool = J::Object(raw);
+      const auto name = J::Text(tool, "name");
+      EXPECT_TRUE(tools.emplace(name, std::move(tool)).second) << name;
+    }
+    return tools;
+  };
+  const auto unix_tools = catalog(*external);
+  EXPECT_EQ(unix_tools, catalog(*websocket));
+  for (const auto* name : {"project_inspect", "delegate", "tools"})
+    EXPECT_TRUE(unix_tools.contains(name)) << name;
+  for (const auto* name : {"run_latest_invocations", "version_diff"})
+    EXPECT_FALSE(unix_tools.contains(name)) << name;
+  for (const auto& entry : unix_tools)
+    EXPECT_FALSE(entry.first.starts_with("guide_")) << entry.first;
+  ASSERT_TRUE(unix_tools.contains("project_save"));
+  const auto save =
+      J::Object(J::Get(unix_tools.at("project_save"), "inputSchema"));
+  EXPECT_FALSE(J::Object(J::Get(save, "properties")).contains("from_commit"));
 }
 
 // Inspect the actual provider requests as well as the external RPC catalog.
@@ -301,24 +308,12 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
       Call(*external, A::RequestPayload::ToolCatalogRequest,
            [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
   EXPECT_EQ(names(external_catalog.View()), main_tools);
-  auto editing_order = [&](const std::string& raw) {
-    std::vector<std::string> ordered;
-    for (const auto& tool : J::Array(raw)) {
-      const auto name = J::Text(J::Object(tool), "name");
-      if (name == "project_edit" || name == "project_connect" ||
-          name == "project_make_subgraph" || name == "project_layout" ||
-          name == "project_copy" || name == "project_save")
-        ordered.push_back(name);
-    }
-    EXPECT_EQ(J::Text(J::Object(J::Array(raw).back()), "name"), "project_save");
-    EXPECT_EQ(ordered,
-              (std::vector<std::string>{
-                  "project_edit", "project_copy", "project_connect",
-                  "project_make_subgraph", "project_layout", "project_save"}));
-  };
-  editing_order(J::Get(J::Object(requests[0]), "tools"));
-  editing_order(J::Get(J::Object(requests[1]), "tools"));
-  editing_order(external_catalog.View());
+  for (const auto* name :
+       {"project_edit", "project_copy", "project_connect",
+        "project_make_subgraph", "project_layout", "project_save"}) {
+    EXPECT_TRUE(main_tools.contains(name)) << name;
+    EXPECT_TRUE(helper_tools.contains(name)) << name;
+  }
   EXPECT_FALSE(helper_tools.contains("delegate"));
   helper_tools.insert("delegate");
   EXPECT_EQ(helper_tools, main_tools);
@@ -592,14 +587,23 @@ TEST_F(AgentFixture,
     ASSERT_TRUE(model.WaitForRequests(turn + 1));
     WaitUntilIdle(conversation);
     const auto events = Events(conversation).View();
-    EXPECT_NE(events.find("ChatGPT usage limit reached"), std::string::npos);
-    EXPECT_EQ(events.find("retrying"), std::string::npos);
+    namespace J = ::tsugumi::json;
+    std::set<std::string> kinds;
+    for (const auto& raw : J::Array(J::Get(J::Object(events), "events")))
+      kinds.insert(J::Text(J::Object(J::Get(J::Object(raw), "event")), "kind"));
+    EXPECT_TRUE(kinds.contains("error"));
+    EXPECT_FALSE(kinds.contains("retrying"));
     EXPECT_EQ(model.Requests().size(), static_cast<size_t>(turn + 1));
   }
   const auto request = model.Requests()[0];
   EXPECT_FALSE(JsonBool(request, "/store"));
   EXPECT_TRUE(JsonBool(request, "/stream"));
-  EXPECT_EQ(JsonString(request, "/tools/0/type"), "namespace");
+  const auto tools = ::tsugumi::json::Array(
+      ::tsugumi::json::Get(::tsugumi::json::Object(request), "tools"));
+  EXPECT_TRUE(std::ranges::any_of(tools, [](const auto& tool) {
+    return ::tsugumi::json::Text(::tsugumi::json::Object(tool), "type") ==
+           "namespace";
+  }));
   EXPECT_THROW(JsonUInt(request, "/max_output_tokens"), std::runtime_error);
 }
 

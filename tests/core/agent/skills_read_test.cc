@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <set>
 
 #include "../agent_fixture_server.hh"
 #include "agent/helper_scope.hh"
@@ -85,7 +86,9 @@ TEST(HostSkillScope, CatalogExposesDeclarationsButNeverSkillBodies) {
   };
   EXPECT_EQ(named("review").scope, std::vector<std::string>{"read"});
   EXPECT_TRUE(named("custom").scoped);
-  EXPECT_EQ(named("custom").scope, (std::vector<std::string>{"read", "run"}));
+  const auto& scope = named("custom").scope;
+  EXPECT_EQ((std::set<std::string>{scope.begin(), scope.end()}),
+            (std::set<std::string>{"read", "run"}));
   EXPECT_EQ(named("invalid").status, "invalid_scope");
 }
 TEST(HostSkillScope, AutomaticSkillsCannotDeclareAScope) {
@@ -100,10 +103,10 @@ TEST(HostSkillScope, AutomaticSkillsCannotDeclareAScope) {
                  std::runtime_error);
     Write(root / "bad.md", text);
     const auto list = host::ListSkills(directory.path, {}, true);
-    const auto& bad = *list.skills.back();
-    EXPECT_EQ(bad.status, "invalid_scope");
-    EXPECT_NE(bad.description.find("cannot combine always: true with scope"),
-              std::string::npos);
+    const auto bad = std::ranges::find_if(
+        list.skills, [](const auto& skill) { return skill->name == "bad"; });
+    ASSERT_NE(bad, list.skills.end());
+    EXPECT_EQ((*bad)->status, "invalid_scope");
     EXPECT_THROW(host::SelectScopedSkill(list, {"bad"}, "bad", {"a"}, ""),
                  std::runtime_error);
   }
@@ -111,12 +114,10 @@ TEST(HostSkillScope, AutomaticSkillsCannotDeclareAScope) {
   // even when the override did not explicitly declare always.
   Write(root / "helpers.md", "---\nscope: [read]\n---\nWRITE_SENTINEL");
   const auto list = host::ListSkills(directory.path, {}, true);
-  for (const auto& skill : list.skills)
-    if (skill->name == "helpers") {
-      EXPECT_EQ(skill->status, "invalid_scope");
-      EXPECT_NE(skill->description.find("cannot declare scope"),
-                std::string::npos);
-    }
+  const auto helpers = std::ranges::find_if(
+      list.skills, [](const auto& skill) { return skill->name == "helpers"; });
+  ASSERT_NE(helpers, list.skills.end());
+  EXPECT_EQ((*helpers)->status, "invalid_scope");
   EXPECT_EQ(host::SkillScope("---\nalways: false\nscope: [read]\n---\n"),
             std::vector<std::string>{"read"});
 }

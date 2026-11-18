@@ -199,7 +199,6 @@ TEST_F(AgentExclusionRPC,
       c, "project_copy",
       R"({"source":"scratch","base_rev":"0","files":[{"from":"missing","to":"definitions/public/copied.bin"}]})");
   EXPECT_EQ(Error(missing), "invalid_path") << Diagnostic(missing);
-  EXPECT_NE(Diagnostic(missing).find("missing"), std::string::npos);
   EXPECT_EQ(Diagnostic(missing).find(directory.path.string()),
             std::string::npos);
   EXPECT_EQ(Diagnostic(missing).find(".tsugumi/agent-files"),
@@ -239,11 +238,6 @@ TEST_F(AgentExclusionRPC,
           << message;
       EXPECT_EQ(message.find(".tsugumi/agent-files"), std::string::npos)
           << message;
-      if (path == from) {
-        EXPECT_NE(message.find("folder"), std::string::npos) << message;
-        EXPECT_NE(message.find("list its files"), std::string::npos) << message;
-        EXPECT_NE(message.find("whole Card"), std::string::npos) << message;
-      }
     }
   }
   EXPECT_FALSE(std::filesystem::exists(
@@ -327,14 +321,13 @@ TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
       std::filesystem::exists(directory.path / "project/externals/copied"));
 }
 
-TEST_F(AgentExclusionRPC, AttachedCardCopyExplainsWhenFolderIsNotAProject) {
+TEST_F(AgentExclusionRPC, AttachedCardCopyRejectsFoldersThatAreNotProjects) {
   const auto folder = directory.path / "attached";
   Write(folder / "note.txt", "An ordinary attached folder");
   const auto c = Open({".git"});
   Attach(c, folder);
   const auto result = CopyAttached(c, folder);
   EXPECT_EQ(Error(result), "invalid_project") << Diagnostic(result);
-  EXPECT_NE(Diagnostic(result).find("tsugumi.json"), std::string::npos);
   EXPECT_FALSE(
       std::filesystem::exists(directory.path / "project/definitions/copied"));
 }

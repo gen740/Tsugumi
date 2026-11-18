@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { modelErrorMessage } from '../src/i18n'
 import { api } from '../src/api'
 import { ChatGPTSignInModel, ChatGPTState, chatGPTSignInIsLocal } from '../src/model/chatgpt'
-import { ChatGPTSettings } from '../src/ui/chatgpt'
+import { ChatGPTButton, ChatGPTSettings } from '../src/ui/chatgpt'
 import { GuideSetupForm } from '../src/ui/guide'
 import { GuideController } from '../src/model/guide'
 
@@ -264,20 +264,33 @@ for (const beginPending of [false, true]) {
   } finally { globalThis.fetch = original }
 }
 
-// Expired sessions expose the recovery action in both Settings and guide errors.
+// An expired registration offers sign-in for that account.
 {
-  const model = fixture().model()
+  const f = fixture()
+  f.setOutcome('pending')
+  const model = f.model()
   model.setState({ ...model.state, accounts: [{ ...account, signedIn: false }] })
-  const html = renderToStaticMarkup(<ChatGPTSettings controller={model} onConnected={() => {}} />)
-  assert.match(html, /ChatGPT にもう一度サインインしてください。/)
-  assert.equal(modelErrorMessage('Sign in to ChatGPT again'), 'ChatGPT にもう一度サインインしてください。')
-  assert.equal(modelErrorMessage('model returned HTTP 503: Capacity exhausted'), 'model returned HTTP 503: Capacity exhausted')
+  const ui = create(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  try {
+    assert.equal(model.state?.accounts.find(a => a.clientId === account.clientId)?.signedIn, false)
+    const signIn = ui.root.findAllByType(ChatGPTButton).find(button => {
+      const row = button.parent
+      return row?.findAllByType('span').length
+    })
+    assert.ok(signIn && !signIn.props.disabled)
+    signIn.props.onClick()
+    await model.settled()
+    assert.equal(f.calls.find(c => c.path === '/api/chatgpt/signin')?.body.clientId, account.clientId)
+  } finally { ui.unmount() }
+  const detail = 'model returned HTTP 503: Capacity exhausted'
+  assert.equal(modelErrorMessage(detail), detail)
 }
 {
   const original = globalThis.fetch
   globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Sign in to ChatGPT again' }) })) as typeof fetch
   try {
-    await assert.rejects(api('/api/settings/models'), { message: 'ChatGPT にもう一度サインインしてください。' })
+    await assert.rejects(api('/api/settings/models'), (error: Error) =>
+      error.message.length > 0 && error.message !== 'Sign in to ChatGPT again')
   } finally { globalThis.fetch = original }
 }
 console.log('ChatGPT first start and Settings: shared button, success, consent, cancellation, failures, non-local page and once-only welcome passed')

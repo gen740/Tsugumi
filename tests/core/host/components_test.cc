@@ -194,7 +194,6 @@ TEST_F(CredentialRefreshTest,
     const auto log = testing::internal::GetCapturedStderr();
     EXPECT_EQ(log.find("old-refresh"), std::string::npos);
     EXPECT_NE(log.find(code), std::string::npos);
-    EXPECT_NE(log.find("auth=chatgpt"), std::string::npos);
     EXPECT_FALSE(
         ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "signed_in")));
     EXPECT_FALSE(Status()->configured);

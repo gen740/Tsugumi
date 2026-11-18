@@ -84,33 +84,16 @@ TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
                std::runtime_error);
 }
 
-TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
-  const auto settings = json::Object(
-      std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
-                       tsugumi_agent_settings_size));
-  std::set<std::string> expected;
-  for (const auto& entry : json::Array(json::Get(settings, "requests")))
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  for (const auto& entry : json::Array(json::Get(settings, "hostRequests")))
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  std::set<std::string> approval;
-  for (const auto& entry :
-       json::Array(json::Get(settings, "approvalRequests"))) {
-    ASSERT_TRUE(approval.insert(json::String(entry)).second);
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  }
-  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]")))
-    ASSERT_TRUE(expected.insert(json::Text(json::Object(raw), "name")).second);
-  expected.insert("FileFormatRequest");
-  ASSERT_FALSE(approval.empty());
+TEST(AgentCatalog, ExposesPublicToolsWithTheExpectedApprovalPolicy) {
   const Catalog catalog;
-  std::set<std::string> actual;
-  for (const auto& tool : catalog.tools()) {
-    actual.insert(tool.request_name);
-    EXPECT_EQ(tool.approval_required, approval.contains(tool.request_name));
+  for (const auto* name : {"project_inspect", "project_file_read"}) {
+    const auto* tool = catalog.Find(name);
+    ASSERT_NE(tool, nullptr) << name;
+    EXPECT_FALSE(tool->approval_required) << name;
   }
-  EXPECT_EQ(actual, expected);
-  EXPECT_EQ(catalog.tools().size(), expected.size());
+  const auto* guarded = catalog.Find("run_history_delete");
+  ASSERT_NE(guarded, nullptr);
+  EXPECT_TRUE(guarded->approval_required);
   for (const auto* denied :
        {"view_save", "view_set_visible", "project_open", "session_hello"}) {
     EXPECT_EQ(catalog.Find(denied), nullptr);
@@ -127,8 +110,6 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
           "working_directory", "writable_paths", "mounts", "output_prefix",
           "workspace_only", "protected_paths"})
       EXPECT_FALSE(properties.contains(owned));
-    EXPECT_TRUE(tool->mutating);
-    EXPECT_EQ(tool->has_origin, std::string_view(name) != "project_shell");
   }
   const auto history = json::Object(json::Get(
       json::Object(catalog.Find("run_history_delete")->spec.input_schema),

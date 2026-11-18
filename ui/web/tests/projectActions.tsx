@@ -1,23 +1,31 @@
 // The Canvas's button back to Home: named after the menu's action, and left to
 // that action while a run is on (it refuses there, with the reason).
 import assert from 'node:assert/strict'
-import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { create } from 'react-test-renderer'
+import { L } from '../src/i18n'
 import type { ProjectSession } from '../src/model/session'
 import type { Workspace } from '../src/model/workspace'
 import { ProjectActions, tip } from '../src/ui/canvasWorkspace'
 
 const workspace = { showChat: true, set() {} } as unknown as Workspace
-const render = (runActive: boolean, onSwitchProject?: () => void) => renderToStaticMarkup(
+const render = (runActive: boolean, onSwitchProject?: () => void) => create(
   <ProjectActions workspace={workspace} session={{ runActive } as unknown as ProjectSession} onSwitchProject={onSwitchProject} />)
-const label = tip('Home へ戻る', 'home')
+const label = tip(L('Home へ戻る'), 'home')
+const home = (view: ReturnType<typeof create>) =>
+  view.root.findAllByType('button').find(button => button.props['aria-label'] === label)
 
 for (const runActive of [false, true]) {
-  const html = render(runActive, () => {})
-  const button = html.split('<button').find((b) => b.includes(`aria-label="${label}"`))?.split('>')[0]
-  assert.ok(button, 'an icon button with the label of the action')
-  assert.ok(button.includes(`title="${label}"`), 'a tooltip with its shortcut')
-  assert.ok(!button.includes('disabled'), 'the action itself refuses during a run, as from the menu')
+  let requested = false
+  const view = render(runActive, () => { requested = true })
+  const button = home(view)
+  assert.ok(button)
+  assert.equal(button.props.title, label)
+  assert.ok(!button.props.disabled)
+  button.props.onClick({ stopPropagation() {} })
+  assert.ok(requested, 'the canvas delegates the decision to the Home action')
+  view.unmount()
 }
-// A child Workflow in a window of its own has no Home to go back to.
-assert.ok(!render(false).includes(label))
+const detached = render(false)
+assert.equal(home(detached), undefined)
+detached.unmount()
 console.log('project actions behavior: passed')

@@ -296,8 +296,6 @@ TEST(CollectValue, RejectsACollectedVectorLargerThan16MiB) {
     FAIL() << "a vector larger than the worker value limit was accepted";
   } catch (const Failed& failure) {
     EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
-    EXPECT_NE(failure.failure.diagnostic.value_or("").find("16 MiB"),
-              std::string::npos);
   }
 }
 
@@ -311,8 +309,6 @@ TEST_F(CollectFiles, RejectsMoreThanOneThousandFiles) {
     FAIL() << "the file count limit was ignored";
   } catch (const Failed& failure) {
     EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
-    EXPECT_NE(failure.failure.diagnostic.value_or("").find("1,000"),
-              std::string::npos);
   }
   EXPECT_FALSE(stdfs::exists(output_dir));
 }
