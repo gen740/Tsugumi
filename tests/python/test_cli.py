@@ -694,7 +694,7 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
         s = api(port, cookie, "GET", "/api/settings")
     finally:
         stream.close()
-    assert int(s["revision"]) == revision
+    assert s["revision"]["desktop"] == revision
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)
