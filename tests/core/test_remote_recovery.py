@@ -100,6 +100,8 @@ class Gateway(socketserver.UnixStreamServer):
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
             entries[0]["path"] = "files/out/../../escape"
+        if result_fault == "size":
+            entries[0]["size"] += 1
         if result_fault == "oversize":
             next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (128 << 20) + 1
         manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
@@ -411,7 +413,7 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     assert wait_run(client, run_id).state == RunState.succeeded
 
 
-@pytest.mark.parametrize("fault", ["type", "escape", "oversize", "log"])
+@pytest.mark.parametrize("fault", ["type", "escape", "size", "oversize", "log"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job

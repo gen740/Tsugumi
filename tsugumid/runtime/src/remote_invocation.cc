@@ -324,8 +324,8 @@ auto import_remote_result(
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, instance, job_id, *digest, destination, *size, *size,
-                     &stop, [&](uint64_t done, uint64_t bytes) {
+    client.get_blob(service, instance, job_id, *digest, destination, *size,
+                    *size, &stop, [&](uint64_t done, uint64_t bytes) {
                       if (progress) progress(*name, done, bytes);
                     });
     destination.close();

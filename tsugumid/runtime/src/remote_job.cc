@@ -336,12 +336,13 @@ auto RemoteJobClient::get_blob(std::string_view service,
     const auto* body = reply.body.AsBlobChunk();
     if (!body || body->digest != digest || body->offset != offset ||
         (offset ? body->total != total
-                : expected_size ? body->total != *expected_size
-                                : body->total > limit) ||
+                : !expected_size && body->total > limit) ||
         body->bytes.size() > body->total - offset ||
         body->bytes.size() > workerd::kChunkBytes ||
         (body->bytes.empty() && offset < body->total))
       throw BrokerDisconnected("invalid remote blob chunk");
+    if (!offset && expected_size && body->total != *expected_size)
+      throw std::runtime_error("remote result size mismatch");
     total = body->total;
     if (progress && !offset) progress(0, total);
     hash.update(body->bytes.data(), body->bytes.size());
