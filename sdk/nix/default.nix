@@ -590,8 +590,13 @@ rec {
         cp -r --no-preserve=mode ${goLayer}/gocache "$GOCACHE"
         go build -mod=readonly -buildmode=c-archive -ldflags="-s -w -buildid=" -o "$TMPDIR/card.a" .
         ${checkLock}
-        go test -mod=readonly ./...
-        ${checkLock}
+        ${lib.optionalString
+          (lib.fileset.toList (lib.fileset.fileFilter (file: lib.hasSuffix "_test.go" file.name) src) != [ ])
+          ''
+            go test -mod=readonly ./...
+            ${checkLock}
+          ''
+        }
         ${entrySource { }}
         ${linkEntry}
         link_card "$TMPDIR/card.a" ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-pthread -ldl -lm"}
@@ -662,7 +667,22 @@ rec {
         ${if lock == null then "rm -f Cargo.lock" else "install -m 0644 ${lock} Cargo.lock"}
         ${rustEnvironment vendor}
         cargo build --offline ${lockFlag} --release --target ${rustTarget}
-        cargo test --offline ${lockFlag} --release --target ${rustTarget}
+        ${lib.optionalString
+          (
+            ((builtins.readDir src).tests or null) == "directory"
+            || builtins.any (
+              file:
+              builtins.length (
+                builtins.split ''#[[:space:]]*\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*\)[[:space:]]*[]]'' (
+                  builtins.readFile file
+                )
+              ) > 1
+            ) (lib.fileset.toList (lib.fileset.fileFilter (file: file.hasExt "rs") src))
+          )
+          ''
+            cargo test --offline ${lockFlag} --release --target ${rustTarget}
+          ''
+        }
         ${entrySource { }}
         ${linkEntry}
         link_card target/${rustTarget}/release/lib${library}.a ${

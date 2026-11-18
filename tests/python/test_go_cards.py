@@ -58,6 +58,24 @@ def test_scaffold_is_current_and_executes(project):
     assert text(shown(c,succeeded(c),'go').value.text)=='hello'
 
 
+def test_failing_go_test_rejects_the_card_build(project):
+    root, connect = project
+    card = go('''package main
+import "tsugumi"
+func run(inputs tsugumi.Inputs) (tsugumi.Output, error) { return tsugumi.Output{}, nil }
+''')
+    card['src']['checks/card_test.go'] = '''package checks
+import "testing"
+func TestCard(t *testing.T) { t.Fatal("deliberate Go Card test failure") }
+'''
+    write_project(root, {'go': card}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('go'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert 'deliberate Go Card test failure' in text(status.failure.diagnostic) + log
+
+
 def test_python_go_cpp_typed_values(project):
     root,connect=project
     card=go('''package main

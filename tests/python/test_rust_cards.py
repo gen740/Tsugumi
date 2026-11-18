@@ -51,6 +51,32 @@ def test_scaffold_generated_from_one_template():
     subprocess.run(['python3', str(ROOT / 'sdk/codegen/scaffold.py'), 'rust', '--check'], check=True)
 
 
+@pytest.mark.parametrize('test_path', ['src/lib.rs', 'tests/card.rs'])
+def test_failing_rust_test_rejects_the_card_build(project, test_path):
+    root, connect = project
+    card = rust('''fn run(_inputs: tsugumi::Inputs<'_>) -> tsugumi::Result<tsugumi::Output> {
+    Ok(tsugumi::Output::default())
+}
+tsugumi::export!(run, inputs);
+''')
+    test = '''
+#[test]
+fn card_test() {
+    panic!("deliberate Rust Card test failure");
+}
+'''
+    if test_path == 'src/lib.rs':
+        card['src'][test_path] += '#[cfg( test )]\nmod tests {\n' + test + '}\n'
+    else:
+        card['src'][test_path] = test
+    write_project(root, {'rust': card}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert 'deliberate Rust Card test failure' in text(status.failure.diagnostic) + log
+
+
 def test_python_rust_cpp_values_and_params(project):
     root, connect = project
     process = rust('''use tsugumi::{Report, Inputs, Output, Result};
