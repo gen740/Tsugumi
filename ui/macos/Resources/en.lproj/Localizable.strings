@@ -90,8 +90,10 @@
 "CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。" = "Set CPU and memory limits. Jobs share the host’s resources.";
 "CPU アーキテクチャ" = "CPU architecture";
 "CPU 上限（ミリコア）" = "CPU limit (millicores)";
+"CPU: %lld 個" = "CPUs: %lld";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
+"Canvas の状態を表示" = "Show canvas state";
 "Canvas（フォーカスがあるとき）" = "Canvas (when focused)";
 "Card SDK を準備" = "Prepared the Card SDK";
 "Card SDK を準備しています" = "Preparing the Card SDK";
@@ -99,10 +101,12 @@
 "Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）" = "Show inside the Card in Card (read only; to edit, open the project in externals by itself)";
 "Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。" = "A Card in Card is this project's own copy in externals. Its ports map to the inside through the boundary of its tsugumi.json. Go inside to edit its Cards and connections.";
 "Card が見つかりません" = "Card not found";
+"Card と配線のキーを詳細に表示" = "Show Card and wire keys in details";
 "Card の定義" = "Card definition";
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。" = "Relative to this Card's definition folder. Use project: for a path relative to its owning project.";
 "Card の実行" = "Run Cards";
 "Card の実行履歴から、前の入力と出力をいつでも見返せるよ" = "A Card's Run History keeps every earlier input and output.";
+"Card の当たり範囲（青）と、配線を選べる帯（橙）を Canvas に重ねて描きます。" = "Draws over the canvas where each Card takes a click (blue) and the band that selects each wire (orange).";
 "Card の権限の変更" = "Change Card permissions";
 "Card の種類のアイコンを使います" = "Uses the icon of the Card's kind";
 "Card の設定画面で開きます" = "Opens in the Card's settings";
@@ -165,9 +169,10 @@
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix store の内容を検査・修復しています（初回と VM イメージの更新後）" = "Checking and repairing Nix store contents (first boot and after a VM image update)";
 "Nix store の検査・修復が完了しました。" = "Nix store checking and repair completed.";
+"Nix store: 最大 %lld GiB" = "Nix store: up to %lld GiB";
 "Nix を準備しています" = "Preparing Nix";
+"Nix 参照" = "Nix references";
 "Nix 参照一覧" = "Nix reference list";
-"Nix 参照（記述どおり）" = "Nix references (as written)";
 "Nix 定義" = "Nix Definition";
 "Nix 定義を開く" = "Open Nix definition";
 "Nix 評価" = "Nix evaluation";
@@ -214,6 +219,7 @@
 "Tsugumi を知る のページが見つかりません" = "The \"Learn about Tsugumi\" page was not found";
 "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。" = "Usage limit reached: review your plan or this app's limit in ChatGPT settings.";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
+"VM のサイズ" = "VM Size";
 "VM を起動しています" = "Booting the VM";
 "VM イメージ %@" = "VM image %@";
 "VM イメージを展開しています" = "Unpacking the VM image";
@@ -232,12 +238,14 @@
 "build 中" = "Building";
 "console.log（ゲスト）、console.prev.log（前回の起動）、launcher.log（アプリの記録）" = "console.log (the guest), console.prev.log (the previous boot), launcher.log (the app's notes)";
 "default.nix がありません" = "No default.nix";
+"default.nix に Card 間の参照はありません" = "No Card references in default.nix";
 "default.nix はほかの Card を参照していません。" = "default.nix references no other Card.";
 "default.nix を作成" = "Create default.nix";
 "default.nix を開く" = "Open default.nix";
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
+"inputs.<入力ポート名> と書いた参照を表示します。" = "Shows references written as inputs.<input port name>.";
 "macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "marimo ノートブック" = "marimo notebook";
@@ -248,6 +256,7 @@
 "stderr への出力はありません（Nix 評価・build のログもここに出ます）。" = "Nothing on stderr (Nix evaluation and build logs appear here too).";
 "stdout への出力はありません" = "Nothing on stdout";
 "stdout への出力はありません。" = "Nothing on stdout.";
+"store のディスクは今 %lld GiB です。小さくするには「すべての実行環境を初期化…」で store を作り直します（それまでは今の大きさのままです）。" = "The store disk is %lld GiB now. To make it smaller, recreate the store with “Reset all environments…” (until then it keeps its size).";
 "store ディスクの空き" = "Store disk available";
 "stream 別" = "By stream";
 "stream 別（元の出力）" = "By stream (as written)";
@@ -372,6 +381,7 @@
 "この環境を共有する Card と呼び出し" = "Cards and invocations sharing this environment";
 "この結果は表示できません" = "This result cannot be displayed";
 "この返事を送ります" = "Sends this reply";
+"この階層には参照がありません（一覧に %lld 件）" = "No references at this level (%lld in the list)";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
@@ -384,6 +394,7 @@
 "すべての実行履歴を削除しますか？" = "Delete the whole run history?";
 "すべての実行環境を初期化…" = "Reset all environments…";
 "すべての実行環境を初期化しますか？" = "Reset all environments?";
+"すべてオフにする" = "Turn all off";
 "すべて選択" = "Select All";
 "その他" = "More";
 "たった今" = "Just now";
@@ -428,6 +439,7 @@
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
 "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。" = "When on, search queries go through the connected provider to its search service. The Agent is told to keep unpublished data out of them, but this cannot be guaranteed. Queries and sources stay in the chat. Searches may be charged.";
+"カメラ、Card と配線の数、最後の配線ルーティングにかかった時間を Canvas の隅に出します。" = "Shows the camera, the number of Cards and wires, and how long the last wire routing took, in a corner of the canvas.";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
 "ガイドのツグミに聞く" = "Ask Tsugumi the Guide";
@@ -447,6 +459,7 @@
 "キーを削除" = "Delete key";
 "キーを押してください…" = "Press a key…";
 "クリックで次のヒント" = "Click for the next tip";
+"クリックの当たり判定を表示" = "Show click areas";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
 "グラフの更新" = "Chart updates";
 "グラフを表示するには？" = "How do I show a chart?";
@@ -541,10 +554,13 @@
 "ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ" = "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.";
 "ツグミへの質問" = "Question for Tsugumi";
 "ツグミへの返事" = "Reply to Tsugumi";
+"ツールのエラーを詳しく表示" = "Show tool errors in full";
 "ツールの詳細" = "Tool details";
 "テキスト検索" = "Text search";
 "テキスト検索…" = "Text Search…";
 "テーマ" = "Theme";
+"デバッグ" = "Debug";
+"デバッグパネル" = "Debug Panel";
 "デフォルト" = "Default";
 "デフォルトに戻す" = "Use the Default";
 "デモ" = "Demos";
@@ -647,10 +663,12 @@
 "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
 "ホストの状態フォルダ「%@」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。" = "The host state folder \"%@\" was written by another version of Tsugumi. Move or rename this folder to set it aside, then start Tsugumi again.";
 "ホーム" = "Home";
+"ポインタを置いたときの詳細に、tsugumi.json やログでの Card キーと接続の番号を加えます。" = "Adds the Card key and the connection number, as in tsugumi.json and the logs, to the details shown under the pointer.";
 "ポートの並びを元に戻す" = "Reset Port Order";
 "メッセージの準備" = "Preparing the message";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
+"メモリ: %lld GiB" = "Memory: %lld GiB";
 "メモリ上限（バイト）" = "Memory limit (bytes)";
 "メンバーを選択" = "Select Members";
 "モジュール %@" = "Module %@";
@@ -804,6 +822,7 @@
 "入力待ち" = "Waiting";
 "全 %lld 回" = "%lld calls";
 "全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）" = "%lld rows · preview of the first %lld (expand to view all)";
+"全プロジェクト共通の VM のサイズです。変更は次に VM を起動したときから使われます（実行中の VM は今のサイズのままです）。" = "The size of the VM all projects share. Changes take effect the next time the VM starts (a running VM keeps its current size).";
 "全体" = "All";
 "全体 " = "Whole ";
 "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。" = "To run the whole Workflow, place a start Card (trigger) at its top level. A selected Card can also be run by itself.";
@@ -857,7 +876,7 @@
 "分配" = "Fork";
 "分野を選び直す" = "Choose Another Field";
 "切断" = "Disconnect";
-"初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（最大 %lld GiB、使った分だけ）を作ります。" = "When a project is first opened, the VM image is unpacked and the Nix store's space is made (up to %lld GiB, only what is used).";
+"初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（設定のサイズまで、使った分だけ）を作ります。" = "When a project is first opened, the VM image is unpacked and the Nix store's space is made (up to the size in Settings, only what is used).";
 "初回の案内（デモの勧誘）をもう一度表示" = "Show the First Greeting (Demo Offer) Again";
 "初回の準備をしています" = "Preparing for the first time";
 "初期値" = "Initial value";
@@ -980,6 +999,7 @@
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
 "失敗したので結果はありません" = "It failed, so there is no result";
+"失敗したツール呼び出しに、短い理由に加えて引数と返ってきた結果の全文を出します。" = "Shows a failed tool call's arguments and its whole result, not only the short reason.";
 "失敗の種類" = "Failure kind";
 "宇宙・地球" = "Space and Earth";
 "完了" = "Done";
@@ -1094,6 +1114,7 @@
 "差分・保存前" = "Patch · not saved";
 "差分・保存済み" = "Patch · saved";
 "幅 %lld" = "Width %lld";
+"引数" = "Arguments";
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
 "待機列" = "Queued";
@@ -1179,6 +1200,7 @@
 "既にある Workflow を見る" = "See a working workflow";
 "既存のプロジェクトを開く…" = "Open Existing Project…";
 "既定" = "Default";
+"既定に戻す" = "Restore Defaults";
 "既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。" = "The default cache.nixos.org and tsugumi.cachix.org remain enabled. Packages are not uploaded to caches.";
 "既定（%@）" = "Default (%@)";
 "日時" = "Date";
@@ -1378,6 +1400,7 @@
 "詳細を閉じる" = "Close details";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
+"説明" = "About this";
 "読み取った内容は接続先のモデルに送信される場合があります。" = "Read content may be sent to the connected model.";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
@@ -1463,6 +1486,7 @@
 "（変更した Card: %@）" = " (changed Cards: %@)";
 "（実行中）" = "(running)";
 "（必須）" = "(required)";
+"（既定）" = " (default)";
 "（次の入力を待てます）" = "(can wait for the next input)";
 "（止まったところから続けます）" = "(going on from where it stopped)";
 "（省略可）" = " (optional)";

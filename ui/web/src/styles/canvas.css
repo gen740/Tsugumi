@@ -18,6 +18,7 @@
 .cv-actions { gap: 4px; padding: 4px 8px !important; }
 .cv-view-controls { gap: 2px; padding: 3px 8px; }
 .cv-view-controls .vdivider, .cv-run .vdivider { height: 16px; align-self: center; }
+.cv-nix-controls { display: flex; align-items: center; gap: 2px; }
 
 /* ---- the canvas ---- */
 .cv-canvas { position: absolute; inset: 0; overflow: hidden; outline: none; touch-action: none; background: var(--text-bg); cursor: default; }

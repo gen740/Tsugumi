@@ -4,7 +4,8 @@
 include "host.fbs";
 namespace Tsugumi.VMHost;
 table Watch {}
-table Boot { key:string; broker_endpoint:string (required); cache_configuration:string; cache_netrc:string; cache_problem:string; }
+// resources: used when this Boot starts the VM; a running VM keeps its own.
+table Boot { key:string; broker_endpoint:string (required); cache_configuration:string; cache_netrc:string; cache_problem:string; resources:Tsugumi.Host.VMResources (required); }
 table Mount { name:string (required); path:string (required); read_only:bool; }
 table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); }
 enum ProcessAction:ubyte { Poll, Stop }

@@ -165,7 +165,10 @@ textarea.field { resize: none; font: inherit; }
 
 /* grouped form */
 .form { padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
-.form-section-title { font-weight: 600; font-size: 12px; margin: 0 0 5px 4px; }
+.form-section-title { font-weight: 600; font-size: 12px; margin: 0 0 5px 4px; display: flex; align-items: center; gap: 4px; }
+.info-button { border: none; background: none; padding: 0 2px; color: var(--secondary); cursor: pointer; display: inline-flex; align-items: center; font-size: 12px; }
+.info-button:hover { color: var(--label); }
+.info-text { white-space: pre-wrap; line-height: 1.45; }
 .form-box { background: var(--control-bg); border-radius: 8px; border: 0.5px solid var(--separator); }
 .form-row { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 5px 10px; }
 .form-row + .form-row { border-top: 0.5px solid var(--separator); }

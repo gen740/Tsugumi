@@ -47,7 +47,6 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
       </div>
       <div className="cv-bottom">
         <ViewControls session={session} tab={tab} />
-        <NixReferenceControls session={session} tab={tab} />
         <span className="cv-spacer" />
         {bottomTrailing}
       </div>
@@ -254,6 +253,9 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
       <Button kind="borderless" small iconOnly icon="arrow.triangle.swap" help={L('配線の交差を減らす（Card の位置は保持）')} onClick={() => session.untangle(tab.scope)} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help={L('グリッド')} onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
+      <Divider vertical />
+      {/* The Nix references belong to the same bar as the other view controls. */}
+      <NixReferenceControls session={session} tab={tab} />
     </div>
   )
 }

@@ -64,6 +64,10 @@ interface Settings {
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
   language: Language
+  /** The shared VM's CPUs, memory and store size (GiB) from its next start; 0 is this machine's default. */
+  vmCpus: number
+  vmMemoryGiB: number
+  vmStoreGiB: number
 }
 
 // The host keeps presentation snapshots only; persistence and validation are RPC.
@@ -73,7 +77,7 @@ const SHARED_KEYS: Record<string, string> = {
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
-const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders' }
+const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()

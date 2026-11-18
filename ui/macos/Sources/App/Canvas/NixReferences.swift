@@ -9,7 +9,7 @@ struct CardNixReference: Identifiable {
   var expression: String {
     let quoted = String(data: try! JSONEncoder().encode(name), encoding: .utf8)!
     let attr = name.range(of: #"^[A-Za-z_][A-Za-z0-9_'-]*$"#, options: .regularExpression) == nil ? quoted : name
-    return "inputs.\(attr).export"
+    return "inputs.\(attr)"
   }
 }
 
@@ -42,6 +42,13 @@ func visibleNixLinks(_ references: [CardNixReference], scope: [String], visible:
   }
 }
 
+/// How many links the canvas draws at `scope`: Cards there are the
+/// resolution's entries one level below it.
+@MainActor func nixLinkCount(_ session: ProjectSession, scope: [String]) -> Int {
+  let visible = Set(session.resolution.keys.filter { path($0).count == scope.count + 1 && Array(path($0).prefix(scope.count)) == scope })
+  return visibleNixLinks(nixReferences(session), scope: scope, visible: visible).count
+}
+
 /// A hovered Card shows all of its links; otherwise the link picked on the canvas.
 func activeNixLinks(_ links: [NixLink], hovered: CardKey?, selected: String?) -> [NixLink] {
   links.filter {
@@ -68,16 +75,22 @@ struct NixReferenceControls: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照（記述どおり）", systemImage: "snowflake") }
+      Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照", systemImage: "snowflake") }
         .toggleStyle(.button)
         .help("保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。")
+      // Turned on with nothing to draw here, the overlay says so instead of
+      // looking as if the button did nothing.
+      if tab.showNixReferences && nixLinkCount(session, scope: tab.scope) == 0 {
+        let all = nixReferences(session).count
+        Text(all == 0 ? "default.nix に Card 間の参照はありません" : "この階層には参照がありません（一覧に \(all) 件）")
+          .foregroundStyle(.secondary)
+          .help("inputs.<入力ポート名> と書いた参照を表示します。")
+      }
       Button { tab.showNixList.toggle() } label: { Label("一覧", systemImage: "list.bullet") }
         .help("Nix 参照一覧")
         .popover(isPresented: $tab.showNixList) { referenceList }
     }
-    .buttonStyle(.borderless).font(.callout)
-    .padding(.horizontal, 12).padding(.vertical, 7)
-    .background(.regularMaterial, in: Capsule())
+    .buttonStyle(.borderless)
   }
 
   private var referenceList: some View {

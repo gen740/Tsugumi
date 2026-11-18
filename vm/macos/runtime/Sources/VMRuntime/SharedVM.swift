@@ -52,6 +52,14 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var _state: VMState = .stopped
   private var stateObservers: [UUID: @Sendable (VMState) -> Void] = [:]
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
+  /// The running VM's size (under `lock`; nil while none runs).
+  private var _resources: VMResources?
+  public var resources: VMResources? { lock.withLock { _resources } }
+  /// What uses the VM now (under `lock`): attached projects, open terminals
+  /// and store operations. While it is zero the guest's memory is given back.
+  private var users = 0
+  private var idleGeneration: UInt64 = 0
+  private var shrunk = false
 
   public init(directory: URL) {
     self.directory = directory
@@ -137,6 +145,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       let files = try installImage(image)
       setVMState(.starting(.disk))
       try ensureDisk(storeImage, gib: resources.storeGiB, what: "store")
+      lock.withLock { _resources = resources; shrunk = false }
       setVMState(.starting(.boot))
       lock.withLock { _bootCount += 1 }
       console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version)), x86_64-linux: \(X86Emulation.chosen.rawValue)")
@@ -210,9 +219,22 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     return BootFiles(kernel: files[0], rootfs: files[1])
   }
 
-  /// A disk: a sparse file, formatted by the guest on first boot.
+  /// A disk: a sparse file, formatted by the guest on first boot. A larger
+  /// size grows the file (the guest grows its file system on boot); a smaller
+  /// one keeps it: shrinking needs a new store (reset the environments).
   private func ensureDisk(_ url: URL, gib: Int, what: String) throws {
-    if FileManager.default.fileExists(atPath: url.path) { return }
+    let wanted = UInt64(gib) << 30
+    if let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? UInt64 {
+      if size < wanted {
+        console.note("growing the \(what) disk from \(size >> 30) to \(gib) GiB")
+        let h = try FileHandle(forWritingTo: url)
+        try h.truncate(atOffset: wanted)
+        try h.close()
+      } else if size > wanted {
+        console.note("the \(what) disk stays \(size >> 30) GiB; a smaller one needs a new store")
+      }
+      return
+    }
     console.note("creating the \(what) disk (\(gib) GiB, sparse)")
     guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
       throw LauncherError.startFailed(reason: "cannot create the \(what) disk", log: url.path)
@@ -240,7 +262,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     net.attachment = VZNATNetworkDeviceAttachment()
     net.macAddress = macAddress()
     c.networkDevices = [net]
-    lock.withLock { slots.removeAll() }
+    // A new boot: nothing uses it yet (holds of the last one end harmlessly).
+    lock.withLock { users = 0; slots.removeAll() }
     let cacheDirectory = directory.appendingPathComponent("binary-cache-config", isDirectory: true)
     try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     for (name, contents) in [("nix.conf", cacheConfiguration), ("netrc", cacheNetrc)] {
@@ -348,6 +371,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       if name == "ready" {
         setVMState(.running)
         keepClock()
+        scheduleIdle()
       } else if let s = VMStage(rawValue: name) { setVMState(.starting(s)) }
     } else if line.hasPrefix("TSUGUMI-FAILED ") {
       setVMState(.failed(String(line.dropFirst("TSUGUMI-FAILED ".count))))
@@ -435,6 +459,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         self.socket = nil
       }
     }
+    lock.withLock { _resources = nil; shrunk = false; idleGeneration += 1 }
     if let error {
       console.note("the VM stopped with an error: \(error.localizedDescription)")
       setVMState(.failed("the VM stopped: \(error.localizedDescription)"))
@@ -455,16 +480,17 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   /// that has one. Only before the guest mounts the slot: the guest cannot
   /// reach the folders it had open once the device's share is replaced.
   public func attach(_ projectId: String, _ entries: [String: URL], readOnly: Set<String> = []) async throws -> Int {
-    let slot: Int? = lock.withLock {
-      if let s = slots[projectId] { return s }
+    let (slot, added): (Int?, Bool) = lock.withLock {
+      if let s = slots[projectId] { return (s, false) }
       let used = Set(slots.values)
-      guard let free = (0..<Self.slotCount).first(where: { !used.contains($0) }) else { return nil }
+      guard let free = (0..<Self.slotCount).first(where: { !used.contains($0) }) else { return (nil, false) }
       slots[projectId] = free
-      return free
+      return (free, true)
     }
     guard let slot else {
       throw LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: "")
     }
+    if added { await hold() }
     var dirs: [String: VZSharedDirectory] = [:]
     for (name, url) in entries { dirs[name] = VZSharedDirectory(url: url, readOnly: readOnly.contains(name)) }
     await setShare(slot, dirs)
@@ -475,6 +501,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   public func detach(_ projectId: String) async {
     guard let slot = lock.withLock({ slots.removeValue(forKey: projectId) }) else { return }
     await setShare(slot, [:])
+    release()
   }
 
   private func setShare(_ slot: Int, _ dirs: [String: VZSharedDirectory]) async {
@@ -482,6 +509,89 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
       queue.async {
         if slot < self.fileSystems.count { self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: handed.value) }
+        c.resume()
+      }
+    }
+  }
+
+  // MARK: - Memory while idle
+
+  /// How long the VM waits with nothing using it before giving memory back,
+  /// and how much the guest keeps then. Measured with a 16 GiB VM: right
+  /// after boot the VM process uses about 0.5 GB; after a Nix build and a run
+  /// about 4 GB, mostly page cache. Ballooned to 1536 MiB the guest still has
+  /// about 920 MiB available, and the process drops to about 1.9 GB within
+  /// seconds. Restoring takes under half a second, so a short delay costs a
+  /// project start little; two minutes keep the page cache across a quick
+  /// close and reopen.
+  public static let idleDelay: Duration = .seconds(120)
+  public static let idleMemoryMiB: UInt64 = 1536
+
+  /// Something starts using the VM (a project, a terminal, a store
+  /// operation): the guest gets its full memory back first.
+  public func hold() async {
+    let restore: VMResources? = lock.withLock {
+      users += 1
+      idleGeneration += 1
+      guard shrunk, let r = _resources else { return nil }
+      shrunk = false
+      return r
+    }
+    guard let restore else { return }
+    let start = ContinuousClock.now
+    await setMemoryTarget(UInt64(restore.memoryGiB) << 30)
+    // The balloon deflates in the guest. Its pages count as used there
+    // (MemTotal stays), so wait until most of them are available again.
+    let wanted = ((UInt64(restore.memoryGiB) << 20) - (Self.idleMemoryMiB << 10)) / 2  // KiB
+    var available: UInt64 = 0
+    while ContinuousClock.now - start < .seconds(10) {
+      if let reply = try? await request("memory", timeout: 2) {
+        let fields = reply.split(separator: " ")
+        available = fields.count == 3 ? UInt64(fields[1]) ?? 0 : 0
+        if available >= wanted { break }
+      }
+      try? await Task.sleep(for: .milliseconds(20))
+    }
+    console.note("memory restored to \(restore.memoryGiB) GiB in \(ContinuousClock.now - start) (guest has \(available >> 10) MiB available)")
+  }
+
+  /// The use that `hold` began has ended.
+  public func release() {
+    lock.withLock { users = max(0, users - 1) }
+    scheduleIdle()
+  }
+
+  private func scheduleIdle() {
+    let generation: UInt64? = lock.withLock {
+      guard users == 0, !shrunk, _resources != nil else { return nil }
+      idleGeneration += 1
+      return idleGeneration
+    }
+    guard let generation else { return }
+    Task.detached { [weak self] in
+      try? await Task.sleep(for: Self.idleDelay)
+      guard let self else { return }
+      let shrink: Bool = self.lock.withLock {
+        guard self.idleGeneration == generation, self.users == 0, !self.shrunk, case .running = self._state else { return false }
+        self.shrunk = true
+        return true
+      }
+      guard shrink else { return }
+      self.console.note("idle for \(Self.idleDelay); giving memory back (guest keeps \(Self.idleMemoryMiB) MiB)")
+      await self.setMemoryTarget(Self.idleMemoryMiB << 20)
+      // What the guest has left, for the log (KiB: total, available, page cache).
+      try? await Task.sleep(for: .seconds(5))
+      if let reply = try? await self.request("memory", timeout: 5) {
+        let kib = reply.split(separator: " ").map { (UInt64($0) ?? 0) >> 10 }
+        if kib.count == 3 { self.console.note("guest memory now \(kib[0]) MiB, available \(kib[1]) MiB, page cache \(kib[2]) MiB") }
+      }
+    }
+  }
+
+  private func setMemoryTarget(_ bytes: UInt64) async {
+    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+      queue.async {
+        (self.vm?.memoryBalloonDevices.first as? VZVirtioTraditionalMemoryBalloonDevice)?.targetVirtualMachineMemorySize = bytes
         c.resume()
       }
     }

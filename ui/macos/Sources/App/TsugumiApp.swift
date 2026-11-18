@@ -89,6 +89,10 @@ struct TsugumiApp: App {
     }
     .defaultSize(width: 760, height: 460)
     .restorationBehavior(.disabled)
+    Window("デバッグ", id: "debug") { DebugPanel() }
+      .defaultSize(width: 460, height: 420)
+      .windowResizability(.contentSize)
+      .restorationBehavior(.disabled)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
         DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
@@ -419,6 +423,7 @@ struct WorkbenchCommands: Commands {
     }
     CommandGroup(after: .windowList) {
       OpenConsoleButton()
+      OpenDebugPanelButton()
     }
     CommandGroup(after: .appInfo) {
       UpdateMenuItem()
