@@ -377,25 +377,6 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   return files;
 }
 
-void NixRunner::acquire_lane(const std::atomic<bool>* cancel) {
-  std::unique_lock<std::mutex> l(lane_mu_);
-  while (lane_busy_) {
-    if (cancel && cancel->load())
-      throw Failed(FailureKind::cancelled,
-                   "cancelled while waiting for the Nix lane");
-    lane_cv_.wait_for(l, std::chrono::milliseconds(100));
-  }
-  lane_busy_ = true;
-}
-
-void NixRunner::release_lane() {
-  {
-    std::lock_guard<std::mutex> l(lane_mu_);
-    lane_busy_ = false;
-  }
-  lane_cv_.notify_all();
-}
-
 // A folder of the evaluation area named after its contents: written once,
 // then reused by every later Card and run with the same contents.
 stdfs::path NixRunner::content_dir(
@@ -608,11 +589,6 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   };
   std::string prefix = root_prefix(node.path);
   NixResult res;
-  acquire_lane(req.cancel);
-  struct Release {
-    NixRunner* r;
-    ~Release() { r->release_lane(); }
-  } release{this};
   try {
     call.root_dir = gcroots_dir();
     call.root_prefix = prefix;
@@ -621,21 +597,31 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     // The evaluator validates its settings epoch and observed filesystem reads.
     const auto key = call.evaluation_key();
     const auto card = path_key(node.path);
-    std::erase_if(evaluations_, [&](const auto& item) {
-      return !graph.index.contains(item.first);
-    });
-    auto found = evaluations_.find(card);
+    std::optional<NixResult> earlier;
+    {
+      std::lock_guard l(evaluations_mu_);
+      std::erase_if(evaluations_, [&](const auto& item) {
+        return !graph.index.contains(item.first);
+      });
+      auto found = evaluations_.find(card);
+      if (found != evaluations_.end() && found->second.first == key)
+        earlier = found->second.second;
+    }
     if (call.on_phase) call.on_phase(false);
-    if (found != evaluations_.end() && found->second.first == key &&
-        evaluator().reuse(call, found->second.second)) {
-      res = found->second.second;
+    if (earlier && evaluator().reuse(call, *earlier)) {
+      res = std::move(*earlier);
       if (res.implementation_count > call.max_implementations)
         throw NixImplementationLimit(
             "input and run list expansion exceeds 256 combinations");
       res.built = false;
     } else {
-      evaluations_.erase(card);
-      log::info("Card full evaluation " + std::to_string(++full_evaluations_));
+      uint64_t count = 0;
+      {
+        std::lock_guard l(evaluations_mu_);
+        evaluations_.erase(card);
+        count = ++full_evaluations_;
+      }
+      log::info("Card full evaluation " + std::to_string(count));
       res = evaluator().evaluate(call);
     }
     if (!req.transport)
@@ -648,6 +634,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     if (build_deadline) call.deadline = *build_deadline + transfer_time;
     if (req.target.kind == WorkerKind::native)
       res = evaluator().realise_native(call, std::move(res));
+    std::lock_guard l(evaluations_mu_);
     std::erase_if(evaluations_, [&](const auto& item) {
       return item.second.second.evaluation_epoch != res.evaluation_epoch;
     });
