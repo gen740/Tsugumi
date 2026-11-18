@@ -12,9 +12,8 @@ import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
 import { DisplayContent } from './display'
-import { InvocationPackages } from './environments'
 import { Icon } from './icons'
-import { RunLogView } from './logs'
+import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
 import { runMark } from '../model/runMark'
 
@@ -26,13 +25,25 @@ export function FailureSourceLink({ failure, onOpenSource }: { failure: D.Failur
 }
 
 type Filter = 'all' | 'succeeded' | 'failed'
-type Detail = 'io' | 'log' | 'packages' | 'info'
 
-/** Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
- *  The packages are those recorded for the invocation.
+/** Which call of the Card an invocation is, with its state, list position and time. */
+export function invocationLabel(i: R.InvocationSummaryT): string {
+  return L('{0} 回目', String(i.invocation ?? 0n)) + ` · ${cardState(i.state).label}` +
+    // A call of an execution list says which element it took.
+    (i.batchIndex != null && i.batchSize != null && i.batchSize > 1 ? ' · ' + L('実行リスト {0}/{1}', i.batchIndex, i.batchSize) : '') +
+    (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : '')
+}
+
+const INVOCATION_HELP = () => L('Card は入力がそろうたびに 1 回呼び出されます（実行リストなら要素ごと）。ほかの実行の呼び出しは左の一覧で実行を選びます。')
+
+/** Runs of one Card (filter by success/failure) → invocations → what one
+ *  invocation was (information first) and what it took and gave. Its log is
+ *  in the Log category; its environment comes from the Card's definition.
  *  Loading, failed and empty are said plainly, never as an empty split view. */
-export function CardExecutionView({ session, cardKey, onOpenSource }: { session: ProjectSession; cardKey: CardKey; onOpenSource: (source: string, line: number) => void }) {
+export function CardExecutionView({ session, model }: { session: ProjectSession; model: CardEditorModel }) {
   useObserve(session)
+  const cardKey = model.cardKey
+  const onOpenSource = (source: string, line: number) => model.openSource(source, line)
   const [runs, setRuns] = useState<R.RunSummaryT[]>([])
   const [filter, setFilter] = useState<Filter>('all')
   const [runId, setRunId] = useState<string>()
@@ -42,7 +53,6 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
   const [nextCursor, setNextCursor] = useState<string>()
   const [invocation, setInvocation] = useState<bigint>()
   const [record, setRecord] = useState<R.RecordResultT>()
-  const [detail, setDetail] = useState<Detail>('io')
   const [error, setError] = useState<string>()
   const [loaded, setLoaded] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -111,7 +121,7 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
       </Empty>
     )
   }
-  if (!runs.length) return <Empty title={L('まだ実行していません')} icon="clock" description={L('この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。')} />
+  if (!runs.length) return <Empty title={L('まだ実行していません')} icon="clock" description={L('この Card が実行されると、ここに実行ごとの情報と入出力が残ります。')} />
 
   const filtered = runs.filter((r) => {
     const st = r.status!.state
@@ -151,53 +161,43 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
           </div>
         </div>,
         <div key="detail" className="col fill">
-          {runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId)) && <div className="caption pad6">{runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId))}</div>}
           {!runId ? <Empty title={L('実行を選んでください')} icon="list.bullet.rectangle" /> : (
             <>
-              <div className="history-detail-header col gap8 pad6 border-bottom">
-                <div className="history-invocation row gap8 center">
-                  {waiting ? <span className="ellipsis secondary" title={L('呼び出しの記録を待っています')}>{L('呼び出しの記録を待っています')}</span> : <Select label={L('呼び出し')} style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
-                    onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
-                    options={invocations.length ? invocations.map((i) => ({
-                      value: String(i.invocation ?? 0n),
-                      label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` +
-                        (i.batchIndex != null && i.batchSize != null ? ` · ${i.batchIndex}/${i.batchSize}` : '') +
-                        (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
-                    })) : [{ value: '', label: L('呼び出しなし') }]} />}
-                  {batch?.executionList && <span className="caption mono">×{batch.invocationCount}</span>}
+              <div className="history-detail-header row gap8 center pad6 border-bottom">
+                <div className="history-invocation row gap8 center min0" title={INVOCATION_HELP()}>
+                  {waiting ? <span className="ellipsis secondary" title={L('呼び出しの記録を待っています')}>{L('呼び出しの記録を待っています')}</span>
+                    : invocations.length <= 1 && !cursors.length && !nextCursor ? (
+                      <span className="ellipsis"><span className="secondary">{L('呼び出し')} </span>
+                        {invocations[0] ? `${invocationLabel(invocations[0])} · ${L('この実行で 1 回だけ')}` : L('呼び出しなし')}</span>
+                    ) : <>
+                      <Select label={L('呼び出し')} style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
+                        onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
+                        options={invocations.map((i) => ({ value: String(i.invocation ?? 0n), label: invocationLabel(i) }))} />
+                      <span className="caption secondary nowrap">{cursors.length || nextCursor ? L('500 回ずつ') : L('全 {0} 回', invocations.length)}</span>
+                    </>}
+                  {batch?.executionList && <span className="caption mono" title={L('実行リストの要素数')}>×{batch.invocationCount}</span>}
                   {(cursors.length > 0 || nextCursor) && <>
-                    <Button small disabled={!cursors.length} onClick={() => { setNextCursor(undefined); setCursors(cursors.slice(0, -1)) }}>{L('前へ')}</Button>
-                    <Button small disabled={!nextCursor} onClick={() => { if (nextCursor) { setCursors([...cursors, nextCursor]); setNextCursor(undefined) } }}>{L('次へ')}</Button>
+                    <Button small disabled={!cursors.length} help={L('前の 500 回')} onClick={() => { setNextCursor(undefined); setCursors(cursors.slice(0, -1)) }}>{L('前へ')}</Button>
+                    <Button small disabled={!nextCursor} help={L('次の 500 回')} onClick={() => { if (nextCursor) { setCursors([...cursors, nextCursor]); setNextCursor(undefined) } }}>{L('次へ')}</Button>
                   </>}
                 </div>
-                <Segmented<Detail> small value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力'), help: L('入出力') }, { value: 'log', label: L('ログ'), help: L('ログ') }, { value: 'packages', label: L('依存 package'), help: L('依存 package') }, { value: 'info', label: L('情報'), help: L('情報') }]} />
+                <span className="spacer" />
+                <Button small disabled={record?.exists === false} help={L('この呼び出しのログを「ログ」で開きます')} onClick={() => model.openLog(runId, invocation)}>{L('ログ')}</Button>
               </div>
               <div className="flex1 col min0">
-                {waiting && (detail === 'io' || detail === 'packages') && <div className="pad10 secondary ellipsis" title={L('呼び出しが記録されると表示します。')}>{L('呼び出しが記録されると表示します。')}</div>}
-                {detail === 'io' && !waiting && (rec ? (
-                  <div className="scroll pad10 col gap8">
-                    {(rec.recordIo === false || record?.recordingDisabled) && <span className="label secondary"><Icon name="info.circle" />{L('この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。')}</span>}
-                    {runMark(record?.run) && <span className="caption">{runMark(record?.run)}</span>}
-                    <div className="headline">{L('入力')}</div>
-                    {!rec.inputs.length && <span className="secondary">{L('なし')}</span>}
-                    {rec.inputs.map((v, i) => <ValueBox key={i} v={v} />)}
-                    <div className="headline">{L('出力')}</div>
-                    {!rec.outputs.length && <span className="secondary">{L('なし')}</span>}
-                    {rec.outputs.map((v, i) => <ValueBox key={i} v={v} />)}
-                  </div>
-                ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
-                {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
-                {/* What this invocation ran with, from its record; never the current definition. */}
-                {detail === 'packages' && !waiting && (record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" />
-                  : <InvocationPackages session={session} runId={runId} environmentId={s(rec?.summary?.environmentId)} />)}
-                {detail === 'info' && (record ? (
+                {waiting ? <div className="pad10 secondary ellipsis" title={L('呼び出しが記録されると表示します。')}>{L('呼び出しが記録されると表示します。')}</div>
+                  : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" description={L('実行の対象に含まれなかったか、入力がそろう前に実行が終わりました。')} />
+                  : !record ? <div className="center-fill"><Spinner /></div> : (
                   <div className="scroll">
                     <Form>
-                      <Section>
+                      <Section title={L('情報')}>
                         <Value label={L('状態')} value={cardState(record.status!.state).label} />
+                        {runMark(record.run) && <Value label={L('実行の種類')} value={runMark(record.run)} />}
                         {summary && (
                           <>
-                            <Value label={L('呼び出し')} value={`#${summary.invocation ?? 0n}`} />
+                            <Value label={L('呼び出し')} value={(record.aggregate?.calls ?? 0n) > 1n
+                              ? L('{0} 回目（この実行で {1} 回）', String(summary.invocation ?? 0n), String(record.aggregate?.calls ?? 0n))
+                              : L('{0} 回目（この実行で 1 回だけ）', String(summary.invocation ?? 0n))} />
                             <Value label={L('段階')} value={D.Phase[summary.phase] ?? ''} />
                             <Value label={L('開始')} value={formatMillis(summary.startedAt)} />
                             <Value label={L('終了')} value={formatMillis(summary.endedAt)} />
@@ -223,17 +223,33 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
                             <FailureSourceLink failure={record.status!.failure} onOpenSource={onOpenSource} />
                           </>
                         )}
-                        <Value label={L('集計')} value={L('呼び出し {0} · 成功 {1} · 失敗 {2}', record.aggregate?.calls ?? 0n, record.aggregate?.succeeded ?? 0n, record.aggregate?.failed ?? 0n)} />
+                        <Value label={L('この実行での集計')} value={L('呼び出し {0} · 成功 {1} · 失敗 {2}', record.aggregate?.calls ?? 0n, record.aggregate?.succeeded ?? 0n, record.aggregate?.failed ?? 0n)} />
+                        {rec?.inputSources.map((x, i) => <Value key={i} label={L('入力元 {0}', s(x.port))} value={`${session.displayPath(segs(x.card))} · ${L('{0} 回目', String(x.invocation ?? 0n))}`} />)}
+                        {record.orphaned && <Row><span className="secondary">{L('この Card は文書から削除されています。')}</span></Row>}
                       </Section>
-                      {rec && rec.inputSources.length > 0 && (
-                        <Section title={L('入力元')}>
-                          {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${session.displayPath(segs(x.card))} #${x.invocation ?? 0n}`} />)}
+                      {/* Not recorded is a setting of this Card, said as such: the section stays, greyed. */}
+                      {rec?.recordIo === false || record.recordingDisabled ? (
+                        <Section title={<span className="history-section-off">{L('入出力（記録していません）')}</span>}>
+                          <div className="history-io-off col gap8 pad10">
+                            <span className="label secondary"><Icon name="nosign" />{L('この Card は入出力を記録しない設定です。値は残っていません。')}</span>
+                            <Row><Button onClick={() => model.update((m) => { m.category = 'ports' })}>{L('入出力の設定を開く')}</Button></Row>
+                          </div>
                         </Section>
-                      )}
-                      {record.orphaned && <div className="secondary pad10">{L('この Card は文書から削除されています。')}</div>}
+                      ) : rec ? (
+                        <>
+                          <Section title={L('入力')}>
+                            {!rec.inputs.length && <Row><span className="secondary">{L('なし')}</span></Row>}
+                            {rec.inputs.map((v, i) => <ValueBox key={i} v={v} />)}
+                          </Section>
+                          <Section title={L('出力')}>
+                            {!rec.outputs.length && <Row><span className="secondary">{L('なし')}</span></Row>}
+                            {rec.outputs.map((v, i) => <ValueBox key={i} v={v} />)}
+                          </Section>
+                        </>
+                      ) : <Section title={L('入出力')}><Row><span className="secondary">{L('この呼び出しの記録はまだありません。')}</span></Row></Section>}
                     </Form>
                   </div>
-                ) : <Empty title={L('情報がありません')} icon="info.circle" />)}
+                )}
               </div>
             </>
           )}

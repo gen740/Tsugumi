@@ -34,11 +34,14 @@ enum ExecutionHistorySelection {
   }
 }
 
-/// Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
+/// Runs of one Card (filter by success/failure) → invocations → what one
+/// invocation was (information first) and what it took and gave. Its log is
+/// in the Log category; its environment comes from the Card's definition
+/// (Dependencies).
 struct CardExecutionView: View {
   let session: ProjectSession
-  let cardKey: CardKey
-  var onOpenSource: (String, Int) -> Void
+  let model: CardEditorModel
+  private var cardKey: CardKey { model.cardKey }
   @State private var runs: [Tsugumi_RPC_RunSummaryT] = []
   @State private var filter = Filter.all
   @State private var runId: String?
@@ -48,9 +51,7 @@ struct CardExecutionView: View {
   @State private var nextCursor: String?
   @State private var batchRevision = 0
   @State private var invocation: UInt64?
-  @State private var logStream: Tsugumi_Data_LogStream = .standardOutput
   @State private var record: Tsugumi_RPC_RecordResultT?
-  @State private var detail = Detail.io
   @State private var error: String?
   @State private var loaded = false
   @State private var invocationsRunId: String?
@@ -60,19 +61,6 @@ struct CardExecutionView: View {
     case all, succeeded, failed
     var id: String { rawValue }
     var title: String { self == .all ? String(localized: "すべて") : (self == .succeeded ? String(localized: "成功") : String(localized: "失敗")) }
-  }
-
-  enum Detail: String, CaseIterable, Identifiable {
-    case io, log, packages, info
-    var id: String { rawValue }
-    var title: String {
-      switch self {
-      case .io: return String(localized: "入出力")
-      case .log: return String(localized: "ログ")
-      case .packages: return String(localized: "依存 package")
-      case .info: return String(localized: "情報")
-      }
-    }
   }
 
   /// Loading, failed and empty are said plainly, never as an empty split view.
@@ -86,7 +74,7 @@ struct CardExecutionView: View {
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
         ContentUnavailableView("まだ実行していません", systemImage: "clock",
-                               description: Text("この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。"))
+                               description: Text("この Card が実行されると、ここに実行ごとの情報と入出力が残ります。"))
       } else {
         content
       }
@@ -145,49 +133,46 @@ struct CardExecutionView: View {
         }
       } detail: {
         VStack(spacing: 0) {
-          if let mark = runMark(record?.run.status ?? runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption).lineLimit(1).padding(6) }
           if runId == nil {
             ContentUnavailableView("実行を選んでください", systemImage: "list.bullet.rectangle")
           } else {
-            ExecutionHistoryDetailHeader(detail: $detail) {
+            ExecutionHistoryDetailHeader {
               if waitingForInvocation {
                 Label("呼び出しの記録を待っています", systemImage: "clock")
                   .lineLimit(1).help("呼び出しの記録を待っています")
               } else {
-                ExecutionHistoryInvocationPicker(invocations: invocations, selection: $invocation)
+                ExecutionHistoryInvocationPicker(invocations: invocations, selection: $invocation,
+                                                 paged: !cursors.isEmpty || nextCursor != nil)
                 if let batch = selectedBatch, batch.executionList {
                   Text(verbatim: "×\(batch.invocationCount)").font(.caption.monospaced()).lineLimit(1)
+                    .help("実行リストの要素数")
                 }
                 if !cursors.isEmpty || nextCursor != nil {
                   Button { nextCursor = nil; cursors.removeLast() } label: { Image(systemName: "chevron.left") }
-                    .disabled(cursors.isEmpty).help("前へ").accessibilityLabel(Text("前へ"))
+                    .disabled(cursors.isEmpty).help("前の 500 回").accessibilityLabel(Text("前へ"))
                   Button {
                     if let next = nextCursor { nextCursor = nil; cursors.append(next) }
                   } label: { Image(systemName: "chevron.right") }
-                    .disabled(nextCursor == nil).help("次へ").accessibilityLabel(Text("次へ"))
+                    .disabled(nextCursor == nil).help("次の 500 回").accessibilityLabel(Text("次へ"))
                 }
+              }
+            } trailing: {
+              if let runId {
+                Button("ログ") { model.openLog(runId: runId, invocation: invocation) }
+                  .disabled(record?.exists == false).help("この呼び出しのログを「ログ」で開きます")
               }
             }
             Divider()
-            if waitingForInvocation && (detail == .io || detail == .packages) {
+            if waitingForInvocation {
               Text("呼び出しが記録されると表示します。")
                 .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 .help("呼び出しが記録されると表示します。")
                 .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if record?.exists == false {
+              ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted",
+                                     description: Text("実行の対象に含まれなかったか、入力がそろう前に実行が終わりました。"))
             } else {
-              switch detail {
-              case .io: ioView
-              case .log:
-                if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
-              case .packages:
-                // What this invocation ran with, from its record; never the current definition.
-                if record?.exists == false {
-                  ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
-                } else if let runId {
-                  InvocationPackagesView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")
-                }
-              case .info: infoView
-              }
+              detailForm
             }
           }
           if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
@@ -224,29 +209,41 @@ struct CardExecutionView: View {
     }
   }
 
-  @ViewBuilder private var ioView: some View {
-    if let rec = record?.record {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 12) {
-          if rec.recordIo == false || record?.recordingDisabled == true {
-            Label("この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。", systemImage: "info.circle")
+  /// Not recorded is a setting of this Card, said as such: the section stays,
+  /// greyed, instead of an empty one that looks lost.
+  private var ioRecorded: Bool {
+    !(record?.recordingDisabled == true || record?.record?.recordIo == false)
+  }
+
+  /// Information first, then inputs and outputs, in one scrolling form.
+  @ViewBuilder private var detailForm: some View {
+    if let r = record {
+      Form {
+        infoSection(r)
+        if !ioRecorded {
+          Section {
+            Label("この Card は入出力を記録しない設定です。値は残っていません。", systemImage: "nosign")
               .foregroundStyle(.secondary)
+            Button("入出力の設定を開く") { model.category = .ports }
+          } header: {
+            Text("入出力（記録していません）").foregroundStyle(.tertiary)
           }
-          if let mark = runMark(record?.run.status) { Text(mark).font(.caption) }
-          Text("入力").font(.headline)
-          if rec.inputs.isEmpty { Text("なし").foregroundStyle(.secondary) }
-          ForEach(Array(rec.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, v in valueBox(v) }
-          Text("出力").font(.headline)
-          if rec.outputs.isEmpty { Text("なし").foregroundStyle(.secondary) }
-          ForEach(Array(rec.outputs.compactMap { $0 }.enumerated()), id: \.offset) { _, v in valueBox(v) }
+        } else if let rec = r.record {
+          Section("入力") {
+            if rec.inputs.isEmpty { Text("なし").foregroundStyle(.secondary) }
+            ForEach(Array(rec.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, v in valueBox(v) }
+          }
+          Section("出力") {
+            if rec.outputs.isEmpty { Text("なし").foregroundStyle(.secondary) }
+            ForEach(Array(rec.outputs.compactMap { $0 }.enumerated()), id: \.offset) { _, v in valueBox(v) }
+          }
+        } else {
+          Section("入出力") { Text("この呼び出しの記録はまだありません。").foregroundStyle(.secondary) }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
       }
-    } else if record?.exists == false {
-      ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
+      .formStyle(.grouped)
     } else {
-      ContentUnavailableView("記録がありません", systemImage: "tray")
+      ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
@@ -254,66 +251,64 @@ struct CardExecutionView: View {
     Text(describeValue(v))
       .font(.system(size: 11, design: .monospaced))
       .textSelection(.enabled)
-      .padding(8)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
   }
 
-  @ViewBuilder private var infoView: some View {
-    if let r = record {
-      Form {
-        LabeledContent("状態", value: r.status.state.label)
-        if let s = r.record?.summary ?? invocations.first(where: { $0.invocation == invocation }) {
-          LabeledContent("呼び出し", value: "#\(s.invocation ?? 0)")
-          LabeledContent("段階", value: String(describing: s.phase))
-          LabeledContent("開始", value: formatMillis(s.startedAt))
-          LabeledContent("終了", value: formatMillis(s.endedAt))
-          if let d = s.durationMs { LabeledContent("所要時間", value: formatDuration(Double(d) / 1000)) }
-          if let service = s.executionService, !service.isEmpty {
-            LabeledContent("実行サービス", value: service == "local" ? String(localized: "プロジェクトの実行環境") : service)
-          }
-          if s.executionState != .unspecified { LabeledContent("実行サービスの状態", value: s.executionState.label) }
-          if let system = s.executionSystem, !system.isEmpty { LabeledContent("CPU アーキテクチャ", value: system) }
-          if let job = s.executionJobId, !job.isEmpty {
-            LabeledContent("ジョブ ID", value: job).textSelection(.enabled)
-            if r.run.status.failure?.kind == .interrupted {
-              Text("Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。")
-                .font(.caption).foregroundStyle(.secondary)
-            }
-          }
-          if let cpu = s.executionResources?.cpuMillis { LabeledContent("CPU 上限（ミリコア）", value: String(cpu)) }
-          if let memory = s.executionResources?.memoryBytes { LabeledContent("メモリ上限（バイト）", value: String(memory)) }
-          // A Card built for another system (its `system` setting): what ran it.
-          if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
-          if !s.waitingInputs.isEmpty {
-            LabeledContent("待っていた入力", value: s.waitingInputs.compactMap { $0?.port }.joined(separator: ", "))
+  @ViewBuilder private func infoSection(_ r: Tsugumi_RPC_RecordResultT) -> some View {
+    Section("情報") {
+      LabeledContent("状態", value: r.status.state.label)
+      if let mark = runMark(r.run.status) { LabeledContent("実行の種類", value: mark) }
+      if let s = r.record?.summary ?? invocations.first(where: { $0.invocation == invocation }) {
+        LabeledContent("呼び出し", value: invocationOrdinal(s, total: r.aggregate.calls))
+        LabeledContent("段階", value: String(describing: s.phase))
+        LabeledContent("開始", value: formatMillis(s.startedAt))
+        LabeledContent("終了", value: formatMillis(s.endedAt))
+        if let d = s.durationMs { LabeledContent("所要時間", value: formatDuration(Double(d) / 1000)) }
+        if let service = s.executionService, !service.isEmpty {
+          LabeledContent("実行サービス", value: service == "local" ? String(localized: "プロジェクトの実行環境") : service)
+        }
+        if s.executionState != .unspecified { LabeledContent("実行サービスの状態", value: s.executionState.label) }
+        if let system = s.executionSystem, !system.isEmpty { LabeledContent("CPU アーキテクチャ", value: system) }
+        if let job = s.executionJobId, !job.isEmpty {
+          LabeledContent("ジョブ ID", value: job).textSelection(.enabled)
+          if r.run.status.failure?.kind == .interrupted {
+            Text("Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。")
+              .font(.caption).foregroundStyle(.secondary)
           }
         }
-        if let f = r.status.failure {
-          LabeledContent("失敗の種類", value: String(describing: f.kind))
-          Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
-          let args = f.args.compactMap { $0 }
-          if let source = args.first(where: { $0.key == "source" })?.value,
-             let rawLine = args.first(where: { $0.key == "line" })?.value,
-             let line = Int(rawLine), line > 0 {
-            let cell = args.first(where: { $0.key == "cell" })?.value ?? source
-            Button("\(cell) · \(source):\(line)") { onOpenSource(source, line) }
-          }
+        if let cpu = s.executionResources?.cpuMillis { LabeledContent("CPU 上限（ミリコア）", value: String(cpu)) }
+        if let memory = s.executionResources?.memoryBytes { LabeledContent("メモリ上限（バイト）", value: String(memory)) }
+        // A Card built for another system (its `system` setting): what ran it.
+        if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
+        if !s.waitingInputs.isEmpty {
+          LabeledContent("待っていた入力", value: s.waitingInputs.compactMap { $0?.port }.joined(separator: ", "))
         }
-        LabeledContent("集計", value: String(localized: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)"))
-        if let srcs = r.record?.inputSources, !srcs.isEmpty {
-          Section("入力元") {
-            ForEach(Array(srcs.compactMap { $0 }.enumerated()), id: \.offset) { _, s in
-              LabeledContent(s.port, value: "\(session.displayPath(s.card.path)) #\(s.invocation ?? 0)")
-            }
-          }
-        }
-        if r.orphaned == true { Text("この Card は文書から削除されています。").foregroundStyle(.secondary) }
       }
-      .formStyle(.grouped)
-    } else {
-      ContentUnavailableView("情報がありません", systemImage: "info.circle")
+      if let f = r.status.failure {
+        LabeledContent("失敗の種類", value: String(describing: f.kind))
+        Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
+        let args = f.args.compactMap { $0 }
+        if let source = args.first(where: { $0.key == "source" })?.value,
+           let rawLine = args.first(where: { $0.key == "line" })?.value,
+           let line = Int(rawLine), line > 0 {
+          let cell = args.first(where: { $0.key == "cell" })?.value ?? source
+          Button("\(cell) · \(source):\(line)") { model.openSource(source, line: line) }
+        }
+      }
+      LabeledContent("この実行での集計", value: String(localized: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)"))
+      if let srcs = r.record?.inputSources, !srcs.isEmpty {
+        ForEach(Array(srcs.compactMap { $0 }.enumerated()), id: \.offset) { _, s in
+          LabeledContent(String(localized: "入力元 \(s.port)"), value: "\(session.displayPath(s.card.path)) · \(String(localized: "\(s.invocation ?? 0) 回目"))")
+        }
+      }
+      if r.orphaned == true { Text("この Card は文書から削除されています。").foregroundStyle(.secondary) }
     }
+  }
+
+  private func invocationOrdinal(_ s: Tsugumi_RPC_InvocationSummaryT, total: UInt64?) -> String {
+    let n = s.invocation ?? 0
+    guard let total, total > 1 else { return String(localized: "\(n) 回目（この実行で 1 回だけ）") }
+    return String(localized: "\(n) 回目（この実行で \(total) 回）")
   }
 
   private func loadRuns() async {
@@ -403,50 +398,59 @@ struct ExecutionHistoryPanes<Runs: View, Detail: View>: View {
   }
 }
 
+/// Which call of the Card this is. A Card is called once each time its inputs
+/// are all there (once per element of an execution list), so most runs have
+/// one call: that is said, with no menu of one item.
 struct ExecutionHistoryInvocationPicker: View {
   let invocations: [Tsugumi_RPC_InvocationSummaryT]
   @Binding var selection: UInt64?
+  /// More calls than one page (500) shows.
+  var paged = false
+
+  static let explanation = String(localized: "Card は入力がそろうたびに 1 回呼び出されます（実行リストなら要素ごと）。ほかの実行の呼び出しは左の一覧で実行を選びます。")
 
   var body: some View {
     Text("呼び出し").fixedSize().accessibilityHidden(true)
       .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["label": $0] }
-    Picker("呼び出し", selection: $selection) {
-      if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
-      ForEach(invocations, id: \.invocation) { i in
-        Text("#\(i.invocation ?? 0) · \(i.state.label)"
-             + (i.batchIndex.flatMap { index in i.batchSize.map { " · \(index)/\($0)" } } ?? "")
-             + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
-          .lineLimit(1).tag(i.invocation)
+    Group {
+      if invocations.count <= 1 && !paged {
+        Text(invocations.first.map { Self.label($0) + " · " + String(localized: "この実行で 1 回だけ") } ?? String(localized: "呼び出しなし"))
+          .lineLimit(1).truncationMode(.middle)
+          .frame(minWidth: 0, maxWidth: 320, alignment: .leading)
+      } else {
+        Picker("呼び出し", selection: $selection) {
+          ForEach(invocations, id: \.invocation) { i in Text(Self.label(i)).lineLimit(1).tag(i.invocation) }
+        }
+        .pickerStyle(.menu).labelsHidden().frame(minWidth: 0, maxWidth: 320)
+        Text(paged ? String(localized: "500 回ずつ") : String(localized: "全 \(invocations.count) 回"))
+          .font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
       }
     }
-    .pickerStyle(.menu).labelsHidden().frame(minWidth: 0, maxWidth: 320).help("呼び出し")
+    .help(Self.explanation)
     .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["invocation": $0] }
+  }
+
+  static func label(_ i: Tsugumi_RPC_InvocationSummaryT) -> String {
+    String(localized: "\(i.invocation ?? 0) 回目") + " · " + i.state.label
+      // A call of an execution list says which element it took.
+      + (i.batchIndex.flatMap { index in i.batchSize.flatMap { $0 > 1 ? " · " + String(localized: "実行リスト \(index)/\($0)") : nil } } ?? "")
+      + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? "")
   }
 }
 
-/// Reserve a row for each control group, then use a menu below the tabs' ideal width.
-struct ExecutionHistoryDetailHeader<InvocationControls: View>: View {
-  @Binding var detail: CardExecutionView.Detail
+/// The invocation controls on one row, with room kept for the trailing actions.
+struct ExecutionHistoryDetailHeader<InvocationControls: View, Trailing: View>: View {
   @ViewBuilder var invocationControls: () -> InvocationControls
+  @ViewBuilder var trailing: () -> Trailing
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) { invocationControls() }
-        .lineLimit(1)
-      ViewThatFits(in: .horizontal) {
-        tabs.pickerStyle(.segmented).fixedSize()
-        tabs.pickerStyle(.menu)
-      }
-      .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["tabs": $0] }
+    HStack(spacing: 6) {
+      invocationControls()
+      Spacer(minLength: 4)
+      trailing()
     }
+    .lineLimit(1)
     .padding(6).fixedSize(horizontal: false, vertical: true)
-  }
-
-  private var tabs: some View {
-    Picker("実行の詳細", selection: $detail) {
-      ForEach(CardExecutionView.Detail.allCases) { Text($0.title).lineLimit(1).tag($0) }
-    }
-    .labelsHidden().help("実行の詳細")
   }
 }
 

@@ -94,20 +94,20 @@ struct LogTimelinePanel: View {
 }
 
 /// Log text of a run (or one Card / invocation of it), read incrementally
-/// with LogRange from its own next_offset when LogAvailable arrives.
+/// with LogRange from where it stopped when LogAvailable arrives.
 struct RunLogView: View {
   let session: ProjectSession
   let runId: String
   let card: [String]?
   let invocation: UInt64?
   @Binding var stream: Tsugumi_Data_LogStream
-  @State private var log = ""
-  @State private var offset: UInt64 = 0
-  @State private var scopeKey = ""
-  @State private var error: String?
-  @State private var follow = true
+  @State private var reader = LogStreamReader()
+  @State private var resolved: UInt64?
+  @State private var exportError: String?
 
-  private var identity: String { "\(runId)|\(stream.rawValue)|\(card?.joined(separator: "/") ?? "")|\(invocation ?? 0)" }
+  private var source: LogStreamReader.Source {
+    LogStreamReader.Source(runId: runId, card: card, invocation: card == nil ? nil : (invocation ?? resolved), stream: stream)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -121,36 +121,37 @@ struct RunLogView: View {
         Text(card.map { "Card \(session.displayPath($0))" + (invocation.map { " #\($0)" } ?? "") } ?? String(localized: "実行全体"))
           .font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Toggle("末尾を追う", isOn: $follow).toggleStyle(.checkbox).font(.caption)
-        Button("コピー") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(log, forType: .string)
+        Button("書き出す…") {
+          let source = source, size = reader.size
+          Task { do { try await exportLog(session, source, size: size) } catch { exportError = "\(error)" } }
         }
-        .disabled(log.isEmpty)
-        Button("書き出す…") { export() }.disabled(log.isEmpty)
+        .disabled(!reader.hasText)
       }
       .padding(.horizontal, 6)
-      ScrollViewReader { proxy in
-        ScrollView {
-          Text(log.isEmpty ? emptyReason : terminalText(log))
-            .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: .monospaced))
-            .foregroundStyle(log.isEmpty ? .secondary : .primary)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(6)
-          Color.clear.frame(height: 1).id("end")
-        }
-        .onChange(of: log) { if follow { proxy.scrollTo("end") } }
+      if reader.clipped {
+        Text("ログの末尾を表示しています").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 6)
       }
-      if let error { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 6) }
+      LogTextView(reader: reader, placeholder: emptyReason)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      if let limit = reader.truncatedAt {
+        Text("ログはここで切り詰めました（上限 \(limit / 1_048_576) MiB）").font(.caption.weight(.semibold)).padding(.horizontal, 6)
+      }
+      if let error = reader.error ?? exportError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 6) }
     }
-    .task(id: identity) { await reset() }
-    .onChange(of: session.logRevision) { Task { await readMore() } }
+    .task(id: "\(runId)|\(card?.joined(separator: "/") ?? "")|\(invocation ?? 0)") {
+      // A Card's latest invocation, when none was named.
+      resolved = nil
+      guard let card, invocation == nil else { return }
+      resolved = session.cardStates[key(card)]?.invocation
+      if resolved == nil { resolved = try? await session.rpc?.record(runId: runId, card: card).selectedInvocation }
+    }
+    .onChange(of: source, initial: true) { reader.show(source, session: session) }
   }
 
   /// Why nothing is shown, so an empty pane is never ambiguous.
   private var emptyReason: String {
-    if let error { return String(localized: "ログを読み込めませんでした: ") + error }
+    if let error = reader.error { return String(localized: "ログを読み込めませんでした: ") + error }
+    if !reader.loaded { return String(localized: "読み込んでいます…") }
     if let card, runId == session.currentRunId, session.cardStates[key(card)] == nil {
       return String(localized: "この実行では、この Card はまだ動いていません。")
     }
@@ -159,46 +160,6 @@ struct RunLogView: View {
     case .journal: return String(localized: "記録された段階の出来事はありません。")
     default: return String(localized: "stdout への出力はありません。")
     }
-  }
-
-  private func reset() async {
-    log = ""
-    offset = 0
-    scopeKey = identity
-    await readMore()
-  }
-
-  private func readMore() async {
-    guard let rpc = session.rpc else { return }
-    let scope = scopeKey
-    do {
-      var inv = invocation
-      if let card, inv == nil {
-        inv = session.cardStates[key(card)]?.invocation
-        if inv == nil { inv = try? await rpc.record(runId: runId, card: card).selectedInvocation }
-      }
-      while true {
-        let slice = try await rpc.logRange(runId: runId, card: card, invocation: card == nil ? nil : inv,
-                                           stream: stream, offset: offset, limit: 256 * 1024)
-        guard scope == scopeKey else { return }  // the selection changed meanwhile
-        log += slice.text
-        let next = slice.nextOffset ?? offset
-        if next == offset { break }
-        offset = next
-        if next >= (slice.sizeBytes ?? 0) { break }
-      }
-      error = nil
-    } catch let f as RPCFailure where f.kind == .notFound {
-      error = nil
-    } catch {
-      self.error = "\(error)"
-    }
-  }
-
-  private func export() {
-    let p = NSSavePanel()
-    p.nameFieldStringValue = "\(runId)-\(stream).log"
-    if p.runModal() == .OK, let url = p.url { try? Data(log.utf8).write(to: url) }
   }
 }
 

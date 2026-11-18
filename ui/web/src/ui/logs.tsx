@@ -9,7 +9,7 @@ import { terminalText } from '../model/terminalText'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../wire/rpc'
-import { Button, copyText, download, Empty, Segmented, Select, Sheet, Spinner, Toggle } from './controls'
+import { Button, download, Empty, Segmented, Select, Sheet, Spinner } from './controls'
 import { RunComparisonView } from './runComparison'
 import { Icon } from './icons'
 import { ProjectTerminalPanel } from './terminal'
@@ -127,8 +127,145 @@ function truncationNotice(limit: bigint) {
   return L('ログはここで切り詰めました（上限 {0} MiB）', limit / 1_048_576n)
 }
 
+/** Bytes kept for drawing: the end of a longer log (export writes all of it). */
+const SHOWN_BYTES = 1 << 20
+const CHUNK = 256 * 1024
+
+type LogForm = 'terminal' | 'journal'
+
+interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream }
+
+interface LogState { text: string; size?: bigint; clipped: boolean; truncatedAt?: bigint; error?: string }
+
+/** Whole lines are shown for good; the last, unfinished one is shown as it
+ *  stands and read again with what follows it. */
+function parseLog(raw: string, form: LogForm): { lines: string; rest: string; shownRest: string } {
+  const split = raw.lastIndexOf('\n') + 1
+  const whole = raw.slice(0, split), rest = raw.slice(split)
+  if (form === 'terminal') return { lines: terminalText(whole), rest, shownRest: terminalText(rest) }
+  const lines = whole.split('\n').flatMap((line) => {
+    try {
+      const v = JSON.parse(line)
+      return typeof v?.phase === 'string' && ['validate', 'save'].includes(v.phase) ? [`${v.phase} · ${v.event ?? ''}: ${v.message ?? ''}\n`] : []
+    } catch {
+      return []
+    }
+  }).join('')
+  return { lines, rest, shownRest: '' }
+}
+
+/** One stream of a run's log (or of one Card invocation), read through
+ *  LogRange: its end first, then forward from where the last read stopped,
+ *  each time LogAvailable says there is more. Reads never overlap; a
+ *  notification during a read asks for one more read after it. */
+function useLogStream(session: ProjectSession, source: LogSource | undefined, form: LogForm): LogState {
+  const [state, setState] = useState<LogState>({ text: '', clipped: false })
+  const reader = useRef({ id: '', end: 0n, first: true, lines: '', partial: '', busy: false, again: false })
+  const id = source ? `${source.runId}|${source.card?.join('/') ?? ''}|${source.invocation ?? ''}|${source.stream}|${form}` : ''
+
+  const read = async () => {
+    const rpc = session.rpc
+    const r = reader.current
+    if (!rpc || !source || r.id !== id) return
+    if (r.busy) {
+      r.again = true
+      return
+    }
+    r.busy = true
+    try {
+      do {
+        r.again = false
+        for (;;) {
+          const first = r.first, start = r.end
+          const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, r.end, first, first ? SHOWN_BYTES : CHUNK)
+          if (reader.current !== r) return
+          r.first = false
+          const next = slice.nextOffset ?? r.end
+          const size = slice.sizeBytes ?? next
+          let clipped = first ? (slice.offset ?? 0n) > 0n : undefined
+          let shown: string | undefined
+          if (next > r.end || first) {
+            r.end = next
+            const parsed = parseLog(r.partial + s(slice.text), form)
+            r.lines += parsed.lines
+            r.partial = parsed.rest
+            // Keep about SHOWN_BYTES drawn: cut at a line once well past it.
+            if (r.lines.length > SHOWN_BYTES * 1.5) {
+              const cut = r.lines.indexOf('\n', r.lines.length - SHOWN_BYTES)
+              r.lines = r.lines.slice(cut < 0 ? r.lines.length - SHOWN_BYTES : cut + 1)
+              clipped = true
+            }
+            shown = r.lines + parsed.shownRest
+          }
+          setState((st) => ({
+            text: shown ?? st.text, size, clipped: clipped ?? st.clipped,
+            truncatedAt: slice.logTruncatedAtBytes ?? st.truncatedAt, error: undefined,
+          }))
+          if ((next <= start && !first) || r.end >= size) break
+        }
+      } while (r.again && reader.current === r)
+    } catch (e) {
+      if (reader.current !== r) return
+      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) setState({ text: '', size: 0n, clipped: false })
+      else setState((st) => ({ ...st, error: errorText(e) }))
+    } finally {
+      if (reader.current === r) r.busy = false
+    }
+  }
+
+  useEffect(() => {
+    reader.current = { id, end: 0n, first: true, lines: '', partial: '', busy: false, again: false }
+    setState({ text: '', clipped: false })
+    void read()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
+  useEffect(() => {
+    void read()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.logRevision])
+  return state
+}
+
+/** Writes a whole stream to a file, in pieces. */
+async function exportLog(session: ProjectSession, source: LogSource, size: bigint) {
+  const rpc = session.rpc
+  if (!rpc) return
+  const chunks: string[] = []
+  let offset = 0n
+  while (offset < size) {
+    const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, CHUNK)
+    const next = slice.nextOffset ?? offset
+    if (next <= offset) break
+    chunks.push(s(slice.text))
+    offset = next
+  }
+  download(`${source.runId}-${D.LogStream[source.stream]}.log`, new Blob(chunks).slice(0, Number(size), 'text/plain'))
+}
+
+/** A log in a scrolling block: lines are not wrapped, and the view follows
+ *  the end while the reader is there. */
+function LogText({ text, placeholder }: { text: string; placeholder: string }) {
+  useObserve(prefs)
+  const scroll = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  const lastTop = useRef(0)
+  useLayoutEffect(() => {
+    const el = scroll.current
+    if (el && following.current) el.scrollTop = el.scrollHeight
+  }, [text])
+  return (
+    <div className="log-text" ref={scroll} onScroll={(e) => {
+      const el = e.currentTarget
+      following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
+      lastTop.current = el.scrollTop
+    }}>
+      <pre className={`selectable${text ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{text || placeholder}</pre>
+    </div>
+  )
+}
+
 /** Log text of a run (or one Card / invocation of it), read incrementally
- *  with LogRange from its own next_offset when LogAvailable arrives. A Card's
+ *  with LogRange from where it stopped when LogAvailable arrives. A Card's
  *  log is shown by stage (StageLogView) unless `raw` asks for the streams. */
 export function RunLogView({ session, runId, card, invocation, stage, raw, stream, onStream }: {
   session: ProjectSession; runId: string; card?: string[]; invocation?: bigint; stage?: Stage; raw?: boolean
@@ -141,71 +278,30 @@ export function RunLogView({ session, runId, card, invocation, stage, raw, strea
 function StreamLogView({ session, runId, card, invocation, stream: shownStream, onStream }: {
   session: ProjectSession; runId: string; card?: string[]; invocation?: bigint; stream?: D.LogStream; onStream?: (s: D.LogStream) => void
 }) {
-  useObserve(session, prefs)
+  useObserve(session)
   const [ownStream, setOwnStream] = useState<D.LogStream>(card ? D.LogStream.standard_output : D.LogStream.journal)
   const stream = shownStream ?? ownStream
   const setStream = (v: D.LogStream) => (onStream ? onStream(v) : setOwnStream(v))
-  const [log, setLog] = useState('')
-  const [truncatedAt, setTruncatedAt] = useState<bigint>()
-  const [error, setError] = useState<string>()
-  const [follow, setFollow] = useState(true)
-  const state = useRef({ offset: 0n, busy: false, again: false })
-  const end = useRef<HTMLDivElement>(null)
-  const identity = `${runId}|${stream}|${card?.join('/') ?? ''}|${invocation ?? 0}`
-
-  const readMore = async () => {
-    const rpc = session.rpc
-    const st = state.current
-    if (!rpc) return
-    if (st.busy) {
-      st.again = true
-      return
-    }
-    st.busy = true
-    try {
-      let inv = invocation ?? null
-      if (card && inv === null) {
-        if (runId === session.currentRunId) inv = session.cardStates.get(key(card))?.invocation ?? null
-        if (inv === null) inv = (await rpc.record(runId, card).catch(() => undefined))?.selectedInvocation ?? null
-      }
-      for (;;) {
-        const slice = await rpc.logRange(runId, card ?? null, card ? inv : null, stream, st.offset, false, 256 * 1024)
-        if (st !== state.current) return
-        setTruncatedAt(slice.logTruncatedAtBytes ?? undefined)
-        if (slice.text) setLog((l) => l + s(slice.text))
-        const next = slice.nextOffset ?? st.offset
-        if (next === st.offset) break
-        st.offset = next
-        if (next >= (slice.sizeBytes ?? 0n)) break
-      }
-      if (st === state.current) setError(undefined)
-    } catch (e) {
-      if (st === state.current && !(e instanceof RPCFailure && e.kind === D.FailureKind.not_found)) setError(errorText(e))
-    } finally {
-      st.busy = false
-      if (st === state.current && st.again) {
-        st.again = false
-        void readMore()
-      }
-    }
-  }
-
+  const [resolved, setResolved] = useState<bigint>()
+  const [exportError, setExportError] = useState<string>()
+  // A Card's latest invocation, when none was named.
   useEffect(() => {
-    state.current = { offset: 0n, busy: false, again: false }
-    setLog('')
-    setTruncatedAt(undefined)
-    void readMore()
-  }, [identity])
-  useEffect(() => {
-    void readMore()
-  }, [session.logRevision])
-  useEffect(() => {
-    if (follow) end.current?.scrollIntoView({ block: 'end' })
-  }, [log, follow, truncatedAt])
+    setResolved(undefined)
+    if (!card || invocation !== undefined) return
+    const live = runId === session.currentRunId ? session.cardStates.get(key(card))?.invocation : undefined
+    if (live !== undefined) return setResolved(live)
+    let alive = true
+    void session.rpc?.record(runId, card).then((r) => alive && setResolved(r.selectedInvocation ?? undefined)).catch(() => undefined)
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, card?.join('/'), invocation])
+  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream }
+  const log = useLogStream(session, source, 'terminal')
 
   /** Why nothing is shown, so an empty pane is never ambiguous. */
   const emptyReason = (() => {
-    if (error) return L('ログを読み込めませんでした: ') + error
+    if (log.error) return L('ログを読み込めませんでした: ') + log.error
+    if (log.size === undefined) return L('読み込んでいます…')
     if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return L('この実行では、この Card はまだ動いていません。')
     switch (stream) {
       case D.LogStream.standard_error: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
@@ -221,16 +317,12 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
           options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
         <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
-        <Toggle kind="checkbox" small checked={follow} onChange={setFollow} label={L('末尾を追う')} />
-        <Button small disabled={!log} onClick={() => void copyText(log)}>{L('コピー')}</Button>
-        <Button small disabled={!log} onClick={() => download(`${runId}-${D.LogStream[stream]}.log`, log, 'text/plain')}>{L('書き出す…')}</Button>
+        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.size ?? 0n).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
       </div>
-      <div className="log-text">
-        <pre className={`selectable${log ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(log) || emptyReason}</pre>
-        {truncatedAt !== undefined && <div className="caption headline">{truncationNotice(truncatedAt)}</div>}
-        <div ref={end} />
-      </div>
-      {error && <div className="caption" style={{ color: 'var(--red)', padding: '0 6px' }}>{error}</div>}
+      {log.clipped && <div className="caption secondary" style={{ padding: '0 6px' }}>{L('ログの末尾を表示しています')}</div>}
+      <LogText text={log.text} placeholder={emptyReason} />
+      {log.truncatedAt !== undefined && <div className="caption headline" style={{ padding: '0 6px' }}>{truncationNotice(log.truncatedAt)}</div>}
+      {(log.error ?? exportError) && <div className="caption" style={{ color: 'var(--red)', padding: '0 6px' }}>{log.error ?? exportError}</div>}
     </div>
   )
 }
@@ -247,33 +339,22 @@ type GroupStatus = { icon: string; color: string; label: string }
 
 /** The log of one invocation of a Card by stage, like a CI job: SDK
  *  preparation, Nix evaluation and build / execution / validation and save,
- *  each with its state, duration and what it printed, folded unless it failed
- *  or was asked for. The raw streams stay available under "By stream". */
+ *  each with its state and duration; the chosen one's output fills the rest.
+ *  The raw streams stay available under "By stream". Only the shown stream
+ *  is read, from its end and then as it grows. */
 export function StageLogView({ session, runId, card, invocation, focus }: {
   session: ProjectSession; runId: string; card: string[]; invocation?: bigint; focus?: Stage
 }) {
-  useObserve(session, prefs)
+  useObserve(session)
   const k = key(card)
-  const [stages, setStages] = useState<StageRecord[]>([])
-  const [state, setState] = useState<D.CardState>()
-  const [failure, setFailure] = useState<string>()
-  const [shownInvocation, setShownInvocation] = useState<bigint>()
-  const [logs, setLogs] = useState<Map<D.LogStream, R.LogSliceT>>(new Map())
-  const [truncatedAt, setTruncatedAt] = useState<bigint>()
+  const [info, setInfo] = useState<R.RecordResultT>()
+  const [infoError, setInfoError] = useState<string>()
+  const [selected, setSelected] = useState<string>()
+  const [rawStream, setRawStream] = useState<D.LogStream>(D.LogStream.standard_output)
+  const [executeStream, setExecuteStream] = useState<D.LogStream>(D.LogStream.standard_output)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>()
-  const [open, setOpen] = useState<Set<string>>(new Set())
-  const [rawStream, setRawStream] = useState<D.LogStream>(D.LogStream.standard_output)
-  const [error, setError] = useState<string>()
-  const [loaded, setLoaded] = useState(false)
-  const busy = useRef({ running: false, again: false })
-  // The log opens at its end and follows it, as the chat does, until the
-  // reader scrolls up; back at the end, it follows again.
-  const scroll = useRef<HTMLDivElement>(null)
-  const following = useRef(true)
-  /** Groups opened when they started running: each once, so one the reader folds stays folded. */
-  const openedRunning = useRef(new Set<string>())
-  const lastTop = useRef(0)
+  const [attempt, setAttempt] = useState(0)
 
   const code = session.kind(k) === 'code'
   const groups: StageGroup[] = [
@@ -281,6 +362,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     { id: 'execute', title: L('実行'), stages: [Stage.execute] },
     { id: 'save', title: L('出力検証・保存'), stages: [Stage.validate, Stage.save] },
   ]
+  const liveState = runId === session.currentRunId ? session.cardStates.get(k) : undefined
+  const live = liveState && (invocation === undefined || liveState.invocation === invocation) ? liveState : undefined
+  const shownInvocation = invocation ?? live?.invocation ?? info?.selectedInvocation ?? undefined
+  const stages: StageRecord[] = live ? live.stages : info?.record?.summary ? stageRecords(info.record.summary.stages) : []
+  const state = live?.state ?? info?.record?.summary?.state
+  const failure = live?.failure ?? (info?.record?.summary?.failure?.diagnostic ? s(info.record.summary.failure.diagnostic) : undefined)
+
   const records = (g: StageGroup) => stages.filter((r) => g.stages.includes(r.stage))
   const status = (g: StageGroup): GroupStatus => {
     const rs = records(g)
@@ -296,258 +384,125 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     const rs = records(g).flatMap((r) => (r.start !== undefined && r.end !== undefined ? [(r.end - r.start) / 1000] : []))
     return rs.length ? rs.reduce((a, b) => a + b, 0) : undefined
   }
+  // Running, else failed, else the one asked for, else the execution.
+  const defaultGroup = groups.find((g) => status(g).label === L('進行中'))?.id ?? groups.find((g) => status(g).label === L('失敗'))?.id
+    ?? (focus !== undefined ? groups.find((g) => g.stages.includes(focus))?.id : undefined) ?? 'execute'
+  const current = selected ?? defaultGroup
+  const stream = current === 'build' ? D.LogStream.build : current === 'execute' ? executeStream : current === 'save' ? D.LogStream.journal : rawStream
+  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream }
+  const log = useLogStream(session, source, current === 'save' ? 'journal' : 'terminal')
 
-  const load = async () => {
-    const b = busy.current
-    if (b.running) {
-      b.again = true
-      return
-    }
-    b.running = true
-    try {
-      const rpc = session.rpc
-      if (!rpc) {
-        setError(L('実行環境に接続していません'))
-        return
-      }
-      let inv: bigint | null = invocation ?? null
-      if (inv === null && runId === session.currentRunId) inv = session.cardStates.get(k)?.invocation ?? null
-      const rec = await rpc.record(runId, card, inv, inv === null).catch(() => undefined)
-      if (b !== busy.current) return
-      inv = inv ?? rec?.selectedInvocation ?? null
-      let st: StageRecord[] = []
-      const live = session.cardStates.get(k)
-      if (runId === session.currentRunId && live && live.invocation === inv) {
-        st = live.stages
-        setState(live.state)
-        setFailure(live.failure)
-      } else if (rec?.record?.summary) {
-        const sum = rec.record.summary
-        st = stageRecords(sum.stages)
-        setState(sum.state)
-        setFailure(sum.failure?.diagnostic ? s(sum.failure.diagnostic) : undefined)
-      }
-      setStages(st)
-      const out = new Map<D.LogStream, R.LogSliceT>()
-      let limit = rec?.record?.summary?.logTruncatedAtBytes
-      for (const stream of [D.LogStream.build, D.LogStream.standard_output, D.LogStream.standard_error, D.LogStream.journal]) {
-        const slice = await rpc.logRange(runId, card, inv, stream, 0n, true, 64 * 1024)
-        if (b !== busy.current) return
-        out.set(stream, slice)
-        limit ??= slice.logTruncatedAtBytes
-      }
-      setShownInvocation(inv ?? undefined)
-      setLogs(out)
-      setTruncatedAt(limit ?? undefined)
-      setError(undefined)
-      // A failed stage opens by itself; so does the one asked for.
-      setOpen((o) => {
-        if (o.size) return o
-        const n = new Set<string>()
-        const failedIn = (g: StageGroup) => st.some((r) => g.stages.includes(r.stage) && r.outcome === D.StageOutcome.failed)
-        for (const g of groups) if (failedIn(g)) n.add(g.id)
-        const f = focus !== undefined ? groups.find((g) => g.stages.includes(focus)) : undefined
-        if (f) n.add(f.id)
-        return n
-      })
-      // So does the one running now, to show its output as it comes.
-      const running = groups.filter((g) => st.some((r) => g.stages.includes(r.stage) && r.outcome === D.StageOutcome.running) && !openedRunning.current.has(g.id))
-      if (running.length) {
-        for (const g of running) openedRunning.current.add(g.id)
-        setOpen((o) => new Set([...o, ...running.map((g) => g.id)]))
-      }
-    } catch (e) {
-      if (b !== busy.current) return
-      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) {
-        setLogs(new Map())
-        setTruncatedAt(undefined)
-        setError(undefined)
-      } else setError(errorText(e))
-    } finally {
-      if (b === busy.current) {
-        setLoaded(true)
-        b.running = false
-        if (b.again) {
-          b.again = false
-          void load()
-        }
-      }
-    }
-  }
-
+  // State changes (a stage starts or ends) read the record again; new output
+  // is read as LogAvailable announces it.
+  const execution = `${session.currentRunId}|${session.runStatus?.state}|${liveState?.state}|${liveState?.phase}|${liveState?.invocation}|${session.remoteHistoryRevision}`
   useEffect(() => {
-    busy.current = { running: false, again: false }
-    setOpen(new Set())
+    const rpc = session.rpc
+    if (!rpc) return setInfoError(L('実行環境に接続していません'))
+    let alive = true
+    void rpc.record(runId, card, invocation ?? null, invocation === undefined).then((r) => {
+      if (!alive) return
+      setInfo(r)
+      setInfoError(undefined)
+    }).catch((e) => {
+      if (!alive) return
+      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) { setInfo(undefined); setInfoError(undefined) } else setInfoError(errorText(e))
+    })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, k, invocation, execution, attempt])
+  useEffect(() => {
+    setInfo(undefined)
+    setInfoError(undefined)
+    setSelected(undefined)
     setExportError(undefined)
-    setLoaded(false)
-    following.current = true
-    openedRunning.current = new Set()
-    void load()
   }, [runId, k, invocation])
-  useLayoutEffect(() => {
-    const el = scroll.current
-    if (el && following.current) el.scrollTop = el.scrollHeight
-  })
-  const scrolled = (el: HTMLDivElement) => {
-    following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
-    lastTop.current = el.scrollTop
-  }
-  useEffect(() => {
-    void load()
-  }, [session.logRevision])
   useEffect(() => {
     const g = focus !== undefined ? groups.find((g) => g.stages.includes(focus)) : undefined
-    if (g) setOpen((o) => new Set([...o, g.id]))
+    if (g) setSelected(g.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus])
 
-  const toggle = (id: string) => setOpen((o) => {
-    const n = new Set(o)
-    if (n.has(id)) n.delete(id)
-    else n.add(id)
-    return n
-  })
-
-  /** Journal lines (JSON) of the given phases, as "event: message". */
-  const journal = (text: string, phases: string[]) => text.split('\n').flatMap((line) => {
-    try {
-      const v = JSON.parse(line)
-      return typeof v?.phase === 'string' && phases.includes(v.phase) ? [`${v.phase} · ${v.event ?? ''}: ${v.message ?? ''}`] : []
-    } catch {
-      return []
+  const placeholder = (() => {
+    if (shownInvocation === undefined || (log.size === undefined && !log.error)) {
+      return !info && !live ? L('読み込んでいます…') : L('この実行では、この Card はまだ動いていません')
     }
-  }).join('\n')
-
-  const exportLog = async (stream: D.LogStream, size: bigint) => {
-    const rpc = session.rpc
-    if (!rpc || shownInvocation === undefined) return
-    setExporting(true)
-    setExportError(undefined)
-    try {
-      const chunks: string[] = []
-      let offset = 0n
-      while (offset < size) {
-        const slice = await rpc.logRange(runId, card, shownInvocation, stream, offset, false, 256 * 1024)
-        const next = slice.nextOffset ?? offset
-        if (next <= offset) break
-        chunks.push(s(slice.text))
-        offset = next
-      }
-      download(`${runId}-${D.LogStream[stream]}.log`, new Blob(chunks).slice(0, Number(size), 'text/plain'))
-    } catch (e) {
-      setExportError(errorText(e))
-    } finally {
-      setExporting(false)
+    switch (current) {
+      case 'build': return L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')
+      case 'save': return L('記録された出来事はありません')
+      case 'execute': return executeStream === D.LogStream.standard_error ? L('stderr への出力はありません') : L('stdout への出力はありません')
+      default: return L('この stream への出力はありません')
     }
-  }
+  })()
 
-  const logText = (stream: D.LogStream, empty: string, phases?: string[]) => {
-    const slice = logs.get(stream)
-    const raw = s(slice?.text)
-    const text = phases ? journal(raw, phases) : raw
-    return (
-      <>
-        {(slice?.offset ?? 0n) > 0n && (
-          <div className="row gap12">
-            <span className="caption secondary">{L('ログの末尾を表示しています')}</span>
-            <Button small disabled={exporting} onClick={() => void exportLog(stream, slice?.sizeBytes ?? 0n)}>{L('ログを書き出す…')}</Button>
-            {exportError && <span className="caption" style={{ color: 'var(--red)' }}>{exportError}</span>}
-          </div>
-        )}
-        <pre className={`stage-log-text selectable${text ? '' : ' empty'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{terminalText(text) || empty}</pre>
-        {truncatedAt !== undefined && <div className="caption headline">{truncationNotice(truncatedAt)}</div>}
-      </>
-    )
-  }
+  const chip = (id: string, help: string, content: JSX.Element) => (
+    <button key={id} type="button" className={`stage-chip${current === id ? ' selected' : ''}`} title={help} aria-pressed={current === id} onClick={() => setSelected(id)}>{content}</button>
+  )
+  const shownGroup = groups.find((g) => g.id === current)
+  const limit = log.truncatedAt ?? info?.record?.summary?.logTruncatedAtBytes ?? undefined
 
-  const shown = shownInvocation ?? invocation ?? 0n
   let body: JSX.Element
-  if (!loaded) body = <div className="center-fill"><Spinner /></div>
-  else if (error) {
+  if (infoError && !info && !live) {
     body = (
-      <Empty title={L('ログを読み込めませんでした')} icon="exclamationmark.triangle" description={error}>
-        <Button onClick={() => void load()}>{L('再試行')}</Button>
+      <Empty title={L('ログを読み込めませんでした')} icon="exclamationmark.triangle" description={infoError}>
+        <Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button>
       </Empty>
     )
-  } else if (truncatedAt === undefined && !stages.length && [...logs.values()].every((slice) => !slice.text)) {
-    body = <Empty title={L('この実行では、この Card はまだ動いていません')} icon="circle.dotted" />
+  } else if (info?.exists === false && !live) {
+    body = <Empty title={L('この実行では、この Card は呼び出されていません')} icon="circle.dotted" />
   } else {
     body = (
-      <div className="stage-log-scroll" ref={scroll} onScroll={(e) => scrolled(e.currentTarget)}>
-        {groups.map((g) => {
-          const st = status(g)
-          const sec = seconds(g)
-          return (
-            <div key={g.id} className="stage-group">
-              <button type="button" className="stage-group-head" aria-expanded={open.has(g.id)} onClick={() => toggle(g.id)}>
-                <Icon name={open.has(g.id) ? 'chevron.down' : 'chevron.right'} size={9} className="secondary" />
-                <Icon name={st.icon} style={{ color: `var(--${st.color})` }} />
-                <span className="headline callout">{g.title}</span>
-                <span className="caption secondary">{st.label}</span>
-                <span className="spacer" />
-                {sec !== undefined && <span className="caption secondary mono-digits">{formatDuration(sec)}</span>}
-              </button>
-              {open.has(g.id) && (
-                <div className="stage-group-body">
-                  <div className="row gap12 wrap">
-                    {g.stages.map((sg) => {
-                      const r = [...stages].reverse().find((x) => x.stage === sg)
-                      return (
-                        <span key={sg} className={`label caption${r ? '' : ' tertiary'}`}>
-                          <Icon name={STAGE_INFO[sg].icon} size={11} />
-                          {STAGE_INFO[sg].label}
-                          {r && r.start !== undefined && r.end !== undefined && <span className="secondary">{formatDuration((r.end - r.start) / 1000)}</span>}
-                          {r?.outcome === D.StageOutcome.cached && <span style={{ color: 'var(--blue)' }}>cache</span>}
-                          {r?.outcome === D.StageOutcome.reused && <span style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
-                        </span>
-                      )
-                    })}
-                  </div>
-                  {g.id === 'build' && logText(D.LogStream.build, L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）'))}
-                  {g.id === 'execute' && (
-                    <>
-                      <div className="caption headline secondary">stdout</div>
-                      {logText(D.LogStream.standard_output, L('stdout への出力はありません'))}
-                      <div className="caption headline secondary">stderr</div>
-                      {logText(D.LogStream.standard_error, L('stderr への出力はありません'))}
-                    </>
-                  )}
-                  {g.id === 'save' && (
-                    <>
-                      {logText(D.LogStream.journal, L('記録された出来事はありません'), ['validate', 'save'])}
-                      {failure && st.label === L('失敗') && <div className="caption selectable" style={{ color: 'var(--red)' }}>{failure}</div>}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
-        <div className="stage-group">
-          <button type="button" className="stage-group-head" aria-expanded={open.has('raw')} onClick={() => toggle('raw')}>
-            <Icon name={open.has('raw') ? 'chevron.down' : 'chevron.right'} size={9} className="secondary" />
-            <Icon name="list.bullet.rectangle" />
-            <span className="callout">{L('stream 別（元の出力）')}</span>
-          </button>
-          {open.has('raw') && (
-            <div className="stage-group-body">
-              <Segmented<D.LogStream> small value={rawStream} onChange={setRawStream} width={300}
-                options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />
-              {logText(rawStream, L('この stream への出力はありません'))}
-            </div>
-          )}
+      <>
+        <div className="row gap12 wrap stage-streams">
+          {current === 'execute' && <Segmented<D.LogStream> small value={executeStream} onChange={setExecuteStream}
+            options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }]} />}
+          {current === 'raw' && <Segmented<D.LogStream> small value={rawStream} onChange={setRawStream} width={300}
+            options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />}
+          {shownGroup?.stages.map((sg) => {
+            const r = [...stages].reverse().find((x) => x.stage === sg)
+            return (
+              <span key={sg} className={`label caption${r ? '' : ' tertiary'}`}>
+                <Icon name={STAGE_INFO[sg].icon} size={11} />
+                {STAGE_INFO[sg].label}
+                {r && r.start !== undefined && r.end !== undefined && <span className="secondary">{formatDuration((r.end - r.start) / 1000)}</span>}
+                {r?.outcome === D.StageOutcome.cached && <span style={{ color: 'var(--blue)' }}>cache</span>}
+                {r?.outcome === D.StageOutcome.reused && <span style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
+              </span>
+            )
+          })}
         </div>
-      </div>
+        {log.clipped && log.size !== undefined && (
+          <div className="caption secondary stage-notice">{L('ログの末尾 {0} MiB を表示しています。全体は「ログを書き出す…」で保存できます。', SHOWN_BYTES >> 20)}</div>
+        )}
+        {(log.error ?? exportError) && <div className="caption stage-notice" style={{ color: 'var(--red)' }}>{log.error ?? exportError}</div>}
+        <LogText text={log.text} placeholder={placeholder} />
+        {limit != null && <div className="caption headline stage-notice">{truncationNotice(limit)}</div>}
+        {failure && shownGroup && status(shownGroup).label === L('失敗') && <div className="caption selectable stage-notice" style={{ color: 'var(--red)' }}>{failure}</div>}
+      </>
     )
   }
   return (
     <div className="stage-log">
       <div className="panel-bar">
         <span className="headline callout ellipsis">
-          {session.displayName(k)} · 実行 #{String(shown)}{state !== undefined ? ` · ${cardState(state).label}` : ''}
+          {session.displayName(k)} · {L('{0} 回目', String(shownInvocation ?? 0n))}{state !== undefined ? ` · ${cardState(state).label}` : ''}
         </span>
         <span className="spacer" />
-        <Button small onClick={() => setOpen(new Set([...groups.map((g) => g.id), 'raw']))}>{L('すべて開く')}</Button>
-        <Button small onClick={() => setOpen(new Set())}>{L('すべて閉じる')}</Button>
+        {source && !!log.size && <Button small disabled={exporting} onClick={() => {
+          setExporting(true)
+          setExportError(undefined)
+          void exportLog(session, source, log.size ?? 0n).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
+        }}>{L('ログを書き出す…')}</Button>}
+      </div>
+      <div className="row gap6 stage-chips">
+        {groups.map((g) => {
+          const st = status(g), sec = seconds(g)
+          return chip(g.id, `${g.title} · ${st.label}`, <>
+            <Icon name={st.icon} style={{ color: `var(--${st.color})` }} />
+            <span>{g.title}</span>
+            {sec !== undefined && <span className="secondary mono-digits">{formatDuration(sec)}</span>}
+          </>)
+        })}
+        {chip('raw', L('stream 別（元の出力）'), <><Icon name="list.bullet.rectangle" /><span>{L('stream 別')}</span></>)}
       </div>
       {body}
     </div>
