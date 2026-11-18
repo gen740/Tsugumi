@@ -22,7 +22,6 @@ struct StateJson {
   schema::t::String<"fingerprint"> fingerprint;
   schema::t::String<"result"> result;
   schema::t::String<"diagnostic"> diagnostic;
-  schema::t::Uint64<"deadline"> deadline;
   schema::t::Uint64<"pid"> pid;
   schema::t::Uint64<"start"> start;
   schema::t::String<"boot"> boot;
@@ -130,7 +129,6 @@ auto Journal::read(const stdfs::path& directory) const -> Record {
           *s.fingerprint,
           *s.result,
           *s.diagnostic,
-          *s.deadline,
           *s.pid,
           *s.start,
           *s.boot,
@@ -145,7 +143,6 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
   *s.fingerprint = r.fingerprint;
   *s.result = r.result;
   *s.diagnostic = r.diagnostic.substr(0, 4096);
-  *s.deadline = r.deadline;
   *s.pid = r.pid;
   *s.start = r.start;
   *s.boot = r.boot;
@@ -184,7 +181,6 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     if (state.state == R::JobState::Missing) {
       state.state = R::JobState::Uploading;
     }
-    state.deadline = now_ms() + 3600000;
     write(dir, state);
     private_directory(dir / "blobs");
     private_directory(dir / "parts");
@@ -294,7 +290,6 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
     result.state = R::JobState::Queued;
     result.core_life_id = core;
     result.fingerprint = fingerprint;
-    result.deadline = 0;
     write(dir, result);
   });
   return result;
@@ -389,18 +384,10 @@ auto Journal::finish(std::string_view job, R::JobState outcome,
     write(dir, state);
   });
 }
-auto Journal::expire(std::string_view job) -> void {
+auto Journal::clean_released(std::string_view job) -> void {
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
-    if (state.state == R::JobState::Released) {
-      erase_scratch(dir);
-      return;
-    }
-    if (!state.deadline || state.deadline > now_ms()) return;
-    if (state.state == R::JobState::Uploading) {
-      // Never accepted: no job fingerprint or result to recover.
-      discard_tree(dir);
-    }
+    if (state.state == R::JobState::Released) erase_scratch(dir);
   });
 }
 auto Journal::import_results(std::string_view job) -> std::string {

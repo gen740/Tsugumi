@@ -517,6 +517,7 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
       if (wait_seconds == UINT64_MAX)
         throw Failure("invalid_request",
                       "wait_seconds must be a nonnegative integer");
+      // This budget is for the caller’s observation; the run can continue.
       wait_seconds = std::min<uint64_t>(wait_seconds, 300);
       fields.erase("wait_seconds");
       prepared = json::Encode(fields);

@@ -153,7 +153,9 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
           <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />
         </SidePane>
       )}
-      <LoadingOverlay content={loadingContent(session)} />
+      <LoadingOverlay content={loadingContent(session)} onCancel={
+        ['starting', 'reconnecting'].includes(session.environment.state) ? () => void session.stopEnvironment() : undefined
+      } />
       {onSwitchProject && <PermissionHost session={session} />}
     </div>
   )
@@ -222,7 +224,7 @@ export function hasProblem(session: ProjectSession): boolean {
 
 /** The loading card over the window, kept at least 300 ms so it never
  *  flickers, fading in quickly and out a little slower. */
-function LoadingOverlay({ content }: { content?: LoadingContent }) {
+function LoadingOverlay({ content, onCancel }: { content?: LoadingContent; onCancel?: () => void }) {
   const [shown, setShown] = useState(content)
   const [leaving, setLeaving] = useState(false)
   const since = useRef(content ? Date.now() : 0)
@@ -249,7 +251,7 @@ function LoadingOverlay({ content }: { content?: LoadingContent }) {
   if (!shown) return null
   return (
     <div className={`loading-overlay${leaving ? ' leaving' : ''}`} style={{ pointerEvents: content ? 'auto' : 'none' }}>
-      <TsugumiLoadingCard content={shown} />
+      <TsugumiLoadingCard content={shown} onCancel={onCancel} />
     </div>
   )
 }

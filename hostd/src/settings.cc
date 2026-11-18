@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <curl/curl.h>
+#include <fcntl.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/param_build.h>
@@ -96,16 +97,23 @@ auto Query(std::string_view s) -> j::Members {
   }
   return out;
 }
-auto HTTP(const std::string& url, const j::Members* form = nullptr)
-    -> std::string {
+auto HTTP(const std::string& url, const j::Members* form = nullptr,
+          std::stop_token stop = {}) -> std::string {
   auto* c = curl_easy_init();
   if (!c) throw std::runtime_error("Sign-in transport unavailable");
   std::string body;
   const auto data = form ? Form(*form) : "";
   curl_easy_setopt(c, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
   curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
+  curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
+  curl_easy_setopt(
+      c, CURLOPT_XFERINFOFUNCTION,
+      +[](void* context, curl_off_t, curl_off_t, curl_off_t,
+          curl_off_t) -> int {
+        return static_cast<std::stop_token*>(context)->stop_requested();
+      });
+  curl_easy_setopt(c, CURLOPT_XFERINFODATA, &stop);
   curl_easy_setopt(
       c, CURLOPT_WRITEFUNCTION,
       +[](char* p, size_t n, size_t m, void* context) -> size_t {
@@ -156,7 +164,8 @@ auto URLAllowed(const std::string& url) -> bool {
   return allowed;
 }
 auto Verify(const std::string& token, const std::string& issuer,
-            const std::string& client, const std::string& nonce) -> j::Members {
+            const std::string& client, const std::string& nonce,
+            std::stop_token stop) -> j::Members {
   const auto a = token.find('.'),
              b = token.find('.', a == token.npos ? a : a + 1);
   if (a == token.npos || b == token.npos ||
@@ -166,7 +175,8 @@ auto Verify(const std::string& token, const std::string& issuer,
   const auto claims = j::Object(Un64(token.substr(a + 1, b - a - 1)));
   if (j::Text(header, "alg") != "RS256")
     throw std::runtime_error("ID token must use RS256");
-  const auto jwks = j::Object(HTTP(issuer + "/.well-known/jwks.json"));
+  const auto jwks =
+      j::Object(HTTP(issuer + "/.well-known/jwks.json", nullptr, stop));
   bool verified = false;
   for (const auto& raw : j::Array(j::Get(jwks, "keys", "[]"))) {
     const auto key = j::Object(raw);
@@ -208,6 +218,7 @@ auto Verify(const std::string& token, const std::string& issuer,
     BN_free(e);
     if (verified) break;
   }
+  // A short skew allowance covers clocks on different sides of the exchange.
   bool audience = j::Text(claims, "aud") == client;
   if (j::Get(claims, "aud").starts_with('['))
     for (const auto& item : j::Array(j::Get(claims, "aud")))
@@ -529,17 +540,40 @@ struct Settings::State {
     a->worker = std::jthread([this, a](std::stop_token stop) {
       try {
         j::Members cb;
-        const auto deadline = Now() + 600000;
-        while (!stop.stop_requested() && Now() < deadline) {
-          pollfd descriptor{a->socket, POLLIN, 0};
-          if (::poll(&descriptor, 1, 100) <= 0) continue;
+        struct CallbackPipe {
+          int fds[2] = {-1, -1};
+          ~CallbackPipe() {
+            for (auto fd : fds)
+              if (fd >= 0) ::close(fd);
+          }
+        } wake;
+        if (::pipe(wake.fds) != 0)
+          throw std::runtime_error("Cannot open sign-in cancellation pipe");
+        for (auto fd : wake.fds) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+        std::stop_callback cancelled(
+            stop, [&] { (void)::write(wake.fds[1], "x", 1); });
+        const auto readable = [&](int fd) {
+          pollfd fds[] = {{fd, POLLIN, 0}, {wake.fds[0], POLLIN, 0}};
+          int result;
+          do {
+            result = ::poll(fds, 2, -1);
+          } while (result < 0 && errno == EINTR);
+          return result > 0 && !stop.stop_requested() &&
+                 (fds[0].revents & POLLIN);
+        };
+        while (!stop.stop_requested()) {
+          if (!readable(a->socket)) break;
           const int fd = ::accept(a->socket, nullptr, nullptr);
-          if (fd < 0) continue;
-          timeval timeout{2, 0};
-          ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+          if (fd < 0) {
+            if (errno == EINTR) continue;
+            break;
+          }
+          ::fcntl(fd, F_SETFD, FD_CLOEXEC);
           std::string input;
           char buffer[2048];
-          while (input.size() < 16384 && input.find("\r\n\r\n") == input.npos) {
+          // Bound the memory a loopback peer can claim for callback headers.
+          while (input.size() < 16384 && input.find("\r\n\r\n") == input.npos &&
+                 readable(fd)) {
             auto n = ::recv(fd, buffer, sizeof buffer, 0);
             if (n <= 0) break;
             input.append(buffer, n);
@@ -547,7 +581,9 @@ struct Settings::State {
           bool valid = false;
           try {
             const auto end = input.find(" HTTP/");
-            if (input.starts_with("GET /auth/callback?") && end != input.npos) {
+            if (!stop.stop_requested() && input.size() < 16384 &&
+                input.find("\r\n\r\n") != input.npos &&
+                input.starts_with("GET /auth/callback?") && end != input.npos) {
               cb = Query(std::string_view(input).substr(19, end - 19));
               valid = cb["state"] == a->oauth_state;
             }
@@ -572,7 +608,7 @@ struct Settings::State {
         a->socket = -1;
         if (stop.stop_requested())
           throw std::runtime_error("Sign-in cancelled");
-        if (cb.empty()) throw std::runtime_error("Sign-in timed out");
+        if (cb.empty()) throw std::runtime_error("Sign-in callback closed");
         if (cb.contains("error"))
           throw std::runtime_error("Sign-in was declined");
         if (a->client.empty()) {
@@ -589,13 +625,13 @@ struct Settings::State {
                               {"code_verifier", a->verifier},
                               {"redirect_uri", a->redirect},
                               {"resource", a->resource}};
-        const auto t =
-            j::Object(HTTP(a->issuer + "/api/accounts/oauth/token", &form));
+        const auto t = j::Object(
+            HTTP(a->issuer + "/api/accounts/oauth/token", &form, stop));
         for (const auto* key : {"access_token", "refresh_token", "id_token"})
           if (j::Text(t, key).empty())
             throw std::runtime_error("Sign-in response lacks tokens");
-        const auto claims =
-            Verify(j::Text(t, "id_token"), a->issuer, a->client, a->nonce);
+        const auto claims = Verify(j::Text(t, "id_token"), a->issuer, a->client,
+                                   a->nonce, stop);
         if (!a->subject.empty() && a->subject != j::Text(claims, "sub"))
           throw std::runtime_error("Signed into another account");
         const auto scope = j::Text(t, "scope", cb["scope"]);
@@ -608,6 +644,8 @@ struct Settings::State {
         credential["revocation_endpoint"] =
             j::Quote(a->issuer + "/api/accounts/oauth/revoke");
         credential["resource"] = j::Quote(a->resource);
+        // The issuer may omit expires_in; preserve the documented token
+        // lifetime.
         credential["expires_at_ms"] = std::to_string(
             Now() + j::UInt(j::Get(t, "expires_in"), 3600) * 1000);
         std::lock_guard operation(account_operations);

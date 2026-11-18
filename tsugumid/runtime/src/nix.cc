@@ -226,12 +226,8 @@ FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
   if (!std::regex_match(flake, allowed))
     throw Failed(FailureKind::validation_failed,
                  "not a flake reference Tsugumi reads: " + ref);
-  NixCall call;
-  call.deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
   try {
-    return evaluator().flake(call, flake);
-  } catch (const NixInterrupted& e) {
-    throw Failed(FailureKind::timeout, e.what());
+    return evaluator().flake(NixCall{}, flake);
   } catch (const std::runtime_error& e) {
     throw Failed(FailureKind::nix_failed, e.what());
   }

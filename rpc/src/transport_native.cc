@@ -100,7 +100,7 @@ class NativeTransport final : public Transport {
     }
 
     auto Wait(short flags, std::optional<Clock::time_point> deadline = {})
-        -> void {
+        -> short {
       pollfd descriptors[] = {{fd, flags, 0}, {wake[0], POLLIN, 0}};
       const auto remaining =
           deadline ? std::max<int64_t>(
@@ -114,12 +114,11 @@ class NativeTransport final : public Transport {
       char bytes[64];
       while (::read(wake[0], bytes, sizeof bytes) > 0) {
       }
+      return descriptors[0].revents;
     }
 
-    auto CheckDeadline(Clock::time_point deadline) -> void {
+    auto CheckOpen() -> void {
       if (stopping) throw std::runtime_error("connection closed");
-      if (Clock::now() >= deadline)
-        throw std::runtime_error("connection timed out");
     }
 
     auto Read(uint8_t* bytes, size_t size) -> ptrdiff_t {
@@ -183,11 +182,10 @@ class NativeTransport final : public Transport {
         return;
       if (errno != EINPROGRESS)
         throw std::runtime_error("cannot connect to Unix socket");
-      const auto deadline = Clock::now() + options.connect_timeout;
       while (true) {
-        CheckDeadline(deadline);
-        pollfd descriptor{fd, POLLOUT, 0};
-        if (::poll(&descriptor, 1, 20) <= 0) continue;
+        CheckOpen();
+        if (!Wait(POLLOUT)) continue;
+        CheckOpen();
         int error = 0;
         socklen_t size = sizeof error;
         if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) != 0 || error)
@@ -240,10 +238,6 @@ class NativeTransport final : public Transport {
       curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
       curl_easy_setopt(curl, CURLOPT_HTTPPROXYTUNNEL, 1L);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-      curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
-                       static_cast<long>(options.connect_timeout.count()));
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
-                       static_cast<long>(options.connect_timeout.count()));
       curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
       curl_easy_setopt(
           curl, CURLOPT_XFERINFOFUNCTION,
@@ -266,26 +260,29 @@ class NativeTransport final : public Transport {
           "\r\nUpgrade: websocket\r\nConnection: "
           "Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " +
           key + "\r\nSec-WebSocket-Protocol: " + protocol + "\r\n\r\n";
-      const auto deadline = Clock::now() + options.connect_timeout;
       size_t offset = 0;
       while (offset < request.size()) {
-        CheckDeadline(deadline);
+        CheckOpen();
         offset +=
             Write(reinterpret_cast<const uint8_t*>(request.data()) + offset,
                   request.size() - offset);
-        if (offset < request.size()) Wait(POLLOUT, deadline);
+        if (offset < request.size()) Wait(POLLOUT);
       }
       std::string response;
       while (response.find("\r\n\r\n") == std::string::npos) {
-        CheckDeadline(deadline);
+        CheckOpen();
         std::array<uint8_t, 4096> block{};
         const auto count = Read(block.data(), block.size());
         if (count == 0)
           throw std::runtime_error("WebSocket handshake ended early");
         if (count < 0) {
-          Wait(POLLIN, deadline);
+          Wait(POLLIN);
           continue;
         }
+        // A peer cannot grow the HTTP header buffer indefinitely.
+        if (response.size() + static_cast<size_t>(count) > 64 * 1024)
+          throw std::runtime_error(
+              "WebSocket upgrade headers exceed their limit");
         response.append(reinterpret_cast<const char*>(block.data()),
                         static_cast<size_t>(count));
       }

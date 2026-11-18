@@ -512,10 +512,16 @@ struct Transfer {
           uint64_t delay = 0;
           if (std::from_chars(value.data(), value.data() + value.size(), delay)
                   .ec == std::errc{}) {
-            if (line.substr(0, colon) == "retry-after")
-              delay = std::min(delay, uint64_t{120}) * 1000;
-            self.retry_after =
-                std::chrono::milliseconds(std::min(delay, uint64_t{120000}));
+            const uint64_t units =
+                line.substr(0, colon) == "retry-after" ? 1000 : 1;
+            // Leave room to add the server's interval to the monotonic clock.
+            const auto max_delay =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::duration::max() / 2)
+                    .count();
+            self.retry_after = std::chrono::milliseconds(
+                std::min(delay, static_cast<uint64_t>(max_delay) / units) *
+                units);
           }
         }
       }
@@ -585,9 +591,8 @@ auto Request(const ProviderConfig& config, std::string_view path,
   curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
   curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
   curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-  curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT,
-                   static_cast<long>(config.timeout_seconds));
+  // libcurl still reports connection and transport failures.
+  curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 0L);
   curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_LIMIT, 1L);
   curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_TIME, 60L);
   curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, &Transfer::Write);
@@ -1258,7 +1263,6 @@ auto RefreshCredential(const CredentialRefresh& request, std::stop_token stop)
   config.api = ProviderAPI::OpenAIResponses;
   config.auth = ProviderAuth::None;
   config.base_url = request.endpoint;
-  config.timeout_seconds = 15;
   RequestStatus status;
   try {
     const auto reply =
@@ -1303,7 +1307,6 @@ auto RevokeCredential(std::string_view endpoint, std::string_view client_id,
   config.api = ProviderAPI::OpenAIResponses;
   config.auth = ProviderAuth::None;
   config.base_url = endpoint;
-  config.timeout_seconds = 15;
   const auto body =
       "token=" + FormEscape(refresh_token) +
       "&token_type_hint=refresh_token&client_id=" + FormEscape(client_id);

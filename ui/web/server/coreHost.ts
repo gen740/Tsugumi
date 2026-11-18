@@ -30,7 +30,7 @@ interface Ready {
 class Connection {
   private socket?: net.Socket
   private nextId = 0n
-  private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
+  private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void }>()
   private opening?: Promise<void>
   // A plugin retry after the page answers must resume the approved call ID.
 
@@ -65,7 +65,7 @@ class Connection {
       if (this.socket !== socket) return
       this.socket = undefined
       this.opening = undefined
-      for (const p of this.waiting.values()) { clearTimeout(p.timer); p.reject(error) }
+      for (const p of this.waiting.values()) p.reject(error)
       this.waiting.clear()
       socket.destroy()
     }
@@ -85,18 +85,17 @@ class Connection {
           length = undefined
           if (reply.event) { this.host.event(reply.event); continue }
           const p = this.waiting.get(reply.id)
-          if (!p) continue // A late reply after its deadline.
+          if (!p) continue // A cancelled call may still reply.
           this.waiting.delete(reply.id)
-          clearTimeout(p.timer)
           if (reply.error) p.reject(reply.error)
           else p.resolve(reply.value)
         }
       } catch (e) { fail(e as Error) }
     })
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { reject(new Error('Service connection timed out')); socket.destroy() }, 3000)
-      socket.once('connect', () => { clearTimeout(timer); resolve() })
-      socket.once('error', (e) => { clearTimeout(timer); reject(e) })
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+      socket.once('close', () => reject(new Error('Service connection closed')))
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token,
       client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}` })
@@ -114,21 +113,15 @@ class Connection {
     return new Promise((resolve, reject) => {
       const cancel = () => {
         if (!this.waiting.delete(requestId)) return
-        clearTimeout(timer)
         signal?.removeEventListener('abort', cancel)
         // The shared socket remains usable by other calls/conversations.
         if (method === 'ToolCallRequest') void this.write('ToolCallCancelRequest', { request_id: requestId }).catch(() => {})
-        reject(signal?.reason ?? new Error('Service request timed out'))
+        reject(signal?.reason)
       }
       const finish = () => signal?.removeEventListener('abort', cancel)
-      const timer = setTimeout(() => {
-        cancel()
-      }, method === 'EnvironmentRequest' || method === 'AttachFoldersRequest' || method === 'HostRuntimeRequest' ? 3_600_000
-        : method === 'ToolCallRequest' && ['run', 'run_status'].includes(String((value as Record<string, unknown>).name)) ? 360_000 : 120_000)
-      timer.unref()
       this.waiting.set(requestId, {
         resolve: value => { finish(); resolve(value) },
-        reject: error => { finish(); reject(error) }, timer,
+        reject: error => { finish(); reject(error) },
       })
       this.socket!.write(frame)
       signal?.addEventListener('abort', cancel, { once: true })

@@ -45,6 +45,8 @@ auto PrivateDirectory(const std::filesystem::path& path) -> void {
 struct Environments::Impl {
   struct Entry {
     std::mutex mutex;
+    std::mutex start_mutex;
+    std::optional<std::stop_source> start_stop;
     std::atomic<bool> starting = false;
     std::atomic<uint64_t> start_generation = 0;
     State state;
@@ -341,11 +343,22 @@ struct Environments::Impl {
     return launch;
   }
   auto Start(Entry& entry, const H::EnvironmentRequestT& request) -> void {
-    entry.starting = true;
-    ++entry.start_generation;
+    std::stop_source start_stop;
+    {
+      std::lock_guard lock(entry.start_mutex);
+      entry.start_stop = start_stop;
+      entry.starting = true;
+      ++entry.start_generation;
+    }
+    std::stop_callback shutting_down(shutdown.get_token(),
+                                     [&] { start_stop.request_stop(); });
     struct Finished {
       Entry& entry;
-      ~Finished() { entry.starting = false; }
+      ~Finished() {
+        std::lock_guard lock(entry.start_mutex);
+        entry.start_stop.reset();
+        entry.starting = false;
+      }
     } finished{entry};
     PrivateDirectory(
         std::filesystem::path(entry.state.control_dir).parent_path());
@@ -460,41 +473,40 @@ struct Environments::Impl {
       // Recorded before the launch: a launch that fails after the process has
       // started (its reply was lost) leaves a process holding these mounts.
       entry.mounted = launch.mounts;
-      entry.pid = options.process->Launch(launch);
+      launch.stop = start_stop.get_token();
+      if (!launch.stop.stop_requested())
+        entry.pid = options.process->Launch(launch);
       entry.child = true;
       Stage(entry, "waiting for tsugumid to become ready");
-      const auto deadline =
-          std::chrono::steady_clock::now() + options.start_timeout;
-      while (!shutdown.stop_requested()) {
-        if (CheckDeath(entry)) return;
-        if (ReadReady(entry)) {
-          auto accepted = options.process->Requirements(entry.state);
-          const auto& planned = launch.mounts;
-          entry.requirements = std::move(accepted);
-          const auto required = Plan(entry).mounts;
-          if (options.process->Guest() && planned != required)
-            throw std::runtime_error(
-                "Host requirements changed during "
-                "startup; retry the environment");
-          Notify(entry);
-          return;
-        }
-        if (std::chrono::steady_clock::now() >= deadline) break;
-        std::this_thread::sleep_for(50ms);
-      }
+      bool ready = false;
+      if (entry.pid)
+        options.process->WaitForReady(
+            entry.state.ready_file, entry.pid, start_stop.get_token(), [&] {
+              if (CheckDeath(entry)) return ready = true;
+              if (!ReadReady(entry)) return false;
+              auto accepted = options.process->Requirements(entry.state);
+              const auto& planned = launch.mounts;
+              entry.requirements = std::move(accepted);
+              const auto required = Plan(entry).mounts;
+              if (options.process->Guest() && planned != required)
+                throw std::runtime_error(
+                    "Host requirements changed during "
+                    "startup; retry the environment");
+              Notify(entry);
+              return ready = true;
+            });
+      if (ready) return;
       Stop(entry);
-      Failed(entry,
-             shutdown.stop_requested()
-                 ? "Environment start cancelled"
-                 : "tsugumid did not become ready within 60 seconds",
-             nullptr,
-             shutdown.stop_requested()
-                 ? H::EnvironmentFailureCode::Cancelled
-                 : H::EnvironmentFailureCode::ReadinessTimeout);
+      Failed(entry, "Environment start cancelled", nullptr,
+             H::EnvironmentFailureCode::Cancelled);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
-      Failed(entry, error.what(),
-             dynamic_cast<const EnvironmentFailure*>(&error));
+      if (start_stop.stop_requested())
+        Failed(entry, "Environment start cancelled", nullptr,
+               H::EnvironmentFailureCode::Cancelled);
+      else
+        Failed(entry, error.what(),
+               dynamic_cast<const EnvironmentFailure*>(&error));
     }
   }
   // A guest launch whose reply was lost may have left a process this entry
@@ -502,14 +514,13 @@ struct Environments::Impl {
   // so that the caller can judge its mounts and stop it.
   auto Rediscover(Entry& entry) -> void {
     if (entry.pid || !options.process->Guest()) return;
-    const auto deadline =
-        std::chrono::steady_clock::now() + options.start_timeout;
     while (!shutdown.stop_requested() && !ReadReady(entry)) {
       try {
         options.process->GuardStart(entry.state.key);
         return;
       } catch (const EnvironmentFailure&) {
-        if (std::chrono::steady_clock::now() >= deadline) throw;
+        // GuardStart reports an earlier launch whose ready file is still
+        // pending.
       }
       std::this_thread::sleep_for(50ms);
     }
@@ -523,19 +534,7 @@ struct Environments::Impl {
       entry.pid = 0;
     if (entry.pid) {
       options.process->Signal(entry.pid, SIGTERM);
-      auto deadline = std::chrono::steady_clock::now() + options.stop_timeout;
-      while (Alive(entry.pid, entry.child) &&
-             std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(50ms);
-      if (Alive(entry.pid, entry.child)) {
-        options.process->Signal(entry.pid, SIGKILL);
-        deadline = std::chrono::steady_clock::now() + 5s;
-        while (Alive(entry.pid, entry.child) &&
-               std::chrono::steady_clock::now() < deadline)
-          std::this_thread::sleep_for(10ms);
-        if (Alive(entry.pid, entry.child))
-          throw std::runtime_error("tsugumid did not stop");
-      }
+      options.process->WaitForExit(entry.pid, entry.child);
     }
     entry.pid = 0;
     entry.child = false;
@@ -583,6 +582,18 @@ auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
   runtime.store_exists = std::filesystem::is_directory(runtime.store_path);
   return runtime;
 }
+auto EnvironmentProcess::WaitForReady(const std::filesystem::path&, int64_t,
+                                      std::stop_token stop,
+                                      const std::function<bool()>& done)
+    -> void {
+  // The guest's virtiofs share does not notify the host of guest-side writes.
+  while (!stop.stop_requested() && !done()) std::this_thread::sleep_for(50ms);
+}
+
+auto EnvironmentProcess::WaitForExit(int64_t pid, bool child) -> void {
+  while (!Poll(pid, child)) std::this_thread::sleep_for(50ms);
+}
+
 auto EnvironmentProcess::Terminal(const H::HostTerminalRequestT&)
     -> H::HostTerminalT {
   throw std::runtime_error("This terminal requires the VM runtime");
@@ -623,8 +634,7 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
   if (impl_->options.process->Guest() &&
       (input.action == H::RuntimeAction::Shutdown ||
        input.action == H::RuntimeAction::Reset)) {
-    // vmd stops all projects concurrently under the VM's one deadline. Do not
-    // spend a separate stop deadline per project before asking it to power off.
+    // Vmd stops all projects concurrently before powering off.
     std::vector<std::shared_ptr<Impl::Entry>> snapshot;
     {
       std::lock_guard lock(impl_->mutex);
@@ -745,6 +755,10 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   auto entry = impl_->EntryFor(request.project);
   const auto generation = entry->start_generation.load();
   const bool joining_start = entry->starting.load();
+  if (request.action == H::EnvironmentAction::Stop) {
+    std::lock_guard lock(entry->start_mutex);
+    if (entry->start_stop) entry->start_stop->request_stop();
+  }
   std::lock_guard lock(entry->mutex);
   // Concurrent callers share a failed attempt too. A later explicit retry
   // starts again; a ready result may still refresh origins and folder grants.

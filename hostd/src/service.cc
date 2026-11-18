@@ -98,7 +98,9 @@ struct Service::State {
         requests(4),
         tool_requests(4),
         wait_requests(4),
-        terminal_requests(1) {
+        terminal_requests(1),
+        terminal_closes(1),
+        environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
         [this](const std::string& id, const json::Members& values) {
@@ -213,7 +215,7 @@ struct Service::State {
         db, registry, *host_settings, *tools, *turns,
         [this](std::string raw) { return Scrub(std::move(raw)); });
     events = std::make_unique<host::HostEvents>(
-        state_gate, terminal_requests, [this](uint64_t session) {
+        state_gate, terminal_closes, [this](uint64_t session) {
           H::HostTerminalRequestT close;
           close.action = H::TerminalAction::Close;
           close.session = session;
@@ -356,6 +358,9 @@ struct Service::State {
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>>
       tool_stops;
   Lane terminal_requests;
+  // A close must wake an input blocked by terminal backpressure.
+  Lane terminal_closes;
+  Lane environment_stops;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
@@ -793,6 +798,8 @@ auto Service::Shutdown() -> void {
   state_->tool_requests.stop();
   state_->wait_requests.stop();
   state_->terminal_requests.stop();
+  state_->terminal_closes.stop();
+  state_->environment_stops.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
   state_->host_settings.reset();
@@ -897,14 +904,22 @@ auto Service::dispatch(RequestIn request) -> void {
     }
     server->reply(request.conn, std::move(bytes));
   };
-  const bool terminal =
-      host && H::GetMessage(request.frame->data())
-                      ->payload_as_Request()
-                      ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto& lane = terminal  ? state_->terminal_requests
-               : waiting ? state_->wait_requests
-               : tool    ? state_->tool_requests
-                         : state_->requests;
+  const auto* host_request =
+      host ? H::GetMessage(request.frame->data())->payload_as_Request()
+           : nullptr;
+  const auto* terminal =
+      host_request ? host_request->value_as_HostTerminalRequest() : nullptr;
+  const auto* environment =
+      host_request ? host_request->value_as_EnvironmentRequest() : nullptr;
+  auto& lane =
+      environment && environment->action() == H::EnvironmentAction::Stop
+          ? state_->environment_stops
+      : terminal && terminal->action() == H::TerminalAction::Close
+          ? state_->terminal_closes
+      : terminal ? state_->terminal_requests
+      : waiting  ? state_->wait_requests
+      : tool     ? state_->tool_requests
+                 : state_->requests;
   if (!lane.submit(task)) {
     if (tool_stop) {
       std::lock_guard lock(state_->mutex);

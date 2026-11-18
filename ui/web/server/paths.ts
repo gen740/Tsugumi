@@ -52,9 +52,9 @@ export function readServer(data: string): ServerInfo | undefined {
   }
 }
 
-export async function serverRequest(s: ServerInfo, route: string, body: unknown = {}, timeoutMs = 5000, signal?: AbortSignal): Promise<Response> {
+export async function serverRequest(s: ServerInfo, route: string, body: unknown = {}, signal?: AbortSignal): Promise<Response> {
   return fetch(`http://127.0.0.1:${s.port}${route}`, {
-    method: 'POST', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+    method: 'POST', signal,
     headers: { 'content-type': 'application/json', 'x-tsugumi': '1', [AGENT_KEY_HEADER]: s.agentKey },
     body: JSON.stringify(body),
   })

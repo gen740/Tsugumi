@@ -49,6 +49,47 @@ import TsugumiRPC
 @MainActor final class ModuleNavigation: NSObject, WKNavigationDelegate {
   static let shared = ModuleNavigation()
   private var hostLoads = Set<ObjectIdentifier>()
+  private var loading: [ObjectIdentifier: CheckedContinuation<Void, Error>] = [:]
+
+  func load(_ web: WKWebView, html: String) async throws {
+    let id = ObjectIdentifier(web)
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Void, Error>) in
+        if Task.isCancelled { answer.resume(throwing: CancellationError()); return }
+        prepare(web)
+        loading[id] = answer
+        web.loadHTMLString(html, baseURL: URL(string: "https://localhost/"))
+      }
+    } onCancel: {
+      Task { @MainActor in
+        self.hostLoads.remove(id)
+        self.loading.removeValue(forKey: id)?.resume(throwing: CancellationError())
+      }
+    }
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    loading.removeValue(forKey: ObjectIdentifier(webView))?.resume()
+  }
+
+  func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    didFail(webView, error: error)
+  }
+
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    didFail(webView, error: error)
+  }
+
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    didFail(webView, error: URLError(.networkConnectionLost))
+  }
+
+  private func didFail(_ web: WKWebView, error: Error) {
+    let id = ObjectIdentifier(web)
+    hostLoads.remove(id)
+    loading.removeValue(forKey: id)?.resume(throwing: error)
+  }
+
   func prepare(_ web: WKWebView) { hostLoads.insert(ObjectIdentifier(web)); web.navigationDelegate = self }
   func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

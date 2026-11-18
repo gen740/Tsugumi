@@ -119,8 +119,8 @@ public final class NativeByteTransport: @unchecked Sendable {
     guard let handle else { continuation.resume(throwing: RPCError.disconnected); return }
     let parts = timeout.components
     let milliseconds = Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15
-    guard milliseconds > 0 else { continuation.resume(throwing: RPCError.timeout); return }
-    let bounded = UInt32(min(Double(UInt32.max), max(1, milliseconds)))
+    guard milliseconds >= 0 else { continuation.resume(throwing: RPCError.timeout); return }
+    let bounded = UInt32(min(Double(UInt32.max), milliseconds.rounded(.up)))
     data.withUnsafeBytes { bytes in
       tsugumi_client_call(handle, bytes.bindMemory(to: UInt8.self).baseAddress, data.count, bounded,
                           nativeReplyCallback, Unmanaged.passRetained(NativeReply(continuation)).toOpaque())
@@ -184,7 +184,7 @@ public actor RPCClient {
 
   private func closedByPeer() { closed = true; receiveTask = nil; notify.finish() }
 
-  public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .seconds(60)) async throws -> R {
+  public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .zero) async throws -> R {
     let reply = try await send(type, value, timeout: timeout)
     guard let value = reply.value?.value as? R else {
       throw RPCError.unexpectedReply("expected \(R.self), got \(String(describing: reply.value?.type))")

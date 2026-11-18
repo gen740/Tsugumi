@@ -8,8 +8,8 @@
 
 namespace tsugumi::peer_tls {
 // Synchronous framed I/O requires blocking accepted sockets on every OS.
-// Also configures deadlines, close-on-exec and SO_NOSIGPIPE where available.
-auto ConfigureSocket(int fd, int timeout_seconds) -> void;
+// Also configures close-on-exec and SO_NOSIGPIPE where available.
+auto ConfigureSocket(int fd, int timeout_seconds = 0) -> void;
 
 // Canonical Ed25519 SubjectPublicKeyInfo, base64 encoded after "ed25519:".
 auto ValidateKey(std::string_view value) -> void;
@@ -45,7 +45,7 @@ class Context {
 };
 class Stream {
  public:
-  // The caller owns fd and configures its socket deadlines before handshake.
+  // The caller owns fd before handshake.
   Stream(const Context& context, int fd, bool server);
   ~Stream();
   Stream(const Stream&) = delete;

@@ -51,6 +51,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var current: ObjectIdentifier?
   private var _state: VMState = .stopped
   private var stateObservers: [UUID: @Sendable (VMState) -> Void] = [:]
+  private var stopWaiters: [CheckedContinuation<Void, Never>] = []
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
 
   public init(directory: URL) {
@@ -90,7 +91,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     if case .running = s { waiters = readyWaiters; readyWaiters = [] }
     if case .failed = s { waiters = readyWaiters; readyWaiters = [] }
     if case .stopped = s { waiters = readyWaiters; readyWaiters = [] }
+    let stopped = current == nil ? stopWaiters : []
+    if current == nil { stopWaiters.removeAll() }
     lock.unlock()
+    for waiter in stopped { waiter.resume() }
     for o in obs { o(s) }
     for w in waiters {
       switch s {
@@ -305,7 +309,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     Task.detached { [weak self] in
       while let self, self.bootCount == boot, case .running = self.state {
         let ms = Int64(Date().timeIntervalSince1970 * 1000)
-        _ = try? await self.request("clock \(ms)", timeout: 5)
+        _ = try? await self.request("clock \(ms)")
         try? await Task.sleep(for: .seconds(30))
       }
     }
@@ -377,27 +381,31 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
           case .success:
             self.console.note("the VM is running; waiting for the guest")
             c.resume()
-          case .failure(let e): c.resume(throwing: LauncherError.startFailed(reason: "the VM did not start: \(e.localizedDescription)", log: ""))
+          case .failure(let e):
+            self.stopped(vm, e)
+            c.resume(throwing: LauncherError.startFailed(reason: "the VM did not start: \(e.localizedDescription)", log: ""))
           }
         }
       }
     }
   }
 
-  /// Stops every project (tsugumid records interrupted runs) and powers the
-  /// VM off; forced after `timeout`.
-  public func shutdown(timeout: TimeInterval = 40, signal: Bool = false, exiting: Bool = false) async {
+  /// Waits for guest poweroff. A second stop signal explicitly forces it.
+  public func shutdown(signal: Bool = false, exiting: Bool = false) async {
     lock.withLock { stopping = true; ending = ending || exiting; bootGeneration += 1 }
-    await shutdownController.stop(signal: signal, timeout: .seconds(timeout), graceful: { [self] in
-      guard queue.sync(execute: { self.vm != nil }) else { return }
+    await shutdownController.stop(signal: signal, graceful: { [self] in
+      guard lock.withLock({ current != nil }) else { return }
       console.note("shutting down; waiting for guest sync and poweroff")
-      // During boot vmd may not be listening yet. Keep trying within the same
-      // deadline instead of cutting power to an initializing store.
-      var requested = false
-      while !Task.isCancelled {
-        if case .stopped = state { return }
-        if !requested { requested = (try? await request("shutdown", timeout: 1)) != nil }
-        do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+      // A boot still preparing the store announces when its control socket is ready.
+      if (try? await waitReady()) != nil, !Task.isCancelled {
+        do { try await request("shutdown") }
+        catch { console.note("shutdown request: \(error)") }
+      }
+      await withCheckedContinuation { continuation in
+        lock.withLock {
+          if current == nil { continuation.resume() }
+          else { stopWaiters.append(continuation) }
+        }
       }
     }, force: { [self] in
       console.note("forcing the VM off; the next boot will check the store")
@@ -515,13 +523,19 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   /// One request line to tsugumi-vmd; returns the reply after "ok" or throws
   /// with the reason after "error".
   @discardableResult
-  public func request(_ line: String, timeout: TimeInterval = 60) async throws -> String {
+  public func request(_ line: String) async throws -> String {
     let fd = try await connect(port: Self.controlPort)
-    defer { close(fd) }
-    var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-    try writeAll(fd, Data((line + "\n").utf8))
-    let reply = readLine(fd)
+    let reply = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+      Thread.detachNewThread {
+        defer { close(fd) }
+        do {
+          try writeAll(fd, Data((line + "\n").utf8))
+          continuation.resume(returning: readLine(fd))
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
     if reply == "ok" { return "" }
     if reply.hasPrefix("ok ") { return String(reply.dropFirst(3)) }
     throw LauncherError.startFailed(reason: reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "no reply from the VM", log: "")

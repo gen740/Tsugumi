@@ -30,7 +30,6 @@ struct ProviderConfig {
   uint32_t max_tokens = 16384;
   // Maximum input tokens, after reserving reply tokens and a safety margin.
   uint32_t context_limit_tokens = 100000;
-  uint32_t timeout_seconds = 600;
   bool web_search = false;
   bool fast = false;
 };

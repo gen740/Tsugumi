@@ -55,7 +55,7 @@ struct RuntimeHooks {
 };
 
 struct RuntimeOptions {
-  uint32_t max_retries = 3;
+  // Bound the tokens spent continuing replies that hit the output limit.
   uint32_t max_cut_replies = 3;
   bool compact = true;
 };

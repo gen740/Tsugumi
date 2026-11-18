@@ -77,7 +77,7 @@ let
       ''
         mkdir -p $out
         ${lib.concatMapStrings (p: ''
-          curl --fail --silent --show-error --location --retry 3 \
+          curl --fail --silent --show-error --location \
             -o $out/${file p} https://api.nuget.org/v3-flatcontainer/${p.id}/${p.version}/${file p}
         '') resolved}
       '';

@@ -17,11 +17,8 @@ public final class AppTermination {
     guard !pending else { return }
     pending = true
     Task {
-      // A restarting or unresponsive host cannot establish that other clients
-      // are idle. Ask once in that case too; never wait indefinitely on a read.
-      let observed = await Self.briefly(timeout: .seconds(3)) {
-        (try? await activity()) ?? true
-      } ?? true
+      // A disconnected host cannot confirm that other clients are idle.
+      let observed = (try? await activity()) ?? true
       let busy = localActivity() || observed
       let allowed: Bool
       if busy { allowed = confirm() }
@@ -29,29 +26,6 @@ public final class AppTermination {
       if allowed { await stop() }
       pending = false
       reply(allowed)
-    }
-  }
-
-  /// An unstructured task bounds the wait even when an RPC ignores cancellation.
-  /// A structured task group would wait for that RPC when leaving its scope.
-  public static func briefly<T>(timeout: Duration,
-                                wait: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-                                operation: @escaping @MainActor () async -> T) async -> T? {
-    await withCheckedContinuation { continuation in
-      var finished = false
-      let work = Task { @MainActor in
-        let value = await operation()
-        guard !finished else { return }
-        finished = true
-        continuation.resume(returning: value)
-      }
-      Task { @MainActor in
-        try? await wait(timeout)
-        guard !finished else { return }
-        finished = true
-        work.cancel()
-        continuation.resume(returning: nil)
-      }
     }
   }
 }

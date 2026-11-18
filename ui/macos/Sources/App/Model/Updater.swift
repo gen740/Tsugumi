@@ -69,7 +69,10 @@ enum UpdateCheck {
     let h = try FileHandle(forReadingFrom: file)
     defer { try? h.close() }
     var hasher = SHA256()
-    while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+    while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty {
+      try Task.checkCancellation()
+      hasher.update(data: chunk)
+    }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
@@ -125,6 +128,7 @@ final class Updater {
   private let bundleID: String
   private let channel: AppChannel
   private var staged: URL?
+  private var transfer: Task<Void, Never>?
   private(set) var relaunch = false
   private(set) var installing = false
 
@@ -160,7 +164,17 @@ final class Updater {
 
   /// Reads the latest release and, when it is newer, downloads it. `manual`:
   /// asked from the menu, so the outcome is said in a dialog.
-  func check(manual: Bool = false) async {
+  func check(manual: Bool = false) {
+    guard transfer == nil else { return }
+    transfer = Task {
+      defer { transfer = nil }
+      await checkAndStage(manual: manual)
+    }
+  }
+
+  func cancelTransfer() { transfer?.cancel() }
+
+  private func checkAndStage(manual: Bool) async {
     if let why = unavailable {
       if manual { Self.alert(String(localized: "このアプリは更新できません"), why) }
       return
@@ -183,6 +197,8 @@ final class Updater {
       staged = try await Self.stage(offer, beside: app, bundleID: bundleID)
       state = .ready(offer.version)
       if manual { askToRelaunch(offer.version) }
+    } catch is CancellationError {
+      state = .idle
     } catch {
       state = .failed("\(error)")
       if manual { Self.alert(String(localized: "アップデートを確認できませんでした"), "\(error)") }
@@ -250,15 +266,15 @@ final class Updater {
   // MARK: - Network
 
   private nonisolated static func latest(current: String) async throws -> ReleaseOffer? {
-    var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!)
-    req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-    req.setValue("Tsugumi/\(current)", forHTTPHeaderField: "User-Agent")
-    req.cachePolicy = .reloadIgnoringLocalCacheData
-    let (data, response) = try await URLSession.shared.data(for: req)
-    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+    let url = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let code = try await download(url, to: file, headers: [
+      "Accept: application/vnd.github+json", "User-Agent: Tsugumi/\(current)",
+    ])
     if code == 404 { return nil }  // no release yet
     guard code == 200 else { throw UpdateCheck.Problem.http(code) }
-    return try UpdateCheck.offer(data, current: current)
+    return try UpdateCheck.offer(Data(contentsOf: file), current: current)
   }
 
   /// Downloads and checks the offered app in a folder on the app's volume
@@ -267,15 +283,17 @@ final class Updater {
     let fm = FileManager.default
     let dir = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: app, create: true)
     do {
-      let (sums, r1) = try await URLSession.shared.data(from: offer.checksum)
-      try ok(r1)
-      guard let expected = UpdateCheck.checksum(in: String(decoding: sums, as: UTF8.self), for: UpdateCheck.assetName) else {
+      let sums = dir.appendingPathComponent(UpdateCheck.checksumName)
+      let checksumCode = try await download(offer.checksum, to: sums)
+      guard checksumCode == 200 else { throw UpdateCheck.Problem.http(checksumCode) }
+      let text = try String(contentsOf: sums, encoding: .utf8)
+      try fm.removeItem(at: sums)
+      guard let expected = UpdateCheck.checksum(in: text, for: UpdateCheck.assetName) else {
         throw UpdateCheck.Problem.checksum
       }
-      let (tmp, r2) = try await URLSession.shared.download(from: offer.zip)
-      try ok(r2)
       let zip = dir.appendingPathComponent(UpdateCheck.assetName)
-      try fm.moveItem(at: tmp, to: zip)
+      let zipCode = try await download(offer.zip, to: zip)
+      guard zipCode == 200 else { throw UpdateCheck.Problem.http(zipCode) }
       guard try UpdateCheck.sha256(of: zip) == expected else { throw UpdateCheck.Problem.checksum }
       try run("/usr/bin/ditto", "-x", "-k", zip.path, dir.path)
       try? fm.removeItem(at: zip)
@@ -291,9 +309,36 @@ final class Updater {
     }
   }
 
-  private nonisolated static func ok(_ r: URLResponse) throws {
-    let code = (r as? HTTPURLResponse)?.statusCode ?? 0
-    guard code == 200 else { throw UpdateCheck.Problem.http(code) }
+  /// Wait for HTTP completion or an explicit cancellation, including during sleep.
+  private nonisolated static func download(_ url: URL, to file: URL, headers: [String] = []) async throws -> Int {
+    let process = Process()
+    let response = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+    process.arguments = ["-q", "--silent", "--show-error", "--location",
+                         "--proto", "=https", "--proto-redir", "=https",
+                         "--output", file.path, "--write-out", "%{http_code}"]
+      + headers.flatMap { ["--header", $0] } + [url.absoluteString]
+    process.standardOutput = response
+    process.standardError = FileHandle.nullDevice
+    let status = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Int32, Error>) in
+        process.terminationHandler = { answer.resume(returning: $0.terminationStatus) }
+        do {
+          try Task.checkCancellation()
+          try process.run()
+          if Task.isCancelled, process.isRunning { process.terminate() }
+        } catch {
+          process.terminationHandler = nil
+          answer.resume(throwing: error)
+        }
+      }
+    } onCancel: {
+      if process.isRunning { process.terminate() }
+    }
+    try Task.checkCancellation()
+    guard status == 0 else { throw UpdateCheck.Problem.tool("curl", status) }
+    let data = response.fileHandleForReading.readDataToEndOfFile()
+    return Int(String(decoding: data, as: UTF8.self)) ?? 0
   }
 
   private nonisolated static func run(_ tool: String, _ args: String...) throws {

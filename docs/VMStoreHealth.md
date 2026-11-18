@@ -35,7 +35,7 @@ A pending CLI/plug-in call loses its service connection when the Mac app quits;
 its run is stopped, not handed over. A later client request may start a host
 again. No new command-only lifetime manager is supplied.
 
-Vmhost gives the guest 40 seconds, then forces a stop. Vmd stops project groups concurrently and ends the Nix daemons. Once all writers have stopped, it flushes the backing store disk with `sync -f /persist`, clears `/persist/store-health/running`, and syncs that unlink. The store disk stays writable because its mounted overlay holds the upper/work directories open. A failed flush or a surviving daemon retains the dirty marker for the next boot.
+Vmhost waits for the guest to power off. A repeated stop signal forces it off. Vmd stops project groups concurrently and ends the Nix daemons. Once all writers have stopped, it flushes the backing store disk with `sync -f /persist`, clears `/persist/store-health/running`, and syncs that unlink. The store disk stays writable because its mounted overlay holds the upper/work directories open. A failed flush or a surviving daemon retains the dirty marker for the next boot.
 
 Boot writes and syncs the marker before store registration. A dirty marker,
 a missing health version (including **existing disks on the first new image

@@ -292,7 +292,7 @@ auto Reconcile(std::vector<Message>& messages, const RuntimeHooks& hooks,
 auto ModelTurn(const ProviderConfig& config, std::string_view system,
                std::vector<Message>& messages,
                const std::vector<ToolSpec>& tools, std::stop_token stop,
-               const RuntimeHooks& hooks, uint32_t max_retries) -> ModelReply {
+               const RuntimeHooks& hooks) -> ModelReply {
   for (uint32_t attempt = 0;; ++attempt) {
     CheckCancelled(stop);
     // Recheck on every retry: a user's revocation can happen during backoff.
@@ -345,12 +345,11 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
           continue;
         }
       }
-      if (!error.retryable || attempt >= max_retries) throw;
+      if (!error.retryable) throw;
       if (streamed) Emit(hooks, {"discardText", {}, {}, {}, true, 0, {}});
-      const auto delay = std::min(
-          std::chrono::milliseconds(120000),
+      const auto delay =
           std::max(error.retry_after,
-                   std::chrono::milliseconds(1000u << std::min(attempt, 6u))));
+                   std::chrono::milliseconds(1000u << std::min(attempt, 6u)));
       Emit(hooks, {"retrying",
                    std::string(error.what()) + "; retry " +
                        std::to_string(attempt + 1),
@@ -436,11 +435,11 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       request_context.omitted_before = context->omitted_before;
       request_context.result_limit = context->result_limit;
       try {
-        reply = ModelTurn(config, system, request_messages, tools, stop, hooks,
-                          options_.max_retries);
+        reply = ModelTurn(config, system, request_messages, tools, stop, hooks);
         context_refusals = 0;
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
+        // Bound attempts that already failed the provider’s context budget.
         if (!options_.compact || ++context_refusals > 3) throw CannotFit();
         context->input_tokens = 0;
         context->result_limit =
@@ -573,6 +572,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
                      result.usage});
       }
       CheckCancelled(stop);
+      // Bound the tokens spent repairing repeated invalid tool arguments.
       if (invalid && ++invalid_replies > 3)
         throw std::runtime_error(
             "model repeatedly returned malformed tool arguments");
@@ -681,7 +681,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
   auto silent_hooks = hooks;
   silent_hooks.event = {};
   auto reply = ModelTurn(compact_config, system, bounded_input, tools, stop,
-                         silent_hooks, options_.max_retries);
+                         silent_hooks);
   if (reply.stop_reason == "max_tokens" || reply.stop_reason == "tool_use")
     throw ProviderError("model did not complete the conversation summary");
   std::string text;

@@ -52,6 +52,7 @@
 #include <pty.h>
 #include <sched.h>
 #include <signal.h>
+#include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
@@ -63,6 +64,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -416,18 +418,13 @@ std::string collect_garbage(bool verify = false) {
   for (ssize_t n; (n = ::read(out[0], buf, sizeof buf)) > 0;)
     text.append(buf, static_cast<size_t>(n));
   ::close(out[0]);
-  // The reaper collects the exit status.
-  int st = -1;
-  for (int i = 0; i < 600; ++i) {
-    {
-      std::lock_guard<std::mutex> l(mu);
-      if (auto it = exit_status.find(pid); it != exit_status.end()) {
-        st = it->second;
-        exit_status.erase(it);
-        break;
-      }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  if (pid < 0) return "error cannot start store maintenance";
+  int st;
+  {
+    std::unique_lock lock(mu);
+    exited.wait(lock, [&] { return exit_status.contains(pid); });
+    st = exit_status.at(pid);
+    exit_status.erase(pid);
   }
   logf("store %s: %s", verify ? "check/repair" : "cleanup", text.c_str());
   if (verify) {
@@ -653,13 +650,8 @@ std::string stop_project(const std::string& id) {
   if (it == projects.end() || !it->second.running) return "ok";
   pid_t pid = it->second.pid;
   ::kill(pid, SIGTERM);
-  // tsugumid records interrupted runs on SIGTERM; give it time.
-  exited.wait_for(l, std::chrono::seconds(20),
-                  [&] { return !it->second.running; });
-  if (it->second.running) {
-    write_file(cgroup_dir(id) + "/cgroup.kill", "1");
-    exited.wait(l, [&] { return !it->second.running; });
-  }
+  // tsugumid records interrupted runs on SIGTERM before exiting.
+  exited.wait(l, [&] { return !it->second.running; });
   return "ok";
 }
 
@@ -873,13 +865,33 @@ int listen_vsock(int port) {
   return fd;
 }
 
+bool wait_for_empty_cgroup(const std::string& id) {
+  const auto path = cgroup_dir(id) + "/cgroup.events";
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return errno == ENOENT;
+  bool empty = false;
+  for (;;) {
+    char state[256];
+    const auto size = ::pread(fd, state, sizeof state, 0);
+    if (size < 0 && errno == EINTR) continue;
+    if (size <= 0) break;
+    if (std::string_view(state, static_cast<size_t>(size)).starts_with("populated 0\n")) {
+      empty = true;
+      break;
+    }
+    pollfd changed{fd, POLLPRI, 0};
+    if (::poll(&changed, 1, -1) < 0 && errno != EINTR) break;
+  }
+  ::close(fd);
+  return empty;
+}
+
 void shutdown_vm() {
   if (powering_off.exchange(true)) return;
   std::vector<std::string> ids;
   {
     std::lock_guard<std::mutex> l(mu);
-    for (const auto& [id, p] : projects)
-      if (p.running) ids.push_back(id);
+    for (const auto& [id, _] : projects) ids.push_back(id);
   }
   std::vector<std::jthread> stops;
   for (const auto& id : ids) stops.emplace_back([id] { stop_project(id); });
@@ -887,16 +899,18 @@ void shutdown_vm() {
   logf("syncing and remounting persistent disks read-only");
   // Run with the boot image's tools, independent of a cached vm-system.
   // The reaper may collect this child; the marker is managed by the script.
-  const auto child = ::fork();
+  bool drained = true;
+  for (const auto& id : ids) drained = wait_for_empty_cgroup(id) && drained;
+  if (!drained) logf("cannot verify that project cgroups drained; keeping dirty marker");
+  const auto child = drained ? ::fork() : -1;
   if (child == 0) {
     ::execl("/run/tsugumi/store-health", "store-health", "poweroff", "/persist",
-            nullptr);
+            "/run/tsugumi/vmd", nullptr);
     ::_exit(127);
   }
   if (child > 0) {
     std::unique_lock lock(mu);
-    exited.wait_for(lock, std::chrono::seconds(10),
-                    [&] { return exit_status.contains(child); });
+    exited.wait(lock, [&] { return exit_status.contains(child); });
     if (auto it = exit_status.find(child); it != exit_status.end()) {
       if (it->second != 0)
         logf("read-only remount failed; next boot will check the store");
@@ -1015,12 +1029,72 @@ void rpc(int conn) {
   ::close(conn);
 }
 
-void serve(int port, void (*handler)(int)) {
+// Boot waits for the daemon's socket or for the process to exit.
+int wait_daemon(pid_t pid, const fs::path& socket) {
+  const int child = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+  const int events = ::inotify_init1(IN_CLOEXEC);
+  if (child < 0 || events < 0 ||
+      ::inotify_add_watch(events, socket.parent_path().c_str(),
+                          IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF) < 0)
+    return 1;
+  for (;;) {
+    struct stat st{};
+    if (::stat(socket.c_str(), &st) == 0 && S_ISSOCK(st.st_mode)) return 0;
+    pollfd fds[] = {{child, POLLIN, 0}, {events, POLLIN, 0}};
+    const auto ready = ::poll(fds, 2, -1);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0 || fds[0].revents || !(fds[1].revents & POLLIN)) return 1;
+    std::array<char, 4096> buffer;
+    if (::read(events, buffer.data(), buffer.size()) <= 0) return 1;
+  }
+}
+
+// End every writer before the caller flushes the store and clears its marker.
+int stop_nix() {
+  for (;;) {
+    std::vector<pollfd> daemons;
+    for (const auto& proc : fs::directory_iterator("/proc")) {
+      const auto name = proc.path().filename().string();
+      char* end = nullptr;
+      const auto pid = std::strtol(name.c_str(), &end, 10);
+      if (*end || pid <= 0) continue;
+      const int fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+      if (fd < 0) {
+        if (errno == ESRCH) continue;
+        return 1;
+      }
+      std::string comm;
+      std::ifstream status(proc.path() / "comm");
+      pollfd process{fd, POLLIN, 0};
+      if (!std::getline(status, comm) || comm != "nix-daemon" ||
+          ::poll(&process, 1, 0) > 0) {
+        ::close(fd);
+        continue;
+      }
+      if (::syscall(SYS_pidfd_send_signal, fd, SIGTERM, nullptr, 0) < 0 &&
+          errno != ESRCH)
+        return 1;
+      daemons.push_back(process);
+    }
+    if (daemons.empty()) return 0;
+    for (auto& process : daemons) {
+      int ready;
+      do {
+        ready = ::poll(&process, 1, -1);
+      } while (ready < 0 && errno == EINTR);
+      ::close(process.fd);
+      if (ready < 0) return 1;
+    }
+  }
+}
+
+void serve(int port, void (*handler)(int), bool announce = false) {
   int fd = listen_vsock(port);
   if (fd < 0) {
     logf("cannot listen on vsock port %d: %s", port, std::strerror(errno));
     std::exit(1);
   }
+  if (announce) std::fprintf(stderr, "TSUGUMI-STAGE ready\n");
   for (;;) {
     int c = ::accept4(fd, nullptr, nullptr, SOCK_CLOEXEC);
     if (c < 0) continue;
@@ -1031,6 +1105,9 @@ void serve(int port, void (*handler)(int)) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--stop-nix") return stop_nix();
+  if (argc == 4 && std::string_view(argv[1]) == "--wait-daemon")
+    return wait_daemon(static_cast<pid_t>(std::atoi(argv[2])), argv[3]);
   for (int i = 1; i + 1 < argc; i += 2) {
     std::string k = argv[i];
     std::string v = argv[i + 1];
@@ -1083,10 +1160,9 @@ int main(int argc, char** argv) {
     std::unique_lock operation(lifecycle);
     shutdown_vm();
   }).detach();
-  std::thread(serve, opt.rpc_port, rpc).detach();
+  std::thread(serve, opt.rpc_port, rpc, false).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port,
        opt.rpc_port);
   // The host waits for this line on the console before connecting.
-  std::fprintf(stderr, "TSUGUMI-STAGE ready\n");
-  serve(opt.control_port, control);
+  serve(opt.control_port, control, true);
 }

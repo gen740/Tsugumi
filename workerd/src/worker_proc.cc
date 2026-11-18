@@ -246,9 +246,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
                        {"/bin/chmod", "-h", "u+rwx", target.string()});
     repair.uid = sp.uid;
     repair.gid = sp.gid;
-    const auto result = proc::run(
-        repair, nullptr,
-        std::chrono::steady_clock::now() + std::chrono::seconds(5), {});
+    const auto result = proc::run(repair, nullptr, std::nullopt, {});
     if (!proc::exited_ok(result.status))
       throw std::system_error(
           EACCES, std::generic_category(),
@@ -675,6 +673,7 @@ WorkerOutcome WorkerProc::call(
       } catch (const Failed&) {
       }
       cancel_sent = true;
+      // A worker can ignore cancellation and otherwise never exit.
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {

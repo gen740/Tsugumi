@@ -93,7 +93,7 @@ auto Invoke(const Connection::Completion& callback, Result result) -> void {
 struct Connection::State {
   struct Pending {
     Completion callback;
-    std::chrono::steady_clock::time_point deadline;
+    std::optional<std::chrono::steady_clock::time_point> deadline;
   };
   explicit State(Options value) : options(std::move(value)) {}
   Options options;
@@ -141,7 +141,7 @@ struct Connection::State {
     std::lock_guard lock(mutex);
     std::optional<std::chrono::steady_clock::time_point> deadline;
     for (const auto& [id, request] : pending)
-      if (!deadline || request.deadline < *deadline)
+      if (request.deadline && (!deadline || *request.deadline < *deadline))
         deadline = request.deadline;
     return deadline;
   }
@@ -152,7 +152,7 @@ struct Connection::State {
     {
       std::lock_guard lock(mutex);
       for (auto it = pending.begin(); it != pending.end();) {
-        if (it->second.deadline > now) {
+        if (!it->second.deadline || *it->second.deadline > now) {
           ++it;
           continue;
         }
@@ -215,8 +215,8 @@ struct Connection::State {
       std::lock_guard lock(mutex);
       if (closed || !opened)
         error = {ErrorCode::Closed, "RPC transport is not open"};
-      else if (timeout.count() <= 0)
-        error = {ErrorCode::InvalidArgument, "timeout must be positive"};
+      else if (timeout.count() < 0)
+        error = {ErrorCode::InvalidArgument, "timeout cannot be negative"};
       else {
         try {
           id = next_id;
@@ -233,8 +233,11 @@ struct Connection::State {
           id = envelope.id;
           next_id = id + 1;
           pending.emplace(
-              id,
-              Pending{completion, std::chrono::steady_clock::now() + timeout});
+              id, Pending{completion,
+                          timeout.count() == 0
+                              ? std::nullopt
+                              : std::optional{std::chrono::steady_clock::now() +
+                                              timeout}});
           // Assignment and enqueue share the lock: concurrent callers cannot
           // put request 2 on the wire before request 1.
           if (auto current = transport.lock())

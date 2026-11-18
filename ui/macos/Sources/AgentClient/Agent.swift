@@ -339,7 +339,6 @@ enum AgentObservation {
       try Task.checkCancellation()
       do { return try await read() }
       catch RPCError.disconnected { try await pause() }
-      catch RPCError.timeout { try await pause() }
       catch let error as CoreHostFailure where error.code == "disconnected" { try await pause() }
     }
   }

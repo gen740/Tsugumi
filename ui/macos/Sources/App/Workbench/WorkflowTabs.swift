@@ -54,7 +54,8 @@ struct WorkflowTabs: View {
       }
       }
     }
-    .tsugumiLoading(EnvironmentOverlay.loading(session))
+    .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
+      ? { session.stopEnvironment() } : nil)
     // Answered once: saving the answer takes a moment, and the alert must not come back meanwhile.
     .alert("このプロジェクトを信頼しますか？", isPresented: Binding(get: { session.projectTrust == 0 && !trustAnswered }, set: { _ in })) {
       Button("信頼する") { trustAnswered = true; Task { await session.setProjectTrust(true) } }
@@ -238,6 +239,13 @@ enum EnvironmentOverlay {
     case .ready:
       if session.connectionMessage != nil { return nil }
       return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), detail: "project snapshot", dirty: dirty)
+    }
+  }
+
+  static func canCancel(_ session: ProjectSession) -> Bool {
+    switch session.environment {
+    case .preparing, .starting, .reconnecting: return !session.connected
+    default: return false
     }
   }
 

@@ -160,36 +160,6 @@ import Testing
     #expect(host.browserOpens == (beginPending ? 0 : 1))
   }
 
-  @Test func terminationHasABoundedWaitForAnUnresponsiveHost() async throws {
-    let host = SignInHostDouble(delayBegin: false)
-    let auth = host.auth()
-    let model = ChatGPTSignInModel(authenticate: { _, _ in
-      try await auth.signIn { _ in await host.openBrowser() }
-    }, load: { await auth.status() })
-    model.signIn { Issue.record("Quit finished setup") }
-    let pending = try #require(model.signingIn)
-    try await until { host.browserOpens == 1 }
-    let delegate = AppDelegate()
-    delegate.activityBeforeQuit = { false }
-    delegate.localActivityBeforeQuit = { false }
-    delegate.stopRuntime = {}
-    let deadline = AsyncStream<Void>.makeStream()
-    delegate.signInTerminationWait = { _ in
-      for await _ in deadline.stream { return }
-    }
-    let replies = Counter()
-    delegate.terminationReply = { allowed in #expect(allowed); replies.value += 1 }
-    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
-    try await until { host.cancels == 1 }
-    #expect(replies.value == 0)
-    deadline.continuation.yield()
-    try await until { replies.value == 1 }
-    host.finishCancel()
-    await pending.value
-    await delegate.signInTerminationTask?.value
-    #expect(replies.value == 1, "A late acknowledgement must not reply twice")
-  }
-
   @Test(.hostService) func successSelectsChatGPTAndFinishesFirstStart() async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let fixtures = ChatResumeTests()

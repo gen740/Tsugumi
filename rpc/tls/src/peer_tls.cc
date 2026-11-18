@@ -72,6 +72,7 @@ auto ConfigureSocket(int fd, int timeout_seconds) -> void {
   Check(flags >= 0 && ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 &&
             ::fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
         "Cannot configure blocking peer socket");
+  if (timeout_seconds == 0) return;
   timeval timeout{timeout_seconds, 0};
   Check(::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) ==
                 0 &&

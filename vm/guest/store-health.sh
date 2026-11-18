@@ -39,18 +39,7 @@ case "$action" in
     # reconfigure it), so end every daemon and wait until none is left: after
     # that nothing can change registered store data. A daemon that survives
     # keeps the dirty marker, and the next boot checks the store.
-    daemons() {
-      for p in /proc/[0-9]*; do
-        [ "$(cat "$p/comm" 2>/dev/null)" != nix-daemon ] || echo "${p##*/}"
-      done
-    }
-    for pid in $(daemons); do kill -TERM "$pid" 2>/dev/null || true; done
-    n=0
-    while [ -n "$(daemons)" ]; do
-      n=$((n + 1))
-      [ "$n" -le 50 ] || exit 1
-      sleep 0.1
-    done
+    "$3" --stop-nix
     sync
     # Flush the store's backing filesystem, then durably clear the marker.
     bash "$0" clean "$persist"

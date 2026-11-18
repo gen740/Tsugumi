@@ -128,7 +128,7 @@ public actor EnvironmentManager {
     return (reply["bytes"] as? UInt64 ?? 0, Int(reply["paths"] as? UInt32 ?? 0))
   }
   public func activityBeforeQuit() async throws -> Bool { try await client.activityBeforeQuit() }
-  public func shutdownForQuit() async { await client.stopResident(timeout: .seconds(2)) }
+  public func shutdownForQuit() async { await client.stopResident(waitForExit: false) }
   public func shutdownForUpdate() async { await client.stopResident() }
   public func resetConfirmation(english: Bool) async throws -> String {
     let reply = try await runtime()

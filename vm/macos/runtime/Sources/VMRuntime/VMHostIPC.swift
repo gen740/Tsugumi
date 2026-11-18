@@ -31,8 +31,6 @@ public enum VMHostIPC {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw LauncherError.notReady("cannot create VM host socket") }
     noSigPipe(fd)
-    var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
     let connected = withUnsafePointer(to: &addr) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
@@ -45,8 +43,11 @@ public enum VMHostIPC {
   }
 
   public static func listen(path: String) throws -> Int32 {
-    unlink(path)
-    var addr = try address(path)
+    // Publish the socket pathname only after it can accept a connection.
+    let pending = path.hasSuffix(".sock") ? String(path.dropLast(5)) + ".new" : path + ".new"
+    unlink(pending)
+    defer { unlink(pending) }
+    var addr = try address(pending)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw LauncherError.notReady("cannot create VM host listener") }
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
@@ -55,7 +56,7 @@ public enum VMHostIPC {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
     }
     umask(mask)
-    guard bound == 0, Darwin.listen(fd, 64) == 0 else {
+    guard bound == 0, Darwin.listen(fd, 64) == 0, rename(pending, path) == 0 else {
       Darwin.close(fd)
       throw LauncherError.notReady("cannot bind VM host listener")
     }

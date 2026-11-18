@@ -47,28 +47,21 @@ async function host(): Promise<ServerInfo> {
     fs.mkdirSync(data, { recursive: true })
     const log = fs.openSync(path.join(data, 'server.log'), 'a')
     const child = spawn(process.execPath, [path.join(here, 'server.js'), '--reuse', '--port', process.env.TSUGUMI_WEB_PORT ?? '0'],
-      { detached: true, stdio: ['ignore', log, log] })
-    let startError: Error | undefined
-    child.on('error', e => { startError = e })
-    child.unref()
+      { detached: true, stdio: ['ignore', log, log, 'ipc'] })
     fs.closeSync(log)
-    const deadline = Date.now() + 30_000
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 200))
-      const next = await runningServer(data, buildIdentity)
-      // A concurrent command or MCP process may win the shared startup lock.
-      if (next) return next
-      if (child.exitCode !== null || startError) break
-    }
-    throw new Error(`the Tsugumi web UI host did not start; see ${path.join(data, 'server.log')}`)
+    return await new Promise<ServerInfo>((resolve, reject) => {
+      child.once('message', info => { child.unref(); resolve(info as ServerInfo) })
+      child.once('error', reject)
+      child.once('disconnect', () => reject(new Error(`the Tsugumi web UI host did not start; see ${path.join(data, 'server.log')}`)))
+    })
   })().finally(() => { starting = undefined })
   return starting
 }
 
-async function api<T>(route: string, body: unknown, timeoutMs = 5000, signal?: AbortSignal): Promise<T> {
+async function api<T>(route: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const s = await host()
   signal?.throwIfAborted()
-  const r = await request(s, route, body, timeoutMs, signal)
+  const r = await request(s, route, body, signal)
   const v = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error((v as { error?: string }).error ?? `${route}: HTTP ${r.status}`)
   return v as T
@@ -108,7 +101,7 @@ async function open(args: { folder?: unknown; create?: unknown; browser?: unknow
 async function call(name: string, args: unknown, signal: AbortSignal): Promise<Result> {
   if (name === OPEN_TOOL.name) return open((args ?? {}) as Record<string, unknown>)
   if (!current && !name.startsWith('agent_')) return text('No Tsugumi project is open: call tsugumi_open with its folder first.', true)
-  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} }, 360_000, signal)
+  const r = await api<{ text: string; isError: boolean; images?: { media_type: string; data: string }[] }>('/api/agent/call', { path: current, name, arguments: args ?? {} }, signal)
   const result = text(r.text, r.isError)
   for (const i of r.images ?? []) result.content.push({ type: 'image', data: i.data, mimeType: i.media_type })
   return result

@@ -74,7 +74,7 @@ auto Write(int fd, R::MessageT message) -> void {
   Exact(fd, prefix, true);
   Exact(fd, bytes, true);
 }
-auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd, 60); }
+auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd); }
 auto ValidId(const std::string& id) -> bool {
   return id != "local" && id != "auto" &&
          std::regex_match(id, std::regex("[a-z][a-z0-9-]{0,31}"));
@@ -356,8 +356,12 @@ struct ExecutionBroker::State {
       pollfd p{peer.fd, POLLOUT, 0};
       int error = 0;
       socklen_t size = sizeof error;
+      int ready;
+      do {
+        ready = ::poll(&p, 1, -1);
+      } while (ready < 0 && errno == EINTR);
       connected =
-          ::poll(&p, 1, 10000) > 0 &&
+          ready > 0 &&
           ::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
           !error;
     }

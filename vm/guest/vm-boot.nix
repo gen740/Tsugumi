@@ -129,7 +129,7 @@ let
     exec </dev/console >/dev/console 2>&1
     stage() { echo "TSUGUMI-STAGE $*"; }
     # Boot failures deliberately leave the dirty marker for the next boot.
-    fail() { echo "TSUGUMI-FAILED $*"; sync; sleep 1; ${busybox}/bin/poweroff -f; }
+    fail() { echo "TSUGUMI-FAILED $*"; sync; ${busybox}/bin/poweroff -f; }
     set -u
     stage boot
     mount -t proc proc /proc
@@ -166,6 +166,7 @@ let
     # Mark the disk before any store writes, including image registration.
     check_reason=$(${storeHealth} begin /persist) || fail "cannot mark the store disk"
     ln -s ${storeHealth} /run/tsugumi/store-health
+    ln -s ${vm-system}/vmd /run/tsugumi/vmd
     df -h /persist | tail -1
 
 
@@ -204,9 +205,10 @@ let
     nix config show substituters 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) print $i }' > /run/tsugumi-substituters
     chmod 0644 /run/tsugumi-substituters
     echo "binary caches: $(wc -l < /run/tsugumi-substituters) configured"
+    rm -f /nix/var/nix/daemon-socket/socket
     nix-daemon --daemon >/persist/nix-daemon.log 2>&1 &
-    for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
-    [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start (see /persist/nix-daemon.log)"
+    ${vm-system}/vmd --wait-daemon "$!" /nix/var/nix/daemon-socket/socket \
+      || fail "nix-daemon did not start (see /persist/nix-daemon.log)"
     echo "nix-daemon ready; store $(du -sh /persist/nix/upper 2>/dev/null | cut -f1) on the store disk"
 
     # Open projects: one virtiofs device each (tsugumi-<slot>), mounted by
@@ -216,7 +218,7 @@ let
     stage network
     ip() { ${busybox}/bin/ip "$@"; }
     ip link set lo up
-    ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
+    ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -t 0 || echo "no network (DHCP failed); Nix downloads will fail"
 
     # No project starts before repair succeeds.
     ${storeHealth} check /persist "$check_reason" \

@@ -444,15 +444,19 @@ final class ProjectSession {
 
   // MARK: - Connection
 
+  @ObservationIgnored private var startTask: Task<Void, Never>?
+
   func start() {
+    guard startTask == nil else { return }
     // Shown as starting at once: the loading card, never a "stopped" page
     // for the moment before the environment reports its state.
     switch environment {
     case .stopped, .incompatibleHistory: environment = .starting("")
     default: break
     }
-    Task { [weak self] in
+    startTask = Task { [weak self] in
       guard let self else { return }
+      defer { startTask = nil }
       if observerToken == nil, endpointOverride == nil {
         observerToken = await environments.observe(identity) { [weak self] s in
           Task { @MainActor in
@@ -461,7 +465,7 @@ final class ProjectSession {
           }
         }
       }
-      await connect()
+      if !Task.isCancelled { await connect() }
     }
   }
 
@@ -486,6 +490,7 @@ final class ProjectSession {
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
+    startTask?.cancel()
     terminals.closeAll()
     listenTask?.cancel()
     reconnectTask?.cancel()
@@ -505,8 +510,6 @@ final class ProjectSession {
   @ObservationIgnored var endpointOverride: Endpoint?
   /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
   var connectionFailed = false
-  /// The waits between tries to reach a tsugumid that has just started (seconds).
-  @ObservationIgnored var connectRetryDelays: [Double] = [0.2, 0.4, 0.8, 1.6, 2.0]
 
   var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
 
@@ -541,6 +544,7 @@ final class ProjectSession {
       await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
+      guard !Task.isCancelled, !closed else { return }
       setConnected(false)
       connectionFailed = error is Unreached
       connectionMessage = "\(error)"
@@ -556,22 +560,17 @@ final class ProjectSession {
     var description: String { "\(underlying)" }
   }
 
-  /// Connects to a tsugumid that has just started. Its port may not be
-  /// reachable at once, so a connection that cannot be made is tried again for
-  /// a few seconds (the web page does the same: WSL2 forwards a new port late).
   private func reach(_ ep: Endpoint) async throws -> RPCClient {
-    var attempt = 0
-    while true {
-      let c = RPCClient(endpoint: ep.url)
-      do {
-        _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
-        return c
-      } catch where Self.unreachable(error) {
-        await c.close()
-        guard !closed, attempt < connectRetryDelays.count else { throw Unreached(underlying: error) }
-        try? await Task.sleep(for: .seconds(connectRetryDelays[attempt]))
-        attempt += 1
-      }
+    let c = RPCClient(endpoint: ep.url)
+    do {
+      _ = try await withTaskCancellationHandler {
+        try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+      } onCancel: { Task { await c.close() } }
+      return c
+    } catch {
+      await c.close()
+      if Self.unreachable(error) { throw Unreached(underlying: error) }
+      throw error
     }
   }
 
@@ -597,8 +596,7 @@ final class ProjectSession {
       client = nil
       setConnected(false)
       // Hostd's Start waits for the current environment transition, including
-      // a guest restart caused by another chat or client. Only reach() retries
-      // the socket after hostd has confirmed readiness.
+      // a guest restart caused by another chat or client.
       if Task.isCancelled { return }
       await connect()
       if connected || Task.isCancelled { return }
@@ -660,12 +658,14 @@ final class ProjectSession {
   /// queued behind that work. Nothing here waits.
   func endForQuit() {
     closed = true
+    startTask?.cancel()
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil
   }
 
   func stopEnvironment() {
+    startTask?.cancel()
     // A stopped environment stays stopped: its connection's end is not a
     // loss to reconnect from (that would start it again).
     listenTask?.cancel()

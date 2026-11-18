@@ -161,8 +161,8 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(accepted.state == R::JobState::Queued &&
              accepted.fingerprint == fingerprint,
          "submit receipt");
-  expect(j.submit(job, bytes, core).deadline == accepted.deadline,
-         "resubmission reset deadline");
+  expect(j.submit(job, bytes, core).fingerprint == accepted.fingerprint,
+         "resubmission changed the receipt");
   rejected([&] { j.submit(job, spec(p.digest, 61), core); });
   rejected([&] { j.cancel(job, std::string(64, 'f')); });
   rejected([&] { j.put(job, p, core); });
@@ -261,7 +261,7 @@ auto journal_test(const stdfs::path& root) -> void {
   // A crashed release leaves the tombstone before payload deletion; recovery
   // completes it. No run data are promoted into the persistent store.
   fs::write_atomic(j.job_path(job) / "leftover", "data", 0600);
-  reopened.expire(job);
+  reopened.clean_released(job);
   expect(!stdfs::exists(j.job_path(job) / "leftover"),
          "release recovery did not erase scratch");
   auto insecure = root / "insecure";
@@ -283,14 +283,13 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   builder.Finish(R::JobSpec::Pack(builder, settings.get()));
   bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
                builder.GetSize());
-  const auto submitted = journal.submit(job, bytes, core);
-  expect(submitted.deadline == 0,
-         "a Card deadline must not start while queued");
-  journal.expire(job);
+  journal.clean_released(job);
+  expect(journal.status(job).state == R::JobState::Uploading,
+         "cleanup discarded a staged upload");
+  expect(journal.submit(job, bytes, core).state == R::JobState::Queued,
+         "submission did not queue the job");
   expect(journal.claim(job, 1, 1, "boot"),
          "queue consumed a Card or build budget");
-  expect(journal.status(job).deadline == 0,
-         "job has an aggregate wall deadline");
   auto decoded = parse_spec(bytes);
   expect(decoded->build_timeout_ms == 1 && decoded->timeout_seconds == 2,
          "build and call budgets were not kept separately");

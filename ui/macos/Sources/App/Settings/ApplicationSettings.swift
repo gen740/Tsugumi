@@ -238,7 +238,11 @@ private struct UpdateSettings: View {
           if case .ready = updater.state {
             Button("再起動して更新") { updater.installAndRelaunch() }
           } else {
-            Button("今すぐ確認") { Task { await updater.check() } }.disabled(updater.busy)
+            if updater.busy {
+              Button("キャンセル") { updater.cancelTransfer() }
+            } else {
+              Button("今すぐ確認") { updater.check() }
+            }
           }
         }
       }

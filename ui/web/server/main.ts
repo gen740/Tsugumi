@@ -379,7 +379,9 @@ function send(res: http.ServerResponse, status: number, v: unknown) {
   res.end(JSON.stringify(v))
 }
 
-const server = http.createServer(async (req, res) => {
+// Active uploads can pause. Node's idle keep-alive limit only releases pooled
+// descriptors after a completed response. An SSE response remains open.
+const server = http.createServer({ headersTimeout: 0, requestTimeout: 0 }, async (req, res) => {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v)
   try {
     await handle(req, res)
@@ -462,6 +464,9 @@ async function openOnRunningServer(): Promise<boolean> {
 const releaseStartup = await startupLock(support)
 try {
   if (await openOnRunningServer()) {
+    if (process.send) await new Promise<void>((resolve, reject) => {
+      process.send!(JSON.parse(fs.readFileSync(serverFile, 'utf8')), undefined, {}, (error: Error | null) => error ? reject(error) : resolve())
+    })
     releaseStartup()
     process.exit(0)
   }
@@ -490,6 +495,10 @@ server.on('listening', () => {
   fs.rmSync(serverFile + '.tmp', { force: true })
   fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ build: buildIdentity, port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
+  if (process.connected) {
+    process.send?.({ build: buildIdentity, port: p, pid: process.pid, agentKey } satisfies ServerInfo)
+    process.disconnect?.()
+  }
   releaseStartup()
   if (reuseServer) console.log(L('終了するには Ctrl-C を押します。'))
   if (openBrowser) openPage(launchProject)

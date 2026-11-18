@@ -2,7 +2,6 @@
 // change, and how it may be shown (the Card setting `displayMode`). A picture
 // is never shown at full strength as a result it is not a picture of.
 import assert from 'node:assert/strict'
-import { mock } from 'node:test'
 import { FigurePicture, FigurePreview, FigureState, FigureWanted, ThumbnailRequest, figureLook, figureMode } from '../src/model/moduleThumbnails'
 import { parse } from '../shared/json'
 import * as R from '../shared/gen/tsugumi/rpc'
@@ -227,7 +226,7 @@ assert.equal(figureMode('smooth'), 'update')
   assert.deepEqual(s.figureState('plot'), { mode: 'update', running: false, stale: false })
 }
 
-// (b) The renderer's frame: a reply that arrives after its request timed out
+// (b) The renderer's frame: a reply that arrives after its frame was closed
 // answers nothing, and neither does a frame that was closed.
 {
   type Listener = (event: { source: unknown; data: unknown }) => void
@@ -254,49 +253,48 @@ assert.equal(figureMode('smooth'), 'update')
   header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 4, 0, 0, 0, 2])
   const png = (tag: string) => `data:image/png;base64,${btoa(String.fromCharCode(...header))}${tag}`
   const req = (json: string): ThumbnailRequest => ({ key: json, name: 'plotly', json, width: 16, height: 16 })
-  mock.timers.enable({ apis: ['setTimeout'] })
   try {
-    const renderer = new FrameRenderer(20, async () => 'export function initialise() {}')
+    const renderer = new FrameRenderer(async () => 'export function initialise() {}')
     const first = renderer.draw(req('first'))
     send(frames[0], { tsugumi: 'ready' })
-    const rejected = assert.rejects(first, /timed out/)
+    const rejected = assert.rejects(first, /closed/)
     await tick()
-    mock.timers.tick(20)
+    renderer.close()
     await rejected
     const id1 = frames[0].contentWindow.posted[0].requestId
     let settled: unknown = 'pending'
     const second = renderer.draw(req('second')).then(v => (settled = v), e => (settled = e))
+    send(frames[1], { tsugumi: 'ready' })
     await tick()
-    const id2 = frames[0].contentWindow.posted[1].requestId
+    const id2 = frames[1].contentWindow.posted[0].requestId
     assert.notEqual(id1, id2)
     send(frames[0], { tsugumi: 'state', state: 'ready', requestId: id1, image: png('late') })
     await tick()
-    assert.equal(settled, 'pending', 'the late reply of the request that timed out answers nothing')
-    send(frames[0], { tsugumi: 'state', state: 'ready', requestId: id2, image: png('second') })
+    assert.equal(settled, 'pending', 'the late reply from the closed frame answers nothing')
+    send(frames[1], { tsugumi: 'state', state: 'ready', requestId: id2, image: png('second') })
     await second
     assert.deepEqual(settled, { image: png('second'), pixelBytes: 4 * 2 * 4 })
 
     // The queue closes a renderer that failed: the next request gets a new
     // frame, and whatever the old one still says is not this one's answer.
     renderer.close()
-    assert.equal(frames[0].removed, true)
+    assert.equal(frames[1].removed, true)
     settled = 'pending'
     const third = renderer.draw(req('third')).then(v => (settled = v), e => (settled = e))
-    assert.equal(frames.length, 2)
+    assert.equal(frames.length, 3)
     send(frames[0], { tsugumi: 'ready' })
-    send(frames[1], { tsugumi: 'ready' })
+    send(frames[2], { tsugumi: 'ready' })
     await tick()
-    const id3 = frames[1].contentWindow.posted[0].requestId
+    const id3 = frames[2].contentWindow.posted[0].requestId
     send(frames[0], { tsugumi: 'state', state: 'ready', requestId: id3, image: png('old-frame') })
     await tick()
     assert.equal(settled, 'pending', 'a closed frame cannot answer')
-    send(frames[1], { tsugumi: 'state', state: 'ready', requestId: id3, image: png('third') })
+    send(frames[2], { tsugumi: 'state', state: 'ready', requestId: id3, image: png('third') })
     await third
     assert.deepEqual(settled, { image: png('third'), pixelBytes: 32 })
     renderer.close()
     assert.equal(listeners.size, 0)
   } finally {
-    mock.timers.reset()
     win.addEventListener = before.add; win.removeEventListener = before.remove
     Object.assign(page.document as object, { createElement: before.create, body: before.body })
   }

@@ -36,7 +36,6 @@ struct TransportOptions {
   std::string endpoint;
   std::string subprotocol;
   size_t max_frame_bytes = 16u << 20;
-  std::chrono::milliseconds connect_timeout{10000};
 };
 
 struct TransportEvents {

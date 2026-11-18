@@ -100,15 +100,13 @@ auto RunHost(int argc, char** argv) -> int {
       throw std::runtime_error("--state-dir is required");
     std::filesystem::create_directories(options.state_dir);
     ::chmod(options.state_dir.c_str(), 0700);
+    // The short-lived startup lock is released both on publication and on exit.
+    auto starting = std::optional{
+        fs::FileLock::acquire(options.state_dir / "host.starting")};
     auto lock = fs::FileLock::try_acquire(options.state_dir / "host.lock");
     const auto ready_file = options.state_dir / "host.ready";
     if (!lock) {
       if (!ensure) return 4;
-      const auto deadline =
-          std::chrono::steady_clock::now() + std::chrono::seconds(15);
-      while (!std::filesystem::exists(ready_file) &&
-             std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
       std::cout << fs::read_file_or_throw(ready_file) << std::endl;
       return 0;
     }
@@ -160,7 +158,6 @@ auto RunHost(int argc, char** argv) -> int {
         throw std::runtime_error(
             "VM helper support and image paths are required");
       options.environment.directory = options.vm.support / "environments";
-      options.environment.start_timeout = std::chrono::seconds(90);
     }
     options.broker_socket = (broker_dir / "s").string();
     Service host(options);
@@ -198,6 +195,7 @@ auto RunHost(int argc, char** argv) -> int {
             {"server_id", json::Quote(options.server_id)},
             {"pid", std::to_string(::getpid())}}),
         0600);
+    starting.reset();
     if (ensure) std::cout << fs::read_file_or_throw(ready_file) << std::endl;
     int signal = 0;
     sigwait(&signals, &signal);

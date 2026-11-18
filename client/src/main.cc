@@ -168,7 +168,8 @@ auto JsonString(const std::string& value) -> std::string {
 auto Run(int argc, char** argv) -> int {
   C::Options options;
   std::string schema_path;
-  std::chrono::milliseconds timeout{60000};
+  // An optional budget supplied explicitly by the CLI caller.
+  std::chrono::milliseconds timeout{};
   for (int i = 1; i < argc; ++i) {
     const std::string argument = argv[i];
     const auto next = [&]() -> std::string {
@@ -195,8 +196,8 @@ auto Run(int argc, char** argv) -> int {
   }
   if (options.endpoint.empty() || schema_path.empty())
     throw std::runtime_error("--endpoint and --schema are required");
-  if (timeout.count() <= 0)
-    throw std::runtime_error("--timeout-ms must be positive");
+  if (timeout.count() < 0)
+    throw std::runtime_error("--timeout-ms cannot be negative");
   std::ifstream file(schema_path, std::ios::binary);
   if (!file) throw std::runtime_error("cannot open RPC schema");
   const C::Bytes schema{std::istreambuf_iterator<char>(file),

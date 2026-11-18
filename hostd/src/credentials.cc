@@ -55,6 +55,7 @@ auto Credentials::AccessToken(const std::string& id, std::string_view stale)
         "chatgpt_plan_disabled");
   const auto token = json::Text(value, "access_token");
   const auto expires = json::UInt(json::Get(value, "expires_at_ms"));
+  // Refresh before expiry so a token remains usable while issuing the request.
   if (!token.empty() &&
       ((!stale.empty() && token != stale) ||
        (stale.empty() && expires > static_cast<uint64_t>(Now() + 300000))))

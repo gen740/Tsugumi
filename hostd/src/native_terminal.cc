@@ -43,12 +43,20 @@ struct NativeTerminals::Impl {
     pid_t pid = -1;
     std::mutex io;
     std::atomic<bool> finished = false;
+    int wake[2] = {-1, -1};
+    std::atomic<bool> closing = false;
     std::jthread reader;
-    ~Session() {
-      reader.request_stop();
+    auto Close() -> void {
+      if (closing.exchange(true)) return;
+      if (wake[1] >= 0) (void)::write(wake[1], "x", 1);
       if (pid > 0) ::kill(-pid, SIGHUP);
+    }
+    ~Session() {
+      Close();
       if (reader.joinable()) reader.join();
       if (fd >= 0) ::close(fd);
+      for (auto pipe : wake)
+        if (pipe >= 0) ::close(pipe);
       if (pid > 0) {
         ::kill(-pid, SIGKILL);
         ::kill(pid, SIGKILL);
@@ -77,6 +85,7 @@ auto NativeTerminals::Shutdown() -> void {
     impl_->stopping = true;
     sessions.swap(impl_->sessions);
   }
+  for (const auto& [_, session] : sessions) session->Close();
   sessions.clear();
 }
 auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
@@ -102,6 +111,9 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
         request.cols >= 1000)
       throw std::runtime_error("Invalid terminal size");
     auto session = std::make_shared<Impl::Session>();
+    if (::pipe(session->wake) != 0)
+      throw std::runtime_error("Cannot create terminal cancellation pipe");
+    for (auto fd : session->wake) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     int slave = -1;
     winsize size{};
     size.ws_row = static_cast<unsigned short>(request.rows);
@@ -158,15 +170,14 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     result.session = ++s.next;
     s.sessions[result.session] = session;
     auto* raw = session.get();
-    session->reader = std::jthread(
-        [raw, id = result.session, output = s.output](std::stop_token stop) {
+    session->reader =
+        std::jthread([raw, id = result.session, output = s.output]() {
           std::array<uint8_t, 8192> bytes{};
-          while (!stop.stop_requested()) {
-            pollfd descriptor{raw->fd, POLLIN, 0};
-            const auto ready = ::poll(&descriptor, 1, 100);
+          while (!raw->closing) {
+            pollfd fds[] = {{raw->fd, POLLIN, 0}, {raw->wake[0], POLLIN, 0}};
+            const auto ready = ::poll(fds, 2, -1);
             if (ready < 0 && errno == EINTR) continue;
-            if (ready < 0) break;
-            if (!ready) continue;
+            if (ready < 0 || fds[1].revents) break;
             const auto count = ::read(raw->fd, bytes.data(), bytes.size());
             if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
             if (count <= 0) break;
@@ -178,6 +189,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
           H::HostTerminalDataT event;
           event.session = id;
           event.closed = true;
+          raw->Close();
           if (output) output(event);
           raw->finished = true;
         });
@@ -193,6 +205,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
   if (request.action == H::TerminalAction::Close) {
     s.sessions.erase(found);
     lock.unlock();
+    session->Close();
     session.reset();
     return result;
   }
@@ -211,9 +224,12 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
   } else if (request.action == H::TerminalAction::Input) {
     size_t offset = 0;
     while (offset < request.data.size()) {
-      pollfd descriptor{session->fd, POLLOUT, 0};
-      if (::poll(&descriptor, 1, 1000) <= 0)
-        throw std::runtime_error("Host terminal input timed out");
+      pollfd fds[] = {{session->fd, POLLOUT, 0}, {session->wake[0], POLLIN, 0}};
+      const auto ready = ::poll(fds, 2, -1);
+      if (ready < 0 && errno == EINTR) continue;
+      if (ready < 0 || fds[1].revents ||
+          (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)))
+        throw std::runtime_error("Host terminal closed during input");
       const auto written = ::write(session->fd, request.data.data() + offset,
                                    request.data.size() - offset);
       if (written < 0 && (errno == EINTR || errno == EAGAIN)) continue;

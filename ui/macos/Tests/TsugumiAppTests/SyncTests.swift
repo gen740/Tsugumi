@@ -198,13 +198,11 @@ import TsugumiTestSupport
     }
   }
 
-  /// A tsugumid that cannot be reached is tried again for a moment and then
-  /// told as a connection failure, not as a project that could not be read.
+  /// A transport failure is surfaced as a connection failure.
   @Test func anUnreachableTsugumidIsToldAsAConnectionFailure() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.connectRetryDelays = [0.01, 0.01]
     s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
     s.start()
     try await waitForModel { !(s.connectionMessage == nil) }

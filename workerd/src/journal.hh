@@ -16,7 +16,6 @@ struct Record {
   std::string fingerprint;
   std::string result;
   std::string diagnostic;
-  uint64_t deadline = 0;
   uint64_t pid = 0;
   uint64_t start = 0;
   std::string boot;
@@ -58,7 +57,7 @@ class Journal {
                            const std::string& boot) -> void;
   auto finish(std::string_view job, R::JobState state,
               const std::string& result, const std::string& diagnostic) -> void;
-  auto expire(std::string_view job) -> void;
+  auto clean_released(std::string_view job) -> void;
   // Called only after the sandbox has stopped. Returns a verified manifest.
   auto import_results(std::string_view job) -> std::string;
 

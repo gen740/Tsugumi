@@ -1,15 +1,12 @@
 """Guest boot decision and durable marker contract, without Nix or a VM."""
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "vm/guest/store-health.sh"
-# A Nix build or container may have no /bin/cat.
-REAL_CAT = shutil.which("cat") or "/bin/cat"
 
 
 def guest(tmp_path, monkeypatch):
@@ -19,8 +16,8 @@ def guest(tmp_path, monkeypatch):
         "sync": ('printf "sync %s marker=%s\\n" "$*" "$(test -e "$HEALTH/running" && echo present || echo absent)" >> "$CALLS"; '
                  '[ "${FAIL_SYNC:-never}" != "$*" ]'),
         "nix-store": 'printf "nix-store %s\\n" "$*" >> "$CALLS"; echo "repaired /nix/store/example"; exit "${CHECK_STATUS:-0}"',
-        # Never signal a real daemon on the machine running this test.
-        "cat": 'case "$1" in /proc/*/comm) exit 1 ;; esac; exec ' + REAL_CAT + ' "$@"',
+        # Wait for the fixture daemon exit rather than signal any real process.
+        "vmd": 'test "$1" = --stop-nix && [ "${FAIL_STOP:-0}" = 0 ]',
     }
     for name, code in commands.items():
         file = tools / name
@@ -31,6 +28,8 @@ def guest(tmp_path, monkeypatch):
     persist = tmp_path / "persist"
     monkeypatch.setenv("HEALTH", str(persist / "store-health"))
     def run(action, *args):
+        if action == "poweroff":
+            args = (str(tools / "vmd"),)
         return subprocess.run(["bash", str(SCRIPT), action, str(persist), *args],
                               capture_output=True, text=True)
     return persist / "store-health", run
@@ -60,8 +59,6 @@ def test_failed_backing_filesystem_sync_retains_marker(tmp_path, monkeypatch):
     assert (health / "running").exists()
     monkeypatch.delenv("FAIL_SYNC")
     assert run("begin").stdout.strip() == "unclean"
-
-
 
 
 @pytest.mark.parametrize("clean_stop", [False, True])

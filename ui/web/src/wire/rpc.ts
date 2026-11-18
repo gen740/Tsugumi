@@ -166,7 +166,7 @@ export class RPCClient {
   }
 
   /** Sends one request and waits for its reply. Failure replies throw RPCFailure. */
-  async call<T>(type: RequestPayload, value: RequestT['value'], timeoutMs = 60_000): Promise<T> {
+  async call<T>(type: RequestPayload, value: RequestT['value'], timeoutMs = 0): Promise<T> {
     const id = this.nextId++
     const msg = new MessageT(id, Payload.Request, new RequestT(type, value))
     const b = new Builder(1024)
@@ -206,7 +206,7 @@ export class RPCClient {
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
     return this.call<R.RunHistoryDeleteResultT>(RequestPayload.RunHistoryDeleteRequest,
-      Object.assign(new R.RunHistoryDeleteRequestT(), { opId, endedBefore: endedBefore === null ? null : BigInt(endedBefore) }), 300_000)
+      Object.assign(new R.RunHistoryDeleteRequestT(), { opId, endedBefore: endedBefore === null ? null : BigInt(endedBefore) }))
   }
   /** The types of an _outputs.fbs text as the core compiles them (bfbs); with
    *  a port and a type, also the text with that port changed. Saves nothing. */
@@ -312,14 +312,14 @@ export class RPCClient {
   }
   /** Looks a flake up for nixSources (nothing is saved). */
   resolveNixSource(ref: string) {
-    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)
+    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }))
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
-    return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
+    return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }))
   }
   deleteRunScratch(opId: string, paths: string[]) {
-    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths), 300_000)
+    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths))
   }
   cacheUsage() {
     return this.call<R.ProjectCacheUsageResultT>(RequestPayload.ProjectCacheUsageRequest, new R.ProjectCacheUsageRequestT())
@@ -383,13 +383,14 @@ const nativeError = (error: NativeClientError) => new RPCError(
 )
 
 /** Browser project connections use the shared C++ byte transport. */
-export async function webSocketTransport(url: string): Promise<Transport> {
+export async function webSocketTransport(url: string, signal?: AbortSignal): Promise<Transport> {
   if (!wasmModule) {
     const moduleUrl = '/client/tsugumi-client.js'
     wasmModule = import(moduleUrl).then((module) => module.default() as Promise<WasmModule>)
     wasmModule.catch(() => { wasmModule = undefined })
   }
   const module = await wasmModule
+  signal?.throwIfAborted()
   const client = new module.RpcClient(url, 0)
   let released = false
   const release = () => {
@@ -411,12 +412,15 @@ export async function webSocketTransport(url: string): Promise<Transport> {
     // Free the binding after the C++ callback has unwound.
     queueMicrotask(release)
   })
+  signal?.addEventListener('abort', release, { once: true })
   try {
     await new Promise<void>((resolve, reject) => client.start((error) => error ? reject(nativeError(error)) : resolve()))
     return transport
   } catch (error) {
     release()
     throw error
+  } finally {
+    signal?.removeEventListener('abort', release)
   }
 }
 

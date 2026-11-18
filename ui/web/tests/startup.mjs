@@ -63,9 +63,11 @@ try {
     await serverRequest(s, '/api/page/open', { path: '/project with spaces' })
     assert.deepEqual(JSON.parse(requests.at(-1).options.body), { path: '/project with spaces' })
     assert.equal(requests.at(-1).options.headers['x-tsugumi-agent'], s.agentKey)
-    assert.equal(timeouts.at(-1), 5000)
-    await serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, 360_000)
-    assert.equal(timeouts.at(-1), 360_000)
+    assert.equal(requests.at(-1).options.signal, undefined)
+    const cancel = new AbortController()
+    await serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, cancel.signal)
+    assert.equal(requests.at(-1).options.signal, cancel.signal)
+    assert.deepEqual(timeouts, [])
     globalThis.fetch = async () => { throw new Error('unreachable') }
     assert.deepEqual(await runningServer(dir, identity), s)
   } finally { globalThis.fetch = originalFetch; AbortSignal.timeout = originalTimeout }

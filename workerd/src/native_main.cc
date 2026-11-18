@@ -583,6 +583,7 @@ int run_shell(const std::string& bash, const std::vector<std::string>& args,
       if (!g_cancel.load()) *timed_out = true;
       ::kill(-pid, SIGTERM);
       term = true;
+      // A cancelled shell step can ignore TERM and hold the worker.
       kill_at = now + std::chrono::seconds(1);
     } else if (term && now >= kill_at) {
       ::kill(-pid, SIGKILL);

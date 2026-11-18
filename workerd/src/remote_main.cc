@@ -181,21 +181,12 @@ auto check_namespace(const std::string& self) -> void {
   posix_spawn_file_actions_destroy(&actions);
   if (rc != 0)
     throw std::runtime_error("cannot start the unshare namespace launcher");
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
   int status = 0;
-  for (;;) {
-    const auto done = ::waitpid(pid, &status, WNOHANG);
-    if (done == pid) break;
-    if (done < 0 && errno != EINTR)
-      throw std::runtime_error("cannot wait for namespace check");
-    if (std::chrono::steady_clock::now() >= deadline) {
-      ::kill(pid, SIGKILL);
-      while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
-      }
-      throw std::runtime_error("namespace startup check timed out");
-    }
-    std::this_thread::sleep_for(10ms);
-  }
+  pid_t done;
+  do {
+    done = ::waitpid(pid, &status, 0);
+  } while (done < 0 && errno == EINTR);
+  if (done < 0) throw std::runtime_error("cannot wait for namespace check");
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     throw std::runtime_error(
         "remote worker requires unprivileged user, mount and PID namespaces");
@@ -359,6 +350,7 @@ class Daemon {
             if (state.state == R::JobState::Cancelling &&
                 !cancelling_.contains(key))
               cancelling_[key] = now_ms();
+            // A cancelled sandbox may ignore its stop and retain a worker slot.
             if (cancelling_.contains(key) &&
                 now_ms() > cancelling_[key] + 15000)
               verified_kill(state);
@@ -374,7 +366,7 @@ class Daemon {
           if (terminal(state.state)) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
           }
-          p->expire(job);
+          p->clean_released(job);
           if (p->status(job).state == R::JobState::Queued)
             pending.emplace_back(p, job);
         } catch (const std::exception& e) {
@@ -664,7 +656,7 @@ auto run(Config config) -> int {
         clients.push_back({std::thread([&, fd, done] {
                              Fd connection(fd);
                              try {
-                               peer_tls::ConfigureSocket(fd, 15);
+                               peer_tls::ConfigureSocket(fd);
                                peer_tls::Stream stream(tls, fd, true);
                                daemon.serve_stream(stream);
                              } catch (const std::exception&) {

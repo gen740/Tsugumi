@@ -215,7 +215,6 @@ class AgentFixture : public ::testing::Test {
     options.protocol = client::Protocol::Agent;
     options.endpoint = websocket ? JsonString(ready, "/endpoint")
                                  : "unix:" + JsonString(ready, "/unix_socket");
-    options.connect_timeout = 3s;
     auto connection = std::make_unique<client::Connection>(options);
     auto opened = connection->Start();
     if (opened.wait_for(4s) != std::future_status::ready)

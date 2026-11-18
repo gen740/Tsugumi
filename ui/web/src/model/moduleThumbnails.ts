@@ -47,7 +47,10 @@ export class ModuleThumbnailQueue {
       }
       const abort = () => {
         target.waiting.delete(waiter); waiter.resolve(undefined)
-        if (!target.waiting.size && target !== this.active) this.jobs.delete(request.key)
+        if (!target.waiting.size) {
+          this.jobs.delete(request.key)
+          if (target === this.active) this.renderer.close()
+        }
       }
       target.waiting.add(waiter)
       signal.addEventListener('abort', abort, { once: true })
@@ -79,7 +82,7 @@ export class ModuleThumbnailQueue {
         for (const waiter of job.waiting) waiter.reject(error)
         this.renderer.close()
       } finally {
-        this.jobs.delete(job.request.key)
+        if (this.jobs.get(job.request.key) === job) this.jobs.delete(job.request.key)
         this.active = undefined
       }
     }

@@ -136,10 +136,15 @@ final class Terminals: @unchecked Sendable {
     }
   }
   func closeAll() { lock.withLock { for fd in descriptors.values { shutdown(fd, SHUT_RDWR) } } }
-  func input(_ session: UInt64, _ data: [UInt8]) throws {
-    try lock.withLock {
-      guard let fd = descriptors[session] else { return }
-      try writeAllToTerminal(fd, Data(data))
+  func input(_ session: UInt64, _ data: [UInt8]) async throws {
+    let fd = lock.withLock { descriptors[session].map { dup($0) } ?? -1 }
+    guard fd >= 0 else { return }
+    try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Void, Error>) in
+      Thread.detachNewThread {
+        defer { Darwin.close(fd) }
+        do { try writeAllToTerminal(fd, Data(data)); answer.resume() }
+        catch { answer.resume(throwing: error) }
+      }
     }
   }
   func close(_ session: UInt64) { lock.withLock { if let fd = descriptors[session] { shutdown(fd, SHUT_RDWR) } } }
@@ -184,7 +189,7 @@ actor Driver {
   func process(_ key: String) async throws -> Tsugumi_VMHost_ProcessT {
     let value = Tsugumi_VMHost_ProcessT()
     guard case .running = vm.state else { return value }
-    let status = try await vm.request("status", timeout: 10)
+    let status = try await vm.request("status")
     for item in status.split(separator: " ") {
       let parts = item.split(separator: ":")
       if parts.count == 2, parts[0] == key, let pid = Int64(parts[1]) {
@@ -217,9 +222,9 @@ actor Driver {
     case .state: result.console = vm.console.snapshot.suffix(200).map { Optional($0) }
     case .shutdown: exitState.begin(); await vm.shutdown(exiting: true); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
     case .verifystore:
-      result.message = try await vm.request("verify-store", timeout: 3600)
+      result.message = try await vm.request("verify-store")
     case .cleanupstore:
-      let fields = try await vm.request("gc", timeout: 3600).split(separator: " ")
+      let fields = try await vm.request("gc").split(separator: " ")
       result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
     case .forgetproject:
       let key = request.projectId ?? ""
@@ -253,8 +258,6 @@ actor Driver {
     case .open_:
       guard let key = request.project, (try await process(key)).running else { throw LauncherError.notReady("the project is not running") }
       let fd = try await vm.connect(port: SharedVM.controlPort)
-      var timeout = timeval(tv_sec: 5, tv_usec: 0)
-      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
       do {
         try writeAllToTerminal(fd, Data("shell \(key) \(max(request.rows, 2)) \(max(request.cols, 10))\n".utf8))
         var line = Data(), byte: UInt8 = 0
@@ -266,8 +269,8 @@ actor Driver {
         terminals.add(fd, session)
         return
       } catch { Darwin.close(fd); throw error }
-    case .input: try terminals.input(request.session, request.data)
-    case .resize: _ = try await vm.request("resize \(request.session) \(max(request.rows, 2)) \(max(request.cols, 10))", timeout: 5)
+    case .input: try await terminals.input(request.session, request.data)
+    case .resize: _ = try await vm.request("resize \(request.session) \(max(request.rows, 2)) \(max(request.cols, 10))")
     case .close: terminals.close(request.session)
     }
     peer.emit(encode(result, reply: .hostterminal, id: id))
@@ -303,8 +306,6 @@ Thread.detachNewThread {
     let fd = accept(listener, nil, nil)
     if fd < 0 { if errno == EINTR { continue }; break }
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC); noSigPipe(fd)
-    var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     let peer = Peer(fd)
     Thread.detachNewThread {
       defer {

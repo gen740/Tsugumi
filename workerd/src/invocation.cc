@@ -171,6 +171,7 @@ auto run_worker(const W::WorkerCall& call,
   request.delivery = workerd::OutputDelivery::transferred_files;
   request.stop_before_outputs = true;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
+  // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
   request.transfer = progress;

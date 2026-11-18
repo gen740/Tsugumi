@@ -126,20 +126,27 @@ public actor CoreHostClient {
   public func activityBeforeQuit() async throws -> Bool {
     guard FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("host.ready").path) else { return false }
     let activity: Tsugumi_Host_HostActivityT = try await hostCall(
-      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), timeout: .seconds(3), existingOnly: true)
+      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), existingOnly: true)
     return activity.busy
   }
 
-  public func stopResident(timeout: Duration = .seconds(47)) async {
+  public func stopResident(waitForExit: Bool = true) async {
     HostProcessLifetime.shared.end()
     let file = stateDirectory.appendingPathComponent("host.ready")
     guard let data = try? Data(contentsOf: file),
           let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let pid = value["pid"] as? Int32, pid > 1 else { return }
-    HostProcessLifetime.shared.requestStop(pid)
-    let deadline = ContinuousClock.now + timeout
-    while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
-      try? await Task.sleep(for: .milliseconds(100))
+    if !waitForExit {
+      HostProcessLifetime.shared.requestStop(pid)
+      return
+    }
+    await withCheckedContinuation { continuation in
+      let exit = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
+      exit.setEventHandler { exit.cancel() }
+      exit.setCancelHandler { continuation.resume() }
+      exit.activate()
+      if kill(pid, 0) == 0 { HostProcessLifetime.shared.requestStop(pid) }
+      else { exit.cancel() }
     }
   }
 
@@ -261,8 +268,7 @@ public actor CoreHostClient {
     let data: Data
     do {
       data = try await withCheckedThrowingContinuation { continuation in
-        let stoppingRuntime = method == "HostRuntimeRequest" && (fields["action"] as? Tsugumi_Host_RuntimeAction) == .shutdown
-        transport.call(frame, timeout: .seconds(stoppingRuntime ? 45 : ["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+        transport.call(frame, timeout: .zero, continuation: continuation)
       }
     } catch RPCError.disconnected {
       // The pending reply can fail before the close observer reaches this
@@ -280,7 +286,7 @@ public actor CoreHostClient {
 
   /// Stateless presentation operations use the host contract, independently of a project socket.
   public func hostCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject,
-                                          timeout: Duration = .seconds(120), existingOnly: Bool = false) async throws -> T {
+                                          timeout: Duration = .zero, existingOnly: Bool = false) async throws -> T {
     try await connect(existingOnly: existingOnly)
     guard let transport = transports[true], nextID < UInt64.max else { throw RPCError.disconnected }
     nextID += 1
