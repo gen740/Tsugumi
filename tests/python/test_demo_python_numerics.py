@@ -31,6 +31,7 @@ from conftest import demo_environment
 from projects import start_run, wait_run
 from test_demos import connect, edit_card, set_param, stderr
 from tsugumi_client import path, text
+from Tsugumi.Data.DisplayValue import DisplayValue
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_DEMO_RUNS") != "1",
@@ -272,12 +273,17 @@ def test_pharmacokinetics(tmp_path):
 
         # The interactive plot: one panel per regimen, each with the window band, on one scale.
         shown = c.call("RunRecordRequest", runId=rid, card=path("simulate")).record.display
-        assert shown.valueType == 7 and text(shown.value.module).endswith("-tsugumi-view-plotly")
+        assert shown.valueType == DisplayValue.DisplayModule and text(shown.value.name) == "plotly"
         fig = json.loads(text(shown.value.configJson))
-        assert len(fig["data"]) == len(settings["doses_mg"]) == len(fig["layout"]["shapes"])
-        assert "架空" in fig["layout"]["title"]["text"]
-        ranges = [v["range"] for k, v in fig["layout"].items() if k.startswith("yaxis")]
-        assert len(ranges) == len(settings["doses_mg"]) and all(r == ranges[0] for r in ranges)
+        layout = fig["layout"]
+        axes = {trace.get("yaxis", "y") for trace in fig["data"] if trace.get("x") and trace.get("y")}
+        assert len(axes) == len(settings["doses_mg"])
+        bands = {shape["yref"] for shape in layout["shapes"]
+                 if shape.get("y0") == settings["low_mg_l"] and shape.get("y1") == settings["high_mg_l"]}
+        assert axes <= bands
+        ranges = {tuple(layout["yaxis" + axis[1:]]["range"]) for axis in axes}
+        (low, high), = ranges
+        assert low <= settings["low_mg_l"] < settings["high_mg_l"] <= high
 
         args = (settings["half_life_h"], settings["ka_per_h"], settings["volume_l"], settings["bioavailability"], settings["days"] * 24)
         checks = result(c, rid, "check")

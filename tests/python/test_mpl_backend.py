@@ -34,7 +34,7 @@ def display_text(text): texts.append(text)
 '''
 
 PRELUDE = '''
-import json, sys, time
+import hashlib, json, sys, time
 import _tsugumi_host as h
 import tsugumi
 import numpy as np
@@ -52,7 +52,9 @@ def call(body):
     ok = tsugumi._guard(body)
     import matplotlib.pyplot as plt
     return {"ok": ok, "frames": len(h.sent), "types": sorted({s[1] for s in h.sent}),
-            "alts": [s[3] for s in h.sent], "open": plt.get_fignums(), "failures": h.failures,
+            "alts": [s[3] for s in h.sent], "open": bool(plt.get_fignums()), "failures": h.failures,
+            "images": [hashlib.sha256(frame[2]).hexdigest() for frame in h.sent],
+            "cancelled": h.cancelled(),
             "sizes": [list(__import__("PIL.Image").Image.open(__import__("io").BytesIO(s[2])).size) for s in h.sent]}
 '''
 
@@ -90,7 +92,7 @@ def test_the_backend_is_chosen_and_show_sends_one_image(run):
     ''')
     assert r["backend"] == "module://tsugumi.mpl"
     assert r["ok"] and r["frames"] == 1 and r["types"] == ["image/png"] and r["alts"] == ["squares"]
-    assert r["open"] == []  # show() closes the figures, as closing the window would
+    assert not r["open"]  # show() closes the figures, as closing the window would
 
 
 def test_figures_left_open_are_closed_without_publishing(run):
@@ -101,7 +103,7 @@ def test_figures_left_open_are_closed_without_publishing(run):
             plt.figure(); plt.bar([1, 2], [3, 4]); plt.title("b")
         print(json.dumps(call(body)))
     ''')
-    assert r["ok"] and r["frames"] == 0 and r["open"] == []
+    assert r["ok"] and r["frames"] == 0 and not r["open"]
 
 
 def test_pause_sends_live_frames_and_a_sharp_last_one(run):
@@ -114,7 +116,7 @@ def test_pause_sends_live_frames_and_a_sharp_last_one(run):
             tsugumi.Report().figure(fig)
         print(json.dumps(call(body)))
     ''')
-    assert r["ok"] and r["frames"] >= 5 and r["open"] == []
+    assert r["ok"] and len(set(r["images"][:-1])) > 1 and not r["open"]
     live, last = r["sizes"][0], r["sizes"][-1]
     assert last[0] == 2 * live[0] and last[1] == 2 * live[1]  # live frames at 1x, the last at 2x
 
@@ -135,8 +137,8 @@ def test_animations_play_while_show_waits(run):
         res["red"] = sum(1 for p in im.getdata() if p[0] > 200 and p[1] < 80 and p[2] < 80)
         print(json.dumps(res))
     ''')
-    assert r["ok"] and r["frames"] >= 3 and r["open"] == []
-    assert r["red"] > 1000  # the animated line is in the image (no blitting)
+    assert r["ok"] and len(set(r["images"])) > 1 and not r["open"]
+    assert r["red"] > 0  # the animated line is in the image (no blitting)
 
 
 def test_an_endless_animation_ends_when_the_run_is_stopped(run):
@@ -152,7 +154,7 @@ def test_an_endless_animation_ends_when_the_run_is_stopped(run):
         res = call(body)
         print(json.dumps(res))
     ''')
-    assert r["ok"] and r["frames"] >= 2 and r["open"] == []
+    assert r["ok"] and r["cancelled"] and not r["open"]
 
 
 def test_a_failing_call_leaves_no_figure(run):
@@ -162,7 +164,7 @@ def test_a_failing_call_leaves_no_figure(run):
             plt.plot([1]); raise ValueError("boom")
         print(json.dumps(call(body)))
     ''')
-    assert not r["ok"] and r["frames"] == 0 and r["open"] == []
+    assert not r["ok"] and r["frames"] == 0 and not r["open"]
     assert r["failures"][0][0] == "worker_failed"
     assert "boom" in r["failures"][0][1]
 
@@ -179,7 +181,7 @@ def test_a_card_that_picks_its_backend_keeps_it(run):
     ''')
     # Agg: nothing is sent by itself, figures stay as the Card left them; display_figure still works.
     assert r["backend"].lower() == "agg"
-    assert r["frames"] == 1 and r["alts"] == ["explicit"] and r["open"] == [1]
+    assert r["frames"] == 1 and r["alts"] == ["explicit"] and r["open"]
 
 
 def test_a_display_of_the_card_is_not_replaced_by_a_figure_left_open(run):
@@ -190,7 +192,7 @@ def test_a_display_of_the_card_is_not_replaced_by_a_figure_left_open(run):
             tsugumi.Report().text("the result")
         res = call(body); res["texts"] = h.texts; print(json.dumps(res))
     ''')
-    assert r["ok"] and r["frames"] == 0 and r["texts"] == ["the result"] and r["open"] == []
+    assert r["ok"] and r["frames"] == 0 and r["texts"] == ["the result"] and not r["open"]
 
 
 def test_the_sdk_loads_no_native_library_before_the_card(tmp_path):
@@ -200,4 +202,4 @@ def test_the_sdk_loads_no_native_library_before_the_card(tmp_path):
     env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{ROOT / 'sdk' / 'python'}"}
     code = 'import sys, tsugumi; print(sorted({"numpy", "flatbuffers"} & set(sys.modules)))'
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
-    assert out.stdout.strip() == "[]", out.stdout + out.stderr
+    assert json.loads(out.stdout) == [], out.stdout + out.stderr

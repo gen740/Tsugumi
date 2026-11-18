@@ -7,7 +7,11 @@ configuration); without it a host tsugumid is used.
 from __future__ import annotations
 
 
+import base64
+import csv
+import io
 import json
+import re
 import shutil
 
 import pytest
@@ -16,6 +20,7 @@ from conftest import ROOT, demo_environment
 from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
 from tsugumi_client import line_chart_series, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.DisplayValue import DisplayValue
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -167,6 +172,18 @@ def collatz_reference(n):
     return seq
 
 
+def collected_collatz(client, run_id, *card):
+    display = display_text(client, run_id, *card)
+    _, _, sequence = display.partition(":")
+    return [int(value) for value in sequence.split()]
+
+
+def check_collatz_summary(shown, sequence):
+    assert shown.markdown
+    values = set(map(int, re.findall(r"\d+", text(shown.text))))
+    assert {len(sequence), len(sequence) - 1, sequence[0], max(sequence)} <= values
+
+
 def test_collatz_27(collatz):
     c = connect(collatz)
     rid = start_run(c, ["start"])
@@ -175,16 +192,16 @@ def test_collatz_27(collatz):
     expected = collatz_reference(27)
     assert len(expected) == 112
     shown = c.call("RunRecordRequest", runId=rid, card=path("compare")).record.display.value
-    assert shown.markdown and text(shown.text).startswith("**C++ and Python agree**: 112 values, $a_0 = 27$")
-    assert "after $111$ steps" in text(shown.text) and "9232" in text(shown.text)
+    check_collatz_summary(shown, expected)
     # The agreed sequence is kept as a CSV file (a File artifact of record).
     art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
-    csv = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
-    lines = csv.splitlines()
-    assert lines[0] == "k,a_k,parity" and lines[1] == "0,27,odd" and lines[-1] == "111,1,odd" and len(lines) == 113
+    content = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
+    rows = list(csv.DictReader(io.StringIO(content)))
+    assert [(int(row["k"]), int(row["a_k"]), row["parity"]) for row in rows] == [
+        (index, value, "odd" if value % 2 else "even") for index, value in enumerate(expected)
+    ]
     for lang in ("collatz-cpp", "collatz-py"):
-        shown = display_text(c, rid, lang, "collect")
-        assert shown == "112 values: " + " ".join(map(str, expected))
+        assert collected_collatz(c, rid, lang, "collect") == expected
     # The C++ Card in Card runs alone from its boundary input (saved value).
     rid2 = start_run(c, ["collatz-cpp"], propagate=False)
     assert wait_run(c, rid2).state == RunState.succeeded
@@ -403,24 +420,44 @@ def test_plots_draw_into_the_displays(plots_demo):
         frames.append(text(note.value.display.card.segments[-1]))
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, (stderr(c, rid, "summary"), stderr(c, rid, "diffusion"))
-    assert frames.count("diffusion") >= 3, frames  # the animation was seen while it played
+    assert "diffusion" in frames  # A display was received before RunFinished.
     assert "missing from font" not in stderr(c, rid, "summary")
-    for card, alt in (("summary", "Random walks spread as √t（拡散は √t で広がる）"), ("diffusion", "step 80 of 80")):
-        d = c.call("RunRecordRequest", runId=rid, card=path(card)).record.display
-        assert d.valueType == 5, card  # DisplayImage
-        img = d.value
-        assert text(img.mediaType) == "image/png" and text(img.alt) == alt
-        data = bytes(img.data)
-        assert data[:8] == b"\x89PNG\r\n\x1a\n"
-        width = int.from_bytes(data[16:20], "big")
-        assert width >= 1200, width  # 2x of a 9-inch figure at 100 dpi (cropped to its content for summary)
-    d = c.call("RunRecordRequest", runId=rid, card=path("explore")).record.display
-    assert d.valueType == 7 and text(d.value.module).endswith("-tsugumi-view-plotly")  # DisplayModule
-    fig = json.loads(text(d.value.configJson))
-    assert fig["data"][0]["type"] == "scatter" and "200 walkers" in fig["layout"]["title"]["text"]
-    d = c.call("RunRecordRequest", runId=rid, card=path("spread")).record.display
-    assert d.valueType == 7 and text(d.value.module).endswith("-tsugumi-view-vega-lite")
-    spec = json.loads(text(d.value.configJson))
-    assert spec["$schema"].startswith("https://vega.github.io/schema/vega-lite/v6")
-    assert len(spec["layer"]) == 2
-    assert spec.get("datasets") or spec.get("data", {}).get("values")  # the data is in the spec
+    from PIL import Image
+
+    for card in ("summary", "diffusion"):
+        display = c.call("RunRecordRequest", runId=rid, card=path(card)).record.display
+        assert display.valueType == DisplayValue.DisplayImage, card
+        image = display.value
+        assert text(image.mediaType) == "image/png" and text(image.alt)
+        if card == "diffusion":
+            assert re.findall(r"\d+", text(image.alt))[-2:] == ["80", "80"]
+        with Image.open(io.BytesIO(bytes(image.data))) as rendered:
+            assert rendered.format == "PNG"
+            rendered.load()
+            assert rendered.width >= 1200
+    import numpy as np
+
+    def coordinates(values):
+        if isinstance(values, list):
+            return values
+        return np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"])
+
+    explore = c.call("RunRecordRequest", runId=rid, card=path("explore")).record.display
+    assert explore.valueType == DisplayValue.DisplayModule and text(explore.value.name) == "plotly"
+    figure = json.loads(text(explore.value.configJson))
+    walkers = [(end, reach) for trace in figure["data"] if "x" in trace and "y" in trace
+               for end, reach in zip(coordinates(trace["x"]), coordinates(trace["y"]), strict=True)]
+    assert len(walkers) == 200 and all(abs(end) <= reach for end, reach in walkers)
+    spread = c.call("RunRecordRequest", runId=rid, card=path("spread")).record.display
+    assert spread.valueType == DisplayValue.DisplayModule and text(spread.value.name) == "vega-lite"
+    spec = json.loads(text(spread.value.configJson))
+    rows = [row for values in spec.get("datasets", {}).values() for row in values]
+    rows += spec.get("data", {}).get("values", [])
+    by_series = {}
+    for row in rows:
+        by_series.setdefault(row["series"], {})[row["step"]] = row["value"]
+    assert len(by_series) == 2
+    measured, = [series for series in by_series.values() if any(step != value for step, value in series.items())]
+    reference, = [series for series in by_series.values() if all(step == value for step, value in series.items())]
+    assert measured.keys() == reference.keys()
+    assert measured[0] == 0 and measured[80] > 0

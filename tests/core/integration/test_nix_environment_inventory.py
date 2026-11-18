@@ -34,10 +34,11 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
             if page.nextOffset is None:
                 break
             offset = page.nextOffset
-        assert paths == sorted(actual.splitlines())
+        assert set(paths) == set(actual.splitlines())
+        assert len(paths) == len(set(paths))
         assert environment.pathCount == len(paths)
         # The ID is a number within the run; the derivation and manifest say what was built.
-        environments.append((run_id, (text(environment.derivation), text(environment.manifest)), paths))
+        environments.append((run_id, (text(environment.derivation), text(environment.manifest)), set(paths)))
     assert environments[0][1:] == environments[1][1:]
     assert environments[0][1] != environments[2][1]
     earlier = client.call("RunEnvironmentsRequest", runId=environments[0][0]).environments[0]

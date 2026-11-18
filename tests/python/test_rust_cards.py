@@ -333,12 +333,12 @@ def test_rust_crates_are_pinned_and_the_card_runs_offline(project):
     assert text(shown(c, succeeded(c), 'rust').value.text) == '42'
 
 
-@pytest.mark.parametrize(('arguments', 'stale', 'message'), [
-    ('lock = ./src/Cargo.lock;', False, 'vendor directory `hash` together'),
-    ('lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;', False, 'hash mismatch'),
-    (f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";', True, 'itoa = "=1.0.14"'),
-])
-def test_rust_rejects_invalid_pins(project, arguments, stale, message):
+@pytest.mark.parametrize(('arguments', 'stale'), [
+    ('lock = ./src/Cargo.lock;', False),
+    ('lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;', False),
+    (f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";', True),
+], ids=['missing-hash', 'wrong-hash', 'stale-lock'])
+def test_rust_rejects_invalid_pins(project, arguments, stale):
     root, connect = project
     card = card_with_registry_crate(arguments)
     if stale:
@@ -348,7 +348,7 @@ def test_rust_rejects_invalid_pins(project, arguments, stale, message):
     run_id, status = run_and_wait(c, 'start')
     log = text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=LogStream.build).text)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
-    assert message in text(status.failure.diagnostic) + log
+    assert not c.call('RunRecordRequest', runId=run_id, card=path('rust')).record.summary.environmentId
 
 
 @pytest.mark.parametrize('language', ['ja', 'en'])

@@ -11,6 +11,7 @@ from pathlib import Path
 from harness.values import recorded_input_json
 from projects import SINK, put, run_and_wait
 from tsugumi_client import change, new_id, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; }\n' \
@@ -65,7 +66,8 @@ def test_input_card_hands_a_project_file_on(tmp_path, core_factory):
     c = core_factory(project_root=root, mocked_builds=True).connect()
     # A single Card run before any run says how to get its inputs.
     _, st = run_and_wait(c, "show", propagate=False)
-    assert st.state == RunState.failed and "trigger" in text(st.failure.diagnostic), text(st.failure.diagnostic)
+    assert st.state == RunState.failed
+    assert st.failure.kind == FailureKind.input_missing
     rid, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     shown = recorded_input_json(c, tmp_path / "decode", rid, "show")["value"]

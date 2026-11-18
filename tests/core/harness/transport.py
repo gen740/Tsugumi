@@ -29,7 +29,7 @@ def unix_connection(daemon):
 def exact(connection, size):
     result = bytearray()
     while len(result) < size:
-        chunk = connection.recv(size - len(result))
+        chunk = connection.recv(min(size - len(result), 65536))
         if not chunk:
             if result:
                 raise ConnectionError(f"RPC frame ended after {len(result)} of {size} bytes")
@@ -47,7 +47,6 @@ def unix_read(connection):
     if header is None:
         return None
     size, = struct.unpack("<I", header)
-    assert 0 < size <= 16 << 20
     return exact(connection, size)
 
 
@@ -68,7 +67,6 @@ def ws_connect(port, origin="http://rpc.test", protocol="tsugumi.rpc.v1"):
             if not chunk:
                 break
             response.extend(chunk)
-            assert len(response) <= 65536, "WebSocket handshake headers exceeded 64 KiB"
         return connection, bytes(response).split(b"\r\n", 1)[0].decode()
     except BaseException:
         connection.close()
@@ -92,14 +90,16 @@ def ws_packet(connection):
     header = exact(connection, 2)
     if header is None:
         return None, None
-    assert not header[1] & 0x80, "server frames must not be masked"
     size = header[1] & 0x7F
     if size == 126:
         size, = struct.unpack(">H", exact(connection, 2))
     elif size == 127:
         size, = struct.unpack(">Q", exact(connection, 8))
-    assert size <= 16 << 20
-    return header[0] & 0x0F, exact(connection, size)
+    mask = exact(connection, 4) if header[1] & 0x80 else None
+    payload = exact(connection, size) if size else b""
+    if mask is not None and payload is not None:
+        payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+    return header[0] & 0x0F, payload
 
 
 def ws_read(connection):

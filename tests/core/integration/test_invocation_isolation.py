@@ -127,7 +127,8 @@ def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
     assert st.state == RunState.failed
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("fail")).records
     assert inv.failure.kind == FailureKind.worker_failed
-    assert "exit status 19" in text(inv.failure.diagnostic)
+    assert not c.call("RunRecordRequest", runId=run_id, card=path("fail")).record.outputs
+    assert not c.call("ArtifactListRequest", runId=run_id, card=path("fail")).artifacts
 
 
 def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path):

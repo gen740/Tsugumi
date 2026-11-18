@@ -1,6 +1,8 @@
 """Guest boot decision and durable marker contract, without Nix or a VM."""
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 
 import pytest
@@ -68,7 +70,7 @@ def test_failed_repair_retains_dirty_marker_and_retries(tmp_path, monkeypatch, c
     monkeypatch.setenv("CHECK_STATUS", "7")
     result = run("check", "unclean")
     assert result.returncode == 7
-    assert "projects were not started" in result.stdout
+    assert "repaired /nix/store/example" in (health / "check.log").read_text()
     assert (health / "running").exists()
     assert run("begin").stdout.strip() == "unclean"
     reason = "unclean"
@@ -80,8 +82,50 @@ def test_failed_repair_retains_dirty_marker_and_retries(tmp_path, monkeypatch, c
     assert run("check", reason).returncode == 0
 
 
-def test_boot_marks_before_writes_and_repairs_before_projects():
+@pytest.mark.parametrize("repair_status", [0, 7], ids=["start-projects", "stop-on-failed-repair"])
+def test_boot_marks_before_writes_and_repairs_before_projects(tmp_path, repair_status):
     boot = (ROOT / "vm/guest/vm-boot.nix").read_text()
-    assert boot.index('storeHealth} begin') < boot.index('nix-store --load-db')
-    assert boot.index('storeHealth} check') < boot.index('stage supervisor')
-    assert '|| fail "Nix store content check/repair failed' in boot
+    # Run the init script from disk setup to supervisor handoff. Point the
+    # guest paths at fixtures and put only command doubles on PATH.
+    init = boot.split("stage store\n", 1)[1].split("\n  '';", 1)[0]
+    init = init.replace("''${", "${")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    replacements = {
+        "${storeHealth}": "health", "${vm-system}": "tools", "${busybox}/bin/": "tools/",
+        "${udhcpcScript}": "fixture-dhcp",
+    }
+    for symbol, replacement in replacements.items():
+        init = init.replace(symbol, replacement)
+    init = re.sub(r"(?<![\w./])/((?:dev/vdb|persist|nix|run|mnt|registration|store-paths)\b)", r"\1", init)
+    for directory in ("persist", "nix", "run", "mnt"):
+        (tmp_path / directory).mkdir()
+    for name in ("registration", "store-paths"):
+        (tmp_path / name).touch()
+    for command, body in {
+        "health": 'printf "%s\n" "$1" >> calls\n'
+                  'case "$1" in begin) echo unclean ;; check) exit "$REPAIR_STATUS" ;; esac',
+        "nix-store": 'printf "nix-store %s\n" "$*" >> calls',
+        "nix": 'printf "nix %s\n" "$*" >> calls',
+        "nix-build": 'echo nix-build >> calls',
+        "tini": 'printf "%s\n" "${2##*/}" >> calls',
+        **dict.fromkeys(("blkid", "mount", "resize2fs", "ln", "df", "tail", "mkdir", "chmod", "awk",
+                        "rm", "nix-daemon", "vmd", "du", "cut", "ip", "udhcpc", "wc"), ":"),
+    }.items():
+        stub = tools / command
+        stub.write_text("#!/bin/sh\n" + body + "\n")
+        stub.chmod(0o755)
+    result = subprocess.run(
+        [shutil.which("bash"), "-c", "stage() { :; }; fail() { exit 1; };\n" + init],
+        cwd=tmp_path, env={**os.environ, "PATH": str(tools), "REPAIR_STATUS": str(repair_status)},
+        capture_output=True, text=True,
+    )
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls.index("begin") < calls.index("nix-store --load-db") < calls.index("check")
+    assert "nix-build" not in calls
+    assert all(call.startswith("nix config show ") for call in calls if call.startswith("nix "))
+    if repair_status:
+        assert result.returncode != 0 and "supervisor" not in calls
+    else:
+        assert result.returncode == 0, result.stderr
+        assert calls.index("check") < calls.index("supervisor")

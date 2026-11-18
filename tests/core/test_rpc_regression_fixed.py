@@ -90,7 +90,7 @@ def test_saved_inputs_missing_port_fails(tmp_path, core_factory):
     c = d.connect()
     _, st = run_and_wait(c, "split", propagate=False)
     assert st.state == RunState.failed
-    assert "saved" in text(st.failure.diagnostic)
+    assert st.failure.kind == FailureKind.input_missing
 
 
 def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_factory):
@@ -180,10 +180,12 @@ class FreedNames:
         """What the core sends for a Card that becomes visible: its text and its Card."""
         self.c.notifications.clear()
         self.c.call("ViewSetVisibleRequest", subscriptionId=self.sub, cards=[path(card)])
-        # A Card without a display sends no notification.
-        try:
-            n = self.c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1.0)
-        except TimeoutError:
+        # The initial display is queued by the visibility update before any
+        # subsequent reply on this connection.
+        self.c.call("ProjectInspectRequest")
+        n = next((n for n in self.c.notifications.copy()
+                  if n.valueType == NotificationPayload.DisplayUpdated), None)
+        if n is None:
             return None
         return text(n.value.display.value.text), "/".join(text(s) for s in n.value.display.card.segments)
 
@@ -201,6 +203,7 @@ def test_a_renamed_card_keeps_its_display(tmp_path, core_factory):
     from test_definitions import rename
     t = FreedNames(tmp_path / "p", core_factory)
     before = t.shown("out")
+    assert before == ("the old result", "out")
     rename(t.c, "out", "kept")
     assert t.shown("out") == before
     assert t.shown("kept") is None

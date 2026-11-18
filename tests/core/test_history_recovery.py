@@ -12,9 +12,14 @@ def test_incompatible_history_is_preserved(project):
     database = folder / "runs.sqlite"
     with sqlite3.connect(database) as connection:
         connection.executescript("CREATE TABLE evidence(value TEXT); INSERT INTO evidence VALUES('retained'); PRAGMA user_version=999")
-    before = database.read_bytes()
+
     with pytest.raises(StartupFailure) as failure:
         with Daemon(project):
             pass
     assert failure.value.kind == "incompatible_history"
-    assert database.read_bytes() == before
+    assert failure.value.record["found"] == "999"
+    assert int(failure.value.record["expected"]) != 999
+    assert failure.value.record["source"] == "local"
+    with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (999,)
+        assert connection.execute("SELECT value FROM evidence").fetchall() == [("retained",)]

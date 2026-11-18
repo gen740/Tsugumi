@@ -183,5 +183,5 @@ def check_definition_tools(client, run_id, name="work"):
         assert directory.startswith("/nix/store/") and directory.endswith("/bin")
         assert directory.removesuffix("/bin") in paths
     logs = text(client.call("LogRangeRequest", runId=run_id, card=path(name), stream=1).text)
-    assert logs == "pre-definition-tools\npost-definition-tools\n"
-    return text(environment.id), paths, search, shell
+    assert {"pre-definition-tools", "post-definition-tools"} <= set(logs.splitlines())
+    return text(environment.id), set(paths), search, shell

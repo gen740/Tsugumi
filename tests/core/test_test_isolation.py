@@ -183,21 +183,25 @@ def test_web_environment_ownership_requires_the_exact_marker(tmp_path, monkeypat
     assert not runner.marked_service_process(42, tmp_path / 'other')
 
 
-def test_vm_cleanup_sends_term_once_and_waits_for_guest_deadline(tmp_path, monkeypatch):
-    now = [0.0]
+def test_vm_cleanup_sends_term_once_and_waits_for_guest_exit(tmp_path, monkeypatch):
     sent = []
     grouped = []
-    monkeypatch.setattr(runner, 'processes', lambda: {1234: f'tsugumi-vmhost --support {tmp_path}/support'})
-    monkeypatch.setattr(runner.os, 'kill', lambda pid, sig: sent.append((pid, sig, now[0])))
+    observations = iter(["running", "syncing", "exited"])
+    seen = []
+
+    def processes():
+        state = next(observations, "exited")
+        seen.append(state)
+        if state == "exited":
+            return {}
+        return {1234: f'tsugumi-vmhost --support {tmp_path}/support'}
+
+    monkeypatch.setattr(runner, 'processes', processes)
+    monkeypatch.setattr(runner.os, 'kill', lambda pid, sig: sent.append((pid, sig)))
     monkeypatch.setattr(runner.os, 'killpg', lambda pid, sig: grouped.append((pid, sig)))
-    monkeypatch.setattr(runner.time, 'monotonic', lambda: now[0])
-    def advance(seconds):
-        now[0] += seconds
-        # Simulate the VM finishing its guest sync after 40 seconds.
-        if now[0] >= 40:
-            monkeypatch.setattr(runner, 'processes', dict)
-    monkeypatch.setattr(runner.time, 'sleep', advance)
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: 0)
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
     runner.stop_services(tmp_path, 1234)
-    assert sent == [(1234, signal.SIGTERM, 0.0)]
-    assert grouped == []
-    assert now[0] >= 40
+    assert sent == [(1234, signal.SIGTERM)]
+    assert not grouped
+    assert "exited" in seen

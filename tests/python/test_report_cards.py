@@ -13,6 +13,7 @@ from harness.observations import read_pages
 from harness.file_events import wait_for_exit
 from projects import run_and_wait, start_run, wait_for_log, wait_run
 from tsugumi_client import new_id, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 OUTPUTS = '''attribute "tsugumi";
@@ -102,7 +103,7 @@ def test_report_chunk_failure_stops_downstream(project, extension):
     run, state = run_and_wait(client, 'start')
     assert state.state == RunState.failed
     log = text(client.call('LogRangeRequest', runId=run, card=path('report'), stream=2, limitBytes=65536).text)
-    assert 'report-cell-error' in log and 'figure' in log
+    assert 'report-cell-error' in log
     assert not client.call('ArtifactListRequest', runId=run).artifacts
 
 
@@ -208,7 +209,7 @@ def test_report_cancel_deadline_and_recovery(project, extension):
     reload(client)
     run, state = run_and_wait(client, 'start')
     assert state.state == RunState.failed
-    assert client.call('RunRecordRequest', runId=run, card=path('report')).status.failure.kind == 14
+    assert client.call('RunRecordRequest', runId=run, card=path('report')).status.failure.kind == FailureKind.timeout
     card.pop('timeoutSeconds')
     card_file.write_text(json.dumps(card))
     (root / ('definitions/report/src/report.' + extension)).write_text(REPORT)

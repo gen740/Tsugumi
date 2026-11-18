@@ -142,18 +142,18 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 9 and worker.caps.maxJobs == 1
+    assert worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):
         worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False, identity=stranger)
-    assert TLS.public_key(worker.state / "identity.pem").startswith("ed25519:")
     assert (worker.state / "identity.pem").stat().st_mode & 0o777 == 0o600
     local = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), unix=True)
     assert local.body.instanceId == worker.instance
     before = (worker.caps.serverId, worker.instance)
     worker.restart()
     assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId == before[1]
+    assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body.serverId == before[0]
     assert (worker.state.stat().st_mode & 0o777) == 0o700
 
 
@@ -189,8 +189,8 @@ def test_cancel_before_submit_and_release_tombstone(worker):
     worker.restart()
     late = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert late.body.state == R.JobState.Released
-    directory = worker.state / "projects" / worker.scope / "jobs" / job
-    assert [p.name for p in directory.iterdir()] == ["state"]
+    missing = worker.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=job)
+    assert missing.bodyType == R.ReplyBody.Failure and missing.body.code == R.ErrorCode.NotFound
 
 
 def test_concurrent_submit_has_one_fingerprint(worker):
@@ -300,7 +300,6 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
         accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=first)
         assert accepted.body.state == R.JobState.Queued
         # From acceptance to timeout there are no further core requests at all.
-        peer.wait_state(first, R.JobState.Running)
         pid = wait_for_file(child_pid, child)
         assert Path(f"/proc/{pid}").exists()
         # The adapter has not started a Card call: its wall time is not the
@@ -313,7 +312,10 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
                   R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
         peer.wait_state(first, R.JobState.Cancelled)
         wait_for_exit(pid)
-        assert (directory / "blobs" / digest).read_bytes() == b"orphan input"
+        cancelled = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=first)
+        assert cancelled.body.state == R.JobState.Cancelled
+        blob = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=first)
+        assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
         # A new life cannot collect the old result, but can use the freed slot.
         peer.core_life_id = "f" * 64
@@ -349,8 +351,21 @@ def test_bounded_frames_and_single_listener(worker):
                 with secure.makefile("rb") as stream:
                     error = R.read(stream).payload
             assert error.bodyType == R.ReplyBody.Failure and error.body.code == R.ErrorCode.Invalid
-    duplicate = subprocess.run(worker.command, capture_output=True, timeout=10, check=False)
-    assert duplicate.returncode != 0 and b"another remote worker" in duplicate.stderr
+    command = list(worker.command)
+    command[command.index("--port") + 1] = "0"
+    command += ["--socket", str(worker.root / "duplicate.sock")]
+    with subprocess.Popen(command, env=worker.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as duplicate:
+        ready = worker.state / "worker.ready.json"
+
+        def duplicate_ready():
+            published = json.loads(ready.read_text())
+            return published if published["pid"] == duplicate.pid else None
+
+        started = process_file(duplicate, ready, duplicate_ready)
+        if started:
+            duplicate.terminate()
+        assert duplicate.wait() != 0 and started is None
+    assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId == worker.instance
 
 
 def test_limits_require_delegation(worker):

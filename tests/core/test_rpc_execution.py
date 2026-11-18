@@ -193,7 +193,7 @@ def test_a_failure_after_the_stop_request_keeps_its_text(core_factory, project, 
     assert status.state == (RunState.failed if deadline else RunState.cancelled)
     failure = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).status.failure
     assert failure.kind == (FailureKind.timeout if deadline else FailureKind.cancelled)
-    assert "output_invalid: scripted rejection" in text(failure.diagnostic)
+    assert "scripted rejection" in text(failure.diagnostic)
 
 
 @pytest.mark.parametrize("cancel", [True, False], ids=["user-cancels-build", "build-deadline-expires"])

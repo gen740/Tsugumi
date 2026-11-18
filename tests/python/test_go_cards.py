@@ -328,18 +328,18 @@ def test_external_module_is_pinned_and_built_offline(project):
     assert text(shown(c, succeeded(c), 'go').value.text) == '550e8400-e29b-41d4-a716-446655440000'
 
 
-@pytest.mark.parametrize(('arguments', 'message'), [
-    ('lock = ./src/go.sum;', 'give `lock = ./src/go.sum;` and `hash` together'),
-    ('lock = ./src/go.sum; hash = pkgs.lib.fakeHash;', 'hash mismatch'),
-])
-def test_go_rejects_an_invalid_pin(project, arguments, message):
+@pytest.mark.parametrize('arguments', [
+    'lock = ./src/go.sum;',
+    'lock = ./src/go.sum; hash = pkgs.lib.fakeHash;',
+], ids=['missing-hash', 'wrong-hash'])
+def test_go_rejects_an_invalid_pin(project, arguments):
     root, connect = project
     write_project(root, {'go': external_module_card(arguments)}, [])
     c = connect()
     run_id, status = run_and_wait(c, 'start')
     log = text(c.call('LogRangeRequest', runId=run_id, card=path('go'), stream=LogStream.build).text)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
-    assert message in text(status.failure.diagnostic) + log
+    assert not c.call('RunRecordRequest', runId=run_id, card=path('go')).record.summary.environmentId
 
 
 def test_go_rejects_missing_required_output(project):

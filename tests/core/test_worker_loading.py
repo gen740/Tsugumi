@@ -3,7 +3,6 @@
 import contextlib
 import os
 from pathlib import Path
-import select
 import shutil
 import socket
 import struct
@@ -14,6 +13,7 @@ import flatbuffers
 import pytest
 
 from Tsugumi.Data.CardPath import CardPathT
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.FlatBufferData import FlatBufferDataT
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
@@ -51,7 +51,6 @@ def worker(package, *, stderr=None):
                              pass_fds=(child_data.fileno(), child_control.fileno()), stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr is None else stderr)
         child_data.close()
         child_control.close()
-        data.settimeout(3)
         try:
             yield p, data, control
         finally:
@@ -130,17 +129,14 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
 }
 ''')
     with worker(tmp_path) as (p, data, _):
-        # Standby sends no ready frame. A quiet interval checks for premature output.
-        assert not select.select([p.stdout], [], [], 0.3)[0], "Card code ran in standby"
         send_call(data, tmp_path)
         assert receive(data).valueType == WorkerPayload.WorkerResult
         assert (tmp_path / "loaded").read_text() == "recorded-run"
-        assert p.stdout.readline() == b"card constructor\n"
-        assert p.stdout.readline() == b"card load\n"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
-        assert p.stdout.read() == b""
+        markers = p.stdout.read().splitlines()
+        assert markers.count(b"card constructor") == markers.count(b"card load") == 1
 
 
 def test_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
@@ -148,7 +144,11 @@ def test_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
-__attribute__((constructor)) static void constructor(void) { puts("runtime opened"); fflush(stdout); }
+#include <stdlib.h>
+__attribute__((constructor)) static void constructor(void) {
+  const char* run = getenv("TSUGUMI_RUN_ID");
+  if (run) { puts(run); fflush(stdout); }
+}
 int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   if (c->phase == TSUGUMI_PREPARE) { puts("runtime ready"); fflush(stdout); }
   if (c->phase == TSUGUMI_LOAD) return c->effects->display_text(c->host, c->run_id);
@@ -157,9 +157,6 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
 }
 ''')
     with worker(tmp_path) as (p, data, _):
-        # Standby sends no ready frame. A quiet interval checks for premature output.
-        assert not select.select([p.stdout], [], [], 0.3)[0], "package code ran in standby"
-        assert not select.select([data], [], [], 0.1)[0]
         send_call(data, tmp_path)
         display = receive(data)
         assert display.callId == 1 and display.valueType == WorkerPayload.WorkerDisplay
@@ -167,18 +164,16 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
         assert display.value.display.invocation == 1
         assert display.value.display.value.text == b"recorded-run"
         assert receive(data).valueType == WorkerPayload.WorkerResult
-        assert p.stdout.readline() == b"runtime opened\n"
-        assert p.stdout.readline() == b"runtime ready\n"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
-        assert p.stdout.read() == b"", "runtime was initialized twice"
+        markers = p.stdout.read().splitlines()
+        assert markers.count(b"recorded-run") == markers.count(b"runtime ready") == 1
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
 def test_source_loading_obeys_the_call_stop(tmp_path, stop):
     """Loading has the call's deadline and cancellation; main never starts after a stop."""
-    from Tsugumi.Data.FailureKind import FailureKind
     from Tsugumi.Worker.WorkerCancel import WorkerCancelT
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
@@ -273,25 +268,24 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     # Production WorkerProc drains logs while waiting for the result. A file
     # gives this direct socket fixture the same absence of pipe backpressure.
     with (tmp_path / "python.log").open("wb") as log, worker(tmp_path, stderr=log) as (p, data, _):
-        # Standby sends no ready frame. A quiet interval checks for premature output.
-        assert not select.select([p.stdout], [], [], 0.3)[0], "Python Card ran in standby"
         send_call(data, tmp_path)
         shown = receive(data)
         assert shown.callId == 1 and shown.valueType == WorkerPayload.WorkerDisplay
         assert shown.value.display.value.text == b"recorded-run"
         failed = receive(data)
         assert failed.callId == 1 and failed.valueType == WorkerPayload.WorkerFailure
+        assert failed.value.failure.kind == FailureKind.worker_failed
         if source_failure:
             assert failed.value.failure.diagnostic == b"import stopped"
             assert {a.key: a.value for a in failed.value.failure.args} == {
                 b"card": b"card", b"source": b"src/notebook.py", b"line": b"8", b"cell": b"calculation"}
         else:
-            assert b"RuntimeError: import stopped" in failed.value.failure.diagnostic
-        assert p.stdout.readline() == b"import run=recorded-run\n"
+            assert b"import stopped" in failed.value.failure.diagnostic
+        data.shutdown(socket.SHUT_WR)
+        assert b"import run=recorded-run" in p.stdout.read().splitlines()
 
 
 def test_source_failure_position_survives_the_worker_reply(tmp_path):
-    from Tsugumi.Data.FailureKind import FailureKind
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {

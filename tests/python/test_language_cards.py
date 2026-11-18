@@ -17,6 +17,7 @@ import pytest
 from conftest import Daemon, real_environment
 from projects import put, run_and_wait
 from tsugumi_client import new_id, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 NUMBERS = """attribute "tsugumi";
@@ -242,12 +243,12 @@ END
     assert check(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display)
 
 
-@pytest.mark.parametrize("display, why", [
-    ('{"image": {"path": "missing.png"}}', "cannot read the image"),
-    ('{"table": {"columns": ["a"], "rows": [["1", "2"]]}}', "a table row has 2 cells"),
-    ("{}", "name one of"),
-])
-def test_an_invalid_display_fails_the_card_and_says_why(project, display, why):
+@pytest.mark.parametrize("display", [
+    '{"image": {"path": "missing.png"}}',
+    '{"table": {"columns": ["a"], "rows": [["1", "2"]]}}',
+    "{}",
+], ids=["missing-image", "ragged-table", "empty-report"])
+def test_an_invalid_display_fails_the_card(project, display):
     root, connect = project
     write_project(root, {"show": {
         "card": {"language": "bash", "inputs": [{"name": "start"}]},
@@ -259,8 +260,9 @@ END
 '''}},
         [("start", "out", "show", "start")])
     c = connect()
-    _, status = run_and_wait(c, "start")
-    assert status.state == RunState.failed and why in text(status.failure.diagnostic)
+    run_id, status = run_and_wait(c, "start")
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
+    assert c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display is None
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])
@@ -800,7 +802,7 @@ end'''}}}, [])
     c = connect()
     _, status = run_and_wait(c, "start")
     assert status.state == RunState.failed
-    assert "allow-import-from-derivation" in text(status.failure.diagnostic)
+    assert status.failure.kind == FailureKind.nix_failed
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])

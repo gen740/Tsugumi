@@ -26,11 +26,11 @@ def graph(c):
     return c.call("VersionGraphRequest", limit=100)
 
 
-def notes(c, root, commit: str, n: int = 0, *, run_id=None) -> list:
+def notes(c, root, commit: str, n: int = 0, *, run_ids=()) -> list:
     """Wait for the Git note ref to be published by the run reaper."""
     def read():
         runs = next(x.runs or [] for x in graph(c).commits if text(x.id) == commit)
-        if len(runs) >= n and (run_id is None or any(text(r.runId) == run_id for r in runs)):
+        if len(runs) >= n and set(run_ids) <= {text(r.runId) for r in runs}:
             return runs
         return None
 
@@ -74,8 +74,8 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     run2, st2 = run_and_wait(c, "start")
     second = text(st1.commit)
     assert second and second != first and text(st2.commit) == second
-    runs = notes(c, root, second, 2)
-    assert [text(r.runId) for r in runs] == [run1, run2] and all(text(r.state) == "succeeded" for r in runs)
+    runs = notes(c, root, second, run_ids=(run1, run2))
+    assert {text(r.runId): text(r.state) for r in runs} == {run1: "succeeded", run2: "succeeded"}
     changed = next(x for x in graph(c).commits if text(x.id) == second).changed
     assert [text(k) for k in changed] == ["src"]
     # git selects versions by their runs' results, and names them by tags.
@@ -235,7 +235,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
 
 def summary_of(c, root, st) -> dict:
     """Read complete language-neutral facts from the public version graph."""
-    runs = notes(c, root, text(st.commit), run_id=text(st.runId))
+    runs = notes(c, root, text(st.commit), run_ids=(text(st.runId),))
     run = next(r for r in runs if text(r.runId) == text(st.runId))
     facts = run.facts
     assert facts is not None

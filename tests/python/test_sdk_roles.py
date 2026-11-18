@@ -98,7 +98,7 @@ def test_inputs_are_read_only_and_run_is_opt_in(sdk):
     from tsugumi.values import encode_outputs
     packed = encode_outputs(module._call(main))
     assert Outputs.GetRootAs(packed).Result().Value() == 9007199254740993
-    assert host.events == []
+    assert all(event == "info" for event in host.events)
 
 
 def test_generated_objects_builders_and_bytes_are_results(sdk):
@@ -111,7 +111,7 @@ def test_generated_objects_builders_and_bytes_are_results(sdk):
     values = [number, module.message(b, root), b]
     for value in values:
         assert Outputs.GetRootAs(encode_outputs({"result": value})).Result().Value() == 42
-    assert host.events == []
+    assert all(event == "info" for event in host.events)
 
 
 def test_displays_are_live_and_outputs_are_returned_together(sdk):

@@ -38,17 +38,18 @@ def test_wheel_import_discovery_and_resources_survive_pruning(tmp_path):
 import importlib.metadata as m
 import importlib.resources as r
 import sample
+import json
 assert sample.VALUE == 42
 distribution = m.distribution('sample')
 assert distribution.version == '1.0'
 assert distribution.requires == ['dependency>=1']
 assert next(iter(distribution.entry_points)).load() == 42
-assert r.files(sample).joinpath('data.json').read_text() == '{"value": 42}'
+assert json.loads(r.files(sample).joinpath('data.json').read_text()) == {'value': 42}
 assert all(distribution.locate_file(f).is_file() for f in distribution.files)
 assert 'Author' not in distribution.metadata and 'License-File' not in distribution.metadata
 assert not distribution.metadata.get_payload()
 '''], env={**os.environ, 'PYTHONPATH': str(tmp_path)}, check=True)
-    assert set(p.name for p in package.iterdir()) <= {'__init__.py', 'data.json', '__pycache__'}
+    assert all(not (package / directory).exists() for directory in ('tests', 'docs', 'examples'))
     assert not (info / 'licenses').exists()
 
 

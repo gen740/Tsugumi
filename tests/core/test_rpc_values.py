@@ -10,6 +10,7 @@ from harness.real_cards import PYTHON_NIX, nix_string
 from harness.scenario import Project, run, wait_run
 from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 
@@ -104,8 +105,9 @@ def test_display_rejects_a_missing_or_non_string_markdown_field(client, project,
     run_id, status, logged = display_run(client)
     assert status.state == RunState.failed
     assert json.loads(logged)["value"] == "other"
-    error = client.call("LogRangeRequest", runId=run_id, card=path("display"), invocation=1, stream=2)
-    assert f"Markdown input must contain the string field {field}" in text(error.text)
+    reply = client.call("RunRecordRequest", runId=run_id, card=path("display"))
+    assert reply.status.state == CardState.failed
+    assert reply.record.display is None
 
 
 def test_display_marks_large_unicode_previews(client, project):
