@@ -1608,7 +1608,7 @@ final class ProjectSession {
         // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
         let parts = prefix.split(separator: "/")
         guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
-        func doc(_ rel: String) async -> JSONValue? {
+        @Sendable func doc(_ rel: String) async -> JSONValue? {
           guard hashes[rel] != nil, let d = try? await readFile(rel, atRev) else { return nil }
           return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
         }

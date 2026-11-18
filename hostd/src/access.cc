@@ -330,7 +330,8 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       const auto needed = static_cast<S::Access>(q.i64(2));
       const auto chosen = [&](S::Access access) {
         if (!p->allow()) return false;
-        if (per_call || !p->selected()) return access == needed;
+        if (per_call || !p->selected() || p->selected()->size() == 0)
+          return access == needed;
         const auto line =
             AccessDescription(q.text(0), access, q.text(4), access == needed);
         return std::ranges::any_of(*p->selected(), [&](const auto* selected) {

@@ -121,7 +121,7 @@ struct ModelMenuTests {
                                 .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])],
                   provider: "chatgpt", model: "g1", names: ["g1": "GPT One"])
     #expect(zip(before, m.menu.items).allSatisfy { $0 === $1 })
-    let item = models[1]
+    let item = models[0]
     _ = (item.target as? NSObject)?.perform(item.action, with: item)
     #expect(picked == ["anthropic", "a1"])
     m.setContents(connections: [.init(id: "anthropic", name: "Anthropic API", models: ["a1", "a2"]), .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])], provider: "anthropic", model: "a1", names: ["g1": "GPT One"])
@@ -150,7 +150,7 @@ struct ModelMenuTests {
       _ = (item.target as? NSObject)?.perform(item.action, with: item)
     }
     m.setContents(connections: connections, provider: "anthropic", model: "claude-opus-5-5", names: [:])
-    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ModelOptions(connection: "anthropic", model: "claude-opus-5-5").efforts)
+    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == [""] + ModelOptions(connection: "anthropic", model: "claude-opus-5-5").efforts)
     #expect(effortItems().first?.state == .on)
     var effort: String?, fast: Bool?
     m.onEffort = { effort = $0 }; m.onFast = { fast = $0 }
@@ -162,7 +162,7 @@ struct ModelMenuTests {
     #expect(fastItem()?.state == .on)
     press(fastItem()); #expect(fast == false)
     m.setContents(connections: connections, provider: "anthropic", model: "claude-sonnet-4-6", names: [:])
-    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ModelOptions(connection: "anthropic", model: "claude-sonnet-4-6").efforts)
+    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == [""] + ModelOptions(connection: "anthropic", model: "claude-sonnet-4-6").efforts)
     #expect(fastItem()?.isEnabled == false)
     m.setContents(connections: connections, provider: "anthropic", model: "claude-haiku-4-5", names: [:])
     #expect(effortItems().isEmpty && fastItem()?.isEnabled == false)

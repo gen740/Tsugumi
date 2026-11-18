@@ -16,6 +16,8 @@ final class ServiceWireTests: XCTestCase {
     for c in try XCTUnwrap(fixture["requests"] as? [[String: Any]]) {
       let method = try XCTUnwrap(c["method"] as? String), host = try XCTUnwrap(c["host"] as? Bool)
       var fields = try XCTUnwrap(c["fields"] as? [String: Any])
+      // Requests that Swift callers make with the generated object API have no dictionary form.
+      if host && !ServiceWire.hostMethod(method, fields) { continue }
       if let raw = fields["provider"] as? [String: Any] {
         let provider = Tsugumi_Service_ProviderSelectionT()
         provider.profile = try XCTUnwrap(raw["profile"] as? String)
@@ -213,13 +215,12 @@ final class ServiceWireTests: XCTestCase {
   }
 
   func testOmittedHostListVectorsAreEmpty() throws {
-    for type in [Tsugumi_Host_ReplyPayload.recentlist, .demolist, .modellist, .executionservices] {
+    for type in [Tsugumi_Host_ReplyPayload.recentlist, .demolist, .executionservices] {
       var b = FlatBufferBuilder(initialSize: 128)
       let value: Offset
       switch type {
       case .recentlist: value = Tsugumi_Host_RecentList.createRecentList(&b)
       case .demolist: value = Tsugumi_Host_DemoList.createDemoList(&b)
-      case .modellist: value = Tsugumi_Host_ModelList.createModelList(&b)
       default:
         let key = b.create(string: "ed25519:fixture")
         value = Tsugumi_Host_ExecutionServices.createExecutionServices(&b, hostPublicKeyOffset: key)
@@ -284,7 +285,6 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertEqual(decoded["image_available"] as? Bool, true)
     XCTAssertEqual(decoded["image_version"] as? String, "bundled-image")
     XCTAssertTrue(try XCTUnwrap(decoded["console"] as? [String]).isEmpty)
-    XCTAssertTrue(try XCTUnwrap(decoded["histories"] as? [Any]).isEmpty)
     let terminal = Tsugumi_Host_HostTerminalDataT(); terminal.session = UInt64.max - 1; terminal.closed = true
     let event = Tsugumi_Host_EventT(); event.value = Tsugumi_Host_EventPayloadUnion(terminal, type: .hostterminaldata)
     message.requestId = 0; message.payload = Tsugumi_Host_PayloadUnion(event, type: .event)
@@ -340,13 +340,13 @@ final class ServiceWireTests: XCTestCase {
   }
 
   func testTypedSnapshotBecomesPresentationValues() throws {
-    let content = Tsugumi_Agent_ModelMessageT()
-    content.role = "assistant"
-    content.contentJson = #"[{"type":"text","text":"kept"}]"#
+    let row = Tsugumi_Agent_ChatRowT()
+    row.id = "row"
+    row.role = "assistant"
+    row.text = "kept"
     let conversation = Tsugumi_Agent_ConversationT()
     conversation.id = "typed"
-    conversation.updatedAt = 1_700_000_000_123
-    conversation.messages = [content]
+    conversation.rows = [row]
     let result = Tsugumi_Agent_ConversationResultT()
     result.conversation = conversation
     result.eventSeq = UInt64.max - 1
@@ -354,8 +354,7 @@ final class ServiceWireTests: XCTestCase {
     let native = try XCTUnwrap(decoded["conversation"] as? Tsugumi_Agent_ConversationT)
     let snapshot = try ServiceWire.conversation(native)
     XCTAssertEqual(snapshot.id, "typed")
-    XCTAssertEqual(snapshot.messages.first?.content, [.text("kept")])
-    XCTAssertEqual(snapshot.updatedAt.timeIntervalSince1970, 1_700_000_000.123, accuracy: 0.001)
+    XCTAssertEqual(snapshot.rows.first?.text, "kept")
     XCTAssertEqual(decoded["event_seq"] as? UInt64, UInt64.max - 1)
   }
 

@@ -100,7 +100,7 @@ def serve(peer):
                 if kind == RequestPayload.Run:
                     key = text(request.key)
                     with open(os.environ["HOST_LOG"], "a") as log:
-                        log.write(json.dumps({"op": "run", "origins": [text(v) for v in request.origins or []], "archive": request.archiveIncompatibleHistory}) + "\n")
+                        log.write(json.dumps({"op": "run", "origins": [text(v) for v in request.origins or []]}) + "\n")
                     if Path(os.environ["HOST_BUSY"]).exists():
                         value, tag = FailureT(), ReplyPayload.Failure
                         value.message, value.recovery = "fixture VM failed", "Retry the virtual machine"

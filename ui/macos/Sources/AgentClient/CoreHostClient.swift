@@ -397,7 +397,7 @@ public actor CoreHostClient {
     let request = Tsugumi_Host_VersionNoteRequestT(); request.projectId = project; request.commit = commit
     request.profile = "desktop"; request.language = language; request.anthropicKeyProfile = keyProfile; request.openaiKeyProfile = keyProfile
     let result: Tsugumi_Service_TextResultT = try await hostCall(.versionnoterequest, request)
-    return result.text
+    return result.text ?? ""
   }
 
   public func provisionKey(_ key: String?, id: String) async throws {

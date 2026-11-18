@@ -108,19 +108,22 @@ import TsugumiRPC
     }
 
     private func waitForAgent(replacing oldPID: Int32? = nil) async throws {
-      let ready = directory.appendingPathComponent("state/host.ready")
+      let readyFile = directory.appendingPathComponent("state/host.ready")
       // An observing client can win the startup lock. Status 4 means wait for
       // that service, not that the replacement service failed to start.
       let replacement = core
-      let value = try await HostReadiness.wait(read: {
-        guard let bytes = try? Data(contentsOf: ready),
-              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-              let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
-              value["protocol"] as? Int == 1, value["unix_socket"] is String,
-              value["host_socket"] is String, value["user_token"] is String else { return nil }
-        return value
-      }, exitStatus: { replacement.isRunning ? nil : replacement.terminationStatus },
-      log: directory.appendingPathComponent("state/host.log"))
+      let deadline = Date().addingTimeInterval(15)
+      var ready: [String: Any]?
+      while ready == nil, Date() < deadline {
+        if let bytes = try? Data(contentsOf: readyFile),
+           let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+           let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
+           value["unix_socket"] is String,
+           value["host_socket"] is String, value["user_token"] is String { ready = value; break }
+        if !replacement.isRunning, replacement.terminationStatus != 4 { break }
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      let value = try #require(ready, "The host service did not become ready")
       servicePID = try #require(value["pid"] as? Int32)
     }
 

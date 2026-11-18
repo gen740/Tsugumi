@@ -25,7 +25,7 @@ final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @un
                 from socketDevice: VZVirtioSocketDevice) -> Bool {
     guard let path = lock.withLock({ endpoint }) else { return false }
     let guest = Guest(connection)
-    Thread.detachNewThread { [self, guest] in
+    Thread.detachNewThread { [guest] in
       do {
         let peer = try VMHostIPC.connect(path: path)
         // VZ owns its descriptor. The generic byte relay owns only this dup.

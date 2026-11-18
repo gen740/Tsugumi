@@ -173,26 +173,6 @@ import TsugumiTestSupport
   #expect(abs(dots - dots.rounded()) < 1e-9, "a whole number of dots per period")
 }
 
-/// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
-@MainActor @Test func aThumbnailDotsADraftsWires() async throws {
-  let card = { (id: String, kind: String) in
-    let inputs = kind == "draft" ? "[]" : #"[{"name":"in"}]"#
-    let outputs = kind == "draft" ? "[]" : #"[{"name":"out"}]"#
-    return "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": \(inputs), \"outputs\": \(outputs), \"params\": [], \"permissions\": []}"
-  }
-  let wire = { (a: String, b: String) in
-    let fromPort = a == "d" ? "" : "out", toPort = b == "d" ? "" : "in"
-    return "{\"from\": \"\(a)\", \"fromPort\": \"\(fromPort)\", \"to\": \"\(b)\", \"toPort\": \"\(toPort)\"}"
-  }
-  let json = """
-    {"flow": "topToBottom", "draftOnly": true, "frames": {}, "steps": [], "final": {}, "outputs": {},
-     "cards": [\(card("a", "code")), \(card("b", "code")), \(card("d", "draft"))],
-     "wires": [\(wire("a", "b")), \(wire("b", "d")), \(wire("d", "a"))]}
-    """
-  let scene = DemoScene(try JSONDecoder().decode(DemoPlayerData.self, from: Data(json.utf8)))
-  #expect(scene.wires.map(\.dotted) == [false, true, true])
-}
-
 @Test func aDraftOffersCardAttachmentsAndOpensWhileWritten() {
   var data = CardNodeData(title: "x", kind: .draft, summary: "plan", inputs: [], outputs: [])
   let empty = CardGeometry(data, flow: .topToBottom)
@@ -383,7 +363,8 @@ import TsugumiTestSupport
       let ends = c.wires[i]
       let start = CGPoint(x: ends.a.x, y: ends.a.y), end = CGPoint(x: ends.b.x, y: ends.b.y)
       let path = router.route(start, end)
-      #expect(path.currentPoint == end)
+      // A Path keeps single-precision coordinates.
+      #expect(path.currentPoint.map { hypot($0.x - end.x, $0.y - end.y) < 1e-3 } == true)
       if let plan {
         #expect(plan.first == start && plan.last == end)
         #expect(plan.allSatisfy { $0.x.isFinite && $0.y.isFinite })

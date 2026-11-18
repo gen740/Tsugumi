@@ -220,14 +220,7 @@ public actor RPCClient {
     let data = try await exchange(builder.data, timeout: timeout)
     var buffer = ByteBuffer(data: data)
     let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
-    let reply: Tsugumi_RPC_ReplyT?
-    if let raw = root.payload(type: Tsugumi_RPC_Reply.self), raw.valueType == .recordresult,
-       let record = raw.value(type: Tsugumi_RPC_RecordResult.self) {
-      let decoded = Tsugumi_RPC_ReplyT()
-      decoded.value = Tsugumi_RPC_ReplyPayloadUnion(unpackRecordResult(record), type: .recordresult)
-      reply = decoded
-    } else { reply = Message(root).payload?.value as? Tsugumi_RPC_ReplyT }
-    guard let reply else {
+    guard let reply = Message(root).payload?.value as? Tsugumi_RPC_ReplyT else {
       throw RPCError.unexpectedReply("no reply value")
     }
     if reply.value?.type == .failure, let failure = reply.value?.value as? Tsugumi_Data_FailureT {
@@ -241,14 +234,6 @@ public actor RPCClient {
     do {
       var buffer = ByteBuffer(data: data)
       let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
-      if let note = root.payload(type: Tsugumi_RPC_Notification.self), note.valueType == .displayupdated,
-         let display = note.value(type: Tsugumi_RPC_DisplayUpdated.self)?.display {
-        let updated = Tsugumi_RPC_DisplayUpdatedT()
-        updated.display = unpackDisplay(display)
-        notify.yield(NotificationEvent(subscriptionId: note.subscriptionId ?? "", seq: note.seq ?? 0,
-          payload: Tsugumi_RPC_NotificationPayloadUnion(updated, type: .displayupdated)))
-        return
-      }
       let message = Message(root)
       guard message.payload?.type == .notification,
             let note = message.payload?.value as? Tsugumi_RPC_NotificationT,
@@ -269,8 +254,3 @@ public extension Tsugumi_Data_CardPathT {
 
 public func cardPath(_ segments: [String]) -> Tsugumi_Data_CardPathT { Tsugumi_Data_CardPathT(segments) }
 
-/// Decode the presentation value validated by the worker.
-public func unpackDisplay(_ wire: Tsugumi_Data_Display) -> Tsugumi_Data_DisplayT {
-  var value = wire
-  return value.unpack()
-}

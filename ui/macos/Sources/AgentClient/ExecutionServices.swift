@@ -57,11 +57,12 @@ public enum ExecutionServices {
   }
   private static func state(_ value: Tsugumi_Host_ExecutionServicesT) -> ExecutionServicesState {
     ExecutionServicesState(services: value.services.compactMap { service in
-      guard let service, let c = service.capabilities else { return nil }
+      guard let service else { return nil }
+      let c = service.capabilities
       return ExecutionServiceConnection(id: service.id, name: service.name, endpoint: service.endpoint,
         workerPublicKey: service.workerPublicKey, grade: String(service.grade),
         capabilities: ExecutionServiceCapabilities(serverId: c.serverId, nativeSystem: c.nativeSystem,
-          systems: c.systems.compactMap { $0 }, isolation: c.isolation, resourceLimits: c.resourceLimits,
+          systems: c.systems.compactMap { $0 }, isolation: c.isolation ?? "", resourceLimits: c.resourceLimits,
           maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract)))
     }, hostPublicKey: value.hostPublicKey)
   }
