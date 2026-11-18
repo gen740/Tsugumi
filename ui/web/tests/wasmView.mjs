@@ -1,5 +1,5 @@
 // A GPU/DOM stand-in: this test never renders or opens a socket.
-// Set TSUGUMI_WASM_TEMPLATE and TSUGUMI_WASM_VIEW to also exercise Emdawn + C.
+// Pass a fetched bundle, or a template and side module, to exercise a Card view.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -7,9 +7,12 @@ import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 const root = process.argv[2] ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
-const real = process.env.TSUGUMI_WASM_TEMPLATE
-const source = fs.readFileSync(real ?? path.join(root, 'sdk/views/wasm/index.js'), 'utf8')
-const names = ['window', 'document', 'navigator', 'requestAnimationFrame', 'cancelAnimationFrame', '__tsugumiCreateRuntime']
+const js = process.env.TSUGUMI_JS_BUNDLE
+const bundle = js ?? process.env.TSUGUMI_WASM_BUNDLE
+const template = bundle ? undefined : process.env.TSUGUMI_WASM_TEMPLATE
+const real = Boolean(bundle || template)
+const source = fs.readFileSync(bundle ?? template ?? path.join(root, 'sdk/views/wasm/index.js'), 'utf8')
+const names = ['window', 'document', 'navigator', 'GPUBufferUsage', 'requestAnimationFrame', 'cancelAnimationFrame', '__tsugumiCreateRuntime']
 const originals = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
 const frames = new Map(), calls = [], errors = [], allocations = new Set()
 let nextFrame = 0, currentRuntime
@@ -44,6 +47,7 @@ const device = Object.assign(new EventTarget(), {
 Object.defineProperties(globalThis, {
   window: { configurable: true, value: {} }, document: { configurable: true, value: { createElement: () => canvas } },
   navigator: { configurable: true, value: { gpu: { async requestAdapter() { return { async requestDevice() { return device } } }, getPreferredCanvasFormat: () => 'bgra8unorm' } } },
+  GPUBufferUsage: { configurable: true, value: { COPY_DST: 8, VERTEX: 32, UNIFORM: 64 } },
   requestAnimationFrame: { configurable: true, value: fn => { const id = ++nextFrame; frames.set(id, fn); return id } },
   cancelAnimationFrame: { configurable: true, value: id => frames.delete(id) },
 })
@@ -74,14 +78,15 @@ globalThis.__tsugumiCreateRuntime = async options => {
 }
 let module
 try {
-  const wasm = real ? fs.readFileSync(process.env.TSUGUMI_WASM_VIEW) : new Uint8Array()
+  const wasm = template ? fs.readFileSync(process.env.TSUGUMI_WASM_VIEW) : new Uint8Array()
   const prefix = `const tsugumiWasm=Uint8Array.from(atob('${Buffer.from(wasm).toString('base64')}'),c=>c.charCodeAt(0));\n`
   const body = real ? source : source.replace("import createRuntime from './runtime.js'", 'const createRuntime = globalThis.__tsugumiCreateRuntime')
-  module = await import('data:text/javascript;base64,' + Buffer.from(prefix + body).toString('base64'))
+  module = await import('data:text/javascript;base64,' + Buffer.from(bundle ? body : prefix + body).toString('base64'))
   const size = { width: 400, height: 300, pixelRatio: 2, visible: true }
   const data = { config: { count: 2 }, blobs: { points: new Uint8Array(24) } }
   await module.initialise({ append() {} }, data, size)
-  assert.equal(canvas.width, 800); assert.equal(canvas.height, 600); assert.equal(frames.size, 1)
+  assert.equal(canvas.width, 800); assert.equal(canvas.height, 600)
+  if (!js) assert.equal(frames.size, 1)
   assert.equal(await module.snapshot(), 'data:image/png;base64,test')
   if (!real) {
     const { library, memory, runtime } = currentRuntime
@@ -116,12 +121,12 @@ try {
     canvas.dispatchEvent(Object.assign(new Event('pointermove'), { pointerId: 5, clientX: 40, clientY: 60, buttons: 1 }))
     canvas.dispatchEvent(Object.assign(new Event('wheel'), { deltaMode: 0, deltaX: 0, deltaY: 10 }))
     await module.update(data); await module.resize({ ...size, visible: false }); assert.equal(frames.size, 0)
-    assert.throws(() => module.update({ config: { count: 3 }, blobs: data.blobs }), /Expected float32 XYZ triples/)
+    await assert.rejects(async () => module.update({ config: { count: 3 }, blobs: data.blobs }))
   }
   await module.dispose(); await module.dispose()
   assert.equal(frames.size, 0); assert.equal(allocations.size, 0)
   assert.ok(calls.some(call => call[0] === 'destroy-device'))
-  console.log(`Wasm view: ${real ? 'Emdawnwebgpu + C fixture on a GPU stand-in' : 'input ABI, events, visibility, errors, snapshot and disposal'} passed`)
+  console.log(`Card view: ${real ? 'rendered on a GPU stand-in' : 'input ABI, events, visibility, errors, snapshot and disposal'} passed`)
 } finally {
   await module?.dispose()
   for (const [name, descriptor] of originals) {

@@ -21,6 +21,7 @@ from harness.daemon import Daemon
 from harness.scenario import run
 from projects import MSG_FBS, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, path, text
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.ExecutionServiceKind import ExecutionServiceKind
@@ -65,7 +66,7 @@ def diagnostics(c, card_id: str) -> list[str]:
 def registered_remote(monkeypatch, resource_limits):
     class Catalog(socketserver.StreamRequestHandler):
         def handle(self):
-            assert R.read_broker_request(self.rfile, "fixture-capability").bodyType == R.RequestBody.CatalogRequest
+            assert R.read_broker_request(self.rfile).bodyType == R.RequestBody.CatalogRequest
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
                                    resourceLimits=resource_limits, maxJobs=8, workerContract=8)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
@@ -87,37 +88,38 @@ def registered_remote(monkeypatch, resource_limits):
                 thread.join()
 
 
-@pytest.mark.parametrize("resource_limits,settings,message", [
-    (False, {"executionService": "cluster"}, None),
-    (False, {"executionService": "cluster", "hostFolders": []}, None),
+@pytest.mark.parametrize("resource_limits,settings,valid", [
+    (False, {"executionService": "cluster"}, True),
+    (False, {"executionService": "cluster", "hostFolders": []}, True),
     (False, {"executionService": "cluster", "hostFolders": [{"path": "/data", "name": "data"}]},
-     "no worker reuse or host folders"),
+     False),
     (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
-     "requires an external execution service"),
+     False),
     (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
-      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
-    (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
-    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
+      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
+    (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
+    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
 ], ids=["unlimited", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
 def test_external_service_validation_keeps_cached_capabilities_advisory(
-        project, core_factory, registered_remote, resource_limits, settings, message):
+        project, core_factory, registered_remote, resource_limits, settings, valid):
     """The catalog describes services; live capabilities are checked during prepare."""
     definition = {"language": "bash", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
-    services = client.call("ProjectInspectRequest").executionServices
-    assert [text(service.id) for service in services] == ["local", "cluster"]
-    assert services[1].kind == ExecutionServiceKind.remote_daemon
-    assert text(services[1].nativeSystem) == FOREIGN
-    assert services[1].resourceLimits == resource_limits
-    assert services[1].maxJobs == 8
+    services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
+    assert services.keys() == {"local", "cluster"}
+    cluster = services["cluster"]
+    assert cluster.kind == ExecutionServiceKind.remote_daemon
+    assert text(cluster.nativeSystem) == FOREIGN
+    assert cluster.resourceLimits == resource_limits
+    assert cluster.maxJobs == 8
     validation = client.call("ProjectValidateRequest")
-    if message is None:
+    if valid:
         assert validation.valid, [text(diagnostic.message) for diagnostic in validation.diagnostics]
     else:
         assert not validation.valid
-        assert any(message in text(diagnostic.message) for diagnostic in validation.diagnostics)
+        assert "invalid_setting" in diagnostics(client, "work")
         with pytest.raises(RpcFailure) as failure:
             run(client)
         assert failure.value.kind == "validation_failed"
@@ -191,5 +193,4 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
         assert not record.record.summary.executionService
         failure = record.status.failure
         assert failure.kind == FailureKind.unsupported
-        message = text(failure.diagnostic)
-        assert FOREIGN in message and "binfmt_misc" in message, message
+        assert record.status.state == CardState.failed

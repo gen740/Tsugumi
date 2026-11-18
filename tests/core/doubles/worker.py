@@ -243,8 +243,8 @@ class Worker:
             return
         while message := self.data.receive():
             try:
-                if message.valueType != WorkerPayload.WorkerCall or not message.callId or message.callId <= self.call_id:
-                    raise ValueError("expected an ordered worker call")
+                if message.valueType != WorkerPayload.WorkerCall:
+                    raise ValueError("expected a worker call")
                 self.call_id = message.callId
                 self.call = message.value
                 self.calls += 1

@@ -122,13 +122,27 @@ def test_scheduled_manual_missing_base_and_initial_push_run_all(monkeypatch):
         assert selection.select(selection.changed_paths(event, base, "HEAD")) == selection.select()
 
 
-def test_diff_handles_both_sides_of_renames_and_unusual_filenames(monkeypatch):
-    def diff(command, **kwargs):
-        assert {"git", "diff", "--name-only", "--no-renames", "-z", "base...head"} <= set(command)
-        return subprocess.CompletedProcess(command, 0, stdout=b"docs/old name.md\0core/new\nname.cc\0")
-    monkeypatch.setattr(subprocess, "run", diff)
-    paths = selection.changed_paths("pull_request", "base", "head")
-    assert paths == ["docs/old name.md", "core/new\nname.cc"]
+def test_diff_handles_both_sides_of_renames_and_unusual_filenames(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+            text=True,
+        ).strip()
+
+    git("init", "--quiet")
+    old = Path("docs/old name.md")
+    new = Path("core/new\nname.cc")
+    old.parent.mkdir()
+    new.parent.mkdir()
+    old.write_text("fixture")
+    git("add", str(old))
+    git("commit", "--quiet", "-m", "Before rename")
+    base = git("rev-parse", "HEAD")
+    git("mv", str(old), str(new))
+    git("commit", "--quiet", "-m", "Rename fixture")
+    paths = selection.changed_paths("pull_request", base, "HEAD")
+    assert set(paths) == {str(old), str(new)}
     assert selection.select(paths)["docs"] and "rpc" in checks(paths)["x86_64-linux"]
 
 

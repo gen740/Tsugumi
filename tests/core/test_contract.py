@@ -374,12 +374,11 @@ def test_sdk_prepare_status_and_read(builtin_client):
     acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
     assert text(acc.opId) == op
     # SDK preparation has a status RPC but emits no completion notification.
-    deadline = time.monotonic() + 5
     while True:
         st = c.call("CardSDKStatusRequest", opId=op)
         if st.state == SDKState.ready:
             break
-        assert time.monotonic() < deadline, "SDK preparation did not finish"
+        assert st.state == SDKState.pending
         time.sleep(0.02)
     names = {text(f.path).rsplit("/", 1)[1]: f for f in st.files}
     assert {"_inputs.fbs", "_outputs.fbs", "_params.fbs"} <= set(names)

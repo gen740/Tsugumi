@@ -112,8 +112,10 @@ def test_python_fields_and_actual_unpacked_types(description, generated, monkeyp
     assert list(map(float, received.values)) == [1.25, 2.5]
     assert eval(module.MessageT.sample__ChildT.__annotations__["itemCount"], module.__dict__) is int
     assert received.children[0].itemCount == 7
-    assert module.MessageT.__dataclass_fields__['children'].name == 'children'
-    # Real names, not a snake_case translation of the .fbs.
+    described = module.MessageT(**vars(received))
+    assert described.children[0].itemCount == 7
+    assert described.noiseSd == 0.5 and described.title == b'text'
+    assert described.optionalInt == 2
 
 
 def test_cpp_members_compile_and_match_generated_native_objects(description, generated, tmp_path):
@@ -121,21 +123,24 @@ def test_cpp_members_compile_and_match_generated_native_objects(description, gen
     compiler = shutil.which(os.environ.get('CXX', 'c++'))
     if not compiler:
         pytest.skip('C++ compiler is required')
-    text = description('cpp')
-    expected = (root / 'input_generated.h').read_text()
-    def fields(source):
-        body = re.search(r'struct\s+MessageT\s*(?::[^{]+)?\{(.*?)\n\};', source, re.S)[1]
-        return {name: re.sub(r'\s+', '', kind) for kind, name in re.findall(
-            r'^\s*([^;()]+?)\s+(\w+)\s*(?:=\s*[^;]*|\{\})?;', body, re.M) if not kind.strip().startswith('typedef')}
-    assert fields(text) == fields(expected)
-    source = tmp_path / 'description.cc'
-    source.write_text(text)
-    run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), source])
-    # Also typecheck the actual generated counterpart used by the SDK.
-    source.write_text('#include "input_generated.h"\n#include <type_traits>\n'
-                      'static_assert(std::is_same_v<decltype(sample::MessageT::noise_sd), double>);\n'
-                      'static_assert(std::is_same_v<decltype(sample::MessageT::title), std::string>);\n')
-    run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), '-I' + str(root), source])
+    checks = """
+#include <type_traits>
+using sample::MessageT;
+static_assert(std::is_same_v<decltype(MessageT::noise_sd), double>);
+static_assert(std::is_same_v<decltype(MessageT::title), std::string>);
+static_assert(std::is_same_v<decltype(MessageT::children), std::vector<std::unique_ptr<sample::ChildT>>>);
+static_assert(std::is_same_v<decltype(MessageT::child), std::unique_ptr<sample::ChildT>>);
+static_assert(std::is_same_v<decltype(MessageT::flag), bool>);
+static_assert(std::is_same_v<decltype(MessageT::values), std::vector<float>>);
+static_assert(std::is_same_v<decltype(MessageT::color), sample::Color>);
+static_assert(std::is_same_v<decltype(MessageT::choice), sample::ChoiceUnion>);
+static_assert(std::is_same_v<decltype(MessageT::optional_int), flatbuffers::Optional<int32_t>>);
+static_assert(std::is_same_v<decltype(MessageT::point), std::unique_ptr<sample::Point>>);
+"""
+    source = tmp_path / 'check.cc'
+    for declarations in (description('cpp'), '#include "input_generated.h"'):
+        source.write_text(declarations + '\n' + checks)
+        run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), '-I' + str(root), source])
 
 
 @pytest.mark.parametrize('language,filename', [('go', 'Message.go'), ('rust', None), ('csharp', 'Message.cs')])

@@ -13,8 +13,12 @@ import os
 import secrets
 import shutil
 import socket
+import socketserver
+import struct
 import tempfile
+from types import SimpleNamespace
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -39,7 +43,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
-from tsugumi_client import RpcFailure, path, text
+from tsugumi_client import RpcFailure, line_chart_series, path, text
 
 pytestmark = pytest.mark.environment
 
@@ -166,6 +170,42 @@ def broker_request(endpoint, capability_file, server_id, body_type, body, **rout
         connection.shutdown(socket.SHUT_WR)
         with connection.makefile("rb") as response:
             return R.read(response).payload
+
+
+@pytest.fixture
+def module_downloads(remote_broker, monkeypatch):
+    """Observe blob requests while forwarding the broker's original frames."""
+    upstream = remote_broker["endpoint"].removeprefix("unix:")
+    downloads = set()
+
+    class Forward(socketserver.BaseRequestHandler):
+        def handle(self):
+            with self.request.makefile("rb") as downstream, socket.socket(socket.AF_UNIX) as connection:
+                header = R.exact(downstream, 4)
+                size, = struct.unpack("<I", header)
+                payload = R.exact(downstream, size)
+                request = R.MessageT.InitFromPackedBuf(payload).payload.request
+                if request.bodyType == R.RequestBody.GetBlobRequest:
+                    downloads.add(text(request.body.digest))
+                connection.connect(upstream)
+                connection.sendall(header + payload)
+                connection.shutdown(socket.SHUT_WR)
+                with connection.makefile("rb") as response:
+                    header = R.exact(response, 4)
+                    size, = struct.unpack("<I", header)
+                    self.request.sendall(header + R.exact(response, size))
+
+    with tempfile.TemporaryDirectory(prefix="mb-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
+        address = str(Path(sockets) / "broker")
+        with socketserver.ThreadingUnixStreamServer(address, Forward) as server:
+            monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + address)
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                yield downloads
+            finally:
+                server.shutdown()
+                thread.join()
 
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
@@ -319,7 +359,7 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
 
 
 @pytest.mark.parametrize("view", ["line-chart", "own-js", "own-wasm"])
-def test_remote_display_module_matches_local_source(project, core_factory, remote_broker, monkeypatch, view):
+def test_remote_display_module_matches_local_source(project, core_factory, module_downloads, monkeypatch, view):
     """Read the recorded remote display before a local build can hide missing module transport."""
     marker = "remote-module-" + hashlib.sha256(str(project).encode()).hexdigest()[:16]
     module_name = "line-chart" if view == "line-chart" else "own"
@@ -379,18 +419,32 @@ def test_remote_display_module_matches_local_source(project, core_factory, remot
     if view != "line-chart":
         assert not Path(identity).exists(), "the unique Card-owned output must only exist on the worker"
     remote_source = read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536)
-    assert remote_source and b"export" in remote_source
-    if view != "line-chart":
-        assert marker.encode() in remote_source
-    if view == "own-wasm":
-        assert b"const tsugumiWasm=Uint8Array.from(atob(" in remote_source
+    assert remote_source
+    if view == "line-chart":
+        assert line_chart_series(remote) == [SimpleNamespace(id="one", label="One", x=(1., 2.), y=(1., 2.))]
+    else:
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("needs Node.js to exercise the retrieved module")
+        script = """
+import fs from 'node:fs';
+const code = fs.readFileSync(0);
+const module = await import('data:text/javascript;base64,' + code.toString('base64'));
+const root = {};
+await module.initialise(root);
+process.stdout.write(JSON.stringify(root.textContent));
+"""
+        result = subprocess.check_output([node, "--input-type=module", "-e", script], input=remote_source)
+        assert json.loads(result) == (42 if view == "own-wasm" else marker)
+    digest = hashlib.sha256(remote_source).hexdigest()
     if view == "own-js":
-        cached = project / ".tsugumi/modules" / Path(identity).name / "index.js"
-        before = cached.stat()
-        _, repeated = run_display("remote")
-        assert text(repeated.module) == identity
-        assert cached.read_bytes() == remote_source
-        assert (cached.stat().st_ino, cached.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+        assert digest in module_downloads
+    module_downloads.clear()
+    _, repeated = run_display("remote")
+    assert text(repeated.module) == identity
+    assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
+    if view == "own-js":
+        assert digest not in module_downloads
 
     # A restarted project serves the recorded display without contacting the
     # worker, whose job may already be released. No local build has run yet.
@@ -434,8 +488,7 @@ def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_fa
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                           invocation=1, stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
-    for line in text(journal.text).splitlines():
-        assert isinstance(json.loads(line), dict)
+    assert stdout.text and not set(text(stdout.text)) - {"x", "\n"}
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):

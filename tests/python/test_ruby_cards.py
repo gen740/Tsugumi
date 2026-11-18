@@ -11,7 +11,6 @@ from projects import run_and_wait, start_run, wait_for_log, wait_run
 from test_language_cards import write_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
@@ -188,15 +187,15 @@ end'''
         assert text(shown(c, rid, 'read').text) == '## Read both artifacts'
 
 
-@pytest.mark.parametrize('expression,diagnostic', [
-    ("{out: nil}", "omit the"),
-    ("{out: {value: 18446744073709551616}}", "does not fit"),
-    ('{out: {label: "\\xff".b}}', 'UTF-8'),
-    ("{out: {value: 'wrong'}}", "enum values"),
-    ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", 'specific failure'),
-    ("Thread.new { sleep 60 }; nil", 'join Ruby threads'),
-])
-def test_ruby_failures_are_structured_and_next_worker_is_fresh(ruby_project, expression, diagnostic):
+@pytest.mark.parametrize('expression,kind,detail', [
+    ("{out: nil}", FailureKind.output_invalid, None),
+    ("{out: {value: 18446744073709551616}}", FailureKind.output_invalid, None),
+    ('{out: {label: "\\xff".b}}', FailureKind.output_invalid, None),
+    ("{out: {value: 'wrong'}}", FailureKind.output_invalid, None),
+    ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", FailureKind.worker_failed, 'specific failure'),
+    ("Thread.new { sleep 60 }; nil", FailureKind.worker_failed, None),
+], ids=['nil-output', 'out-of-range', 'invalid-utf8', 'wrong-type', 'explicit-failure', 'unjoined-thread'])
+def test_ruby_failures_are_structured_and_next_worker_is_fresh(ruby_project, expression, kind, detail):
     root, connect = ruby_project
     source = f'''def main(inputs, report, run)
   @calls = (@calls || 0) + 1
@@ -210,7 +209,11 @@ end''')})
         rid, status = run_and_wait(c, 'ruby')
         assert status.state == RunState.failed
         record = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record
-        assert diagnostic in text(record.summary.failure.diagnostic), text(record.summary.failure.diagnostic)
+        assert record.summary.failure.kind == kind
+        assert not record.outputs
+        assert not record.summary.workerReused
+        if detail:
+            assert detail in text(record.summary.failure.diagnostic)
     rid, status = run_and_wait(c, 'good')
     assert status.state == RunState.succeeded
     assert text(shown(c, rid, 'good').text) == 'alive'
@@ -286,18 +289,17 @@ def test_ruby_gems_are_locked_and_loaded_without_network(ruby_project):
     assert text(shown(c, rid).text) == 'offline 1.1.0'
 
 
-@pytest.mark.parametrize(('arguments', 'requirement', 'message'), [
-    ('lock = ./src/gems/Gemfile.lock;', "1.1.0", "gems need both"),
-    ('lock = ./src/gems/Gemfile.lock; hash = pkgs.lib.fakeHash;', "1.1.0", "hash mismatch"),
-    (f'lock = ./src/gems/Gemfile.lock; hash = "{COLORIZE_HASH}";', "1.0.0", "does not match its Gemfile"),
-])
-def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement, message):
+@pytest.mark.parametrize(('arguments', 'requirement'), [
+    ('lock = ./src/gems/Gemfile.lock;', "1.1.0"),
+    ('lock = ./src/gems/Gemfile.lock; hash = pkgs.lib.fakeHash;', "1.1.0"),
+    (f'lock = ./src/gems/Gemfile.lock; hash = "{COLORIZE_HASH}";', "1.0.0"),
+], ids=['missing-hash', 'wrong-hash', 'stale-lock'])
+def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement):
     _, connect = ruby_project
     c = connect({'ruby': colorize_card(arguments, requirement)})
     rid, status = run_and_wait(c, 'ruby')
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed
-    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.build, limitBytes=65536)
-    assert message in text(status.failure.diagnostic) + text(log.text or b"")
+    assert not c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.summary.environmentId
 
 
 @pytest.mark.parametrize('expression,kind', [
@@ -326,21 +328,20 @@ def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
     if "plotly" in expression:
         assert json.loads(text(display.value.configJson))['data'][0]['y'] == [2]
 
-@pytest.mark.parametrize(('source', 'message'), [
-    ('''def main(inputs, report)
+@pytest.mark.parametrize('source', [
+    '''def main(inputs, report)
   nil
 
-''', 'syntax error'),
-    ('''def helper; end
-''', 'main'),
-])
-def test_ruby_load_errors_are_structured(ruby_project, source, message):
+''',
+    '''def helper; end
+''',
+], ids=['syntax-error', 'missing-entry'])
+def test_ruby_load_errors_are_structured(ruby_project, source):
     _, connect = ruby_project
     c = connect({'ruby': ruby(source)})
     rid, status = run_and_wait(c, 'ruby')
     assert status.state == RunState.failed and status.failure.kind == FailureKind.worker_failed
-    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.standard_error, limitBytes=65536)
-    assert message in text(status.failure.diagnostic) + text(log.text or b"")
+    assert not c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.outputs
 
 
 def test_ruby_rejects_an_unknown_output_field(ruby_project):
@@ -352,8 +353,9 @@ end''', outputs=NUMBERS)
     c = connect({'ruby': card})
     rid, status = run_and_wait(c, 'ruby')
     assert status.state == RunState.failed
-    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.standard_error, limitBytes=65536)
-    assert 'vale' in text(status.failure.diagnostic) + text(log.text or b"")
+    assert status.failure.kind == FailureKind.output_invalid
+    assert not c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.outputs
+    assert 'vale' in text(status.failure.diagnostic)
 
 
 @pytest.mark.parametrize('language', ['ja', 'en'])

@@ -13,7 +13,7 @@ import pytest
 
 from conftest import demo_environment
 from projects import start_run, wait_run
-from test_demos import collatz_reference, connect, display_text, edit_card, set_param, stderr
+from test_demos import check_collatz_summary, collected_collatz, collatz_reference, connect, edit_card, set_param, stderr
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -38,11 +38,10 @@ def test_collatz_27_in_four_languages(demo):
     expected = collatz_reference(27)
     assert len(expected) == 112
     shown = c.call("RunRecordRequest", runId=rid, card=path("compare")).record.display.value
-    assert shown.markdown and text(shown.text).startswith("**C++, Python, Julia and R agree**: 112 values, $a_0 = 27$")
-    assert "after $111$ steps" in text(shown.text) and "9232" in text(shown.text)
+    check_collatz_summary(shown, expected)
     # Every language collected the sequence it computed.
     for lang in LANGUAGES:
-        assert display_text(c, rid, lang, "collect") == "112 values: " + " ".join(map(str, expected)), lang
+        assert collected_collatz(c, rid, lang, "collect") == expected, lang
 
 
 def test_collatz_r_fails_rather_than_round(demo):
@@ -59,4 +58,4 @@ def test_collatz_r_fails_rather_than_round(demo):
     assert "2^53" in stderr(c, rid, "collatz-r", "check")
     # The failed run waits for the branches that go on: Julia has the exact sequence.
     expected = [n] + [2 ** k for k in range(56, -1, -1)]
-    assert display_text(c, rid, "collatz-jl", "collect") == f"{len(expected)} values: " + " ".join(map(str, expected))
+    assert collected_collatz(c, rid, "collatz-jl", "collect") == expected

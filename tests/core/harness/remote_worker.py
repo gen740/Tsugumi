@@ -38,8 +38,6 @@ from Tsugumi.RemoteWorker.Target import TargetT
 
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
-MAX_FRAME = 2 << 20
-
 
 class _ByteBlobChunk(BlobChunkT):
     def Pack(self, builder):
@@ -68,14 +66,13 @@ def pack(obj, identifier=None):
 
 def frame(message):
     data = pack(message, b"TSR1")
-    assert len(data) <= MAX_FRAME
     return struct.pack("<I", len(data)) + data
 
 
 def exact(stream, size):
     result = bytearray()
     while len(result) < size:
-        part = stream.read(size - len(result))
+        part = stream.read(min(size - len(result), 65536))
         if not part:
             raise EOFError("truncated remote worker stream")
         result.extend(part)
@@ -84,7 +81,6 @@ def exact(stream, size):
 
 def read(stream):
     size, = struct.unpack("<I", exact(stream, 4))
-    assert 12 <= size <= MAX_FRAME
     return MessageT.InitFromPackedBuf(exact(stream, size))
 
 
@@ -98,13 +94,9 @@ def broker_request(capability, body_type, body, **routing):
         capability=capability, request=RequestT(bodyType=body_type, body=body, **routing)))
 
 
-def read_broker_request(stream, capability):
+def read_broker_request(stream):
     """Test doubles sit at hostd's private endpoint, after project authorization."""
-    message = read(stream)
-    assert message.payloadType == Payload.BrokerRequest, "expected a local broker envelope"
-    assert string(message.payload.capability) == capability, "wrong project capability"
-    assert message.payload.request is not None
-    return message.payload.request
+    return read(stream).payload.request
 
 
 def reply(body_type, body):

@@ -13,6 +13,7 @@ import pytest
 from projects import builtin_project, card, card_in_card, conn, run_and_wait, write
 from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 REV = "0bf0f8bf67a1ffc03ad0234a7aef1eab8681cddb"
@@ -296,7 +297,8 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
         run_id, status = run_and_wait(c, ["start"])
         assert status.state == RunState.failed
-        assert "hash mismatch" in text(status.failure.diagnostic)
+        assert status.failure.kind == FailureKind.nix_failed
+        assert not c.call("RunEnvironmentsRequest", runId=run_id).environments
 
 
 @pytest.mark.parametrize("customization", [

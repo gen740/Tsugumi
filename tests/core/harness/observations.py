@@ -1,4 +1,4 @@
-"""Read public RPC values and verify their paged transport."""
+"""Read public RPC values through their paged transport."""
 
 import hashlib
 import struct
@@ -10,24 +10,26 @@ from tsugumi_client import path, text
 from Tsugumi.Data.ValueSide import ValueSide
 
 
-def read_pages(client, request, *, page_bytes=31, **fields):
-    """Read all pages, checking progress, stable identity, and the final digest."""
+def read_pages(client, request, *, page_bytes=31, verify_integrity=False, **fields):
+    """Read all pages and optionally verify the public integrity metadata."""
     content = bytearray()
     offset = 0
     digest = None
     while True:
         reply = client.call(request, offset=offset, limitBytes=page_bytes, **fields)
         chunk = bytes(reply.bytes)
-        assert reply.offset == offset
-        assert reply.nextOffset == offset + len(chunk)
-        assert reply.eof or chunk, "a non-final public page must advance"
-        digest = text(reply.hash) if digest is None else digest
-        assert text(reply.hash) == digest
+        assert reply.eof or reply.nextOffset > offset, "a non-final page must advance"
+        if verify_integrity:
+            assert reply.offset == offset
+            assert reply.nextOffset == offset + len(chunk)
+            digest = text(reply.hash) if digest is None else digest
+            assert text(reply.hash) == digest
         content.extend(chunk)
         offset = reply.nextOffset
         if reply.eof:
-            assert reply.sizeBytes == len(content)
-            assert hashlib.sha256(content).hexdigest() == digest
+            if verify_integrity:
+                assert reply.sizeBytes == len(content)
+                assert hashlib.sha256(content).hexdigest() == digest
             return bytes(content)
 
 

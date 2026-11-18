@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -74,6 +76,8 @@ def test_build_emits_payload_manifest_and_checksums(tmp_path):
     value = artifact.verify(out, "definition", "commit")
     assert value["files"] == {artifact.PAYLOAD: artifact.digest(out / artifact.PAYLOAD)}
     assert (out / artifact.PAYLOAD).read_bytes() == (image / artifact.PAYLOAD).read_bytes()
-    assert (out / "SHA256SUMS").read_text() == "".join(
-        f"{artifact.digest(out / name)}  {name}\n"
-        for name in sorted([artifact.PAYLOAD, "vm-manifest.json"]))
+    checksums = dict(reversed(line.split(maxsplit=1))
+                     for line in (out / "SHA256SUMS").read_text().splitlines())
+    assert checksums == {name: artifact.digest(out / name) for name in (artifact.PAYLOAD, "vm-manifest.json")}
+    checker = ["sha256sum"] if shutil.which("sha256sum") else ["shasum", "-a", "256"]
+    subprocess.run([*checker, "-c", "SHA256SUMS"], cwd=out, check=True)

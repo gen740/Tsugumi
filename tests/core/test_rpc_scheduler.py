@@ -105,10 +105,9 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     rec = c.call("RunInvocationsRequest", runId=run_id, card=path("gate")).records[0]
     assert [text(p) for p in rec.outputsSent] == ["a"]
     assert not rec.executionService
-    assert [(st.phase, st.outcome) for st in rec.stages] == [(Phase.execute, StageOutcome.done),
-                                                             (Phase.validate, StageOutcome.done),
-                                                             (Phase.save, StageOutcome.done)]
-    assert all(st.start <= st.end for st in rec.stages)
+    assert {(stage.phase, stage.outcome) for stage in rec.stages} >= {
+        (Phase.execute, StageOutcome.done), (Phase.validate, StageOutcome.done), (Phase.save, StageOutcome.done)
+    }
 
 
 def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(project, core_factory):
@@ -196,7 +195,8 @@ def set_param(c, card_id, name, value):
            changes=[change("PutDefinition", id=card_id, cardJson=json.dumps(body), keepMeta=True)])
 
 
-FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"])}
+FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"]),
+            "branch": dict(BASE_DEFS["branch"], recordIO=True)}
 FAN_CARDS = [card("start", "trigger"), card("fan", "fork"), card("words", "words"), card("cond", "cond"),
              card("gate", "branch"), card("yes", "sink"), card("no", "sink")]
 FAN_CONNS = [conn("start", "out", "fan", "in"), conn("fan", "out1", "words", "start"), conn("fan", "out2", "cond", "start"),
@@ -222,11 +222,12 @@ def test_run_from_one_branch_meets_the_saved_values_of_the_others(env, tmp_path)
     assert states(c, run_id, "cond") == [] and states(c, run_id, "fan") == []
     assert states(c, run_id, "gate") == [CardState.succeeded]
     assert inputs(c, tmp_path / "decode", run_id, "yes") == [{"text": "changed"}]
-    # Only the branch that ran is a source; the record says where the saved value came from.
+    # Only the branch that ran is a live source. The invocation records the saved condition.
     rec = c.call("RunRecordRequest", runId=run_id, card=path("gate")).record
     assert [text(s.port) for s in rec.inputSources] == ["value"]
-    journal = c.call("LogRangeRequest", runId=run_id, stream=3)
-    assert any(first in line and "gate.condition" in line for line in text(journal.text).splitlines())
+    saved_condition = recorded_input_json(c, tmp_path / "condition", run_id, "gate", port="condition")
+    assert saved_condition["value"] is True
+    assert states(c, run_id, "no") in ([], [CardState.skipped])
 
     # The other branch next: the saved value is now the one that just went through.
     set_param(c, "cond", "value", False)

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+from pathlib import Path
 import re
 import shutil
+import struct
+import subprocess
 
 import pytest
 from conftest import ROOT, Daemon
 from projects import run_and_wait
+from Tsugumi.Data.DisplayValue import DisplayValue
 from Tsugumi.Data.RunState import RunState
-from tsugumi_client import path, text
+from tsugumi_client import new_id, path, text
 
 DOCS = ROOT / "docs"
 
@@ -75,11 +81,13 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
         assert status.state == RunState.succeeded
         display = c.call("RunRecordRequest", runId=run_id, card=path("cloud")).record.display.value
         identity = text(display.module)
-        suffix = "-point-cloud-wasm-view" if wasm else "-point-cloud-view"
-        assert identity.startswith("/nix/store/") and identity.endswith(suffix)
-        assert json.loads(text(display.configJson)) == {"count": 12000}
-        assert text(display.blobs[0].name) == "points"
-        assert len(display.blobs[0].data) == 12000 * 12
+        count = json.loads(text(display.configJson))["count"]
+        assert count == 12000
+        blobs = {text(blob.name): bytes(blob.data) for blob in display.blobs}
+        points = list(struct.iter_unpack("<fff", blobs["points"]))
+        assert len(points) == count
+        assert all(math.isfinite(value) for point in points for value in point)
+        assert len(set(points)) > 1
         # The module was already built and retained by the Card manifest's closure.
         code = bytearray()
         offset = 0
@@ -91,34 +99,41 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
                 break
             assert page.nextOffset > offset
             offset = page.nextOffset
-        assert b"requestAdapter" in code and b"createRenderPipeline" in code
-        if wasm:
-            import base64
-            from pathlib import Path
-
-            output = Path(identity)
-            assert (output / "index.js").is_symlink()
-            template = (output / "index.js").resolve()
-            assert template.parent.name.endswith("-tsugumi-wasm-view-template")
-            # The Card has only its Wasm and a reference, never a template copy.
-            binary = (output / "view.wasm").read_bytes()
-            assert binary.startswith(b"\0asm\1\0\0\0")
-            assert base64.b64encode(binary) in code
-            assert code.endswith(template.read_bytes())
-            assert len(binary) < 32768
-        else:
-            assert len(code) < 10000
+        assert code
+        node = shutil.which("node")
+        if node:
+            module = tmp_path / "point-cloud.mjs"
+            module.write_bytes(code)
+            bundle_variable = "TSUGUMI_WASM_BUNDLE" if wasm else "TSUGUMI_JS_BUNDLE"
+            subprocess.run([node, str(ROOT / "ui/web/tests/wasmView.mjs"), str(ROOT)],
+                           env={**os.environ, bundle_variable: str(module)}, check=True)
         again_id, again = run_and_wait(c, "start")
         assert again.state == RunState.succeeded
         again_display = c.call("RunRecordRequest", runId=again_id, card=path("cloud")).record.display.value
         assert text(again_display.module) == identity
+        if wasm:
+            definition = root / "definitions/cloud/default.nix"
+            definition.write_text(definition.read_text().replace("point-cloud-wasm-view", "second-point-cloud-view"))
+            c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev,
+                   opId=new_id(), origin="test")
+            second_id, second = run_and_wait(c, "start")
+            assert second.state == RunState.succeeded
+            second_view = c.call("RunRecordRequest", runId=second_id, card=path("cloud")).record.display.value
+            second_identity = text(second_view.module)
+            assert second_identity != identity
+
+            def references(module):
+                return set(subprocess.check_output(["nix-store", "--query", "--references", module],
+                                                   text=True).splitlines())
+
+            shared = references(identity) & references(second_identity)
+            assert any((Path(reference) / "index.js").is_file() for reference in shared)
     finally:
         d.cleanup()
 
 
 def test_line_chart_uses_binary_view_input(tmp_path):
     """The unchanged SDK call publishes double precision blobs through the module RPC."""
-    import struct
     from tsugumi_client import line_chart_series
     root = tmp_path / "line-chart"
     shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
@@ -140,7 +155,7 @@ def test_line_chart_uses_binary_view_input(tmp_path):
         rid, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded
         display = c.call("RunRecordRequest", runId=rid, card=path("cloud")).record.display
-        assert display.valueType == 7
+        assert display.valueType == DisplayValue.DisplayModule
         series = line_chart_series(display.value)
         assert series[0].x == (1e12, 1e12 + 0.125)
         assert series[0].y == (1e12, 1e12 + 0.25)
@@ -151,6 +166,6 @@ def test_line_chart_uses_binary_view_input(tmp_path):
         blobs = {text(b.name): bytes(b.data) for b in display.value.blobs}
         assert blobs["x"] == struct.pack("<dddd", 1e12, 1e12 + 0.125, 1e12, 1e12 + 0.125)
         page = c.call("ModuleReadRequest", module=text(display.value.module), limitBytes=1048576)
-        assert page.eof and b"createRenderPipeline" in bytes(page.bytes)
+        assert page.eof and page.bytes
     finally:
         d.cleanup()

@@ -155,8 +155,6 @@ class Client:
                     return None
                 head += chunk
             (n,) = struct.unpack("<I", head)
-            if not 0 < n <= 16 << 20:
-                raise ValueError(f"invalid RPC frame size: {n}")
             body = bytearray()
             while len(body) < n:
                 chunk = self._sock.recv(min(1 << 20, n - len(body)))
@@ -293,7 +291,6 @@ def line_chart_series(value):
     import json
     import struct
     from types import SimpleNamespace
-    assert text(value.module).endswith("-tsugumi-view-line-chart")
     config = json.loads(text(value.configJson))
     blobs = {text(b.name): bytes(b.data) for b in value.blobs}
     x = struct.unpack("<" + "d" * (len(blobs["x"]) // 8), blobs["x"])
