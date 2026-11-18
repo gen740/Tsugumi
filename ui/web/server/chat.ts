@@ -703,5 +703,5 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
-  return Object.fromEntries(Object.entries(routes).map(([key, route]) => [key, async (body, url) => { await initialSettings; return route(body, url) }]))
+  return Object.fromEntries(Object.entries(routes).map(([key, route]) => [key, async (body, url, signal) => { await initialSettings; return route(body, url, signal) }]))
 }
