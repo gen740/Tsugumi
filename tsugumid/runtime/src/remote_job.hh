@@ -36,6 +36,7 @@ struct RemoteJobState {
   std::string error;
   std::string transfer_name = {};
   uint64_t transfer_done = 0, transfer_total = 0;
+  bool log_truncated = false;
 };
 
 struct RemoteProbe {

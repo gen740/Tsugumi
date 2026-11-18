@@ -46,6 +46,9 @@ auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT> {
   auto spec = std::unique_ptr<R::JobSpecT>(
       flatbuffers::GetRoot<R::JobSpec>(bytes.data())->UnPack());
+  if (spec->log_limit_bytes == 0 ||
+      spec->log_limit_bytes > kInvocationLogLimitBytes)
+    throw Error(R::ErrorCode::Invalid, "invalid invocation log limit");
   return spec;
 }
 auto terminal(R::JobState state) -> bool {

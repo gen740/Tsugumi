@@ -126,7 +126,7 @@ Note log_note(const LogEnd& e) {
     if (e.card) lb.add_card(card);
     if (e.invocation) lb.add_invocation(*e.invocation);
     lb.add_stream(e.stream);
-    lb.add_end_offset(e.end_offset);
+    if (e.end_offset) lb.add_end_offset(*e.end_offset);
     return std::make_pair(R::NotificationPayload::LogAvailable,
                           lb.Finish().Union());
   });
@@ -392,14 +392,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                const std::optional<CardPath>& card, std::optional<uint64_t> inv,
                const std::string& message) {
     std::string line = journal_line(phase, event, card, inv, message);
+    if (card) {
+      card_log(*card, *inv, LogStream::journal, line);
+      return;
+    }
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), line, card, inv, run, ends](sql::Db& db) {
-          if (card)
-            *ends =
-                h.append_log(db, run, *card, *inv, LogStream::journal, line);
-          *ends = card ? *ends : h.append_run_journal(db, run, line);
+        [&h = svc_.history(), line, run, ends](sql::Db& db) {
+          *ends = h.append_run_journal(db, run, line);
         },
         [self = shared_from_this(), ends](bool ok) {
           if (!ok) self->persistence_lost("journal");
@@ -425,24 +426,39 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         });
   }
 
+  auto log_budget(const CardPath& card, uint64_t inv)
+      -> workerd::InvocationLog& {
+    return log_budgets_
+        .try_emplace({path_key(card), inv}, kInvocationLogLimitBytes)
+        .first->second;
+  }
+
+  void mark_card_log_truncated(const CardPath& card, uint64_t inv) {
+    const auto run = run_id_;
+    svc_.history().submit(
+        [run, card, inv](sql::Db& db) {
+          History::mark_log_truncated(db, run, card, inv,
+                                      kInvocationLogLimitBytes);
+        },
+        [self = shared_from_this(), run, card, inv](bool ok) {
+          if (!ok) {
+            self->persistence_lost("log truncation");
+            return;
+          }
+          self->svc_.server()->broadcast(
+              log_note({run, card, inv, LogStream::unspecified, std::nullopt}));
+        });
+  }
+
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 const std::string& text) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
-    auto& budget = log_budgets_[{path_key(card), inv}];
-    if (!budget)
-      budget = std::make_unique<workerd::InvocationLog>(
-          [this, card, inv](uint64_t stream, const std::string& text) {
-            record_card_log(card, inv, static_cast<LogStream>(stream), text);
-          },
-          kInvocationLogLimitBytes);
-    // Backends use journal entries for their truncation notice. The core
-    // records one notice for its combined build and execution budget.
-    if (stream == LogStream::journal)
-      budget->truncate();
+    auto& budget = log_budget(card, inv);
+    if (budget.truncated()) return;
+    if (budget.append(static_cast<uint64_t>(stream), text))
+      record_card_log(card, inv, stream, text);
     else
-      budget->append(static_cast<uint64_t>(stream), text);
-    // Record the first omission immediately, including on interrupted runs.
-    budget->finish();
+      mark_card_log_truncated(card, inv);
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -767,6 +783,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
     std::vector<std::pair<LogStream, std::string>> remote_logs;
+    bool remote_log_truncated = false;
     bool detached = false;
     std::optional<InvocationSummaryData> unpublished;
   };
@@ -1378,7 +1395,22 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           w.cancellation->failed.store(true);
           w.cancellation->stop.store(true);
         }
+        {
+          std::lock_guard<std::mutex> lock(log_policy_mu_);
+          auto& budget = log_budget(s.card, s.invocation);
+          std::erase_if(out.remote_logs, [&](const auto& entry) {
+            return !budget.append(static_cast<uint64_t>(entry.first),
+                                  entry.second);
+          });
+          if (out.remote_log_truncated) budget.truncate();
+          if (budget.truncated()) {
+            s.log_truncated_at_bytes = kInvocationLogLimitBytes;
+          }
+        }
         h.write_sync([&](sql::Db& db) {
+          if (s.log_truncated_at_bytes)
+            History::mark_log_truncated(db, s.run_id, s.card, s.invocation,
+                                        *s.log_truncated_at_bytes);
           if (remote_artifact && !out.failure)
             History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
@@ -1900,13 +1932,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            s.transfer_done = done;
            s.transfer_total = total;
            card_status(s);
-         }});
+         },
+         [&] { mark_card_log_truncated(node.path, inv); }});
     s.transfer_direction.clear();
     s.transfer_name.clear();
     w.out_alias = std::move(result.out_alias);
     Produced p;
     p.failure = result.outcome.failure;
     p.remote_logs = std::move(result.logs);
+    p.remote_log_truncated = result.log_truncated;
     if (!p.failure)
       for (auto& [name, bytes] : result.outcome.outputs)
         p.outputs.push_back(
@@ -2146,8 +2180,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> start_failure_;
   std::optional<FailureData> stall_failure_;
   std::mutex log_policy_mu_;
-  std::map<std::pair<std::string, uint64_t>,
-           std::unique_ptr<workerd::InvocationLog>>
+  std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;

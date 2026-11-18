@@ -41,7 +41,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 7.
+  // Zero means no advertised contract; writers explicitly send contract 8.
   worker_contract:uint;
   active_jobs:uint;
 }
@@ -49,7 +49,7 @@ table Capabilities {
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
-table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; }
+table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }

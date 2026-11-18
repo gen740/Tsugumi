@@ -6,7 +6,6 @@
 #include <atomic>
 #include <filesystem>
 #include <iostream>
-#include <sstream>
 #include <thread>
 
 #include "journal.hh"
@@ -55,112 +54,38 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   p.bytes.assign(data.begin(), data.end());
   return p;
 }
-auto log_entries(const std::string& bytes)
-    -> std::vector<std::pair<uint64_t, std::string>> {
-  std::vector<std::pair<uint64_t, std::string>> result;
-  std::istringstream input(bytes);
-  std::string line;
-  while (std::getline(input, line)) {
-    remote::LogJson entry;
-    expect(!schema::decode(line, entry), "invalid NDJSON log record");
-    result.emplace_back(*entry.stream, *entry.text);
-  }
-  return result;
-}
 auto log_test() -> void {
-  // Fill the budget exactly, then append a notice outside it. The complete
-  // result must still fit the core's shared import limit.
-  std::ostringstream boundary;
-  InvocationLog maximum(boundary, remote::kMaxLogLimitBytes);
-  maximum.append(1, std::string(remote::kMaxLogLimitBytes - 23, 'x'));
-  expect(boundary.str().size() == remote::kMaxLogLimitBytes,
-         "boundary entry did not fill budget");
-  maximum.append(2, "overflow");
-  maximum.finish();
-  expect(boundary.str().size() > remote::kMaxLogLimitBytes &&
-             boundary.str().size() <= remote::kMaxLogResultBytes,
-         "truncation notice exceeds import allowance");
-  // 25 encoded bytes: the raw text fits, but JSON escaping and framing do not
-  // fit in a 23-byte budget. A dropped entry must not look like a complete log.
-  std::ostringstream output;
-  InvocationLog log(output, 23);
-  log.append(1, "\n");
-  log.finish();
-  remote::LogJson entry;
-  std::istringstream lines(output.str());
-  std::string line;
-  expect(static_cast<bool>(std::getline(lines, line)),
-         "missing truncation notice");
-  expect(!schema::decode(line, entry) && *entry.stream == 3 &&
-             !entry.text->empty(),
-         "invalid truncation notice");
-  expect(!std::getline(lines, line), "unexpected log entry");
-
-  const auto encoded = [](uint64_t stream, std::string text) {
-    remote::LogJson value;
-    *value.stream = stream;
-    *value.text = std::move(text);
-    return schema::encode(value) + '\n';
-  };
-  const auto first = encoded(4, "build"), second = encoded(2, "error");
-  for (const auto limit :
-       {first.size() + second.size(), first.size() + second.size() + 1}) {
-    std::ostringstream complete;
-    InvocationLog full(complete, limit);
-    full.append(4, "build");
-    full.append(2, "error");
-    full.finish();
-    expect(log_entries(complete.str()) == log_entries(first + second),
-           "complete log was changed or marked truncated");
+  InvocationLog maximum(kInvocationLogLimitBytes);
+  // Fill the shared budget with entries that can be uploaded verbatim.
+  const std::string block((1 << 20) - 23, 'x');
+  for (uint64_t total = 0; total < kInvocationLogLimitBytes; total += 1 << 20) {
+    const auto entry = maximum.append(1, block);
+    expect(entry && entry->size() + 1 == (1 << 20),
+           "boundary entry did not fill its part of the budget");
   }
-  std::ostringstream combined;
-  InvocationLog bounded(combined, first.size() + second.size() - 1);
-  bounded.append(4, "build");
-  bounded.append(2, "error");
-  bounded.append(1, std::string(100, 'x'));
-  bounded.finish();
-  const auto once = combined.str();
-  bounded.finish();
-  expect(combined.str() == once, "duplicate truncation notice");
-  const auto entries = log_entries(once);
-  expect(entries.size() == 2 &&
-             entries[0] == std::pair<uint64_t, std::string>{4, "build"} &&
-             entries[1].first == 3 && !entries[1].second.empty(),
+  expect(!maximum.truncated(), "an exact fit was marked truncated");
+  expect(!maximum.append(2, "overflow") && maximum.truncated(),
+         "omitted entry was not marked truncated");
+  expect(!maximum.append(3, "journal"), "wrote an entry after truncation");
+
+  // A newline fits as raw text, but its JSON escaping and framing do not.
+  InvocationLog escaped(23);
+  expect(!escaped.append(1, "\n") && escaped.truncated(),
+         "budget did not account for JSON escaping");
+
+  InvocationLog combined(30);
+  expect(combined.append(4, "build").has_value(), "build entry omitted");
+  expect(!combined.append(2, "error") && combined.truncated(),
          "combined stream budget was not enforced");
-
-  std::ostringstream tiny;
-  InvocationLog minimum(tiny, 1);
-  minimum.append(1, "too large");
-  minimum.append(2, "also too large");
-  minimum.finish();
-  const auto minimum_entries = log_entries(tiny.str());
-  expect(minimum_entries.size() == 1 && minimum_entries[0].first == 3 &&
-             !minimum_entries[0].second.empty(),
-         "tiny budget suppressed the truncation notice");
-  std::ostringstream local, remote;
-  InvocationLog worker(remote, 80);
-  InvocationLog recording(
-      [&](uint64_t stream, const std::string& text) {
-        tsugumi::remote::LogJson entry;
-        *entry.stream = stream;
-        *entry.text = text;
-        local << schema::encode(entry) << '\n';
-      },
-      80);
-  for (const auto& text :
-       {std::string("build"), std::string("stdout"), std::string(100, 'x')}) {
-    worker.append(1, text);
-    recording.append(1, text);
-  }
-  worker.finish();
-  recording.finish();
-  expect(log_entries(local.str()) == log_entries(remote.str()),
-         "local and remote recording budgets differ");
 }
 auto protocol_test() -> void {
   const std::string digest(64, 'a');
   expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17,
          "job lost the core log budget");
+  expect(
+      parse_spec(spec(digest, 60, kInvocationLogLimitBytes))->log_limit_bytes ==
+          kInvocationLogLimitBytes,
+      "remote worker refused the shared limit");
   R::RequestT q;
   q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');
