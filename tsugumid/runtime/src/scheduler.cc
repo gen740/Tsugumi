@@ -2233,33 +2233,61 @@ auto Scheduler::start_remote_cleanup() -> void {
   });
 }
 
-std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
+namespace {
+
+struct PlanEdges {
+  explicit PlanEdges(const Resolution& res)
+      : incoming(res.nodes.size()), outgoing(res.nodes.size()) {
+    for (const auto& edge : res.edges) {
+      incoming[edge.to].push_back(&edge);
+      outgoing[edge.from].push_back(&edge);
+    }
+  }
+
+  std::vector<std::vector<const Edge*>> incoming;
+  std::vector<std::vector<const Edge*>> outgoing;
+};
+
+// A connected required port waits when all its suppliers are waiting.
+auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
+    -> std::set<size_t> {
   std::set<size_t> waits;
-  for (size_t i = 0; i < res.nodes.size(); ++i)
-    if (res.nodes[i].kind == Template::Draft) waits.insert(i);
-  for (bool changed = !waits.empty(); changed;) {
-    changed = false;
-    for (size_t i = 0; i < res.nodes.size(); ++i) {
-      if (res.nodes[i].is_virtual || waits.count(i)) continue;
-      for (const auto& p : res.nodes[i].inputs) {
-        if (p.optional) continue;
-        bool fed = false;
-        bool only_waiting = true;
-        if (const auto port = res.incoming[i].find(p.name);
-            port != res.incoming[i].end())
-          for (const auto from : port->second) {
-            fed = true;
-            only_waiting &= waits.count(from) > 0;
-          }
-        if (fed && only_waiting) {
-          waits.insert(i);
-          changed = true;
-          break;
-        }
+  std::vector<size_t> waiting;
+  for (size_t i = 0; i < res.nodes.size(); ++i) {
+    if (res.nodes[i].kind != Template::Draft) continue;
+    waits.insert(i);
+    waiting.push_back(i);
+  }
+  if (waiting.empty()) return waits;
+
+  std::vector<std::map<std::string, size_t>> remaining(res.nodes.size());
+  for (size_t i = 0; i < res.nodes.size(); ++i) {
+    if (res.nodes[i].is_virtual || waits.contains(i)) continue;
+    for (const auto& p : res.nodes[i].inputs) {
+      if (p.optional) continue;
+      if (const auto port = res.incoming[i].find(p.name);
+          port != res.incoming[i].end())
+        remaining[i].try_emplace(p.name, port->second.size());
+    }
+  }
+  for (size_t i = 0; i < waiting.size(); ++i) {
+    for (const auto* edge : edges.outgoing[waiting[i]]) {
+      if (waits.contains(edge->to)) continue;
+      auto& ports = remaining[edge->to];
+      if (const auto port = ports.find(edge->to_port);
+          port != ports.end() && --port->second == 0) {
+        waits.insert(edge->to);
+        waiting.push_back(edge->to);
       }
     }
   }
   return waits;
+}
+
+}  // namespace
+
+std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
+  return find_draft_waiting(res, PlanEdges(res));
 }
 
 RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
@@ -2269,6 +2297,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   if (!target)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
+  const PlanEdges edges(res);
   size_t t = res.index.at(path_key(card));
   std::set<size_t> targets;
   std::vector<size_t> starts;
@@ -2287,16 +2316,12 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
           res.nodes[i].kind == Template::Draft)
         continue;
       targets.insert(i);
-      bool from_outside = false;
-      bool any_in = false;
-      for (const auto& [port, froms] : res.incoming[i])
-        for (const auto from : froms) {
-          any_in = true;
-          from_outside |= !inside(from);
-        }
+      const auto& incoming = edges.incoming[i];
+      const bool from_outside = std::ranges::any_of(
+          incoming, [&](const Edge* edge) { return !inside(edge->from); });
       if (from_outside)
         seeds.push_back(i);
-      else if (!any_in)
+      else if (incoming.empty())
         starts.push_back(i);
     }
     if (targets.empty())
@@ -2308,11 +2333,13 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       while (!stack.empty()) {
         size_t i = stack.back();
         stack.pop_back();
-        for (const auto to : res.outgoing[i])
+        for (const auto* edge : edges.outgoing[i]) {
+          const auto to = edge->to;
           if (!targets.count(to) && res.nodes[to].kind != Template::Draft) {
             targets.insert(to);
             stack.push_back(to);
           }
+        }
       }
     }
   } else if (!propagate) {
@@ -2325,7 +2352,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       if (res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft)
         continue;
       targets.insert(i);
-      if (res.incoming[i].empty()) starts.push_back(i);
+      if (edges.incoming[i].empty()) starts.push_back(i);
     }
   } else {
     std::vector<size_t> stack = {t};
@@ -2333,7 +2360,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       size_t i = stack.back();
       stack.pop_back();
       if (!targets.insert(i).second) continue;
-      for (const auto to : res.outgoing[i]) stack.push_back(to);
+      for (const auto* edge : edges.outgoing[i]) stack.push_back(edge->to);
     }
     starts.push_back(t);
   }
@@ -2341,7 +2368,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   // need its outputs (a required input fed only by Drafts or by Cards waiting
   // on one). Everything else runs as usual; a Card started on its own keeps
   // its saved inputs.
-  std::set<size_t> waits = draft_waiting(res);
+  const auto waits = find_draft_waiting(res, edges);
   for (size_t i : waits)
     if (i != t || target->kind == Template::Draft) targets.erase(i);
   if (target->kind == Template::Draft)
@@ -2373,12 +2400,11 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   for (size_t i : targets) {
     if (res.nodes[i].settings.any_mode || given.count(i)) continue;
     std::set<std::string> fed, saved;
-    for (const auto& e : res.edges) {
-      if (e.to != i) continue;
-      if (targets.count(e.from))
-        fed.insert(e.to_port);
-      else if (!waits.count(e.from))
-        saved.insert(e.to_port);
+    for (const auto* edge : edges.incoming[i]) {
+      if (targets.count(edge->from))
+        fed.insert(edge->to_port);
+      else if (!waits.count(edge->from))
+        saved.insert(edge->to_port);
     }
     for (const auto& port : fed) saved.erase(port);
     if (!saved.empty())
