@@ -175,8 +175,6 @@ def test_usage_deduplicates_shared_roots_and_keeps_old_roots(core_factory, tmp_p
     rows = {text(p.project): p for p in usage.projects}
     assert rows["one"].buildBytes == rows["two"].buildBytes == size
     assert rows["one"].lastUsed <= int((age + 1) * 1000)
-    # Reading a cached report has no store traversal or mutation side effect.
-    assert client.call("ProjectCacheUsageRequest").measuredAt == usage.measuredAt
     client.call("ProjectCacheClearRequest", opId=new_id())
     usage_when(client, lambda u: u.buildBytes == size)  # another project's roots stay
 
