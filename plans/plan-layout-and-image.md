@@ -326,7 +326,7 @@ This is a source-selection issue, not evidence of a missing component.
   SwiftPM path identity (`macos`); the nested runtime root makes their
   identities distinct. `TsugumiVMTypes` uses Foundation only; the UI consumes
   values, while `TsugumiVMRuntime` owns Virtualization and the helper.
-- `tsugumi-vmctl` belongs to `cli/macos`: inspection showed that it is a Host
+- `tsugumi-vmctl` belongs to `cli/vmctl`: inspection showed that it is a Host
   RPC client using `EnvironmentManager`, not a VM owner. Its build tool builds
   and signs the independent helper beside the diagnostic client. It does not
   bring AgentClient or renderer dependencies into the VM helper package.
