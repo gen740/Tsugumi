@@ -78,9 +78,12 @@ std::string entry_nix() {
 # in the source evaluator before these derivation references are reconstructed.
 pkgs: { sdk, gen, upstream, card, remote ? false }:
 let
-  # upstream.json is read here only: it names folders of this evaluator, so it
-  # is kept out of `gen`, which builds take in by content.
+  # upstream.json names folders of this evaluator and is read only here.
   up = builtins.fromJSON (builtins.readFile upstream);
+  sdkFor = g: import (pkgs.lib.path.append sdk "nix") {
+    inherit pkgs;
+    generated = g + "/contract";
+  };
   # What Tsugumi evaluated apart from this evaluator: built when a Card uses it.
   sourceReaders.flake = v: {
     inherit (v) ref rev narHash;
@@ -113,15 +116,14 @@ let
   importCard = u:
     let
       ugen = /. + u.gen;
-      usdk = import (sdk + "/nix") { inherit pkgs; generated = ugen; };
     in
     import (/. + u.def + "/default.nix") {
       inherit pkgs;
       params = builtins.fromJSON (builtins.readFile (ugen + "/params-nix.json"));
-      inputs = inputsFor usdk ugen u.deps;
+      inputs = inputsFor (sdkFor ugen) ugen u.deps;
     };
   cards = builtins.listToAttrs (map (u: { name = u.key; value = importCard u; }) up.cards);
-  tsugumi = import (sdk + "/nix") { inherit pkgs; generated = gen; };
+  tsugumi = sdkFor gen;
   params = builtins.fromJSON (builtins.readFile (gen + "/params-nix.json"));
   self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi gen up.deps; };
   run = self.run or (throw "a Card needs run");
@@ -405,21 +407,6 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
                               ",\"outputs\":" + list(node.outputs, "outputs") +
                               ",\"params\":" + params + "]}\n";
   }
-  // Binary schemas for reflection based tools.
-  for (const char* name : {"_inputs", "_outputs", "_params"}) {
-    std::string err;
-    std::string text = files[std::string(name) + ".fbs"];
-    std::string root = std::string(name) == "_inputs"    ? "inputs.Inputs"
-                       : std::string(name) == "_outputs" ? "outputs.Outputs"
-                                                         : "params.Params";
-    if (auto t = types::compile(text, root, &err))
-      files[std::string(name) + ".bfbs"] = (*t)->bfbs;
-    else
-      throw Failed(FailureKind::validation_failed,
-                   std::string(name) + ".fbs: " + err);
-  }
-  files["params.json"] = params_json(node, false);
-  files["params-nix.json"] = params_json(node, true);
   return files;
 }
 
@@ -513,8 +500,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
       return m;
     });
   };
-  auto generated_dir = [&](std::map<std::string, std::string> files) {
-    files.erase("params.json");  // runtime params never reach the build
+  auto generated_dir = [&](const std::map<std::string, std::string>& files) {
     crypto::Sha256 h;
     for (const auto& [name, content] : files) {
       h.update(name);
@@ -526,7 +512,10 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   // The sources a Card names, evaluated apart from it; nothing is fetched for a
   // Card that names none.
   auto with_sources = [&](const Node& n) {
-    auto generated = generate(n);
+    std::map<std::string, std::string> generated;
+    for (auto& [name, content] : generate(n))
+      generated.emplace("contract/" + name, std::move(content));
+    generated["params-nix.json"] = params_json(n, true);
     std::string sources = "[";
     auto nix =
         req.doc->sources.count(n.def_dir + "default.nix")
@@ -802,6 +791,8 @@ SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node,
   sdk_threads_.emplace_back([this, copy, job, dir, write_job]() mutable {
     try {
       auto files = generate(copy);
+      files["params.json"] = params_json(copy, false);
+      files["params-nix.json"] = params_json(copy, true);
       for (const auto& [name, content] : files) {
         fs::write_atomic(dir / "files" / name, content, 0444);
         job.files.emplace_back(".sdk/" + job.op_id + "/" + name,

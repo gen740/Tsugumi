@@ -11,12 +11,11 @@
 #     jq '{out: {value: .value}}' "$JSON_IN" > "$TSUGUMI_OUTPUT"
 #   ''; }                                                            # bash
 #
-# `generated` holds the core-generated contract of the Card being built
-# (_inputs.fbs, _outputs.fbs, _params.fbs and _contract.json).
+# `generated` contains only the four files of the Card's generated contract:
+# _inputs.fbs, _outputs.fbs, _params.fbs and _contract.json.
 { pkgs, generated }:
 let
   inherit (pkgs) lib;
-  sdkRoot = ./..;
   builtinViews = import ./builtin-views.nix { inherit pkgs; };
   wasmViews = import ./wasm-view.nix { inherit pkgs; };
   flatc = "${pkgs.flatbuffers}/bin/flatc";
@@ -26,21 +25,23 @@ let
     "_params"
   ];
 
-  # Only these files go into the shared runtime, so it does not change (and
-  # is not rebuilt) when anything else in the SDK or any Card changes.
-  runtimeSrc = lib.fileset.toSource {
-    root = sdkRoot;
-    fileset = lib.fileset.unions [
-      (sdkRoot + "/include")
-      (sdkRoot + "/src/card_runtime.cc")
-    ];
+  abiHeaders = lib.fileset.toSource {
+    root = ../include;
+    fileset = ../include/tsugumi/sdk/abi.h;
   };
 
   # libtsugumi_card.so: call glue, Run and Report.
   # Independent of any Card's contract: one build per environment.
   runtime = pkgs.stdenv.mkDerivation {
     name = "tsugumi-card-runtime";
-    src = runtimeSrc;
+    src = lib.fileset.toSource {
+      root = ../.;
+      fileset = lib.fileset.unions [
+        ../include/tsugumi/card_runtime.hh
+        ../include/tsugumi/sdk/abi.h
+        ../src/card_runtime.cc
+      ];
+    };
     buildInputs = [ pkgs.flatbuffers ];
     dontConfigure = true;
     # Cards find it through their rpath (Linux) or its absolute install name (macOS hosts).
@@ -99,7 +100,7 @@ let
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --cpp --gen-object-api --scoped-enums -o $out/include ${dir}/$f.fbs
       done
-      python3 ${sdkRoot + "/codegen/card_cpp.py"} ${dir}/_contract.json $out
+      python3 ${../codegen/card_cpp.py} ${dir}/_contract.json $out
     '';
 
   pythonFace =
@@ -126,27 +127,27 @@ let
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} -b --schema --bfbs-builtins -o $out ${dir}/$f.fbs
       done
-      python3 ${sdkRoot + "/codegen/card_json.py"} ${dir}/_contract.json $out
+      python3 ${../codegen/card_json.py} ${dir}/_contract.json $out
     '';
 
   rustFace =
     dir:
     pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
       mkdir -p $out/src $out/lib
-      cp ${sdkRoot + "/rust/Cargo.toml"} $out/Cargo.toml
+      cp ${../rust/Cargo.toml} $out/Cargo.toml
       mkdir -p $out/flatbuffers
       cp -r ${pkgs.flatbuffers.src}/rust/flatbuffers/src $out/flatbuffers/src
       cp ${pkgs.flatbuffers.src}/rust/flatbuffers/build.rs $out/flatbuffers/build.rs
       # Cargo needs the package identity and dependency/feature declarations only.
       sed '/^authors =/d; /^license =/d; /^description =/d; /^homepage =/d; /^repository =/d; /^keywords =/d; /^categories =/d' \
         ${pkgs.flatbuffers.src}/rust/flatbuffers/Cargo.toml > $out/flatbuffers/Cargo.toml
-      cp ${sdkRoot + "/rust/src/runtime.rs"} $out/src/runtime.rs
+      cp ${../rust/src/runtime.rs} $out/src/runtime.rs
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --rust --gen-object-api -o $out/src ${dir}/$f.fbs
       done
-      python3 ${sdkRoot + "/codegen/card_rust.py"} ${dir}/_contract.json $out
-      $CC -std=c11 -O2 -fPIC -Wall -Wextra -Werror -I${sdkRoot + "/include"} \
-        -c ${sdkRoot + "/src/rust_host.c"} -o host.o
+      python3 ${../codegen/card_rust.py} ${dir}/_contract.json $out
+      $CC -std=c11 -O2 -fPIC -Wall -Wextra -Werror -I${abiHeaders} \
+        -c ${../src/rust_host.c} -o host.o
       $AR rcs $out/lib/libtsugumi_rust_host.a host.o
       cat > $out/build.rs <<EOF
       fn main() { println!("cargo:rustc-link-search=native=$out/lib"); }
@@ -157,17 +158,17 @@ let
     dir:
     pkgs.runCommand "tsugumi-card-sdk-go" { nativeBuildInputs = [ pkgs.python3 ]; } ''
       mkdir -p $out/flatbuffers
-      cp ${sdkRoot + "/go/go.mod"} $out/go.mod
-      cp ${sdkRoot + "/go/runtime.go"} $out/runtime.go
-      cp ${sdkRoot + "/go/host.h"} $out/host.h
-      cp ${sdkRoot + "/include/tsugumi/sdk/abi.h"} $out/abi.h
-      cp ${sdkRoot + "/src/go_host.c"} $out/host.c
+      cp ${../go/go.mod} $out/go.mod
+      cp ${../go/runtime.go} $out/runtime.go
+      cp ${../go/host.h} $out/host.h
+      cp ${../include/tsugumi/sdk/abi.h} $out/abi.h
+      cp ${../src/go_host.c} $out/host.c
       cp ${pkgs.flatbuffers.src}/go/*.go $out/flatbuffers/
       rm -f $out/flatbuffers/*_test.go $out/flatbuffers/doc.go
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --go --gen-object-api --go-import tsugumi/flatbuffers --go-module-name tsugumi -o $out ${dir}/$f.fbs
       done
-      python3 ${sdkRoot + "/codegen/card_go.py"} ${dir}/_contract.json $out
+      python3 ${../codegen/card_go.py} ${dir}/_contract.json $out
     '';
 
   csharpFace =
@@ -177,9 +178,8 @@ let
       for f in ${lib.concatStringsSep " " schemas}; do
         ${flatc} --csharp --gen-object-api --cs-global-alias -o $out ${dir}/$f.fbs
       done
-      python3 ${sdkRoot + "/codegen/card_csharp.py"} ${dir}/_contract.json $out/CardBindings.cs ${
-        sdkRoot + "/include/tsugumi/sdk/abi.h"
-      }
+      python3 ${../codegen/card_csharp.py} ${dir}/_contract.json $out/CardBindings.cs \
+        ${../include/tsugumi/sdk/abi.h}
     '';
 
   languagesKnown = [
@@ -203,18 +203,16 @@ let
   # and system, reused by every such Card. The sources are those tsugumid was
   # built from (installed with it: share/tsugumi/sdk/worker).
   worker =
-    let
-      dir = sdkRoot + "/worker";
-    in
-    assert lib.assertMsg (builtins.pathExists dir)
+    assert lib.assertMsg (builtins.pathExists ../worker)
       "a package Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
     pkgs.stdenv.mkDerivation {
       name = "tsugumi-worker";
       src = lib.fileset.toSource {
-        root = sdkRoot;
+        root = ../.;
         fileset = lib.fileset.unions [
-          dir
-          (sdkRoot + "/include")
+          ../worker
+          ../include/tsugumi/message_json.hh
+          ../include/tsugumi/sdk/abi.h
         ];
       };
       nativeBuildInputs = [ pkgs.flatbuffers ];
@@ -244,10 +242,10 @@ rec {
   sdk =
     {
       languages,
-      inputs ? "${generated}/_inputs.fbs",
-      outputs ? "${generated}/_outputs.fbs",
-      params ? "${generated}/_params.fbs",
-      contract ? "${generated}/_contract.json",
+      inputs ? lib.path.append generated "_inputs.fbs",
+      outputs ? lib.path.append generated "_outputs.fbs",
+      params ? lib.path.append generated "_params.fbs",
+      contract ? lib.path.append generated "_contract.json",
     }:
     let
       unknown = lib.subtractLists languagesKnown languages;
@@ -276,7 +274,7 @@ rec {
       ruby = if want "ruby" then jsonFace dir else null;
     };
 
-  csharpCard = import ./csharp.nix { inherit pkgs sdkRoot foreign; };
+  csharpCard = import ./csharp.nix { inherit pkgs abiHeaders foreign; };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.
@@ -398,7 +396,7 @@ rec {
     let
       manifest = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
       library = manifest.lib.name or (builtins.replaceStrings [ "-" ] [ "_" ] manifest.package.name);
-      sdkCrates = pkgs.rustPlatform.importCargoLock { lockFile = sdkRoot + "/rust/sdk-crates.lock"; };
+      sdkCrates = pkgs.rustPlatform.importCargoLock { lockFile = ../rust/sdk-crates.lock; };
       lockedCrates = pkgs.rustPlatform.importCargoLock { lockFile = lock; };
       # Match the cached path to the lock that produced it, even if an old
       # hash was left in the Card. Keep all output paths inside the archive.
@@ -574,7 +572,7 @@ rec {
             --disable-pip-version-check --target $out "''${files[@]}"
         fi
         rm -rf $out/bin
-        python ${sdkRoot + "/codegen/trim_packages.py"} $out
+        python ${../codegen/trim_packages.py} $out
       '';
       passthru = { inherit wheels; };
     };
@@ -642,8 +640,8 @@ rec {
         dontConfigure = true;
         buildPhase = ''
           runHook preBuild
-          $CC -O2 -fPIC -shared ${sdkRoot + "/src/python_main.c"} -o $NIX_BUILD_TOP/runtime.so \
-            -I${sdkRoot + "/include"} -I${python}/include/python${python.pythonVersion} \
+          $CC -O2 -fPIC -shared ${../src/python_main.c} -o $NIX_BUILD_TOP/runtime.so \
+            -I${abiHeaders} -I${python}/include/python${python.pythonVersion} \
             -L${python}/lib -lpython${python.pythonVersion} \
             -Wl,-rpath,${python}/lib \
             -DTSUGUMI_PY_HOME='"${python}"' \
@@ -655,7 +653,12 @@ rec {
           mkdir -p $out/lib/python
           cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
           mkdir -p $out/lib/python/tsugumi $out/lib/python/flatbuffers
-          cp ${sdkRoot + "/python/tsugumi"}/*.py $out/lib/python/tsugumi/
+          cp ${
+            lib.fileset.toSource {
+              root = ../python/tsugumi;
+              fileset = lib.fileset.fileFilter (file: file.hasExt "py") ../python/tsugumi;
+            }
+          }/*.py $out/lib/python/tsugumi/
           cp ${pkgs.flatbuffers.src}/python/flatbuffers/*.py $out/lib/python/flatbuffers/
           # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
           for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
@@ -752,8 +755,8 @@ rec {
             exit 1
           }
           rm -rf $out/vendor $out/installed/ruby/*/cache $out/installed/ruby/*/doc
-          python3 ${sdkRoot + "/codegen/trim_packages.py"} $out/installed
-          ruby ${sdkRoot + "/ruby/trim-gems.rb"} $out/installed
+          python3 ${../codegen/trim_packages.py} $out/installed
+          ruby ${../ruby/trim-gems.rb} $out/installed
         '';
         dontInstall = true;
       };
@@ -772,15 +775,20 @@ rec {
           runHook preBuild
           ruby_config=${ruby}/bin/ruby
           libruby=$($ruby_config -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
-          $CC -O2 -fPIC -c ${sdkRoot + "/src/ruby_main.c"} -o $NIX_BUILD_TOP/ruby_main.o \
-            -I${sdkRoot + "/include"} $(pkg-config --cflags ruby-${ruby.version.majMin}) \
+          $CC -O2 -fPIC -c ${../src/ruby_main.c} -o $NIX_BUILD_TOP/ruby_main.o \
+            -I${abiHeaders} $(pkg-config --cflags ruby-${ruby.version.majMin}) \
             -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
             -DTSUGUMI_RUBY_SDK='"'$out'/lib"' \
             -DTSUGUMI_RUBY_CARD='"${source}"' \
             -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
             -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
-          $CXX -std=c++20 -O2 -fPIC -c ${sdkRoot + "/src/json_face.cc"} -o $NIX_BUILD_TOP/json_face.o \
-            -I${sdkRoot + "/include"} -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
+          $CXX -std=c++20 -O2 -fPIC -c ${../src/json_face.cc} -o $NIX_BUILD_TOP/json_face.o \
+            -I${abiHeaders} -I${
+              lib.fileset.toSource {
+                root = ../include;
+                fileset = ../include/tsugumi/message_json.hh;
+              }
+            } -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
           $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/runtime.so \
             $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
             -Wl,-rpath,${ruby}/lib
@@ -788,7 +796,7 @@ rec {
         '';
         installPhase = ''
           mkdir -p $out/lib
-          cp ${sdkRoot + "/ruby/tsugumi.rb"} $out/lib/tsugumi.rb
+          cp ${../ruby/tsugumi.rb} $out/lib/tsugumi.rb
           cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
         '';
       };
@@ -821,9 +829,9 @@ rec {
         dontConfigure = true;
         buildPhase = ''
           runHook preBuild
-          cp ${sdkRoot + "/src/native_host.h"} native_host.h
-          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${sdkRoot + "/src/r_main.c"} -o $NIX_BUILD_TOP/runtime.so \
-            -I${sdkRoot + "/include"} -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
+          cp ${../src/native_host.h} native_host.h
+          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${../src/r_main.c} -o $NIX_BUILD_TOP/runtime.so \
+            -I${abiHeaders} -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
             -Wl,-rpath,${pkgs.R}/lib/R/lib \
             -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
             -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_LIBS='"'"$R_LIBS_SITE"'"' \
@@ -833,7 +841,7 @@ rec {
         '';
         installPhase = ''
           mkdir -p $out/lib
-          cp ${sdkRoot + "/r/tsugumi.R"} $out/lib/tsugumi.R
+          cp ${../r/tsugumi.R} $out/lib/tsugumi.R
           cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
         '';
       };
@@ -876,7 +884,7 @@ rec {
       export RSTUDIO_PANDOC=${pkgs.pandoc}/bin
       export QUARTO_R=${r}/bin/R
       ${lib.optionalString quarto "export TSUGUMI_QUARTO=${q}/bin/quarto"}
-      exec ${r}/bin/Rscript --vanilla ${sdkRoot + "/r/report.R"} ${src} ${lib.escapeShellArg entry} ${
+      exec ${r}/bin/Rscript --vanilla ${../r/report.R} ${src} ${lib.escapeShellArg entry} ${
         if quarto then "quarto" else "rmarkdown"
       }
     '';
@@ -904,9 +912,9 @@ rec {
         # Runtime headers are external; keep warnings fatal for our shim.
         buildPhase = ''
           runHook preBuild
-          cp ${sdkRoot + "/src/native_host.h"} native_host.h
-          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${sdkRoot + "/src/julia_main.c"} -o $NIX_BUILD_TOP/runtime.so \
-            -I${sdkRoot + "/include"} -isystem ${base}/include/julia -L${base}/lib -ljulia \
+          cp ${../src/native_host.h} native_host.h
+          $CC -O2 -fPIC -shared -Wall -Wextra -Werror -I. ${../src/julia_main.c} -o $NIX_BUILD_TOP/runtime.so \
+            -I${abiHeaders} -isystem ${base}/include/julia -L${base}/lib -ljulia \
             -Wl,-rpath,${base}/lib \
             -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
             -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/runtime.so"' \
@@ -920,7 +928,7 @@ rec {
         '';
         installPhase = ''
           mkdir -p $out/lib
-          cp ${sdkRoot + "/julia/tsugumi.jl"} $out/lib/tsugumi.jl
+          cp ${../julia/tsugumi.jl} $out/lib/tsugumi.jl
           cp $NIX_BUILD_TOP/runtime.so $NIX_BUILD_TOP/julia-env $out/lib/
         '';
       };

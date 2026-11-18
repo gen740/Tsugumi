@@ -95,7 +95,7 @@ class NixRunner {
   NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
-  // _inputs.fbs/_outputs.fbs/_params.fbs (+ .bfbs) and JSON parameter files.
+  // _inputs.fbs, _outputs.fbs, _params.fbs and _contract.json.
   static std::map<std::string, std::string> generate(const Node& node);
   // Builds JSON for all params (worker) and for nix:true params (Nix).
   static std::string params_json(const Node& node, bool nix_only);

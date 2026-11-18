@@ -30,7 +30,13 @@ let
 in
 {
   line-chart = bundle {
-    src = ../views;
+    src = pkgs.lib.fileset.toSource {
+      root = ../views;
+      fileset = pkgs.lib.fileset.unions [
+        ../views/line-chart.js
+        ../views/line-geometry.js
+      ];
+    };
     entry = "line-chart.js";
     name = "tsugumi-view-line-chart";
   };
