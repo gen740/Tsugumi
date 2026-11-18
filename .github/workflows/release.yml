@@ -74,7 +74,6 @@ jobs:
     name: Build and package the app (macOS)
     needs: [resolve, image]
     runs-on: macos-26
-    timeout-minutes: 120
     env:
       PACKAGE_VERSION: ${{ needs.resolve.outputs.version }}
       TSUGUMI_VM_ARTIFACT_ONLY: '1'
