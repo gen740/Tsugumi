@@ -218,12 +218,13 @@ Note display_note(const DisplayData& d) {
 class RunExec : public std::enable_shared_from_this<RunExec> {
  public:
   RunExec(Service& svc, Scheduler& sched, DocumentPtr doc, RunParams p,
-          RunSummaryData summary)
+          RunSummaryData summary, RunPlanData plan)
       : svc_(svc),
         sched_(sched),
         doc_(std::move(doc)),
         p_(std::move(p)),
-        summary_(std::move(summary)) {
+        summary_(std::move(summary)),
+        plan_(std::move(plan)) {
     run_id_ = *summary_.status.run_id;
     run_dir_ = svc_.store().state_dir() / "runs" / run_id_;
   }
@@ -457,15 +458,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       out_edges_[{e.from, e.from_port}].push_back({e.to, e.to_port});
       nodes_[e.to].queues[e.to_port];
     }
-    auto plan = Scheduler::plan(res, p_.card, p_.propagate);
-    for (const auto& t : plan.targets)
+    for (const auto& t : plan_.targets)
       nodes_[res.index.at(path_key(t))].in_targets = true;
     std::set<std::string> seeded;
-    for (const auto& s : plan.seeds) seeded.insert(path_key(s));
-    for (const auto& s : plan.starts)
+    for (const auto& s : plan_.seeds) seeded.insert(path_key(s));
+    for (const auto& s : plan_.starts)
       if (!seeded.count(path_key(s)))
         nodes_[res.index.at(path_key(s))].start = true;
-    for (const auto& s : plan.seeds) {
+    for (const auto& s : plan_.seeds) {
       NodeRt& n = nodes_[res.index.at(path_key(s))];
       std::set<std::string> outside;
       for (const auto& e : res.edges)
@@ -473,7 +473,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           outside.insert(e.to_port);
       seed_saved(n, outside);
     }
-    for (const auto& j : plan.joins)
+    for (const auto& j : plan_.joins)
       seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
   }
 
@@ -2114,6 +2114,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   DocumentPtr doc_;
   RunParams p_;
   RunSummaryData summary_;
+  const RunPlanData plan_;
   std::string note_record_;  // neutral run facts, for the commit's note
   std::string run_id_;
   stdfs::path run_dir_;
@@ -2439,7 +2440,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
   svc_.server()->broadcast(status_note(s.status, true));
-  active_ = std::make_shared<RunExec>(svc_, *this, doc, p, s);
+  active_ = std::make_shared<RunExec>(svc_, *this, doc, p, s, std::move(plan));
   active_->start();
   return receipt;
 }
