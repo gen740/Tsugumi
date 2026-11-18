@@ -107,7 +107,7 @@ class WorkerPeer {
           if (q->body.AsProbeRequest()) {
             R::CapabilitiesT c;
             c.server_id = server;
-            c.instance_id = "live-instance";
+            c.instance_id = std::string(64, 'c');
             c.native_system = "x86_64-linux";
             c.systems = {c.native_system};
             c.max_jobs = 4;
@@ -250,14 +250,12 @@ class BrokerFixture : public AgentFixture {
                     .empty());
   }
   template <class T>
-  auto Broker(T body, const std::string& capability,
-              std::string server = std::string(64, 'b'))
+  auto Broker(T body, const std::string& capability)
       -> std::unique_ptr<R::MessageT> {
     Socket socket{
         ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
     R::RequestT request;
     request.service = "worker";
-    request.server_id = server;
     request.project_scope = "SPOOFED";
     request.instance_id = "instance";
     request.job_id = "job";
@@ -430,7 +428,7 @@ TEST_F(BrokerFixture, PinnedRegistrationOwnsTheWorkerIdentity) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   const auto count = worker->Requests().size();
-  auto changed = Broker(R::ProbeRequestT{}, capability, std::string(64, 'c'));
+  auto changed = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(changed->payload.AsReply()->body.AsCapabilities(), nullptr);
   EXPECT_EQ(changed->payload.AsReply()->body.AsCapabilities()->server_id,
             worker->server);

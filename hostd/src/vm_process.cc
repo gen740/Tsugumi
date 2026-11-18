@@ -173,13 +173,12 @@ class VMProcess final : public EnvironmentProcess {
   auto Inspect(H::EnvironmentStateT& ready) -> std::optional<int64_t> override {
     V::ProcessRequestT request;
     request.key = ready.key;
-    const auto reply = Call(std::move(request));
-    const auto* process = reply->value.AsProcess();
-    if (!process || !process->running || process->pid <= 0) return std::nullopt;
-    ready.endpoint = process->endpoint;
+    const auto process = CallProcess(std::move(request));
+    if (!process.running) return std::nullopt;
+    ready.endpoint = process.endpoint;
     ready.unix_socket.clear();
-    Remember(process->pid, ready.key);
-    return process->pid;
+    Remember(process.pid, ready.key);
+    return process.pid;
   }
   auto Verify(const H::EnvironmentStateT& ready) -> bool override {
     auto copy = ready;
@@ -193,11 +192,9 @@ class VMProcess final : public EnvironmentProcess {
     V::ProcessRequestT request;
     request.key = Key(pid);
     try {
-      const auto reply = Call(std::move(request));
-      const auto* process = reply->value.AsProcess();
-      return process && process->running && process->pid == pid
-                 ? std::nullopt
-                 : std::optional<int>(-1);
+      const auto process = CallProcess(std::move(request));
+      return process.running && process.pid == pid ? std::nullopt
+                                                   : std::optional<int>(-1);
     } catch (...) {
       // A transport failure does not prove a guest process has stopped.
       return std::nullopt;
@@ -214,9 +211,7 @@ class VMProcess final : public EnvironmentProcess {
   auto GuardStart(const std::string& key) -> void override {
     V::ProcessRequestT request;
     request.key = key;
-    const auto reply = Call(std::move(request));
-    if (const auto* process = reply->value.AsProcess();
-        process && process->running)
+    if (CallProcess(std::move(request)).running)
       throw EnvironmentFailure(
           "A resident project process cannot be authenticated",
           "Stop the environment and retry.", "");
@@ -334,9 +329,8 @@ class VMProcess final : public EnvironmentProcess {
     watch_fd_ = Connect();
     try {
       Send(watch_fd_, V::WatchT{});
-      auto message = Read(watch_fd_);
-      if (!message->payload.AsReply())
-        throw std::runtime_error("VM helper did not acknowledge Watch");
+      // The helper acknowledges Watch before subscribing this peer.
+      Read(watch_fd_);
     } catch (...) {
       ::close(watch_fd_);
       watch_fd_ = -1;
@@ -348,7 +342,6 @@ class VMProcess final : public EnvironmentProcess {
             while (!stop.stop_requested()) {
               auto message = Read(fd);
               const auto* event = message->payload.AsEvent();
-              if (!event) throw std::runtime_error("Expected VM helper event");
               if (const auto* progress = event->value.AsProgress())
                 options_.progress(*progress);
               if (const auto* runtime = event->value.AsHostRuntime())
@@ -389,6 +382,10 @@ class VMProcess final : public EnvironmentProcess {
       throw EnvironmentFailure(failure->message, failure->recovery,
                                failure->log);
     return std::make_unique<V::ReplyT>(*reply);
+  }
+  auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {
+    auto reply = Call(std::move(request));
+    return std::move(*reply->value.AsProcess());
   }
 };
 }  // namespace

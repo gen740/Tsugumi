@@ -7,6 +7,7 @@
 
 #include "host/layout.hh"
 #include "host/layout_service.hh"
+#include "host/save.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/text.hh"
@@ -29,33 +30,18 @@ auto Bytes(const std::string& raw) -> std::string {
   }
   return text;
 }
-auto Integer(const std::string& raw) -> uint64_t {
-  return json::UInt(raw.front() == '"' ? json::String(raw) : raw, UINT64_MAX);
-}
-auto Patched(const LayoutFile& file, const json::Members& value)
-    -> std::string {
+auto Patched(const LayoutFile& file, const json::Members& value,
+             const SourcePatches& patches) -> std::string {
   if (!file.hash || *file.hash != json::Text(value, "base_hash"))
     throw LayoutFailure("layout source hash changed");
-  text::PatchApplier apply(file.text);
-  const auto patches = json::Array(json::Get(value, "patches", "[]"));
-  if (patches.empty())
+  const auto raw = json::Array(json::Get(value, "patches", "[]"));
+  if (raw.empty())
     throw LayoutFailure("layout source patches must not be empty");
-  for (const auto& raw : patches) {
-    const auto patch = json::Object(raw);
-    const auto offset = Integer(json::Get(patch, "offset"));
-    const auto remove = Integer(json::Get(patch, "remove"));
-    if (offset < apply.cursor() || offset > file.text.size() ||
-        remove > file.text.size() - offset)
-      throw LayoutFailure("invalid layout source patch range");
-    auto boundary = [&](size_t at) {
-      return at == file.text.size() ||
-             (static_cast<unsigned char>(file.text[at]) & 0xc0) != 0x80;
-    };
-    if (!boundary(offset) || !boundary(offset + remove))
-      throw LayoutFailure("layout source patch splits UTF-8");
-    apply.append(offset, remove, json::Text(patch, "text"));
+  try {
+    return patches.Project(file.text, raw);
+  } catch (const text::PatchRangeError& error) {
+    throw LayoutFailure(error.what());
   }
-  return std::move(apply).finish();
 }
 auto CardIds(const std::string& text, const std::string& path)
     -> std::set<std::string> {
@@ -427,7 +413,8 @@ auto MoveProjectLayout(const std::string& project, const std::string& text,
 
 auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
                        const std::vector<std::string>& documents,
-                       const LayoutWrite& may_write) -> std::string {
+                       const LayoutWrite& may_write,
+                       const SourcePatches& patches) -> std::string {
   auto args = json::Object(arguments);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
   struct Edit {
@@ -451,7 +438,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
         pending[path] = {Bytes(json::Get(value, "bytes")), {}};
       else if (type == "PatchSource") {
         if (const auto file = read(path))
-          pending[path] = {Patched(*file, value), {}};
+          pending[path] = {Patched(*file, value, patches), {}};
       }
     }
     if (type == "SetProject")
@@ -475,7 +462,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     else {
       const auto file = read(path);
       if (!file) throw LayoutFailure("missing layout source for patch");
-      text = Patched(*file, value);
+      text = Patched(*file, value, patches);
     }
     (layout ? layouts : projects)[prefix] = {i, std::move(text), true};
   }

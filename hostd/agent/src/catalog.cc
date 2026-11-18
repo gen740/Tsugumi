@@ -134,8 +134,8 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
   std::vector<std::string> required;
   for (const auto* field : *object.fields()) {
     const auto name = field->name()->str();
-    if (field->deprecated() || (top && host::OwnedFields.contains(name) &&
-                                (name != "op_id" || OwnOperationId(object))))
+    if (top && host::OwnedFields.contains(name) &&
+        (name != "op_id" || OwnOperationId(object)))
       continue;
     const auto& type = *field->type();
     if (type.base_type() == reflection::UType) {
@@ -604,11 +604,6 @@ auto Catalog::HostReply(std::string_view bytes) const -> std::string {
   return Reply(bytes);
 }
 auto Catalog::Reply(std::string_view bytes) const -> std::string {
-  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                 bytes.size());
-  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier)
-                    : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
-    throw std::runtime_error("invalid project reply");
   auto parser = Parser();
   std::string raw;
   if (auto error = flatbuffers::GenerateText(*parser, bytes.data(), &raw))

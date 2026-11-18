@@ -65,15 +65,15 @@ struct Tools {
                        const json::Members& args, const std::string& operation,
                        HelperScope* boundary, bool recovering,
                        std::stop_token stop) -> std::string;
-  auto OperateProject(const std::string& project,
-                      const Tsugumi::Host::ProjectOperateRequestT& operation,
+  auto OperateProject(const Tsugumi::Host::ProjectOperateRequestT& operation,
                       const host::OperationContext& context,
                       std::stop_token stop) -> host::OperationReply;
   auto ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop,
-                         const host::LayoutWrite& may_write = {})
+                         const host::LayoutWrite& may_write = {},
+                         const host::SourcePatches& patches = {})
       -> std::string;
   auto Exclusions(const std::string& project, std::stop_token stop = {})
       -> host::AgentExclude;

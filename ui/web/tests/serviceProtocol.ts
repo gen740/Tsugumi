@@ -1,3 +1,4 @@
+import { Access } from '../shared/gen/tsugumi/service/access'
 import { ProjectTrust } from '../shared/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../shared/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../shared/gen/tsugumi/host/settings'
@@ -165,11 +166,11 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
 
 // Each checkbox travels independently; no implicit Write/Run grant.
 {
-  const bytes = encodeRequest('AccessResolveRequest', { request_id: 'first-access', allow: true, selected: ['fixture-choice'] }, 5n, false)
+  const bytes = encodeRequest('AccessResolveRequest', { request_id: 'first-access', allow: true, selected: [Access.Write] }, 5n, false)
   const message = Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
   const value = (message.payload as any).value
   assert.equal(value.allow, true)
-  assert.deepEqual(value.selected, ['fixture-choice'])
+  assert.deepEqual(value.selected, [Access.Write])
 }
 
 // Formatting and version presentation are Host operations, independently of the core PATH/language.

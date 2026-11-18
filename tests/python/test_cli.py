@@ -572,7 +572,7 @@ def core_settings(root: Path, changes: dict | None = None):
                 return reply.payload.value
 
         call(1, RequestPayload.HelloRequest,
-             HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test"), ReplyPayload.HelloResult)
+             HelloRequestT(token=ready["user_token"]), ReplyPayload.HelloResult)
         settings = call(2, RequestPayload.SettingsGetRequest,
                         SettingsGetRequestT(profile="desktop"), ReplyPayload.Settings)
         if changes is not None:

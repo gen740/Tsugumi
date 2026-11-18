@@ -44,7 +44,6 @@ struct InvocationRecordData {
 struct RemoteJobRecord {
   InvocationSummaryData invocation;
   std::string instance;
-  std::string server_id;
   std::string spec;
   bool accepted = false;
   bool cancel_requested = false;

@@ -1,6 +1,6 @@
 // Shared authentication, access and result vocabulary for the Host and Agent services.
 namespace Tsugumi.Service;
-table HelloRequest { token:string (required); client_id:string (required); }
+table HelloRequest { token:string (required); }
 table HelloResult { server_id:string (required); principal:string (required); }
 table Failure { code:string (required); message:string (required); request_id:string; }
 table Acknowledgement { accepted:bool; }

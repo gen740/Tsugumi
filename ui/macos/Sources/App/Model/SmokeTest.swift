@@ -106,7 +106,7 @@ enum SmokeTest {
         // Another client saves while this window edits: both changes stay.
         if case .ready(let ep) = s.environment {
           let other = RPCClient(endpoint: ep.url)
-          _ = try await other.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
+          _ = try await other.connect(token: ep.token, expectedProjectId: nil)
           let snap = try await other.inspect()
           s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
           var layout = try JSONValue.parse(snap.layoutJson)

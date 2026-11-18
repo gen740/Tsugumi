@@ -9,7 +9,6 @@ public struct Endpoint: Sendable, Equatable {
   public let url: URL
   public let token: String
   public let projectId: String
-  public let serverInstanceId: String
 }
 
 public enum EnvironmentState: Sendable, Equatable {

@@ -257,7 +257,7 @@ class Client:
     # -- conveniences ------------------------------------------------------------
 
     def hello(self, token: Optional[str] = None, project: Optional[str] = None):
-        return self.call("SessionHelloRequest", clientId=new_id(), token=token,
+        return self.call("SessionHelloRequest", token=token,
                          expectedProjectId=project)
 
     def open(self, view_id: Optional[str] = None):

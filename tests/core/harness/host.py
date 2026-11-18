@@ -53,7 +53,7 @@ class Host:
             self.socket.settimeout(30)
             self.socket.connect(self.ready["host_socket"])
             self.stream = self.socket.makefile("rwb", buffering=0)
-            self.call("HelloRequest", token=self.ready["user_token"], clientId="remote-test")
+            self.call("HelloRequest", token=self.ready["user_token"])
         except BaseException:
             self.close()
             raise

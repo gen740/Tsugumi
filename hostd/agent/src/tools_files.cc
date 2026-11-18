@@ -240,7 +240,7 @@ auto Tools::FileOperation(const std::string& conversation,
             HelperReader(conversation, stop, json::Get(base.snapshot, "rev"),
                          boundary->authorization()));
     };
-    return OperateProject(project, request, context, stop).json;
+    return OperateProject(request, context, stop).json;
   }
   const auto read_scope = HelperReader(
       conversation, stop, revision, boundary ? boundary->authorization() : "");

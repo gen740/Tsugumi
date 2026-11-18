@@ -143,7 +143,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
         {}};
   };
   const auto saved =
-      ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+      ProjectOperations().Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(saved.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 1);
 
@@ -152,7 +152,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   // UI conflicts are typed replies; Agent conflicts still throw. Neither
   // origin may send a partially applied wire edit to core.
   const auto conflict =
-      ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+      ProjectOperations().Execute(request, {"ui", {}, {}, {}}, call);
   const auto envelope = json::Object(conflict.json);
   ASSERT_EQ(json::Text(envelope, "reply"), "Failure");
   const auto value = json::Object(envelope.at("value"));
@@ -162,7 +162,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   EXPECT_NE(diagnostic.find("new_value"), std::string::npos);
   EXPECT_EQ(saves, 1);
   try {
-    ProjectOperations().Execute("p", request, {"agent", {}, {}, {}}, call);
+    ProjectOperations().Execute(request, {"agent", {}, {}, {}}, call);
     FAIL() << "stale second end must refuse the entire plan";
   } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "value_conflict");
@@ -498,7 +498,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
           {}};
     };
     const auto conflict =
-        ProjectOperations().Execute("p", request, {"ui", {}, {}, {}}, call);
+        ProjectOperations().Execute(request, {"ui", {}, {}, {}}, call);
     flatbuffers::Verifier verifier(
         reinterpret_cast<const uint8_t*>(conflict.wire.data()),
         conflict.wire.size());
@@ -509,7 +509,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
     ASSERT_NE(failure, nullptr);
     EXPECT_EQ(failure->kind(), kind);
     EXPECT_THROW(
-        ProjectOperations().Execute("p", request, {"agent", {}, {}, {}}, call),
+        ProjectOperations().Execute(request, {"agent", {}, {}, {}}, call),
         Failure);
   }
 }

@@ -55,8 +55,7 @@ TEST_F(AgentFixture, HostFramesAreRejectedByTheAgentListener) {
       Call(wrong, H::RequestPayload::HelloRequest,
            [&](Builder& b) {
              return Tsugumi::Service::CreateHelloRequest(
-                        b, b.CreateString(JsonString(ready, "/user_token")),
-                        b.CreateString("wrong"))
+                        b, b.CreateString(JsonString(ready, "/user_token")))
                  .Union();
            }),
       std::runtime_error);

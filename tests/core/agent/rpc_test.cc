@@ -475,8 +475,7 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
           .Call(
               [](uint64_t id) {
                 Builder b;
-                const auto hello = R::CreateSessionHelloRequest(
-                    b, b.CreateString("wrong-protocol"));
+                const auto hello = R::CreateSessionHelloRequest(b);
                 const auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());
                 R::FinishMessageBuffer(

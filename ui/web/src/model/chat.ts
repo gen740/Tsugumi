@@ -1,3 +1,4 @@
+import type { Access } from '../../shared/gen/tsugumi/service/access'
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
@@ -556,7 +557,13 @@ export class ChatController extends Observable {
     if (!p || p.id !== id) return
     this.removePermission(p.id)
     this.changed()
-    void api('/api/chat/permission', { id: p.id, allow, always, selected }).catch((e) => this.fail(e))
+    const access = selected?.flatMap(line => {
+      const prefix = 'project_access {'
+      if (!line.startsWith(prefix)) return []
+      const { access_id } = JSON.parse(line.slice('project_access '.length)) as { access_id: Access }
+      return [access_id]
+    })
+    void api('/api/chat/permission', { id: p.id, allow, always, selected: access }).catch((e) => this.fail(e))
   }
 
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */

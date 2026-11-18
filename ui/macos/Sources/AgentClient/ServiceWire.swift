@@ -166,7 +166,6 @@ enum ServiceWire {
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
         v.token = fields["token"] as? String ?? ""
-        v.clientId = fields["client_id"] as? String ?? ""
         return (Tsugumi_Host_RequestPayload.hellorequest.rawValue, v)
       case "RegisterProjectRequest":
         let v = Tsugumi_Host_RegisterProjectRequestT()
@@ -241,7 +240,6 @@ enum ServiceWire {
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
         v.token = fields["token"] as? String ?? ""
-        v.clientId = fields["client_id"] as? String ?? ""
         return (Tsugumi_Agent_RequestPayload.hellorequest.rawValue, v)
       case "ConfigureRequest":
         let v = Tsugumi_Agent_ConfigureRequestT()
@@ -321,7 +319,7 @@ enum ServiceWire {
         let v = Tsugumi_Agent_AccessResolveRequestT()
         v.requestId = fields["request_id"] as? String ?? ""
         v.allow = fields["allow"] as? Bool ?? false
-        v.selected = (fields["selected"] as? [String] ?? []).map { $0 }
+        v.selected = fields["selected"] as? [Tsugumi_Service_Access] ?? []
         return (Tsugumi_Agent_RequestPayload.accessresolverequest.rawValue, v)
       case "AccessRevokeRequest":
         let v = Tsugumi_Agent_AccessRevokeRequestT()
@@ -457,7 +455,7 @@ enum ServiceWire {
       return ["folder": v.folder, "resource": v.resource]
     case let v as Tsugumi_Host_EnvironmentStateT:
       return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
-        "project_id": v.projectId ?? "", "server_instance_id": v.serverInstanceId ?? "", "control_dir": v.controlDir ?? "",
+        "project_id": v.projectId ?? "", "control_dir": v.controlDir ?? "",
         "ready_file": v.readyFile ?? "", "message": v.message ?? "", "recovery": v.recovery ?? "", "log": v.log ?? "",
         "startup_error_json": v.startupErrorJson ?? "", "folders": v.folders.compactMap { $0 }] as [String: Any]
     case let v as Tsugumi_Host_HostRuntimeT:

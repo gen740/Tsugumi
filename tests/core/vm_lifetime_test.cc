@@ -148,7 +148,6 @@ class VMLifetime : public ::testing::Test {
       throw std::runtime_error(error.message);
     S::HelloRequestT hello;
     hello.token = "user";
-    hello.client_id = "vm-lifetime-test";
     Call(*connection, hello);
     return connection;
   }

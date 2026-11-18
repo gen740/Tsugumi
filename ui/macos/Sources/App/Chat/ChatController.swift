@@ -545,7 +545,7 @@ final class ChatController {
     var groups: [Tsugumi_Agent_AccessGroupT] = []
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: String? {
-      guard let request = raw.first(where: { $0.contains("operation_approval\n") }),
+      guard let request = raw.first(where: { $0.hasPrefix("project_access operation_approval\n") }),
             let marker = request.range(of: "operation_approval\n") else { return nil }
       return request[marker.upperBound...].components(separatedBy: "\n").map { line in
         guard let data = line.data(using: .utf8),

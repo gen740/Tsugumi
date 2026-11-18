@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "host/comments.hh"
+#include "host/save.hh"
 
 namespace tsugumi::agent {
 using ProjectRead =
@@ -15,6 +16,6 @@ struct AgentSave {
   std::string comments;
 };
 auto PrepareAgentSave(json::Members arguments, const ProjectRead& read,
-                      const host::comments::ReserveComment& reserve = {})
-    -> AgentSave;
+                      const host::comments::ReserveComment& reserve = {},
+                      const host::SourcePatches& patches = {}) -> AgentSave;
 }  // namespace tsugumi::agent

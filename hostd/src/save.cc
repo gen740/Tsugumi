@@ -8,6 +8,7 @@
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::host {
 auto CardStem(const std::string& name) -> std::string {
@@ -49,6 +50,26 @@ auto DocumentPath(const std::string& path) -> bool {
          comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
 }
 }  // namespace
+
+auto SourcePatches::Project(std::string_view source,
+                            const std::vector<std::string>& patches) const
+    -> const std::string& {
+  auto key = std::pair{crypto::sha256_hex(source), patches};
+  if (const auto found = projected_.find(key); found != projected_.end())
+    return found->second;
+  text::PatchApplier apply(source);
+  for (const auto& raw : patches) {
+    const auto patch = json::Object(raw);
+    const auto integer = [&](const char* field) {
+      const auto value = json::Get(patch, field);
+      return json::UInt(json::String(value, value), UINT64_MAX);
+    };
+    apply.append(integer("offset"), integer("remove"),
+                 json::Text(patch, "text"));
+  }
+  return projected_.emplace(std::move(key), std::move(apply).finish())
+      .first->second;
+}
 
 auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
     -> SaveBase {

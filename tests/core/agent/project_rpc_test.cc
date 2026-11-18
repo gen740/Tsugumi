@@ -1230,10 +1230,10 @@ TEST_F(AgentProjectFixture, FirstProjectAccessAsksForThreeInOneDurablePrompt) {
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(std::vector{
-                                    b.CreateString(asked->Get(0)->str()),
-                                    b.CreateString(asked->Get(1)->str()),
-                                    b.CreateString(asked->Get(2)->str())}))
+                                b.CreateVector(
+                                    std::vector{Tsugumi::Service::Access::Read,
+                                                Tsugumi::Service::Access::Write,
+                                                Tsugumi::Service::Access::Run}))
                          .Union();
                    })
                   .Code()
@@ -1258,31 +1258,13 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("partial-access");
   const auto pending = Inspect(conversation);
   ASSERT_EQ(pending.Code(), "grant_required");
-  const auto AccessChoice = [&](const std::string& conversation,
-                                Tsugumi::Service::Access access) {
-    const auto reply =
-        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-          return A::CreateAccessListRequest(b, b.CreateString(conversation))
-              .Union();
-        });
-    for (const auto* line :
-         *reply.Value()->value_as_AccessList()->requests()->Get(0)->asked())
-      if (JsonString(line->str().substr(std::string("project_access ").size()),
-                     "/access") == Tsugumi::Service::EnumNameAccess(access))
-        return line->str();
-    throw std::runtime_error("Missing requested access");
-  };
-  const auto readChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Read);
-  const auto writeChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(
-                                    std::vector{b.CreateString(readChoice),
-                                                b.CreateString(writeChoice)}))
+                                b.CreateVector(std::vector{
+                                    Tsugumi::Service::Access::Read,
+                                    Tsugumi::Service::Access::Write}))
                          .Union();
                    })
                   .Code()
@@ -1325,28 +1307,12 @@ TEST_F(AgentProjectFixture, NeededAccessCanBeLeftOutWhileAnotherIsAllowed) {
   const auto conversation = Conversation("omitted-needed-access");
   const auto pending = Inspect(conversation);
   ASSERT_EQ(pending.Code(), "grant_required");
-  const auto AccessChoice = [&](const std::string& conversation,
-                                Tsugumi::Service::Access access) {
-    const auto reply =
-        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-          return A::CreateAccessListRequest(b, b.CreateString(conversation))
-              .Union();
-        });
-    for (const auto* line :
-         *reply.Value()->value_as_AccessList()->requests()->Get(0)->asked())
-      if (JsonString(line->str().substr(std::string("project_access ").size()),
-                     "/access") == Tsugumi::Service::EnumNameAccess(access))
-        return line->str();
-    throw std::runtime_error("Missing requested access");
-  };
-  const auto writeChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(
-                                    std::vector{b.CreateString(writeChoice)}))
+                                b.CreateVector(std::vector{
+                                    Tsugumi::Service::Access::Write}))
                          .Union();
                    })
                   .Code()
@@ -1432,7 +1398,6 @@ TEST(AgentShellProbe, DirectProjectRequest) {
               hello
                   ? R::CreateSessionHelloRequest(
                         b,
-                        b.CreateString("00000000-0000-4000-8000-000000000001"),
                         b.CreateString(
                             std::getenv("TSUGUMI_SHELL_PROBE_PROJECT")),
                         b.CreateString(
@@ -2602,7 +2567,21 @@ TEST_F(AgentProjectFixture,
                                   "clear\nOnly this call"))
             .Union();
       });
-  EXPECT_EQ(reply.Code(), "invalid_request");
+  ASSERT_TRUE(reply.Code().empty()) << reply.View();
+  const auto id = reply.Value()->value_as_AccessResult()->id()->str();
+  const auto listed =
+      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+        return A::CreateAccessListRequest(b, b.CreateString(conversation))
+            .Union();
+      });
+  for (const auto* entry : *listed.Value()->value_as_AccessList()->requests()) {
+    if (entry->id()->str() != id) continue;
+    ASSERT_EQ(entry->asked()->size(), 1);
+    EXPECT_TRUE(
+        entry->asked()->Get(0)->string_view().starts_with("project_access {"));
+    return;
+  }
+  FAIL() << "Missing access request";
 }
 
 TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {

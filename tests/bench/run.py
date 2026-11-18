@@ -158,7 +158,7 @@ class Remote:
         try:
             self.socket.connect(ready["host_socket"])
             self.stream = self.socket.makefile("rwb", buffering=0)
-            self.call("HelloRequest", token=ready["user_token"], clientId="bench")
+            self.call("HelloRequest", token=ready["user_token"])
             self.call("ExecutionServicePutRequest", id=self.service, name="Execution baseline",
                       endpoint=endpoint, workerPublicKey=public_key, verify=True)
             self.registered = True

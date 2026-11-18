@@ -131,7 +131,6 @@ class EnvironmentFixture : public AgentFixture {
     };
     W::RequestT request;
     request.service = "worker";
-    request.server_id = "missing-worker";
     request.body.Set(W::ProbeRequestT{});
     W::BrokerRequestT broker;
     broker.capability = capability;
@@ -230,7 +229,6 @@ TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
   ASSERT_NE(returned, nullptr);
   EXPECT_EQ(returned->phase(), H::EnvironmentPhase::Ready);
   EXPECT_EQ(returned->project_id()->str(), state.project_id);
-  EXPECT_EQ(returned->server_instance_id()->str(), state.server_instance_id);
   EXPECT_EQ(returned->token()->str(), state.token);
   lock.unlock();
   EXPECT_GT(state.pid, 0);
@@ -246,7 +244,6 @@ TEST_F(EnvironmentFixture, StartRegistersIdentityAndAuthorizesBeforeReady) {
       << state.message << state.log;
   EXPECT_GT(state.pid, 0);
   EXPECT_FALSE(state.endpoint.empty());
-  EXPECT_FALSE(state.server_instance_id.empty());
   EXPECT_TRUE(WaitForEvent(H::EventPayload::EnvironmentProgress));
   EXPECT_TRUE(WaitForEvent(H::EventPayload::EnvironmentState));
   const auto conversation = Call(
@@ -306,7 +303,7 @@ TEST_F(EnvironmentFixture, DeathIsReportedAndAnotherStartCreatesOneNewProcess) {
   EXPECT_EQ(BrokerCode(capability), W::ErrorCode::Unauthorized);
   const auto next = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(next.phase, H::EnvironmentPhase::Ready) << next.message;
-  EXPECT_NE(next.server_instance_id, first.server_instance_id);
+  EXPECT_NE(next.token, first.token);
   EXPECT_EQ(LaunchCount(), 2u);
 }
 
@@ -318,8 +315,7 @@ TEST_F(EnvironmentFixture,
   const auto adopted = Environment(H::EnvironmentAction::State);
   EXPECT_EQ(adopted.phase, H::EnvironmentPhase::Ready);
   EXPECT_EQ(adopted.pid, first.pid);
-  EXPECT_EQ(Environment(H::EnvironmentAction::Start).server_instance_id,
-            first.server_instance_id);
+  EXPECT_EQ(Environment(H::EnvironmentAction::Start).pid, first.pid);
   EXPECT_EQ(LaunchCount(), 1u);
 }
 

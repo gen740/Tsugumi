@@ -52,7 +52,7 @@ import TsugumiTestSupport
 
     var endpoint: Endpoint {
       Endpoint(url: URL(string: ready["endpoint"] as! String)!, token: ready["token"] as! String,
-               projectId: ready["project_id"] as? String ?? "", serverInstanceId: ready["server_instance_id"] as? String ?? "")
+               projectId: ready["project_id"] as? String ?? "")
     }
 
     func stop() {
@@ -179,7 +179,7 @@ import TsugumiTestSupport
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
+    s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p")
     s.start()
     try await waitForModel { !(s.connectionMessage == nil) }
     #expect(!s.connected)
@@ -391,7 +391,7 @@ import TsugumiTestSupport
     let daemon = try Daemon(project: dir)
     defer { daemon.stop() }
     let rpc = RPCClient(endpoint: daemon.endpoint.url)
-    _ = try await rpc.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await rpc.connect(token: daemon.endpoint.token, expectedProjectId: nil)
     let opened = try await rpc.open(viewId: UUID())
     let marker = UUID()
     // A final saved change is the barrier: every run notification before it
@@ -709,7 +709,7 @@ import TsugumiTestSupport
     s.start()
     try await Self.connected(s)
     let agent = RPCClient(endpoint: d.endpoint.url)
-    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await agent.connect(token: d.endpoint.token, expectedProjectId: nil)
 
     defer { Task { await agent.close() } }
     // Start each Agent edit with UI edits pending. Either transaction may win;
@@ -769,7 +769,7 @@ import TsugumiTestSupport
     // Each comes to its Card first.
     #expect(s.helperPresences[0].beats.map(\.beat) == [.visit("a")])
     let agent = RPCClient(endpoint: d.endpoint.url)
-    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await agent.connect(token: d.endpoint.token, expectedProjectId: nil)
     for id in ["b", "c"] {
       let snap = try await agent.inspect()
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",

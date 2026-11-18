@@ -11,7 +11,6 @@ struct BinaryCacheSnapshot {
   std::string netrc;
   std::string problem;
 };
-auto ValidateBinaryCaches(std::string_view json) -> void;
 auto LoadBinaryCaches(const std::filesystem::path& support) -> std::string;
 auto SaveBinaryCaches(const std::filesystem::path& support,
                       std::string_view json) -> void;

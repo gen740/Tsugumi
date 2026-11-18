@@ -42,7 +42,6 @@ struct RemoteJobState {
 struct RemoteProbe {
   std::string native_system;
   std::string instance;
-  std::string server_id;
   std::vector<std::string> systems;
   bool resource_limits;
   uint32_t max_jobs = 0, active_jobs = 0;
@@ -74,29 +73,28 @@ class RemoteJobClient {
   auto catalog() const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service, std::string_view registered_server) const
       -> RemoteProbe;
-  auto put_blob(std::string_view service, std::string_view server_id,
-                std::string_view instance, std::string_view job_id,
-                std::string_view digest, uint64_t size, std::istream& contents,
+  auto put_blob(std::string_view service, std::string_view instance,
+                std::string_view job_id, std::string_view digest, uint64_t size,
+                std::istream& contents,
                 const std::atomic<bool>* cancel = nullptr,
                 const TransferProgress& progress = {}) const -> void;
-  auto get_blob(std::string_view service, std::string_view server_id,
-                std::string_view instance, std::string_view job_id,
-                std::string_view digest, std::ostream& destination,
-                uint64_t limit, const std::atomic<bool>* stop = nullptr,
+  auto get_blob(std::string_view service, std::string_view instance,
+                std::string_view job_id, std::string_view digest,
+                std::ostream& destination, uint64_t limit,
+                const std::atomic<bool>* stop = nullptr,
                 const TransferProgress& progress = {}) const -> void;
-  auto submit(std::string_view service, std::string_view server_id,
-              std::string_view instance, std::string_view job_id,
-              std::string_view spec) const -> RemoteJobState;
-  auto status(std::string_view service, std::string_view server_id,
-              std::string_view instance, std::string_view job_id) const
+  auto submit(std::string_view service, std::string_view instance,
+              std::string_view job_id, std::string_view spec) const
       -> RemoteJobState;
-  auto cancel(std::string_view service, std::string_view server_id,
-              std::string_view instance, std::string_view job_id,
-              std::string_view fingerprint) const -> RemoteJobState;
+  auto status(std::string_view service, std::string_view instance,
+              std::string_view job_id) const -> RemoteJobState;
+  auto cancel(std::string_view service, std::string_view instance,
+              std::string_view job_id, std::string_view fingerprint) const
+      -> RemoteJobState;
 
-  auto release(std::string_view service, std::string_view server_id,
-               std::string_view instance, std::string_view job_id,
-               std::string_view fingerprint) const -> void;
+  auto release(std::string_view service, std::string_view instance,
+               std::string_view job_id, std::string_view fingerprint) const
+      -> void;
 
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message,

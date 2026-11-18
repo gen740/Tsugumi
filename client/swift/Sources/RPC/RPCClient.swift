@@ -149,7 +149,7 @@ public actor RPCClient {
   }
 
   /// Opens the socket and performs SessionHello. The token never appears in URLs.
-  public func connect(token: String, clientId: UUID, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
+  public func connect(token: String, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
     guard !started, !closed else { throw RPCError.disconnected }
     started = true
     // Native callbacks are ordered. A separate Task for every notification can
@@ -166,7 +166,6 @@ public actor RPCClient {
     }
     try await transport.start()
     let req = Tsugumi_RPC_SessionHelloRequestT()
-    req.clientId = clientId.uuidString.lowercased()
     req.token = token
     req.expectedProjectId = expectedProjectId
     let result: Tsugumi_RPC_HelloResultT = try await call(.sessionhellorequest, req)

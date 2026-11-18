@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -11,14 +12,20 @@ namespace tsugumi::text {
 // Returns true when `s` is valid UTF-8 (no surrogates, no overlongs).
 bool valid_utf8(std::string_view s);
 
-// Applies byte edits to a source that must outlive the applier. Callers
-// validate that edits are ascending, non-overlapping and in range.
+struct PatchRangeError : std::invalid_argument {
+  using std::invalid_argument::invalid_argument;
+};
+struct PatchBoundaryError : PatchRangeError {
+  using PatchRangeError::PatchRangeError;
+};
+
+// Applies ascending, non-overlapping edits at UTF-8 boundaries. The source
+// must outlive the applier.
 class PatchApplier {
  public:
   explicit PatchApplier(std::string_view source) : source_(source) {}
 
-  auto cursor() const -> size_t { return cursor_; }
-  auto append(size_t offset, size_t remove, std::string_view text) -> void;
+  auto append(uint64_t offset, uint64_t remove, std::string_view text) -> void;
   auto finish() && -> std::string;
 
  private:

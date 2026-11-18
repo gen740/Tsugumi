@@ -14,7 +14,7 @@ table GetBlobRequest { digest:string (required); offset:ulong; limit:uint = 1048
 table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
-  cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:ulong; build_timeout_ms:ulong;
+  cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
 
@@ -32,7 +32,7 @@ table ReleaseRequest { fingerprint:string (required); }
 table CatalogRequest {}
 union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest }
 table Request {
-  service:string; server_id:string; instance_id:string;
+  service:string; instance_id:string;
   project_scope:string; job_id:string;
   // Random identity of one tsugumid process. Scoped probes renew its lease.
   core_life_id:string;
@@ -41,7 +41,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 8.
+  // Zero means no advertised contract; writers explicitly send contract 9.
   worker_contract:uint;
   active_jobs:uint;
 }

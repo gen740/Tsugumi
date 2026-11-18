@@ -23,8 +23,7 @@ struct OperationContext {
 };
 class ProjectOperations {
  public:
-  auto Execute(const std::string& project,
-               const Tsugumi::Host::ProjectOperateRequestT& operation,
+  auto Execute(const Tsugumi::Host::ProjectOperateRequestT& operation,
                const OperationContext& context, const OperationCall& call)
       -> OperationReply;
 };

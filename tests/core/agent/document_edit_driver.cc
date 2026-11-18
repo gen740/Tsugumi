@@ -147,7 +147,7 @@ auto main() -> int {
           flatbuffers::GetRoot<H::ProjectOperateRequest>(bytes.data())
               ->UnPack());
       const auto result = tsugumi::host::ProjectOperations().Execute(
-          operation->project_id, *operation, {"ui", {}, {}, {}},
+          *operation, {"ui", {}, {}, {}},
           [&](const auto& method, const auto& args) {
             return project.Call(method, args);
           });

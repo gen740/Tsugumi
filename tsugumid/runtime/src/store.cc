@@ -30,12 +30,6 @@ constexpr uintmax_t kCompactBytes = 8u << 20;
 constexpr size_t kKeepReceipts = 2000;
 constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
-bool utf8_boundary(const std::string& s, uint64_t off) {
-  if (off == 0 || off == s.size()) return true;
-  if (off > s.size()) return false;
-  return (static_cast<unsigned char>(s[off]) & 0xC0) != 0x80;
-}
-
 std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 
 // What a save may write: the documents and the source areas, never
@@ -750,19 +744,14 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                          {{"path", c.path}});
           text::PatchApplier patch(original);
           for (const auto& p : c.patches) {
-            if (p.offset < patch.cursor())
-              throw Failed(FailureKind::invalid_range,
-                           "patches must be ascending and non-overlapping");
-            if (p.offset + p.remove > original.size() ||
-                p.offset + p.remove < p.offset)
-              throw Failed(FailureKind::invalid_range,
-                           "patch exceeds the source size");
-            if (!utf8_boundary(original, p.offset) ||
-                !utf8_boundary(original, p.offset + p.remove))
-              throw Failed(FailureKind::invalid_range,
-                           "patch is not on a UTF-8 boundary",
+            try {
+              patch.append(p.offset, p.remove, p.text);
+            } catch (const text::PatchBoundaryError& error) {
+              throw Failed(FailureKind::invalid_range, error.what(),
                            {{"offset", std::to_string(p.offset)}});
-            patch.append(p.offset, p.remove, p.text);
+            } catch (const text::PatchRangeError& error) {
+              throw Failed(FailureKind::invalid_range, error.what());
+            }
           }
           if (c.patches.empty())
             throw Failed(FailureKind::invalid_request,

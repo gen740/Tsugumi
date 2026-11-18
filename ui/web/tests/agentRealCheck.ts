@@ -1,3 +1,4 @@
+import { Access } from '../shared/gen/tsugumi/service/access'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -75,15 +76,15 @@ try {
   const a = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(a.permission.asked, [asked, write, run])
   assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
-  await call('permission', { id: 'pending-a', allow: true, selected: [asked, write] })
+  await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: true, selected: [asked, write] })
+    { request_id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   pendingAsked = [run.replace('"needed_now":false', '"needed_now":true')]
   const later = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(later.permission.asked, pendingAsked)
-  await call('permission', { id: 'pending-a', allow: false, selected: pendingAsked })
+  await call('permission', { id: 'pending-a', allow: false, selected: [Access.Run] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: false, selected: pendingAsked })
+    { request_id: 'pending-a', allow: false, selected: [Access.Run] })
   const b = await call('conversation', { path: folders[1], session: 'b' })
   assert.equal(b.permission, null)
   assert.equal(b.provider.model, 'gpt-6.1-sol')

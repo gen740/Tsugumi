@@ -398,7 +398,7 @@ TEST(HostComponents,
   project.path = other.string();
   EXPECT_THROW(register_project(project), host::Failure);
   opened = other / ".tsugumi";
-  EXPECT_THROW(registry.ValidateLocation("project", root), host::Failure);
+  EXPECT_THROW(registry.ReserveLocation("project", root), host::Failure);
   opened.reset();
   const auto register_folder = [&](const H::RegisterFolderRequestT& input) {
     flatbuffers::FlatBufferBuilder builder;

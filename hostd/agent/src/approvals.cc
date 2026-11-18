@@ -34,7 +34,7 @@ auto Approvals::ApproveOperation(
           : crypto::sha256_hex(digest + "\n" + json::Encode(permissions));
   auto describe = [&] {
     if (!permissions.empty())
-      return std::string("operation_approval\n") + call.name + "\n" +
+      return call.name + "\n" +
              json::Encode(
                  json::Members{{"project", json::Quote(project)},
                                {"arguments_digest", json::Quote(digest)},

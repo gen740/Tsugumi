@@ -1,5 +1,9 @@
 # Usage: cmake -DINPUT=file -DOUTPUT=file.cc -DSYMBOL=name -P embed.cmake
 file(READ ${INPUT} _hex HEX)
+if(DEFINED STRIP_LINE)
+  string(HEX "${STRIP_LINE}\n" _line)
+  string(REPLACE "${_line}" "" _hex "${_hex}")
+endif()
 string(LENGTH "${_hex}" _len)
 math(EXPR _size "${_len} / 2")
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _bytes "${_hex}")

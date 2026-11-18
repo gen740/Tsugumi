@@ -81,14 +81,14 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertTrue(input.folders.isEmpty)
     let state = Tsugumi_Host_EnvironmentStateT()
     state.project = "/project"; state.key = "key"; state.phase = .ready
-    state.endpoint = "ws://localhost:123/rpc"; state.projectId = "project"; state.serverInstanceId = "new-instance"
+    state.endpoint = "ws://localhost:123/rpc"; state.projectId = "project"
     let folder = Tsugumi_Host_FolderAttachmentT()
     folder.folder = "/data"; folder.resource = "folder:project:data"
     let attached = Tsugumi_Host_AttachedFoldersT()
     attached.state = state; attached.folders = [folder]
     let reply = try ServiceWire.decode(hostReply(attached, type: .attachedfolders), host: true)
     let ready = try XCTUnwrap(reply["state"] as? [String: Any])
-    XCTAssertEqual(ready["server_instance_id"] as? String, "new-instance")
+    XCTAssertEqual(ready["project_id"] as? String, "project")
     XCTAssertEqual(ready["phase"] as? Tsugumi_Host_EnvironmentPhase, .ready)
     XCTAssertEqual(reply["folders"] as? [[String: String]], [["folder": "/data", "resource": "folder:project:data"]])
   }

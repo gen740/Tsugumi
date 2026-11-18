@@ -26,26 +26,24 @@ constexpr uint64_t kMaxWorkerBytes = uint64_t{16} << 20;
 constexpr size_t kMaxInputBlobs = 1024;
 
 auto upload(const RemoteJobClient& client, const std::string& service,
-            const std::string& server_id, const std::string& instance,
-            const std::string& job_id, const std::string& bytes,
-            const std::atomic<bool>& cancel,
+            const std::string& instance, const std::string& job_id,
+            const std::string& bytes, const std::atomic<bool>& cancel,
             const TransferProgress& progress = {}) -> std::string {
   const std::string digest = crypto::sha256_hex(bytes);
   std::istringstream stream(bytes);
-  client.put_blob(service, server_id, instance, job_id, digest, bytes.size(),
-                  stream, &cancel, progress);
+  client.put_blob(service, instance, job_id, digest, bytes.size(), stream,
+                  &cancel, progress);
   return digest;
 }
 
 auto download(const RemoteJobClient& client, const std::string& service,
-              const std::string& server_id, const std::string& instance,
-              const std::string& job_id, const std::string& digest,
-              uint64_t limit, const std::atomic<bool>& stop) -> std::string {
+              const std::string& instance, const std::string& job_id,
+              const std::string& digest, uint64_t limit,
+              const std::atomic<bool>& stop) -> std::string {
   if (!crypto::is_sha256_hex(digest))
     throw std::runtime_error("invalid remote blob digest");
   std::ostringstream bytes;
-  client.get_blob(service, server_id, instance, job_id, digest, bytes, limit,
-                  &stop);
+  client.get_blob(service, instance, job_id, digest, bytes, limit, &stop);
   return bytes.str();
 }
 
@@ -80,7 +78,6 @@ auto import_logs(const stdfs::path& path, RemoteInvocationResult& result)
 
 auto stage_remote_archive(const RemoteJobClient& client,
                           const std::string& service,
-                          const std::string& server_id,
                           const std::string& instance,
                           const std::string& job_id, const stdfs::path& archive,
                           const std::atomic<bool>& cancel,
@@ -96,14 +93,13 @@ auto stage_remote_archive(const RemoteJobClient& client,
       });
   const auto archive_digest = archive_hash.finish_hex();
   std::ifstream nar(archive, std::ios::binary);
-  client.put_blob(service, server_id, instance, job_id, archive_digest,
-                  archive_size, nar, &cancel, progress);
+  client.put_blob(service, instance, job_id, archive_digest, archive_size, nar,
+                  &cancel, progress);
   return archive_digest;
 }
 
 auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::string& service,
-                             const std::string& server_id,
                              const std::string& instance,
                              const std::string& job_id,
                              const std::vector<stdfs::path>& file_roots,
@@ -148,12 +144,12 @@ auto stage_remote_invocation(const RemoteJobClient& client,
     const auto digest = hash.finish_hex();
     if (blobs.insert(digest).second) {
       std::ifstream stream(temporary, std::ios::binary);
-      client.put_blob(
-          service, server_id, instance, job_id, digest, size, stream,
-          &request.cancel, [&](uint64_t done, uint64_t bytes) {
-            if (request.transfer)
-              request.transfer("upload", path.generic_string(), done, bytes);
-          });
+      client.put_blob(service, instance, job_id, digest, size, stream,
+                      &request.cancel, [&](uint64_t done, uint64_t bytes) {
+                        if (request.transfer)
+                          request.transfer("upload", path.generic_string(),
+                                           done, bytes);
+                      });
     }
     remote::FileJson file;
     *file.path = path.generic_string();
@@ -206,14 +202,14 @@ auto stage_remote_invocation(const RemoteJobClient& client,
           : std::nullopt,
       types::card_catalog(request.node.inputs, true),
       types::card_catalog(request.node.outputs, false));
-  *invocation.call_sha256 = upload(client, service, server_id, instance, job_id,
-                                   call, request.cancel);
+  *invocation.call_sha256 =
+      upload(client, service, instance, job_id, call, request.cancel);
   blobs.insert(*invocation.call_sha256);
   *invocation.archive_sha256 = archive_digest;
   blobs.insert(archive_digest);
   const auto invocation_digest =
-      upload(client, service, server_id, instance, job_id,
-             schema::encode(invocation), request.cancel);
+      upload(client, service, instance, job_id, schema::encode(invocation),
+             request.cancel);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
   job.input_blobs.assign(blobs.begin(), blobs.end());
@@ -222,7 +218,6 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   job.derivation = request.build.derivation.path;
   job.output = request.build.derivation.output;
   job.log_limit_bytes = request.log_limit_bytes;
-  job.timeout_seconds = request.node.settings.timeout_seconds.value_or(0);
   if (request.node.settings.build_timeout_seconds) {
     const auto budget = *request.node.settings.build_timeout_seconds * 1000;
     if (request.build.preparation_ms >= budget)
@@ -240,18 +235,16 @@ auto stage_remote_invocation(const RemoteJobClient& client,
 
 auto import_remote_result(
     const RemoteJobClient& client, const std::string& service,
-    const std::string& server_id, const std::string& instance,
-    const std::string& job_id, const std::string& result_digest,
-    const std::string& spec, const stdfs::path& directory,
-    const stdfs::path& module_cache,
+    const std::string& instance, const std::string& job_id,
+    const std::string& result_digest, const std::string& spec,
+    const stdfs::path& directory, const stdfs::path& module_cache,
     const std::vector<types::PortType>& outputs,
     const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
     -> RemoteInvocationResult {
   const auto job = workerd::parse_spec(spec);
-  const auto manifest_bytes =
-      download(client, service, server_id, instance, job_id, result_digest,
-               kMaxManifestBytes, stop);
+  const auto manifest_bytes = download(client, service, instance, job_id,
+                                       result_digest, kMaxManifestBytes, stop);
   flatbuffers::Verifier manifest_verifier(
       reinterpret_cast<const uint8_t*>(manifest_bytes.data()),
       manifest_bytes.size());
@@ -263,8 +256,8 @@ auto import_remote_result(
   const auto* files = manifest->outputs();
   if (files->size() > 65536)
     throw std::runtime_error("too many remote result members");
-  auto bytes = download(client, service, server_id, instance, job_id,
-                        result_hash, kMaxWorkerBytes, stop);
+  auto bytes = download(client, service, instance, job_id, result_hash,
+                        kMaxWorkerBytes, stop);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
                                  bytes.size());
   if (!W::VerifyWorkerMessageBuffer(verifier))
@@ -327,8 +320,8 @@ auto import_remote_result(
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, server_id, instance, job_id, *digest, destination,
-                    *size, &stop, [&](uint64_t done, uint64_t bytes) {
+    client.get_blob(service, instance, job_id, *digest, destination, *size,
+                    &stop, [&](uint64_t done, uint64_t bytes) {
                       if (progress) progress(*name, done, bytes);
                     });
     destination.close();
@@ -356,8 +349,8 @@ auto import_remote_result(
       if (!stdfs::is_directory(root) &&
           !cached_module_source(module_cache, identity)) {
         const auto source =
-            download(client, service, server_id, instance, job_id,
-                     file->sha256()->str(), kModuleSourceLimit, stop);
+            download(client, service, instance, job_id, file->sha256()->str(),
+                     kModuleSourceLimit, stop);
         if (source.size() != file->size()) continue;
         // The pinned builder supplies built resources, restricted to its
         // closure. A Nix store path is an identity, not the content hash of

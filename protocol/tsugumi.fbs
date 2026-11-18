@@ -252,9 +252,8 @@ table OperationReceipt {
 /// -> HelloResult. token is required on WebSocket. Project mismatch is
 /// permission_denied. Must be the first request, within 5 s of connecting.
 table SessionHelloRequest {
-  client_id:string (id: 0, required);
-  expected_project_id:string (id: 1);
-  token:string (id: 2);
+  expected_project_id:string (id: 0);
+  token:string (id: 1);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.

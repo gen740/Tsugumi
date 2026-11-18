@@ -4,6 +4,7 @@ import type { AccessGroup } from '../shared/chatPresentation'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { modelChoices } from '../shared/agentShared'
+import type { Access } from '../shared/gen/tsugumi/service/access'
 import { type AgentEvent, type ProviderConfig } from './agent'
 import { CoreHost, CoreHostError, RemoteAgent } from './coreHost'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
@@ -275,7 +276,7 @@ interface PermissionWait {
 const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
-async function answerPermission(id: string, allow: boolean, selected?: string[]) {
+async function answerPermission(id: string, allow: boolean, selected?: Access[]) {
   const result = await core.user.call<{ accepted: boolean }>('AccessResolveRequest', { request_id: id, allow, selected })
   const waiting = permissionWaits.get(id)
   permissionWaits.delete(id)
