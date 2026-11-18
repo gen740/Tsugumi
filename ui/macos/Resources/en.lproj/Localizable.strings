@@ -4,8 +4,10 @@
 " · 未配置" = " · not placed";
 " ほか %lld" = " and %lld more";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
+"%1$llu 回目（この実行で %2$llu 回）" = "Call %1$llu (of %2$llu in this run)";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
+"%@ · %llu 回目" = "%@ · call %llu";
 "%@ · コメントを%@: %@" = "%@ · comment %@: %@";
 "%@ · 実行 #%llu" = "%@ · invocation #%llu";
 "%@ · 実行 #%llu · %@" = "%@ · invocation #%llu · %@";
@@ -44,11 +46,14 @@
 "%lld 点 · ドラッグで回転" = "%lld points · drag to rotate";
 "%lld–%lld / %lld 行" = "%lld–%lld of %lld rows";
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
+"%llu 回目" = "Call %llu";
+"%llu 回目（この実行で 1 回だけ）" = "Call %llu (the only one in this run)";
 "0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。" = "0 means never. Use 0 to keep jobs running while this computer sleeps.";
 "0 秒" = "0 s";
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
+"500 回ずつ" = "500 at a time";
 "64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。" = "An unsigned 64-bit integer (decimal or hexadecimal starting with 0x). Selects the free worker with the lowest matching value.";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API の設定…" = "API Settings…";
@@ -106,6 +111,7 @@
 "Card は C++ でも Python でも bash でも書けるよ" = "Cards can be written in C++, Python or bash.";
 "Card は Tsugumi の Linux VM（Virtualization.framework、アプリ全体で 1 台）の中で、プロジェクトごとに隔離して実行されます。" = "Cards run isolated per project in Tsugumi's Linux VM (Virtualization.framework, one for the whole app).";
 "Card はありません" = "No Cards";
+"Card は入力がそろうたびに 1 回呼び出されます（実行リストなら要素ごと）。ほかの実行の呼び出しは左の一覧で実行を選びます。" = "A Card is called once each time its inputs are all there (once per element of an execution list). For the calls of another run, choose that run in the list on the left.";
 "Card を削除すると定義も削除されます" = "Deleting the Card deletes its definition too";
 "Card を右クリックして参照に追加、$ で Skill を選べます。" = "Right-click a Card to add it as a reference; type $ to choose a Skill.";
 "Card を検索（名前・説明）" = "Search Cards (name, description)";
@@ -226,7 +232,9 @@
 "build 中" = "Building";
 "console.log（ゲスト）、console.prev.log（前回の起動）、launcher.log（アプリの記録）" = "console.log (the guest), console.prev.log (the previous boot), launcher.log (the app's notes)";
 "default.nix がありません" = "No default.nix";
+"default.nix はほかの Card を参照していません。" = "default.nix references no other Card.";
 "default.nix を作成" = "Create default.nix";
+"default.nix を開く" = "Open default.nix";
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
@@ -241,6 +249,7 @@
 "stdout への出力はありません" = "Nothing on stdout";
 "stdout への出力はありません。" = "Nothing on stdout.";
 "store ディスクの空き" = "Store disk available";
+"stream 別" = "By stream";
 "stream 別（元の出力）" = "By stream (as written)";
 "table %@ が閉じていません" = "Table %@ is not closed";
 "tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。" = "Check that tsugumi.json and the other documents are well formed, then try again.";
@@ -280,12 +289,14 @@
 "ここから Workflow を実行" = "Run the Workflow from here";
 "ここから下流を実行" = "Run from Here Downstream";
 "ここです" = "Here";
-"この Card が実行されると、ここに実行ごとの入出力・ログ・情報が残ります。" = "After this Card runs, each invocation's inputs, outputs, logs and details are kept here.";
+"この Card が使う SDK、nixpkgs の package、ほかの Card の出力は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。" = "The SDK, the nixpkgs packages and the other Cards’ outputs this Card uses are set by its Nix definition (default.nix). Edit default.nix to change them.";
+"この Card が実行されると、ここに実行ごとの情報と入出力が残ります。" = "When this Card runs, each run’s information and inputs and outputs are kept here.";
+"この Card が実行されると、ここに段階ごとのログが出ます。実行中は出力をそのまま追います。" = "When this Card runs, its log appears here by stage. While it runs, the output is followed as it comes.";
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
 "この Card の出力" = "This Card's output";
 "この Card は何をしている？" = "What does this Card do?";
-"この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。" = "This Card does not record inputs and outputs (Settings > Ports > Record I/O).";
+"この Card は入出力を記録しない設定です。値は残っていません。" = "This Card is set not to record its inputs and outputs. No values were kept.";
 "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。" = "This Card keeps no artifacts (Settings > Inputs & Outputs > Keep artifacts).";
 "この Card は文書から削除されています。" = "This Card has been removed from the document.";
 "この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。" = "Write how you want this Card to change. The Agent follows it with \"Generate from comments\" on the canvas (kept in _meta.json and in the version history).";
@@ -334,13 +345,17 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
+"この呼び出しのログを「ログ」で開きます" = "Opens this call’s log in Log";
 "この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
+"この呼び出しの記録はまだありません。" = "This call has no record yet.";
+"この実行で 1 回だけ" = "the only one in this run";
+"この実行での集計" = "This run in total";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
+"この実行では、この Card は呼び出されていません" = "This Card was not called in this run";
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この実行にはありません" = "Absent from this run";
 "この実行の Card からは届いていません" = "Not sent by a Card of this run";
-"この実行の共有環境" = "Shared environments in this run";
 "この実行サービスではリソースを指定できません。" = "This execution service does not support resource requests.";
 "この実行環境では %@ を実行できません。" = "%@ cannot run in this execution environment.";
 "この実行環境の既定" = "Execution environment default";
@@ -370,8 +385,6 @@
 "すべての実行環境を初期化…" = "Reset all environments…";
 "すべての実行環境を初期化しますか？" = "Reset all environments?";
 "すべて選択" = "Select All";
-"すべて閉じる" = "Collapse All";
-"すべて開く" = "Expand All";
 "その他" = "More";
 "たった今" = "Just now";
 "つぐみ → つむぐ。試行錯誤をつないで、研究を「紡ぐ」道具でありたいんだ" = "Tsugumi → tsumugu, to spin: a tool for spinning trial and error into research.";
@@ -387,6 +400,7 @@
 "まだ実行していません" = "Not run yet";
 "まだ結果がありません" = "No result yet";
 "まだ結果がありません（実行すると表示されます）" = "No result yet (run to see one)";
+"まだ記録された環境はありません。実行すると、使った環境がここに出ます。" = "No environment has been recorded yet. When the Card runs, the environment it used appears here.";
 "もう一方の処理が終わるのを待ってから、再試行してください。" = "Wait for the other operation to finish, then retry.";
 "やり直す" = "Redo";
 "アイコン" = "Icon";
@@ -461,6 +475,7 @@
 "コメントから生成" = "Generate from comments";
 "コメントから生成（%lld）" = "Generate from comments (%lld)";
 "コメントが閉じていません" = "A comment is not closed";
+"コメントと追加コンテキスト" = "Comments and Context";
 "コメントを追加" = "Add Comment";
 "コメント（Agent）: %@" = "Comment (Agent): %@";
 "コンソールで詳細を見る" = "Show Details in the Console";
@@ -651,6 +666,7 @@
 "レポート（HTML・PDF 未対応）" = "Reports (HTML; PDF unsupported)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
+"ログの末尾 %u MiB を表示しています。全体は「ログを書き出す…」で保存できます。" = "Showing the last %u MiB of the log. Save all of it with “Export log…”.";
 "ログの末尾を表示しています" = "Showing the end of the log";
 "ログの表示切替" = "Toggle Log";
 "ログはここで切り詰めました（上限 %llu MiB）" = "Log truncated here (%llu MiB limit)";
@@ -721,8 +737,7 @@
 "使う接続先" = "Connection in Use";
 "使用中" = "In use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
-"依存 package" = "Packages";
-"依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
+"依存" = "Dependencies";
 "依存パスを検索" = "Search dependencies";
 "依頼されたときの手分けの進め方" = "How to delegate when asked";
 "保存" = "Save";
@@ -769,8 +784,10 @@
 "先に変更を保存してください（配線と Draft の内容を確定してから生成します）" = "Save your changes first (generation starts from the saved wiring and Draft content)";
 "先頭 64 KiB を表示" = "Showing the first 64 KiB";
 "入出力" = "Ports";
+"入出力の設定を開く" = "Open the input and output settings";
 "入出力は記録されていません" = "Inputs and outputs were not recorded";
 "入出力を記録" = "Record I/O";
+"入出力（記録していません）" = "Inputs and Outputs (not recorded)";
 "入力" = "Inputs";
 "入力 " = "Input ";
 "入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。" = "Name a real input for each incoming wire and a real output for each outgoing wire, even when there is only one candidate.";
@@ -785,6 +802,7 @@
 "入力元" = "Input sources";
 "入力元 %@" = "Source of %@";
 "入力待ち" = "Waiting";
+"全 %lld 回" = "%lld calls";
 "全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）" = "%lld rows · preview of the first %lld (expand to view all)";
 "全体" = "All";
 "全体 " = "Whole ";
@@ -820,7 +838,6 @@
 "再開" = "Resume";
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
 "処理" = "Step";
-"処理 Card の実行環境は default.nix で定義します。" = "A step Card's environment is defined in default.nix.";
 "処理の意図や補足を文章で残します（_meta.json）。チャットで Card を参照したときにも使われます。" = "Notes on the intent and details, in prose (_meta.json). Also used when the Card is referenced in the chat.";
 "出力" = "Outputs";
 "出力 " = "Output ";
@@ -860,6 +877,7 @@
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
 "削除対象の合計" = "Total selected for deletion";
+"前の 500 回" = "Previous 500 calls";
 "前へ" = "Previous";
 "前回の VM が正常に停止しなかったため、Nix store を検査・修復しています" = "Checking and repairing the Nix store after an unclean VM stop";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
@@ -867,6 +885,7 @@
 "動かす" = "Animate";
 "化学・生態" = "Chemistry and ecology";
 "原因（ログより）" = "Cause (from the log)";
+"参照している Card" = "Referenced Cards";
 "参照を外す" = "Remove the reference";
 "参照を解決できません。Nix 定義と診断を確認してください。" = "This reference is invalid. Check the Nix definition and diagnostics.";
 "参照・フォルダを添付" = "Attach references or folders";
@@ -975,6 +994,7 @@
 "実ポート名" = "Real port name";
 "実行" = "Run";
 "実行 #%llu" = "Invocation #%llu";
+"実行 %@ の %llu 回目で使われた環境です。default.nix を変えた後は、次に実行したときに変わります。" = "The environment call %2$llu of the run at %1$@ used. After default.nix changes, it changes with the next run.";
 "実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@" = "%lld runs (%lld succeeded, %lld failed) · last: %@";
 "実行 revision" = "Execution revision";
 "実行: %@" = "Run: %@";
@@ -985,8 +1005,10 @@
 "実行するとここにログが表示されます。" = "Logs appear here after a run.";
 "実行すると表示されます。" = "Appears after a run.";
 "実行の scratch（合計）" = "Run scratch (total)";
+"実行の対象に含まれなかったか、入力がそろう前に実行が終わりました。" = "The Card was not part of the run, or the run ended before its inputs were all there.";
 "実行の期限（秒）" = "Run timeout (s)";
 "実行の様子を見ています" = "Looking at the run";
+"実行の種類" = "Kind of run";
 "実行の範囲" = "Run scope";
 "実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
@@ -1006,6 +1028,8 @@
 "実行デーモンの接続先" = "Execution daemon endpoint";
 "実行デーモンへの接続に失敗しました（HTTP %@）。" = "Could not connect to the execution daemon (HTTP %@).";
 "実行リスト" = "Execution list";
+"実行リスト %u/%u" = "execution list %u/%u";
+"実行リストの要素数" = "Elements in the execution list";
 "実行リスト内の呼び出しはまとめて 1 回の発火として数えます。" = "The invocations in an execution list count as one activation.";
 "実行リスト（件数未確定）" = "Execution list (count unknown)";
 "実行ログを開く" = "Open Run Log";
@@ -1022,6 +1046,7 @@
 "実行全体" = "Whole run";
 "実行履歴" = "Run History";
 "実行履歴…" = "Run History…";
+"実行履歴から開いた呼び出し: %@ · %@" = "Call opened from the execution history: %@ · %@";
 "実行履歴なし" = "No runs";
 "実行履歴の形式が異なります" = "Incompatible Run History";
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
@@ -1077,7 +1102,6 @@
 "思考の過程を描く: Agent の考えを要約して Canvas に出します（追加の token を使います）" = "Draw thoughts: summarizes the Agent's thinking on the canvas (uses extra tokens)";
 "思考の過程を描く: オン（使った token: 入力 %lld、出力 %lld）" = "Draw thoughts: on (tokens used: input %lld, output %lld)";
 "情報" = "Info";
-"情報がありません" = "No information";
 "情報なし" = "Unavailable";
 "成功" = "Succeeded";
 "成果物" = "Artifacts";
@@ -1166,8 +1190,12 @@
 "書き込み" = "Write";
 "最大同時ジョブ数" = "Maximum concurrent jobs";
 "最大発火回数" = "Maximum activations";
+"最後に記録された環境" = "Last recorded environment";
 "最後のウインドウを閉じたら Tsugumi を終了する" = "Quit Tsugumi when the last window closes";
+"最後の呼び出し" = "the last call";
+"最後の実行: %@" = "Last run: %@";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
+"最新の呼び出しに戻る" = "Back to the Latest Call";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
 "最近のプロジェクト" = "Recent Projects";
 "最近開いたプロジェクトはありません" = "No recent projects";
@@ -1211,6 +1239,7 @@
 "概要" = "Description";
 "構文エラーがあります（テキストは変更していません）" = "Syntax errors (the text was not changed)";
 "標準" = "Standard";
+"次の 500 回" = "Next 500 calls";
 "次へ" = "Next";
 "止めました" = "Stopped";
 "残す" = "Keep";
@@ -1374,6 +1403,7 @@
 "進行中の処理を停止して Tsugumi を終了しますか？" = "Quit Tsugumi and stop ongoing work?";
 "進行中の実行を表示" = "Show Active Run";
 "進行中の実行を表示しています" = "Showing the active run";
+"進行中の実行（最新の呼び出しを追います）" = "Run in progress (following the latest call)";
 "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。" = "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.";
 "過去の実行を表示しています。別の実行が進行中です。" = "Showing a previous run. Another run is active.";
 "適用" = "Apply";
@@ -1414,7 +1444,6 @@
 "開始" = "Start";
 "開始した Card" = "Started at";
 "隔離方式" = "Isolation";
-"集計" = "Totals";
 "青" = "Blue";
 "非対応" = "Unavailable";
 "高さ %lld" = "Height %lld";

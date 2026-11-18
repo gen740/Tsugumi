@@ -103,12 +103,12 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .terminal { flex: 1; min-height: 0; padding: 4px 0 0 8px; background: var(--text-bg); }
 .stage-log { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .stage-log > .panel-bar { border-bottom: 1px solid var(--separator); }
-.stage-log-scroll { flex: 1; overflow: auto; padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }
-.stage-group { padding: 3px 8px; }
-.stage-group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; padding: 2px 0; text-align: left; }
-.stage-group-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 4px 18px; }
-.stage-log-text { padding: 6px; border-radius: 5px; background: color-mix(in srgb, var(--secondary) 8%, var(--text-bg)); white-space: pre-wrap; word-break: break-all; }
-.stage-log-text.empty { font-family: var(--font); color: var(--secondary); }
+.stage-chips { flex: none; padding: 6px 8px; overflow-x: auto; }
+.stage-chip { display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; font-size: 11px; border: 0; border-radius: 6px; padding: 4px 8px;
+  background: color-mix(in srgb, var(--secondary) 8%, transparent); color: inherit; }
+.stage-chip.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.stage-streams { flex: none; padding: 4px 8px; }
+.stage-notice { flex: none; padding: 0 8px 2px; }
 
 /* timeline */
 .timeline { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 0; gap: 0; overflow: hidden; }

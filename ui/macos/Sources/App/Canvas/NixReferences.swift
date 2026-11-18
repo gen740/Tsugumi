@@ -100,7 +100,7 @@ struct NixReferenceControls: View {
               if !ref.valid { Text("参照を解決できません。Nix 定義と診断を確認してください。").foregroundStyle(.secondary) }
               Button("Nix 定義を開く") {
                 tab.showNixList = false
-                openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: ref.source, category: .nix))
+                openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: ref.source, category: .source, file: "default.nix"))
               }
             }
             .padding(8).frame(maxWidth: .infinity, alignment: .leading)

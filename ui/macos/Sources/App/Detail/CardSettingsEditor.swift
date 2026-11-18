@@ -171,6 +171,21 @@ final class CardEditorModel {
     openFile(prefix + source, line: line)
   }
 
+  /// The Nix definition (default.nix), which Source edits.
+  func openDefinition() {
+    guard let prefix = session.definitionDir(cardKey) else { return }
+    category = .source
+    openFile(prefix + "default.nix")
+  }
+
+  /// The run and invocation the Log category shows; nil follows this Card's latest.
+  var logSelection: CardLogSelection?
+
+  func openLog(runId: String, invocation: UInt64?) {
+    logSelection = CardLogSelection(runId: runId, invocation: invocation)
+    category = .log
+  }
+
   private(set) var sourceLine: Int?
 
   func openFile(_ p: String, line: Int? = nil) {
@@ -396,6 +411,7 @@ struct CardSettingsEditor: View {
       if model == nil {
         let m = CardEditorModel(session: session, cardKey: ref.card)
         m.category = ref.category
+        if ref.file == "default.nix" { m.openDefinition() }
         model = m
         UIScript.shared.editors[ref.card] = m
       }
@@ -410,10 +426,10 @@ struct CardSettingsEditor: View {
   private func categories(_ m: CardEditorModel) -> [CardEditorCategory] {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
-    case .input: return [.general, .comments, .source, .ports, .executions, .artifacts, .context]
-    case .draft: return [.general, .comments, .context]
-    case .subgraph: return [.general, .comments, .ports, .executions]
-    default: return [.general, .comments, .ports, .executions, .artifacts, .context]
+    case .input: return [.general, .source, .ports, .log, .executions, .artifacts, .notes]
+    case .draft: return [.general, .notes]
+    case .subgraph: return [.general, .ports, .executions, .notes]
+    default: return [.general, .ports, .log, .executions, .artifacts, .notes]
     }
   }
 
@@ -432,15 +448,13 @@ struct CardSettingsEditor: View {
         Group {
           switch m.category {
           case .general: GeneralCategory(model: m)
-          case .comments: CommentsCategory(session: session, card: m.cardKey)
-          case .nix: SourceCategory(model: m, only: "default.nix")
-          case .source: SourceCategory(model: m, only: nil)
+          case .source: SourceCategory(model: m)
           case .ports: m.kind == .subgraph ? AnyView(BoundaryCategory(model: m)) : AnyView(PortsCategory(model: m))
-          case .executions: CardExecutionView(session: session, cardKey: ref.card) { source, line in
-            m.openSource(source, line: line)
-          }
+          case .log: CardLogView(session: session, model: m)
+          case .dependencies: DependenciesCategory(model: m)
+          case .executions: CardExecutionView(session: session, model: m)
           case .artifacts: CardArtifactsView(session: session, cardKey: ref.card)
-          case .context: ContextCategory(model: m)
+          case .notes: NotesCategory(model: m)
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1313,6 +1327,26 @@ private struct CommentsCategory: View {
   }
 }
 
+/// Comments (what to change, for the Agent) above the added context (what the
+/// Card is for); a Card with no definition has only comments.
+private struct NotesCategory: View {
+  @Bindable var model: CardEditorModel
+
+  var body: some View {
+    VSplitView {
+      CommentsCategory(session: model.session, card: model.cardKey)
+        .frame(minHeight: 160, maxHeight: .infinity)
+      if model.kind != .subgraph {
+        VStack(alignment: .leading, spacing: 0) {
+          Text("追加コンテキスト").font(.headline).padding([.horizontal, .top], 12)
+          ContextCategory(model: model)
+        }
+        .frame(minHeight: 140, idealHeight: 200, maxHeight: .infinity)
+      }
+    }
+  }
+}
+
 private struct ContextCategory: View {
   @Bindable var model: CardEditorModel
 
@@ -1344,7 +1378,6 @@ private struct ContextCategory: View {
 /// so switching categories or applying keeps them.
 private struct SourceCategory: View {
   @Bindable var model: CardEditorModel
-  let only: String?
   @State private var newName = ""
   @State private var renaming: String?
   @State private var showNew = false
@@ -1359,48 +1392,44 @@ private struct SourceCategory: View {
   private var prefix: String { model.session.definitionDir(model.cardKey) ?? "" }
 
   var body: some View {
-    let files = model.files.filter { only == nil || $0.hasSuffix("/" + only!) }
+    let files = model.files
     HSplitView {
-      if only == nil {
-        VStack(spacing: 0) {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-              FileTreeRows(nodes: FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), depth: 0,
-                           model: model, open: open, contextMenu: menu)
-              if model.kind == .code {
-                Text("生成").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                  .padding(.leading, 10).padding(.top, 12).padding(.bottom, 2)
-                ForEach(["_inputs.fbs", "_params.fbs"], id: \.self) { name in
-                  FileRow(name: name, icon: "lock.doc", depth: 0, folder: nil,
-                          selected: model.shownFile == Self.generatedPrefix + name, readOnly: true) { open(Self.generatedPrefix + name) }
-                }
+      VStack(spacing: 0) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 0) {
+            FileTreeRows(nodes: FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), depth: 0,
+                         model: model, open: open, contextMenu: menu)
+            if model.kind == .code {
+              Text("生成").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.leading, 10).padding(.top, 12).padding(.bottom, 2)
+              ForEach(["_inputs.fbs", "_params.fbs"], id: \.self) { name in
+                FileRow(name: name, icon: "lock.doc", depth: 0, folder: nil,
+                        selected: model.shownFile == Self.generatedPrefix + name, readOnly: true) { open(Self.generatedPrefix + name) }
               }
             }
-            .padding(.vertical, 4)
           }
-          Divider()
-          HStack {
-            Button { showNew = true; newName = "src/" } label: { Image(systemName: "plus") }.help("ファイルを作成")
-            Button {
-              if let s = model.shownFile, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); model.closeFile(s) }
-            } label: { Image(systemName: "minus") }
-              .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.generatedPrefix)).help("表示中のファイルを削除")
-            Spacer()
-          }
-          .buttonStyle(.borderless).padding(6)
+          .padding(.vertical, 4)
         }
-        .frame(minWidth: 170, idealWidth: 220, maxWidth: 360)
+        Divider()
+        HStack {
+          Button { showNew = true; newName = "src/" } label: { Image(systemName: "plus") }.help("ファイルを作成")
+          Button {
+            if let s = model.shownFile, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); model.closeFile(s) }
+          } label: { Image(systemName: "minus") }
+            .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.generatedPrefix)).help("表示中のファイルを削除")
+          Spacer()
+        }
+        .buttonStyle(.borderless).padding(6)
       }
+      .frame(minWidth: 170, idealWidth: 220, maxWidth: 360)
       VStack(spacing: 0) {
-        if only == nil && model.openFiles.count > 1 { tabs }
+        if model.openFiles.count > 1 { tabs }
         editorPane(files: files)
       }
       .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
     }
     .onAppear {
-      if only != nil {
-        if let f = files.first { model.openFile(f) }
-      } else if model.shownFile == nil || (model.shownFile?.hasSuffix("/default.nix") ?? false) {
+      if model.shownFile == nil {
         if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".rb") || $0.hasSuffix(".cs") || ["rmd", "qmd"].contains(($0 as NSString).pathExtension.lowercased()) }) ?? files.first { model.openFile(f) }
       }
     }
@@ -1552,13 +1581,6 @@ private struct SourceCategory: View {
             .padding(6)
           }
           .frame(maxHeight: 80)
-        }
-      } else if only != nil && files.isEmpty {
-        ContentUnavailableView("default.nix がありません", systemImage: "snowflake",
-                               description: Text("処理 Card の実行環境は default.nix で定義します。"))
-        Button("default.nix を作成") {
-          model.createFile("default.nix", text: "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n")
-          model.openFile(prefix + "default.nix")
         }
       } else {
         ContentUnavailableView("ファイルを選んでください", systemImage: "doc.text")

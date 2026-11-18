@@ -132,62 +132,6 @@ struct RecordedEnvironmentView: View {
   }
 }
 
-private struct RecordedRunEnvironments: View {
-  let session: ProjectSession
-  let runId: String
-  @State var selected: String
-  @State private var offsets: [UInt64] = [0]
-  @State private var page: Tsugumi_RPC_BuildEnvironmentPageT?
-  @State private var error: String?
-  @State private var attempt = 0
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 10) {
-        Text("この実行の共有環境").font(.headline)
-        if let error { Text(error).foregroundStyle(.red); Button("再試行") { attempt += 1 } }
-        if let page {
-          ForEach(page.environments.compactMap { $0 }, id: \.id) { environment in
-            Button { selected = environment.id } label: {
-              Text("\(recordedStoreName(environment.manifest)) · \(environment.system) · \(environment.id.prefix(8))")
-                .fontWeight(selected == environment.id ? .bold : .regular)
-            }
-          }
-        } else if error == nil { ProgressView() }
-        HStack {
-          Button("前へ") { offsets.removeLast() }.disabled(page == nil || offsets.count == 1)
-          Text(String(offsets.count))
-          Button("次へ") { if let next = page?.nextOffset { offsets.append(next) } }.disabled(page == nil || page?.nextOffset == nil)
-        }
-        Divider()
-        RecordedEnvironmentView(session: session, runId: runId, environmentId: selected).id(runId + ":" + selected)
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-    }.task(id: "\(offsets.last ?? 0):\(attempt)") {
-      page = nil; error = nil
-      guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
-      do {
-        let result = try await EnvironmentHistorySource(rpc: rpc).page(run: runId, offset: offsets.last ?? 0)
-        try Task.checkCancellation()
-        page = result
-      } catch { if !Task.isCancelled { self.error = String(describing: error) } }
-    }
-  }
-}
-
-struct InvocationPackagesView: View {
-  let session: ProjectSession
-  let runId: String
-  let environmentId: String
-  var body: some View {
-    if environmentId.isEmpty {
-      ContentUnavailableView("この呼び出しの環境は記録されていません", systemImage: "shippingbox",
-                             description: Text("依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。"))
-    } else {
-      RecordedRunEnvironments(session: session, runId: runId, selected: environmentId).id(runId + ":" + environmentId)
-    }
-  }
-}
-
 struct RecordedEnvironmentComparison: View {
   var source: EnvironmentHistorySource? = nil
   let session: ProjectSession

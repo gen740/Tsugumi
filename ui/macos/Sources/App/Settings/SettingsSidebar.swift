@@ -14,6 +14,7 @@ struct SettingsSidebar<Item: Hashable>: View {
     List(selection: Binding<Item?>(get: { selection }, set: { if let v = $0 { selection = v } })) {
       ForEach(items, id: \.self) { item in
         Label(title(item), systemImage: symbol(item))
+          .lineLimit(2)
           .tag(Optional(item))
           .accessibilityIdentifier("settings.category.\(title(item))")
       }
