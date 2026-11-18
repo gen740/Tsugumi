@@ -22,6 +22,7 @@ struct RemoteTarget {
   std::string id;
   std::string native_system;
   std::vector<std::string> systems;
+  std::string server_id;
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;

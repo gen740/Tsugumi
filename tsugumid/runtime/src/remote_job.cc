@@ -262,8 +262,8 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
     const auto& c = *t->capabilities;
-    targets.push_back({t->id, c.native_system, c.systems, t->available,
-                       c.resource_limits, c.max_jobs, t->grade,
+    targets.push_back({t->id, c.native_system, c.systems, c.server_id,
+                       t->available, c.resource_limits, c.max_jobs, t->grade,
                        t->unavailable_reason});
   }
   return targets;
