@@ -114,6 +114,14 @@ void logf(const char* fmt, ...) {
   std::fprintf(stderr, "vmd: %s\n", buf);
 }
 
+// A project id or folder tag: lower-case hex, as the app makes them.
+bool valid_id(const std::string& id) {
+  if (id.empty() || id.size() > 64) return false;
+  for (char c : id)
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  return true;
+}
+
 std::vector<std::string> split(const std::string& s) {
   std::vector<std::string> out;
   std::istringstream in(s);
