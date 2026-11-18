@@ -206,11 +206,13 @@ extension ChatResumeTests {
     func probe(_ name: String) -> HistoryLayoutProbe {
       HistoryLayoutProbe { measurement.frames[name] = $0 }
     }
-    let header = ExecutionHistoryDetailHeader(detail: .constant(.packages)) {
-      ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2))
+    let header = ExecutionHistoryDetailHeader {
+      ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2), paged: true)
       Text("×3").fixedSize()
       Button {} label: { Image(systemName: "chevron.left") }
       Button {} label: { Image(systemName: "chevron.right") }
+    } trailing: {
+      Button("ログ") {}
     }
     let host = NSHostingView(rootView:
       HStack(spacing: 0) {
@@ -240,7 +242,7 @@ extension ChatResumeTests {
     host.layoutSubtreeIfNeeded()
     try await waitForModel {
       Set(measurement.frames.keys).isSuperset(of: ["runs", "detail", "header"]) &&
-        Set(measurement.controls.keys) == ["label", "invocation", "tabs"]
+        Set(measurement.controls.keys) == ["label", "invocation"]
     }
     func rect(_ name: String) throws -> CGRect {
       let view = try #require(frames[name])
@@ -251,7 +253,7 @@ extension ChatResumeTests {
       #expect(rect.minX >= 160 && rect.maxX <= width + 1)
       #expect(rect.minY >= -1 && rect.maxY <= 501)
     }
-    #expect(Set(controlFrames.keys) == ["label", "invocation", "tabs"])
+    #expect(Set(controlFrames.keys) == ["label", "invocation"])
     for rect in controlFrames.values {
       #expect(rect.minX >= -1 && rect.maxX <= headerRect.width + 1, "A history control is clipped")
       #expect(rect.height <= 30, "A history control must stay on one line")
@@ -267,16 +269,18 @@ extension ChatResumeTests {
     }
   }
 
-  @Test(arguments: [180.0, 320.0, 420.0], [0, 3])
+  @Test(arguments: [180.0, 320.0, 420.0], [0, 1, 3])
   func headerFitsWithoutClipping(width: Double, invocationCount: Int) async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let host = NSHostingView(rootView:
-      ExecutionHistoryDetailHeader(detail: .constant(.packages)) {
+      ExecutionHistoryDetailHeader {
         if invocationCount == 0 {
           Label("呼び出しの記録を待っています", systemImage: "clock").lineLimit(1)
         } else {
-          ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2))
+          ExecutionHistoryInvocationPicker(invocations: Array(Self.invocations.prefix(invocationCount)), selection: .constant(1))
         }
+      } trailing: {
+        Button("ログ") {}
       }.frame(width: width)
     )
     host.layoutSubtreeIfNeeded()
@@ -316,4 +320,17 @@ private struct HistoryMeasuredBounds: PreferenceKey {
   static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
     value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
+}
+
+/// Whole lines are drawn for good; the last one is redrawn as a terminal would
+/// (a progress meter) and read again with what follows it.
+@Test func logReaderKeepsWholeLinesAndRedrawsTheLastOne() {
+  let first = LogStreamReader.parse("one\ntwo 10%\rtwo 50%", form: .terminal)
+  #expect(first == .init(lines: "one\n", rest: "two 10%\rtwo 50%", shownRest: "two 50%"))
+  let next = LogStreamReader.parse(first.rest + "\rtwo 100%\nthree", form: .terminal)
+  #expect(next == .init(lines: "two 100%\n", rest: "three", shownRest: "three"))
+  let journal = LogStreamReader.parse(#"{"phase":"save","event":"stored","message":"m"}"# + "\n"
+                                        + #"{"phase":"execute","event":"x"}"# + "\n" + #"{"pha"#,
+                                      form: .journal(["validate", "save"]))
+  #expect(journal == .init(lines: "save · stored: m\n", rest: #"{"pha"#, shownRest: ""))
 }

@@ -36,7 +36,7 @@ function Content({ w }: { w: DetailWindow }) {
   if (what.kind === 'appSettings') return <ApplicationSettings />
   if (!s) return null
   switch (what.kind) {
-    case 'card': return <CardSettingsEditor session={s} card={what.card} initial={what.category} onClose={close} />
+    case 'card': return <CardSettingsEditor session={s} card={what.card} initial={what.category} file={what.file} onClose={close} />
     case 'definitions': return <CardDatabaseView session={s} definition={what.definition} />
     case 'versions': return <VersionTreeView session={s} />
     case 'evidence': return <EvidenceView session={s} href={what.href} />

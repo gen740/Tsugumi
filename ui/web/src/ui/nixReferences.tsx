@@ -44,7 +44,7 @@ export function NixReferenceList({ session, tab }: { session: ProjectSession; ta
         </div>
         <code className="selectable wrap-pre">{ref.expression}</code>
         {!ref.valid && <span className="secondary">{L('参照を解決できません。Nix 定義と診断を確認してください。')}</span>}
-        <Button kind="borderless" onClick={() => { tab.showNixList = false; tab.changed(); app.openWindow(session, { kind: 'card', card: ref.source, category: 'nix' }) }}>{L('Nix 定義を開く')}</Button>
+        <Button kind="borderless" onClick={() => { tab.showNixList = false; tab.changed(); app.openWindow(session, { kind: 'card', card: ref.source, category: 'source', file: 'default.nix' }) }}>{L('Nix 定義を開く')}</Button>
       </div>)}
     </div>
   )

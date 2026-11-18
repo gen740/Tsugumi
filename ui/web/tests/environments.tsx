@@ -1,12 +1,12 @@
-// Packages in the run history: read from what an invocation recorded, never
-// from the current definition, and plain about an invocation without a record.
+// Recorded packages: read from what an invocation recorded, never from the
+// current definition.
 import assert from 'node:assert/strict'
 import { L } from '../src/i18n'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { EnvironmentSource, environmentPaths, findEnvironment, storeName } from '../src/model/environments'
 import type { ProjectSession } from '../src/model/session'
 import { R } from '../src/wire/rpc'
-import { InvocationPackages, recordedEnvironmentSource } from '../src/ui/environments'
+import { recordedEnvironmentSource } from '../src/ui/environments'
 
 const env = (id: string) => ({ id, derivation: `${id}.drv`, manifest: id, system: 'aarch64-linux', pathCount: 3n })
 const calls: string[] = []
@@ -27,10 +27,6 @@ assert.equal(await findEnvironment(source, 'run', ''), undefined)
 assert.deepEqual(calls, [])
 let touched = 0
 const untouchable = new Proxy({}, { get() { touched++; return undefined } }) as unknown as ProjectSession
-const empty = renderToStaticMarkup(<InvocationPackages session={untouchable} runId="run" environmentId="" />)
-assert.ok(empty.includes(L('この呼び出しの環境は記録されていません')))
-assert.ok(empty.includes(L('依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。')))
-assert.equal(touched, 0, 'the session (its RPC, its document) is not consulted at all')
 
 // A recorded environment is found by walking the run's own pages, and stops there.
 assert.equal((await findEnvironment(source, 'run', 'c'))?.id, 'c')
