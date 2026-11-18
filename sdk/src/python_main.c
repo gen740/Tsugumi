@@ -34,15 +34,8 @@ static int check_display(int status) {
 
 static PyObject* host_inputs(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
-  PyObject* list = PyList_New(0);
-  for (size_t i = 0; i < g_call->input_count; ++i) {
-    const tsugumi_value* v = &g_call->inputs[i];
-    PyObject* item = Py_BuildValue("(sIy#)", v->name, v->kind,
-                                   (const char*)v->data, (Py_ssize_t)v->size);
-    PyList_Append(list, item);
-    Py_DECREF(item);
-  }
-  return list;
+  return PyBytes_FromStringAndSize((const char*)g_call->inputs,
+                                   (Py_ssize_t)g_call->inputs_size);
 }
 
 static PyObject* host_params(PyObject* self, PyObject* args) {
@@ -76,22 +69,11 @@ static PyObject* host_environ(PyObject* self, PyObject* args) {
   return list;
 }
 
-static PyObject* host_emit_output(PyObject* self, PyObject* args) {
-  if (!require_call()) return NULL;
-  const char* port;
-  Py_buffer buf;
-  if (!PyArg_ParseTuple(args, "sy*", &port, &buf)) return NULL;
-  int rc = g_call->emit_output(g_call->host, port, (const uint8_t*)buf.buf,
-                               (size_t)buf.len);
-  PyBuffer_Release(&buf);
-  return PyBool_FromLong(rc == 0);
-}
-
 static PyObject* host_display_text(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
   const char* text;
   if (!PyArg_ParseTuple(args, "s", &text)) return NULL;
-  if (!check_display(g_call->display_text(g_call->host, text))) return NULL;
+  if (!check_display(g_call->effects->display_text(g_call->host, text))) return NULL;
   Py_RETURN_NONE;
 }
 
@@ -99,7 +81,7 @@ static PyObject* host_display_markdown(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
   const char* text;
   if (!PyArg_ParseTuple(args, "s", &text)) return NULL;
-  if (!check_display(g_call->display_markdown(g_call->host, text))) return NULL;
+  if (!check_display(g_call->effects->display_markdown(g_call->host, text))) return NULL;
   Py_RETURN_NONE;
 }
 
@@ -108,7 +90,7 @@ static PyObject* host_display_scalar(PyObject* self, PyObject* args) {
   double value;
   const char* label;
   if (!PyArg_ParseTuple(args, "ds", &value, &label)) return NULL;
-  if (!check_display(g_call->display_scalar(g_call->host, value, label)))
+  if (!check_display(g_call->effects->display_scalar(g_call->host, value, label)))
     return NULL;
   Py_RETURN_NONE;
 }
@@ -170,7 +152,7 @@ static PyObject* host_display_line_chart(PyObject* self, PyObject* args) {
   }
   if (ok)
     ok = check_display(
-        g_call->display_line_chart(g_call->host, series, (size_t)n));
+        g_call->effects->display_line_chart(g_call->host, series, (size_t)n));
   for (Py_ssize_t i = 0; i < n * 2; ++i) free(buffers[i]);
   free(buffers);
   free(series);
@@ -204,7 +186,7 @@ static PyObject* host_display_table(PyObject* self, PyObject* args) {
   }
   if (ok)
     ok = check_display(
-        g_call->display_table(g_call->host, c, (size_t)nc, cells, (size_t)nr));
+        g_call->effects->display_table(g_call->host, c, (size_t)nc, cells, (size_t)nr));
   free(c);
   free(cells);
   if (!ok) return NULL;
@@ -217,7 +199,7 @@ static PyObject* host_display_image(PyObject* self, PyObject* args) {
   const char* alt;
   Py_buffer data;
   if (!PyArg_ParseTuple(args, "sy*s", &media, &data, &alt)) return NULL;
-  const int status = g_call->display_image(
+  const int status = g_call->effects->display_image(
       g_call->host, media, (const uint8_t*)data.buf, (size_t)data.len, alt);
   PyBuffer_Release(&data);
   if (!check_display(status)) return NULL;
@@ -261,7 +243,7 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
   }
   int ok = !PyErr_Occurred();
   if (ok)
-    ok = check_display(g_call->display_points(g_call->host, p, p + n, p + 2 * n,
+    ok = check_display(g_call->effects->display_points(g_call->host, p, p + n, p + 2 * n,
                                               c, (size_t)n));
   free(p);
   free(c);
@@ -296,7 +278,7 @@ static PyObject* host_display_module(PyObject* self, PyObject* args) {
   }
   int status = -1;
   if (!PyErr_Occurred())
-    status = g_call->display_module(g_call->host, name, data, blobs, (size_t)n);
+    status = g_call->effects->display_module(g_call->host, name, data, blobs, (size_t)n);
   for (Py_ssize_t i = 0; i < n; ++i) PyBuffer_Release(&buffers[i]);
   free(blobs);
   free(buffers);
@@ -314,18 +296,18 @@ static PyObject* host_log(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
   const char* msg;
   if (!PyArg_ParseTuple(args, "s", &msg)) return NULL;
-  g_call->log(g_call->host, msg);
+  g_call->effects->log(g_call->host, msg);
   Py_RETURN_NONE;
 }
 
 static PyObject* host_cancelled(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
-  return PyBool_FromLong(g_call->cancelled(g_call->host));
+  return PyBool_FromLong(g_call->effects->cancelled(g_call->host));
 }
 
 static PyObject* host_remaining_ms(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
-  return PyLong_FromLongLong(g_call->remaining_ms(g_call->host));
+  return PyLong_FromLongLong(g_call->effects->remaining_ms(g_call->host));
 }
 
 static PyObject* host_fail(PyObject* self, PyObject* args) {
@@ -338,15 +320,10 @@ static PyObject* host_fail(PyObject* self, PyObject* args) {
   if (!PyArg_ParseTuple(args, "ss|zIz", &kind, &msg, &source, &line, &cell))
     return NULL;
   if (source)
-    g_call->fail_at(g_call->host, kind, msg, source, line, cell);
+    g_call->effects->fail_at(g_call->host, kind, msg, source, line, cell);
   else
-    g_call->fail(g_call->host, kind, msg);
+    g_call->effects->fail(g_call->host, kind, msg);
   Py_RETURN_NONE;
-}
-
-static PyObject* host_finish_outputs(PyObject* self, PyObject* args) {
-  if (!require_call()) return NULL;
-  return PyBool_FromLong(g_call->finish_outputs(g_call->host) == 0);
 }
 
 static PyMethodDef host_methods[] = {
@@ -354,8 +331,6 @@ static PyMethodDef host_methods[] = {
     {"params", host_params, METH_NOARGS, NULL},
     {"info", host_info, METH_NOARGS, NULL},
     {"environ", host_environ, METH_NOARGS, NULL},
-    {"finish_outputs", host_finish_outputs, METH_NOARGS, NULL},
-    {"emit_output", host_emit_output, METH_VARARGS, NULL},
     {"display_text", host_display_text, METH_VARARGS, NULL},
     {"display_markdown", host_display_markdown, METH_VARARGS, NULL},
     {"display_scalar", host_display_scalar, METH_VARARGS, NULL},
@@ -425,10 +400,10 @@ static int ensure_python(void) {
 }
 
 /* Calls tsugumi.<fn>() with g_call set; returns 0 on success. */
-static int call_python(const tsugumi_call* call, const char* fn) {
+static int call_python(const tsugumi_call* call, const char* fn, tsugumi_buffer* outputs) {
   if (!ensure_python()) {
     if (call)
-      call->fail(call->host, "worker_failed",
+      call->effects->fail(call->host, "worker_failed",
                  "cannot initialize the embedded Python interpreter");
     else
       fprintf(stderr, "cannot initialize the embedded Python interpreter\n");
@@ -442,11 +417,17 @@ static int call_python(const tsugumi_call* call, const char* fn) {
     /* tsugumi reports structured failures itself; print the traceback. */
     PyErr_Print();
     if (call)
-      call->fail(call->host, "worker_failed",
+      call->effects->fail(call->host, "worker_failed",
                  "the Python Card raised an exception (see stderr)");
     rc = 1;
   } else if (result == Py_False) {
     rc = 1;
+  } else if (outputs) {
+    char* bytes;
+    Py_ssize_t size;
+    rc = PyBytes_AsStringAndSize(result, &bytes, &size) != 0 ||
+         tsugumi_copy_outputs(outputs, bytes, (size_t)size) != 0;
+    if (PyErr_Occurred()) PyErr_Print();
   }
   Py_XDECREF(result);
   Py_XDECREF(mod);
@@ -458,7 +439,7 @@ static int call_python(const tsugumi_call* call, const char* fn) {
 }
 
 /* Preparation imports only the SDK. Card imports belong to the first call. */
-int tsugumi_prepare(void) {
+static int prepare(void) {
   if (!ensure_python()) return 1;
   PyObject* mod = PyImport_ImportModule("tsugumi");
   if (!mod) {
@@ -468,14 +449,12 @@ int tsugumi_prepare(void) {
   Py_DECREF(mod);
   return 0;
 }
-int tsugumi_load(const tsugumi_call* call) {
-  return call_python(call, "_load");
-}
-
-int tsugumi_run_start(const tsugumi_call* call) {
-  return call_python(call, "_run_start");
-}
-
-int tsugumi_main(const tsugumi_call* call) {
-  return call_python(call, "_invoke");
+int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+  switch (call->phase) {
+    case TSUGUMI_PREPARE: return prepare();
+    case TSUGUMI_LOAD: return call_python(call, "_load", NULL);
+    case TSUGUMI_RUN_START: return call_python(call, "_run_start", NULL);
+    case TSUGUMI_RUN: return call_python(call, "_invoke", outputs);
+  }
+  return 1;
 }

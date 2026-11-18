@@ -77,11 +77,13 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
                 'src':{'main.py':'''import tsugumi
 import outputs.out.t.Number as N
 def main(inputs):
+ result = {}
  for port in ("out","other"):
   b=tsugumi.builder()
   N.Start(b)
   N.AddValue(b,9007199254740993)
-  yield {port: tsugumi.message(b, N.End(b))}
+  result[port] = tsugumi.message(b, N.End(b))
+ return result
 '''}},
         'go':card,
         'check':{'card':{'language':'cpp','inputs':[{'name':'number'}]},

@@ -159,6 +159,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.number = s.invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
+  invocation.input_schema = types::card_catalog(node.inputs, true);
+  invocation.output_schema = types::card_catalog(node.outputs, false);
   invocation.prepare_params = [&] {
     const auto ptype = NixRunner::params_type(node);
     return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,

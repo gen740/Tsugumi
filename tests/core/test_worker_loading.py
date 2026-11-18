@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", ROOT / "build/workerd/tsugumi-worker"))
 
 
-def library(tmp_path, source, name="main", *, adapter=False):
+def library(tmp_path, source, name="main"):
     if not shutil.which("cc"):
         pytest.skip("needs a C compiler")
     lib = tmp_path / "lib"
@@ -33,8 +33,6 @@ def library(tmp_path, source, name="main", *, adapter=False):
     c.write_text(source)
     subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "sdk/include"),
                     str(c), "-o", str(lib / (name + ".so"))], check=True)
-    if adapter:
-        (lib / "tsugumi-runtime").write_text(str(lib / (name + ".so")) + "\n")
 
 
 @contextlib.contextmanager
@@ -71,6 +69,8 @@ def send_call(data, tmp_path, call_id=1, deadline=None):
     call.invocation = call_id
     call.inputs = []
     call.outputs = []
+    call.inputSchema = "namespace inputs; table Inputs {} root_type Inputs;"
+    call.outputSchema = "namespace outputs; table Outputs {} root_type Outputs;"
     call.params = FlatBufferDataT()
     call.params.schemaBfbs = []
     call.params.rootType = "Unused"
@@ -108,7 +108,7 @@ def receive(data):
 
 
 def test_card_constructors_wait_for_the_invocation(tmp_path):
-    """Card constructors and tsugumi_load see the call environment and run once."""
+    """Card constructors and the load phase see the call environment and run once."""
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
@@ -118,12 +118,15 @@ __attribute__((constructor)) static void constructor(void) {
   const char* marker = getenv("LOAD_MARKER");
   if (marker) { FILE* f = fopen(marker, "w"); fputs(getenv("TSUGUMI_RUN_ID"), f); fclose(f); }
 }
-int tsugumi_load(const tsugumi_call* call) { puts("card load"); setenv("FROM_SOURCE", "source", 1); return 0; }
-int tsugumi_main(const tsugumi_call* call) {
+int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
+  if (call->phase == TSUGUMI_LOAD) {
+    puts("card load"); setenv("FROM_SOURCE", "source", 1); return 0;
+  }
+  if (call->phase != TSUGUMI_RUN) return 0;
   if (!getenv("FROM_SOURCE") || getenv("FROM_MAIN")) return 1;
   if (call->invocation == 2 && getenv("ONLY_FIRST_CALL")) return 2;
   setenv("FROM_MAIN", "transient", 1);
-  return 0;
+  return call->effects->outputs_json(call->host, "{}", outputs);
 }
 ''')
     with worker(tmp_path) as (p, data, _):
@@ -138,16 +141,19 @@ int tsugumi_main(const tsugumi_call* call) {
         assert not select.select([p.stdout], [], [], 0.1)[0]
 
 
-def test_explicit_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
-    """Even an explicit runtime descriptor cannot authorize package code in standby."""
+def test_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
+    """Library initialization and source loading happen inside the first invocation."""
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
 __attribute__((constructor)) static void constructor(void) { puts("runtime opened"); fflush(stdout); }
-int tsugumi_prepare(void) { puts("runtime ready"); fflush(stdout); return 0; }
-int tsugumi_load(const tsugumi_call* c) { return c->display_text(c->host, c->run_id); }
-int tsugumi_main(const tsugumi_call* c) { return 0; }
-''', "runtime", adapter=True)
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase == TSUGUMI_PREPARE) { puts("runtime ready"); fflush(stdout); }
+  if (c->phase == TSUGUMI_LOAD) return c->effects->display_text(c->host, c->run_id);
+  if (c->phase == TSUGUMI_RUN) return c->effects->outputs_json(c->host, "{}", outputs);
+  return 0;
+}
+''')
     with worker(tmp_path) as (p, data, _):
         assert not select.select([p.stdout], [], [], 0.3)[0], "package code ran in standby"
         assert not select.select([data], [], [], 0.1)[0]
@@ -174,15 +180,19 @@ def test_source_loading_obeys_the_call_stop(tmp_path, stop):
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
 #include <unistd.h>
-int tsugumi_prepare(void) { return 0; }
-int tsugumi_load(const tsugumi_call* c) {
-  puts("loading"); fflush(stdout);
-  while (!c->cancelled(c->host) && c->remaining_ms(c->host) != 0) usleep(1000);
-  usleep(2000);
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase == TSUGUMI_LOAD) {
+    puts("loading"); fflush(stdout);
+    while (!c->effects->cancelled(c->host) && c->effects->remaining_ms(c->host) != 0) usleep(1000);
+    usleep(2000);
+  }
+  if (c->phase == TSUGUMI_RUN) {
+    puts("main ran");
+    return c->effects->outputs_json(c->host, "{}", outputs);
+  }
   return 0;
 }
-int tsugumi_main(const tsugumi_call* c) { puts("main ran"); return 0; }
-''', "runtime", adapter=True)
+''')
     with worker(tmp_path) as (p, data, control):
         send_call(data, tmp_path, deadline=50 if stop == "deadline" else None)
         assert select.select([p.stdout], [], [], 3)[0]
@@ -205,8 +215,10 @@ def test_source_loading_failure_is_an_invocation_failure(tmp_path):
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
-int tsugumi_load(const tsugumi_call* c) { fputs("source failed\n", stderr); return 1; }
-int tsugumi_main(const tsugumi_call* c) { return 0; }
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase == TSUGUMI_LOAD) { fputs("source failed\n", stderr); return 1; }
+  return 0;
+}
 ''')
     with worker(tmp_path) as (p, data, _):
         send_call(data, tmp_path)
@@ -241,14 +253,19 @@ raise RuntimeError("import stopped")
     }
     entry = tmp_path / "entry.c"
     paths = str(ROOT / "sdk/python") + ":" + str(source)
-    entry.write_text(f"const char tsugumi_python_path[] = {json.dumps(paths)};\n")
+    entry.write_text(f"const char tsugumi_python_path[] = {json.dumps(paths)};\n" + """
+#include <tsugumi/sdk/abi.h>
+extern int tsugumi_card_invoke(const tsugumi_call*, tsugumi_buffer*);
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  return tsugumi_card_invoke(c, outputs);
+}
+""")
     library = tmp_path / "lib/main.so"
     subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "sdk/include"), "-I", str(include),
                     *["-D" + k + "=" + json.dumps(v) for k, v in defines.items()],
                     str(ROOT / "sdk/src/python_main.c"), str(entry), "-L", str(libdir),
                     "-lpython" + sysconfig.get_config_var("LDVERSION"), "-Wl,-rpath," + str(libdir),
                     "-o", str(library)], check=True)
-    (tmp_path / "lib/tsugumi-runtime").write_text(str(library) + "\n")
     # Production WorkerProc drains logs while waiting for the result. A file
     # gives this direct socket fixture the same absence of pipe backpressure.
     with (tmp_path / "python.log").open("wb") as log, worker(tmp_path, stderr=log) as (p, data, _):
@@ -272,9 +289,10 @@ def test_source_failure_position_survives_the_worker_reply(tmp_path):
     from Tsugumi.Data.FailureKind import FailureKind
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
-int tsugumi_main(const tsugumi_call* c) {
-  c->fail_at(c->host, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");
-  c->fail(c->host, "output_invalid", "must not replace the first failure");
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase != TSUGUMI_RUN) return 0;
+  c->effects->fail_at(c->host, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");
+  c->effects->fail(c->host, "output_invalid", "must not replace the first failure");
   return 1;
 }
 ''')

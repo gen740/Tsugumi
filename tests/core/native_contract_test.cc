@@ -26,7 +26,6 @@ class NativeContract : public testing::Test {
   flatbuffers::FlatBufferBuilder message;
   flatbuffers::Parser schema;
   Call call{};
-  std::string valid;
   std::string directory;
 
   void SetUp() override {
@@ -37,10 +36,6 @@ class NativeContract : public testing::Test {
     ASSERT_TRUE(
         schema.Parse("namespace sample; table Output { value:string "
                      "(required); } root_type Output;"));
-    ASSERT_TRUE(schema.ParseJson("{\"value\":\"ok\"}"));
-    valid.assign(
-        reinterpret_cast<const char*>(schema.builder_.GetBufferPointer()),
-        schema.builder_.GetSize());
     schema.Serialize();
     W::WorkerCallT request;
     request.run_id = "run";
@@ -48,6 +43,9 @@ class NativeContract : public testing::Test {
     request.card->segments = {"card"};
     request.invocation = 1;
     request.params = std::make_unique<D::FlatBufferDataT>();
+    request.output_schema =
+        "namespace sample; table Output { value:string (required); } "
+        "table Outputs { first:Output; second:Output; } root_type Outputs;";
     request.working_directory = directory;
     request.temporary_directory = directory;
     for (const auto* name : {"first", "second"}) {
@@ -71,39 +69,47 @@ class NativeContract : public testing::Test {
     g_call = nullptr;
     std::filesystem::remove_all(directory);
   }
-  auto emit(const char* port, const std::string& bytes) -> int {
-    return emit_output_impl(nullptr, port,
-                            reinterpret_cast<const uint8_t*>(bytes.data()),
-                            bytes.size());
+  auto receive(const std::string& bytes) -> void {
+    tsugumi_buffer buffer{};
+    ASSERT_EQ(tsugumi_copy_outputs(&buffer, bytes.data(), bytes.size()), 0);
+    receive_outputs(buffer);
+    std::free(buffer.data);
+  }
+  auto receive_json(const std::string& json) -> void {
+    tsugumi_buffer buffer{};
+    ASSERT_EQ(outputs_json_impl(nullptr, json.c_str(), &buffer), 0);
+    receive_outputs(buffer);
+    std::free(buffer.data);
   }
 };
 
-TEST_F(NativeContract, InvalidBytesAreRejectedAtEmit) {
-  EXPECT_NE(emit("first", "not a FlatBuffer"), 0);
+TEST_F(NativeContract, InvalidReturnedBufferIsRejected) {
+  receive("not a FlatBuffer");
+  EXPECT_TRUE(call.failure);
   EXPECT_TRUE(call.outputs.empty());
 }
-TEST_F(NativeContract, OversizedOutputIsRejectedAtEmit) {
-  EXPECT_NE(emit("first", std::string(kMaxFrame, 'x')), 0);
+TEST_F(NativeContract, OversizedReturnedBufferIsRejected) {
+  receive(std::string(kMaxFrame + 1, 'x'));
+  EXPECT_TRUE(call.failure);
   EXPECT_TRUE(call.outputs.empty());
 }
 TEST_F(NativeContract, CombinedOutputsMustFitOneResultFrame) {
-  const std::string value(9u << 20, 'a');
-  // Valid table messages, individually under the limit.
-  ASSERT_TRUE(schema.ParseJson(("{\"value\":\"" + value + "\"}").c_str()));
-  const std::string bytes(
-      reinterpret_cast<const char*>(schema.builder_.GetBufferPointer()),
-      schema.builder_.GetSize());
-  ASSERT_EQ(emit("first", bytes), 0);
-  EXPECT_NE(emit("second", bytes), 0);
-  EXPECT_EQ(call.outputs.size(), 1u);
+  const std::string value(8u << 20, 'a');
+  receive_json("{\"first\":{\"value\":\"" + value +
+               "\"},\"second\":{\"value\":\"" + value + "\"}}");
+  ASSERT_TRUE(call.failure);
+  EXPECT_EQ(call.failure->kind, D::FailureKind::output_invalid);
 }
 TEST_F(NativeContract, ValidOutputAndOmittedOptionalCompletes) {
-  ASSERT_EQ(emit("first", valid), 0);
-  EXPECT_EQ(finish_outputs_impl(nullptr), 0);
+  receive_json(R"({"first":{"value":"ok"}})");
+  validate_required_outputs(call);
   EXPECT_FALSE(call.failure);
+  ASSERT_EQ(call.outputs.size(), 1u);
+  EXPECT_EQ(call.outputs[0].first, "first");
 }
-TEST_F(NativeContract, RequiredOutputFailsAtTheSdkCompletionCallback) {
-  EXPECT_NE(finish_outputs_impl(nullptr), 0);
+TEST_F(NativeContract, RequiredOutputIsCheckedOnReturn) {
+  receive_json("{}");
+  validate_required_outputs(call);
   ASSERT_TRUE(call.failure);
   ASSERT_EQ(call.failure->args.size(), 1u);
   EXPECT_EQ(call.failure->args[0].first, "port");
@@ -112,7 +118,7 @@ TEST_F(NativeContract, RequiredOutputFailsAtTheSdkCompletionCallback) {
 TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   fail_at_impl(nullptr, "worker_failed", "cell traceback", "src/notebook.py", 8,
                "calculation");
-  EXPECT_NE(finish_outputs_impl(nullptr), 0);
+  validate_required_outputs(call);
   fail_impl(nullptr, "output_invalid", "must not replace the first failure");
 
   // Capture the real framed reply in a file, without a worker socket.
@@ -153,8 +159,9 @@ TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
 TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
   ASSERT_NE(display_scalar_impl(nullptr, NAN, "value"), 0);
   ASSERT_FALSE(call.failure);
-  ASSERT_EQ(emit("first", valid), 0);
-  EXPECT_EQ(finish_outputs_impl(nullptr), 0);
+  receive_json(R"({"first":{"value":"ok"}})");
+  validate_required_outputs(call);
+  EXPECT_FALSE(call.failure);
 }
 TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   const std::string base = directory + "/contract";

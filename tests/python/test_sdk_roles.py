@@ -1,4 +1,4 @@
-"""The Python role boundary and result stream against the real FlatBuffers API.
+"""The Python role boundary and returned Outputs against the real FlatBuffers API.
 
 No daemon or sockets: the host stub records precisely when a callback occurs.
 """
@@ -24,8 +24,8 @@ def sdk_tree(tmp_path_factory):
                 "outputs": [{"name": name, "type": "outputs.result.sample.Number", "kind": "flatbuffer", "required": name == "result"} for name in ("result", "next", "last")]}
     (tmp_path / "_contract.json").write_text(json.dumps(contract))
     for name, schema in {
-        "inputs": "namespace inputs.number.sample; table Number { value:ulong; }",
-        "outputs": "namespace outputs.result.sample; table Number { value:ulong; }",
+        "inputs": "namespace inputs.number.sample; table Number { value:ulong; } namespace inputs; table Inputs { number:inputs.number.sample.Number (required); optional:inputs.number.sample.Number; } root_type Inputs;",
+        "outputs": "namespace outputs.result.sample; table Number { value:ulong; } namespace outputs; table Outputs { result:outputs.result.sample.Number; next:outputs.result.sample.Number; last:outputs.result.sample.Number; } root_type Outputs;",
         "params": "namespace params; table Params { threshold:ulong = null; samples:[double]; labels:[string]; } root_type Params;",
     }.items():
         path = tmp_path / (name + ".fbs")
@@ -42,15 +42,12 @@ import os
 events = []
 values = []
 parameter_bytes = b""
-accept = True
 def inputs(): return values
 def params(): return parameter_bytes
 def info():
     events.append("info")
     return dict(run_id="test", card="step", invocation=7, working_directory="work", temporary_directory="temp", output_directory="outputs")
 def environ(): return list(os.environb.items())
-def finish_outputs(): return accept
-def emit_output(port, value): events.append((port, bytes(value))); return accept
 def display_text(text): events.append(("text", text))
 def log(text): events.append(("log", text))
 def cancelled(): return False
@@ -65,10 +62,12 @@ def fail(kind, message, *position): events.append(("failure", kind, message, *po
         module = importlib.import_module("tsugumi")
         host = importlib.import_module("_tsugumi_host")
         from inputs.number.sample.Number import NumberT
+        from inputs.Inputs import InputsT
         from params.Params import ParamsT
         number = NumberT(); number.value = 9007199254740993
         parameters = ParamsT(); parameters.threshold = 21; parameters.samples = [1., 2.]; parameters.labels = [b"a", b"b"]
-        host.values = [("number", 3, module.message(number))]
+        inputs = InputsT(); inputs.number = number
+        host.values = module.message(inputs)
         host.parameter_bytes = module.message(parameters)
         yield module, host
     finally:
@@ -90,45 +89,49 @@ def test_inputs_are_read_only_and_run_is_opt_in(sdk):
         with pytest.raises(AttributeError): inputs.params.threshold = 0
         with pytest.raises(AttributeError): inputs.number = None
         return {"result": inputs.input_bytes("number")}
-    module._outputs(module._call(main))
-    assert [e[0] for e in host.events if e != "info"] == ["result"]
+    from outputs.Outputs import Outputs
+    from tsugumi.values import encode_outputs
+    packed = encode_outputs(module._call(main))
+    assert Outputs.GetRootAs(packed).Result().Value() == 9007199254740993
+    assert host.events == []
 
 
 def test_generated_objects_builders_and_bytes_are_results(sdk):
     module, host = sdk
-    from outputs.result.sample.Number import Number, NumberT
+    from outputs.result.sample.Number import NumberT
+    from outputs.Outputs import Outputs
+    from tsugumi.values import encode_outputs
     number = NumberT(); number.value = 42
     b = module.builder(); root = number.Pack(b)
     values = [number, module.message(b, root), b]
-    for value in values: module._outputs({"result": value})
-    assert [Number.GetRootAs(event[1], 0).Value() for event in host.events] == [42, 42, 42]
+    for value in values:
+        assert Outputs.GetRootAs(encode_outputs({"result": value})).Result().Value() == 42
+    assert host.events == []
 
 
-def test_stream_is_lazy_ordered_and_keeps_final_result(sdk):
+def test_displays_are_live_and_outputs_are_returned_together(sdk):
+    from types import SimpleNamespace
+    from outputs.Outputs import Outputs
     module, host = sdk
     def main(inputs, report, run):
         assert run.invocation == 7 and run.remaining_ms() == -1
         report.text("before")
-        yield {"result": inputs.input_bytes("number")}
         report.log("between")
-        yield {"next": inputs.input_bytes("number")}
-        return {"last": inputs.input_bytes("number")}
-    def body():
-        result = module._call(main)
-        module._outputs(result)
-    assert module._guard(body)
-    assert [e[0] for e in host.events if e != "info"] == ["text", "result", "log", "next", "last"]
+        return {"result": inputs.input_bytes("number"), "next": inputs.input_bytes("number")}
+    module._card_module = SimpleNamespace(main=main)
+    value = Outputs.GetRootAs(module._invoke())
+    assert value.Result().Value() == value.Next().Value() == 9007199254740993
+    assert [e[0] for e in host.events if e != "info"] == ["text", "log"]
 
 
-def test_hook_uses_same_roles_and_rejection_fails_invocation(sdk):
+def test_hook_uses_the_same_roles_and_main_rejects_unknown_ports(sdk):
     module, host = sdk
     from types import SimpleNamespace
     def hook(inputs, report):
+        assert inputs.number.value == 9007199254740993
         report.log("start")
-        return {"result": inputs.input_bytes("number")}
-    module._card_module = SimpleNamespace(on_run_start=hook, main=hook)
+    module._card_module = SimpleNamespace(on_run_start=hook, main=lambda inputs: {"unknown": 1})
     assert module._run_start()
-    host.accept = False
     assert not module._invoke()
     assert host.events[-1][0:2] == ("failure", "output_invalid")
 
@@ -176,15 +179,6 @@ def test_run_callbacks_reject_background_threads(sdk):
         thread.join()
     assert module._guard(body)
     assert len(errors) == 2
-
-
-def test_required_output_completion_fails_inside_the_language_guard(sdk):
-    from types import SimpleNamespace
-    module, host = sdk
-    host.accept = False
-    module._card_module = SimpleNamespace(main=lambda inputs: {})
-    assert module._invoke() is False
-    assert host.events[-1][:2] == ('failure', 'output_invalid')
 
 
 def test_python_reads_the_shared_numeric_vectors_without_changing_bits(sdk):

@@ -123,25 +123,39 @@ def _object(schema, index, value):
     return result
 
 
-def encode(port, value):
-    from tsugumi import contract
-    import flatbuffers
-    found = contract.port(port, "outputs")
-    if found is None:
-        raise Failure("output_invalid", f"unknown output port {port}")
-    if found["kind"] in ("file", "directory") and isinstance(value, (str, Path)):
-        value = {"value": str(value)}
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value)
-    if hasattr(value, "Pack") or hasattr(value, "Output"):
-        from tsugumi import message
-        return message(value)
-    schema = _schema()
+def _accessor(name):
+    field = _camel(name)
+    return field[:1].upper() + field[1:]
+
+
+def encode_outputs(value):
+    from tsugumi import contract, message
+    from outputs.Outputs import OutputsT
+
+    if value is None:
+        value = {}
+    if not isinstance(value, Mapping):
+        raise Failure("output_invalid", "return a mapping by output port")
+    result = OutputsT()
+    for port, item in value.items():
+        found = contract.port(port, "outputs")
+        if found is None:
+            raise Failure("output_invalid", f"unknown output port {port}")
+        if found["kind"] in ("file", "directory") and isinstance(item, (str, Path)):
+            item = {"value": str(item)}
+        try:
+            if isinstance(item, (bytes, bytearray, memoryview)) or hasattr(item, "Output"):
+                module = importlib.import_module(found["type"])
+                cls = getattr(module, found["type"].rsplit(".", 1)[1] + "T")
+                item = cls.InitFromPackedBuf(bytes(item) if not hasattr(item, "Output") else message(item))
+            elif not hasattr(item, "Pack"):
+                schema = _schema()
+                index = next(i for i, obj in enumerate(schema["objects"]) if obj["name"] == found["type"])
+                item = _object(schema, index, item)
+            setattr(result, _camel(port), item)
+        except Exception as error:
+            raise Failure("output_invalid", f"output {port}: {error}") from error
     try:
-        index = next(i for i, item in enumerate(schema["objects"]) if item["name"] == found["type"])
-        result = _object(schema, index, value)
-        builder = flatbuffers.Builder(1024)
-        builder.Finish(result.Pack(builder))
-        return bytes(builder.Output())
+        return message(result)
     except Exception as error:
-        raise Failure("output_invalid", f"output {port}: {error}") from error
+        raise Failure("output_invalid", f"cannot pack Outputs: {error}") from error

@@ -67,26 +67,40 @@ def main(contract_path, out):
     for function, result in [("run", "Card::Output"), ("onRunStart", "void")]:
         cc += [f"TSUGUMI_OPTIONAL auto {function}({args}) -> {result};" for args in signatures]
     cc += ["#undef TSUGUMI_OPTIONAL", "namespace {", "auto read(tsugumi::card::Call& c) -> Card::Inputs {", "  Card::Inputs inputs;"]
+    if c["inputs"]:
+        cc.append("  const auto* in = ::inputs::GetInputs(c.inputs());")
     for p in c["inputs"]:
-        cc.append(f'  c.unpack<{cxx(p["type"])}>("{p["name"]}", inputs.{member(p["name"])});')
-    cc += ["  c.unpack_params<::params::Params>(inputs.params);", "  return inputs;", "}", "}"]
-    for entry, function, result in [("tsugumi_main", "run", "Card::Output"), ("tsugumi_run_start", "onRunStart", "void")]:
-        cc += [f'extern "C" int {entry}(const tsugumi_call* call) {{',
-               "  return tsugumi::card::invoke(call, [call](tsugumi::card::Call& c) {",
-               "    const auto inputs = read(c);", "    tsugumi::Report report;"]
-        if function == "run": cc += ["    Card::Output output;"]
-        for i, args in enumerate(["const Card::Inputs&", "const Card::Inputs&, tsugumi::Report&", "const Card::Inputs&, tsugumi::Report&, const tsugumi::Run&"]):
-            prefix = "if" if i == 0 else "else if"
-            actual = ["inputs", "inputs, report", "inputs, report, tsugumi::Run(call)"][i]
-            assign = "output = " if function == "run" else ""
-            cc.append(f"    {prefix} (auto f = static_cast<{result}(*)({args})>({function})) {assign}f({actual});")
-        if function == "run":
-            cc += ['    else throw tsugumi::Failure("worker_failed", "define run(inputs[, report[, run]])");']
-            for p in c["outputs"]:
-                m = member(p["name"])
-                cc.append(f'    if (output.{m}) c.emit_object<{cxx(p["type"])}>("{p["name"]}", *output.{m});')
-            cc.append("    c.finish_outputs();")
-        cc += ["  });", "}", ""]
+        m = member(p["name"])
+        cc.append(f"  if (auto* value = in->{m}()) {{")
+        cc.append(f"    value->UnPackTo(&inputs.{m}{'' if p['required'] else '.emplace()'});")
+        cc.append("  }")
+        if p["required"]:
+            cc.append(f'  else throw tsugumi::Failure("input_missing", "{p["name"]}");')
+    cc += ["  c.unpack_params<::params::Params>(inputs.params);", "  return inputs;", "}", "}",
+           'extern "C" int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* result) {',
+           "  if (call->phase == TSUGUMI_PREPARE || call->phase == TSUGUMI_LOAD) return 0;",
+           "  return tsugumi::card::invoke(call, [call, result](tsugumi::card::Call& c) {",
+           "    const auto inputs = read(c);", "    tsugumi::Report report;"]
+    args_list = ["const Card::Inputs&", "const Card::Inputs&, tsugumi::Report&",
+                 "const Card::Inputs&, tsugumi::Report&, const tsugumi::Run&"]
+    actual_list = ["inputs", "inputs, report", "inputs, report, tsugumi::Run(call)"]
+    cc.append("    if (call->phase == TSUGUMI_RUN_START) {")
+    for i, (args, actual) in enumerate(zip(args_list, actual_list)):
+        prefix = "if" if i == 0 else "else if"
+        cc.append(f"      {prefix} (auto f = static_cast<void(*)({args})>(onRunStart)) f({actual});")
+    cc += ["      return;", "    }", "    Card::Output output;"]
+    for i, (args, actual) in enumerate(zip(args_list, actual_list)):
+        prefix = "if" if i == 0 else "else if"
+        cc.append(f"    {prefix} (auto f = static_cast<Card::Output(*)({args})>(run)) output = f({actual});")
+    cc += ['    else throw tsugumi::Failure("worker_failed", "define run(inputs[, report[, run]])");',
+           "    ::outputs::OutputsT packed;"]
+    for p in c["outputs"]:
+        m = member(p["name"])
+        cc.append(f'    if (output.{m}) packed.{m} = std::make_unique<{cxx(p["type"])}T>(std::move(*output.{m}));')
+    cc += ["    flatbuffers::FlatBufferBuilder builder;",
+           "    builder.Finish(::outputs::Outputs::Pack(builder, &packed));",
+           "    if (tsugumi_copy_outputs(result, builder.GetBufferPointer(), builder.GetSize())) throw std::bad_alloc();",
+           "  });", "}", ""]
     open(os.path.join(out, "include", "card.hh"), "w").write("\n".join(hh))
     open(os.path.join(out, "src", "card_adapter.cc"), "w").write("\n".join(cc))
 

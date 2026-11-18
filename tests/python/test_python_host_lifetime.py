@@ -41,10 +41,15 @@ static void fail_at(void* host, const char* kind, const char* message,
 }
 static PyObject* active(PyObject* self, PyObject* value) {
   (void)self;
-  static tsugumi_call call;
-  call.cancelled = cancelled; call.remaining_ms = remaining;
-  call.display_text = text; call.display_scalar = scalar;
-  call.fail = fail; call.fail_at = fail_at;
+  static const tsugumi_host effects = {
+    .cancelled = cancelled,
+    .remaining_ms = remaining,
+    .display_text = text,
+    .display_scalar = scalar,
+    .fail = fail,
+    .fail_at = fail_at,
+  };
+  static const tsugumi_call call = {.effects = &effects};
   if (!PyObject_IsTrue(value)) assert(failures == 2);
   g_call = PyObject_IsTrue(value) ? &call : NULL;
   Py_RETURN_NONE;

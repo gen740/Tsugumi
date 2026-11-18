@@ -165,16 +165,12 @@ func copied(ptr *C.uchar, n C.size_t) ([]byte, error) {
 	}
 	return C.GoBytes(unsafe.Pointer(ptr), C.int(n)), nil
 }
-func (scope *Scope) InputBytes(port string) ([]byte, error) {
-	name, err := cstring(port)
-	if err != nil {
-		return nil, err
-	}
-	defer C.free(unsafe.Pointer(name))
+func (scope *Scope) InputsBytes() ([]byte, error) {
 	var bytes []byte
-	err = scope.host(func(call *C.tsugumi_call) error {
+	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
-		p := C.tsugumi_go_input(call, name, &n)
+		p := C.tsugumi_go_inputs(call, &n)
+		var err error
 		bytes, err = copied(p, n)
 		return err
 	})
@@ -196,17 +192,6 @@ func bytesPointer(bytes []byte) *C.uchar {
 		return nil
 	}
 	return (*C.uchar)(unsafe.Pointer(&bytes[0]))
-}
-func (scope *Scope) Emit(port string, bytes []byte) error {
-	name, err := cstring(port)
-	if err != nil {
-		return err
-	}
-	defer C.free(unsafe.Pointer(name))
-	// The host copies bytes synchronously; no Go pointer is retained by C.
-	return scope.host(func(call *C.tsugumi_call) error {
-		return accepted(C.tsugumi_go_emit(call, name, bytesPointer(bytes), C.size_t(len(bytes))))
-	})
 }
 func (scope *Scope) Log(text string) error {
 	value, err := cstring(text)
@@ -416,15 +401,6 @@ func Invoke(raw unsafe.Pointer, body func(*Scope) error) (result int) {
 	defer C.free(unsafe.Pointer(m))
 	_ = scope.host(func(call *C.tsugumi_call) error { C.tsugumi_go_log(call, m); C.tsugumi_go_fail(call, k, m); return nil })
 	return 1
-}
-
-func (scope *Scope) FinishOutputs() error {
-	return scope.host(func(call *C.tsugumi_call) error {
-		if C.tsugumi_go_finish_outputs(call) != 0 {
-			return Fail("output_invalid", "required outputs were not emitted")
-		}
-		return nil
-	})
 }
 
 // Report publishes presentation and log side effects during the call.

@@ -562,9 +562,7 @@ def main(inputs, report, run):
     while not run.cancelled():
         time.sleep(0.01)
 '''),
-    "ruby": ('''{ pkgs, inputs, params }: let
-  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
-in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+    "ruby": ('''{ pkgs, inputs, params }: { run = inputs.tsugumi.rubyCard { src = ./src; }; }
 ''', "main.rb", '''
 def main(inputs, report, run)
   @calls = (@calls || 0) + 1
@@ -607,17 +605,18 @@ public sealed class Card : ICard {
 #include <string.h>
 #include <unistd.h>
 static int calls;
-int tsugumi_main(const tsugumi_call* c) {
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase != TSUGUMI_RUN) return 0;
   char display[80];
   snprintf(display, sizeof display, "{\\"text\\":\\"call %d\\"}", ++calls);
-  c->display_json(c->host, display);
-  if (calls != 2) return 0;
+  c->effects->display_json(c->host, display);
+  if (calls != 2) return c->effects->outputs_json(c->host, "{}", outputs);
   if (!strcmp("HOW", "fail")) {
-    c->fail(c->host, "worker_failed", "on purpose");
+    c->effects->fail(c->host, "worker_failed", "on purpose");
     return 1;
   }
-  while (!c->cancelled(c->host)) usleep(10000);
-  return 0;
+  while (!c->effects->cancelled(c->host)) usleep(10000);
+  return c->effects->outputs_json(c->host, "{}", outputs);
 }
 '''),
 }

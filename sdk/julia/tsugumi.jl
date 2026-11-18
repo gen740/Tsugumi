@@ -148,7 +148,7 @@ json_text(v) = (io = IOBuffer(); write_json(io, v); String(take!(io)))
 
 # ---- The Card's side of the worker ---------------------------------------------
 
-const HOST = ENV["TSUGUMI_NATIVE_LIBRARY"]
+const HOST = Main.TSUGUMI_HOST
 
 mutable struct CallScope
     active::Bool
@@ -166,7 +166,7 @@ struct Run
     invocation::UInt64
 end
 function info(field)
-    value = ccall((:tsugumi_native_info, HOST), Cstring, (Cint,), field)
+    value = ccall(HOST.info, Cstring, (Cint,), field)
     value == C_NULL && error("no active Card invocation")
     return unsafe_string(value)
 end
@@ -175,7 +175,7 @@ function Run()
     scope = active_scope[]
     scope === nothing && error("no active Card invocation")
     Run(scope, info(4), info(3), info(2), info(0), info(1),
-            ccall((:tsugumi_native_invocation, HOST), UInt64, ()))
+            ccall(HOST.invocation, UInt64, ()))
 end
 
 
@@ -186,48 +186,37 @@ function Base.getproperty(report::Report, name::Symbol)
 end
 struct Inputs
     params::Dict{String,Any}
+    values::Dict{String,Any}
 end
 function Inputs()
-    value = ccall((:tsugumi_native_params, HOST), Cstring, ())
+    value = ccall(HOST.params, Cstring, ())
     value == C_NULL && error("no active Card invocation")
-    Inputs(parse_json(unsafe_string(value)))
+    inputs = ccall(HOST.inputs, Cstring, ())
+    inputs == C_NULL && error("cannot decode inputs")
+    Inputs(parse_json(unsafe_string(value)), parse_json(unsafe_string(inputs)))
 end
 Base.getproperty(inputs::Inputs, name::Symbol) = name == :params ? deepcopy(getfield(inputs, :params)) : input(inputs, string(name))
 
 function input(inputs::Inputs, port::AbstractString)
-    value = ccall((:tsugumi_native_input, HOST), Cstring, (Cstring,), port)
-    value == C_NULL && return nothing
-    return parse_json(unsafe_string(value))
+    deepcopy(get(getfield(inputs, :values), port, nothing))
 end
 
 function path(inputs::Inputs, port::AbstractString)
-    ccall((:tsugumi_native_input_kind, HOST), Cint, (Cstring,), port) in (1, 2) || error("no File or Directory input port named $port")
+    ccall(HOST.input_kind, Cint, (Cstring,), port) in (1, 2) || error("no File or Directory input port named $port")
     value = input(inputs, port)
     value !== nothing && get(value, "value", nothing) isa AbstractString || error("no File or Directory input port named $port")
     return value["value"]
 end
 
-function send_outputs(result)
-    result === nothing && return
-    if result isa AbstractDict
-        for (port, message) in result
-            ccall((:tsugumi_native_output, HOST), Cint, (Cstring, Cstring), port, json_text(message)) == 0 || error("output was rejected by the worker: $port")
-        end
-    else
-        for batch in result
-            send_outputs(batch)
-        end
-    end
-end
 function check(run::Run)
     run.scope.active && run.scope === active_scope[] && run.scope.owner === current_task() || error("Card call has expired or belongs to another task")
 end
-cancelled(run::Run) = (check(run); ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0)
-remaining_ms(run::Run) = (check(run); ccall((:tsugumi_native_remaining_ms, HOST), Int64, ()))
-log(report::Report, message::AbstractString) = ccall((:tsugumi_native_log, HOST), Cvoid, (Cstring,), message)
+cancelled(run::Run) = (check(run); ccall(HOST.cancelled, Cint, ()) != 0)
+remaining_ms(run::Run) = (check(run); ccall(HOST.remaining_ms, Int64, ()))
+log(report::Report, message::AbstractString) = ccall(HOST.log, Cvoid, (Cstring,), message)
 
 function show_member(member)
-    ccall((:tsugumi_native_display, HOST), Cint, (Cstring,), json_text(member)) == 0 || error("display was rejected by the worker")
+    ccall(HOST.display, Cint, (Cstring,), json_text(member)) == 0 || error("display was rejected by the worker")
     return nothing
 end
 
@@ -248,23 +237,24 @@ function invoke(hook::Bool)
     try
         arguments = (Inputs(), Report(), Run())
         function_ = hook ? (isdefined(Main, :on_run_start) ? Main.on_run_start : nothing) : Main.main
+        result = nothing
         if function_ !== nothing
             for count in 1:3
                 args = arguments[1:count]
                 if applicable(function_, args...)
-                    send_outputs(Base.invokelatest(function_, args...))
+                    result = Base.invokelatest(function_, args...)
                     break
                 end
                 count == 3 && error("Card functions take inputs, optionally report and run")
             end
         end
-        if !hook
-            ccall((:tsugumi_native_finish_outputs, HOST), Cint, ()) == 0 || error("required outputs were not emitted")
-        end
-        return true
+        hook && return true
+        result === nothing && return "{}"
+        result isa AbstractDict || error("return a Dict by output port")
+        return json_text(result)
     catch error
         message = sprint(showerror, error, catch_backtrace())
-        ccall((:tsugumi_native_fail, HOST), Cvoid, (Cstring,), message)
+        ccall(HOST.fail, Cvoid, (Cstring,), message)
         return false
     finally
         scope.active = false

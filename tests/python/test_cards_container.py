@@ -434,14 +434,14 @@ def main(inputs, report, run):
     Rich.AddPoint(b, Point.CreatePoint(b, -7, 8))
     Rich.AddShapeType(b, Shape.Shape.Circle)
     Rich.AddShape(b, circle)
-    yield {"rich": tsugumi.message(b, Rich.End(b))}
+    rich = tsugumi.message(b, Rich.End(b))
     path = os.path.join(run.output_directory, "table.csv")
     with open(path, "w") as f:
         f.write("a,b\\n" * 1000)
     b = tsugumi.builder()
     p = b.CreateString(path)
     Doc.Start(b); Doc.AddValue(b, p)
-    yield {"doc": tsugumi.message(b, Doc.End(b))}
+    return {"rich": rich, "doc": tsugumi.message(b, Doc.End(b))}
 '''
 
 CPP_CHECK = '''

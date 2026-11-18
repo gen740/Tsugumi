@@ -16,7 +16,7 @@ from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
-RUBY_NIX = '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; }; in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }'
+RUBY_NIX = '{ pkgs, inputs, params }: { run = inputs.tsugumi.rubyCard { src = ./src; }; }'
 EMPTY = 'namespace test; table Outputs {} root_type Outputs;'
 NUMBERS = '''attribute "tsugumi";
 namespace sample;

@@ -15,10 +15,9 @@ extern const char tsugumi_csharp_runtimeconfig[];
 }
 
 namespace {
-using Entry = int (*)(const tsugumi_call*);
+using Entry = int (*)(const tsugumi_call*, tsugumi_buffer*);
 load_assembly_and_get_function_pointer_fn g_load = nullptr;
 Entry g_main = nullptr;
-Entry g_run_start = nullptr;
 void* g_host = nullptr;
 
 // The ABI structs as this compiler lays them out from abi.h. The managed
@@ -36,11 +35,9 @@ struct Field {
 #define TSUGUMI_FIELD(type, member) \
   Field { #type "." #member, offsetof(type, member), sizeof(type::member) }
 constexpr Field k_layout[] = {
-    TSUGUMI_STRUCT(tsugumi_value),
-    TSUGUMI_FIELD(tsugumi_value, name),
-    TSUGUMI_FIELD(tsugumi_value, kind),
-    TSUGUMI_FIELD(tsugumi_value, data),
-    TSUGUMI_FIELD(tsugumi_value, size),
+    TSUGUMI_STRUCT(tsugumi_buffer),
+    TSUGUMI_FIELD(tsugumi_buffer, data),
+    TSUGUMI_FIELD(tsugumi_buffer, size),
     TSUGUMI_STRUCT(tsugumi_blob),
     TSUGUMI_FIELD(tsugumi_blob, name),
     TSUGUMI_FIELD(tsugumi_blob, data),
@@ -53,36 +50,38 @@ constexpr Field k_layout[] = {
     TSUGUMI_FIELD(tsugumi_series, count),
     TSUGUMI_STRUCT(tsugumi_call),
     TSUGUMI_FIELD(tsugumi_call, abi_version),
+    TSUGUMI_FIELD(tsugumi_call, phase),
     TSUGUMI_FIELD(tsugumi_call, run_id),
     TSUGUMI_FIELD(tsugumi_call, card),
     TSUGUMI_FIELD(tsugumi_call, invocation),
     TSUGUMI_FIELD(tsugumi_call, inputs),
-    TSUGUMI_FIELD(tsugumi_call, input_count),
+    TSUGUMI_FIELD(tsugumi_call, inputs_size),
     TSUGUMI_FIELD(tsugumi_call, params),
     TSUGUMI_FIELD(tsugumi_call, params_size),
     TSUGUMI_FIELD(tsugumi_call, working_directory),
     TSUGUMI_FIELD(tsugumi_call, temporary_directory),
     TSUGUMI_FIELD(tsugumi_call, output_directory),
     TSUGUMI_FIELD(tsugumi_call, host),
-    TSUGUMI_FIELD(tsugumi_call, emit_output),
-    TSUGUMI_FIELD(tsugumi_call, display_text),
-    TSUGUMI_FIELD(tsugumi_call, display_scalar),
-    TSUGUMI_FIELD(tsugumi_call, display_line_chart),
-    TSUGUMI_FIELD(tsugumi_call, log),
-    TSUGUMI_FIELD(tsugumi_call, cancelled),
-    TSUGUMI_FIELD(tsugumi_call, remaining_ms),
-    TSUGUMI_FIELD(tsugumi_call, fail),
-    TSUGUMI_FIELD(tsugumi_call, display_table),
-    TSUGUMI_FIELD(tsugumi_call, display_image),
-    TSUGUMI_FIELD(tsugumi_call, display_points),
-    TSUGUMI_FIELD(tsugumi_call, display_module),
-    TSUGUMI_FIELD(tsugumi_call, display_markdown),
-    TSUGUMI_FIELD(tsugumi_call, input_json),
-    TSUGUMI_FIELD(tsugumi_call, params_json),
-    TSUGUMI_FIELD(tsugumi_call, emit_json),
-    TSUGUMI_FIELD(tsugumi_call, display_json),
-    TSUGUMI_FIELD(tsugumi_call, finish_outputs),
-    TSUGUMI_FIELD(tsugumi_call, fail_at),
+    TSUGUMI_FIELD(tsugumi_call, effects),
+    TSUGUMI_STRUCT(tsugumi_host),
+    TSUGUMI_FIELD(tsugumi_host, display_text),
+    TSUGUMI_FIELD(tsugumi_host, display_scalar),
+    TSUGUMI_FIELD(tsugumi_host, display_line_chart),
+    TSUGUMI_FIELD(tsugumi_host, log),
+    TSUGUMI_FIELD(tsugumi_host, cancelled),
+    TSUGUMI_FIELD(tsugumi_host, remaining_ms),
+    TSUGUMI_FIELD(tsugumi_host, fail),
+    TSUGUMI_FIELD(tsugumi_host, display_table),
+    TSUGUMI_FIELD(tsugumi_host, display_image),
+    TSUGUMI_FIELD(tsugumi_host, display_points),
+    TSUGUMI_FIELD(tsugumi_host, display_module),
+    TSUGUMI_FIELD(tsugumi_host, display_markdown),
+    TSUGUMI_FIELD(tsugumi_host, inputs_json),
+    TSUGUMI_FIELD(tsugumi_host, params_json),
+    TSUGUMI_FIELD(tsugumi_host, input_kind),
+    TSUGUMI_FIELD(tsugumi_host, outputs_json),
+    TSUGUMI_FIELD(tsugumi_host, display_json),
+    TSUGUMI_FIELD(tsugumi_host, fail_at),
 };
 #undef TSUGUMI_FIELD
 #undef TSUGUMI_STRUCT
@@ -99,7 +98,7 @@ auto load_entry(load_assembly_and_get_function_pointer_fn load,
 }
 }  // namespace
 
-extern "C" auto tsugumi_prepare() -> int {
+static auto prepare() -> int {
   // A Card is not a debugging endpoint. No diagnostic socket is needed in its
   // filesystem/network sandbox; this does not change its application logging.
   ::setenv("DOTNET_EnableDiagnostics", "0", 1);
@@ -137,7 +136,7 @@ extern "C" auto tsugumi_prepare() -> int {
   return 0;
 }
 
-extern "C" auto tsugumi_load(const tsugumi_call*) -> int {
+static auto load_card() -> int {
   const auto load = g_load;
   void* check = nullptr;
   if (!load_entry(load, "CheckLayout", &check) ||
@@ -148,16 +147,16 @@ extern "C" auto tsugumi_load(const tsugumi_call*) -> int {
                  "(tsugumi/sdk/abi.h); see above\n");
     return 1;
   }
-  return load_entry(load, "Execute", reinterpret_cast<void**>(&g_main)) &&
-                 load_entry(load, "RunStart",
-                            reinterpret_cast<void**>(&g_run_start))
-             ? 0
-             : 1;
+  return load_entry(load, "Execute", reinterpret_cast<void**>(&g_main)) ? 0 : 1;
 }
 
-extern "C" auto tsugumi_main(const tsugumi_call* call) -> int {
-  return g_main ? g_main(call) : 1;
-}
-extern "C" auto tsugumi_run_start(const tsugumi_call* call) -> int {
-  return g_run_start ? g_run_start(call) : 1;
+extern "C" auto tsugumi_card_invoke(const tsugumi_call* call,
+                                    tsugumi_buffer* outputs) -> int {
+  switch (call->phase) {
+    case TSUGUMI_PREPARE: return prepare();
+    case TSUGUMI_LOAD: return load_card();
+    case TSUGUMI_RUN_START: return g_main(call, nullptr);
+    case TSUGUMI_RUN: return g_main(call, outputs);
+  }
+  return 1;
 }

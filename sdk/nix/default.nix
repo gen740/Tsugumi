@@ -61,9 +61,42 @@ let
     '';
   };
 
-  # Keep the worker's interpreter preparation and lifetime environment.
-  # The descriptor names the Card's own entry, which links a shared build of
-  # the language startup code and a small object containing the Card paths.
+  # The same C entry is generated for every Card. Only the private adapter
+  # and the path constants vary by language.
+  entrySource = paths: ''
+    cat > "$TMPDIR/tsugumi_entry.c" <<EOF
+    #include <tsugumi/sdk/abi.h>
+    ${lib.concatStringsSep "\n" (
+      lib.mapAttrsToList (
+        symbol: value: "const char tsugumi_${symbol}[] = ${builtins.toJSON value};"
+      ) paths
+    )}
+    extern int tsugumi_card_invoke(const tsugumi_call*, tsugumi_buffer*);
+    int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
+      if (call->abi_version != TSUGUMI_ABI_VERSION || call->phase > TSUGUMI_RUN)
+        return 1;
+      return tsugumi_card_invoke(call, outputs);
+    }
+    EOF
+  '';
+
+  linkEntry = ''
+    $CC -fPIC -I${abiHeaders} -c "$TMPDIR/tsugumi_entry.c" -o "$TMPDIR/tsugumi_entry.o"
+    link_card() {
+      ${
+        if pkgs.stdenv.hostPlatform.isDarwin then
+          ''
+            $CXX -shared -Wl,-exported_symbol,_tsugumi_main "$TMPDIR/tsugumi_entry.o" "$@" -o "$out/lib/main.so"
+          ''
+        else
+          ''
+            printf '{ global: tsugumi_main; local: *; };\n' > "$TMPDIR/tsugumi-exports"
+            $CXX -shared -Wl,--version-script,"$TMPDIR/tsugumi-exports" "$TMPDIR/tsugumi_entry.o" "$@" -o "$out/lib/main.so"
+          ''
+      }
+    }
+  '';
+
   linkAdapter =
     {
       name,
@@ -82,16 +115,9 @@ let
       ''
         mkdir -p $out/lib
         ${setup}
-        cat > card.c <<EOF
-        ${lib.concatStringsSep "\n" (
-          lib.mapAttrsToList (
-            symbol: value: "const char tsugumi_${symbol}[] = ${builtins.toJSON value};"
-          ) paths
-        )}
-        EOF
-        $CC -fPIC -fvisibility=hidden -c card.c -o card.o
-        $CXX -shared card.o ${layer}/lib/start.o ${flags} -o $out/lib/main.so
-        printf '%s\n' "$out/lib/main.so" > $out/lib/tsugumi-runtime
+        ${entrySource paths}
+        ${linkEntry}
+        link_card ${layer}/lib/start.o ${flags}
       '';
 
   cardSource =
@@ -123,10 +149,7 @@ let
     pkgs.runCommandCC "tsugumi-ruby-layer"
       {
         nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [
-          ruby
-          pkgs.flatbuffers
-        ];
+        buildInputs = [ ruby ];
       }
       ''
         mkdir -p $out/lib
@@ -137,13 +160,6 @@ let
           -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
           -DTSUGUMI_RUBY_SDK='"${placeholder "out"}/lib"' \
           -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"'
-        $CXX -std=c++20 -O2 -fPIC -c ${../src/json_face.cc} -o $out/lib/json_face.o \
-          -I${abiHeaders} -I${
-            lib.fileset.toSource {
-              root = ../include;
-              fileset = ../include/tsugumi/message_json.hh;
-            }
-          }
       '';
 
   nativeHeaders = lib.fileset.toSource {
@@ -226,19 +242,6 @@ let
       ${flatc} -t --strict-json --defaults-json -o $out \
         ${pkgs.flatbuffers.src}/reflection/reflection.fbs -- $out/_outputs.bfbs
       cp ${dir}/_contract.json $out/_contract.json
-    '';
-
-  # The JSON face (sdk/src/json_face.cc): binary schemas of the Card's ports
-  # and params, and which root type each port carries. Ruby uses it today; it
-  # holds nothing of the language.
-  jsonFace =
-    dir:
-    pkgs.runCommand "tsugumi-card-sdk-json" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-      mkdir -p $out
-      for f in ${lib.concatStringsSep " " schemas}; do
-        ${flatc} -b --schema --bfbs-builtins -o $out ${dir}/$f.fbs
-      done
-      python3 ${../codegen/card_json.py} ${dir}/_contract.json $out
     '';
 
   rustFlatbuffers = pkgs.runCommand "tsugumi-rust-flatbuffers-source" { } ''
@@ -356,7 +359,7 @@ let
     # Go internal imports must originate in the SDK module.
     mkdir -p tsugumi/cmd/warm
     mv main.go tsugumi/cmd/warm/
-    go build -mod=readonly -buildmode=c-shared -ldflags="-s -w -buildid=" -o warm.so tsugumi/cmd/warm
+    go build -mod=readonly -buildmode=c-archive -ldflags="-s -w -buildid=" -o warm.a tsugumi/cmd/warm
     # go test still runs in step 2, with a second set of compiler options.
     go test -mod=readonly tsugumi/internal/host tsugumi/flatbuffers
   '';
@@ -386,7 +389,6 @@ let
     "python"
     "go"
     "rust"
-    "ruby"
     "csharp"
   ];
 
@@ -470,7 +472,6 @@ rec {
       go = if want "go" then goFace dir else null;
       csharp = if want "csharp" then csharpFace dir else null;
       rust = if want "rust" then rustFace dir else null;
-      ruby = if want "ruby" then jsonFace dir else null;
     };
 
   csharpCard = import ./csharp.nix {
@@ -504,11 +505,13 @@ rec {
         sources=$(find . -name '*.cc' | sort)
         if [ -z "$sources" ]; then echo "no .cc sources in src" >&2; exit 1; fi
         # Optional role overloads are weak imports; Mach-O leaves missing ones for the loader.
-        $CXX -std=c++20 -O2 -fPIC -shared -Wall \
+        ${entrySource { }}
+        ${linkEntry}
+        link_card -std=c++20 -O2 -fPIC -Wall \
           -I${sdk.cpp}/include -I${runtime}/include ${lib.escapeShellArgs cxxflags} \
           $sources ${sdk.cpp}/src/card_adapter.cc \
           ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "-Wl,-undefined,dynamic_lookup"} \
-          -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib -o $out/lib/main.so
+          -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib
       '';
 
   # Go's runtime stays in the worker process until the process exits. Remote
@@ -585,11 +588,13 @@ rec {
             }"
         }
         cp -r --no-preserve=mode ${goLayer}/gocache "$GOCACHE"
-        go build -mod=readonly -buildmode=c-shared -ldflags="-s -w -buildid=" -o main.so .
+        go build -mod=readonly -buildmode=c-archive -ldflags="-s -w -buildid=" -o "$TMPDIR/card.a" .
         ${checkLock}
         go test -mod=readonly ./...
         ${checkLock}
-        cp main.so $out/lib/
+        ${entrySource { }}
+        ${linkEntry}
+        link_card "$TMPDIR/card.a" ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-pthread -ldl -lm"}
       '';
 
   # The SDK uses the FlatBuffers runtime source that comes with flatc. A
@@ -658,7 +663,14 @@ rec {
         ${rustEnvironment vendor}
         cargo build --offline ${lockFlag} --release --target ${rustTarget}
         cargo test --offline ${lockFlag} --release --target ${rustTarget}
-        cp target/${rustTarget}/release/lib${library}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} $out/lib/main.so
+        ${entrySource { }}
+        ${linkEntry}
+        link_card target/${rustTarget}/release/lib${library}.a ${
+          if pkgs.stdenv.hostPlatform.isDarwin then
+            "-framework Security -framework SystemConfiguration -lresolv"
+          else
+            "-pthread -ldl -lm"
+        }
       '';
 
   # The Python of Python Cards: nixpkgs' python3, except that the plotting
@@ -849,7 +861,7 @@ rec {
       '';
     };
 
-  # A Ruby Card: a separately built MRI adapter, on the JSON face.
+  # A Ruby Card: a separately built MRI adapter with worker JSON conversion.
   #
   # Gems are used only when the Card names its own lock: `lock` is the Card's
   # Gemfile.lock (its Gemfile beside it) and `hash` the hash of the .gem files
@@ -861,14 +873,12 @@ rec {
   rubyCard =
     {
       src,
-      sdk,
       name ? "tsugumi-ruby-card",
       ruby ? pkgs.ruby,
       lock ? null,
       hash ? null,
       buildInputs ? [ ],
     }:
-    assert lib.assertMsg (sdk.ruby != null) "rubyCard: the SDK needs ruby in languages";
     assert lib.assertMsg ((lock == null) == (hash == null))
       "rubyCard: gems need both `lock = ./Gemfile.lock;` and `hash = \"sha256-...\";` (or neither, for no gems)";
     assert lib.assertMsg (
@@ -945,19 +955,14 @@ rec {
       inherit name;
       layer = rubyLayer ruby;
       nativeBuildInputs = [ pkgs.pkg-config ];
-      buildInputs = [
-        ruby
-        pkgs.flatbuffers
-      ]
-      ++ buildInputs;
+      buildInputs = [ ruby ] ++ buildInputs;
       paths = {
         ruby_card = "${source}";
         ruby_gemfile = lib.optionalString (lock != null) "${gems}/Gemfile";
         ruby_bundle_path = lib.optionalString (lock != null) "${gems}/installed";
         ruby_bundle_config = lib.optionalString (lock != null) "${gems}/no-config";
-        json_contract = "${sdk.ruby}";
       };
-      flags = "-fPIC -fvisibility=hidden ${sdk.ruby}/json_ports.cc ${rubyLayer ruby}/lib/json_face.o $(pkg-config --libs ruby-${ruby.version.majMin}) -lflatbuffers -Wl,-rpath,${ruby}/lib";
+      flags = "$(pkg-config --libs ruby-${ruby.version.majMin}) -Wl,-rpath,${ruby}/lib";
     };
 
   # R and Julia Cards embed one interpreter in the resident ABI worker.
@@ -1044,7 +1049,6 @@ rec {
         julia_env = "${interpreterLayers.juliaEnvironment (
           if packages == [ ] then juliaBase else juliaBase.withPackages packages
         )}";
-        julia_library = "$out/lib/main.so";
         julia_source = "${cardSource name src}/main.jl";
       };
       flags = "-L${juliaBase}/lib -ljulia -Wl,-rpath,${juliaBase}/lib";
@@ -1053,7 +1057,7 @@ rec {
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.
   #   run      the body: a package (derivation; the worker loads its
-  #            lib/main.so (native) or the SDK artifact named by lib/tsugumi-runtime;
+  #            lib/main.so;
   #            for another system,
   #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>

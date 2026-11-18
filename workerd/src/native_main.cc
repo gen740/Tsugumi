@@ -5,8 +5,7 @@
 // as the invocation's logs.
 //
 // Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: native lib/main.so or lib/tsugumi-runtime naming an SDK
-// adapter; Card code loads inside its first invocation) or a bash script
+// package (--package: lib/main.so; Card code loads inside its first invocation) or a bash script
 // (--run). preRun / postRun (--pre / --post) are bash and get no Card inputs;
 // the environment and working directory produced by preRun carry over. An
 // earlier failure is never cleared by a later step's success. One deadline
@@ -162,8 +161,7 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string
-      package;  // native main.so or lib/tsugumi-runtime naming the SDK artifact
+  std::string package;  // contains lib/main.so
   std::string pre;   // a file with bash text
   std::string run;   // a file with bash text (a bash body)
   std::string post;  // a file with bash text
@@ -178,7 +176,9 @@ struct Call {
   std::optional<Failure> failure;
   std::string card;
   std::string run_id;
-  std::map<std::string, std::string> json_values;
+  const uint8_t* inputs = nullptr;
+  std::optional<std::string> inputs_json;
+  std::optional<std::string> params_json;
   std::string display_error;
 };
 
@@ -214,7 +214,7 @@ auto result_frame(const Call& call) -> flatbuffers::FlatBufferBuilder {
   return b;
 }
 
-int emit_output_impl(void*, const char* port, const uint8_t* data,
+int collect_output(const char* port, const uint8_t* data,
                      size_t size) {
   if (!g_call) return 1;
   const auto invalid = [&](const std::string& reason) {
@@ -266,12 +266,6 @@ void validate_required_outputs(Call& call) {
       return;
     }
   }
-}
-
-int finish_outputs_impl(void*) {
-  if (!g_call) return 1;
-  validate_required_outputs(*g_call);
-  return g_call->failure ? 1 : 0;
 }
 
 auto invalid_display(const std::string& message) -> int {
@@ -648,33 +642,8 @@ flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs,
   return (cache[key] = std::move(p)).get();
 }
 
-auto input_json_impl(void*, const char* port) -> const char* {
-  if (!g_call) return nullptr;
-  if (auto it = g_call->json_values.find(port); it != g_call->json_values.end())
-    return it->second.c_str();
-  for (const auto* in : *g_call->msg->inputs()) {
-    if (in->name()->str() != port) continue;
-    auto* parser =
-        parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
-    std::string json;
-    if (!parser || tsugumi::message_json::gen_language_text(
-                       *parser, in->value()->bytes()->data(), &json)) {
-      record_failure(D::FailureKind::worker_failed,
-                     std::string("cannot decode input ") + port);
-      return nullptr;
-    }
-    return g_call->json_values.emplace(port, std::move(json))
-        .first->second.c_str();
-  }
-  return nullptr;
-}
-
 auto params_json_impl(void*) -> const char* {
-  if (!g_call) return nullptr;
-  // Port names cannot contain a NUL, so this cache key cannot alias an input.
-  const std::string key(1, '\0');
-  if (auto it = g_call->json_values.find(key); it != g_call->json_values.end())
-    return it->second.c_str();
+  if (g_call->params_json) return g_call->params_json->c_str();
   const auto* params = g_call->msg->params();
   auto* parser = parser_for(params->schema_bfbs(), params->root_type()->str());
   std::string json;
@@ -683,41 +652,252 @@ auto params_json_impl(void*) -> const char* {
     record_failure(D::FailureKind::worker_failed, "cannot decode params");
     return nullptr;
   }
-  return g_call->json_values.emplace(key, std::move(json))
-      .first->second.c_str();
+  return g_call->params_json.emplace(std::move(json)).c_str();
 }
 
-auto emit_json_impl(void*, const char* name, const char* json) -> int {
-  if (!g_call) return 1;
-  for (const auto* port : *g_call->msg->outputs()) {
-    if (port->name()->str() != name) continue;
-    auto* parser = parser_for(port->schema_bfbs(), port->root_type()->str());
-    if (!parser || !tsugumi::message_json::parse_json(*parser, json)) {
-      record_failure(D::FailureKind::output_invalid,
-                     std::string("output ") + name +
-                         " does not match its type" +
-                         (parser ? ": " + parser->error_ : ""));
-      return 1;
-    }
-    return emit_output_impl(nullptr, name, parser->builder_.GetBufferPointer(),
-                            parser->builder_.GetSize());
+// These schemas also generate the language bindings. A resident worker only
+// parses them once, independently of the set of ports present in a call.
+auto catalog_for(const flatbuffers::String* text) -> flatbuffers::Parser* {
+  if (!text) return nullptr;
+  static std::map<std::string, std::unique_ptr<flatbuffers::Parser>> cache;
+  if (auto it = cache.find(text->str()); it != cache.end())
+    return it->second.get();
+  flatbuffers::IDLOptions options;
+  options.strict_json = true;
+  options.natural_utf8 = true;
+  options.output_default_scalars_in_json = true;
+  auto parser = std::make_unique<flatbuffers::Parser>(options);
+  parser->known_attributes_["tsugumi"] = true;
+  if (!parser->Parse(text->c_str())) return nullptr;
+  return (cache[text->str()] = std::move(parser)).get();
+}
+
+auto inputs_json_impl(void*) -> const char* {
+  if (g_call->inputs_json) return g_call->inputs_json->c_str();
+  auto* parser = catalog_for(g_call->msg->input_schema());
+  std::string json;
+  if (!parser || tsugumi::message_json::gen_language_text(
+                     *parser, g_call->inputs, &json)) {
+    record_failure(D::FailureKind::worker_failed, "cannot decode inputs");
+    return nullptr;
   }
-  record_failure(D::FailureKind::output_invalid,
-                 std::string("unknown output port ") + name);
-  return 1;
+  return g_call->inputs_json.emplace(std::move(json)).c_str();
+}
+
+auto input_kind_impl(void*, const char* name) -> uint32_t {
+  for (const auto* port : *g_call->msg->inputs())
+    if (port->name()->string_view() == name)
+      return static_cast<uint32_t>(port->kind());
+  return 0;
+}
+
+auto outputs_json_impl(void*, const char* json, tsugumi_buffer* outputs) -> int {
+  auto* parser = catalog_for(g_call->msg->output_schema());
+  if (!parser || !tsugumi::message_json::parse_json(*parser, json)) {
+    record_failure(D::FailureKind::output_invalid,
+                   "outputs do not match the Card contract" +
+                       (parser ? ": " + parser->error_ : ""));
+    return 1;
+  }
+  return tsugumi_copy_outputs(outputs, parser->builder_.GetBufferPointer(),
+                              parser->builder_.GetSize());
+}
+
+// Put each intact input message into the aggregate buffer. Its internal
+// offsets stay relative to their original locations, including those of
+// shared tables, strings, and union members.
+auto pack_inputs(const W::WorkerCall& call) -> flatbuffers::FlatBufferBuilder {
+  namespace fb = flatbuffers;
+  fb::FlatBufferBuilder b;
+  const auto* parser = catalog_for(call.input_schema());
+  if (!parser) {
+    record_failure(D::FailureKind::worker_failed, "cannot load input catalog");
+    return b;
+  }
+  std::vector<std::pair<fb::voffset_t, fb::Offset<fb::Table>>> fields;
+  for (const auto* in : *call.inputs()) {
+    const auto* field = parser->root_struct_def_->fields.Lookup(in->name()->str());
+    if (!field) {
+      record_failure(D::FailureKind::worker_failed,
+                     "input is absent from the Card contract: " + in->name()->str());
+      return b;
+    }
+    const auto* bytes = in->value()->bytes();
+    if (bytes->size() < sizeof(fb::uoffset_t)) {
+      record_failure(D::FailureKind::type_mismatch, "invalid input buffer");
+      return b;
+    }
+    const auto root = fb::ReadScalar<fb::uoffset_t>(bytes->data());
+    if (root >= bytes->size()) {
+      record_failure(D::FailureKind::type_mismatch, "invalid input root");
+      return b;
+    }
+    b.PreAlign(bytes->size(), FLATBUFFERS_MAX_ALIGNMENT);
+    b.PushBytes(bytes->data(), bytes->size());
+    fields.emplace_back(field->value.offset,
+                        fb::Offset<fb::Table>(b.GetSize() - root));
+  }
+  const auto start = b.StartTable();
+  for (const auto& [field, value] : fields) b.AddOffset(field, value);
+  b.Finish(fb::Offset<fb::Table>(b.EndTable(start)));
+  return b;
+}
+
+// Copy a verified port table out of the aggregate. Keep inline data and
+// union discriminators byte-for-byte, including optional scalars and -0.0.
+namespace fb = flatbuffers;
+
+auto copy_table(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
+                const reflection::Object& type, const fb::Table& table)
+    -> fb::Offset<void>;
+
+auto copy_object(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
+                 const reflection::Object& type, const uint8_t* data)
+    -> fb::Offset<void> {
+  if (!type.is_struct())
+    return copy_table(b, schema, type,
+                      *reinterpret_cast<const fb::Table*>(data));
+  b.StartStruct(type.minalign());
+  b.PushBytes(data, type.bytesize());
+  return fb::Offset<void>(b.EndStruct());
+}
+
+auto copy_union(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
+                const reflection::Field& field, uint8_t tag,
+                const uint8_t* data) -> fb::Offset<void> {
+  if (!tag) return {};
+  const auto* member =
+      schema.enums()->Get(field.type()->index())->values()->Get(tag)->union_type();
+  if (member->base_type() == reflection::String)
+    return b.CreateString(reinterpret_cast<const fb::String*>(data)).Union();
+  return copy_object(b, schema, *schema.objects()->Get(member->index()), data);
+}
+
+auto copy_vector(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
+                 const reflection::Field& field, const fb::Table& table)
+    -> fb::Offset<void> {
+  const auto* vector = fb::GetFieldAnyV(table, field);
+  const auto element = field.type()->element();
+  const auto* object = element == reflection::Obj
+                           ? schema.objects()->Get(field.type()->index())
+                           : nullptr;
+  if (fb::IsScalar(element) || (object && object->is_struct())) {
+    const size_t size = object ? object->bytesize() : fb::GetTypeSize(element);
+    const size_t align = object ? object->minalign() : size;
+    b.StartVector(vector->size(), size, align);
+    b.PushBytes(vector->Data(), vector->size() * size);
+    return fb::Offset<void>(b.EndVector(vector->size()));
+  }
+  const auto* offsets =
+      reinterpret_cast<const fb::Vector<fb::Offset<uint8_t>>*>(vector);
+  const auto* tags = element == reflection::Union
+                         ? table.GetPointer<const fb::Vector<uint8_t>*>(
+                               field.offset() - sizeof(fb::voffset_t))
+                         : nullptr;
+  std::vector<fb::Offset<void>> values;
+  for (fb::uoffset_t i = 0; i < offsets->size(); ++i) {
+    const auto* data = offsets->Get(i);
+    if (element == reflection::String)
+      values.push_back(
+          b.CreateString(reinterpret_cast<const fb::String*>(data)).Union());
+    else if (object)
+      values.push_back(copy_object(b, schema, *object, data));
+    else
+      values.push_back(copy_union(b, schema, field, tags->Get(i), data));
+  }
+  b.StartVector<fb::Offset<void>>(values.size());
+  for (auto it = values.rbegin(); it != values.rend(); ++it) {
+    if (it->IsNull())
+      b.PushElement(fb::uoffset_t{0});
+    else
+      b.PushElement(*it);
+  }
+  return fb::Offset<void>(b.EndVector(values.size()));
+}
+
+auto copy_table(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
+                const reflection::Object& type, const fb::Table& table)
+    -> fb::Offset<void> {
+  struct Inline {
+    fb::voffset_t field;
+    const uint8_t* data;
+    size_t size;
+    size_t alignment;
+  };
+  std::vector<Inline> inline_fields;
+  std::vector<std::pair<fb::voffset_t, fb::Offset<void>>> offsets;
+  for (const auto* field : *type.fields()) {
+    const auto id = field->offset();
+    const auto* data = table.GetAddressOf(id);
+    if (!data) continue;
+    const auto base = field->type()->base_type();
+    if (fb::IsScalar(base)) {
+      const auto size = fb::GetTypeSize(base);
+      inline_fields.push_back({id, data, size, size});
+    } else if (base == reflection::Obj) {
+      const auto& object = *schema.objects()->Get(field->type()->index());
+      if (object.is_struct()) {
+        inline_fields.push_back({id, data, static_cast<size_t>(object.bytesize()),
+                                 static_cast<size_t>(object.minalign())});
+      } else {
+        offsets.emplace_back(
+            id, copy_object(b, schema, object, table.GetPointer<const uint8_t*>(id)));
+      }
+    } else if (base == reflection::String) {
+      offsets.emplace_back(id, b.CreateString(fb::GetFieldS(table, *field)).Union());
+    } else if (base == reflection::Vector) {
+      offsets.emplace_back(id, copy_vector(b, schema, *field, table));
+    } else if (base == reflection::Union) {
+      offsets.emplace_back(
+          id, copy_union(b, schema, *field,
+                         table.GetField<uint8_t>(id - sizeof(fb::voffset_t), 0),
+                         table.GetPointer<const uint8_t*>(id)));
+    }
+  }
+  const auto start = b.StartTable();
+  for (const auto& [id, offset] : offsets) b.AddOffset(id, offset);
+  for (const auto& field : inline_fields) {
+    b.Align(field.alignment);
+    b.PushBytes(field.data, field.size);
+    b.TrackField(field.field, b.GetSize());
+  }
+  return fb::Offset<void>(b.EndTable(start));
+}
+
+auto receive_outputs(const tsugumi_buffer& outputs) -> void {
+  namespace fb = flatbuffers;
+  auto* parser = catalog_for(g_call->msg->output_schema());
+  if (!parser || !outputs.data || outputs.size > kMaxFrame) {
+    record_failure(D::FailureKind::output_invalid,
+                   "missing or oversized Outputs buffer");
+    return;
+  }
+  // Use the same resolved catalog to verify the buffer and extract its ports.
+  parser->Serialize();
+  const auto* schema = reflection::GetSchema(parser->builder_.GetBufferPointer());
+  if (!fb::Verify(*schema, *schema->root_table(), outputs.data, outputs.size)) {
+    record_failure(D::FailureKind::output_invalid,
+                   "Outputs does not match the Card contract");
+    return;
+  }
+  const auto& root = *fb::GetAnyRoot(outputs.data);
+  for (const auto* field : *schema->root_table()->fields()) {
+    const auto* table = fb::GetFieldT(root, *field);
+    if (!table) continue;
+    const auto* type = schema->objects()->Get(field->type()->index());
+    fb::FlatBufferBuilder b;
+    b.Finish(copy_table(b, *schema, *type, *table));
+    if (collect_output(field->name()->c_str(), b.GetBufferPointer(), b.GetSize()))
+      return;
+  }
 }
 
 auto display_json_impl(void*, const char* json) -> int;
 
-// Package metadata does not establish provenance. Libraries are opened
-// only inside an invocation; tsugumi_prepare initializes the interpreter
-// and tsugumi_load loads the Card after preRun.
-using prepare_fn = int (*)();
+// Package libraries and language state are initialized during the first call.
 void* g_lib = nullptr;
 tsugumi_main_fn g_main = nullptr;
-tsugumi_main_fn g_load = nullptr;
 bool g_card_loaded = false;
-tsugumi_main_fn g_run_start = nullptr;
 std::string g_load_error;
 std::string g_last_run;
 std::vector<std::string>
@@ -773,49 +953,66 @@ void open_package(const std::string& lib) {
     g_load_error = lib + " does not export tsugumi_main";
     return;
   }
-  g_run_start =
-      reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_run_start"));
-  g_load = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_load"));
   std::fflush(stdout);
   std::fflush(stderr);
 }
 
-tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values,
-                       const std::string& work, const std::string& tmp,
-                       const std::string& out_dir) {
+constexpr tsugumi_host kEffects{
+    .display_text = display_text_impl,
+    .display_scalar = display_scalar_impl,
+    .display_line_chart = display_line_chart_impl,
+    .log = log_impl,
+    .cancelled = cancelled_impl,
+    .remaining_ms = remaining_ms_impl,
+    .fail = fail_impl,
+    .display_table = display_table_impl,
+    .display_image = display_image_impl,
+    .display_points = display_points_impl,
+    .display_module = display_module_impl,
+    .display_markdown = display_markdown_impl,
+    .inputs_json = inputs_json_impl,
+    .params_json = params_json_impl,
+    .input_kind = input_kind_impl,
+    .outputs_json = outputs_json_impl,
+    .display_json = display_json_impl,
+    .fail_at = fail_at_impl,
+};
+
+auto make_call(const Call& call, const flatbuffers::FlatBufferBuilder& inputs,
+               const std::string& work, const std::string& tmp,
+               const std::string& out_dir) -> tsugumi_call {
   const auto* m = call.msg;
-  tsugumi_call c{};
-  c.abi_version = TSUGUMI_ABI_VERSION;
-  c.run_id = call.run_id.c_str();
-  c.card = call.card.c_str();
-  c.invocation = m->invocation().value_or(0);
-  c.inputs = values.data();
-  c.input_count = values.size();
-  c.params = m->params()->bytes()->data();
-  c.params_size = m->params()->bytes()->size();
-  c.working_directory = work.c_str();
-  c.temporary_directory = tmp.c_str();
-  c.output_directory = out_dir.c_str();
-  c.emit_output = emit_output_impl;
-  c.display_text = display_text_impl;
-  c.display_scalar = display_scalar_impl;
-  c.display_line_chart = display_line_chart_impl;
-  c.log = log_impl;
-  c.cancelled = cancelled_impl;
-  c.remaining_ms = remaining_ms_impl;
-  c.fail = fail_impl;
-  c.fail_at = fail_at_impl;
-  c.display_table = display_table_impl;
-  c.display_image = display_image_impl;
-  c.display_points = display_points_impl;
-  c.display_module = display_module_impl;
-  c.display_markdown = display_markdown_impl;
-  c.input_json = input_json_impl;
-  c.params_json = params_json_impl;
-  c.emit_json = emit_json_impl;
-  c.display_json = display_json_impl;
-  c.finish_outputs = finish_outputs_impl;
-  return c;
+  return {
+      .abi_version = TSUGUMI_ABI_VERSION,
+      .phase = TSUGUMI_PREPARE,
+      .run_id = call.run_id.c_str(),
+      .card = call.card.c_str(),
+      .invocation = m->invocation().value_or(0),
+      .inputs = inputs.GetBufferPointer(),
+      .inputs_size = inputs.GetSize(),
+      .params = m->params()->bytes()->data(),
+      .params_size = m->params()->bytes()->size(),
+      .working_directory = work.c_str(),
+      .temporary_directory = tmp.c_str(),
+      .output_directory = out_dir.c_str(),
+      .host = nullptr,
+      .effects = &kEffects,
+  };
+}
+
+auto invoke(tsugumi_call& call, tsugumi_phase phase, const char* name) -> bool {
+  call.phase = phase;
+  tsugumi_buffer outputs{};
+  const int rc = g_main(&call, &outputs);
+  std::unique_ptr<uint8_t, decltype(&std::free)> owned(outputs.data, std::free);
+  if (rc != 0) {
+    record_failure(g_cancel.load() ? D::FailureKind::cancelled
+                                   : D::FailureKind::worker_failed,
+                   std::string(name) + " returned " + std::to_string(rc));
+    return false;
+  }
+  if (!g_call->failure && phase == TSUGUMI_RUN) receive_outputs(outputs);
+  return !g_call->failure;
 }
 
 // The environment of a package body (the order is at the top of this file):
@@ -922,7 +1119,7 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
                          (p ? ": " + p->error_ : ""));
       return;
     }
-    emit_output_impl(nullptr, name.c_str(), p->builder_.GetBufferPointer(),
+    collect_output(name.c_str(), p->builder_.GetBufferPointer(),
                      p->builder_.GetSize());
   }
 }
@@ -1109,75 +1306,50 @@ void execute(const Options& opt, Call& call) {
     }
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
-    std::vector<tsugumi_value> values;
-    for (const auto* in : *m->inputs())
-      values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()),
-                        in->value()->bytes()->data(),
-                        in->value()->bytes()->size()});
+    auto inputs = pack_inputs(*m);
     apply_env(body_env(call_env, env));
     if (::chdir(cwd.c_str()) != 0)
       record_failure(D::FailureKind::worker_failed,
                      "cannot enter working directory " + cwd);
-    tsugumi_call c = make_call(call, values, work, tmp, out_dir);
-    if (!call.failure && !g_card_loaded && g_load_error.empty() &&
-        may_start("source loading")) {
-      if (!g_lib) {
-        const auto descriptor = opt.package + "/lib/tsugumi-runtime";
-        const bool adapter = ::access(descriptor.c_str(), F_OK) == 0;
-        auto runtime = adapter ? read_text(descriptor) : std::string{};
-        if (!runtime.empty() && runtime.back() == '\n') runtime.pop_back();
-        // Runtime initialization is invocation work too: a package filename
-        // does not prove SDK provenance. Preserve lifetime HOME for R/Julia
-        // session caches while the Card itself gets this call's HOME.
-        if (adapter) {
+    if (!call.failure) {
+      call.inputs = inputs.GetBufferPointer();
+      auto c = make_call(call, inputs, work, tmp, out_dir);
+      if (!g_card_loaded && g_load_error.empty() && may_start("source loading")) {
+        // Keep lifetime HOME for interpreter caches. Card source code gets
+        // this invocation's HOME, just like the run-start hook and run.
+        const auto before_open = process_env();
+        open_package(opt.package + "/lib/main.so");
+        remember_loaded_env(before_open);
+        if (g_main) {
           auto initialization_env = process_env();
           if (auto home = env_value(g_loaded_env, "HOME"))
             set_env(initialization_env, "HOME", *home);
           apply_env(initialization_env);
+          const auto before_prepare = process_env();
+          if (!invoke(c, TSUGUMI_PREPARE, "language runtime initialization"))
+            g_load_error = "cannot initialize the language runtime (see stderr)";
+          remember_loaded_env(before_prepare);
+          apply_env(body_env(call_env, env));
+          const auto before_load = process_env();
+          if (g_load_error.empty() && !invoke(c, TSUGUMI_LOAD, "Card source loading"))
+            g_load_error = "Card source loading failed (see stderr)";
+          remember_loaded_env(before_load);
+          g_card_loaded = true;
+          std::fflush(stdout);
+          std::fflush(stderr);
         }
-        const auto before = process_env();
-        if (adapter && (runtime.empty() || runtime.front() != '/'))
-          g_load_error =
-              "the SDK runtime descriptor must name an absolute library path";
-        else
-          open_package(adapter ? runtime : opt.package + "/lib/main.so");
-        if (adapter && g_load_error.empty()) {
-          auto prepare =
-              reinterpret_cast<prepare_fn>(::dlsym(g_lib, "tsugumi_prepare"));
-          if (!prepare || prepare() != 0)
-            g_load_error =
-                "cannot initialize the language runtime (see stderr)";
-        }
-        remember_loaded_env(before);
-        apply_env(body_env(call_env, env));
       }
-      const auto before = process_env();
-      if (g_load_error.empty() && g_load && g_load(&c) != 0)
-        g_load_error = "tsugumi_load failed (see stderr)";
-      remember_loaded_env(before);
-      g_card_loaded = true;
-      std::fflush(stdout);
-      std::fflush(stderr);
-    }
-    if (g_card_loaded) apply_env(body_env(call_env, env));
-    if (!g_load_error.empty())
-      record_failure(D::FailureKind::worker_failed, g_load_error);
-    // The first invocation of each run starts it (onRunStart / on_run_start).
-    if (!call.failure && may_start("run-start hook") && g_run_start &&
-        call.run_id != g_last_run) {
+      if (g_card_loaded) apply_env(body_env(call_env, env));
+      if (!g_load_error.empty())
+        record_failure(D::FailureKind::worker_failed, g_load_error);
+      if (!call.failure && may_start("run-start hook") && call.run_id != g_last_run)
+        invoke(c, TSUGUMI_RUN_START, "onRunStart");
       g_last_run = call.run_id;
-      if (g_run_start(&c) != 0)
-        record_failure(D::FailureKind::worker_failed, "onRunStart failed");
-    }
-    g_last_run = call.run_id;
-    if (!call.failure && may_start("main")) {
-      int rc = g_main(&c);
-      std::fflush(stdout);
-      std::fflush(stderr);
-      if (rc != 0)
-        record_failure(g_cancel.load() ? D::FailureKind::cancelled
-                                       : D::FailureKind::worker_failed,
-                       "main.so returned " + std::to_string(rc));
+      if (!call.failure && may_start("main")) {
+        invoke(c, TSUGUMI_RUN, "main.so");
+        std::fflush(stdout);
+        std::fflush(stderr);
+      }
     }
   }
   if (!call.failure && !opt.run.empty() && may_start("run")) {

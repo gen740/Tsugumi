@@ -805,7 +805,8 @@ std::string worker_call_frame(
     const std::string& params, const std::vector<types::PortType>& outputs,
     const std::string& work, const std::string& tmp, const std::string& out,
     const std::vector<std::pair<std::string, std::string>>& env,
-    std::optional<uint64_t> deadline_ms) {
+    std::optional<uint64_t> deadline_ms, const std::string& input_schema,
+    const std::string& output_schema) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) {
     return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size());
@@ -834,6 +835,8 @@ std::string worker_call_frame(
   auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
+  auto input_catalog = b.CreateString(input_schema);
+  auto output_catalog = b.CreateString(output_schema);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -845,6 +848,8 @@ std::string worker_call_frame(
   cb.add_temporary_directory(t);
   if (!out.empty()) cb.add_output_directory(o);
   cb.add_environment(evv);
+  cb.add_input_schema(input_catalog);
+  cb.add_output_schema(output_catalog);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);

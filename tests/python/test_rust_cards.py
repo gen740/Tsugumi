@@ -77,11 +77,11 @@ def main(inputs):
  N.Start(b)
  N.AddValue(b,9007199254740993)
  root=N.End(b)
- yield {"out": tsugumi.message(b, root)}
+ out = tsugumi.message(b, root)
  b=tsugumi.builder()
  N.Start(b)
  N.AddValue(b,9007199254740993)
- yield {"other": tsugumi.message(b, N.End(b))}
+ return {"out": out, "other": tsugumi.message(b, N.End(b))}
 '''}},
         'rust': process,
         'check': {'card': {'language': 'cpp', 'inputs': [{'name': 'number'}]},

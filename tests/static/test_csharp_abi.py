@@ -1,10 +1,9 @@
 """The C# SDK's handwritten mirror of the Card ABI stays the ABI.
 
-sdk/csharp/InvocationScope.cs declares NativeValue, NativeSeries and NativeCall by
-hand, in the field order of sdk/include/tsugumi/sdk/abi.h. When a C# Card
+sdk/csharp/InvocationScope.cs declares the native structs by hand, in the field order of sdk/include/tsugumi/sdk/abi.h. When a C# Card
 loads, sdk/csharp/host.cc passes the compiler's offsetof/sizeof of every abi.h
 field and sdk/csharp/Layout.cs compares them with the managed layout (a drift
-fails tsugumi_load). These checks need no .NET: they read the sources and
+fails the load phase). These checks need no .NET: they read the sources and
 compare field order, field types and callback signatures, and that the two
 layout tables (host.cc, Layout.cs) name every field. Appending a callback to
 abi.h without the C# side fails here.
@@ -23,7 +22,7 @@ HOST = ROOT / "sdk/csharp/host.cc"
 LAYOUT = ROOT / "sdk/csharp/Layout.cs"
 
 # Every struct the worker hands to a C# Card, with its managed mirror.
-MIRRORS = {"tsugumi_value": "NativeValue", "tsugumi_blob": "NativeBlob", "tsugumi_series": "NativeSeries", "tsugumi_call": "NativeCall"}
+MIRRORS = {'tsugumi_buffer': 'NativeBuffer', 'tsugumi_blob': 'NativeBlob', 'tsugumi_series': 'NativeSeries', 'tsugumi_call': 'NativeCall', 'tsugumi_host': 'NativeHost'}
 # C scalar types and their blittable C# types (LP64 and LLP64 alike).
 SCALARS = {"void": "void", "char": "byte", "uint8_t": "byte", "uint32_t": "uint", "uint64_t": "ulong",
            "int64_t": "long", "int": "int", "size_t": "nuint", "double": "double", "float": "float", **MIRRORS}

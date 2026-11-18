@@ -73,8 +73,8 @@ public sealed class Card : ICard {
   private Report? previous;
   private readonly string identity = Guid.NewGuid().ToString();
   private int runs;
-  public ValueTask<Outputs> OnRunStartAsync(Inputs inputs) {
-        runs++; return ValueTask.FromResult(new Outputs()); }
+  public ValueTask OnRunStartAsync(Inputs inputs) {
+        runs++; return ValueTask.CompletedTask; }
   public async ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
         var result = new Outputs();
     if (previous != null) {

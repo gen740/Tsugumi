@@ -83,8 +83,7 @@ class InvocationFixture:
         inputs = SimpleNamespace(params=self.p, input=self.input)
         report = SimpleNamespace(figure=self.figure, log=lambda message: None)
         result = load(self.library).main(inputs, report, self)
-        for batch in result:
-            self.outputs.update({port: tsugumi.message(value) for port, value in batch.items()})
+        self.outputs = {port: tsugumi.message(value) for port, value in result.items()}
         from outputs.figure.visualization.Files import Files
         return Path(Files.GetRootAs(self.outputs['figure'], 0).Value().decode())
 
@@ -97,8 +96,11 @@ def load(library):
     return module
 
 def use(kind, typename='Table'):
-    (HERE / '_contract.json').write_text(json.dumps({'inputs': [{'name': 'data', 'type': 'inputs.data.example.' + typename, 'kind': kind, 'required': True}], 'outputs': []}))
+    ports = [{'name': 'data', 'type': 'inputs.data.example.' + typename, 'kind': kind, 'required': True}] if kind else []
+    (HERE / '_contract.json').write_text(json.dumps({'inputs': ports, 'outputs': []}))
     contract._contract.cache_clear()
+    contract._port_index.cache_clear()
+    contract._generated.cache_clear()
 
 def table(x, y, group=None):
     """The `data` input as typed equally sized columns (inputs.data.example.Table)."""
@@ -268,7 +270,6 @@ use('directory', 'File')
 case = InvocationFixture('matplotlib', pack(file))
 assert input_rows(SimpleNamespace(input=case.input), case, member='data.csv')[0]['y'] == '3'
 expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, member='../outside.csv'), 'relative member')
-(HERE / '_contract.json').write_text(json.dumps({'inputs': [], 'outputs': []}))
-contract._contract.cache_clear()
+use(None)
 expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case), 'Connect')
 ''')

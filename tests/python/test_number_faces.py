@@ -34,7 +34,8 @@ puts JSON.generate(Tsugumi.json_value(v),allow_nan:true)
         args = [executable('RUBY'), str(script), str(ROOT / 'sdk/ruby/tsugumi.rb'), str(input_file)]
     elif language == 'julia':
         script = tmp_path / 'test.jl'
-        script.write_text('''include(ARGS[1])
+        script.write_text('''const TSUGUMI_HOST = nothing
+include(ARGS[1])
 v=Tsugumi.parse_json(read(ARGS[2],String))
 numbers=v["values"]
 @assert isnan(numbers[1]) && numbers[2] == Inf && numbers[3] == -Inf
@@ -45,19 +46,19 @@ println(Tsugumi.json_text(v))
     else:
         script = tmp_path / 'test.R'
         script.write_text('''source(commandArgs(TRUE)[[1]])
-.Call <- function(name, ...) switch(name,tsugumi_params='{}',tsugumi_info='.',tsugumi_invocation=1)
+.Call <- function(name, ...) switch(name,tsugumi_params='{}',tsugumi_inputs='{}',tsugumi_info='.',tsugumi_invocation=1)
 scope <- new.env(); scope$active <- TRUE
-.tsugumi_arguments(scope)
+to_json <- .tsugumi_arguments(scope)$to_json
 v <- .tsugumi_from_json(paste(readLines(commandArgs(TRUE)[[2]]),collapse=""))
 numbers <- v$values
 stopifnot(is.numeric(numbers), is.nan(numbers[1]), numbers[2] == Inf, numbers[3] == -Inf,
           numbers[4] == 0, 1 / numbers[4] == -Inf)
-cat(.tsugumi_json(v))
-bad <- try(.tsugumi_json(list(value=NA_real_)),silent=TRUE)
+cat(to_json(v))
+bad <- try(to_json(list(value=NA_real_)),silent=TRUE)
 stopifnot(inherits(bad,"try-error"))
-'''.replace('.tsugumi_arguments(scope)\n', 'invisible(.tsugumi_arguments(scope))\n'))
+''')
         args = [executable('RSCRIPT'), '--vanilla', str(script), str(ROOT / 'sdk/r/tsugumi.R'), str(input_file)]
-    result = subprocess.run(args, env={**os.environ, 'TSUGUMI_NATIVE_LIBRARY': 'unused', 'JULIA_DEPOT_PATH': str(tmp_path / 'depot')}, text=True, capture_output=True, check=True)
+    result = subprocess.run(args, env={**os.environ, 'JULIA_DEPOT_PATH': str(tmp_path / 'depot')}, text=True, capture_output=True, check=True)
     value = json.loads(result.stdout)
     assert value['strings'] == VECTORS['strings']
     assert value['missing'] is None
