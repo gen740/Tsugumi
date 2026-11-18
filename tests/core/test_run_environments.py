@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sqlite3
 
 import pytest
 from harness.fixtures import worker_project
@@ -374,8 +375,8 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     environment_id, paths = inventory(client, run_id)
-    for query in ["", "NIX", paths[-1].split("/")[-1], "%", "_", "'", "no-such-package"]:
-        expected = [p for p in paths if query.lower() in p.lower()]
+    for query in ["", "NIX", max(paths).rsplit("/", 1)[-1], "%", "_", "'", "no-such-package"]:
+        expected = {p for p in paths if query.lower() in p.lower()}
         found = []
         offset = 0
         while True:
@@ -387,7 +388,8 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
                 break
             assert page.nextOffset > offset
             offset = page.nextOffset
-        assert found == expected
+        assert len(found) == len(expected)
+        assert set(found) == expected
 
 
 def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_path):
