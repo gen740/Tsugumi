@@ -34,7 +34,7 @@ def test_history_write_failure_fails_the_run(tmp_path, core_factory):
     file_fork_project(root)
     d = core_factory(project_root=root, fault="invocation_record")
     c = d.connect()
-    _, st = run_and_wait(c, "src", timeout=10)
+    _, st = run_and_wait(c, "src")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.persistence_failed
     for k in ("src", "split", "a", "b"):
@@ -52,7 +52,7 @@ def test_file_passes_through_fork(tmp_path, core_factory):
     file_fork_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    run_id, st = run_and_wait(c, "src", timeout=10)
+    run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     for k in ("a", "b"):
         value = recorded_input_json(c, tmp_path / "decode", run_id, k)
@@ -65,20 +65,20 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
     file_fork_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    first, st = run_and_wait(c, "src", timeout=10)
+    first, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
     # Saved inputs have independent copies of the earlier run’s scratch.
     c.call("ProjectCacheClearRequest", opId=new_id())
-    _, st2 = run_and_wait(c, "split", propagate=False, timeout=10)
+    _, st2 = run_and_wait(c, "split", propagate=False)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
     c.call("RunScratchDeleteRequest", opId=new_id(), paths=[f"runs/{first}"])
     d.stop()
     d.start()
     c = d.connect()
-    _, st3 = run_and_wait(c, "split", propagate=False, timeout=10)
+    _, st3 = run_and_wait(c, "split", propagate=False)
     assert st3.state == RunState.succeeded, st3.failure and text(st3.failure.diagnostic)
     # The downstream Card also kept its own saved input.
-    _, st4 = run_and_wait(c, "a", propagate=False, timeout=10)
+    _, st4 = run_and_wait(c, "a", propagate=False)
     assert st4.state == RunState.succeeded
 
 
@@ -88,7 +88,7 @@ def test_saved_inputs_missing_port_fails(tmp_path, core_factory):
     file_fork_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    _, st = run_and_wait(c, "split", propagate=False, timeout=10)
+    _, st = run_and_wait(c, "split", propagate=False)
     assert st.state == RunState.failed
     assert "saved" in text(st.failure.diagnostic)
 
@@ -108,10 +108,10 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
           files={"definitions/doc/report.txt": "quarterly numbers\n"})
     d = core_factory(project_root=root)
     c = d.connect()
-    _, st = run_and_wait(c, src, timeout=10)
+    _, st = run_and_wait(c, src)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     # The merge reruns from its saved value; the sink records the path it received.
-    run_id, st2 = run_and_wait(c, "join", timeout=10)
+    run_id, st2 = run_and_wait(c, "join")
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
     received = recorded_input_json(c, tmp_path / "decode", run_id, "out")
     assert received["value"]["value"].endswith("/report.txt")
@@ -141,7 +141,7 @@ root_type Outputs;
                  conn("split", "out2", "b", "in")])
     d = core_factory(project_root=root)
     c = d.connect()
-    run_id, st = run_and_wait(c, "src", timeout=10)
+    run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     for card_id in ("a", "b"):
         record = c.call("RunRecordRequest", runId=run_id, card=path(card_id)).record
@@ -168,7 +168,7 @@ class FreedNames:
             filename = text(source.path)
             if filename.startswith("definitions/out/") and filename != "definitions/out/_card.json":
                 self.sources[filename] = bytes(self.c.call("ProjectFileReadRequest", path=filename).bytes)
-        _, st = run_and_wait(self.c, "out", timeout=10)
+        _, st = run_and_wait(self.c, "out")
         assert st.state == RunState.succeeded
 
     def restore(self):
@@ -180,6 +180,7 @@ class FreedNames:
         """What the core sends for a Card that becomes visible: its text and its Card."""
         self.c.notifications.clear()
         self.c.call("ViewSetVisibleRequest", subscriptionId=self.sub, cards=[path(card)])
+        # A Card without a display sends no notification.
         try:
             n = self.c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=1.0)
         except TimeoutError:

@@ -47,7 +47,7 @@ def main(inputs, report):
 
 def display_run(client):
     run_id = run(client, "source")
-    status = wait_run(client, run_id, timeout=600)
+    status = wait_run(client, run_id)
     stdout = text(client.call("LogRangeRequest", runId=run_id, card=path("display"),
                               invocation=1, stream=1).text)
     return run_id, status, stdout

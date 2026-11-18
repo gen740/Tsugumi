@@ -84,7 +84,7 @@ def test_lost_reply_can_be_recovered_and_replayed_without_another_save(daemon):
         client = daemon.connect(unix=proxy.unix)
         gate = proxy.drop_reply(50)
         request_id = client.send("ProjectSaveRequest", make("ProjectSaveRequest", **request), request_id=50)
-        gate.wait(timeout=5)
+        gate.wait()
         with pytest.raises(TimeoutError):
             client.wait_reply(request_id, timeout=0.05)
 
@@ -107,7 +107,7 @@ def test_held_reply_does_not_block_other_requests_or_clients(daemon):
         client = daemon.connect(unix=proxy.unix)
         gate = proxy.hold_reply(50)
         request_id = client.send("ProjectSaveRequest", make("ProjectSaveRequest", **request), request_id=50)
-        gate.wait(timeout=5)
+        gate.wait()
 
         assert project_name(observer) == (snapshot.rev + 1, "committed-before-delivery")
         # Even this same connection remains usable while one reply is held.
@@ -184,7 +184,6 @@ def test_notifications_follow_committed_operations_without_replay_duplicates(dae
         return subscriber.wait_notification(
             lambda note: note.valueType == NotificationPayload.DocPatched
             and text(note.value.delta.opId) == op_id,
-            timeout=5,
         )
 
     first_note = patched(first["opId"])

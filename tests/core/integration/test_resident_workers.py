@@ -211,7 +211,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     if stop != "shutdown":
         if stop == "cancel":
             c.call("RunCancelRequest", runId=second)
-        state = wait_run(c, second, timeout=20).state
+        state = wait_run(c, second).state
         assert state == (RunState.cancelled if stop == "cancel" else RunState.failed)
         inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
         assert inv.workerReused

@@ -104,9 +104,9 @@ def python_probe_project(main: str, pre: str | None = None) -> tuple:
     return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
 
 
-def shown_by_probe(c, timeout=1800) -> tuple[str, str]:
+def shown_by_probe(c) -> tuple[str, str]:
     """A run from the trigger: its id and what `show` displayed."""
-    run_id, st = run_and_wait(c, "start", timeout=timeout)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     return run_id, text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
 

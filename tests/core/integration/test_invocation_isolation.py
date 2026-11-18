@@ -19,7 +19,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     # First produce an independently recorded File with no wire to the reader.
     write(root, {"make": make}, [card("secret", "make")], [])
     c = core_factory(project_root=root).connect()
-    secret_run, st = run_and_wait(c, "secret", timeout=600)
+    secret_run, st = run_and_wait(c, "secret")
     assert st.state == RunState.succeeded, log(c, secret_run, "secret", 2)
     record = c.call("RunRecordRequest", runId=secret_run, card=path("secret"))
     secret = text(record.record.outputs[0].filePath)
@@ -36,7 +36,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test")
     seen = []
     for _ in range(2):
-        run_id, st = run_and_wait(c, "source", timeout=600)
+        run_id, st = run_and_wait(c, "source")
         assert st.state == RunState.succeeded, log(c, run_id, "reader", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("reader")).records
         seen.append(inv.workerReused)
@@ -82,7 +82,7 @@ def main(inputs, report):
     definitions["show"]["timeoutSeconds"] = 5
     write(tmp_path / "p", definitions, cards, wires, files)
     c = core_factory(project_root=tmp_path / "p").connect()
-    run_id, st = run_and_wait(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.failed
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert invocation.failure.kind == FailureKind.timeout
@@ -144,7 +144,7 @@ def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path)
         assert time.monotonic() < until, "worker did not reach cancellation point"
         time.sleep(0.02)
     c.call("RunCancelRequest", runId=run_id)
-    assert wait_run(c, run_id, timeout=30).state == RunState.cancelled
+    assert wait_run(c, run_id).state == RunState.cancelled
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("wait")).records
     assert inv.failure.kind == FailureKind.cancelled
 

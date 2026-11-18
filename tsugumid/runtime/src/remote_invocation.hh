@@ -9,6 +9,7 @@ namespace tsugumi {
 struct RemoteInvocationResult {
   WorkerOutcome worker;
   BuildEnvironmentData environment;
+  std::vector<std::pair<LogStream, std::string>> logs;
   bool built = false;
   bool log_truncated = false;
 };
@@ -35,7 +36,7 @@ auto import_remote_result(
     const std::string& job_id, const std::string& result_digest,
     const std::string& spec, const std::filesystem::path& directory,
     const std::filesystem::path& module_cache,
-    const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
+    const std::vector<types::PortType>& outputs,
     const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress =
         {}) -> RemoteInvocationResult;

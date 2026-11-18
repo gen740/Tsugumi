@@ -186,15 +186,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
-      output.logs.clear();
       try {
         auto result = import_remote_result(
             client_, target_, server_id_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules", node.outputs,
-            [&](LogStream stream, const std::string& line) {
-              output.logs.emplace_back(stream, line);
-            },
             request.display, request.detach,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
@@ -208,6 +204,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           });
         }
         output.log_truncated = result.log_truncated;
+        output.logs = std::move(result.logs);
         output.outcome = std::move(result.worker);
         if (output.outcome.failure)
           s.execution_state = RemoteExecutionState::failed;

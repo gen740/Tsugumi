@@ -120,6 +120,7 @@ class Client:
         self._cv = threading.Condition(self._lock)
         self._replies: dict[int, MessageT] = {}
         self.notifications: deque = deque()
+        self.subscribed = False
         self.closed = False
         self.reader_error: Exception | None = None
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
@@ -279,8 +280,8 @@ class Client:
         rid = self._send_request(name, make(name, **fields), None, deadline)
         return self._wait_reply(rid, deadline)
 
-    def wait_notification(self, pred: Callable[[Any], bool], timeout: float = 30.0) -> Any:
-        deadline = time.monotonic() + timeout
+    def wait_notification(self, pred: Callable[[Any], bool], timeout: float | None = None) -> Any:
+        deadline = None if timeout is None else time.monotonic() + timeout
         with self._cv:
             while True:
                 for i, n in enumerate(self.notifications):
@@ -289,8 +290,8 @@ class Client:
                         return n
                 if self.closed:
                     raise ConnectionError(f"connection closed: {self.reader_error or 'EOF'}") from self.reader_error
-                left = deadline - time.monotonic()
-                if left <= 0:
+                left = None if deadline is None else deadline - time.monotonic()
+                if left is not None and left <= 0:
                     raise TimeoutError("notification not received")
                 self._cv.wait(left)
 
@@ -301,7 +302,13 @@ class Client:
                          expectedProjectId=project)
 
     def open(self, view_id: Optional[str] = None):
-        return self.call("ProjectOpenRequest", viewId=view_id)
+        opened = self.call("ProjectOpenRequest", viewId=view_id)
+        self.subscribed = True
+        return opened
+
+    def ensure_subscription(self):
+        if not self.subscribed:
+            self.open()
 
 
 def change(kind: str, **fields: Any):

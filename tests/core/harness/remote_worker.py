@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, os.environ.get("TSUGUMI_PY_BINDINGS", str(Path(__file__).resolve().parents[3] / "build/generated/python")))
 
 import flatbuffers
+from Tsugumi.RemoteWorker import BlobChunk
 from Tsugumi.RemoteWorker.Ack import AckT
 from Tsugumi.RemoteWorker.BrokerRequest import BrokerRequestT
 from Tsugumi.RemoteWorker.BlobChunk import BlobChunkT
@@ -38,6 +39,25 @@ from Tsugumi.RemoteWorker.Target import TargetT
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
 MAX_FRAME = 2 << 20
+
+
+class _ByteBlobChunk(BlobChunkT):
+    def Pack(self, builder):
+        # The generated object API prepends each byte separately without NumPy.
+        digest = builder.CreateString(self.digest)
+        contents = builder.CreateByteVector(self.bytes)
+        BlobChunk.Start(builder)
+        BlobChunk.AddDigest(builder, digest)
+        BlobChunk.AddTotal(builder, self.total)
+        BlobChunk.AddOffset(builder, self.offset)
+        BlobChunk.AddBytes(builder, contents)
+        return BlobChunk.End(builder)
+
+
+def blob_chunk(digest, total, offset, contents):
+    return reply(ReplyBody.BlobChunk, _ByteBlobChunk(
+        digest=digest, total=total, offset=offset, bytes=contents,
+    ))
 
 
 def pack(obj, identifier=None):

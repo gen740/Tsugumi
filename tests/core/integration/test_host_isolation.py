@@ -45,7 +45,7 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
               [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
         d = core_factory(project_root=root)
         c = d.connect()
-        run_id, st = run_and_wait(c, "start", timeout=600)
+        run_id, st = run_and_wait(c, "start")
         log = log_of(c, run_id, "probe")
         record = c.call("RunRecordRequest", runId=run_id, card=path("probe")).status
         why = record.failure and text(record.failure.diagnostic)

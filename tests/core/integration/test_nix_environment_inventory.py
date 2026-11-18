@@ -18,7 +18,7 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
                    sources={"default.nix": '{ pkgs, inputs, params }: { run = "echo ' + greeting + '"; }'})
         graph.save(client)
         run_id = run(client)
-        status = wait_run(client, run_id, timeout=300)
+        status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         environment = client.call("RunEnvironmentsRequest", runId=run_id).environments[0]
         assert text(client.call("RunRecordRequest", runId=run_id, card=path("work")).record.summary.environmentId) == text(environment.id)
@@ -54,7 +54,7 @@ def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, pro
     observed = []
     for _ in range(2):
         run_id = run(client)
-        status = wait_run(client, run_id, timeout=600)
+        status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         observed.append(check_definition_tools(client, run_id))
     assert observed[0] == observed[1]

@@ -15,6 +15,7 @@ from Tsugumi.Data.RunState import RunState
 
 
 def usage_when(client, condition, timeout=10):
+    # Cache usage is measured in the background and has no subscription event.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         usage = client.call("ProjectCacheUsageRequest")

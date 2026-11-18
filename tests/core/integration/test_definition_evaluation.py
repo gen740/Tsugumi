@@ -162,7 +162,7 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
         pkgsPath=SECOND_PIN.split("#")[0] + "#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="))
     reload_project(client)
     failed = run(client)
-    status = wait_run(client, failed, timeout=1800)
+    status = wait_run(client, failed)
     assert status.state == RunState.failed
     assert "hash" in text(status.failure.diagnostic).lower()
     assert not text(client.call("RunRecordRequest", runId=failed, card=path("work")).record.summary.environmentId)
@@ -341,7 +341,7 @@ def test_impure_file_read_cannot_fall_back_to_an_old_definition(core_factory, pr
         "builtins.readFile (/. + " + nix_string(str(outside.resolve())) + ")"))
     reload_project(client)
     run_id = run(client)
-    status = wait_run(client, run_id, timeout=1800)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     assert "forbidden" in text(status.failure.diagnostic).lower()
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record

@@ -15,6 +15,7 @@ from Tsugumi.Data.RunState import RunState
 
 
 def wait_exit(pid):
+    # workerd is a grandchild of the test runner, so it cannot be waited on here.
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         try:

@@ -187,6 +187,5 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
         note = client.wait_notification(
             lambda n: n.valueType == NotificationPayload.RunEvent
             and text(n.value.runId) == run_id and n.value.valueType == RunEventValue.RunFinished,
-            timeout=5,
         )
         assert note.value.value.summary.status.state == RunState.succeeded

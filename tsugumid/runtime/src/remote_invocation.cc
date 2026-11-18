@@ -59,16 +59,20 @@ auto input_location(const std::vector<stdfs::path>& file_roots,
   throw std::runtime_error("remote file input is outside the run's folders");
 }
 
-auto log_result(const stdfs::path& path, const WorkerProc::LogSink& log)
+auto import_logs(const stdfs::path& path, RemoteInvocationResult& result)
     -> void {
-  if (!log) return;
   std::ifstream stream(path, std::ios::binary);
   std::string line;
   while (std::getline(stream, line)) {
     remote::LogJson entry;
-    if (schema::decode(line, entry) || *entry.stream < 1 || *entry.stream > 4)
+    // Decode the complete entry directly. A JSON DOM would own another copy
+    // of the line and validate it before decoding the same bytes again.
+    if (hosq::decode_document_into<hosq::json::FastReader<>>(
+            entry, line, {.error_path = false}) ||
+        *entry.stream < 1 || *entry.stream > 4)
       throw std::runtime_error("invalid remote log entry");
-    log(static_cast<LogStream>(*entry.stream), *entry.text);
+    result.logs.emplace_back(static_cast<LogStream>(*entry.stream),
+                             std::move(*entry.text));
   }
 }
 
@@ -240,7 +244,7 @@ auto import_remote_result(
     const std::string& job_id, const std::string& result_digest,
     const std::string& spec, const stdfs::path& directory,
     const stdfs::path& module_cache,
-    const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
+    const std::vector<types::PortType>& outputs,
     const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
     -> RemoteInvocationResult {
@@ -424,7 +428,7 @@ auto import_remote_result(
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }
-  log_result(temp / "logs.jsonl", log);
+  import_logs(temp / "logs.jsonl", result);
   if (display && decoded_display) display(*decoded_display);
   return result;
 }

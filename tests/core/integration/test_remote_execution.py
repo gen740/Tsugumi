@@ -30,6 +30,7 @@ from projects import (
     conn,
     run_and_wait,
     start_run,
+    wait_invocation,
     wait_run,
     write,
 )
@@ -232,20 +233,6 @@ def fixture(project):
           {"definitions/input/payload.txt": "remote-input-roundtrip\n"})
 
 
-def wait_invocation(client, run_id, name, check, timeout=480):
-    until = time.monotonic() + timeout
-    while time.monotonic() < until:
-        try:
-            values = client.call("RunInvocationsRequest", runId=run_id, card=path(name)).records or []
-            if values and check(values[-1]):
-                return values[-1]
-        except RpcFailure as error:
-            if error.kind != "not_found":
-                raise
-        time.sleep(0.5)
-    raise TimeoutError(f"external Card {name} did not reach the expected invocation state")
-
-
 def check_success(client, run_id, name, system):
     record = client.call("RunRecordRequest", runId=run_id, card=path(name)).record
     summary = record.summary
@@ -282,7 +269,7 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     assert system in ("aarch64-linux", "x86_64-linux")
 
     run_id = start_run(client, "source")
-    run = wait_run(client, run_id, timeout=480)
+    run = wait_run(client, run_id)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     check_success(client, run_id, "work", system)
 
@@ -292,7 +279,7 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
         # Only the listener restarts: its journal and detached supervisor survive.
         # The same core life must resume this job under the default never-expire policy.
         restart()
-    assert wait_run(client, run_id, timeout=480).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     resumed = check_success(client, run_id, "slow", system)
     assert text(resumed.executionJobId) == text(started.executionJobId)
 
@@ -362,7 +349,7 @@ def test_remote_display_module_matches_local_source(project, core_factory, remot
     client = daemon.connect()
 
     def run_display(card_id):
-        run_id, status = run_and_wait(client, card_id, timeout=RUN_LIST_TIMEOUT_SECONDS + 60)
+        run_id, status = run_and_wait(client, card_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         record = client.call("RunRecordRequest", runId=run_id, card=path(card_id)).record
         if card_id == "remote":
@@ -418,7 +405,7 @@ def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_fa
         "head -c 142606336 /dev/zero | tr '\\000' x"))
     client = core_factory().connect()
     run_id = start_run(client, "source")
-    run = wait_run(client, run_id, timeout=480)
+    run = wait_run(client, run_id)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                          invocation=1, stream=LogStream.standard_output)
@@ -440,7 +427,7 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
     run_id = start_run(client, "later")
     running = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     client.call("RunCancelRequest", runId=run_id)
-    assert wait_run(client, run_id, timeout=60).state == RunState.cancelled
+    assert wait_run(client, run_id).state == RunState.cancelled
     cancelled = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record.summary
     assert cancelled.state == CardState.cancelled and cancelled.executionState == RemoteExecutionState.cancelled
     assert text(cancelled.executionJobId) == text(running.executionJobId)
@@ -476,7 +463,7 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
     client = core_factory().connect()
-    run_id, run = run_and_wait(client, "source", timeout=RUN_LIST_TIMEOUT_SECONDS + 60)
+    run_id, run = run_and_wait(client, "source")
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
 
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("work"))
@@ -521,7 +508,7 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     run_id = start_run(client, "fails", concurrency=2)
     running = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 2 and
                               row.executionState == RemoteExecutionState.running)
-    assert wait_run(client, run_id, timeout=RUN_LIST_TIMEOUT_SECONDS + 60).state == RunState.failed
+    assert wait_run(client, run_id).state == RunState.failed
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
     batch, = page.batches
     assert batch.complete and batch.failed and not batch.outputs
@@ -558,7 +545,7 @@ def test_remote_transfers_only_declared_outputs(project, core_factory, remote_br
     write(project, {"copy": definition}, [card("copy", "copy")], [])
     scratch = tmp_path / "scratch"
     c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
-    run_id, st = run_and_wait(c, "copy", timeout=900)
+    run_id, st = run_and_wait(c, "copy")
     assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
     record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
     saved = Path(text(record.outputs[0].filePath))
@@ -580,7 +567,7 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
                              "timeoutSeconds": 600, "_outputs": TXT, "_nix": DEFINITION_TOOLS_NIX}},
           [card("work", "work")], [])
     client = core_factory().connect()
-    run_id, status = run_and_wait(client, "work", timeout=600)
+    run_id, status = run_and_wait(client, "work")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     check_definition_tools(client, run_id)
 
@@ -591,6 +578,6 @@ def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory
     definition = bash("sleep 10", executionService=execution_service, timeoutSeconds=1, buildTimeoutSeconds=600)
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
     client = core_factory().connect()
-    run_id, status = run_and_wait(client, "deadline", timeout=900)
+    run_id, status = run_and_wait(client, "deadline")
     assert status.state == RunState.failed, log(client, run_id, "deadline", 2)
     assert status.failure.kind == FailureKind.timeout

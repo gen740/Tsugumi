@@ -19,12 +19,13 @@ import pytest
 from harness import remote_worker as R
 from harness.fixtures import worker_project
 from harness.scenario import Project
-from projects import FILE_FBS, start_run, wait_run
+from projects import FILE_FBS, start_run, wait_invocation, wait_run
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
@@ -57,6 +58,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.download_count = 0
         self.released = set()
         self.cancelled = set()
+        self.cancel_received = threading.Event()
         self.core_ids = set()
         self.probe_count = 0
         self.probe_times = []
@@ -97,6 +99,8 @@ class Gateway(socketserver.UnixStreamServer):
         }
         if logs is not None:
             files["logs.jsonl"] = logs
+        if result_fault == "log":
+            files["logs.jsonl"] = b'{"stream":1,"text":"message"} trailing data\n'
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
             entries[0]["path"] = "files/out/../../escape"
@@ -148,8 +152,8 @@ class Gateway(socketserver.UnixStreamServer):
         if kind == R.RequestBody.GetBlobRequest:
             self.download_count += 1
             data = self.results[R.string(body.digest)]
-            return R.reply(R.ReplyBody.BlobChunk, R.BlobChunkT(digest=body.digest, total=len(data), offset=body.offset,
-                                                             bytes=data[body.offset:body.offset + body.limit]))
+            return R.blob_chunk(body.digest, len(data), body.offset,
+                                data[body.offset:body.offset + body.limit])
         job = R.string(q.jobId)
         if kind == R.RequestBody.ReleaseRequest:
             self.released.add(job)
@@ -163,11 +167,12 @@ class Gateway(socketserver.UnixStreamServer):
             self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
-            self.cancelled.add(job)
             receipt = self.receipts[job]
             assert receipt["fingerprint"] == R.string(body.fingerprint)
             if receipt["state"] not in {"succeeded", "failed", "cancelled"}:
                 receipt["state"] = "cancelled"
+            self.cancelled.add(job)
+            self.cancel_received.set()
         else:
             assert kind == R.RequestBody.StatusRequest
         state = self.receipts.get(job, {"state": "missing"})
@@ -190,9 +195,12 @@ class Handler(socketserver.StreamRequestHandler):
                 if mode == "trickle":
                     self.wfile.write(struct.pack("<I", 8192) + b"\x00")
                 self.server.stalled.set()
-                while not self.server.resume.wait(0.05):
-                    if mode == "trickle":
+                if mode == "trickle":
+                    # Keep sending a partial frame until the test releases it.
+                    while not self.server.resume.wait(0.05):
                         self.wfile.write(b"\x00")
+                else:
+                    self.server.resume.wait()
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -201,18 +209,11 @@ class Handler(socketserver.StreamRequestHandler):
             self.wfile.write(R.frame(data))
 
 
-def wait_for_state(client, run_id, expected, card_state=None, timeout=15):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            rows = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
-            if rows and rows[-1].executionState == expected and (card_state is None or rows[-1].state == card_state):
-                return rows[-1]
-        except RpcFailure as error:
-            if error.kind != "not_found":
-                raise
-        time.sleep(0.1)
-    raise TimeoutError(f"invocation did not reach remote state {expected}")
+def wait_for_state(client, run_id, expected, card_state=None):
+    return wait_invocation(
+        client, run_id, "work",
+        lambda row: row.executionState == expected and (card_state is None or row.state == card_state),
+    )
 
 
 @pytest.fixture
@@ -272,7 +273,7 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
                    executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
     run_id = start_run(client, "work", propagate=False)
-    status = wait_run(client, run_id, timeout=10)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.unsupported
     assert remote_gateway.probe_count > 0
@@ -291,9 +292,9 @@ def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, co
     if live_resources:
         live = wait_for_state(client, run_id, RemoteExecutionState.running)
         remote_gateway.finish(text(live.executionJobId))
-        assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+        assert wait_run(client, run_id).state == RunState.succeeded
     else:
-        status = wait_run(client, run_id, timeout=10)
+        status = wait_run(client, run_id)
         assert status.state == RunState.failed
         assert status.failure.kind == FailureKind.unsupported
         assert remote_gateway.submit_count == 0
@@ -309,7 +310,7 @@ def test_stale_catalog_contract_does_not_prevent_probe(project, remote_gateway, 
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert remote_gateway.probe_count > 0
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
 
 
 def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway, core_factory, tmp_path):
@@ -324,7 +325,7 @@ def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway
     assert text(live.executionSystem) == "aarch64-linux"
     assert remote_gateway.probe_count > 0
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
 
 
 
@@ -345,7 +346,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     assert invocation["call_sha256"] in [R.string(d) for d in spec.inputBlobs]
     assert remote_gateway.blob_contents[invocation["archive_sha256"]] == b"test Nix derivation archive"
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
 
 
 def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
@@ -354,7 +355,7 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
     Project(project).card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
                           outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
-    status = wait_run(client, run_id, timeout=10)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     diagnostic = text(status.failure.diagnostic)
     assert remote_gateway.system in diagnostic and "package is unavailable on this platform" in diagnostic
@@ -376,7 +377,7 @@ def test_each_system_evaluates_without_host_builds(project, remote_gateway, core
     for system in ["aarch64-linux", "x86_64-linux", "aarch64-linux"]:
         remote_gateway.system = system
         run_id = start_run(client, "work", propagate=False)
-        live = wait_for_state(client, run_id, RemoteExecutionState.running, timeout=120)
+        live = wait_for_state(client, run_id, RemoteExecutionState.running)
         job_id = text(live.executionJobId)
         spec = remote_gateway.specs[job_id]
         assert R.string(spec.system) == system
@@ -388,7 +389,7 @@ def test_each_system_evaluates_without_host_builds(project, remote_gateway, core
             assert derivations[system] == R.string(spec.derivation)
         derivations[system] = R.string(spec.derivation)
         remote_gateway.finish(job_id)
-        assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+        assert wait_run(client, run_id).state == RunState.succeeded
     assert len(set(derivations.values())) == 2
 
 
@@ -401,7 +402,7 @@ def test_real_target_evaluation_error_prevents_transfer(project, remote_gateway,
         outputs=FILE_FBS, sources={"default.nix":
             '{ pkgs, inputs, params }: throw "unavailable for ${pkgs.stdenv.hostPlatform.system}"'}).save(client)
     run_id = start_run(client, "work", propagate=False)
-    status = wait_run(client, run_id, timeout=120)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     assert "unavailable for " + remote_gateway.system in text(status.failure.diagnostic)
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
@@ -417,15 +418,15 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     spec = remote_gateway.specs[text(live.executionJobId)]
     assert spec.cpuMillis == spec.memoryBytes == 0
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
 
 
-@pytest.mark.parametrize("fault", ["type", "escape", "oversize"])
+@pytest.mark.parametrize("fault", ["type", "escape", "oversize", "log"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job
     gateway.finish(job_id, result_fault=fault)
-    assert wait_run(client, run_id, timeout=10).state == RunState.failed
+    assert wait_run(client, run_id).state == RunState.failed
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert record.summary.state == CardState.failed and record.summary.failure
     assert not record.outputs
@@ -454,9 +455,7 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     assert interrupted.failure.kind == FailureKind.interrupted
     gateway.online = True
     gateway.registered_server = gateway.server_id
-    deadline = time.monotonic() + 10
-    while job_id not in gateway.cancelled and time.monotonic() < deadline:
-        time.sleep(0.1)
+    gateway.cancel_received.wait()
     assert job_id in gateway.cancelled
     assert job_id not in gateway.released
     assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
@@ -474,7 +473,7 @@ def test_network_cut_within_same_core_life_resumes(running_job):
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
     gateway.online = True
     gateway.finish(job_id)
-    assert wait_run(client, run_id, timeout=15).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     assert gateway.submit_count == 1
     assert gateway.core_ids == original
 
@@ -491,10 +490,11 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     gateway.stall = mode
     if request_cancel and operation == R.RequestBody.CancelRequest:
         client.call("RunCancelRequest", runId=run_id)
-    assert gateway.stalled.wait(5)
+    gateway.stalled.wait()
     if request_cancel and operation == R.RequestBody.StatusRequest:
         client.call("RunCancelRequest", runId=run_id)
     daemon.proc.send_signal(signal.SIGTERM)
+    # This test requires shutdown to be bounded even while the broker is silent.
     assert daemon.proc.wait(timeout=5) == 0
     assert gateway.receipts[job_id]["state"] == "running"
 
@@ -517,17 +517,17 @@ def test_maximum_log_budget_and_truncation_metadata_import(running_job):
     logs = entry * 128
     assert len(logs) == limit
     gateway.receipts[job_id]["log_truncated"] = True
-    wait_for_state(client, run_id, RemoteExecutionState.running)
-    deadline = time.monotonic() + 10
-    while True:
-        live = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
-        if live.record.summary.logTruncatedAtBytes == limit:
-            assert live.record.summary.state == CardState.running
-            break
-        assert time.monotonic() < deadline
-        time.sleep(0.05)
+    client.wait_notification(
+        lambda n: n.valueType == NotificationPayload.LogAvailable
+        and text(n.value.runId) == run_id
+        and n.value.card is not None and list(map(text, n.value.card.segments)) == ["work"]
+        and n.value.invocation == 1 and n.value.stream == LogStream.unspecified
+    )
+    live = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
+    assert live.record.summary.logTruncatedAtBytes == limit
+    assert live.record.summary.state == CardState.running
     gateway.finish(job_id, logs=logs, log_truncated=True)
-    assert wait_run(client, run_id, timeout=120).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     daemon.restart()
     client = daemon.connect()
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
@@ -552,7 +552,7 @@ def test_grade_condition_selects_and_records_registered_worker(project, remote_g
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert text(live.executionService) == "cluster"
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     rows = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
     assert text(rows[-1].executionService) == "cluster"
 
@@ -581,4 +581,4 @@ def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_f
     # Spending more than the call budget in transport/queue polling must not
     # make the core fail a call which the worker has not yet completed.
     remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded

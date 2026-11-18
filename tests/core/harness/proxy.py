@@ -33,13 +33,9 @@ class Gate:
         self._deliver: Callable[[], None] | None = None
         self._error: str | None = None
 
-    def wait(self, timeout: float = 5.0) -> Gate:
+    def wait(self) -> Gate:
         """Return this gate once its reply is captured; fail on disconnect."""
-        if not self._ready.wait(timeout):
-            raise TimeoutError(
-                f"reply {self.request_id} was not captured within {timeout}s; "
-                + self._diagnostic()
-            )
+        self._ready.wait()
         with self._lock:
             error = self._error if self.frame is None else None
         if error is not None:

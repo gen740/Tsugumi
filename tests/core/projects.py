@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import copy
 import json
-import time
 from pathlib import Path
 
-from tsugumi_client import new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunEventValue import RunEventValue
 
 MSG_FBS = """
 namespace demo;
@@ -127,6 +128,7 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
 
 def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4) -> str:
     """Starts a run from a Card ("id", "outer/inner" or a list of ids); its run_id."""
+    c.ensure_subscription()
     segments = card_path.split("/") if isinstance(card_path, str) else list(card_path)
     rev = c.call("ProjectInspectRequest").rev
     extra = {"maxConcurrency": concurrency} if concurrency else {}
@@ -135,16 +137,52 @@ def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4)
     return text(acc.run.runId)
 
 
-def wait_run(c, run_id: str, timeout: float = 1800):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        st = c.call("RunStatusRequest", runId=run_id)
-        if st.state in ENDED:
-            return st
-        time.sleep(0.05)
-    raise TimeoutError(f"run {run_id} did not finish within {timeout} s")
+def wait_run(c, run_id: str):
+    # Subscribe first so completion between the snapshot and the wait is queued.
+    c.ensure_subscription()
+    status = c.call("RunStatusRequest", runId=run_id)
+    if status.state in ENDED:
+        return status
+    note = c.wait_notification(
+        lambda n: n.valueType == NotificationPayload.RunEvent
+        and text(n.value.runId) == run_id
+        and n.value.valueType == RunEventValue.RunStatusChanged
+        and n.value.value.status.state in ENDED
+    )
+    return note.value.value.status
 
 
-def run_and_wait(c, card_path, propagate: bool = True, timeout: float = 600.0, concurrency: int | None = None):
+def wait_invocation(c, run_id, card_path, check):
+    c.ensure_subscription()
+    segments = card_path.split("/")
+    try:
+        rows = c.call("RunInvocationsRequest", runId=run_id, card=path(*segments)).records or []
+    except RpcFailure as error:
+        if error.kind != "not_found":
+            raise
+        rows = []
+    if rows and check(rows[-1]):
+        return rows[-1]
+
+    # A finished run cannot produce another invocation update.
+    def matches(note):
+        if note.valueType != NotificationPayload.RunEvent or text(note.value.runId) != run_id:
+            return False
+        event = note.value
+        if event.valueType == RunEventValue.RunFinished:
+            return True
+        if event.valueType != RunEventValue.RunCardChanged:
+            return False
+        row = event.value.invocation
+        return [text(segment) for segment in row.card.segments] == segments and check(row)
+
+    event = c.wait_notification(matches).value
+    assert event.valueType == RunEventValue.RunCardChanged, (
+        f"run {run_id} finished before {card_path} reached the expected invocation state"
+    )
+    return event.value.invocation
+
+
+def run_and_wait(c, card_path, propagate: bool = True, concurrency: int | None = None):
     run_id = start_run(c, card_path, propagate, concurrency)
-    return run_id, wait_run(c, run_id, timeout)
+    return run_id, wait_run(c, run_id)
