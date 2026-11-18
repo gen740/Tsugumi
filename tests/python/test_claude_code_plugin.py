@@ -13,7 +13,6 @@ import queue
 import re
 import shutil
 import shlex
-import signal
 import stat
 import subprocess
 import threading
@@ -24,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.file_events import terminate_process, wait_for_file
 from conftest import BUILD, TSUGUMID, WEB_DIST, write_project
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,23 +84,10 @@ def stop_resident_services(root: Path):
                 pid = int(json.loads(ready.read_text())["pid"])
                 if pid > 1 and pid != os.getpid():
                     pids.add(pid)
-                    os.kill(pid, signal.SIGTERM)
             except (FileNotFoundError, ProcessLookupError, KeyError):
                 pass
-    deadline = time.monotonic() + 5
-    while pids and time.monotonic() < deadline:
-        for pid in tuple(pids):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                pids.remove(pid)
-        if pids:
-            time.sleep(0.02)
     for pid in pids:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        terminate_process(pid)
     directory = _socket_directories.pop(root, None)
     if directory:
         directory.cleanup()
@@ -205,6 +192,7 @@ class Events(threading.Thread):
         self.r = self.c.getresponse()
         assert self.r.status == 200
         self.events: list[dict] = []
+        self.closed = False
         self.changed = threading.Condition()
 
     def run(self):
@@ -215,12 +203,17 @@ class Events(threading.Thread):
                     with self.changed:
                         self.events.append(json.loads(line[5:]))
                         self.changed.notify_all()
-        except Exception:
+        except (OSError, http.client.HTTPException):
             pass
+        finally:
+            with self.changed:
+                self.closed = True
+                self.changed.notify_all()
 
-    def wait(self, predicate, timeout=60):
+    def wait(self, predicate):
         with self.changed:
-            assert self.changed.wait_for(predicate, timeout), self.events
+            self.changed.wait_for(lambda: self.closed or predicate())
+            assert predicate(), self.events
 
     def shows(self, project: Path | None):
         """Tells the server what this page shows (none: Home), as the page does."""
@@ -245,11 +238,7 @@ def plugin_at(root, **environment):
         mcp.close()
         try:
             info = json.loads((data / "server.json").read_text())
-            os.kill(info["pid"], signal.SIGTERM)
-            for _ in range(100):
-                if not (data / "server.json").exists():
-                    break
-                time.sleep(0.1)
+            terminate_process(info["pid"])
         except (FileNotFoundError, ProcessLookupError):
             pass
         stop_resident_services(root)
@@ -320,10 +309,12 @@ def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waitin
     else:
         request_id = mcp.send("tools/call", {"name": tool, "arguments": arguments})
     try:
+        wait_for_file(root / "mock/web-wait.started")
+        # The external Agent tool history can only be read through agent_events.
         deadline = time.monotonic() + 10
         while True:
             started = [e["event"]["id"] for e in events() if e["event"]["kind"] == "toolStarted" and e["event"]["id"] not in previous]
-            if started and (root / "mock/web-wait.started").exists():
+            if started:
                 break
             assert time.monotonic() < deadline, "external wait did not start"
             time.sleep(0.01)
@@ -337,6 +328,7 @@ def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waitin
             mcp.close()
         else:
             connection.close()
+        # No push event is available for an external call ending after disconnect.
         deadline = time.monotonic() + 3
         while True:
             finished = [e["event"] for e in events() if e["event"]["kind"] == "toolFinished" and e["event"]["id"] == started[0]]

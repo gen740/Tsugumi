@@ -132,17 +132,13 @@ def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
 
 def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path):
     """Cancellation skips partial output transfer, even when the worker left a FIFO."""
-    from projects import start_run, wait_run
+    from projects import start_run, wait_for_log, wait_run
     from Tsugumi.Data.FailureKind import FailureKind
-    import time
-    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; sleep 60', outputs=FILE_FBS)
+    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; exec tail -f /dev/null', outputs=FILE_FBS)
     write(tmp_path / "p", {"wait": waiting}, [card("wait", "wait")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id = start_run(c, "wait")
-    until = time.monotonic() + 600
-    while "ready" not in log(c, run_id, "wait"):
-        assert time.monotonic() < until, "worker did not reach cancellation point"
-        time.sleep(0.02)
+    wait_for_log(c, run_id, "wait", 1, lambda log: "ready" in text(log.text or b""))
     c.call("RunCancelRequest", runId=run_id)
     assert wait_run(c, run_id).state == RunState.cancelled
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("wait")).records
@@ -250,7 +246,9 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   snprintf(data, sizeof data, "%s/data", c->output_directory);
   snprintf(next, sizeof next, "%s/next", c->working_directory);
   snprintf(padding, sizeof padding, "%s/padding", c->output_directory);
-  /* Slow the snapshot so replacements continue while the core reads it. */
+  /* Keep replacements active while the core reads the snapshot. The Card
+     receives no event for individual reads, so the producer varies the
+     filesystem state independently. */
   FILE* f = fopen(padding, "w");
   if (!f || ftruncate(fileno(f), 8 * 1024 * 1024)) return 1;
   fclose(f);

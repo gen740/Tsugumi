@@ -12,7 +12,6 @@ import os
 import random
 import socket
 import struct
-import time
 import uuid
 
 from harness.transport import hello_frame, port_of, unix_connection, unix_frame, ws_connect, ws_frame
@@ -99,13 +98,12 @@ def send_in_pieces(connection, data, rnd):
 
 
 def drain(connection):
-    """Read bounded replies; an intentionally incomplete frame may remain idle."""
-    deadline = time.monotonic() + 0.2
+    """Half-close incomplete frames so the receiver sees EOF and can close."""
     try:
-        while (remaining := deadline - time.monotonic()) > 0:
-            connection.settimeout(remaining)
-            if not connection.recv(65536):
-                return
+        connection.shutdown(socket.SHUT_WR)
+        connection.settimeout(None)
+        while connection.recv(65536):
+            pass
     except (ConnectionError, socket.timeout):
         pass
     except OSError as error:
@@ -115,7 +113,7 @@ def drain(connection):
 
 def still_serves(daemon, *, websocket=False):
     with daemon.connect(websocket=websocket) as client:
-        assert client.call("ProjectInspectRequest", timeout=5).rev == 0
+        assert client.call("ProjectInspectRequest").rev == 0
 
 
 def test_unix_frames_of_any_shape(daemon):

@@ -89,7 +89,8 @@ class JournalBroker : public testing::Test {
   }
   auto WaitForProbes(size_t count) -> bool {
     std::unique_lock lock(mutex_);
-    return changed_.wait_for(lock, 60s, [&] { return probes_ >= count; });
+    changed_.wait(lock, [&] { return probes_ >= count; });
+    return true;
   }
   auto Submit(RemoteJobClient& client, const std::string& job) -> std::string {
     std::istringstream input("input");

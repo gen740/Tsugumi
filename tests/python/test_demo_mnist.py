@@ -45,7 +45,7 @@ def mnist(tmp_path):
 
 
 def succeeded(c, run_id):
-    st = wait_run(c, run_id, timeout=3000)
+    st = wait_run(c, run_id)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
 
 

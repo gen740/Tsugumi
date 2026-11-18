@@ -11,7 +11,7 @@ import pytest
 from harness.fixtures import worker_project
 from harness.proxy import ReplyProxy
 from harness.scenario import Project, STRING_OUTPUT, wait_run
-from projects import builtin_project, start_run
+from projects import builtin_project, start_run, wait_for_log
 from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
@@ -373,6 +373,7 @@ def test_sdk_prepare_status_and_read(builtin_client):
     op = new_id()
     acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
     assert text(acc.opId) == op
+    # SDK preparation has a status RPC but emits no completion notification.
     deadline = time.monotonic() + 5
     while True:
         st = c.call("CardSDKStatusRequest", opId=op)
@@ -411,10 +412,12 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
 
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
+    import os
     release = tmp_path / "release"
+    os.mkfifo(release)
     body = f"""
         head -c {136 << 20} /dev/zero | tr '\\000' x
-        while [ ! -e {shlex.quote(str(release))} ]; do sleep 0.05; done
+        read -r release < {shlex.quote(str(release))}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
     Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
@@ -423,13 +426,8 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     args = dict(runId=run_id, card=path("work"), invocation=1)
     limit = 128 << 20
     try:
-        deadline = time.monotonic() + 60
-        while True:
-            stderr = client.call("LogRangeRequest", **args, stream=LogStream.standard_error)
-            if stderr.logTruncatedAtBytes is not None:
-                break
-            assert time.monotonic() < deadline
-            time.sleep(0.05)
+        stderr = wait_for_log(client, run_id, "work", LogStream.standard_error,
+                              lambda log: log.logTruncatedAtBytes is not None)
         assert stderr.logTruncatedAtBytes == limit and not stderr.truncated
         live = client.call("RunRecordRequest", **args).record.summary
         assert live.state == CardState.running
@@ -437,7 +435,9 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True)
         assert 120 << 20 < stdout.sizeBytes <= limit
     finally:
-        release.touch()
+        if client.call("RunStatusRequest", runId=run_id).state == RunState.running:
+            with release.open("w") as gate:
+                gate.write("release\n")
     assert wait_run(client, run_id).state == RunState.succeeded
     journal = client.call("LogRangeRequest", **args, stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit

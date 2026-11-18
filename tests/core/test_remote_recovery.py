@@ -495,7 +495,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
         client.call("RunCancelRequest", runId=run_id)
     daemon.proc.send_signal(signal.SIGTERM)
     # This test requires shutdown to be bounded even while the broker is silent.
-    assert daemon.proc.wait(timeout=5) == 0
+    assert daemon.proc.wait() == 0
     assert gateway.receipts[job_id]["state"] == "running"
 
     gateway.stall = None

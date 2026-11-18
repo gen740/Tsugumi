@@ -44,7 +44,9 @@ const ready = JSON.stringify({ protocol: 1, pid: process.pid,
   unix_socket: 'fixture-agent', host_socket: 'fixture-host', user_token: 'fixture', external_token: 'fixture' });
 fs.writeFileSync(path.join(state, 'host.ready'), ready);
 process.stdout.write(ready + '\\n');
-setTimeout(() => {}, 3000);
+// Keep the fake host alive until the test sends TERM.
+const { port1 } = new (require('node:worker_threads').MessageChannel)();
+port1.on('message', () => {});
 `, { mode: 0o700 })
   const ready = await new CoreHost(directory, directory, {} as Environments).ready()
   try {

@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import json
 import shutil
-import time
 
 import pytest
 
 from conftest import ROOT, demo_environment
-from projects import ENDED, start_run, wait_run
+from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
 from tsugumi_client import line_chart_series, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
@@ -291,29 +290,20 @@ def test_live_stream_complete_and_ordered(live, concurrency):
 
 
 def test_live_stream_keeps_its_pace(live):
-    # A few samples at the demo's 100 ms: the loop waits between them.
+    # The demo should retain all five samples with its configured interval.
+    interval_ms = 100
     c = connect(live)
-    edit_card(live, c, "settings", lambda b: set_param(b, "samples", 5))
+    def configure(body):
+        set_param(body, "samples", 5)
+        set_param(body, "interval_ms", interval_ms)
+    edit_card(live, c, "settings", configure)
     rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded
     xs, calls = live_points(c, rid)
     assert calls == 5 and xs == [0.0, 1.0, 2.0, 3.0, 4.0]
     # Measured by the core from start to end: at least the four waits between five samples.
-    assert st.endedAt - st.startedAt >= 400, st.endedAt - st.startedAt
-
-
-def first_display(c, rid: str, timeout: float = 1800):
-    """The run's first Display; a run that ends without one fails the test
-    at once (a build that could not download, say), never after the timeout."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            return c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=5)
-        except TimeoutError:
-            st = c.call("RunStatusRequest", runId=rid)
-            assert st.state not in ENDED, f"the run ended ({st.state}) before showing anything: {st.failure}"
-    raise TimeoutError("no Display")
+    assert st.endedAt - st.startedAt >= (calls - 1) * interval_ms, st.endedAt - st.startedAt
 
 
 def test_live_stream_cancel_and_rerun(live):
@@ -334,17 +324,10 @@ def test_live_stream_cancel_and_rerun(live):
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
            changes=[change("PutSource", path=source, bytes=list(code.encode()), baseHash=text(src.hash))])
     def wait_for_blocked_sample(rid):
-        def card_event(n, card, state):
-            return (n.valueType == NotificationPayload.RunEvent and
-                    text(n.value.runId) == rid and n.value.valueType == RunEventValue.RunCardChanged and
-                    [text(s) for s in n.value.value.invocation.card.segments] == [card] and
-                    n.value.value.invocation.state == state)
-
-        # A displayed value can precede the invocation's saved record. Wait
-        # for that record and for the next generator invocation to be active.
-        c.wait_notification(lambda n: card_event(n, "plot", CardState.succeeded), timeout=60)
-        c.wait_notification(lambda n: card_event(n, "generate", CardState.running) and
-                            n.value.value.invocation.invocation == 2, timeout=60)
+        # Display can precede the saved invocation and the next generator call.
+        wait_invocation(c, rid, "plot", lambda row: row.state == CardState.succeeded)
+        wait_invocation(c, rid, "generate",
+                        lambda row: row.state == CardState.running and row.invocation == 2)
 
     rid = start_run(c, ["start"])
     first_display(c, rid)
@@ -353,18 +336,17 @@ def test_live_stream_cancel_and_rerun(live):
     # The reply acknowledges the request before run finalization; it does not
     # join the worker. The run cannot finish normally past its first sample.
     assert st.state == RunState.cancelling
-    final = wait_run(c, rid, timeout=10)
+    final = wait_run(c, rid)
     assert final.state == RunState.cancelled
     xs, calls = live_points(c, rid)
     assert calls == 1 and xs == [0.0]  # the last chart is kept
     # A new run starts the reused plotting worker's series from the beginning.
     rid2 = start_run(c, ["start"])
-    first = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
-                                text(n.value.display.runId) == rid2, timeout=60)
+    first = first_display(c, rid2)
     assert line_chart_series(first.value.display.value)[0].x == (0.0,)
     wait_for_blocked_sample(rid2)
     assert c.call("RunCancelRequest", runId=rid2).state == RunState.cancelling
-    assert wait_run(c, rid2, timeout=10).state == RunState.cancelled
+    assert wait_run(c, rid2).state == RunState.cancelled
 
 
 def test_crash_marks_run_interrupted_and_recovers(live):
@@ -383,7 +365,7 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     assert c.call("RunStatusRequest").runId in (rid.encode(), rid)
     rid2 = start_run(c, ["start"])
     c.call("RunCancelRequest", runId=rid2)
-    assert wait_run(c, rid2, timeout=20).state == RunState.cancelled
+    assert wait_run(c, rid2).state == RunState.cancelled
 
 
 
@@ -409,15 +391,16 @@ def test_plots_draw_into_the_displays(plots_demo):
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path(c) for c in ("summary", "diffusion", "explore", "spread")])
     rid = start_run(c, ["start"])
     frames = []
-    first_display(c, rid)
     while True:
-        try:
-            n = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
-                                    text(n.value.display.runId) == rid, timeout=5)
-            frames.append(text(n.value.display.card.segments[-1]))
-        except TimeoutError:
-            if c.call("RunStatusRequest", runId=rid).state in ENDED:
-                break
+        note = c.wait_notification(lambda n: (
+            n.valueType == NotificationPayload.DisplayUpdated and text(n.value.display.runId) == rid
+        ) or (
+            n.valueType == NotificationPayload.RunEvent and text(n.value.runId) == rid
+            and n.value.valueType == RunEventValue.RunFinished
+        ))
+        if note.valueType == NotificationPayload.RunEvent:
+            break
+        frames.append(text(note.value.display.card.segments[-1]))
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, (stderr(c, rid, "summary"), stderr(c, rid, "diffusion"))
     assert frames.count("diffusion") >= 3, frames  # the animation was seen while it played

@@ -552,6 +552,7 @@ TEST_F(AgentProjectFixture,
   };
   ASSERT_TRUE(selected_skill().Code().empty());
   EXPECT_FALSE(model.WaitForRequests(1, 100ms));
+  // Agent exposes these permission transitions through snapshot reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("permission") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -614,6 +615,7 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ASSERT_TRUE(start.Code().empty());
   EXPECT_FALSE(model.WaitForRequests(1, 100ms));
   std::string approval;
+  // Agent exposes these permission transitions through snapshot reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =

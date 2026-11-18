@@ -8,6 +8,6 @@ def test_second_daemon_is_refused(daemon):
     second = Daemon(daemon.project)
     try:
         second.start(expect_exit=True)
-        assert second.proc.wait(timeout=10) == 4
+        assert second.proc.wait() == 4
     finally:
         second.cleanup()

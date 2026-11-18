@@ -27,6 +27,7 @@ import pytest
 
 from conftest import WEB_DIST, BUILD, WORKER, SDK, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
+from harness.file_events import process_file, wait_for_file
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
@@ -654,16 +655,23 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     root, _, prefs, port, cookie = vm_server
     # Start hostd, then act as the app through Host RPC.
     api(port, cookie, "GET", "/api/settings")
-    revision, before = core_settings(root, {
-        "agent.provider": "openai", "agent.model.openai": "from-the-app",
-        "agent.permissions.allowed": ["network", "nix_source"],
-    })
-    # The page's host reloads its settings when the core announces the change.
-    for _ in range(50):
+    stream = http.client.HTTPConnection("127.0.0.1", port)
+    try:
+        stream.request("GET", "/api/events", headers={"Cookie": cookie})
+        with stream.getresponse() as events:
+            assert events.status == 200
+            revision, before = core_settings(root, {
+                "agent.provider": "openai", "agent.model.openai": "from-the-app",
+                "agent.permissions.allowed": ["network", "nix_source"],
+            })
+            for line in events:
+                if line.startswith(b"data:") and json.loads(line[5:]).get("type") == "settingsChanged":
+                    break
+            else:
+                pytest.fail("settings event stream closed before the change")
         s = api(port, cookie, "GET", "/api/settings")
-        if s["provider"] == "openai":
-            break
-        time.sleep(0.1)
+    finally:
+        stream.close()
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)
@@ -737,21 +745,18 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
     stubs.mkdir()
     opened = tmp_path / "opened"
     for name in ("open", "xdg-open"):
-        executable(stubs / name, f'#!/bin/sh\necho "$1" >> {opened}\n')
+        executable(stubs / name, f'#!/bin/sh\nprintf "%s\\n" "$1" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
     project = tmp_path / "project with spaces"
     write_project(project)
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
     first = subprocess.Popen(["node", str(SERVER), "--port", "0", "--reuse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         port = int(re.search(r":(\d+)/\?key=", first.stdout.readline()).group(1))
-        deadline = time.monotonic() + 10
-        while not (data / "server.json").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert process_file(first, data / "server.json") is not None
         r = subprocess.run(["node", str(SERVER), "--open", "--reuse", str(project)], capture_output=True, text=True, env=env, timeout=30)
         assert r.returncode == 0, r.stderr
         assert "動いています" in r.stdout
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_file(opened)
         from urllib.parse import parse_qs, urlparse
         shown = urlparse(opened.read_text().strip())
         assert shown.port == port
@@ -769,9 +774,7 @@ def test_another_build_is_refused_even_with_the_same_release_version(tmp_path):
     first = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         assert "Tsugumi web UI:" in first.stdout.readline()
-        deadline = time.monotonic() + 10
-        while not (data / "server.json").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert process_file(first, data / "server.json") is not None
         info = json.loads((data / "server.json").read_text())
         other = tmp_path / "other/web/dist/server.js"
         other.parent.mkdir(parents=True)
@@ -794,13 +797,11 @@ def test_simultaneous_commands_end_with_one_host(tmp_path):
     processes = [subprocess.Popen(["node", str(SERVER), "--reuse", "--port", "0"],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) for _ in range(2)]
     try:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and all(p.poll() is None for p in processes):
-            time.sleep(0.05)
-        hosts = [p for p in processes if p.poll() is None]
-        assert len(hosts) == 1
-        assert sorted(p.returncode for p in processes if p.poll() is not None) == [0]
-        assert json.loads((data / "server.json").read_text())["pid"] == hosts[0].pid
+        winner = json.loads(wait_for_file(data / "server.json").read_text())["pid"]
+        host, = [process for process in processes if process.pid == winner]
+        reused, = [process for process in processes if process.pid != winner]
+        assert reused.wait() == 0
+        assert host.poll() is None
     finally:
         for process in processes:
             if process.poll() is None:
@@ -815,14 +816,12 @@ def test_in_wsl_the_page_opens_in_the_browser_of_windows(tmp_path):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     opened = tmp_path / "opened"
-    executable(stubs / "rundll32.exe", f'#!/bin/sh\necho "$@" >> {opened}\n')
+    executable(stubs / "rundll32.exe", f'#!/bin/sh\nprintf "%s\\n" "$*" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
     p = subprocess.Popen(["node", str(SERVER), "--port", "0", "--open"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         port = int(re.search(r":(\d+)/\?key=", p.stdout.readline()).group(1))
-        deadline = time.monotonic() + 10
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert process_file(p, opened) is not None
         assert re.fullmatch(rf"url\.dll,FileProtocolHandler http://127\.0\.0\.1:{port}/\?key=[0-9a-f]+\n", opened.read_text())
     finally:
         p.terminate()

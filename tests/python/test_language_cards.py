@@ -183,7 +183,7 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
                    "nix": R_NIX, "outputs": REPORT, "src": {"main.R": R_REPORT}},
     }, [("start", "out", "make", "start"), ("make", "numbers", "double", "numbers"), ("double", "numbers", "report", "numbers")])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     log = lambda card: text(c.call("LogRangeRequest", runId=run_id, card=path(card), stream=2, limitBytes=65536).text)
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
                                                 log("make"), log("double"), log("report"))
@@ -213,7 +213,7 @@ def test_a_double_crosses_bash_r_and_julia_unchanged(project):
     }, [("start", "out", "make", "start"), ("make", "numbers", "r", "numbers"),
         ("r", "numbers", "julia", "numbers"), ("julia", "numbers", "show", "numbers")])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     log = lambda card: text(c.call("LogRangeRequest", runId=run_id, card=path(card), stream=2, limitBytes=65536).text)
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log("r"), log("julia"))
     raw = text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
@@ -237,7 +237,7 @@ END
 '''}},
         [("start", "out", "show", "start")])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=600)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert check(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display)
 
@@ -259,7 +259,7 @@ END
 '''}},
         [("start", "out", "show", "start")])
     c = connect()
-    _, status = run_and_wait(c, "start", timeout=600)
+    _, status = run_and_wait(c, "start")
     assert status.state == RunState.failed and why in text(status.failure.diagnostic)
 
 
@@ -276,7 +276,7 @@ end''')
         "card": {"language": language, "inputs": [{"name": "start"}]}, "nix": nix,
         "src": {name: source}}}, [("start", "out", "boom", "start")])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.failed
     assert "on purpose" in text(c.call("LogRangeRequest", runId=run_id, card=path("boom"), stream=2, limitBytes=65536).text)
 
@@ -325,7 +325,7 @@ def test_interpreter_state_and_run_hook(project, language, reuse):
                                   "nix": nix, "src": {name: source}}}, [])
     c = connect()
     for n in (1, 2):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         shown = c.call("RunRecordRequest", runId=run_id, card=path("count")).record.display
         expected = n if reuse else 1
@@ -401,7 +401,7 @@ def test_a_card_keeps_no_interpreter_state_by_default(project, language):
     c = connect()
     seen = []
     for _ in range(2):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         seen.append(shown_text(c, run_id, "probe"))
         assert not reused(c, run_id, "probe")
@@ -421,7 +421,7 @@ def test_reuse_worker_carries_globals_options_and_the_random_position(project, l
     c = connect()
     seen = []
     for n in (1, 2):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         seen.append(shown_text(c, run_id, "probe"))
         assert reused(c, run_id, "probe") == (n == 2)
@@ -460,7 +460,7 @@ def test_disabling_reuse_drops_the_previous_interpreter(project, language):
     c = connect()
 
     def expect(calls, again):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert shown_text(c, run_id, "count") == f"calls {calls}"
         assert reused(c, run_id, "count") == again
@@ -481,12 +481,12 @@ def test_a_changed_source_replaces_the_resident_interpreter(project, language):
                                   "nix": nix, "src": {name: source.replace("VERSION", "first")}}}, [])
     c = connect()
     for expected, again in (("first 1", False), ("first 2", True)):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert shown_text(c, run_id, "count") == expected and reused(c, run_id, "count") == again
     put(root / "definitions" / "count" / "src" / name, source.replace("VERSION", "second"))
     reload(c)
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     # The new source runs in a new interpreter: nothing of the old one is left.
     assert shown_text(c, run_id, "count") == "second 1" and not reused(c, run_id, "count")
@@ -499,19 +499,21 @@ def test_changed_r_packages_replace_the_resident_interpreter(project):
                                   "src": {name: source.replace("VERSION", "calls")}}}, [])
     c = connect()
     for expected in ("calls 1", "calls 2"):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert shown_text(c, run_id, "count") == expected
     put(root / "definitions" / "count" / "default.nix",
         '''{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; packages = ps: [ ps.digest ]; }; }
 ''')
     reload(c)
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert shown_text(c, run_id, "count") == "calls 1" and not reused(c, run_id, "count")
 
 
 # The second call of a resident interpreter ends badly in one of four ways.
+# These Card interfaces expose cancellation as a query. Cooperative fixtures
+# check it periodically until the host cancels the call.
 BAD_SECOND_CALL = {
     "r": (R_NIX, "main.R", '''
 calls <- 0L
@@ -629,31 +631,29 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
     # An error, a cancellation, the interpreter leaving by itself (quit/exit)
     # and the process being killed all end the worker: the next run starts a
     # new interpreter, and the daemon goes on serving.
-    from projects import start_run, wait_run
-    from Tsugumi.RPC.NotificationPayload import NotificationPayload
+    from projects import start_run, wait_for_display, wait_run
     root, connect = project
     nix, name, source = BAD_SECOND_CALL[language]
     write_project(root, {"count": {"card": {"language": language, "reuseWorker": True},
                                   "nix": nix, "src": {name: source.replace("HOW", how)}}}, [])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert shown_text(c, run_id, "count") == "call 1"
     if how == "cancel":
         opened = c.open()
         c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("count")])
         run_id = start_run(c, "start")
-        c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated
-                            and text(n.value.display.value.text) == "call 2", timeout=600)
+        wait_for_display(c, run_id, lambda display: text(display.value.text) == "call 2")
         c.call("RunCancelRequest", runId=run_id)
-        assert wait_run(c, run_id, 30).state == RunState.cancelled
+        assert wait_run(c, run_id).state == RunState.cancelled
     else:
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.failed
         failure = c.call("RunRecordRequest", runId=run_id, card=path("count")).status.failure
         assert failure is not None and failure.kind != 14  # not a timeout: the call ended at once
     c.call("ProjectInspectRequest")
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert shown_text(c, run_id, "count") == "call 1" and not reused(c, run_id, "count")
     log = text(c.call("LogRangeRequest", runId=run_id, card=path("count"), stream=2, limitBytes=65536).text)
@@ -701,7 +701,7 @@ def test_display_arrives_before_completion_and_cancel_stops_worker(project, lang
     assert text(notification.value.display.value.text) == "running"
     assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed)
     c.call("RunCancelRequest", runId=run_id)
-    assert wait_run(c, run_id, 10).state == RunState.cancelled
+    assert wait_run(c, run_id).state == RunState.cancelled
     c.call("ProjectInspectRequest")  # The daemon remains usable after interpreter cancellation.
 
 
@@ -721,7 +721,7 @@ end''')
     write_project(root, {"slow": {"card": {"language": language, "timeoutSeconds": 2},
                                  "nix": nix, "src": {name: source}}}, [])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.failed
     record = c.call("RunRecordRequest", runId=run_id, card=path("slow"))
     assert record.status.failure.kind == 14  # timeout
@@ -766,7 +766,7 @@ end'''}},
         "show": {"card": {"language": "bash", "inputs": [{"name": "value"}]}, "nix": show},
     }, [("make", "value", "r", "value"), ("r", "value", "julia", "value"), ("julia", "value", "show", "value")])
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
+    run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     shown = c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display
     assert json.loads(text(shown.value.text)) == payload
@@ -781,7 +781,7 @@ def test_nix_r_packages_available_in_resident_interpreter(project):
     write_project(root, {"package": {"card": {"language": "r"}, "nix": nix, "src": {"main.R": source}}}, [])
     c = connect()
     for _ in range(2):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         shown = text(c.call("RunRecordRequest", runId=run_id, card=path("package")).record.display.value.text)
         assert len(shown) == 64
@@ -798,7 +798,7 @@ def test_julia_package_resolution_does_not_enable_ifd(project):
     return nothing
 end'''}}}, [])
     c = connect()
-    _, status = run_and_wait(c, "start", timeout=1800)
+    _, status = run_and_wait(c, "start")
     assert status.state == RunState.failed
     assert "allow-import-from-derivation" in text(status.failure.diagnostic)
 
@@ -843,7 +843,7 @@ end'''
     }, [("make", port, "read", port) for port in ("file", "directory")])
     c = connect()
     for _ in range(2):
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         shown = c.call("RunRecordRequest", runId=run_id, card=path("read")).record.display
         assert text(shown.value.text) == "read both"

@@ -18,7 +18,6 @@ import socket
 import struct
 import sys
 import threading
-import time
 
 import flatbuffers
 
@@ -33,6 +32,9 @@ from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from harness.file_events import wait_for_file  # noqa: E402
 
 
 MAX_FRAME = 16 << 20
@@ -107,6 +109,8 @@ class Worker:
         self.data = Channel(3)
         self.control = Channel(4)
         self.condition = threading.Condition()
+        self.changed, self.wake = socket.socketpair()
+        self.wake.setblocking(False)
         self.cancelled = set()
         self.calls = 0
         self.call_id = 0
@@ -135,23 +139,27 @@ class Worker:
         if entered:
             marker = Path(entered)
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"call": self.call_id, "pid": os.getpid(), "parent_pid": os.getppid()}))
+            temporary = marker.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"call": self.call_id, "pid": os.getpid(), "parent_pid": os.getppid()}))
+            temporary.replace(marker)
         release = action.get("release")
         if not forever and not release:
             raise ValueError("gate needs a release path")
-        deadline = time.monotonic() + float(action.get("timeout", 10))
-        while forever or not Path(release).exists():
-            # Startup happens before control_loop: observe only EOF, without
-            # consuming a cancellation that belongs to the first call.
-            if self.call is None and select.select([self.control.socket], [], [], 0)[0]:
-                if not self.control.socket.recv(1, socket.MSG_PEEK):
-                    os._exit(0)
-            if not action.get("ignore_cancel", False):
-                self.check_cancel()
-            if not forever and time.monotonic() >= deadline:
-                raise TimeoutError(f"worker gate was not released: {release}")
+        ignore_cancel = action.get("ignore_cancel", False)
+        if forever:
+            if ignore_cancel:
+                # The control thread exits the worker when the owner closes
+                # the socket, even for a deliberately uncooperative call.
+                threading.Event().wait()
             with self.condition:
-                self.condition.wait(0.01)
+                self.condition.wait_for(lambda: self.call_id in self.cancelled)
+        else:
+            marker = Path(release)
+            while not marker.exists():
+                self.check_cancel()
+                if wait_for_file(marker, exited=self.changed.fileno()) is not None:
+                    break
+                self.changed.recv(4096)
         self.check_cancel()
 
     def failure(self, kind, message):
@@ -189,7 +197,7 @@ class Worker:
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text(json.dumps({"call": self.call_id, "pid": os.getpid()}))
                 with self.condition:
-                    self.condition.wait_for(lambda: self.call_id in self.cancelled, timeout=10)
+                    self.condition.wait_for(lambda: self.call_id in self.cancelled)
                 self.failure(action.get("kind", "worker_failed"), action.get("message", "scripted worker failure"))
                 return False
             elif operation == "failure":
@@ -230,9 +238,9 @@ class Worker:
         return True
 
     def serve(self):
+        threading.Thread(target=self.control_loop, daemon=True).start()
         if not self.actions(self.scenario.get("startup", []), {}):
             return
-        threading.Thread(target=self.control_loop, daemon=True).start()
         while message := self.data.receive():
             try:
                 if message.valueType != WorkerPayload.WorkerCall or not message.callId or message.callId <= self.call_id:

@@ -50,7 +50,7 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
     try:
         c = d.client()
         c.hello()
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         if shown:
             record = c.call("RunRecordRequest", runId=run_id, card=path("multiply"))
@@ -71,7 +71,7 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
     try:
         c = d.client()
         c.hello()
-        run_id, status = run_and_wait(c, "start", timeout=1800)
+        run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded
         display = c.call("RunRecordRequest", runId=run_id, card=path("cloud")).record.display.value
         identity = text(display.module)
@@ -108,7 +108,7 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
             assert len(binary) < 32768
         else:
             assert len(code) < 10000
-        again_id, again = run_and_wait(c, "start", timeout=1800)
+        again_id, again = run_and_wait(c, "start")
         assert again.state == RunState.succeeded
         again_display = c.call("RunRecordRequest", runId=again_id, card=path("cloud")).record.display.value
         assert text(again_display.module) == identity
@@ -137,7 +137,7 @@ def test_line_chart_uses_binary_view_input(tmp_path):
     try:
         c = d.client()
         c.hello()
-        rid, status = run_and_wait(c, "start", timeout=1800)
+        rid, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded
         display = c.call("RunRecordRequest", runId=rid, card=path("cloud")).record.display
         assert display.valueType == 7

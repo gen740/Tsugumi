@@ -4,6 +4,7 @@ import Foundation
 import Testing
 @testable import TsugumiAgentClient
 import TsugumiRPC
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 
@@ -28,7 +29,7 @@ import TsugumiRPC
 
     var session: ProjectSession { sessions[0] }
 
-    func start(slow: Double, options: [String], managed: Bool) async throws {
+    func start(options: [String], managed: Bool) async throws {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let state = directory.appendingPathComponent("state")
       await environment.install(state: state, support: directory.appendingPathComponent("support"))
@@ -49,7 +50,7 @@ import TsugumiRPC
       try releaseStream()
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
-                         "--port", "0", "--slow", "\(slow)", "--stream-release", streamRelease.path] + options
+                         "--port", "0", "--stream-release", streamRelease.path] + options
       let output = Pipe()
       model.standardOutput = output
       model.standardError = FileHandle.nullDevice
@@ -88,13 +89,8 @@ import TsugumiRPC
       let binary = core.executableURL
       let arguments = core.arguments
       let oldPID = servicePID ?? core.processIdentifier
-      kill(oldPID, SIGKILL)
+      try finishFixtureProcess(oldPID, signal: SIGKILL)
       if oldPID == core.processIdentifier { core.waitUntilExit() }
-      else {
-        let deadline = Date().addingTimeInterval(5)
-        while kill(oldPID, 0) == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(kill(oldPID, 0) != 0, "The previous fixture service did not exit")
-      }
       // Leave stale readiness in place: the observer may already have replaced
       // it with the winner's file. Validate the new PID instead of unlinking it.
       core = Process()
@@ -112,16 +108,20 @@ import TsugumiRPC
       // An observing client can win the startup lock. Status 4 means wait for
       // that service, not that the replacement service failed to start.
       let replacement = core
-      let deadline = Date().addingTimeInterval(15)
-      var ready: [String: Any]?
-      while ready == nil, Date() < deadline {
-        if let bytes = try? Data(contentsOf: readyFile),
-           let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-           let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
-           value["unix_socket"] is String,
-           value["host_socket"] is String, value["user_token"] is String { ready = value; break }
-        if !replacement.isRunning, replacement.terminationStatus != 4 { break }
-        try await Task.sleep(for: .milliseconds(50))
+      func read() -> [String: Any]? {
+        guard let bytes = try? Data(contentsOf: readyFile),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
+              value["unix_socket"] is String, value["host_socket"] is String,
+              value["user_token"] is String else { return nil }
+        return value
+      }
+      var ready = try fixtureReadiness(readyFile, pid: replacement.processIdentifier, read: read)
+      if ready == nil {
+        replacement.waitUntilExit()
+        if replacement.terminationStatus == 4 {
+          ready = try fixtureReadiness(readyFile, pid: nil, read: read)
+        }
       }
       let value = try #require(ready, "The host service did not become ready")
       servicePID = try #require(value["pid"] as? Int32)
@@ -191,6 +191,8 @@ import TsugumiRPC
     }
 
     func finished() async throws -> [String: Any] {
+      // Agent exposes conversation status via snapshot and EventsRequest reads.
+      // There is no push notification for a conversation becoming idle.
       let deadline = Date().addingTimeInterval(30)
       var result = try await snapshot()
       while result["busy"] as? Bool == true, Date() < deadline {
@@ -209,25 +211,16 @@ import TsugumiRPC
       if model.isRunning { kill(model.processIdentifier, SIGCONT) }
       if let pid = servicePID, pid != core.processIdentifier {
         // The lock winner belongs to this fixture even when the client launched it.
-        kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(5)
-        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        try? finishFixtureProcess(pid, signal: SIGTERM)
       }
       for process in [core, model] where process.isRunning {
-        process.terminate()
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        try? finishFixtureProcess(process.processIdentifier, signal: SIGTERM)
         process.waitUntilExit()
       }
       daemon?.stop()
       // The helper double outlives the host service, as the VM helper does.
       if let text = try? String(contentsOf: helperPID, encoding: .utf8), let pid = Int32(text), pid > 1 {
-        kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(5)
-        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        try? finishFixtureProcess(pid, signal: SIGTERM)
       }
       await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -235,11 +228,11 @@ import TsugumiRPC
     }
   }
 
-  func withFixture(slow: Double = 0.05, options: [String] = [], managed: Bool = false,
+  func withFixture(options: [String] = [], managed: Bool = false,
                    _ body: (Fixture) async throws -> Void) async throws {
     let fixture = Fixture()
     do {
-      try await fixture.start(slow: slow, options: options, managed: managed)
+      try await fixture.start(options: options, managed: managed)
       try await body(fixture)
       await fixture.stop()
     } catch {
@@ -248,7 +241,7 @@ import TsugumiRPC
     }
   }
 
-  func until(_ what: String, seconds: Double = 30, _ ok: @escaping @MainActor () -> Bool) async throws {
+  func until(_ what: String, _ ok: @escaping @MainActor () -> Bool) async throws {
     try await waitForModel(what, ok)
   }
 
@@ -257,7 +250,7 @@ import TsugumiRPC
   }
 
   @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
-    try await withFixture(slow: 0.3) { t in
+    try await withFixture { t in
       try await t.send("hello interrupted", holdingModel: true)
       // The core records preparing/model before sending the RPC acknowledgement.
       try await t.restartAgent()
@@ -286,7 +279,7 @@ import TsugumiRPC
   }
 
   @Test func aRestartWhileObservedShowsInterruptionWithoutResuming() async throws {
-    try await withFixture(slow: 2) { t in
+    try await withFixture { t in
       t.session.start()
       try await SyncTests.connected(t.session)
       try await t.send("hello interrupted", holdingModel: true)
@@ -302,7 +295,7 @@ import TsugumiRPC
   }
 
   @Test func anInterruptedConversationAcceptsANewMessageWithoutResume() async throws {
-    try await withFixture(slow: 0.3) { t in
+    try await withFixture { t in
       try await t.send("hello interrupted", holdingModel: true)
       try await t.restartAgent()
       let chat = t.makeChat()
@@ -391,7 +384,7 @@ import TsugumiRPC
   }
 
   @Test func aRunningCoreAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
@@ -414,7 +407,7 @@ import TsugumiRPC
   }
 
   @Test func aMessageAfterStoppingIsNotShownAsStopped() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
@@ -432,7 +425,7 @@ import TsugumiRPC
   }
 
   @Test func detachingTheUIKeepsTheAnswerAndReopeningReadsIt() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let left = t.makeChat()
@@ -473,7 +466,7 @@ import TsugumiRPC
   }
 
   @Test func aConversationThatCannotFitSaysToStartANewOne() async throws {
-    try await withFixture(slow: 0, options: ["--context-limit", "6000"]) { t in
+    try await withFixture(options: ["--context-limit", "6000"]) { t in
       let chat = t.makeChat()
       t.session.start()
       try await SyncTests.connected(t.session)
@@ -491,7 +484,7 @@ import TsugumiRPC
   }
 
   @Test func copiedProjectsNeverRestoreEachOthersChatOrPermission() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       let original = t.makeChat()
       try await until("copy A is open") { original.currentId == t.conversationID }
       try await t.send("Only copy A")
@@ -530,7 +523,7 @@ import TsugumiRPC
   }
 
   @Test func theChatModelFollowsSettingsEditedOutsideItsWindow() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       let chat = ChatController(session: t.session)
       t.keep(chat)
       let settings = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
@@ -549,7 +542,7 @@ import TsugumiRPC
   }
 
   @Test func compactionDoesNotReplaceStreamedRowsWithTheAgentsOlderCache() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Initial request")
       _ = try await t.finished()
       let chat = t.makeChat()
@@ -569,7 +562,7 @@ import TsugumiRPC
   }
 
   @Test func failedAndCancelledSelectionsKeepTheVisibleConversation() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Keep this conversation")
       _ = try await t.finished()
       let chat = t.makeChat()
@@ -589,7 +582,7 @@ import TsugumiRPC
   }
 
   @Test func theChatFollowsTheOpenSession() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Keep the selected conversation")
       _ = try await t.finished()
       let back = try t.makeSession()
@@ -617,7 +610,7 @@ import TsugumiRPC
   }
 
   @Test func stoppingBeforeTheProjectConnectsKeepsItStopped() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send(holdingModel: true)
       let chat = t.makeChat()
       try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }

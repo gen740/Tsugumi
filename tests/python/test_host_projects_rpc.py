@@ -10,8 +10,9 @@ import json
 import os
 import subprocess
 import tempfile
-import time
 from pathlib import Path
+
+from harness.file_events import process_file
 
 import pytest
 
@@ -41,12 +42,9 @@ def host(tmp_path):
                                      "--socket-dir", short + "/b", "--usage-scratch-dir", str(tmp_path.resolve() / "scratch"),
                                      "--demos-dir", str(demos), "--no-websocket"], stdout=log, stderr=log)
         try:
-            deadline = time.monotonic() + 10
-            while not (state / "host.ready").exists():
-                assert proc.poll() is None, (tmp_path / "host.log").read_text()
-                assert time.monotonic() < deadline, "hostd startup timed out"
-                time.sleep(0.02)
-            ready = json.loads((state / "host.ready").read_text())
+            published = process_file(proc, state / "host.ready")
+            assert published is not None, (tmp_path / "host.log").read_text()
+            ready = json.loads(published.read_text())
 
             import flatbuffers
             from Tsugumi.Host.Message import Message, MessageT

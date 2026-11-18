@@ -3,10 +3,10 @@
 from itertools import product
 import json
 import shutil
-import time
 
 import pytest
 
+from projects import wait_invocation
 from harness.observations import read_output
 from harness.scenario import Gate, Project, run, wait_run
 from harness.values import recorded_input_json, reference_json
@@ -319,10 +319,7 @@ def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_fact
     run_id = run(client, "work", propagate=True, maxConcurrency=3)
     failure.wait()
     hanging.wait()
-    deadline = time.monotonic() + 5
-    while not any(row.state == CardState.succeeded for row in invocation_page(client, run_id, "work").records):
-        assert time.monotonic() < deadline, "the first member did not complete"
-        time.sleep(0.01)
+    wait_invocation(client, run_id, "work", lambda row: row.state == CardState.succeeded)
     failure.release()
 
     assert wait_run(client, run_id).state == RunState.failed
@@ -376,10 +373,8 @@ def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, 
         gate.wait()
     for index in reversed(range(len(gates))):
         gates[index].release()
-        deadline = time.monotonic() + 5
-        while invocation_page(client, run_id, "work").records[index].state != CardState.succeeded:
-            assert time.monotonic() < deadline, f"member {index + 1} did not finish"
-            time.sleep(0.01)
+        wait_invocation(client, run_id, "work",
+                        lambda row: row.batchIndex == index + 1 and row.state == CardState.succeeded)
     assert wait_run(client, run_id).state == RunState.succeeded
     assert collected(client, tmp_path / "decode", run_id) == [{"value": 0}, {"value": 1}, {"value": 2}]
 
@@ -397,7 +392,7 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
 
     run_id = run(client, propagate=True, maxConcurrency=limit)
     for gate in gates[:slots]:
-        gate.wait(timeout=10)
+        gate.wait()
     assert not gates[slots].entered.exists()
     client.call("RunCancelRequest", runId=run_id)
     assert wait_run(client, run_id).state == RunState.cancelled

@@ -1,29 +1,16 @@
 """Local slots belong to workerd, and end with their starting core."""
 
 import json
-import os
-import time
 import sys
 
 import pytest
 
 from harness.daemon import WORKERD
+from harness.file_events import wait_for_exit
 from harness.scenario import Gate, Project, run, wait_run
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
-
-
-def wait_exit(pid):
-    # workerd is a grandchild of the test runner, so it cannot be waited on here.
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return
-        time.sleep(0.01)
-    raise AssertionError(f"process {pid} survived its core")
 
 
 def local_service(directory):
@@ -61,7 +48,7 @@ def test_core_crash_ends_the_service_owning_an_active_worker(core_factory, proje
     owner = json.loads(service_marker.read_text())
     assert owner["parent_pid"] == daemon.proc.pid
     daemon.stop(crash=True)
-    wait_exit(owner["pid"])
+    wait_for_exit(owner["pid"])
     daemon.start()
     status = daemon.connect().call("RunStatusRequest", runId=run_id)
     assert status.state == RunState.failed
@@ -95,4 +82,4 @@ def test_resident_connection_returns_with_its_call_counter(core_factory, project
     owner = json.loads(service_marker.read_text())
     assert owner["parent_pid"] == daemon.proc.pid
     daemon.stop(crash=True)
-    wait_exit(owner["pid"])
+    wait_for_exit(owner["pid"])

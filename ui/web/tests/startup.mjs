@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { fork, spawn } from 'node:child_process'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 
@@ -12,31 +12,53 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-startup-'))
 const bundle = path.join(dir, 'startup.mjs')
 try {
   await esbuild.build({ entryPoints: ['server/startup.ts'], absWorkingDir: web, outfile: bundle, bundle: true, platform: 'node', format: 'esm' })
-  const worker = `
+  const workerPath = path.join(dir, 'contender.mjs')
+  fs.writeFileSync(workerPath, `
     import fs from 'node:fs';
     import { startupLock } from ${JSON.stringify(pathToFileURL(bundle).href)};
-    const release = await startupLock(${JSON.stringify(dir)});
+    const permission = new Promise(resolve => process.once('message', resolve));
+    const acquisition = startupLock(${JSON.stringify(dir)});
+    process.send('contending');
+    const release = await acquisition;
     const file = ${JSON.stringify(path.join(dir, 'count'))};
     const before = Number(fs.readFileSync(file, 'utf8'));
-    await new Promise(r => setTimeout(r, 20));
+    await permission;
     fs.writeFileSync(file, String(before + 1));
     release();
-  `
-  const run = () => new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, ['--input-type=module', '-e', worker], { stdio: ['ignore', 'ignore', 'pipe'] })
-    let errors = ''
-    p.stderr.on('data', b => { errors += b })
-    p.on('error', reject)
-    p.on('exit', code => code === 0 ? resolve() : reject(new Error(errors)))
-  })
+    process.disconnect();
+  `)
+  const run = () => {
+    const contenders = []
+    const processes = []
+    const exits = Array.from({ length: 12 }, () => new Promise((resolve, reject) => {
+      const p = fork(workerPath, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
+      processes.push(p)
+      let errors = ''
+      p.stderr.on('data', b => { errors += b })
+      p.on('error', reject)
+      p.on('exit', code => code === 0 ? resolve() : reject(new Error(errors)))
+      p.on('message', event => {
+        if (event === 'contending') contenders.push(p)
+        // Hold the first lock until every process has reached the attempt.
+        if (contenders.length === exits.length) {
+          for (const child of contenders) if (child.connected) child.send('release')
+          contenders.length = 0
+        }
+      })
+    }))
+    return Promise.all(exits).catch(error => {
+      for (const child of processes) if (child.exitCode === null) child.kill()
+      throw error
+    })
+  }
   fs.writeFileSync(path.join(dir, 'count'), '0')
-  await Promise.all(Array.from({ length: 12 }, run))
+  await run()
   assert.equal(fs.readFileSync(path.join(dir, 'count'), 'utf8'), '12')
   // Reclaim an actual dead owner, with many simultaneous contenders.
   const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
   await new Promise(resolve => dead.on('exit', resolve))
   fs.symlinkSync(`${dead.pid}-00000000-0000-0000-0000-000000000000`, path.join(dir, 'startup.lock'))
-  await Promise.all(Array.from({ length: 12 }, run))
+  await run()
   assert.equal(fs.readFileSync(path.join(dir, 'count'), 'utf8'), '24')
   assert.throws(() => fs.lstatSync(path.join(dir, 'startup.lock')), { code: 'ENOENT' })
 

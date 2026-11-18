@@ -42,16 +42,11 @@ import TsugumiTestSupport
       do {
         try process.run()
         let file = dir.appendingPathComponent("control/server.ready")
-        for _ in 0..<500 {
-          if let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-            ready = j
-            return
-          }
-          // A service that refused its arguments never becomes ready.
-          if !process.isRunning { break }
-          Thread.sleep(forTimeInterval: 0.025)
-        }
-        throw CocoaError(.fileReadNoSuchFile)
+        guard let value = try fixtureReadiness(file, pid: process.processIdentifier, read: {
+          guard let data = try? Data(contentsOf: file) else { return nil as [String: Any]? }
+          return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }) else { throw CocoaError(.fileReadNoSuchFile) }
+        ready = value
       } catch { stop(); throw error }
     }
 
@@ -62,10 +57,7 @@ import TsugumiTestSupport
 
     func stop() {
       if process.isRunning {
-        process.terminate()
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        try? finishFixtureProcess(process.processIdentifier, signal: SIGTERM)
         process.waitUntilExit()
       }
       try? FileManager.default.removeItem(at: dir)
@@ -141,25 +133,9 @@ import TsugumiTestSupport
     return saved.rev ?? 0
   }
 
-  /// A revision is the notification barrier. The timer only diagnoses a stuck
-  /// stream; receiving a save reply on another connection is not this barrier.
+  /// Observe the revision applied by the session's notification handler.
   static func received(_ revision: UInt64, by session: ProjectSession) async throws {
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      defer { group.cancelAll() }
-      group.addTask { @MainActor in
-        for await current in Observations({ session.rev }) {
-          if current >= revision { return }
-        }
-        throw CancellationError()
-      }
-      group.addTask {
-        try await Task.sleep(for: .seconds(60))
-        throw NSError(domain: "SyncTests", code: 1, userInfo: [
-          NSLocalizedDescriptionKey: "UI did not receive document revision \(revision)",
-        ])
-      }
-      try await group.next()
-    }
+    try await waitForModel("document revision \(revision)") { session.rev >= revision }
   }
 
   static func connected(_ s: ProjectSession) async throws {
@@ -432,16 +408,10 @@ import TsugumiTestSupport
         if let patch = event.payload.value as? Tsugumi_RPC_DocPatchedT,
            patch.delta.opId == marker.uuidString.lowercased() { return (sequences, true) }
       }
+      ended.continuation.finish()
       return (sequences, false)
     }
-    let deadline = Task {
-      do {
-        try await Task.sleep(for: .seconds(60))
-        ended.continuation.finish()
-        received.cancel()
-      } catch {}
-    }
-    defer { deadline.cancel(); ended.continuation.finish(); received.cancel() }
+    defer { ended.continuation.finish(); received.cancel() }
     var project = try JSONValue.parse(opened.snapshot.projectJson)
     let cards = (project["canvas"]?["cards"]?.array ?? []).filter {
       ["start", "b"].contains($0["id"]?.string ?? "")

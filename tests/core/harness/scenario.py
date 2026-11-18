@@ -6,13 +6,13 @@ import json
 import os
 import shutil
 import sys
-import time
 from pathlib import Path
 
 from projects import wait_run as wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 from .daemon import BUILD, ROOT
+from .file_events import wait_for_file
 
 # A mocked build has no pinned shell, so its Cards use the host's. NixOS and the
 # nixos/nix container have no /bin/bash and no tools in /usr/bin:/bin; there the
@@ -30,19 +30,14 @@ class Gate:
         self.entered = directory / (name + ".started")
         self.released = directory / (name + ".release")
 
-    def wait(self, timeout=5):
-        # The worker double signals entry by creating a file.
-        end = time.monotonic() + timeout
-        while not self.entered.exists():
-            if time.monotonic() >= end:
-                raise TimeoutError(f"dependency did not reach gate {self.entered}")
-            time.sleep(0.01)
+    def wait(self):
+        wait_for_file(self.entered)
 
     def release(self):
         self.released.touch()
 
     def action(self):
-        return {"op": "gate", "entered": str(self.entered), "release": str(self.released), "timeout": 10}
+        return {"op": "gate", "entered": str(self.entered), "release": str(self.released)}
 
 
 def worker_launcher(directory: Path) -> Path:
@@ -100,6 +95,7 @@ class Project:
 
 
 def run(client, card="work", **fields):
+    client.ensure_subscription()
     accepted = client.call("RunRequest", baseRev=client.call("ProjectInspectRequest").rev,
                            opId=new_id(), origin="ui:test", card=path(*card.split("/")), **fields)
     return text(accepted.run.runId)

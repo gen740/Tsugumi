@@ -145,6 +145,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     const auto started = impl_->control / (*gate + ".started");
     const auto release = impl_->control / (*gate + ".release");
     fs::write_atomic(started, "started\n", 0600);
+    // The mock evaluator receives a cancellation flag and deadline in the
+    // evaluation call. They have no wake handle to join with the release file.
     while (!std::filesystem::exists(release)) {
       check_interrupted(call);
       std::this_thread::sleep_for(std::chrono::milliseconds(5));

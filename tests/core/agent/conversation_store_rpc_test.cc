@@ -385,6 +385,7 @@ TEST_F(ConversationStoreFixture,
             .Union();
       });
   ASSERT_TRUE(sent.Code().empty());
+  // The pending permission is visible through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("permission") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)

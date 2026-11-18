@@ -129,8 +129,6 @@ inline auto Call(client::Connection& connection, A::RequestPayload type,
                              builder.GetBufferPointer() + builder.GetSize());
       },
       5s);
-  if (pending.wait_for(6s) != std::future_status::ready)
-    throw std::runtime_error("Agent RPC did not finish before its deadline");
   auto result = pending.get();
   if (result.error)
     throw std::runtime_error("Agent transport: " + result.error.message);
@@ -217,8 +215,6 @@ class AgentFixture : public ::testing::Test {
                                  : "unix:" + JsonString(ready, "/unix_socket");
     auto connection = std::make_unique<client::Connection>(options);
     auto opened = connection->Start();
-    if (opened.wait_for(4s) != std::future_status::ready)
-      throw std::runtime_error("Agent connection did not open");
     if (auto error = opened.get()) throw std::runtime_error(error.message);
     auto hello =
         Call(*connection, A::RequestPayload::HelloRequest, [&](Builder& b) {
@@ -402,6 +398,7 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto WaitUntilIdle(const std::string& conversation) -> std::string {
+    // Agent conversation status has a read API but no push notification.
     const auto deadline = std::chrono::steady_clock::now() + 8s;
     do {
       auto state = Get(conversation, true).View();

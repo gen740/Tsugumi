@@ -94,7 +94,7 @@ def main(inputs):
 '''}}
     write_project(root, {'make': make, 'check': sdk_card(language)}, [('make', 'out', 'check', 'number')])
     client = connect()
-    run_id, status = run_and_wait(client, 'start', timeout=1800)
+    run_id, status = run_and_wait(client, 'start')
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
         [(card, stream, text(client.call('LogRangeRequest', runId=run_id, card=path(card),
             stream=stream, limitBytes=65536).text)) for card in ('make', 'check') for stream in (2, 4)])

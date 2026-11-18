@@ -132,7 +132,10 @@ class OAuthServer {
     const auto rc = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     if (rc != CURLE_OK) throw std::runtime_error("test callback failed");
-    for (int i = 0; i < 500; ++i) {
+    // Completing or failing the exchange updates signin status. Host offers
+    // status reads for that attempt, with no event for every terminal outcome.
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (std::chrono::steady_clock::now() < deadline) {
       auto status = Status(host, info->attempt_id()->str(), profile);
       const auto state =
           status.HostValue()->value_as_SignInStatus()->state()->str();

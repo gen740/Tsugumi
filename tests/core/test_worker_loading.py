@@ -130,6 +130,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
 }
 ''')
     with worker(tmp_path) as (p, data, _):
+        # Standby sends no ready frame. A quiet interval checks for premature output.
         assert not select.select([p.stdout], [], [], 0.3)[0], "Card code ran in standby"
         send_call(data, tmp_path)
         assert receive(data).valueType == WorkerPayload.WorkerResult
@@ -138,7 +139,8 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
         assert p.stdout.readline() == b"card load\n"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
-        assert not select.select([p.stdout], [], [], 0.1)[0]
+        data.shutdown(socket.SHUT_WR)
+        assert p.stdout.read() == b""
 
 
 def test_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
@@ -155,6 +157,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
 }
 ''')
     with worker(tmp_path) as (p, data, _):
+        # Standby sends no ready frame. A quiet interval checks for premature output.
         assert not select.select([p.stdout], [], [], 0.3)[0], "package code ran in standby"
         assert not select.select([data], [], [], 0.1)[0]
         send_call(data, tmp_path)
@@ -168,7 +171,8 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
         assert p.stdout.readline() == b"runtime ready\n"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
-        assert not select.select([p.stdout], [], [], 0.1)[0], "runtime was initialized twice"
+        data.shutdown(socket.SHUT_WR)
+        assert p.stdout.read() == b"", "runtime was initialized twice"
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
@@ -183,8 +187,8 @@ def test_source_loading_obeys_the_call_stop(tmp_path, stop):
 int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   if (c->phase == TSUGUMI_LOAD) {
     puts("loading"); fflush(stdout);
+    // The Card ABI exposes cancellation and remaining time as queries.
     while (!c->effects->cancelled(c->host) && c->effects->remaining_ms(c->host) != 0) usleep(1000);
-    usleep(2000);
   }
   if (c->phase == TSUGUMI_RUN) {
     puts("main ran");
@@ -195,7 +199,6 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
 ''')
     with worker(tmp_path) as (p, data, control):
         send_call(data, tmp_path, deadline=50 if stop == "deadline" else None)
-        assert select.select([p.stdout], [], [], 3)[0]
         assert p.stdout.readline() == b"loading\n"
         if stop == "cancel":
             msg = WorkerMessageT()
@@ -207,7 +210,8 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
         result = receive(data)
         assert result.valueType == WorkerPayload.WorkerFailure
         assert result.value.failure.kind == (FailureKind.timeout if stop == "deadline" else FailureKind.cancelled)
-        assert not select.select([p.stdout], [], [], 0.1)[0], "main ran after loading was stopped"
+        data.shutdown(socket.SHUT_WR)
+        assert p.stdout.read() == b"", "main ran after loading was stopped"
 
 
 def test_source_loading_failure_is_an_invocation_failure(tmp_path):
@@ -269,6 +273,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     # Production WorkerProc drains logs while waiting for the result. A file
     # gives this direct socket fixture the same absence of pipe backpressure.
     with (tmp_path / "python.log").open("wb") as log, worker(tmp_path, stderr=log) as (p, data, _):
+        # Standby sends no ready frame. A quiet interval checks for premature output.
         assert not select.select([p.stdout], [], [], 0.3)[0], "Python Card ran in standby"
         send_call(data, tmp_path)
         shown = receive(data)

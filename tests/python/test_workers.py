@@ -137,7 +137,7 @@ def test_resident_worker_serves_later_runs(env):
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
     reload(c)
-    first, st = run_and_wait(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
     second, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "count", 2)
@@ -162,7 +162,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
     from test_cards_container import reload
     reload(c)
-    first, st = run_and_wait(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start")
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
     assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
                                             log(c, first, "make", 2), log(c, first, "read", 2))
@@ -192,7 +192,7 @@ root_type Outputs;
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
     from test_cards_container import reload
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)
     recs = invocations(c, run_id, "fresh")
     assert len(recs) == 4
@@ -221,7 +221,7 @@ let f = x: f (x + 1); in { run = f 0; }
                    "loop": {"language": "bash", "_outputs": NUM, "_nix": loop_nix},
                    "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
              [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
-    run_id, st = run_and_wait(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}
     assert rec["loop"].state == CardState.failed
     diag = text(rec["loop"].failure.diagnostic)
@@ -264,7 +264,7 @@ def test_network_is_off_unless_the_card_allows_it(env):
     names = [n for n in cards if n != "trigger"]
     cards["fan"], wires = fan_out(names)
     c = load(env, cards, [card("start", "trigger"), card("fan", "fan")] + [card(n, n) for n in names], wires)
-    run_id, st = run_and_wait(c, "start", timeout=900)
+    run_id, st = run_and_wait(c, "start")
     for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
         out = number(c, run_id, name)
         want = "reach=1" if name.startswith("open") else "reach=0"
@@ -294,7 +294,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     env.stop()
     env.start()
     c = env.client()
-    run_id, st = run_and_wait(c, "start", timeout=900)
+    run_id, st = run_and_wait(c, "start")
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")

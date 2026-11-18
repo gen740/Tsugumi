@@ -39,8 +39,7 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   std::jthread scripted([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
-      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
-        continue;
+      if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
       if (::tsugumi::json::UInt(::tsugumi::json::Get(
               ::tsugumi::json::Object(request), "max_tokens")) == 2048) {

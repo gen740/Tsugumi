@@ -21,6 +21,8 @@ def accept_in_background(listener: socket.socket) -> list:
     """Record accepted peers without leaking sockets or a blocking accept thread."""
     accepted = []
     listener.listen(1)
+    # Closing a listening descriptor in another thread need not wake accept.
+    # The caller owns this socket and has no separate shutdown channel.
     listener.settimeout(0.1)
 
     def accept():

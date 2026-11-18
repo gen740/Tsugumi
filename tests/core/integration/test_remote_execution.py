@@ -15,11 +15,11 @@ import shutil
 import socket
 import tempfile
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
+from harness.file_events import process_file, wait_for_file
 from harness.host import Host
 from harness.observations import read_output, read_pages
 from harness.values import reference_json
@@ -86,22 +86,15 @@ def remote_daemon(tmp_path, request):
         ready.unlink(missing_ok=True)
         with daemon_log.open("ab") as log:
             process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
-        until = time.monotonic() + 10
-        while time.monotonic() < until:
-            if process.poll() is not None:
-                raise RuntimeError(daemon_log.read_text())
-            try:
-                port = json.loads(ready.read_text())["port"]
-                command[command.index("--port") + 1] = str(port)
-                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                    return
-            except (OSError, ValueError):
-                time.sleep(0.05)
-        raise TimeoutError("the test execution daemon did not listen")
+        published = process_file(process, ready)
+        if published is None:
+            raise RuntimeError(daemon_log.read_text())
+        port = json.loads(published.read_text())["port"]
+        command[command.index("--port") + 1] = str(port)
 
     def restart():
         process.kill()
-        process.wait(timeout=5)
+        process.wait()
         start()
 
     try:
@@ -110,11 +103,12 @@ def remote_daemon(tmp_path, request):
     finally:
         if process and process.poll() is None:
             process.terminate()
+            # Escalate only if the disposable listener ignores shutdown.
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=5)
+                process.wait()
 
 
 @pytest.fixture
@@ -201,7 +195,27 @@ def test_remote_broker_isolates_copies_of_a_project(remote_broker):
         assert refused.body.code == code, R.string(refused.body.message)
 
 
-def fixture(project):
+# HOME is the writable work folder inside this invocation's bound scratch.
+CARD_GATE = 'mkfifo -m 666 "$HOME/test-release" && read -r release < "$HOME/test-release"'
+
+@pytest.fixture
+def remote_gates(tmp_path, remote_daemon):
+    if remote_daemon[2] is None:
+        # The externally managed worker exposes status but has no fixture
+        # channel for releasing a staged Card inside its sandbox.
+        return None
+
+    def release(invocation):
+        job = text(invocation.executionJobId)
+        directory, = (tmp_path / "daemon-state/projects").glob(f"*/jobs/{job}")
+        fifo = wait_for_file(directory / "work/scratch/work/test-release")
+        with fifo.open("w") as gate:
+            gate.write("release\n")
+
+    return release
+
+
+def fixture(project, slow_gate=CARD_GATE):
     script = """
       set -e
       test "$(uname -s)" = Linux
@@ -222,7 +236,7 @@ def fixture(project):
     definitions = {
         "input": source,
         "work": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + script + "''; }"},
-        "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''sleep 25\n" + script + "''; }"},
+        "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + slow_gate + "\n" + script + "''; }"},
         "sink": SINK,
     }
     write(project, definitions,
@@ -258,8 +272,9 @@ def check_success(client, run_id, name, system):
     return summary
 
 
-def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon):
-    fixture(project)
+def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):
+    # A separately managed worker has no test-side access to job scratch.
+    fixture(project, CARD_GATE if remote_gates else "sleep 25")
     daemon = core_factory()
     client = daemon.connect()
     services = client.call("ProjectInspectRequest").executionServices
@@ -279,6 +294,8 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
         # Only the listener restarts: its journal and detached supervisor survive.
         # The same core life must resume this job under the default never-expire policy.
         restart()
+    if remote_gates:
+        remote_gates(started)
     assert wait_run(client, run_id).state == RunState.succeeded
     resumed = check_success(client, run_id, "slow", system)
     assert text(resumed.executionJobId) == text(started.executionJobId)
@@ -487,18 +504,19 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
     assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
 
 
-def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker):
+def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
     definitions = {
         "fails": {
             **RUN_LIST_REMOTE,
             "_nix": """
                 { pkgs, inputs, params }: {
                   run = [
-                    "sleep 15; echo expected-batch-member-failure >&2; exit 17"
-                    "sleep 180; exit 99"
+                    ''@fail_gate@; echo expected-batch-member-failure >&2; exit 17''
+                    ''@sibling_gate@; exit 99''
                   ];
                 }
-            """,
+            """.replace("@fail_gate@", CARD_GATE if remote_gates else "sleep 15")
+               .replace("@sibling_gate@", CARD_GATE),
         },
         "collect": {"template": "collect", "recordIO": True},
     }
@@ -508,6 +526,10 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     run_id = start_run(client, "fails", concurrency=2)
     running = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 2 and
                               row.executionState == RemoteExecutionState.running)
+    if remote_gates:
+        first = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 1 and
+                                row.executionState == RemoteExecutionState.running)
+        remote_gates(first)
     assert wait_run(client, run_id).state == RunState.failed
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
     batch, = page.batches

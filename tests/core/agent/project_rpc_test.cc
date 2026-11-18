@@ -180,13 +180,10 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
     return Tool(conversation, "project_copy", args);
   });
   const auto staging = directory.path / "project/.tsugumi/document-files";
-  const auto deadline = std::chrono::steady_clock::now() + 10s;
-  while (!std::filesystem::exists(directory.path /
-                                  "project/.tsugumi/transfer.started")) {
-    ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
-    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
-    std::this_thread::sleep_for(1ms);
-  }
+  const auto marker = directory.path / "project/.tsugumi/transfer.started";
+  ASSERT_TRUE(WaitForPath(marker, [&] { return std::filesystem::exists(marker); },
+                          project.Pid()));
+  ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
   if (GetParam()) {
     external->Close();
     EXPECT_THROW(copying.get(), std::runtime_error);
@@ -202,11 +199,9 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
                     .empty());
     EXPECT_EQ(copying.get().Code(), "cancelled");
   }
-  const auto stopped = std::chrono::steady_clock::now() + 15s;
-  while (!std::filesystem::is_empty(staging)) {
-    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
-    std::this_thread::sleep_for(1ms);
-  }
+  ASSERT_TRUE(WaitForPath(staging / "entries", [&] {
+    return std::filesystem::is_empty(staging);
+  }, project.Pid()));
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),
             "0");
@@ -236,17 +231,9 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
         R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=1 2>/dev/null"})");
   });
   const auto staging = directory.path / "project/.tsugumi/document-files";
-  const auto deadline = std::chrono::steady_clock::now() + 20s;
-  while (!std::filesystem::exists(directory.path /
-                                  "project/.tsugumi/transfer.started")) {
-    if (saving.wait_for(0ms) == std::future_status::ready) {
-      FAIL() << "The successful isolated shell could not reach import: "
-             << saving.get().View();
-      return;
-    }
-    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
-    std::this_thread::sleep_for(1ms);
-  }
+  const auto marker = directory.path / "project/.tsugumi/transfer.started";
+  ASSERT_TRUE(WaitForPath(marker, [&] { return std::filesystem::exists(marker); },
+                          project.Pid()));
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest,
                    [&](Builder& b) {
                      return A::CreateConversationCancelRequest(
@@ -256,11 +243,9 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
                   .Code()
                   .empty());
   EXPECT_EQ(saving.get().Code(), "cancelled");
-  const auto stopped = std::chrono::steady_clock::now() + 15s;
-  while (!std::filesystem::is_empty(staging)) {
-    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
-    std::this_thread::sleep_for(1ms);
-  }
+  ASSERT_TRUE(WaitForPath(staging / "entries", [&] {
+    return std::filesystem::is_empty(staging);
+  }, project.Pid()));
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),
             "0");
@@ -905,9 +890,11 @@ TEST_F(AgentProjectFixture,
     auto pending = std::async(std::launch::async, [&] {
       return Tool(
           conversation, "project_shell",
-          R"({"command":"printf staged > definitions/edit/src/data.txt; printf ready > scratch/started; sleep 1","timeout_ms":10000})");
+          R"({"command":"printf staged > definitions/edit/src/data.txt; mkfifo scratch/release && printf ready > scratch/started && read -r released < scratch/release","timeout_ms":10000})");
     });
     std::filesystem::path marker;
+    // The private scratch directory is chosen by the Host. Agent exposes
+    // snapshots but no push event with its path while the command is active.
     const auto deadline = std::chrono::steady_clock::now() + 3s;
     while (std::chrono::steady_clock::now() < deadline) {
       const auto private_root = directory.path / "project/.tsugumi/agent-files";
@@ -936,9 +923,11 @@ TEST_F(AgentProjectFixture,
                        })
                       .Code()
                       .empty());
-    } else
+    } else {
       Write(source, "person's concurrent external edit");
-    ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+      Write(marker.parent_path() / "release", "continue\n");
+    }
+
     const auto result = pending.get();
     if (cancel) {
       EXPECT_EQ(result.Code(), "cancelled");
@@ -949,6 +938,7 @@ TEST_F(AgentProjectFixture,
       EXPECT_EQ(Read(source), "person's concurrent external edit");
     }
     std::filesystem::remove(marker);
+    std::filesystem::remove(marker.parent_path() / "release");
   }
 }
 
@@ -2036,7 +2026,7 @@ TEST_F(AgentProjectFixture, ConcurrentPluginToolsDoNotBlockTheUsersApproval) {
   const auto approval = Grant(conversation);
   EXPECT_FALSE(approval.empty());
   for (auto& tool : tools) {
-    ASSERT_EQ(tool.wait_for(8s), std::future_status::ready);
+
     EXPECT_TRUE(tool.get().Code().empty());
   }
   EXPECT_EQ(model.Requests().size(), 8u);
@@ -2160,6 +2150,7 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   ASSERT_TRUE(Send(conversation, "Start a command, then wait.").Code().empty());
   // Scratch is private. Wait for the recorded call rather than writing a
   // marker into a shared host temporary directory.
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -2191,6 +2182,7 @@ TEST_F(AgentProjectFixture,
     return Tool(conversation, "project_shell",
                 R"({"command":"sleep 20","timeout_ms":30000})");
   });
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -2204,7 +2196,7 @@ TEST_F(AgentProjectFixture,
                    })
                   .Code()
                   .empty());
-  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+
   EXPECT_EQ(pending.get().Code(), "cancelled");
   const auto events = Events(conversation).View();
   EXPECT_NE(events.find("toolStarted"), std::string::npos);
@@ -2226,13 +2218,14 @@ TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
     return Tool(conversation, "project_shell",
                 R"({"command":"sleep 20","timeout_ms":30000})");
   });
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
   ASSERT_NE(Events(conversation).View().find("toolStarted"), std::string::npos);
   Revoke(grant);
-  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+
   EXPECT_EQ(pending.get().Code(), "cancelled");
   EXPECT_EQ(Tool(conversation, "project_shell", R"({"command":"true"})").Code(),
             "grant_required");

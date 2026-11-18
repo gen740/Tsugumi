@@ -131,9 +131,9 @@ def project(tmp_path):
         env.cleanup()
 
 
-def run(connect, timeout: float = 1800):
+def run(connect):
     c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=timeout)
+    run_id, status = run_and_wait(c, "start")
     log = text(c.call("LogRangeRequest", runId=run_id, card=path("card"), stream=LogStream.build, limitBytes=262144).text)
     return c, run_id, status, log
 
@@ -179,7 +179,7 @@ def test_a_card_without_a_lock_has_no_pypi_package(project):
 def test_an_incomplete_pin_is_refused_and_says_what_is_missing(project, arguments, pyproject, why):
     root, connect = project
     write_project(root, arguments, USES_TABULATE, pyproject=pyproject, sandbox=False)
-    _, _, status, log = run(connect, timeout=600)
+    _, _, status, log = run(connect)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, said(status, log)
     assert why in said(status, log)
 

@@ -11,10 +11,6 @@ final class ExecutionBrokerBridgeTests: XCTestCase {
     XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &guest), 0)
     XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &host), 0)
     defer { Darwin.close(guest[0]); Darwin.close(host[0]) }
-    for fd in [guest[0], host[0]] {
-      var timeout = timeval(tv_sec: 2, tv_usec: 0)
-      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-    }
     // The VZ adapter uses this byte relay; it never decodes remote_worker.fbs.
     VMHostIPC.relay(guest[1], host[1])
     let request = Data([0, 255, 1, 0, 128])

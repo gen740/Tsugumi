@@ -132,12 +132,14 @@ def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4)
     segments = card_path.split("/") if isinstance(card_path, str) else list(card_path)
     rev = c.call("ProjectInspectRequest").rev
     extra = {"maxConcurrency": concurrency} if concurrency else {}
+    c.ensure_subscription()
     acc = c.call("RunRequest", baseRev=rev, opId=new_id(), origin="test", card=path(*segments), propagate=propagate,
                  **extra)
     return text(acc.run.runId)
 
 
-def wait_run(c, run_id: str):
+def wait_run(c, run_id: str, *, timeout=None):
+    """Follow terminal status. Benchmarks may bound their measurement window."""
     # Subscribe first so completion between the snapshot and the wait is queued.
     c.ensure_subscription()
     status = c.call("RunStatusRequest", runId=run_id)
@@ -147,7 +149,8 @@ def wait_run(c, run_id: str):
         lambda n: n.valueType == NotificationPayload.RunEvent
         and text(n.value.runId) == run_id
         and n.value.valueType == RunEventValue.RunStatusChanged
-        and n.value.value.status.state in ENDED
+        and n.value.value.status.state in ENDED,
+        timeout=timeout,
     )
     return note.value.value.status
 
@@ -161,8 +164,9 @@ def wait_invocation(c, run_id, card_path, check):
         if error.kind != "not_found":
             raise
         rows = []
-    if rows and check(rows[-1]):
-        return rows[-1]
+    for row in reversed(rows):
+        if check(row):
+            return row
 
     # A finished run cannot produce another invocation update.
     def matches(note):
@@ -181,6 +185,55 @@ def wait_invocation(c, run_id, card_path, check):
         f"run {run_id} finished before {card_path} reached the expected invocation state"
     )
     return event.value.invocation
+
+
+def wait_for_display(c, run_id, check=lambda _: True):
+    """Wait for a display on a visible Card, failing if the run ends first."""
+    def matches(note):
+        if note.valueType == NotificationPayload.DisplayUpdated:
+            display = note.value.display
+            return text(display.runId) == run_id and check(display)
+        return (note.valueType == NotificationPayload.RunEvent
+                and text(note.value.runId) == run_id
+                and note.value.valueType == RunEventValue.RunFinished)
+
+    note = c.wait_notification(matches)
+    assert note.valueType == NotificationPayload.DisplayUpdated, (
+        f"run {run_id} ended before its expected display"
+    )
+    return note
+
+
+def wait_for_log(c, run_id, card_path, stream, check, *, invocation=1):
+    """Read live log updates until the fixture's marker or the end of the run."""
+    c.ensure_subscription()
+    segments = card_path.split("/")
+
+    def matches(note):
+        event = note.value
+        if note.valueType not in (NotificationPayload.LogAvailable, NotificationPayload.RunEvent):
+            return False
+        if text(event.runId) != run_id:
+            return False
+        if note.valueType == NotificationPayload.RunEvent:
+            return event.valueType == RunEventValue.RunFinished
+        return (event.invocation == invocation and event.card is not None
+                and [text(segment) for segment in event.card.segments] == segments)
+
+    while True:
+        log = c.call("LogRangeRequest", runId=run_id, card=path(*segments),
+                     invocation=invocation, stream=stream)
+        if check(log):
+            return log
+        status = c.call("RunStatusRequest", runId=run_id)
+        if status.state in ENDED:
+            # Read once more after completion; the final log can be persisted
+            # between the previous read and the terminal snapshot.
+            log = c.call("LogRangeRequest", runId=run_id, card=path(*segments),
+                         invocation=invocation, stream=stream)
+            assert check(log), f"run {run_id} finished before {card_path} logged its marker"
+            return log
+        c.wait_notification(matches)
 
 
 def run_and_wait(c, card_path, propagate: bool = True, concurrency: int | None = None):

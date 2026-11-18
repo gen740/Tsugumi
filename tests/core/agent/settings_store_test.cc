@@ -907,8 +907,7 @@ TEST_F(ContextBudget, OverLimitConversationSummarizesOnlyTheFittingPast) {
   std::jthread provider([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
-      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
-        continue;
+      if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
       // A real provider refuses the old whole-conversation summary too.
       if (request.size() >= config.context_limit_tokens)

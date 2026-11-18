@@ -6,7 +6,8 @@ import os
 
 import pytest
 from conftest import demo_environment
-from projects import start_run, wait_run
+from harness.file_events import wait_for_exit
+from projects import start_run, wait_for_log, wait_run
 from test_demos import connect, edit_card, set_param, stderr
 from harness.observations import read_pages
 from tsugumi_client import path, text
@@ -23,7 +24,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
     try:
         c = connect(env)
         rid = start_run(c, ['start'], propagate=True)
-        state = wait_run(c, rid, timeout=600)
+        state = wait_run(c, rid)
         assert state.state == RunState.succeeded, stderr(c, rid, 'notebook')
         record = c.call('RunRecordRequest', runId=rid, card=path('notebook')).record
         assert record and '14' in text(record.display.value.text)
@@ -49,7 +50,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         assert art.invocation == record.summary.invocation
         edit_card(env, c, 'notebook', lambda card: set_param(card, 'factor', 3))
         updated = start_run(c, ['source'], propagate=True)
-        assert wait_run(c,updated,timeout=600).state == RunState.succeeded, stderr(c,updated,'notebook')
+        assert wait_run(c,updated).state == RunState.succeeded, stderr(c,updated,'notebook')
         assert '21' in text(c.call('RunRecordRequest',runId=updated,card=path('notebook')).record.display.value.text)
         downstream = c.call('RunRecordRequest', runId=updated, card=path('result')).record
         assert json.loads(text(downstream.display.value.text)) == {'value': 21}
@@ -84,7 +85,7 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
     try:
         client = connect(env)
         rid = start_run(client, ['start'], propagate=True)
-        state = wait_run(client, rid, timeout=600)
+        state = wait_run(client, rid)
         assert state.state == RunState.failed
         record = client.call('RunRecordRequest', runId=rid, card=path('notebook'))
         failure = record.status.failure
@@ -111,7 +112,6 @@ def test_project_owns_notebook_process_tree(tmp_path,ending):
     if os.environ.get('TSUGUMI_TEST_CONTAINER')=='1':
         pytest.skip('Host process identity assertion; VM lifecycle has separate core tests')
     import re
-    import time
     def edit(root):
         card_file=root/'definitions/notebook/_card.json'
         card=json.loads(card_file.read_text())
@@ -135,29 +135,20 @@ def lifecycle():
     env=demo_environment(tmp_path,'marimo',edit=edit)
     try:
         c=connect(env);rid=start_run(c,['start'],propagate=True)
-        until=time.monotonic()+60;match=None
-        while time.monotonic()<until:
-            log=text(c.call('LogRangeRequest',runId=rid,card=path('notebook'),stream=1,limitBytes=262144).text)
-            match=re.search(r'NOTEBOOK_PROCESSES (\d+) (\d+)',log)
-            if match:break
-            time.sleep(.05)
-        assert match,'Notebook did not report process identity'
-        pids=[int(x) for x in match.groups()]
+        pattern = re.compile(r'NOTEBOOK_PROCESSES (\d+) (\d+)')
+        log = wait_for_log(c, rid, 'notebook', 1, lambda log: pattern.search(text(log.text or b"")))
+        pids = [int(pid) for pid in pattern.search(text(log.text or b"")).groups()]
         if ending=='cancel':c.call('RunCancelRequest',runId=rid)
         if ending=='project_stop':env.stop()
         else:
-            state=wait_run(c,rid,timeout=30)
+            state=wait_run(c,rid)
             assert state.state!=RunState.succeeded
             if ending == 'failure':
                 failure = c.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
                 args = {text(a.key): text(a.value) for a in failure.args}
                 assert (args['source'], args['line'], args['cell']) == ('src/notebook.py', '13', 'lifecycle')
-        def alive(pid):
-            try:os.kill(pid,0);return True
-            except ProcessLookupError:return False
-        until=time.monotonic()+5
-        while time.monotonic()<until and any(alive(pid) for pid in pids):time.sleep(.05)
-        assert not any(alive(pid) for pid in pids),f'Notebook process survived {ending}: {pids}'
+        for pid in pids:
+            wait_for_exit(pid)
     finally:env.cleanup()
 
 
@@ -182,7 +173,7 @@ def test_two_cards_run_the_same_notebook_without_shared_state(tmp_path):
     env=demo_environment(tmp_path,'marimo',edit=edit)
     try:
         c=connect(env);rid=start_run(c,['start'],propagate=True)
-        assert wait_run(c,rid,timeout=600).state==RunState.succeeded,stderr(c,rid,'notebook_b')
+        assert wait_run(c,rid).state==RunState.succeeded,stderr(c,rid,'notebook_b')
         artifacts=c.call('ArtifactListRequest',runId=rid).artifacts
         for name,value in [('notebook',14),('notebook_b',7)]:
             art=next(a for a in artifacts if text(a.card.segments[0])==name)

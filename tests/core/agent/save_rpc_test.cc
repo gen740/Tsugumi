@@ -224,6 +224,7 @@ TEST_F(AgentProjectFixture,
   });
   // Always unblock approval on an assertion failure before joining the helper.
   std::string approval;
+  // Agent save approvals are read through AccessListRequest without a push event.
   const auto deadline = std::chrono::steady_clock::now() + 10s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =

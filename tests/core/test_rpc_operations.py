@@ -33,10 +33,10 @@ def test_concurrent_saves_commit_one_winner(daemon):
     barrier = threading.Barrier(len(clients))
 
     def save(index):
-        barrier.wait(timeout=5)
+        barrier.wait()
         name = f"writer-{index}"
         try:
-            result = clients[index].call("ProjectSaveRequest", timeout=5,
+            result = clients[index].call("ProjectSaveRequest",
                                          **save_request(snapshot, name))
             return name, result
         except RpcFailure as failure:
@@ -46,7 +46,7 @@ def test_concurrent_saves_commit_one_winner(daemon):
 
     with ThreadPoolExecutor(max_workers=len(clients)) as pool:
         futures = [pool.submit(save, index) for index in range(len(clients))]
-        results = [future.result(timeout=10) for future in futures]
+        results = [future.result() for future in futures]
 
     winners = [(name, result) for name, result in results if result is not None]
     assert len(winners) == 1
@@ -63,12 +63,12 @@ def test_concurrent_resend_of_one_operation_commits_once(daemon):
     barrier = threading.Barrier(2)
 
     def save(client):
-        barrier.wait(timeout=5)
-        return client.call("ProjectSaveRequest", timeout=5, **request)
+        barrier.wait()
+        return client.call("ProjectSaveRequest", **request)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(save, client) for client in clients]
-        results = [future.result(timeout=10) for future in futures]
+        results = [future.result() for future in futures]
 
     assert sorted(result.replayed for result in results) == [False, True]
     assert {result.rev for result in results} == {snapshot.rev + 1}
@@ -85,8 +85,8 @@ def test_lost_reply_can_be_recovered_and_replayed_without_another_save(daemon):
         gate = proxy.drop_reply(50)
         request_id = client.send("ProjectSaveRequest", make("ProjectSaveRequest", **request), request_id=50)
         gate.wait()
-        with pytest.raises(TimeoutError):
-            client.wait_reply(request_id, timeout=0.05)
+        client.call("ProjectInspectRequest")
+        assert not client.has_reply(request_id)
 
         operation = observer.call("OperationGetRequest", opId=request["opId"])
         assert operation.state == OperationState.completed
@@ -111,14 +111,13 @@ def test_held_reply_does_not_block_other_requests_or_clients(daemon):
 
         assert project_name(observer) == (snapshot.rev + 1, "committed-before-delivery")
         # Even this same connection remains usable while one reply is held.
-        operation = client.call("OperationGetRequest", timeout=5, opId=request["opId"])
+        operation = client.call("OperationGetRequest", opId=request["opId"])
         assert operation.state == OperationState.completed
         assert operation.receipt.resultType == ReceiptValue.SaveResult
-        with pytest.raises(TimeoutError):
-            client.wait_reply(request_id, timeout=0.05)
+        assert not client.has_reply(request_id)
 
         gate.release()
-        result = client.wait_reply(request_id, timeout=5)
+        result = client.wait_reply(request_id)
         assert result.rev == snapshot.rev + 1
         assert result.replayed is False
 
@@ -154,7 +153,7 @@ def test_restart_recovers_the_whole_save_and_its_receipt(core_factory, fault):
     request["changes"].append(change("SetLayout", json=json.dumps(layout)))
     request_id = client.send("ProjectSaveRequest", make("ProjectSaveRequest", **request))
     with pytest.raises((ConnectionError, TimeoutError)):
-        client.wait_reply(request_id, timeout=5)
+        client.wait_reply(request_id)
 
     daemon.restart()
     recovered = daemon.connect()

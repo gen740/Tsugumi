@@ -6,12 +6,11 @@ import json
 import os
 import re
 import shutil
-import time
 
 import pytest
 
 from conftest import ROOT, Daemon, real_environment
-from projects import put, run_and_wait, start_run, wait_run
+from projects import put, run_and_wait, start_run, wait_for_log, wait_run
 from test_language_cards import write_project as write_language_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
@@ -176,7 +175,7 @@ def test_invalid_entry_names_the_candidate_and_rejection(tmp_path, name, method,
                                 "nix": NIX, "src": {"Card.cs": source}}}, [("start", "out", "bad", "start")])
     env, c = open_environment(root, "tsugumi-test-csharp-entry")
     try:
-        rid, status = run_and_wait(c, "start", timeout=2400)
+        rid, status = run_and_wait(c, "start")
         assert status.state == RunState.failed
         failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
         assert failure.kind == FailureKind.worker_failed
@@ -222,7 +221,7 @@ def build_lock(root, lock, hash):
     put(root / "definitions/probe/packages.lock.json", json.dumps(lock))
     env, c = open_environment(root, "tsugumi-test-csharp-lock")
     try:
-        rid, status = run_and_wait(c, "start", timeout=2400)
+        rid, status = run_and_wait(c, "start")
         said = text(c.call("LogRangeRequest", runId=rid, card=path("probe"), stream=4, limitBytes=262144).text)
         if status.failure: said += '''
 ''' + text(status.failure.diagnostic)
@@ -296,7 +295,7 @@ def log(c, rid, card="scale"):
 
 
 def run(c):
-    rid, status = run_and_wait(c, "start", timeout=2400)
+    rid, status = run_and_wait(c, "start")
     if status.state != RunState.succeeded:
         print(text(c.call("LogRangeRequest", runId=rid, stream=4, limitBytes=262144).text), flush=True)
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log(c,rid,"make"), log(c,rid), log(c,rid,"report"), text(c.call("LogRangeRequest", runId=rid, stream=4, limitBytes=262144).text))
@@ -341,12 +340,9 @@ def test_failure_cancel_deadline_and_recovery(project, mode):
     edit(env, c, mode=mode, timeoutSeconds=1 if mode == "wait" else None)
     rid = start_run(c, "start")
     if mode == "callback":
-        until = time.monotonic() + 30
-        while "waiting for cancellation" not in log(c, rid):
-            assert time.monotonic() < until, log(c, rid)
-            time.sleep(.02)
+        wait_for_log(c, rid, "scale", 2, lambda log: "waiting for cancellation" in text(log.text or b""))
         c.call("RunCancelRequest", runId=rid)
-    status = wait_run(c, rid, timeout=30)
+    status = wait_run(c, rid)
     assert status.state == (RunState.cancelled if mode == "callback" else RunState.failed)
     card_status = c.call("RunRecordRequest", runId=rid, card=path("scale")).status
     assert card_status.failure.kind == {
@@ -392,7 +388,7 @@ def test_production_creation_scaffold(tmp_path):
     c = env.client()
     try:
         if isinstance(env, Daemon): c.hello()
-        rid, status = run_and_wait(c, "start", timeout=2400)
+        rid, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log(c,rid,"hello"))
         shown = c.call("RunRecordRequest", runId=rid, card=path("hello")).record.display
         assert shown.valueType == 1 and text(shown.value.text) == "Hello from C#"

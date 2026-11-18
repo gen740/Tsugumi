@@ -173,12 +173,13 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
 
     for _ in range(2):
         # RunFinished is sent just before the scheduler releases the active
-        # run. A brief busy reply is valid; a blocked acceptance is not.
+        # run. The active-slot release has no separate notification, so a
+        # brief busy reply is valid; a blocked acceptance is not.
         deadline = time.monotonic() + 5
         while True:
             try:
                 accepted = client.call("RunRequest", baseRev=rev, opId=new_id(), origin="ui:test",
-                                       card=path("work"), timeout=5)
+                                       card=path("work"))
                 break
             except RpcFailure as failure:
                 assert failure.kind == "busy"

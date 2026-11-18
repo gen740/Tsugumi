@@ -38,9 +38,9 @@ def demo(request, tmp_path):
     env.cleanup()
 
 
-def run(c, card="start", propagate=True, timeout=900):
+def run(c, card="start", propagate=True):
     rid = start_run(c, [card], propagate=propagate)
-    st = wait_run(c, rid, timeout=timeout)
+    st = wait_run(c, rid)
     assert st.state == RunState.succeeded, (st.failure and text(st.failure.diagnostic))
     return rid
 

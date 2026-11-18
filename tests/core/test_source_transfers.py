@@ -241,8 +241,8 @@ def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path,
 @pytest.mark.parametrize("shell_changes", [False, True])
 def test_disconnect_during_streamed_save_discards_all_changes(project, core_factory, tmp_path, shell_changes):
     """Both copy and successful-shell imports use this public cancellable save."""
-    import time
     from concurrent.futures import ThreadPoolExecutor
+    from harness.file_events import wait_for_file
     setup(project)
     source = (project / ".tsugumi/agent-files/test/commands/success/data.bin"
               if shell_changes else tmp_path / "attached/data.bin")
@@ -256,22 +256,16 @@ def test_disconnect_during_streamed_save_discards_all_changes(project, core_fact
     with ThreadPoolExecutor(max_workers=1) as threads:
         pending = threads.submit(caller.call, "ProjectSaveRequest", baseRev=0, opId=operation,
                                  origin="agent", changes=[], transfers=[transfer(source)])
-        deadline = time.monotonic() + 10
-        while not (project / ".tsugumi/transfer.started").exists():
-            assert not pending.done(), "save completed before cancellation was observed"
-            assert time.monotonic() < deadline
-            time.sleep(0.001)
+        wait_for_file(project / ".tsugumi/transfer.started")
+        assert not pending.done(), "save completed before cancellation was observed"
         caller.close()
         with pytest.raises((ConnectionError, OSError)):
-            pending.result(timeout=3)
+            pending.result()
     from Tsugumi.Data.OperationState import OperationState
-    deadline = time.monotonic() + 15
-    while True:
-        outcome = observer.call("OperationGetRequest", opId=operation)
-        if outcome.state == OperationState.completed:
-            break
-        assert time.monotonic() < deadline, "disconnected save never reached a terminal receipt"
-        time.sleep(0.01)
+    # ProjectOpen runs on the mutation lane behind the cancelled save.
+    observer.open()
+    outcome = observer.call("OperationGetRequest", opId=operation)
+    assert outcome.state == OperationState.completed
     assert observer.call("ProjectInspectRequest").rev == 0
     from Tsugumi.Data.FailureKind import FailureKind
     assert outcome.receipt.result.kind == FailureKind.cancelled
