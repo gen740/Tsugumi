@@ -166,6 +166,6 @@ def test_line_chart_uses_binary_view_input(tmp_path):
         blobs = {text(b.name): bytes(b.data) for b in display.value.blobs}
         assert blobs["x"] == struct.pack("<dddd", 1e12, 1e12 + 0.125, 1e12, 1e12 + 0.125)
         page = c.call("ModuleReadRequest", module=text(display.value.module), limitBytes=1048576)
-        assert page.eof and page.bytes
+        assert page.eof and len(page.bytes) > 0
     finally:
         d.cleanup()
