@@ -92,7 +92,7 @@ table SearchResult { matches:[SearchMatch]; }
 table Event {
   kind:string (required); text:string; message:string; input_json:string;
   id:string; name:string; ok:bool = true; index:uint;
-  asked:[string]; groups:[AccessGroup]; event:Event;
+  asked:[string]; groups:[AccessGroup]; event:Event; code:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
 table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }

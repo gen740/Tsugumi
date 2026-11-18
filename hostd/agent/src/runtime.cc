@@ -149,12 +149,12 @@ auto ContextOverflow(std::string reason) -> bool {
 
 auto IsResults(const Message& message) -> bool;
 
-auto CannotFit() -> std::runtime_error {
-  // Local fitting and a provider context refusal have the same terminal
-  // error. Clients recognize it to offer starting a new conversation.
-  return std::runtime_error(
-      "the conversation no longer fits the model's context");
-}
+class ContextFull final : public std::runtime_error {
+ public:
+  ContextFull()
+      : std::runtime_error(
+            "the conversation no longer fits the model's context") {}
+};
 
 // Never split a tool exchange, or the provider-only thinking/signature blocks
 // carried with its assistant message. Parallel calls may have separate results.
@@ -372,6 +372,13 @@ auto ValidateHooks(const RuntimeHooks& hooks) -> void {
 
 }  // namespace
 
+auto RuntimeErrorCode(const std::exception& error) -> std::string {
+  if (dynamic_cast<const ContextFull*>(&error)) return "context_full";
+  if (const auto* provider = dynamic_cast<const ProviderError*>(&error))
+    return provider->reason_code();
+  return {};
+}
+
 auto Runtime::Run(const ProviderConfig& config, std::string_view system,
                   std::vector<Message>& messages,
                   const std::vector<ToolSpec>& tools, std::stop_token stop,
@@ -414,7 +421,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           const auto after =
               InputTokens(config, system, request_messages, tools, *context);
           if (after >= config.context_limit_tokens && after >= before)
-            throw CannotFit();
+            throw ContextFull();
         } catch (const ProviderError&) {
           // An optional summary failure must not prevent a request that can
           // still fit. A provider context refusal below triggers forced
@@ -440,7 +447,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
         // Bound attempts that already failed the provider’s context budget.
-        if (!options_.compact || ++context_refusals > 3) throw CannotFit();
+        if (!options_.compact || ++context_refusals > 3) throw ContextFull();
         context->input_tokens = 0;
         context->result_limit =
             std::max(size_t{1024}, context->result_limit / 2);
@@ -585,7 +592,8 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
   } catch (const std::exception& error) {
     result.outcome = RunOutcome::Failed;
     result.error = error.what();
-    Emit(hooks, {"error", result.error, {}, {}, false, 0, result.usage});
+    Emit(hooks, {"error", result.error, {}, {}, false, 0, result.usage,
+                 RuntimeErrorCode(error)});
   }
   return result;
 }
@@ -608,7 +616,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
     for (const auto& message : summary_input)
       if (fixed_tokens + EstimateMessageTokens(message) >=
           config.context_limit_tokens)
-        throw CannotFit();
+        throw ContextFull();
   uint64_t total = 0;
   for (const auto& message : summary_input)
     total += EstimateMessageTokens(message);
@@ -666,7 +674,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
       if (!fits_prefix) break;
       fitting_cut = i + 1;
     }
-    if (!fitting_cut) throw CannotFit();
+    if (!fitting_cut) throw ContextFull();
     cut = fitting_cut;
     bounded_input.assign(
         summary_input.begin(),

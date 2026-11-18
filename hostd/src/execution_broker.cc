@@ -495,8 +495,8 @@ ExecutionBroker::ExecutionBroker(std::filesystem::path state,
     : state_(std::make_unique<State>(std::move(state), std::move(socket))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
-auto ExecutionBroker::endpoint() const -> std::string {
-  return "unix:" + state_->socket;
+auto ExecutionBroker::socket_path() const -> const std::string& {
+  return state_->socket;
 }
 auto ExecutionBroker::Authorize(const std::string& project,
                                 const std::filesystem::path& path,
@@ -515,7 +515,7 @@ auto ExecutionBroker::Authorize(const std::string& project,
         .run();
     fs::remove_file_durable(control / "execution-broker-capability");
     H::ExecutionAuthorizationT result;
-    result.endpoint = endpoint();
+    result.endpoint = "unix:" + socket_path();
     result.capability_file = "";
     return result;
   }
@@ -542,7 +542,7 @@ auto ExecutionBroker::Authorize(const std::string& project,
   fs::write_atomic(control / "execution-broker-capability", capability,
                    guest ? 0644 : 0600);
   H::ExecutionAuthorizationT result;
-  result.endpoint = endpoint();
+  result.endpoint = "unix:" + socket_path();
   result.capability_file = (control / "execution-broker-capability").string();
   result.available = true;
   return result;

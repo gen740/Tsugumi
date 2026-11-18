@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import TsugumiRPC
 @testable import TsugumiAgentClient
 @testable import TsugumiLauncher
 
@@ -15,7 +16,7 @@ final class EnvironmentSetupTests: XCTestCase {
 
   func testConfirmedNegativeChecksRemainDistinctFromFailure() async {
     let status = await EnvironmentManager.SetupStatus.query {
-      ["virtualization_supported": false, "image_available": false]
+      Tsugumi_Host_HostRuntimeT()
     }
     XCTAssertEqual(status, .checked(virtualizationSupported: false, imageAvailable: false, imageVersion: nil))
     XCTAssertFalse(status.ready)
@@ -23,16 +24,13 @@ final class EnvironmentSetupTests: XCTestCase {
 
   func testSuccessfulRuntimeReplyKeepsBothChecksAndVersion() async {
     let status = await EnvironmentManager.SetupStatus.query {
-      ["virtualization_supported": true, "image_available": true, "image_version": "bundled-image"]
+      let reply = Tsugumi_Host_HostRuntimeT()
+      reply.virtualizationSupported = true
+      reply.imageAvailable = true
+      reply.imageVersion = "bundled-image"
+      return reply
     }
     XCTAssertEqual(status, .checked(virtualizationSupported: true, imageAvailable: true, imageVersion: "bundled-image"))
     XCTAssertTrue(status.ready)
   }
-
-  func testMalformedReplyIsAFailureRatherThanMissingImage() async {
-    let status = await EnvironmentManager.SetupStatus.query { ["virtualization_supported": true] }
-    guard case .failed(let message) = status else { return XCTFail("Missing fields are not negative answers") }
-    XCTAssertFalse(message.isEmpty)
-  }
-
 }

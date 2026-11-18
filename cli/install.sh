@@ -105,12 +105,12 @@ if [ "$artifact" = tsugumi-linux.tar.gz ]; then
   nix --extra-experimental-features 'nix-command flakes' --accept-flake-config build "path:$tree#cli" --out-link "$dest/result" ||
     fail 70 "Nix でのビルドに失敗しました（上の出力を確かめてください）。"
   ln -s result/bin/tsugumi "$dest/tsugumi"
+  reported="$("$dest/tsugumi" --version)" || fail 70 "The new command does not run."
+  [ "$reported" = "$version" ] || fail 70 "Version check failed: expected $version, got $reported"
 else
   mv "$tree" "$dest/runtime"
   ln -s runtime/tsugumi "$dest/tsugumi"
 fi
-reported="$("$dest/tsugumi" --version)" || fail 70 "The new command does not run."
-[ "$reported" = "$version" ] || fail 70 "Version check failed: expected $version, got $reported"
 printf '%s\n' "$generation" > "$dest/.installed-by-tsugumi"
 # Rename over a symlink itself, never into the directory it points at.
 # Both links are prepared on the same filesystem as their destination.

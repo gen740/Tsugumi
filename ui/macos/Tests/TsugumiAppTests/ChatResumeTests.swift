@@ -67,7 +67,7 @@ import TsugumiRPC
       _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
         "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture",
         "path": project.standardizedFileURL.path])
-      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
+      let _: Tsugumi_Agent_ConversationResultT = try await CoreHostClient.shared.agentCall("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
       let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
@@ -186,18 +186,18 @@ import TsugumiRPC
     func holdStream() throws { try FileManager.default.removeItem(at: streamRelease) }
     func releaseStream() throws { try Data().write(to: streamRelease) }
 
-    func snapshot() async throws -> [String: Any] {
-      try await CoreHostClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
+    func snapshot() async throws -> Tsugumi_Agent_ConversationResultT {
+      try await CoreHostClient.shared.agentCall("ConversationGetRequest", ["conversation_id": conversationID])
     }
 
-    func finished() async throws -> [String: Any] {
+    func finished() async throws -> Tsugumi_Agent_ConversationResultT {
       let deadline = Date().addingTimeInterval(30)
       var result = try await snapshot()
-      while result["busy"] as? Bool == true, Date() < deadline {
+      while result.busy, Date() < deadline {
         try await Task.sleep(for: .milliseconds(20))
         result = try await snapshot()
       }
-      try #require(result["busy"] as? Bool == false)
+      try #require(!result.busy)
       return result
     }
 
@@ -262,8 +262,8 @@ import TsugumiRPC
       // The core records preparing/model before sending the RPC acknowledgement.
       try await t.restartAgent()
       let before = try await t.snapshot()
-      try #require(before["resumable"] as? Bool == true)
-      let operation = try #require(before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+      try #require(before.resumable)
+      let operation = try #require(before.interruptedOperation)
       #expect(["preparing", "model"].contains(operation.kind))
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
@@ -272,10 +272,10 @@ import TsugumiRPC
       try await agent.open()
       try await agent.refresh()
       let after = try await t.snapshot()
-      #expect(after["busy"] as? Bool == false)
-      #expect(after["resumable"] as? Bool == true)
-      #expect(after["event_seq"] as? UInt64 == before["event_seq"] as? UInt64)
-      #expect((after["conversation"] as? Tsugumi_Agent_ConversationT)?.messages.count == 1)
+      #expect(!after.busy)
+      #expect(after.resumable)
+      #expect(after.eventSeq == before.eventSeq)
+      #expect(after.conversation.messages.count == 1)
       #expect(chat.interruptedOperation?.kind == operation.kind)
       t.session.start()
       try await SyncTests.connected(t.session)
@@ -296,8 +296,8 @@ import TsugumiRPC
       try await until("the restarted conversation is interrupted") { chat.interrupted }
       #expect(!chat.busy && !chat.failed)
       let snapshot = try await t.snapshot()
-      #expect(snapshot["resumable"] as? Bool == true)
-      #expect(try await t.snapshot()["event_seq"] as? UInt64 == snapshot["event_seq"] as? UInt64)
+      #expect(snapshot.resumable)
+      #expect(try await t.snapshot().eventSeq == snapshot.eventSeq)
     }
   }
 
@@ -370,7 +370,7 @@ import TsugumiRPC
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { !chat.busy && reply(chat, after: 0) }
       let snapshot = try await t.snapshot()
-      let conversation = try #require(snapshot["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = snapshot.conversation
       let messages = conversation.messages.compactMap { $0 }
       let user = try #require(messages.first { $0.role == "user" })
       let content = try #require(JSONSerialization.jsonObject(with: Data((user.contentJson ?? "[]").utf8)) as? [[String: Any]])
@@ -442,14 +442,14 @@ import TsugumiRPC
       await left.detach().value
       try t.releaseStream()
       let complete = try await t.finished()
-      let conversation = try #require(complete["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = complete.conversation
       let messages = conversation.messages.compactMap { $0 }
       #expect(messages.map { $0.role } == ["user", "assistant"])
       let back = t.makeChat()
       try await until("the completed answer is restored") { back.currentId == t.conversationID && reply(back, after: 1) }
       #expect(!back.busy && !back.failed)
       #expect(back.items.count == 2)
-      #expect(try await t.snapshot()["busy"] as? Bool == false)
+      #expect(try await t.snapshot().busy == false)
     }
   }
 
@@ -463,9 +463,8 @@ import TsugumiRPC
       chat.compact()
       #expect(chat.busy && chat.status == String(localized: "会話を圧縮しています…"))
       try await until("compaction ended") { !chat.busy }
-      let trace = try await CoreHostClient.shared.call("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
-      let errors = (trace["events"] as? [[String: Any]] ?? []).compactMap { $0["event"] as? [String: Any] }
-        .filter { $0["kind"] as? String == "error" }.compactMap { $0["message"] as? String }
+      let trace: Tsugumi_Agent_EventsPageT = try await CoreHostClient.shared.agentCall("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
+      let errors = trace.events.compactMap { $0?.event }.filter { $0.kind == "error" }.compactMap(\.message)
       #expect(chat.status == nil && !chat.failed && !chat.contextFull, "\(chat.status ?? "-"); core errors: \(errors)")
       try await until("the compacted history is restored") { chat.items.contains { $0.archived } }
       #expect(chat.items.count == 8, "Only the original messages belong in the transcript: \(chat.items.map(\.text))")
@@ -525,7 +524,7 @@ import TsugumiRPC
       try await until("an explicit cross-project selection is refused") { chat.status != nil && !chat.loading }
       #expect(chat.items.isEmpty && chat.permissionPrompt == nil)
       let saved = try await t.snapshot()
-      #expect(saved["project_id"] as? String == project.projectId)
+      #expect(saved.projectId == project.projectId)
     }
   }
 
@@ -555,7 +554,7 @@ import TsugumiRPC
       let chat = t.makeChat()
       try await until("the older snapshot is loaded") { chat.ready }
       let host = try await t.snapshot()
-      let conversation = try #require(host["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = host.conversation
       let row = try #require(conversation.rows.compactMap { $0 }.last)
       row.text = "New streamed progress"
       let snapshot = Tsugumi_Agent_ConversationT(); snapshot.id = t.conversationID; snapshot.rows = [row]
@@ -603,7 +602,7 @@ import TsugumiRPC
       try await until("the selected transcript is visible") { first.ready && first.items.count == 2 }
       let visible = first.items.map(\.text)
       let project = try #require(t.session.endpointOverride)
-      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
+      let _: Tsugumi_Agent_ConversationResultT = try await CoreHostClient.shared.agentCall("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
       #expect(model.chat(for: t.session) === first)
       let replacement = model.chat(for: back)
       t.keep(replacement)
@@ -624,8 +623,8 @@ import TsugumiRPC
       chat.cancel()
       let stopped = try await t.finished()
       try #require(kill(t.model.processIdentifier, SIGCONT) == 0)
-      #expect(stopped["resumable"] as? Bool == false)
-      #expect(stopped["continuable"] as? Bool == true)
+      #expect(!stopped.resumable)
+      #expect(stopped.continuable)
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the cancelled conversation is observed") { !chat.busy && chat.canContinue }

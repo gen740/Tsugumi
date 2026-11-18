@@ -55,7 +55,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
   /// The running VM's size (under `lock`; nil while none runs).
   private var _resources: VMResources?
-  public var resources: VMResources? { lock.withLock { _resources } }
   /// What uses the VM now (under `lock`): attached projects, open terminals
   /// and store operations. While it is zero the guest's memory is given back.
   private var users = 0
@@ -64,10 +63,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   public init(directory: URL) {
     self.directory = directory
-    executionBroker = ExecutionBrokerBridge(support: directory.deletingLastPathComponent())
+    executionBroker = ExecutionBrokerBridge()
   }
 
-  public func configureBroker(_ endpoint: String) throws { try executionBroker.configure(endpoint) }
+  public func configureBroker(_ socket: String) { executionBroker.configure(socket) }
 
   public var state: VMState {
     lock.lock()

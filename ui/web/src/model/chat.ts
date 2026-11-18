@@ -72,11 +72,7 @@ export interface ProviderInfo {
   thoughtModel?: string
 }
 
-/** The Agent's error at the ChatGPT plan's usage limit (ui/web/server/chatgpt.ts). */
-export const USAGE_LIMIT_TEXT = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 export const USAGE_URL = 'https://chatgpt.com/settings/usage'
-/** The Agent's error when the conversation cannot be made to fit the model's context (ui/web/server/agent.ts). */
-export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's context"
 
 interface ContentBlock {
   type: string
@@ -606,7 +602,7 @@ export class ChatController extends Observable {
       case 'finished':
         this.writer(who).ended(true, now)
         return false
-      case 'discardText': case 'retrying': case 'error':
+      case 'discardText': case 'retrying': case 'error': case 'cancelled':
         this.writer(who).ended(false, now)
         return false
     }
@@ -663,27 +659,31 @@ export class ChatController extends Observable {
         this.reloadCurrent()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
+        this.status = L('再試行中: {0}', e.message)
         break
+      case 'cancelled':
       case 'error':
         // The stopped answer ended after the next one began, which goes on.
-        if (e.message === 'cancelled' && this.stopping && this.busy) {
+        if (e.kind === 'cancelled' && this.stopping && this.busy) {
           this.stopping = false
           break
         }
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
-        this.team.endAll(e.message === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
-        if (e.message === 'cancelled') this.notes = []
+        this.team.endAll(e.kind === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
+        if (e.kind === 'cancelled') {
+          this.canContinue = true
+          this.notes = []
+        }
         this.busy = false
-        this.failed = e.message !== 'cancelled'
-        this.usageLimited = e.message === USAGE_LIMIT_TEXT
-        this.contextFull = e.message === CONTEXT_FULL_TEXT
-        this.status = e.message === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
+        this.failed = e.kind === 'error'
+        this.usageLimited = e.kind === 'error' && e.code === 'subscription_sharing_usage_limit_exceeded'
+        this.contextFull = e.kind === 'error' && e.code === 'context_full'
+        this.status = e.kind === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
           : this.usageLimited ? L('Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。')
           : this.contextFull ? L('この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。')
-          : L('エラー: {0}', modelErrorMessage(e.message))
+          : L('エラー: {0}', modelErrorMessage(e.message, e.code))
         this.refreshAfterTurn()
         break
       case 'finished':

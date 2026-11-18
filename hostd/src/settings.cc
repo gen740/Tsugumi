@@ -388,11 +388,14 @@ struct Settings::State {
       while (q.step()) {
         const auto v = j::Object(q.text(0));
         if (j::Bool(j::Get(v, "active"))) {
-          if (!j::Bool(j::Get(v, "signed_in")))
+          if (!j::Bool(j::Get(v, "signed_in"))) {
+            out.code = "chatgpt_sign_in_required";
             out.message = "Sign in to ChatGPT again";
-          else if (!j::Bool(j::Get(v, "plan_enabled")))
+          } else if (!j::Bool(j::Get(v, "plan_enabled"))) {
+            out.code = "chatgpt_plan_disabled";
             out.message =
                 "The ChatGPT plan is not enabled for this registration";
+          }
         }
         out.configured |= j::Bool(j::Get(v, "active")) &&
                           j::Bool(j::Get(v, "signed_in")) &&
@@ -400,6 +403,7 @@ struct Settings::State {
       }
       if (out.configured) {
         out.source = "oauth";
+        out.code.clear();
         out.message.clear();
       } else if (out.message.empty()) {
         out.message = "Sign in to ChatGPT first";
@@ -1273,9 +1277,10 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     std::string client;
     for (const auto& a : status.accounts)
       if (a->active && a->signed_in && a->plan_enabled) client = a->client_id;
-    if (client.empty())
-      throw std::runtime_error(
-          s.ProviderStatus(account_profile, "chatgpt").message);
+    if (client.empty()) {
+      const auto status = s.ProviderStatus(account_profile, "chatgpt");
+      throw agent::ProviderError(status.message, false, 0, {}, status.code);
+    }
     c.base_url = j::Text(s.Account(account_profile, client), "resource",
                          "https://api.openai.com/v1");
     c.access_token = [state = state_.get(), client](std::string_view stale) {

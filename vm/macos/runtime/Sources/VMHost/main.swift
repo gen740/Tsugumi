@@ -163,7 +163,7 @@ actor Driver {
   private var bridges: [String: LoopbackBridge] = [:]
   func boot(_ request: Tsugumi_VMHost_BootT) async throws {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
-    try vm.configureBroker(request.brokerEndpoint)
+    vm.configureBroker(request.brokerSocket)
     guard let image else { throw LauncherError.imageMissing }
     let preparing = !FileManager.default.fileExists(atPath: vm.directory.appendingPathComponent("store.img").path)
     let token = vm.observe { state in
@@ -176,7 +176,6 @@ actor Driver {
     defer { vm.stopObserving(token) }
     let size = request.resources
     let resources = VMResources(cpus: Int(size.cpus), memoryGiB: Int(size.memoryGib), storeGiB: Int(size.storeGib))
-    guard resources.cpus > 0, resources.memoryGiB > 0, resources.storeGiB > 0 else { throw LauncherError.notReady("the VM size is missing") }
     try await vm.start(image: image, resources: resources, cacheConfiguration: request.cacheConfiguration ?? "", cacheNetrc: request.cacheNetrc ?? "", cacheProblem: request.cacheProblem ?? "")
   }
   func shares(_ key: String, _ mounts: [Tsugumi_VMHost_MountT?]) async throws -> Int {
@@ -199,21 +198,21 @@ actor Driver {
         value.endpoint = "ws://127.0.0.1:\(bridges[key]!.port)/rpc"
       }
     }
-    if !value.running {
-      bridges.removeValue(forKey: key)?.close()
-      await vm.detach(key)
-    }
+    if !value.running { await detach(key) }
     return value
   }
   func run(_ request: Tsugumi_VMHost_RunT) async throws -> Tsugumi_VMHost_ProcessT {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(vm.resources?.cpus ?? 1)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    _ = try await vm.request("start \(request.key) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
     return try await process(request.key)
   }
   func stop(_ key: String) async throws {
     if case .running = vm.state { _ = try await vm.request("stop \(key)") }
+    await detach(key)
+  }
+  private func detach(_ key: String) async {
     bridges.removeValue(forKey: key)?.close()
     await vm.detach(key)
   }
@@ -227,12 +226,11 @@ actor Driver {
       result.message = try await vm.request("verify-store")
     case .cleanupstore:
       await vm.hold(); defer { vm.release() }
-      let fields = try await vm.request("gc").split(separator: " ")
-      result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
+      try await vm.request("gc")
     case .forgetproject:
       let key = request.projectId ?? ""
-      guard !(try await process(key)).running else { throw LauncherError.notReady("the project is running; stop it first") }
-      _ = try await vm.request("forget \(key)")
+      try await vm.request("forget-stopped \(key)")
+      await detach(key)
     case .command:
       guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
       result.message = try await vm.request(request.command ?? "")
@@ -259,14 +257,18 @@ actor Driver {
     let result = Tsugumi_Host_HostTerminalT(); result.session = request.session
     switch request.action {
     case .open_:
-      guard let key = request.project, (try await process(key)).running else { throw LauncherError.notReady("the project is not running") }
+      guard let key = request.project else { throw LauncherError.notReady("the project is not running") }
       let fd = try await vm.connect(port: SharedVM.controlPort)
       do {
         try writeAllToTerminal(fd, Data("shell \(key) \(max(request.rows, 2)) \(max(request.cols, 10))\n".utf8))
         var line = Data(), byte: UInt8 = 0
         while Darwin.read(fd, &byte, 1) == 1, byte != 10 { line.append(byte) }
-        let fields = String(decoding: line, as: UTF8.self).split(separator: " ")
-        guard fields.count == 2, fields[0] == "ok", let session = UInt64(fields[1]) else { throw LauncherError.notReady("cannot open terminal") }
+        let reply = String(decoding: line, as: UTF8.self)
+        let fields = reply.split(separator: " ")
+        guard fields.count == 2, fields[0] == "ok", let session = UInt64(fields[1]) else {
+          let reason = reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "cannot open terminal"
+          throw LauncherError.notReady(reason)
+        }
         result.session = session
         peer.emit(encode(result, reply: .hostterminal, id: id))
         terminals.add(fd, session)

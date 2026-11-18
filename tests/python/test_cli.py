@@ -176,17 +176,14 @@ def test_reinstalling_the_same_version_keeps_the_previous_generation(machine):
 
 
 def test_failed_version_check_keeps_the_current_command(machine):
-    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
-    assert machine("Darwin", "arm64").returncode == 0
-    # A checksum-valid release whose executable reports a different version.
-    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
-    tree = machine.release / "build/1.2.4/tsugumi"
-    executable(tree / "tsugumi", "#!/bin/sh\necho wrong\n")
-    name = "tsugumi-macos-arm64.tar.gz"
-    with tarfile.open(machine.release / name, "w:gz") as archive:
-        archive.add(tree, "tsugumi")
-    (machine.release / f"{name}.sha256").write_text(hashlib.sha256((machine.release / name).read_bytes()).hexdigest())
-    result = machine("Darwin", "arm64")
+    name = "tsugumi-linux.tar.gz"
+    artifact(machine.release, name, "1.2.3")
+    assert machine("Linux", "aarch64", nix=True).returncode == 0
+    # The build succeeded, but the resulting command reports a different version.
+    artifact(machine.release, name, "1.2.4")
+    nix = machine.stubs / "nix"
+    executable(nix, nix.read_text().replace('$(cat "$src/VERSION")', "wrong"))
+    result = machine("Linux", "aarch64")
     assert result.returncode == 70
     assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
     assert len(list((machine.home / ".local/share/tsugumi").iterdir())) == 2

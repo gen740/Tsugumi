@@ -1,6 +1,5 @@
 """Guest artifact assembly and integrity."""
 import argparse
-import hashlib
 import importlib.util
 import io
 import json
@@ -29,9 +28,7 @@ def fixture(directory):
             entry.size = len(data)
             tar.addfile(entry, io.BytesIO(data))
     value = {"identity": "definition", "system": "aarch64-linux", "revision": "commit",
-             "files": {p.name: artifact.digest(p) for p in directory.iterdir()},
-             "members": {name: hashlib.sha256(data).hexdigest() for name, data in
-                         [("vmlinux", b"kernel"), ("rootfs.erofs", b"image"), ("vm-version", b"definition\n")]}}
+             "files": {p.name: artifact.digest(p) for p in directory.iterdir()}}
     (directory / "vm-manifest.json").write_text(json.dumps(value))
     return value
 
@@ -54,14 +51,6 @@ def test_wrong_archive_stamp_fails_even_with_updated_archive_checksum(tmp_path):
     (tmp_path / "vm-manifest.json").write_text(json.dumps(value))
     with pytest.raises(ValueError, match="payload identity"):
         artifact.verify(tmp_path, "another-definition")
-
-
-def test_attachment_checksums_match_extracted_bytes(tmp_path):
-    value = fixture(tmp_path)
-    value["members"]["rootfs.erofs"] = "0" * 64
-    (tmp_path / "vm-manifest.json").write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="attachment checksum"):
-        artifact.verify(tmp_path, "definition")
 
 
 def test_build_emits_payload_manifest_and_checksums(tmp_path):

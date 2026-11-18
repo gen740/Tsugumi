@@ -8,7 +8,7 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
-const { ChatController, CONTEXT_FULL_TEXT } = await import('../src/model/chat')
+const { ChatController } = await import('../src/model/chat')
 
 const chat = () => {
   const c = Object.create(ChatController.prototype) as any
@@ -29,7 +29,7 @@ const STOPPED = '回答を停止しました（Workflow の実行は止めてい
   c.reloadCurrent = () => {}
   c.handle({ kind: 'compacted' })
   assert.equal(c.status, undefined)
-  c.handle({ kind: 'error', message: CONTEXT_FULL_TEXT })
+  c.handle({ kind: 'error', code: 'context_full', message: 'Context is full' })
   assert.equal(c.busy, false)
   assert.equal(c.contextFull, true)
   assert.match(c.status, /新しい会話を始めてください/)
@@ -40,7 +40,7 @@ const STOPPED = '回答を停止しました（Workflow の実行は止めてい
   c.handle({ kind: 'finished' })
   assert.equal(c.status, undefined)
 }
-const cancelled = { kind: 'error', message: 'cancelled' }
+const cancelled = { kind: 'cancelled' }
 
 // The next answer began first.
 let c = chat()

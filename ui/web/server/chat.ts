@@ -176,11 +176,18 @@ async function providerInfo() {
            modelNames: p.auth === 'chatgpt' ? (await modelCatalogs()).modelNames : {} }
 }
 
+function providerConnectionMessage(code?: string): string | undefined {
+  switch (code) {
+    case 'chatgpt_sign_in_required': return L('ChatGPT にもう一度サインインしてください。')
+    case 'chatgpt_plan_disabled': return L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')
+  }
+}
+
 /** The ChatGPT accounts and the sign-in for the settings page (never a token). */
 async function chatGPTState() {
-  const status = await core.user.call<{ message?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
+  const status = await core.user.call<{ code?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
   return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL,
-    connectionMessage: status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined }
+    connectionMessage: providerConnectionMessage(status.code) }
 }
 
 // ---- The guide -----------------------------------------------------------------
@@ -220,10 +227,10 @@ async function guideProvider(): Promise<ProviderConfig> { return purposeProvider
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
  *  signed-in ChatGPT plan, or the local fixture. */
-async function guideAvailability(): Promise<{ configured: boolean; message?: string }> {
+async function guideAvailability(): Promise<{ configured: boolean; code?: string }> {
   const p = await guideProvider()
   const selected = await core.provider(p)
-  const status = await core.user.call<{ configured: boolean; message?: string }>('ProviderStatusRequest', {
+  const status = await core.user.call<{ configured: boolean; code?: string }>('ProviderStatusRequest', {
     profile: p.auth === 'chatgpt' ? selected.account_profile ?? selected.profile : selected.profile,
     id: selected.provider_id, key_profile: selected.key_profile,
   })
@@ -235,7 +242,7 @@ const guideSession = () => `web:${ctx.support}`
 async function guideState() {
   const status = await guideAvailability()
   const available = status.configured
-  const connectionMessage = status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined
+  const connectionMessage = providerConnectionMessage(status.code)
   const progress = await core.user.call('GuideAdvanceRequest', { session_id: guideSession(), language: settings().language,
     event: { kind: 'connection', connected: available } })
   return { available, connectionMessage, ...progress }
@@ -586,7 +593,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
       scoped_skill: b.scopedSkill ? String(b.scopedSkill) : undefined,
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
     }))
-      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))
+      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
     return { ok: true }
   },
   'POST /api/chat/thoughts': async (b) => {
@@ -625,7 +632,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
   'POST /api/chat/folders': async (b) => {
-    if (!Array.isArray(b.selected) || !b.selected.length) throw ctx.httpError(400, 'Select at least one folder.')
+    if (!Array.isArray(b.selected)) throw ctx.httpError(400, 'Select at least one folder.')
     const folders = b.selected.map(String)
     const host = chatFor(projectDir(b.path))
     return { folders: await host.attachFolders(folders) }
@@ -680,19 +687,17 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/guide/send': async (b) => {
     const status = await guideAvailability()
-    if (!status.configured) throw ctx.httpError(409, status.message === 'Sign in to ChatGPT again'
-      ? L('ChatGPT にもう一度サインインしてください。') : L('ガイドに使える API キーがありません。'))
+    if (!status.configured) throw ctx.httpError(409, providerConnectionMessage(status.code) ?? L('ガイドに使える API キーがありません。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     const a = await guide()
-    if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))
     const turn = randomUUID()
     void withAccess(guideProject ?? '', 'guide', () => a.send(String(b.text ?? ''), guideEvents, turn))
-      .catch((e) => guideEvents({ kind: 'error', message: e.message }))
+      .catch((e) => guideEvents({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
     return { ok: true }
   },
   'POST /api/guide/retry': async () => {
     const a = await guide()
-    if (!a.busy) await a.action('Retry', guideEvents)
+    await a.action('Retry', guideEvents)
     return { ok: true }
   },
   'POST /api/guide/cancel': async () => {

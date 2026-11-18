@@ -22,14 +22,13 @@
 //
 //   1024  control, one request line per connection, one reply line:
 //           ping                            -> ok
-//           start <id> <cpus> <name> <slot> -> ok <rpc port>
+//           start <id> <name> <slot> [origins] -> ok <id>
 //           stop <id>                       -> ok
-//           forget <id>                     -> ok (stopped project's build
-//                                              roots and scratch go;
-//                                              data deletion)
-//           gc                              -> ok <bytes freed> <paths deleted>
-//                                              (the shared store's cleanup:
-//                                              what no root keeps)
+//           forget <id>                     -> ok (stop and delete build
+//                                              roots and scratch)
+//           forget-stopped <id>             -> ok (delete for a stopped project)
+//           gc                              -> ok (remove store paths without
+//                                              GC roots)
 //           status                          -> ok <id>:<pid>:<port> ...
 //           shell <id> <rows> <cols>        -> ok <session>, then the
 //                                              connection is the terminal
@@ -60,6 +59,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -439,21 +439,7 @@ std::string collect_garbage(bool verify = false) {
   }
   if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0))
     return "error nix-store --gc failed";
-  // "N store paths deleted, X MiB freed"
-  unsigned long long paths = 0;
-  double amount = 0;
-  char unit[8] = "";
-  if (auto at = text.rfind(" store paths deleted, "); at != std::string::npos) {
-    auto line = text.find_last_of('\n', at);
-    std::sscanf(text.c_str() + (line == std::string::npos ? 0 : line + 1),
-                "%llu store paths deleted, %lf %7s", &paths, &amount, unit);
-  }
-  double mul = std::string(unit) == "GiB"   ? 1073741824.0
-               : std::string(unit) == "MiB" ? 1048576.0
-               : std::string(unit) == "KiB" ? 1024.0
-                                            : 1.0;
-  return "ok " + std::to_string(static_cast<unsigned long long>(amount * mul)) +
-         " " + std::to_string(paths);
+  return "ok";
 }
 
 int project_main(void* arg) {
@@ -485,16 +471,6 @@ int project_main(void* arg) {
   return 127;
 }
 
-std::string sanitize_name(const std::string& s) {
-  std::string out;
-  for (char c : s)
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') || c == '-')
-      out += c;
-  if (out.empty()) out = "project";
-  return out.substr(0, 63);
-}
-
 std::string slot_dir(int slot) { return opt.host + "/" + std::to_string(slot); }
 
 // Mounts the slot's virtiofs device afresh (the app has just set its share).
@@ -510,9 +486,8 @@ std::string mount_slot(int slot) {
   return "";
 }
 
-std::string start_project(const std::string& id, int cpus,
-                          const std::string& name, int slot,
-                          const std::string& origins) {
+auto start_project(const std::string& id, const std::string& name, int slot,
+                   const std::string& origins) -> std::string {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
@@ -554,7 +529,7 @@ std::string start_project(const std::string& id, int cpus,
     ::close(log_fd);
     return "error pipe";
   }
-  ChildArgs args{sanitize_name(name),
+  ChildArgs args{name,
                  pr.uid,
                  sync[0],
                  log_fd,
@@ -574,7 +549,7 @@ std::string start_project(const std::string& id, int cpus,
                "--control-dir",
                "/control",
                "--cpus",
-               std::to_string(cpus),
+               std::to_string(::get_nprocs()),
                "--allow-missing-origin",
                "--gcroots-dir",
                kRoots + "/" + id,
@@ -588,8 +563,7 @@ std::string start_project(const std::string& id, int cpus,
   // The binary caches of this VM's nix-daemon, for the run records. A project
   // cannot read the daemon's settings (they sit beside the caches' credentials
   // under /run/tsugumi, which its view replaces); /init wrote this list.
-  if (::access(kSubstituters.c_str(), R_OK) == 0)
-    args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
+  args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
   // The pages that may connect (the Mac's tsugumi command): comma-separated.
   // Without any, as for the app, a browser's request is refused.
   for (size_t at = 0; at < origins.size();) {
@@ -644,20 +618,24 @@ std::string start_project(const std::string& id, int cpus,
   return "ok " + id;
 }
 
-std::string stop_project(const std::string& id) {
+auto stop_project(const std::string& id) -> void {
   std::unique_lock<std::mutex> l(mu);
   auto it = projects.find(id);
-  if (it == projects.end() || !it->second.running) return "ok";
+  if (it == projects.end() || !it->second.running) return;
   pid_t pid = it->second.pid;
   ::kill(pid, SIGTERM);
   // tsugumid records interrupted runs on SIGTERM before exiting.
   exited.wait(l, [&] { return !it->second.running; });
-  return "ok";
 }
 
-std::string forget_project(const std::string& id) {
-  std::string r = stop_project(id);
-  if (r != "ok") return r;
+auto forget_project(const std::string& id, bool stop) -> std::string {
+  if (stop) {
+    stop_project(id);
+  } else {
+    std::lock_guard lock(mu);
+    if (auto it = projects.find(id); it != projects.end() && it->second.running)
+      return "error the project is running; stop it first";
+  }
   std::error_code ec;
   fs::remove_all(kRoots + "/" + id, ec);
   fs::remove_all(kScratch + "/" + id, ec);
@@ -956,13 +934,14 @@ void control(int conn) {
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";
-  } else if (w[0] == "start" && (w.size() == 5 || w.size() == 6))
-    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3],
-                      std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "");
-  else if (w[0] == "stop" && w.size() == 2)
-    r = stop_project(w[1]);
-  else if (w[0] == "forget" && w.size() == 2)
-    r = forget_project(w[1]);
+  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5))
+    r = start_project(w[1], w[2], std::atoi(w[3].c_str()),
+                      w.size() == 5 ? w[4] : "");
+  else if (w[0] == "stop" && w.size() == 2) {
+    stop_project(w[1]);
+    r = "ok";
+  } else if ((w[0] == "forget" || w[0] == "forget-stopped") && w.size() == 2)
+    r = forget_project(w[1], w[0] == "forget");
   else if (w[0] == "gc" && w.size() == 1)
     r = collect_garbage();
   else if (w[0] == "verify-store" && w.size() == 1)

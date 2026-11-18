@@ -36,8 +36,8 @@ private func release(tag: String, draft: Bool = false, prerelease: Bool = false,
 @Test func checksumsAreReadFromShasumLines() throws {
   let h = String(repeating: "ab", count: 32)
   #expect(UpdateCheck.checksum(in: "\(h)  Tsugumi.zip\n", for: "Tsugumi.zip") == h)
-  #expect(UpdateCheck.checksum(in: "\(h.uppercased()) *Tsugumi.zip", for: "Tsugumi.zip") == h)
-  #expect(UpdateCheck.checksum(in: h, for: "Tsugumi.zip") == h)
+  #expect(UpdateCheck.checksum(in: "\(h.uppercased()) *Tsugumi.zip", for: "Tsugumi.zip") == nil)
+  #expect(UpdateCheck.checksum(in: h, for: "Tsugumi.zip") == nil)
   #expect(UpdateCheck.checksum(in: "\(h)  Other.zip", for: "Tsugumi.zip") == nil)
   #expect(UpdateCheck.checksum(in: "abc  Tsugumi.zip", for: "Tsugumi.zip") == nil)
   let file = testTemporaryDirectory.appendingPathComponent("tsugumi-sha-\(UUID().uuidString)")

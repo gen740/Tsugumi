@@ -118,7 +118,7 @@ def serve(peer):
                         processes[key] = subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         value, tag = status(key), ReplyPayload.Process
                 elif kind == RequestPayload.Boot:
-                    broker_endpoint = text(request.brokerEndpoint)
+                    broker_endpoint = "unix:" + text(request.brokerSocket)
                 elif kind == RequestPayload.ProcessRequest:
                     key = text(request.key)
                     if request.action == 1 and status(key).running:

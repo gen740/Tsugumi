@@ -89,13 +89,13 @@ const noWriter = () => undefined
   assert.ok(team.bird('b')!.visible(end + T.linger + 0.1), 'the other still works')
   assert.ok(team.out(end + T.linger + 0.1))
   // How the others end.
-  team.note('b', { kind: 'error', message: 'cancelled' }, 200)
+  team.note('b', { kind: 'cancelled' }, 200)
   assert.ok(team.bird('b')!.line(200.1)?.text)
   assert.ok(!team.out(200 + T.linger + 0.1))
   team.start([{ name: 'c', cards: ['x'] }, { name: 'd', cards: ['y'] }], 300)
   team.note('c', { kind: 'error', message: 'broken' }, 301)
   assert.ok(team.bird('c')!.line(301 + T.scene)?.text)
-  team.note('d', { kind: 'error', message: 'cancelled' }, 301)
+  team.note('d', { kind: 'cancelled' }, 301)
   assert.ok(team.bird('d')!.line(301 + T.scene)?.text)
   // The main Agent's turn ended while one seems at work (its events were lost): none stays.
   team.start([{ name: 'e', cards: ['x'] }], 400)

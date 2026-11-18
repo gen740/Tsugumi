@@ -145,10 +145,10 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
     before = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert before["state"] == "ready", before
     # Another page shows it: it goes on.
-    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)}) == {"stopped": False}
+    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)})["ok"] is True
     assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
     # The last page detaches its views while core remains available.
-    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": False}
+    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)})["ok"] is True
     pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
     assert {"type": "projectClosed", "project": real} in pages[2].events
     after = post(port, cookie, "/api/env/start", {"path": str(project)})

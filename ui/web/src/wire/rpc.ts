@@ -75,9 +75,10 @@ export class RPCError extends Error {
 export const disconnected = () => new RPCError('disconnected', L('tsugumid との接続が切れました'))
 
 export interface Transport {
+  /** Resolves with the verified reply matched to the request ID. */
   call(frame: Uint8Array, timeoutMs: number): Promise<Uint8Array>
   close(): void
-  /** Set by the client. */
+  /** Set by the client. The transport delivers verified notifications here. */
   onEvent?: (frame: Uint8Array) => void
   onClose?: (reason: string) => void
 }
@@ -136,7 +137,6 @@ export class RPCClient {
     try {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
-      if (message.payloadType() !== Payload.Notification) throw new Error('unexpected notification')
       const raw = message.payload(new R.Notification()) as R.Notification
       const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
         ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
@@ -149,15 +149,11 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, id: bigint, timeoutMs: number): Promise<ReplyT> {
+  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<ReplyT> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
-    if (message.requestId() !== id || message.payloadType() !== Payload.Reply) {
-      this.close()
-      throw new RPCError('protocol', 'unexpected RPC reply')
-    }
     const wire = message.payload(new Reply()) as Reply
     const reply = wire.valueType() === R.ReplyPayload.RecordResult
       ? new ReplyT(R.ReplyPayload.RecordResult, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
@@ -171,9 +167,8 @@ export class RPCClient {
     const msg = new MessageT(id, Payload.Request, new RequestT(type, value))
     const b = new Builder(1024)
     b.finish(msg.pack(b), 'TSG1')
-    const reply = await this.dispatch(b.asUint8Array().slice(), id, timeoutMs)
+    const reply = await this.dispatch(b.asUint8Array().slice(), timeoutMs)
     if (reply.valueType === R.ReplyPayload.Failure) throw new RPCFailure(reply.value as D.FailureT)
-    if (reply.valueType === R.ReplyPayload.NONE) throw new RPCError('unexpected', 'empty reply')
     return reply.value as T
   }
 

@@ -37,6 +37,7 @@ import * as fb from 'flatbuffers'
 import { Message as AgentMessage, MessageT as AgentMessageT } from '../shared/gen/tsugumi/agent/message'
 import { RequestT as AgentRequestT } from '../shared/gen/tsugumi/agent/request'
 import { RequestPayload as AgentRequestPayload } from '../shared/gen/tsugumi/agent/request-payload'
+import { ReplyPayload as AgentReplyPayload } from '../shared/gen/tsugumi/agent/reply-payload'
 import { Payload as AgentPayload } from '../shared/gen/tsugumi/agent/payload'
 import { Message as HostMessage, MessageT as HostMessageT } from '../shared/gen/tsugumi/host/message'
 import { RequestT as HostRequestT } from '../shared/gen/tsugumi/host/request'
@@ -245,14 +246,25 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
     builder.finish(reply.value.pack(builder))
     return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
   }
-  const value = view(reply.value)
-  if (value.code !== undefined) return { id: message.requestId, value: undefined,
-    error: new CoreHostError(value.code, value.message, reply.value.requestId ?? undefined) }
-  if (host && reply.valueType === H.ReplyPayload.ProjectPermissionList) return { id: message.requestId, value }
-  let result = value
-  // Vector result tables keep the public API's array shape.
-  for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools', 'services']) {
-    if (Object.keys(value).length === 1 && Array.isArray(value[key])) { result = value[key]; break }
+  if (reply.valueType === (host ? H.ReplyPayload.Failure : AgentReplyPayload.Failure)) {
+    const failure = reply.value
+    return { id: message.requestId, value: undefined,
+      error: new CoreHostError(failure.code, failure.message, failure.requestId ?? undefined) }
   }
-  return { id: message.requestId, value: result }
+  let value = view(reply.value)
+  if (host) {
+    switch (reply.valueType) {
+      case H.ReplyPayload.RecentList: value = value.projects; break
+      case H.ReplyPayload.DemoList: value = value.demos; break
+      case H.ReplyPayload.ModelList: value = value.models; break
+      case H.ReplyPayload.DemoPaths: value = value.paths; break
+    }
+  } else {
+    switch (reply.valueType) {
+      case AgentReplyPayload.ConversationList: value = value.conversations; break
+      case AgentReplyPayload.SearchResult: value = value.matches; break
+      case AgentReplyPayload.ToolCatalog: value = value.tools; break
+    }
+  }
+  return { id: message.requestId, value }
 }

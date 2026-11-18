@@ -40,9 +40,9 @@ export function adoptLanguage(l: unknown) {
 }
 
 /** Known host authentication states use the same wording in chat and the guide. */
-export function modelErrorMessage(message: string): string {
-  if (message === 'Sign in to ChatGPT again') return L('ChatGPT にもう一度サインインしてください。')
-  if (message === 'The ChatGPT plan is not enabled for this registration')
+export function modelErrorMessage(message: string, code?: string): string {
+  if (code === 'chatgpt_sign_in_required') return L('ChatGPT にもう一度サインインしてください。')
+  if (code === 'chatgpt_plan_disabled')
     return L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')
   return message
 }

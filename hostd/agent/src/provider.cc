@@ -1148,6 +1148,10 @@ ProviderError::ProviderError(std::string message, bool retryable_value,
       code(std::move(code_value)),
       curl_code(curl_code_value) {}
 
+auto ProviderError::reason_code() const -> std::string {
+  return sign_in_required ? "chatgpt_sign_in_required" : code;
+}
+
 auto ValidToolArguments(std::string_view json) -> bool {
   try {
     (void)Members(Parse(json));

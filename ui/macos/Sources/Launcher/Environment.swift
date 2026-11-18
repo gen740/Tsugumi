@@ -45,9 +45,6 @@ public struct ProjectIdentity: Sendable, Hashable {
     let canonical = url.resolvingSymlinksInPath().standardizedFileURL
     var st = stat()
     guard stat(canonical.path, &st) == 0 else { throw LauncherError.invalidProject(url.path) }
-    guard FileManager.default.fileExists(atPath: canonical.appendingPathComponent("tsugumi.json").path) else {
-      throw LauncherError.invalidProject(url.path)
-    }
     let key = "\(st.st_dev):\(st.st_ino)"
     id = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     supportsExternalExecution = st.st_birthtimespec.tv_sec > 0
