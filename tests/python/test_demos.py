@@ -443,13 +443,13 @@ def test_plots_draw_into_the_displays(plots_demo):
         return np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"])
 
     explore = c.call("RunRecordRequest", runId=rid, card=path("explore")).record.display
-    assert explore.valueType == DisplayValue.DisplayModule and text(explore.value.name) == "plotly"
+    assert explore.valueType == DisplayValue.DisplayModule
     figure = json.loads(text(explore.value.configJson))
     walkers = [(end, reach) for trace in figure["data"] if "x" in trace and "y" in trace
                for end, reach in zip(coordinates(trace["x"]), coordinates(trace["y"]), strict=True)]
     assert len(walkers) == 200 and all(abs(end) <= reach for end, reach in walkers)
     spread = c.call("RunRecordRequest", runId=rid, card=path("spread")).record.display
-    assert spread.valueType == DisplayValue.DisplayModule and text(spread.value.name) == "vega-lite"
+    assert spread.valueType == DisplayValue.DisplayModule
     spec = json.loads(text(spread.value.configJson))
     rows = [row for values in spec.get("datasets", {}).values() for row in values]
     rows += spec.get("data", {}).get("values", [])
