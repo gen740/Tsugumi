@@ -134,7 +134,7 @@ class SharedVM:
 
     def __init__(self):
         import atexit
-        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/macos" / ".build" / "debug" / "tsugumi-vmctl"))
+        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/vmctl" / ".build" / "debug" / "tsugumi-vmctl"))
         self.directory = tempfile.TemporaryDirectory(prefix="vm-")
         support = Path(self.directory.name)
         support.mkdir(parents=True, exist_ok=True)
