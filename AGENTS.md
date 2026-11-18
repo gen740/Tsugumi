@@ -26,6 +26,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [hostd/agent/](hostd/agent/) | Agent implementation, prompts, tool descriptions and guide scripts |
 | [ui/web/](ui/web/) | Browser UI, host server and platform adapters |
 | [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
+| [pack/](pack/) | `tsugumi-pack`: exports a Project as a standalone Mac app ([design](pack/README.md)) |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
 | [nix/](nix/) | Runtime, SDK, remote worker and CLI packages; flake outputs, checks and development shell |
 | [demos/](demos/) | Matching Japanese and English demos and Drafts (`ja/`, `en/`): change both |

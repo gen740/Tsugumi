@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <iosfwd>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -68,6 +69,10 @@ struct ServiceOptions {
   // per line, written by a launcher whose daemon reads settings this process
   // cannot see (the shared VM). Empty: this process's own Nix configuration.
   std::filesystem::path substituters_file;
+  // Builds made ahead (--prepare-cards output). When set, no Card is
+  // evaluated: each uses its prepared build, and a Card without one, or
+  // whose definition changed since, fails.
+  std::filesystem::path prepared_cards;
   TransportLimits limits;
 };
 
@@ -99,6 +104,9 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
+  // Builds every Code Card the way a run would, without running any
+  // (tsugumid --prepare-cards): one JSON line per Card. False when one failed.
+  auto prepare_cards(std::ostream& out) -> bool;
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }

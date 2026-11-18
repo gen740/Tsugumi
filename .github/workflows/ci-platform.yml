@@ -288,3 +288,28 @@ jobs:
       revision: ${{ github.sha }}
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+  pack-guest:
+    name: tsugumi-pack guest
+    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks).vm }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      # pack/build.sh takes this folder as TSUGUMI_PACK_GUEST, so the guest
+      # need not be built on a Mac.
+      - name: Build the export and runner images
+        run: |
+          nix build -L ".#packages.aarch64-linux.pack-guest" -o build-pack-guest
+          mkdir -p dist/pack-guest
+          cp build-pack-guest/{vmlinux,export.erofs,run.erofs,identity} dist/pack-guest/
+      - uses: actions/upload-artifact@v4
+        with:
+          # The branch's commit, not a pull request's merge commit.
+          name: pack-guest-${{ github.event.pull_request.head.sha || github.sha }}
+          path: dist/pack-guest
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

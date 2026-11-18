@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <regex>
+#include <sstream>
 
 #include "nix_eval.hh"
 #include "runtime_schema.hh"
@@ -176,6 +177,26 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
   // macOS).
   eval_dir_ = stdfs::canonical(eval_dir_);
   sdk_dir_ = stdfs::canonical(svc_.options().sdk_dir, ec);
+  if (const auto& file = svc_.options().prepared_cards; !file.empty()) {
+    auto text = fs::read_file(file);
+    if (!text)
+      throw std::runtime_error("cannot read prepared builds " + file.string());
+    prepared_.emplace();
+    std::istringstream lines(*text);
+    for (std::string line; std::getline(lines, line);) {
+      if (line.empty()) continue;
+      schema::PreparedCard card;
+      if (auto error = schema::decode(line, card))
+        throw std::runtime_error("prepared builds " + file.string() + ": " +
+                                 error->message);
+      const auto* name = schema::get(card.card);
+      if (!name)
+        throw std::runtime_error("prepared builds " + file.string() +
+                                 ": a line names no card");
+      const auto key = *name;
+      prepared_->emplace(key, std::move(card));
+    }
+  }
   if (ec) sdk_dir_ = svc_.options().sdk_dir;
   // SDK jobs left pending by a previous process were interrupted.
   auto dir = svc_.store().state_dir() / "sdk";
@@ -206,6 +227,44 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
       sdk_jobs_[job.op_id] = std::move(job);
     }
   }
+}
+
+auto NixRunner::prepared(const std::string& card, const std::string& key) const
+    -> NixResult {
+  const auto found = prepared_->find(card);
+  if (found == prepared_->end())
+    throw Failed(FailureKind::unsupported,
+                 "Card " + card + " has no prepared build", {{"card", card}});
+  const auto& p = found->second;
+  if (const auto* error = schema::get(p.error))
+    throw Failed(FailureKind::nix_failed,
+                 "Card " + card + " did not build ahead: " + *error,
+                 {{"card", card}});
+  const auto* prepared_key = schema::get(p.key);
+  if (!prepared_key || *prepared_key != key)
+    throw Failed(FailureKind::validation_failed,
+                 "Card " + card +
+                     " changed since its build was prepared: its definition, "
+                     "contract, Nix parameters or upstream exports differ",
+                 {{"card", card}});
+  NixResult res;
+  res.derivation.path = *schema::get(p.derivation);
+  res.derivation.output = *schema::get(p.manifest);
+  res.derivation.system = *schema::get(p.system);
+  auto manifest = fs::read_file(res.derivation.output);
+  if (!manifest)
+    throw Failed(FailureKind::nix_failed,
+                 "the prepared manifest of " + card +
+                     " is missing: " + res.derivation.output,
+                 {{"card", card}});
+  res.manifest = std::move(*manifest);
+  if (const auto* closure = schema::get(p.closure)) res.closure = *closure;
+  if (const auto* list = schema::get(p.execution_list))
+    res.execution_list = *list;
+  if (const auto* count = schema::get(p.implementations))
+    res.implementation_count = static_cast<uint32_t>(*count);
+  res.built = false;
+  return res;
 }
 
 NixRunner::~NixRunner() {
@@ -469,6 +528,10 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
       if (nix.find("sources") == std::string::npos ||
           nix.find(s.name) == std::string::npos)
         continue;
+      if (prepared_)
+        throw Failed(FailureKind::unsupported,
+                     "Card " + path_key(n.path) + " uses nixSources " + s.name +
+                         ", which prepared builds do not carry yet");
       NixCall lookup;
       lookup.system = req.target.system;
       lookup.source_overrides = s.overrides;
@@ -583,74 +646,85 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   };
   std::string prefix = root_prefix(node.path);
   NixResult res;
-  try {
-    call.root_dir = gcroots_dir();
-    call.root_prefix = prefix;
-    // Paths in args name content-addressed sources, generated contracts/Nix
-    // params, and the transitive upstream definitions and flake products.
-    // The evaluator validates its settings epoch and observed filesystem reads.
-    const auto key = call.evaluation_key();
-    const auto card = path_key(node.path);
-    std::optional<NixResult> earlier;
-    {
-      std::lock_guard l(evaluations_mu_);
-      std::erase_if(evaluations_, [&](const auto& item) {
-        return !graph.index.contains(item.first);
-      });
-      auto found = evaluations_.find(card);
-      if (found != evaluations_.end() && found->second.first == key)
-        earlier = found->second.second;
-    }
-    if (call.on_phase) call.on_phase(false);
-    if (earlier && evaluator().reuse(call, *earlier)) {
-      res = std::move(*earlier);
-      enforce_implementation_limit(res.implementation_count,
-                                   call.max_implementations);
-      res.built = false;
-    } else {
-      uint64_t count = 0;
+  const auto key = call.evaluation_key();
+  const auto key_text = std::get<0>(key) + "\n" + std::get<1>(key) + "\n" +
+                        std::get<2>(key) + "\n" + std::get<3>(key);
+  if (prepared_) {
+    if (req.on_phase) req.on_phase(Phase::evaluate);
+    res = prepared(path_key(node.path), key_text);
+  } else {
+    try {
+      call.root_dir = gcroots_dir();
+      call.root_prefix = prefix;
+      // Paths in args name content-addressed sources, generated contracts/Nix
+      // params, and the transitive upstream definitions and flake products.
+      // The evaluator validates its settings epoch and observed filesystem
+      // reads.
+      const auto card = path_key(node.path);
+      std::optional<NixResult> earlier;
       {
         std::lock_guard l(evaluations_mu_);
-        evaluations_.erase(card);
-        count = ++full_evaluations_;
+        std::erase_if(evaluations_, [&](const auto& item) {
+          return !graph.index.contains(item.first);
+        });
+        auto found = evaluations_.find(card);
+        if (found != evaluations_.end() && found->second.first == key)
+          earlier = found->second.second;
       }
-      log::info("Card full evaluation " + std::to_string(count));
-      res = evaluator().evaluate(call);
+      if (call.on_phase) call.on_phase(false);
+      if (earlier && evaluator().reuse(call, *earlier)) {
+        res = std::move(*earlier);
+        enforce_implementation_limit(res.implementation_count,
+                                     call.max_implementations);
+        res.built = false;
+      } else {
+        uint64_t count = 0;
+        {
+          std::lock_guard l(evaluations_mu_);
+          evaluations_.erase(card);
+          count = ++full_evaluations_;
+        }
+        log::info("Card full evaluation " + std::to_string(count));
+        res = evaluator().evaluate(call);
+      }
+      if (!req.transport)
+        throw std::runtime_error(
+            "execution target has no derivation transport");
+      const auto transfer_start = std::chrono::steady_clock::now();
+      const auto build_deadline = call.deadline;
+      call.deadline.reset();
+      evaluator().make_available(call, *req.transport, res.derivation);
+      transfer_time = std::chrono::steady_clock::now() - transfer_start;
+      if (build_deadline) call.deadline = *build_deadline + transfer_time;
+      if (req.target.kind == WorkerKind::native)
+        res = evaluator().realise_native(call, std::move(res));
+      std::lock_guard l(evaluations_mu_);
+      std::erase_if(evaluations_, [&](const auto& item) {
+        return item.second.second.evaluation_epoch != res.evaluation_epoch;
+      });
+      if (res.evaluation_epoch) {
+        if (evaluations_.size() >= 256 && !evaluations_.contains(card))
+          evaluations_.erase(evaluations_.begin());
+        evaluations_[card] = {key, res};
+      }
+    } catch (const NixInterrupted& e) {
+      if (e.timed_out)
+        throw Failed(FailureKind::timeout, e.what(),
+                     {{"timeout_seconds",
+                       std::to_string(req.timeout_seconds.value_or(0))}});
+      throw Failed(FailureKind::cancelled, e.what());
+    } catch (const NixImplementationLimit& e) {
+      throw Failed(FailureKind::execution_limit, e.what(),
+                   {{"card", path_key(node.path)}});
+    } catch (const std::exception& e) {
+      throw Failed(
+          FailureKind::nix_failed,
+          "Card preparation for system " + call.system + ": " + e.what(),
+          {{"card", path_key(node.path)}, {"system", call.system}});
     }
-    if (!req.transport)
-      throw std::runtime_error("execution target has no derivation transport");
-    const auto transfer_start = std::chrono::steady_clock::now();
-    const auto build_deadline = call.deadline;
-    call.deadline.reset();
-    evaluator().make_available(call, *req.transport, res.derivation);
-    transfer_time = std::chrono::steady_clock::now() - transfer_start;
-    if (build_deadline) call.deadline = *build_deadline + transfer_time;
-    if (req.target.kind == WorkerKind::native)
-      res = evaluator().realise_native(call, std::move(res));
-    std::lock_guard l(evaluations_mu_);
-    std::erase_if(evaluations_, [&](const auto& item) {
-      return item.second.second.evaluation_epoch != res.evaluation_epoch;
-    });
-    if (res.evaluation_epoch) {
-      if (evaluations_.size() >= 256 && !evaluations_.contains(card))
-        evaluations_.erase(evaluations_.begin());
-      evaluations_[card] = {key, res};
-    }
-  } catch (const NixInterrupted& e) {
-    if (e.timed_out)
-      throw Failed(FailureKind::timeout, e.what(),
-                   {{"timeout_seconds",
-                     std::to_string(req.timeout_seconds.value_or(0))}});
-    throw Failed(FailureKind::cancelled, e.what());
-  } catch (const NixImplementationLimit& e) {
-    throw Failed(FailureKind::execution_limit, e.what(),
-                 {{"card", path_key(node.path)}});
-  } catch (const std::exception& e) {
-    throw Failed(FailureKind::nix_failed,
-                 "Card preparation for system " + call.system + ": " + e.what(),
-                 {{"card", path_key(node.path)}, {"system", call.system}});
   }
   CardBuildPlan plan;
+  plan.evaluation_key = key_text;
   plan.execution_list = res.execution_list;
   auto& build = plan.common;
   build.preparation_ms =
