@@ -45,6 +45,7 @@ struct EnvironmentLaunch {
   bool vm_helper = false;
   std::vector<std::string> arguments;
   std::filesystem::path log;
+  std::stop_token stop;
   Tsugumi::Host::ExecutionAuthorizationT authorization;
 };
 
@@ -71,9 +72,17 @@ class EnvironmentProcess {
   // nullopt while alive; otherwise raw wait status (-1 if unavailable).
   virtual auto Poll(int64_t pid, bool child) -> std::optional<int> = 0;
   virtual auto Signal(int64_t pid, int signal) -> void = 0;
+  virtual auto WaitForExit(int64_t pid, bool child) -> void;
+  virtual auto WaitForReady(const std::filesystem::path& file, int64_t pid,
+                            std::stop_token stop,
+                            const std::function<bool()>& done) -> void;
   virtual auto Verify(const Tsugumi::Host::EnvironmentStateT& ready)
       -> bool = 0;
 };
+
+auto WaitForNativeReadiness(const std::filesystem::path& file, int64_t pid,
+                            std::stop_token stop,
+                            const std::function<bool()>& done) -> void;
 
 auto NativeEnvironmentProcess(
     std::function<void(const Tsugumi::Host::HostTerminalDataT&)> terminal = {})
@@ -86,11 +95,9 @@ struct EnvironmentOptions {
   std::filesystem::path tsugumid;
   std::filesystem::path worker;
   std::filesystem::path sdk;
-  std::chrono::milliseconds start_timeout{60000};
-  std::chrono::milliseconds stop_timeout{20000};
   std::shared_ptr<EnvironmentProcess> process;
-  std::function<void(const std::filesystem::path&)> prepare_project_identity =
-      {};
+  std::function<std::function<void()>(const std::filesystem::path&)>
+      reserve_project_identity;
 };
 
 class Environments {

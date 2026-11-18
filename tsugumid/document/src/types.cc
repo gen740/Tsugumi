@@ -666,6 +666,27 @@ std::string render_closure(const Type& t, const std::string& prefix,
   return r.qualified(s->root_table()->name()->str());
 }
 
+auto card_catalog(const std::vector<PortType>& ports, bool inputs)
+    -> std::string {
+  const std::string side = inputs ? "inputs" : "outputs";
+  const std::string table = inputs ? "Inputs" : "Outputs";
+  std::string types = "attribute \"tsugumi\";\n";
+  std::string catalog = "namespace " + side + ";\ntable " + table + " {\n";
+  // Leave output fields nullable in the buffer so the worker can report a
+  // missing required port before postRun.
+  int id = 0;
+  for (const auto& port : ports) {
+    if (!port.type) continue;
+    const auto root = render_closure(*port.type, side + "." + port.name, types);
+    catalog += "  " + port.name + ":" + root + " (id: " + std::to_string(id++) +
+               (port.kind == PortKind::File        ? ", tsugumi: \"file\""
+                : port.kind == PortKind::Directory ? ", tsugumi: \"directory\""
+                                                   : "") +
+               (inputs && !port.optional ? ", required" : "") + ");\n";
+  }
+  return types + catalog + "}\nroot_type " + table + ";\n";
+}
+
 std::vector<UnionField> root_unions(const Type& t, const std::string& prefix) {
   const auto* s = t.schema();
   const auto* root = s->root_table();

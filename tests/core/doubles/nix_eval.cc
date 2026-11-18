@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -80,6 +81,8 @@ struct NixEvaluator::Impl {
   std::filesystem::path products;
   std::vector<std::string> allowed;
   uint64_t full_evaluations = 0;
+  // Evaluations take turns, as on the real evaluator's single thread.
+  std::mutex evaluation;
 };
 
 auto NixEvaluator::init_process() -> void {}
@@ -105,6 +108,7 @@ NixEvaluator::~NixEvaluator() = default;
 auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (call.system.empty())
     throw std::runtime_error("execution target system is unknown");
+  std::lock_guard turn(impl_->evaluation);
   check_interrupted(call);
   if (call.definition_dir.empty() || !call.definition_dir.is_absolute() ||
       std::none_of(impl_->allowed.begin(), impl_->allowed.end(),
@@ -116,7 +120,7 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
         "area");
 
   // Test-only observation of full Card evaluations, including store hits.
-  // The core serializes this adapter on the Nix lane. Publish before returning
+  // Evaluations take turns (above). Publish before returning
   // so a completed RPC run is also a barrier for readers of this counter.
   fs::write_atomic(impl_->control / "full-evaluations",
                    std::to_string(++impl_->full_evaluations), 0600);
@@ -141,6 +145,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     const auto started = impl_->control / (*gate + ".started");
     const auto release = impl_->control / (*gate + ".release");
     fs::write_atomic(started, "started\n", 0600);
+    // The mock evaluator receives a cancellation flag and deadline in the
+    // evaluation call. They have no wake handle to join with the release file.
     while (!std::filesystem::exists(release)) {
       check_interrupted(call);
       std::this_thread::sleep_for(std::chrono::milliseconds(5));

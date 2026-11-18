@@ -17,7 +17,11 @@ final class ServiceWireTests: XCTestCase {
       let method = try XCTUnwrap(c["method"] as? String), host = try XCTUnwrap(c["host"] as? Bool)
       var fields = try XCTUnwrap(c["fields"] as? [String: Any])
       // Requests that Swift callers make with the generated object API have no dictionary form.
-      if host && !ServiceWire.hostMethod(method, fields) { continue }
+      if method == "VersionNoteRequest" {
+        XCTAssertFalse(ServiceWire.hostMethod(method, fields), method)
+        XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 7, host: host))
+        continue
+      }
       if let raw = fields["provider"] as? [String: Any] {
         let provider = Tsugumi_Service_ProviderSelectionT()
         provider.profile = try XCTUnwrap(raw["profile"] as? String)
@@ -27,22 +31,62 @@ final class ServiceWireTests: XCTestCase {
       XCTAssertEqual(ServiceWire.hostMethod(method, fields), host, method)
       let encoded = try ServiceWire.encode(method, fields: fields, id: 7, host: host)
       let golden = bytes(try XCTUnwrap(c["hex"] as? String))
-      func object(_ data: Data) throws -> [UInt8] {
-        var builder = FlatBufferBuilder(initialSize: 256)
-        var b = ByteBuffer(data: data)
-        if host {
-          let m: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSH1")
-          var native: Tsugumi_Host_MessageT? = Tsugumi_Host_MessageT(m)
-          builder.finish(offset: Tsugumi_Host_Message.pack(&builder, obj: &native))
-          return builder.sizedByteArray
+      if host {
+        func request(_ data: Data) throws -> Tsugumi_Host_RequestPayloadUnion {
+          var buffer = ByteBuffer(data: data)
+          let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+          let native = Tsugumi_Host_MessageT(message)
+          XCTAssertEqual(native.requestId, 7)
+          return try XCTUnwrap((native.payload?.value as? Tsugumi_Host_RequestT)?.value)
         }
-        let m: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSA1")
-        var native: Tsugumi_Agent_MessageT? = Tsugumi_Agent_MessageT(m)
-        builder.finish(offset: Tsugumi_Agent_Message.pack(&builder, obj: &native))
-        return builder.sizedByteArray
+        let actual = try request(encoded), expected = try request(golden)
+        XCTAssertEqual(actual.type, expected.type, method)
+        switch (actual.value, expected.value) {
+        case (_ as Tsugumi_Host_DemoListRequestT, _ as Tsugumi_Host_DemoListRequestT),
+             (_ as Tsugumi_Host_ProjectPermissionsRequestT, _ as Tsugumi_Host_ProjectPermissionsRequestT):
+          break
+        case let (a as Tsugumi_Host_DemoReadRequestT, b as Tsugumi_Host_DemoReadRequestT):
+          XCTAssertEqual(a.path, b.path)
+        case let (a as Tsugumi_Host_IdentifierReserveRequestT, b as Tsugumi_Host_IdentifierReserveRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.kind, b.kind)
+          XCTAssertEqual(a.scope, b.scope)
+          XCTAssertEqual(Set(a.occupied.compactMap { $0 }), Set(b.occupied.compactMap { $0 }))
+        case let (a as Tsugumi_Host_ProjectPermissionSetRequestT, b as Tsugumi_Host_ProjectPermissionSetRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.resourceId, b.resourceId)
+          XCTAssertEqual(a.access, b.access)
+          XCTAssertEqual(a.allow, b.allow)
+        default:
+          XCTFail("Unexpected Host request for \(method)")
+        }
+      } else {
+        func request(_ data: Data) throws -> Tsugumi_Agent_RequestPayloadUnion {
+          var buffer = ByteBuffer(data: data)
+          let message: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSA1")
+          let native = Tsugumi_Agent_MessageT(message)
+          XCTAssertEqual(native.requestId, 7)
+          return try XCTUnwrap((native.payload?.value as? Tsugumi_Agent_RequestT)?.value)
+        }
+        let actual = try request(encoded), expected = try request(golden)
+        XCTAssertEqual(actual.type, expected.type, method)
+        switch (actual.value, expected.value) {
+        case let (a as Tsugumi_Agent_CallIdRequestT, b as Tsugumi_Agent_CallIdRequestT):
+          XCTAssertEqual(a.conversationId, b.conversationId)
+        case let (a as Tsugumi_Agent_ConversationSummarizeRequestT, b as Tsugumi_Agent_ConversationSummarizeRequestT):
+          XCTAssertEqual(a.conversationId, b.conversationId)
+          let provider = try XCTUnwrap(a.provider), expectedProvider = try XCTUnwrap(b.provider)
+          XCTAssertEqual(provider.profile, expectedProvider.profile)
+          XCTAssertEqual(provider.purpose, expectedProvider.purpose)
+        case let (a as Tsugumi_Agent_AccessRequestT, b as Tsugumi_Agent_AccessRequestT):
+          XCTAssertEqual(a.projectId, b.projectId)
+          XCTAssertEqual(a.conversationId, b.conversationId)
+          XCTAssertEqual(a.access, b.access)
+          XCTAssertEqual(a.reason, b.reason)
+        default:
+          XCTFail("Unexpected Agent request for \(method)")
+        }
       }
-      // Decode the same fields with the generated object API on both paths.
-      XCTAssertEqual(try object(encoded), try object(golden), method)
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 7, host: !host))
     }
     for c in try XCTUnwrap(fixture["replies"] as? [[String: Any]]) {
@@ -73,7 +117,9 @@ final class ServiceWireTests: XCTestCase {
   }
 
   func testAttachmentIsOneHostRequestWithReadyEndpointAndResources() throws {
-    let bytes = try ServiceWire.encode("AttachFoldersRequest", fields: ["project": "/project", "folders": [String]()], id: 1, host: true)
+    let request = Tsugumi_Host_AttachFoldersRequestT()
+    request.project = "/project"
+    let bytes = ServiceWire.encodeHost(.attachfoldersrequest, request, id: 1)
     var buffer = ByteBuffer(data: bytes)
     let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let input = try XCTUnwrap((Tsugumi_Host_MessageT(message).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_AttachFoldersRequestT)
@@ -81,16 +127,17 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertTrue(input.folders.isEmpty)
     let state = Tsugumi_Host_EnvironmentStateT()
     state.project = "/project"; state.key = "key"; state.phase = .ready
-    state.endpoint = "ws://localhost:123/rpc"; state.projectId = "project"; state.serverInstanceId = "new-instance"
+    state.endpoint = "ws://localhost:123/rpc"; state.projectId = "project"
     let folder = Tsugumi_Host_FolderAttachmentT()
     folder.folder = "/data"; folder.resource = "folder:project:data"
     let attached = Tsugumi_Host_AttachedFoldersT()
     attached.state = state; attached.folders = [folder]
-    let reply = try ServiceWire.decode(hostReply(attached, type: .attachedfolders), host: true)
-    let ready = try XCTUnwrap(reply["state"] as? [String: Any])
-    XCTAssertEqual(ready["server_instance_id"] as? String, "new-instance")
-    XCTAssertEqual(ready["phase"] as? Tsugumi_Host_EnvironmentPhase, .ready)
-    XCTAssertEqual(reply["folders"] as? [[String: String]], [["folder": "/data", "resource": "folder:project:data"]])
+    let reply = try XCTUnwrap(ServiceWire.decodeReply(hostReply(attached, type: .attachedfolders), host: true) as? Tsugumi_Host_AttachedFoldersT)
+    XCTAssertEqual(reply.state.projectId, "project")
+    XCTAssertEqual(reply.state.phase, .ready)
+    let root = try XCTUnwrap(reply.folders.first ?? nil)
+    XCTAssertEqual(root.folder, "/data")
+    XCTAssertEqual(root.resource, "folder:project:data")
   }
 
   func testRuntimeResetConfirmationAndReportSurviveTheAdapter() throws {
@@ -100,11 +147,11 @@ final class ServiceWireTests: XCTestCase {
     runtime.resetConfirmationEn = "Keep history"
     runtime.resetKeptFiles = ["history.img"]
     runtime.resetDiscardedFiles = ["store.img", ".lock"]
-    let reply = try ServiceWire.decode(hostReply(runtime, type: .hostruntime), host: true)
-    XCTAssertEqual(reply["reset_confirmation_ja"] as? String, "履歴を保持")
-    XCTAssertEqual(reply["reset_confirmation_en"] as? String, "Keep history")
-    XCTAssertEqual(reply["reset_kept_files"] as? [String], ["history.img"])
-    XCTAssertEqual(reply["reset_discarded_files"] as? [String], ["store.img", ".lock"])
+    let reply = try XCTUnwrap(ServiceWire.decodeReply(hostReply(runtime, type: .hostruntime), host: true) as? Tsugumi_Host_HostRuntimeT)
+    XCTAssertEqual(reply.resetConfirmationJa, "履歴を保持")
+    XCTAssertEqual(reply.resetConfirmationEn, "Keep history")
+    XCTAssertEqual(reply.resetKeptFiles, ["history.img"])
+    XCTAssertEqual(reply.resetDiscardedFiles, ["store.img", ".lock"])
   }
   func testHostOwnsPurposeAndKeyPolicyWire() throws {
     let input = Tsugumi_Host_ProviderInputT(); input.apiKey = "memory-key"
@@ -252,15 +299,16 @@ final class ServiceWireTests: XCTestCase {
   }
 
   func testEnvironmentRequestsAndTopLevelReplies() throws {
-    let fields: [String: Any] = ["project": "/project", "action": Tsugumi_Host_EnvironmentAction.start, "archive_incompatible_history": true]
+    let fields: [String: Any] = ["project": "/project", "action": Tsugumi_Host_EnvironmentAction.start,
+                                 "origins": ["http://localhost:1234"], "folders": ["/data/reference"]]
     XCTAssertTrue(ServiceWire.hostMethod("EnvironmentRequest", fields))
     let bytes = try ServiceWire.encode("EnvironmentRequest", fields: fields, id: 4, host: true)
     var buffer = ByteBuffer(data: bytes)
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let request = try XCTUnwrap((Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_EnvironmentRequestT)
     XCTAssertEqual(request.action, .start)
-    XCTAssertTrue(request.origins.isEmpty)
-    XCTAssertTrue(request.folders.isEmpty)
+    XCTAssertEqual(request.origins.compactMap { $0 }, ["http://localhost:1234"])
+    XCTAssertEqual(request.folders.compactMap { $0 }, ["/data/reference"])
     let state = Tsugumi_Host_EnvironmentStateT(); state.project = "/project"; state.key = "key"; state.phase = .ready; state.endpoint = "ws://localhost:1/rpc"
     let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(state, type: .environmentstate)
     let message = Tsugumi_Host_MessageT(); message.requestId = 4; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
@@ -279,12 +327,11 @@ final class ServiceWireTests: XCTestCase {
     let message = Tsugumi_Host_MessageT(); message.requestId = 1; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
     var builder = FlatBufferBuilder(initialSize: 128); var object: Tsugumi_Host_MessageT? = message
     let offset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: offset)
-    let decoded = try ServiceWire.decode(builder.data, host: true)
-    XCTAssertNil(decoded["value"])
-    XCTAssertEqual(decoded["virtualization_supported"] as? Bool, true)
-    XCTAssertEqual(decoded["image_available"] as? Bool, true)
-    XCTAssertEqual(decoded["image_version"] as? String, "bundled-image")
-    XCTAssertTrue(try XCTUnwrap(decoded["console"] as? [String]).isEmpty)
+    let decoded = try XCTUnwrap(ServiceWire.decodeReply(builder.data, host: true) as? Tsugumi_Host_HostRuntimeT)
+    XCTAssertTrue(decoded.virtualizationSupported)
+    XCTAssertTrue(decoded.imageAvailable)
+    XCTAssertEqual(decoded.imageVersion, "bundled-image")
+    XCTAssertTrue(decoded.console.isEmpty)
     let terminal = Tsugumi_Host_HostTerminalDataT(); terminal.session = UInt64.max - 1; terminal.closed = true
     let event = Tsugumi_Host_EventT(); event.value = Tsugumi_Host_EventPayloadUnion(terminal, type: .hostterminaldata)
     message.requestId = 0; message.payload = Tsugumi_Host_PayloadUnion(event, type: .event)
@@ -350,12 +397,11 @@ final class ServiceWireTests: XCTestCase {
     let result = Tsugumi_Agent_ConversationResultT()
     result.conversation = conversation
     result.eventSeq = UInt64.max - 1
-    let decoded = try ServiceWire.decode(reply(result, type: .conversationresult), host: false)
-    let native = try XCTUnwrap(decoded["conversation"] as? Tsugumi_Agent_ConversationT)
-    let snapshot = try ServiceWire.conversation(native)
+    let decoded = try XCTUnwrap(ServiceWire.decodeReply(reply(result, type: .conversationresult), host: false) as? Tsugumi_Agent_ConversationResultT)
+    let snapshot = try ServiceWire.conversation(decoded.conversation)
     XCTAssertEqual(snapshot.id, "typed")
     XCTAssertEqual(snapshot.rows.first?.text, "kept")
-    XCTAssertEqual(decoded["event_seq"] as? UInt64, UInt64.max - 1)
+    XCTAssertEqual(decoded.eventSeq, UInt64.max - 1)
   }
 
   func testInterruptionUsesTheCoreFlagsAndKeepsTheOperation() throws {
@@ -371,11 +417,11 @@ final class ServiceWireTests: XCTestCase {
     result.resumable = true
     result.continuable = true
     result.interruptedOperation = operation
-    let decoded = try ServiceWire.decode(reply(result, type: .conversationresult), host: false)
-    XCTAssertEqual(decoded["busy"] as? Bool, false)
-    XCTAssertEqual(decoded["resumable"] as? Bool, true)
-    XCTAssertEqual(decoded["continuable"] as? Bool, true)
-    let saved = try XCTUnwrap(decoded["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+    let decoded = try XCTUnwrap(ServiceWire.decodeReply(reply(result, type: .conversationresult), host: false) as? Tsugumi_Agent_ConversationResultT)
+    XCTAssertEqual(decoded.busy, false)
+    XCTAssertEqual(decoded.resumable, true)
+    XCTAssertEqual(decoded.continuable, true)
+    let saved = try XCTUnwrap(decoded.interruptedOperation)
     XCTAssertEqual(saved.kind, "tool")
     XCTAssertEqual(saved.id, "pending-read")
     XCTAssertEqual(saved.name, "project_inspect")
@@ -383,10 +429,8 @@ final class ServiceWireTests: XCTestCase {
 
     // An event page reports liveness only; it has no interruption flags.
     let page = Tsugumi_Agent_EventsPageT()
-    let idle = try ServiceWire.decode(reply(page, type: .eventspage), host: false)
-    XCTAssertEqual(idle["busy"] as? Bool, false)
-    XCTAssertNil(idle["resumable"])
-    XCTAssertNil(idle["interrupted_operation"])
+    let idle = try XCTUnwrap(ServiceWire.decodeReply(reply(page, type: .eventspage), host: false) as? Tsugumi_Agent_EventsPageT)
+    XCTAssertFalse(idle.busy)
   }
 
   func testFailuresKeepTheApprovalRequestIdentity() throws {

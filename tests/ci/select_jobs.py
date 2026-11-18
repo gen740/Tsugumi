@@ -50,13 +50,11 @@ def consumers(path):
         if path == "docs/features.md":
             jobs.add("prompt")
         return jobs
-    if path == "ui/macos/tools/bundle-docs.sh":
-        return {"docs", "swift"}
     if path.startswith("vm/guest/") or path in {
         "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
     }:
         return {"swift", "vm", "sdk", "host"}
-    if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/macos/")):
+    if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
         return {"swift"}
     if path.startswith("ui/web/"):
         return WEB

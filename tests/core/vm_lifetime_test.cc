@@ -148,7 +148,6 @@ class VMLifetime : public ::testing::Test {
       throw std::runtime_error(error.message);
     S::HelloRequestT hello;
     hello.token = "user";
-    hello.client_id = "vm-lifetime-test";
     Call(*connection, hello);
     return connection;
   }
@@ -204,8 +203,7 @@ TEST_F(VMLifetime, RunningHostRequestCountsAfterItsQueueIsEmpty) {
   });
   {
     std::unique_lock lock(runtime->mutex);
-    ASSERT_TRUE(runtime->changed.wait_for(
-        lock, 2s, [&] { return runtime->terminal_started; }));
+    runtime->changed.wait(lock, [&] { return runtime->terminal_started; });
   }
   EXPECT_TRUE(Busy(*app));
   service->Shutdown();
@@ -225,7 +223,7 @@ TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
   }));
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(changed.wait_for(lock, 2s, [&] { return started; }));
+    changed.wait(lock, [&] { return started; });
   }
   EXPECT_EQ(lane.queued(), 0);
   EXPECT_EQ(lane.pending(), 1);

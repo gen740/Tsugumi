@@ -6,13 +6,12 @@ another's run."""
 from __future__ import annotations
 
 import os
-import time
 
 import pytest
 
 from conftest import SharedVM, VMEnv
 from projects import card
-from projects import run_and_wait, wait_run, write
+from projects import run_and_wait, start_run, wait_for_log, wait_run, write
 from test_cards_container import bash, log
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -82,19 +81,12 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
     other = project(tmp_path / "other", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "other")
     try:
         c = slow.client()
-        snap = c.call("ProjectInspectRequest")
-        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
-        run_id = text(acc.run.runId)
-        # The worker cannot finish by racing a six-second settling window.
-        deadline = time.monotonic() + 600
-        while "HOLDING" not in log(c, run_id, "step", 1):
-            assert time.monotonic() < deadline, "the Card never started"
-            assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded)
-            time.sleep(0.05)
+        run_id = start_run(c, "start")
+        wait_for_log(c, run_id, "step", 1, lambda log: "HOLDING" in text(log.text or b""))
         other.stop()
         assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded, RunState.cancelled)
         c.call("RunCancelRequest", runId=run_id)
-        assert wait_run(c, run_id, timeout=60).state == RunState.cancelled
+        assert wait_run(c, run_id).state == RunState.cancelled
         # The stopped project starts again in the same VM.
         other.start()
         _, st = run_and_wait(other.client(), "start")

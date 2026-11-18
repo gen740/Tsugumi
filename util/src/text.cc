@@ -6,8 +6,18 @@
 
 namespace tsugumi::text {
 
-auto PatchApplier::append(size_t offset, size_t remove, std::string_view text)
-    -> void {
+auto PatchApplier::append(uint64_t offset, uint64_t remove,
+                          std::string_view text) -> void {
+  if (offset < cursor_)
+    throw PatchRangeError("patches must be ascending and non-overlapping");
+  if (offset > source_.size() || remove > source_.size() - offset)
+    throw PatchRangeError("patch exceeds the source size");
+  const auto boundary = [&](size_t position) {
+    return position == 0 || position == source_.size() ||
+           (static_cast<unsigned char>(source_[position]) & 0xc0) != 0x80;
+  };
+  if (!boundary(offset) || !boundary(offset + remove))
+    throw PatchBoundaryError("patch is not on a UTF-8 boundary");
   result_.append(source_.substr(cursor_, offset - cursor_));
   result_.append(text);
   cursor_ = offset + remove;

@@ -34,18 +34,18 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job)
   const auto fingerprint = crypto::sha256_hex(job.spec);
   RemoteJobState reply;
   if (job.cancel_requested) {
-    reply = client.cancel(s.execution_service, job.server_id, job.instance,
-                          s.execution_job_id, fingerprint);
+    reply = client.cancel(s.execution_service, job.instance, s.execution_job_id,
+                          fingerprint);
   } else {
-    reply = client.status(s.execution_service, job.server_id, job.instance,
-                          s.execution_job_id);
+    reply =
+        client.status(s.execution_service, job.instance, s.execution_job_id);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted)
         return {"interrupted",
                 fingerprint,
                 {},
                 "the execution service lost a previously accepted job"};
-      reply = client.submit(s.execution_service, job.server_id, job.instance,
+      reply = client.submit(s.execution_service, job.instance,
                             s.execution_job_id, job.spec);
     }
   }
@@ -77,13 +77,11 @@ class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client,
                           std::string target, std::string system,
-                          std::string server_id, std::string instance,
-                          stdfs::path archive)
+                          std::string instance, stdfs::path archive)
       : service_(service),
         client_(client),
         target_(std::move(target)),
         system_(std::move(system)),
-        server_id_(std::move(server_id)),
         instance_(std::move(instance)),
         archive_(std::move(archive)),
         transport_(archive_) {}
@@ -110,7 +108,6 @@ class PreparedRemoteExecution final : public PreparedExecution {
   const RemoteJobClient& client_;
   std::string target_;
   std::string system_;
-  std::string server_id_;
   std::string instance_;
   stdfs::path archive_;
   ArchiveDerivationTransport transport_;
@@ -127,13 +124,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       service_.project_id() + "\n" + s.run_id + "\n" + path_key(node.path) +
       "\n" + std::to_string(s.invocation));
   const auto archive_digest = stage_remote_archive(
-      client_, target_, server_id_, instance_, s.execution_job_id, archive_,
-      request.cancel, [&](uint64_t done, uint64_t total) {
+      client_, target_, instance_, s.execution_job_id, archive_, request.cancel,
+      [&](uint64_t done, uint64_t total) {
         if (request.transfer) request.transfer("upload", "Nix", done, total);
       });
-  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_,
-                                      s.execution_job_id, service_.file_roots(),
-                                      archive_digest, request);
+  auto spec =
+      stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
+                              service_.file_roots(), archive_digest, request);
   if (request.cancel.load())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -142,7 +139,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   s.execution_resources = settings.execution_resources;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
-  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec)};
+  RemoteJobRecord job{{}, instance_, std::move(spec)};
   // Cancellation identity is durable before submission; results are never
   // recovered after restart.
   request.start([&](sql::Db& db) {
@@ -167,12 +164,12 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                          reply->transfer_total);
     } catch (const BrokerInstanceChanged& error) {
       s.execution_state = RemoteExecutionState::interrupted;
-      output.outcome.failure =
+      output.failure =
           FailureData::make(FailureKind::interrupted, error.what());
       return output;
     } catch (const BrokerRequestRejected& error) {
       s.execution_state = RemoteExecutionState::failed;
-      output.outcome.failure =
+      output.failure =
           FailureData::make(FailureKind::invalid_request, error.what());
       return output;
     } catch (const std::exception&) {
@@ -180,22 +177,23 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       s.execution_state = RemoteExecutionState::disconnected;
     }
     if (request.detach.load()) throw ExecutionDetached{};
+    if (reply && reply->log_truncated && !s.log_truncated_at_bytes) {
+      s.log_truncated_at_bytes = request.log_limit_bytes;
+      if (request.log_truncated) request.log_truncated();
+    }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
-      output.logs.clear();
       try {
         auto result = import_remote_result(
-            client_, target_, server_id_, instance_, s.execution_job_id,
+            client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules", node.outputs,
-            [&](LogStream stream, const std::string& line) {
-              output.logs.emplace_back(stream, line);
-            },
             request.display, request.detach,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
-            });
+            },
+            request.on_remote_validation);
         if (!result.environment.paths.empty()) {
           s.build_cached = !result.built;
           history.write_sync([&](sql::Db& db) {
@@ -203,9 +201,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
-        output.outcome = std::move(result.worker);
-        if (output.outcome.failure)
-          s.execution_state = RemoteExecutionState::failed;
+        output.log_truncated = result.log_truncated;
+        output.logs = std::move(result.logs);
+        output.outputs = std::move(result.outputs);
+        output.failure = std::move(result.failure);
+        if (output.failure) s.execution_state = RemoteExecutionState::failed;
         return output;
       } catch (const BrokerDisconnected&) {
         s.execution_state = RemoteExecutionState::disconnected;
@@ -214,7 +214,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     } else if (reply &&
                (reply->state == "failed" || reply->state == "cancelled" ||
                 reply->state == "interrupted")) {
-      output.outcome.failure = remote_failure(*reply);
+      output.failure = remote_failure(*reply);
       return output;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(750));
@@ -247,19 +247,18 @@ auto RemoteExecutionService::prepare(const Node& node,
                                                " is not registered");
   auto probe = client_.probe(target->id, target->server_id);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
-  if (system.empty())
-    throw Failed(FailureKind::unsupported, "remote worker system is unknown");
   if (settings.execution_resources && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");
-  if (std::ranges::find(probe.systems, system) == probe.systems.end())
+  if (!settings.system.empty() &&
+      std::ranges::find(probe.systems, system) == probe.systems.end())
     throw Failed(
         FailureKind::unsupported,
         "external execution service no longer supports system " + system);
   stdfs::create_directories(directory);
   auto prepared = std::make_unique<PreparedRemoteExecution>(
       service_, client_, target->id, std::move(system),
-      std::move(probe.server_id), std::move(probe.instance),
+      std::move(probe.instance),
       directory / (".derivation-" + crypto::uuid4()));
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
@@ -268,26 +267,26 @@ auto RemoteExecutionService::prepare(const Node& node,
 
 auto RemoteExecutionService::release_completed() -> void {
   struct Release {
-    std::string job, service, server, instance, fingerprint;
+    std::string job, service, instance, fingerprint;
     bool delete_data;
   };
   const auto releases = service_.history().read([](sql::Db& db) {
     std::vector<Release> result;
     auto rows = db.prepare(
-        "SELECT job_id,service,server_id,instance,fingerprint,delete_data FROM "
+        "SELECT job_id,service,instance,fingerprint,delete_data FROM "
         "remote_releases");
     while (rows.step())
       result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3),
-                        rows.text(4), rows.i64(5) != 0});
+                        rows.i64(4) != 0});
     return result;
   });
   for (const auto& r : releases) {
     try {
-      client_.cancel(r.service, r.server, r.instance, r.job, r.fingerprint);
+      client_.cancel(r.service, r.instance, r.job, r.fingerprint);
       // Cancellation relinquishes execution. Only acknowledged, collected data
       // may use the separate payload-deleting release; interruption keeps it.
       if (r.delete_data)
-        client_.release(r.service, r.server, r.instance, r.job, r.fingerprint);
+        client_.release(r.service, r.instance, r.job, r.fingerprint);
     } catch (const BrokerInstanceChanged&) { /* The original journal no longer
                                                 exists at this endpoint. */
     } catch (const std::exception&) {

@@ -1,11 +1,72 @@
 import Foundation
 import AppKit
+import CoreGraphics
 import SwiftUI
 import Testing
 import TsugumiTestSupport
 @testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
+
+@MainActor
+@Test func mathRenderingUsesThePackagedFont() throws {
+  let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("../../Resources")
+  let fontURL = resources.appendingPathComponent("Fonts/latin-modern-math/latinmodern-math.otf")
+  let provider = try #require(CGDataProvider(url: fontURL as CFURL))
+  let bundledFont = try #require(CGFont(provider))
+  let bundledName = try #require(bundledFont.postScriptName as String?)
+
+  let rendered = try #require(MathImages.image("x + y = 2", size: 18, display: true))
+  let data = NSMutableData()
+  let consumer = try #require(CGDataConsumer(data: data as CFMutableData))
+  var bounds = CGRect(origin: .zero, size: rendered.image.size)
+  let context = try #require(CGContext(consumer: consumer, mediaBox: &bounds, nil))
+  context.beginPDFPage(nil)
+  NSGraphicsContext.saveGraphicsState()
+  NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+  rendered.image.draw(in: bounds)
+  NSGraphicsContext.restoreGraphicsState()
+  context.endPDFPage()
+  context.closePDF()
+
+  let pdfData = try #require(CGDataProvider(data: data as CFData))
+  let pdf = try #require(CGPDFDocument(pdfData))
+  let page = try #require(pdf.page(at: 1)?.dictionary)
+  func dictionary(_ parent: CGPDFDictionaryRef, _ key: String) -> CGPDFDictionaryRef? {
+    var child: CGPDFDictionaryRef?
+    return CGPDFDictionaryGetDictionary(parent, key, &child) ? child : nil
+  }
+  let pageResources = try #require(dictionary(page, "Resources"))
+  var names = Set<String>()
+  func readFonts(_ resources: CGPDFDictionaryRef) {
+    if let fonts = dictionary(resources, "Font") {
+      CGPDFDictionaryApplyBlock(fonts, { _, value, _ in
+        var font: CGPDFDictionaryRef?
+        var baseFont: UnsafePointer<CChar>?
+        if CGPDFObjectGetValue(value, .dictionary, &font), let font,
+           CGPDFDictionaryGetName(font, "BaseFont", &baseFont), let baseFont {
+          // PDF font subsets may add a prefix to the PostScript name.
+          let name = String(cString: baseFont)
+          names.insert(String(name.split(separator: "+").last ?? Substring(name)))
+        }
+        return true
+      }, nil)
+    }
+    if let objects = dictionary(resources, "XObject") {
+      CGPDFDictionaryApplyBlock(objects, { _, value, _ in
+        var stream: CGPDFStreamRef?
+        if CGPDFObjectGetValue(value, .stream, &stream), let stream,
+           let form = CGPDFStreamGetDictionary(stream), let nested = dictionary(form, "Resources") {
+          readFonts(nested)
+        }
+        return true
+      }, nil)
+    }
+  }
+  readFonts(pageResources)
+  #expect(names == [bundledName])
+}
 
 @Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() async throws {
   struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
@@ -117,11 +178,10 @@ import TsugumiTestSupport
   #expect(StageProgress.merge([.done, .failed, .notRun], ended: true) == .failed)
   #expect(StageProgress.merge([.reused, .reused, .reused], ended: true) == .reused)
   #expect(Stage(phase: .evaluate) == .evaluate && Stage(phase: .save) == .save && Stage(phase: .unspecified) == nil)
-  // Stages run in the order the core reports them.
-  #expect(Stage.allCases.map(\.rawValue) == Array(0..<Stage.allCases.count))
-  // Every stage keeps its own icon, also while running (no generic check marks).
+  #expect(Stage(phase: .prepare) == .prepare && Stage(phase: .execute) == .execute)
+  // The visible stages remain distinguishable as progress moves between them.
   #expect(Set(Stage.allCases.map(\.symbol)).count == Stage.allCases.count)
-  #expect(Stage.build.activeSymbol == "hammer.fill" && Stage.evaluate.activeSymbol == "snowflake")
+  #expect(Set(Stage.allCases.map(\.activeSymbol)).count == Stage.allCases.count)
   #expect(Stage.build.logStream == .build && Stage.execute.logStream == .standardOutput && Stage.save.logStream == .journal)
 }
 
@@ -213,12 +273,13 @@ import TsugumiTestSupport
   #expect(right.port("a", output: false).x == 0 && right.port("out", output: true).x == CardGeometry.width)
 }
 
-@Test func fileTreeGroupsFolders() {
-  let t = FileNode.tree(["default.nix", "src/main.py", "src/lib/a.py", "_outputs.fbs"], base: "definitions/d/")
-  #expect(t.map(\.name) == ["src", "_outputs.fbs", "default.nix"])
-  let src = t[0]
-  #expect(src.children?.map(\.name) == ["lib", "main.py"])
-  #expect(src.children?[1].path == "definitions/d/src/main.py")
+@Test func fileTreeGroupsFolders() throws {
+  let tree = FileNode.tree(["default.nix", "src/main.py", "src/lib/a.py", "_outputs.fbs"], base: "definitions/d/")
+  #expect(Set(tree.map(\.name)) == ["src", "_outputs.fbs", "default.nix"])
+  let src = try #require(tree.first { $0.name == "src" }?.children)
+  #expect(Set(src.map(\.name)) == ["lib", "main.py"])
+  #expect(src.first { $0.name == "main.py" }?.path == "definitions/d/src/main.py")
+  #expect(src.first { $0.name == "lib" }?.children?.first { $0.name == "a.py" }?.path == "definitions/d/src/lib/a.py")
 }
 
 @Test func paramsKeepExactIntegerSpelling() {
@@ -630,11 +691,12 @@ func sdkLanguagesAreOfferedByTheCanvas(language: String) async throws {
   #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
   #expect(editor.draftEnds.isEmpty)
   editor.implementAs("fork")
-  #expect(editor.kind == .fork && editor.draftEnds.count == 2)
-  #expect(editor.draftEnds.map(\.side) == ["to", "from"])
+  #expect(editor.kind == .fork)
+  let input = try #require(editor.draftEnds.first { $0.side == "to" })
+  let output = try #require(editor.draftEnds.first { $0.side == "from" })
   #expect(editor.rebindings.isEmpty)
-  editor.rebindings[editor.draftEnds[0].id] = "in"
-  #expect(editor.rebindings[editor.draftEnds[1].id] == nil, "The output still needs an explicit choice")
+  editor.rebindings[input.id] = "in"
+  #expect(editor.rebindings[output.id] == nil, "The output still needs an explicit choice")
   #expect(session.kind("plan") == .draft)
   #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
 }

@@ -8,10 +8,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 from tsugumi_client import Client
+
+from .file_events import process_file
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
@@ -69,7 +70,7 @@ class Daemon:
         self.proc = None
         self.clients = []
 
-    def start(self, timeout=20, expect_exit=False):
+    def start(self, expect_exit=False):
         if self.proc and self.proc.poll() is None:
             raise RuntimeError("daemon already running")
         ready = self.control / "server.ready"
@@ -93,19 +94,15 @@ class Daemon:
                 raise FileNotFoundError(f"build the test targets first: {self.binary}")
             with self.log.open("ab") as log:
                 self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=log)
-            end = time.monotonic() + timeout
-            while time.monotonic() < end:
-                if self.proc.poll() is not None:
-                    if expect_exit:
-                        return self
-                    record_path = self.control / "server.startup-error.json"
-                    record = json.loads(record_path.read_text()) if record_path.exists() else {}
-                    raise StartupFailure(self.proc.returncode, record, self.diagnostics())
-                if ready.exists():
-                    self.ready = json.loads(ready.read_text())
-                    return self
-                time.sleep(0.01)
-            raise TimeoutError(f"daemon startup timed out:\n{self.diagnostics()}")
+            if process_file(self.proc, ready) is not None:
+                self.ready = json.loads(ready.read_text())
+                return self
+            status = self.proc.wait()
+            if expect_exit:
+                return self
+            record_path = self.control / "server.startup-error.json"
+            record = json.loads(record_path.read_text()) if record_path.exists() else {}
+            raise StartupFailure(status, record, self.diagnostics())
         except BaseException:
             self.close()
             raise
@@ -128,11 +125,12 @@ class Daemon:
         self.clients.clear()
         if self.proc and self.proc.poll() is None:
             self.proc.send_signal(signal.SIGKILL if crash else signal.SIGTERM)
+            # An unresponsive service must not prevent cleanup of later fixtures.
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                self.proc.wait(timeout=5)
+                self.proc.wait()
 
     def restart(self, *, fault=None, crash=False):
         self.stop(crash=crash)

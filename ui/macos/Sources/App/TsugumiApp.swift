@@ -89,6 +89,10 @@ struct TsugumiApp: App {
     }
     .defaultSize(width: 760, height: 460)
     .restorationBehavior(.disabled)
+    Window("デバッグ", id: "debug") { DebugPanel() }
+      .defaultSize(width: 460, height: 420)
+      .windowResizability(.contentSize)
+      .restorationBehavior(.disabled)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
         DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
@@ -115,8 +119,11 @@ struct UpdateMenuItem: View {
     if case .ready(let v) = updater.state {
       Button("再起動して \(v) に更新") { updater.installAndRelaunch() }
     } else {
-      Button("アップデートを確認…") { Task { await updater.check(manual: true) } }
-        .disabled(updater.busy)
+      if updater.busy {
+        Button("キャンセル") { updater.cancelTransfer() }
+      } else {
+        Button("アップデートを確認…") { updater.check(manual: true) }
+      }
     }
   }
 }
@@ -156,9 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @MainActor private var signalled = false
   private var signalSources: [DispatchSourceSignal] = []
   @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
-  @MainActor var signInTerminationTimeout: Duration = .seconds(3)
-  @MainActor var signInTerminationWait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
-  @MainActor private(set) var signInTerminationTask: Task<Void, Never>?
   @MainActor var activityBeforeQuit: () async throws -> Bool = { try await AppModel.shared.environments.activityBeforeQuit() }
   @MainActor var localActivityBeforeQuit: () -> Bool = {
     AppModel.shared.sessions.values.contains { $0.runActive || $0.saving || $0.draftFinishTask != nil }
@@ -194,10 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settleEdits: { self.signalled ? true : await self.settleEdits() },
         stop: {
           for session in AppModel.shared.sessions.values { session.endForQuit() }
-          self.signInTerminationTask = Task { await ChatGPTSignInModel.cancelPendingSignIns() }
-          _ = await AppTermination.briefly(timeout: self.signInTerminationTimeout, wait: self.signInTerminationWait) {
-            await self.signInTerminationTask?.value
-          }
+          await ChatGPTSignInModel.cancelPendingSignIns()
           await self.stopRuntime()
         },
         reply: { allowed in
@@ -419,6 +420,7 @@ struct WorkbenchCommands: Commands {
     }
     CommandGroup(after: .windowList) {
       OpenConsoleButton()
+      OpenDebugPanelButton()
     }
     CommandGroup(after: .appInfo) {
       UpdateMenuItem()

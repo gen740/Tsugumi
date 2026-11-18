@@ -14,14 +14,13 @@ from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 
-def usage_when(client, condition, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+def usage_when(client, condition):
+    # Cache usage is measured in the background and has no subscription event.
+    while True:
         usage = client.call("ProjectCacheUsageRequest")
         if usage.measuredAt is not None and condition(usage):
             return usage
         time.sleep(0.01)
-    raise AssertionError(f"cache usage did not converge: {usage}")
 
 
 def current(usage):

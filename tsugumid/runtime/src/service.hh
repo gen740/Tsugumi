@@ -123,6 +123,11 @@ class Service : public RequestSink {
                          const std::filesystem::path& directory,
                          BuildRequest& build)
       -> std::unique_ptr<PreparedExecution>;
+  // A Card's build ahead of its activation: when the worker it would choose
+  // with every worker free is the local one, configures `build` as
+  // prepare_execution() would and returns true. Reserves no worker; the
+  // activation still chooses its own.
+  auto prepare_early_build(const Node& node, BuildRequest& build) -> bool;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;

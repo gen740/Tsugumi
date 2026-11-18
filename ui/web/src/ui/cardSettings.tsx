@@ -19,6 +19,7 @@ import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor, EditorMarker } from './editor'
 import { CardArtifactsView, CardExecutionView } from './history'
+import { CardLogView, DependenciesCategory } from './cardLog'
 import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
@@ -174,6 +175,23 @@ export class CardEditorModel extends Observable {
   /** Untouched editors may reload; an open working copy is never locally merged. */
   async follow(whileApplying = false) {
     if ((!this.applying || whileApplying) && !this.unapplied) this.reload()
+  }
+
+  /** The Nix definition (default.nix), which Source edits. */
+  openDefinition() {
+    const prefix = this.session.definitionDir(this.cardKey)
+    if (prefix === undefined) return
+    this.category = 'source'
+    this.openFile(prefix + 'default.nix')
+  }
+
+  /** The run and invocation the Log category shows; undefined follows this Card's latest. */
+  logSelection?: { runId: string; invocation?: bigint }
+
+  openLog(runId: string, invocation?: bigint) {
+    this.logSelection = { runId, invocation }
+    this.category = 'log'
+    this.changed()
   }
 
   openSource(source: string, line: number) {
@@ -431,18 +449,19 @@ export class CardEditorModel extends Observable {
 
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
-    case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'input': return ['general', 'comments', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'draft': return ['general', 'comments', 'context']
-    case 'subgraph': return ['general', 'comments', 'ports', 'executions']
-    default: return ['general', 'comments', 'ports', 'executions', 'artifacts', 'context']
+    case 'code': return ['general', 'source', 'ports', 'log', 'dependencies', 'executions', 'artifacts', 'notes']
+    case 'input': return ['general', 'source', 'ports', 'log', 'executions', 'artifacts', 'notes']
+    case 'draft': return ['general', 'notes']
+    case 'subgraph': return ['general', 'ports', 'executions', 'notes']
+    default: return ['general', 'ports', 'log', 'executions', 'artifacts', 'notes']
   }
 }
 
-export function CardSettingsEditor({ session, card, initial, onClose }: { session: ProjectSession; card: CardKey; initial?: CardEditorCategory; onClose: () => void }) {
+export function CardSettingsEditor({ session, card, initial, file, onClose }: { session: ProjectSession; card: CardKey; initial?: CardEditorCategory; file?: 'default.nix'; onClose: () => void }) {
   const [model, setModel] = useState(() => {
     const m = new CardEditorModel(session, card)
     m.category = initial ?? 'general'
+    if (file === 'default.nix') m.openDefinition()
     return m
   })
   useObserve(model, session)
@@ -495,13 +514,13 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
         {category === 'general' && <CardPreview session={session} model={model} height={170} />}
         <div className="cse-content">
           {category === 'general' && <GeneralCategory model={model} />}
-          {category === 'comments' && <CommentsCategory session={session} card={model.cardKey} />}
-          {category === 'nix' && <SourceCategory model={model} only="default.nix" />}
           {category === 'source' && <SourceCategory model={model} />}
           {category === 'ports' && (model.kind === 'subgraph' ? <BoundaryCategory model={model} /> : <PortsCategory model={model} />)}
-          {category === 'executions' && <CardExecutionView session={session} cardKey={model.cardKey} onOpenSource={(source, line) => model.openSource(source, line)} />}
+          {category === 'log' && <CardLogView session={session} model={model} />}
+          {category === 'dependencies' && <DependenciesCategory model={model} />}
+          {category === 'executions' && <CardExecutionView session={session} model={model} />}
           {category === 'artifacts' && <CardArtifactsView session={session} cardKey={model.cardKey} />}
-          {category === 'context' && <ContextCategory model={model} />}
+          {category === 'notes' && <NotesCategory model={model} />}
         </div>
         <RevisionEditNotice edit={model.revisionEdit} text={() => model.recoveryText}
           overwrite={() => void model.apply(true)} reload={() => model.reload()} />
@@ -1125,6 +1144,22 @@ function BoundaryCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
+/** Comments (what to change, for the Agent) above the added context (what the
+ *  Card is for); a Card with no definition has only comments. */
+function NotesCategory({ model }: { model: CardEditorModel }) {
+  return (
+    <div className="col fill min0">
+      <div className="flex1 min0 col"><CommentsCategory session={model.session} card={model.cardKey} /></div>
+      {model.kind !== 'subgraph' && (
+        <div className="col border-top" style={{ height: 220 }}>
+          <div className="headline" style={{ padding: '12px 12px 0' }}>{L('追加コンテキスト')}</div>
+          <ContextCategory model={model} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Free text describing intent and notes, kept in `_meta.json` (`context`). */
 function ContextCategory({ model }: { model: CardEditorModel }) {
   return (
@@ -1310,11 +1345,11 @@ const GENERATED = 'generated:'
  *  `default.nix`, with formatting, errors in place and the generated inputs.
  *  The open files, the shown one and the expanded folders live on the model,
  *  so switching categories or applying keeps them. */
-function SourceCategory({ model, only }: { model: CardEditorModel; only?: string }) {
+function SourceCategory({ model }: { model: CardEditorModel }) {
   useObserve(model, prefs)
   const session = model.session
   const prefix = session.definitionDir(model.cardKey) ?? ''
-  const files = model.files.filter((f) => !only || f.endsWith('/' + only))
+  const files = model.files
   const [showNew, setShowNew] = useState(false)
   const [renaming, setRenaming] = useState<string>()
   const [formatting, setFormatting] = useState(false)
@@ -1325,9 +1360,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
   const shown = model.shownFile
 
   useEffect(() => {
-    if (only) {
-      if (files[0]) model.openFile(files[0])
-    } else if (shown === undefined || shown.endsWith('/default.nix')) {
+    if (shown === undefined) {
       const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.rb') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
       if (f) model.openFile(f)
     }
@@ -1480,15 +1513,6 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
         )}
       </>
     )
-  } else if (only && !files.length) {
-    pane = (
-      <Empty title={L('default.nix がありません')} icon="snowflake" description={L('処理 Card の実行環境は default.nix で定義します。')}>
-        <Button onClick={() => {
-          model.createFile('default.nix', '{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n')
-          model.openFile(prefix + 'default.nix')
-        }}>{L('default.nix を作成')}</Button>
-      </Empty>
-    )
   } else {
     pane = <Empty title={L('ファイルを選んでください')} icon="doc.text" />
   }
@@ -1502,7 +1526,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
         void format(shown)
       }
     }}>
-      {!only && model.openFiles.length > 1 && (
+      {model.openFiles.length > 1 && (
         <div className="src-tabs" role="tablist">
           {model.openFiles.map((f) => (
             <div key={f} role="tab" aria-selected={shown === f} className={`src-tab${shown === f ? ' shown' : ''}`} title={f} onClick={() => model.openFile(f)}>
@@ -1523,8 +1547,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
 
   return (
     <div className="src-view">
-      {only ? editor : (
-        <HSplit sizes={[220, null]} min={[170, 320]} storageKey="tsugumi.sourceSplit">
+      <HSplit sizes={[220, null]} min={[170, 320]} storageKey="tsugumi.sourceSplit">
           {[
             <div key="files" className="src-files">
               <div className="scroll flex1 src-tree">
@@ -1547,7 +1570,6 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
             editor,
           ]}
         </HSplit>
-      )}
       {showNew && <Prompt title={L('ファイルを作成')} initial="src/" placeholder={L('パス（例: src/util.py）')} confirm={L('作成')} onCancel={() => setShowNew(false)}
         onConfirm={(v) => { model.createFile(v); model.openFile(prefix + v) }} />}
       {renaming && <Prompt title={L('名前を変更')} initial={renaming.slice(prefix.length)} placeholder={L('新しいパス')} confirm={L('変更')} onCancel={() => setRenaming(undefined)}

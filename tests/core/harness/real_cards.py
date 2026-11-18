@@ -21,6 +21,8 @@ def accept_in_background(listener: socket.socket) -> list:
     """Record accepted peers without leaking sockets or a blocking accept thread."""
     accepted = []
     listener.listen(1)
+    # Closing a listening descriptor in another thread need not wake accept.
+    # The caller owns this socket and has no separate shutdown channel.
     listener.settimeout(0.1)
 
     def accept():
@@ -104,9 +106,9 @@ def python_probe_project(main: str, pre: str | None = None) -> tuple:
     return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
 
 
-def shown_by_probe(c, timeout=1800) -> tuple[str, str]:
+def shown_by_probe(c) -> tuple[str, str]:
     """A run from the trigger: its id and what `show` displayed."""
-    run_id, st = run_and_wait(c, "start", timeout=timeout)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     return run_id, text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
 
@@ -181,5 +183,5 @@ def check_definition_tools(client, run_id, name="work"):
         assert directory.startswith("/nix/store/") and directory.endswith("/bin")
         assert directory.removesuffix("/bin") in paths
     logs = text(client.call("LogRangeRequest", runId=run_id, card=path(name), stream=1).text)
-    assert logs == "pre-definition-tools\npost-definition-tools\n"
-    return text(environment.id), paths, search, shell
+    assert {"pre-definition-tools", "post-definition-tools"} <= set(logs.splitlines())
+    return text(environment.id), set(paths), search, shell

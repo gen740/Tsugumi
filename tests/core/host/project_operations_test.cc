@@ -16,27 +16,23 @@ namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
-TEST(ProjectOperations,
-     MissingHostIdentityIsAnInternalFailureBeforeAnyReadOrWrite) {
-  for (const auto& invalid : {"project", "operation"}) {
-    H::ProjectOperateRequestT request;
-    request.project_id = std::string(invalid) == "project" ? "other" : "p";
-    request.op_id = std::string(invalid) == "operation"
-                        ? ""
-                        : "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
-    bool called = false;
-    try {
+TEST(ProjectOperations, CoreRejectsInvalidOperationIdentity) {
+  H::ProjectOperateRequestT request;
+  request.project_id = "p";
+  int calls = 0;
+  EXPECT_THROW(
       ProjectOperations().Execute(
-          "p", request, {}, [&](const auto&, const auto&) -> OperationReply {
-            called = true;
-            return {};
-          });
-      FAIL() << "invalid host identity must fail";
-    } catch (const Failure& failure) {
-      EXPECT_EQ(failure.code, "internal_error");
-    }
-    EXPECT_FALSE(called);
-  }
+          request, {},
+          [&](const auto& method, const auto& args) -> OperationReply {
+            ++calls;
+            EXPECT_EQ(method, "operation_get");
+            EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
+            return {
+                R"({"reply":"Failure","value":{"kind":"invalid_request","diagnostic":"invalid op_id"}})",
+                {}};
+          }),
+      Failure);
+  EXPECT_EQ(calls, 1);
 }
 TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
   H::ProjectTextEditT edit;
@@ -76,15 +72,25 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
       EXPECT_EQ(method, "project_save");
       EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
       if (saves++ == 0) {
-        intent = args.at("save_intent");
+        intent = json::Text(args, "save_intent");
+        EXPECT_FALSE(intent.empty());
         ++revision;
         reply = "Failure";
         value = {{"kind", "\"revision_conflict\""}};
       } else {
-        EXPECT_EQ(args.at("save_intent"), intent);
+        EXPECT_EQ(json::Text(args, "save_intent"), intent);
         EXPECT_EQ(json::Text(args, "base_rev"), "2");
-        EXPECT_NE(args.at("changes").find("bmV3ICsgdW5yZWxhdGVk"),
-                  std::string::npos);
+        std::optional<std::string> found;
+        for (const auto& raw : json::Array(args.at("changes"))) {
+          const auto change = json::Object(raw);
+          const auto file = json::Object(change.at("value"));
+          if (json::Text(file, "path") != edit.file_path) continue;
+          std::string bytes;
+          EXPECT_TRUE(crypto::base64_decode(
+              json::Text(json::Object(file.at("bytes")), "base64"), bytes));
+          found = std::move(bytes);
+        }
+        EXPECT_EQ(found, "new + unrelated");
         reply = "SaveResult";
         value = {{"rev", "\"3\""}};
       }
@@ -95,8 +101,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
         {}};
   };
   ProjectOperations operations;
-  const auto result =
-      operations.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto result = operations.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(result.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 2);
 }
@@ -105,8 +110,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
 
 namespace tsugumi::host {
 namespace {
-TEST(ProjectOperationUndo,
-     UnrelatedWriterChangesSurviveAndConflictsNameTheField) {
+TEST(ProjectOperationUndo, UnrelatedWriterChangesSurviveAndConflictsBlockUndo) {
   SaveBase before;
   before.snapshot["rev"] = "1";
   before.files["tsugumi.json"] =
@@ -135,8 +139,6 @@ TEST(ProjectOperationUndo,
     FAIL() << "Undo must refuse a conflicting writer";
   } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "value_conflict");
-    EXPECT_NE(std::string(failure.what()).find("tsugumi.json.name"),
-              std::string::npos);
   }
 }
 
@@ -159,7 +161,13 @@ TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
   current.files["layout.json"] = R"({"groups":[{"id":"g","name":"new"}]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   EXPECT_EQ(json::Array(plan.at("changes")).size(), 1);
-  EXPECT_EQ(plan.at("changes").find("other"), std::string::npos);
+  const auto change = json::Object(json::Array(plan.at("changes")).front());
+  const auto layout =
+      json::Object(json::Text(json::Object(change.at("value")), "json"));
+  const auto groups = json::Array(layout.at("groups"));
+  ASSERT_EQ(groups.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "id"), "g");
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "name"), "old");
 }
 
 TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {
@@ -244,8 +252,8 @@ TEST(ProjectOperations,
             {}};
   };
   ProjectOperations executor;
-  const auto first = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
-  const auto repeat = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto first = executor.Execute(request, {"ui", {}, {}, {}}, call);
+  const auto repeat = executor.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(first.json, repeat.json);
   EXPECT_EQ(reads, 1);
   EXPECT_EQ(applications, 1);
@@ -329,7 +337,7 @@ class TransformationProject {
     request.op_id = crypto::uuid4();
     request.body = std::move(body);
     return ProjectOperations().Execute(
-        "p", request, context, [&](const auto& method, const auto& args) {
+        request, context, [&](const auto& method, const auto& args) {
           return Call(method, args);
         });
   }

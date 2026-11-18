@@ -74,7 +74,7 @@ auto Write(int fd, R::MessageT message) -> void {
   Exact(fd, prefix, true);
   Exact(fd, bytes, true);
 }
-auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd, 60); }
+auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd); }
 auto ValidId(const std::string& id) -> bool {
   return id != "local" && id != "auto" &&
          std::regex_match(id, std::regex("[a-z][a-z0-9-]{0,31}"));
@@ -207,18 +207,15 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   c->worker_contract = entry.capabilities.worker_contract;
   return value;
 }
-auto CheckCapabilities(const R::CapabilitiesT* c) -> void {
-  Require(
-      c && crypto::is_sha256_hex(c->server_id) && c->max_jobs &&
-          c->worker_contract == W::kContract &&
-          std::ranges::find(c->systems, c->native_system) != c->systems.end() &&
-          std::ranges::all_of(c->systems,
-                              [](const auto& s) {
-                                return s == "aarch64-linux" ||
-                                       s == "x86_64-linux";
-                              }),
-      "Rebuild the remote worker with this Tsugumi revision (invalid "
-      "capabilities)");
+auto VerifiedCapabilities(const R::ReplyT& reply) -> const R::CapabilitiesT& {
+  const auto* capabilities = reply.body.AsCapabilities();
+  if (!capabilities || capabilities->worker_contract != W::kContract ||
+      !crypto::is_sha256_hex(capabilities->server_id) ||
+      !capabilities->max_jobs)
+    throw W::Error(R::ErrorCode::Rejected,
+                   "Rebuild the remote worker with this Tsugumi revision "
+                   "(invalid capabilities)");
+  return *capabilities;
 }
 }  // namespace
 
@@ -304,7 +301,10 @@ struct ExecutionBroker::State {
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
-      auto message = W::decode(q.blob(4));
+      const auto bytes = q.blob(4);
+      Require(bytes.size() <= W::kMaxFrame,
+              "Invalid stored worker capabilities");
+      auto message = W::decode(bytes);
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
@@ -356,8 +356,12 @@ struct ExecutionBroker::State {
       pollfd p{peer.fd, POLLOUT, 0};
       int error = 0;
       socklen_t size = sizeof error;
+      int ready;
+      do {
+        ready = ::poll(&p, 1, -1);
+      } while (ready < 0 && errno == EINTR);
       connected =
-          ::poll(&p, 1, 10000) > 0 &&
+          ready > 0 &&
           ::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
           !error;
     }
@@ -382,7 +386,7 @@ struct ExecutionBroker::State {
     auto message = Read(fd);
     try {
       auto* broker = message->payload.AsBrokerRequest();
-      Require(broker && broker->request, "Expected a private broker envelope");
+      Require(broker, "Expected a private broker envelope");
       auto* request = broker->request.get();
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
@@ -436,10 +440,7 @@ struct ExecutionBroker::State {
             throw W::Error(R::ErrorCode::RegistrationChanged,
                            "Execution service registration changed; "
                            "reauthorize this project");
-          Require(request->body.type != R::RequestBody::NONE,
-                  "Missing worker request");
           entry = *found;
-          request->server_id = entry.capabilities.server_id;
         }
       }
       if (catalog_reply) {
@@ -450,9 +451,17 @@ struct ExecutionBroker::State {
       const bool probing = request->body.AsProbeRequest() != nullptr;
       auto response = Remote(entry, std::move(*request));
       if (probing) {
-        if (const auto* live =
-                response.payload.AsReply()->body.AsCapabilities()) {
-          auto cached = *live;
+        const auto& reply = *response.payload.AsReply();
+        if (!reply.body.AsFailure()) {
+          auto cached = VerifiedCapabilities(reply);
+          if (cached.server_id != entry.capabilities.server_id)
+            throw W::Error(R::ErrorCode::Rejected,
+                           "The remote worker's server ID changed. Verify the "
+                           "registered endpoint.");
+          if (!crypto::is_sha256_hex(cached.instance_id))
+            throw W::Error(
+                R::ErrorCode::Rejected,
+                "The remote worker did not identify its project journal");
           cached.instance_id.clear();
           std::lock_guard lock(mutex);
           auto update = db.prepare(
@@ -491,8 +500,8 @@ ExecutionBroker::ExecutionBroker(std::filesystem::path state,
     : state_(std::make_unique<State>(std::move(state), std::move(socket))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
-auto ExecutionBroker::endpoint() const -> std::string {
-  return "unix:" + state_->socket;
+auto ExecutionBroker::socket_path() const -> const std::string& {
+  return state_->socket;
 }
 auto ExecutionBroker::Authorize(const std::string& project,
                                 const std::filesystem::path& path,
@@ -511,7 +520,7 @@ auto ExecutionBroker::Authorize(const std::string& project,
         .run();
     fs::remove_file_durable(control / "execution-broker-capability");
     H::ExecutionAuthorizationT result;
-    result.endpoint = endpoint();
+    result.endpoint = "unix:" + socket_path();
     result.capability_file = "";
     return result;
   }
@@ -538,7 +547,7 @@ auto ExecutionBroker::Authorize(const std::string& project,
   fs::write_atomic(control / "execution-broker-capability", capability,
                    guest ? 0644 : 0600);
   H::ExecutionAuthorizationT result;
-  result.endpoint = endpoint();
+  result.endpoint = "unix:" + socket_path();
   result.capability_file = (control / "execution-broker-capability").string();
   result.available = true;
   return result;
@@ -615,8 +624,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         if (reply->body.AsFailure())
           throw std::runtime_error(
               "The remote worker rejected the registration");
-        CheckCapabilities(reply->body.AsCapabilities());
-        entry.capabilities = *reply->body.AsCapabilities();
+        entry.capabilities = VerifiedCapabilities(*reply);
         entry.capabilities.instance_id.clear();
       }
       std::lock_guard lock(state_->mutex);

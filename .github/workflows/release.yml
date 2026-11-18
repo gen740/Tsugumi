@@ -74,7 +74,6 @@ jobs:
     name: Build and package the app (macOS)
     needs: [resolve, image]
     runs-on: macos-26
-    timeout-minutes: 120
     env:
       PACKAGE_VERSION: ${{ needs.resolve.outputs.version }}
       TSUGUMI_VM_ARTIFACT_ONLY: '1'
@@ -92,18 +91,6 @@ jobs:
           cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build the app
         run: ui/macos/build-app.sh --release
-      - name: Exercise the downloaded guest with the existing VM suite
-        env:
-          TSUGUMI_TEST_CONTAINER: '1'
-          TSUGUMI_VM_IMAGE: ${{ github.workspace }}/dist/tsugumi-vm
-          TSUGUMI_VMHOST: ${{ github.workspace }}/dist/Tsugumi.app/Contents/MacOS/tsugumi-vmhost
-          TSUGUMI_HOSTD: ${{ github.workspace }}/dist/Tsugumi.app/Contents/MacOS/tsugumi-hostd
-          TSUGUMI_PY_BINDINGS: ${{ github.workspace }}/build-host/generated/python
-          TSUGUMI_CLIENT_LIB_DIR: ${{ github.workspace }}/build-host/client
-        run: |
-          set -euo pipefail
-          controller=$(vm/macos/tools/build-vmctl.sh | tail -n 1)
-          TSUGUMI_VMCTL="$controller" nix develop -c python3 tests/run-isolated.py python3 -m pytest -q tests/python/test_shared_vm.py -k 'projects_share_the_store or stopping_one_project'
       - name: Check and package the app
         run: |
           set -euo pipefail

@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 
 namespace Tsugumi;
 
-// NativeValue, NativeSeries and NativeCall (InvocationScope.cs) mirror
+// The native structs (InvocationScope.cs) mirror
 // sdk/include/tsugumi/sdk/abi.h by hand. host.cc passes the C compiler's
 // offsetof/sizeof of every field; this compares them with the managed layout
 // by C field name, so a field missing, moved or resized on either side fails
-// tsugumi_load. When abi.h gains a field, add it to host.cc's k_layout, to
+// the load phase. When abi.h gains a field, add it to host.cc's k_layout, to
 // the managed struct and here. tests/static/test_csharp_abi.py also checks
 // field order and callback signatures without building a Card.
 internal static unsafe class Layout {
@@ -42,23 +42,21 @@ internal static unsafe class Layout {
         void Add(string name, void* start, void* field, ulong size) =>
             list.Add((name, (ulong)((byte*)field - (byte*)start), size));
 
-        NativeValue value = default;
-        var v = &value;
-        list.Add(("tsugumi_value", 0, (ulong)sizeof(NativeValue)));
-        Add("tsugumi_value.name", v, &v->Name, pointer);
-        Add("tsugumi_value.kind", v, &v->Kind, sizeof(uint));
-        Add("tsugumi_value.data", v, &v->Data, pointer);
-        Add("tsugumi_value.size", v, &v->Size, (ulong)sizeof(nuint));
+        NativeBuffer bufValue = default;
+        var buf = &bufValue;
+        list.Add(("tsugumi_buffer", 0, (ulong)sizeof(NativeBuffer)));
+        Add("tsugumi_buffer.data", buf, &buf->Data, pointer);
+        Add("tsugumi_buffer.size", buf, &buf->Size, (ulong)sizeof(nuint));
 
-        NativeBlob blob = default;
-        var b = &blob;
+        NativeBlob bValue = default;
+        var b = &bValue;
         list.Add(("tsugumi_blob", 0, (ulong)sizeof(NativeBlob)));
         Add("tsugumi_blob.name", b, &b->Name, pointer);
         Add("tsugumi_blob.data", b, &b->Data, pointer);
         Add("tsugumi_blob.size", b, &b->Size, (ulong)sizeof(nuint));
 
-        NativeSeries series = default;
-        var s = &series;
+        NativeSeries sValue = default;
+        var s = &sValue;
         list.Add(("tsugumi_series", 0, (ulong)sizeof(NativeSeries)));
         Add("tsugumi_series.id", s, &s->Id, pointer);
         Add("tsugumi_series.label", s, &s->Label, pointer);
@@ -66,40 +64,46 @@ internal static unsafe class Layout {
         Add("tsugumi_series.y", s, &s->Y, pointer);
         Add("tsugumi_series.count", s, &s->Count, (ulong)sizeof(nuint));
 
-        NativeCall call = default;
-        var c = &call;
+        NativeCall cValue = default;
+        var c = &cValue;
         list.Add(("tsugumi_call", 0, (ulong)sizeof(NativeCall)));
         Add("tsugumi_call.abi_version", c, &c->AbiVersion, sizeof(uint));
+        Add("tsugumi_call.phase", c, &c->Phase, sizeof(uint));
         Add("tsugumi_call.run_id", c, &c->RunId, pointer);
         Add("tsugumi_call.card", c, &c->Card, pointer);
         Add("tsugumi_call.invocation", c, &c->Invocation, sizeof(ulong));
         Add("tsugumi_call.inputs", c, &c->Inputs, pointer);
-        Add("tsugumi_call.input_count", c, &c->InputCount, (ulong)sizeof(nuint));
+        Add("tsugumi_call.inputs_size", c, &c->InputsSize, (ulong)sizeof(nuint));
         Add("tsugumi_call.params", c, &c->Params, pointer);
         Add("tsugumi_call.params_size", c, &c->ParamsSize, (ulong)sizeof(nuint));
         Add("tsugumi_call.working_directory", c, &c->Work, pointer);
         Add("tsugumi_call.temporary_directory", c, &c->Temp, pointer);
         Add("tsugumi_call.output_directory", c, &c->Output, pointer);
         Add("tsugumi_call.host", c, &c->Host, pointer);
-        Add("tsugumi_call.emit_output", c, &c->Emit, pointer);
-        Add("tsugumi_call.display_text", c, &c->Text, pointer);
-        Add("tsugumi_call.display_scalar", c, &c->Scalar, pointer);
-        Add("tsugumi_call.display_line_chart", c, &c->LineChart, pointer);
-        Add("tsugumi_call.log", c, &c->Log, pointer);
-        Add("tsugumi_call.cancelled", c, &c->Cancelled, pointer);
-        Add("tsugumi_call.remaining_ms", c, &c->Remaining, pointer);
-        Add("tsugumi_call.fail", c, &c->Fail, pointer);
-        Add("tsugumi_call.display_table", c, &c->Table, pointer);
-        Add("tsugumi_call.display_image", c, &c->Image, pointer);
-        Add("tsugumi_call.display_points", c, &c->Points, pointer);
-        Add("tsugumi_call.display_module", c, &c->Module, pointer);
-        Add("tsugumi_call.display_markdown", c, &c->Markdown, pointer);
-        Add("tsugumi_call.input_json", c, &c->InputJson, pointer);
-        Add("tsugumi_call.params_json", c, &c->ParamsJson, pointer);
-        Add("tsugumi_call.emit_json", c, &c->EmitJson, pointer);
-        Add("tsugumi_call.display_json", c, &c->DisplayJson, pointer);
-        Add("tsugumi_call.finish_outputs", c, &c->FinishOutputs, pointer);
-        Add("tsugumi_call.fail_at", c, &c->FailAt, pointer);
+        Add("tsugumi_call.effects", c, &c->Effects, pointer);
+
+        NativeHost hValue = default;
+        var h = &hValue;
+        list.Add(("tsugumi_host", 0, (ulong)sizeof(NativeHost)));
+        Add("tsugumi_host.display_text", h, &h->Text, pointer);
+        Add("tsugumi_host.display_scalar", h, &h->Scalar, pointer);
+        Add("tsugumi_host.display_line_chart", h, &h->LineChart, pointer);
+        Add("tsugumi_host.log", h, &h->Log, pointer);
+        Add("tsugumi_host.cancelled", h, &h->Cancelled, pointer);
+        Add("tsugumi_host.remaining_ms", h, &h->Remaining, pointer);
+        Add("tsugumi_host.fail", h, &h->Fail, pointer);
+        Add("tsugumi_host.display_table", h, &h->Table, pointer);
+        Add("tsugumi_host.display_image", h, &h->Image, pointer);
+        Add("tsugumi_host.display_points", h, &h->Points, pointer);
+        Add("tsugumi_host.display_module", h, &h->Module, pointer);
+        Add("tsugumi_host.display_markdown", h, &h->Markdown, pointer);
+        Add("tsugumi_host.inputs_json", h, &h->InputsJson, pointer);
+        Add("tsugumi_host.params_json", h, &h->ParamsJson, pointer);
+        Add("tsugumi_host.input_kind", h, &h->InputKind, pointer);
+        Add("tsugumi_host.outputs_json", h, &h->OutputsJson, pointer);
+        Add("tsugumi_host.display_json", h, &h->DisplayJson, pointer);
+        Add("tsugumi_host.fail_at", h, &h->FailAt, pointer);
+
         return list;
     }
 }

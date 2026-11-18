@@ -14,13 +14,16 @@ import time
 import pytest
 
 from conftest import real_environment
+from harness.observations import decode_scalar, read_output
 from harness.real_cards import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, FLAG, NUM, PYTHON_NIX, TXT, bash, check_python_card_environment, log, python_probe_project, shown_by_probe)
-from projects import card, conn, put, run_and_wait, write
+from projects import card, conn, put, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunEventValue import RunEventValue
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
                                 reason="needs the container environment (TSUGUMI_TEST_CONTAINER=1)")
@@ -42,7 +45,7 @@ def env(tmp_path_factory):
 
 
 def reload(c):
-    """Wait for the shared folder to expose a valid document, with a watchdog."""
+    """Retry until the guest sees the host write. Shared folders send no visibility event."""
     deadline = time.monotonic() + 60
     while True:
         snap = c.call("ProjectInspectRequest")
@@ -88,9 +91,12 @@ def test_backpressure_stall_ends_the_run(env):
               conn("each", "out1", "loop", "again"), conn("each", "out2", "wait", "value"),
               conn("never", "flag", "both", "in"), conn("both", "out1", "gate", "value"),
               conn("both", "out2", "gate", "condition"), conn("gate", "a", "wait", "condition")])
-    run_id, st = run_and_wait(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.failed
-    assert "cannot progress" in text(st.failure.diagnostic)
+    assert st.failure.kind == FailureKind.execution_limit
+    assert {text(arg.key): text(arg.value) for arg in st.failure.args}.items() >= {
+        "card": "wait", "port": "value"
+    }.items()
 
 
 def test_shell_step_contract(env):
@@ -126,10 +132,10 @@ def test_shell_step_contract(env):
     # A later successful step never clears an earlier failure; post failure fails the Card.
     assert states["postfail"].status.state == CardState.failed
     assert states["runfail"].status.state == CardState.failed
-    assert "run failed" in text(states["runfail"].status.failure.diagnostic)
+    assert states["runfail"].status.failure.kind == FailureKind.worker_failed
     # One deadline for all steps: 1.5 s + 1.5 s exceeds 2 s.
     assert states["slow"].status.state == CardState.failed
-    assert states["slow"].status.failure.kind == 14  # timeout
+    assert states["slow"].status.failure.kind == FailureKind.timeout
     assert st.state == RunState.failed
 
 
@@ -147,20 +153,15 @@ def proc_count(env, pattern: str) -> int:
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_cancel_ends_every_descendant(env, sandbox):
     defs = {"trigger": {"template": "trigger"},
-            "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719; wait", sandbox=sandbox)}
+            "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719 & echo descendants-ready; wait", sandbox=sandbox)}
     c = load(env, defs, [card("start", "trigger"), card("hang", "hang")], [])
-    snap = c.call("ProjectInspectRequest")
-    acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
-    run_id = text(acc.run.runId)
-    deadline = time.time() + 600
+    run_id = start_run(c, "start")
     try:
-        while proc_count(env, "sleep271") == 0:
-            assert time.time() < deadline, "the Card never started"
-            assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded)
-            time.sleep(0.5)
+        wait_for_log(c, run_id, "hang", 1, lambda log: "descendants-ready" in text(log.text or b""))
         c.call("RunCancelRequest", runId=run_id)
-        while c.call("RunStatusRequest", runId=run_id).state not in (RunState.cancelled, RunState.failed):
-            time.sleep(0.05)
+        assert wait_run(c, run_id).state in (RunState.cancelled, RunState.failed)
+        # The controller exposes a guest process snapshot, without exit events
+        # for adopted descendants inside the shared VM.
         deadline = time.monotonic() + 60
         while proc_count(env, "sleep271") or proc_count(env, "sleep3141"):
             assert time.monotonic() < deadline, "a descendant survived cancellation"
@@ -225,40 +226,30 @@ def test_stages_and_cache(env):
     defs = {"trigger": {"template": "trigger"}, "one": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')}
     c = load(env, defs, [card("start", "trigger"), card("one", "one")], [])
     c.open()
-    phases = []
-    trace = []
+    def collect_phases():
+        run_id = start_run(c, "start")
+        phases = set()
 
-    counted = set()
+        def finished(note):
+            if note.valueType != NotificationPayload.RunEvent or text(note.value.runId) != run_id:
+                return False
+            event = note.value
+            if event.valueType == RunEventValue.RunCardChanged:
+                invocation = event.value.invocation
+                if [text(segment) for segment in invocation.card.segments] == ["one"]:
+                    phases.add(invocation.phase)
+            return event.valueType == RunEventValue.RunFinished
 
-    def collect(n):
-        # The client may offer the same notification again: count each seq once.
-        if n.seq in counted:
-            return n.valueType == NotificationPayload.RunEvent and n.value.valueType == 5
-        counted.add(n.seq)
-        if n.valueType == NotificationPayload.RunEvent and n.value.valueType == 3:
-            inv = n.value.value.invocation
-            if [text(s) for s in inv.card.segments] == ["one"]:
-                phases.append((inv.phase, inv.buildCached))
-                trace.append((inv.invocation, inv.state, inv.phase, inv.buildCached))
-        return n.valueType == NotificationPayload.RunEvent and n.value.valueType == 5
+        c.wait_notification(finished)
+        assert wait_run(c, run_id).state == RunState.succeeded
+        record, = c.call("RunInvocationsRequest", runId=run_id, card=path("one")).records
+        return phases, record.buildCached
 
-    snap = c.call("ProjectInspectRequest")
-    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
-    c.wait_notification(collect, timeout=900)
-    seen = []
-    for p, _ in phases:
-        if not seen or seen[-1] != p:
-            seen.append(p)
-    order = [Phase.prepare, Phase.evaluate, Phase.build, Phase.execute, Phase.validate, Phase.save]
-    ranks = [order.index(p) for p in seen if p in order]
-    assert ranks == sorted(ranks), trace[:30]  # stages only move forward
-    assert Phase.execute in seen and Phase.save in seen, seen
-    phases.clear()
-    snap = c.call("ProjectInspectRequest")
-    c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
-    c.wait_notification(collect, timeout=600)
-    assert Phase.build not in [p for p, _ in phases]
-    assert any(cached for _, cached in phases)
+    phases, _ = collect_phases()
+    assert {Phase.execute, Phase.save} <= phases
+    phases, cached = collect_phases()
+    assert Phase.build not in phases
+    assert cached
 
 
 def test_python_card_has_a_home_while_it_loads(env):
@@ -285,7 +276,7 @@ let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     shown = text(rec.record.display.value.text)
@@ -386,7 +377,7 @@ let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
@@ -434,14 +425,14 @@ def main(inputs, report, run):
     Rich.AddPoint(b, Point.CreatePoint(b, -7, 8))
     Rich.AddShapeType(b, Shape.Shape.Circle)
     Rich.AddShape(b, circle)
-    yield {"rich": tsugumi.message(b, Rich.End(b))}
+    rich = tsugumi.message(b, Rich.End(b))
     path = os.path.join(run.output_directory, "table.csv")
     with open(path, "w") as f:
         f.write("a,b\\n" * 1000)
     b = tsugumi.builder()
     p = b.CreateString(path)
     Doc.Start(b); Doc.AddValue(b, p)
-    yield {"doc": tsugumi.message(b, Doc.End(b))}
+    return {"rich": rich, "doc": tsugumi.message(b, Doc.End(b))}
 '''
 
 CPP_CHECK = '''
@@ -528,7 +519,7 @@ def main(inputs):
     put(root / "definitions" / "bad" / "src" / "main.py", bad)
     put(root / "definitions" / "missing" / "src" / "main.py", missing)
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in
            ("make", "check", "shell", "bad", "missing", "after_bad", "after_missing")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
@@ -536,8 +527,8 @@ def main(inputs):
     assert rec["check"].state == CardState.succeeded, (detail, log(c, run_id, "check", 2)[-800:])
     assert rec["shell"].state == CardState.succeeded, (detail, log(c, run_id, "shell", 2)[-800:])
     # Invalid output never flows on; a missing required output fails the Card.
-    assert rec["bad"].state == CardState.failed and rec["bad"].failure.kind == 24, detail
-    assert rec["missing"].state == CardState.failed and "missing" in text(rec["missing"].failure.diagnostic), detail
+    assert rec["bad"].state == CardState.failed and rec["bad"].failure.kind == FailureKind.output_invalid, detail
+    assert rec["missing"].state == CardState.failed and rec["missing"].failure.kind == FailureKind.output_invalid, detail
     assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
 
 
@@ -554,8 +545,9 @@ static int calls = 0;  // reuseWorker: one worker serves every invocation
 
 static std::string runtime_path() {
   Dl_info info{};
-  dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info);
-  return info.dli_fname ? info.dli_fname : "?";
+  if (!dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info) || !info.dli_fname)
+    throw tsugumi::Failure("worker_failed", "fixture could not locate the runtime");
+  return info.dli_fname;
 }
 
 auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
@@ -567,9 +559,9 @@ auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   uint64_t n = 0;
   if (const auto* v = inputs.x.value.Asinit()) n = v->value;
   else if (const auto* v = inputs.x.value.Asagain()) n = v->value;
-  report.log("runtime " + runtime_path());
   report.text("n = " + std::to_string(n));
   Card::Output out;
+  out.runtime.emplace().value = runtime_path();
   if (n > 0) {
     out.again.emplace().value = n - 1;
     return out;
@@ -589,10 +581,11 @@ SDK_OTHER = '''
 
 auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   Dl_info info{};
-  dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info);
-  report.log(std::string("runtime ") + (info.dli_fname ? info.dli_fname : "?"));
+  if (!dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info) || !info.dli_fname)
+    throw tsugumi::Failure("worker_failed", "fixture could not locate the runtime");
   Card::Output out;
   out.out.emplace().value = inputs.in.value + inputs.params.step.value();
+  out.runtime.emplace().value = info.dli_fname;
   report.text("out = " + std::to_string(out.out->value));
   return out;
 }
@@ -608,11 +601,14 @@ def test_cpp_sdk_card_api(env):
     seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
     calc_out = ('''namespace t; table Num { value:ulong; } table Doc { value:string; }
 '''
-                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "file"); }
+                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "file"); runtime:Doc; }
 '''
                 '''root_type Outputs;
 attribute "tsugumi";
 ''')
+    other_out = '''namespace t; table Num { value:ulong; } table Runtime { value:string; }
+table Outputs { out:Num (required); runtime:Runtime; } root_type Outputs;
+'''
     calc_nix = """{ pkgs, inputs, params }:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
@@ -630,11 +626,11 @@ in
 ''', "")
     defs = {"trigger": {"template": "trigger"}, "seed": seed,
             "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True,
+            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
                      "_outputs": calc_out, "_nix": calc_nix},
-            "other": {"language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False,
+            "other": {"language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
                       "params": [{"name": "step", "type": "uint64", "data": 10}],
-                      "_outputs": NUM, "_nix": other_nix}}
+                      "_outputs": other_out, "_nix": other_nix}}
     root = env.project
     c = load(env, defs,
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("calc", "calc"),
@@ -644,7 +640,7 @@ in
     put(root / "definitions" / "calc" / "src" / "card.cc", SDK_CALC)
     put(root / "definitions" / "other" / "src" / "card.cc", SDK_OTHER)
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
     detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
     assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
@@ -653,9 +649,9 @@ in
     # Three invocations (2, 1, 0) on one worker; preRun/postRun around each.
     invs = c.call("RunInvocationsRequest", runId=run_id, card=path("calc")).records
     assert len(invs) == 3
-    runtimes = {line.split(" ", 1)[1] for k, inv in (("calc", 3), ("other", 1))
-                for line in log(c, run_id, k, 2, inv).splitlines() if line.startswith("runtime ")}
-    assert len(runtimes) == 1 and next(iter(runtimes)).endswith("/lib/libtsugumi_card.so"), runtimes
+    calc_runtime = decode_scalar(read_output(c, run_id, card="calc", port="runtime"))
+    other_runtime = decode_scalar(read_output(c, run_id, card="other", port="runtime"))
+    assert calc_runtime and calc_runtime == other_runtime
     # calls = 3 from the reused worker, plus the param step 10.
     shown = c.call("RunRecordRequest", runId=run_id, card=path("other")).record.display
     assert shown is not None and shown.valueType == 1 and text(shown.value.text) == "out = 13"
@@ -682,9 +678,7 @@ def test_unselected_branch_is_not_evaluated(env):
     snap = c.call("ProjectInspectRequest")
     acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"), maxConcurrency=2)
     run_id = text(acc.run.runId)
-    while c.call("RunStatusRequest", runId=run_id).state not in (RunState.succeeded, RunState.failed, RunState.cancelled):
-        time.sleep(0.1)
-    st = c.call("RunStatusRequest", runId=run_id)
+    st = wait_run(c, run_id)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert c.call("RunRecordRequest", runId=run_id, card=path("never")).status.state == CardState.skipped
 
@@ -704,10 +698,10 @@ def main(inputs):
     os.kill(os.getpid(), signal.SIGKILL)
 ''')
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start")
     rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
     assert st.state == RunState.failed and rec.state == CardState.failed
-    assert rec.failure.kind == 23  # worker_failed
+    assert rec.failure.kind == FailureKind.worker_failed
     # After the crash the environment keeps working: fix the source and run again.
     put(root / "definitions" / "crash" / "src" / "main.py",
         '''import tsugumi
@@ -720,5 +714,5 @@ def main(inputs):
     return {'out': tsugumi.message(b, Num.End(b))}
 ''')
     reload(c)
-    _, st2 = run_and_wait(c, "start", timeout=1800)
+    _, st2 = run_and_wait(c, "start")
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)

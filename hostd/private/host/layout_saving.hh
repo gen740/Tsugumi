@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "host/save.hh"
+
 namespace Tsugumi::Host {
 struct LayoutSceneT;
 struct ProjectMoveT;
@@ -40,5 +42,6 @@ auto MoveProjectLayout(const std::string& project, const std::string& layout,
 auto PrepareLayoutSave(
     const std::string& arguments, const LayoutRead& read,
     const std::vector<std::string>& documents = {"tsugumi.json"},
-    const LayoutWrite& may_write = {}) -> std::string;
+    const LayoutWrite& may_write = {}, const SourcePatches& patches = {})
+    -> std::string;
 }  // namespace tsugumi::host

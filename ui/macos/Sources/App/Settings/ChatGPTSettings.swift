@@ -15,17 +15,13 @@ struct ChatGPTSettings: View {
 
   var body: some View {
     Section {
-      Text("ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。")
-        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       ChatGPTConnection(model: connection) { GuideController.shared.connectionSaved() }
     } header: {
       HStack {
         Text("ChatGPT プラン（Sign in with ChatGPT）")
+        InfoButton(Text("ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。"), Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。"))
         if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
       }
-    } footer: {
-      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
-        .font(.caption).foregroundStyle(.secondary)
     }
     .onAppear { Task { models = (try? await CoreHostClient.shared.storedModels("chatgpt")) ?? [] } }
     Section("モデル") {

@@ -72,15 +72,6 @@ module Tsugumi
       @params
     end
 
-    def output(name, value)
-      check
-      value = Tsugumi.json_value(value)
-      raise ArgumentError, 'an output message must be a Hash or #to_h value object; omit the port to leave it unproduced' unless value.is_a?(Hash)
-      TsugumiHost.output(name.to_s, JSON.generate(value, allow_nan: true))
-    rescue ArgumentError, JSON::GeneratorError => e
-      raise Failure.new('output_invalid', e.message)
-    end
-
     def text(value)
       check
       TsugumiHost.display_text(Tsugumi.text(value))
@@ -165,9 +156,8 @@ module Tsugumi
   class Inputs
     def initialize(scope)
       @params = Tsugumi.freeze_input(scope.params)
-      inputs = TsugumiHost.inputs
-      @kinds = inputs.to_h { |name, kind, _| [name, kind] }.freeze
-      @values = inputs.to_h { |name, _, json| [name, Tsugumi.freeze_input(JSON.parse(json, allow_nan: true))] }.freeze
+      @values = Tsugumi.freeze_input(JSON.parse(TsugumiHost.inputs, allow_nan: true))
+      @kinds = @values.keys.to_h { |name| [name, TsugumiHost.input_kind(name)] }.freeze
       freeze
     end
     attr_reader :params
@@ -204,18 +194,20 @@ module Tsugumi
   def self.call(function, scope)
     args = [Inputs.new(scope), Report.new(scope), Run.new(scope)]
     raise ArgumentError, 'Card functions take inputs, optionally report and run' unless (1..3).cover?(function.arity)
-    result = function.call(*args.take(function.arity))
-    send_outputs(scope, result)
+    function.call(*args.take(function.arity))
   end
 
-  def self.send_outputs(scope, result)
-    return if result.nil?
-    if result.is_a?(Enumerator)
-      result.each { |batch| send_outputs(scope, batch) }
-      return
-    end
+  def self.outputs_json(result)
+    result ||= {}
     raise ArgumentError, 'return a Hash by output port' unless result.is_a?(Hash)
-    result.each { |port, value| scope.output(port, value) }
+    values = result.to_h do |port, value|
+      value = json_value(value)
+      raise ArgumentError, "output #{port} needs a Hash or #to_h value object; omit the port to leave it unproduced" unless value.is_a?(Hash)
+      [port.to_s, value]
+    end
+    JSON.generate(values, allow_nan: true)
+  rescue ArgumentError, JSON::GeneratorError => error
+    raise Failure.new('output_invalid', error.message)
   end
 
   private_constant :CallScope
@@ -223,17 +215,16 @@ module Tsugumi
 
   class Card; end
 
-  def self.guard(finish_outputs: false)
+  def self.guard
     require 'json'
     before = Thread.list
     scope = CallScope.new
     begin
-      yield scope
+      result = yield scope
       if (Thread.list - before).any?(&:alive?)
         raise Failure.new('worker_failed', 'join Ruby threads before returning from a Card')
       end
-      TsugumiHost.finish_outputs if finish_outputs
-      true
+      result
     rescue Exception => error # SystemExit and syntax errors also fail the invocation.
       warn error.full_message
       kind = error.is_a?(Failure) ? error.kind : 'worker_failed'
@@ -260,10 +251,10 @@ module Tsugumi
 
   def self._run_start
     return true unless @card.respond_to?(:on_run_start)
-    guard { |scope| call(@card.method(:on_run_start), scope) }
+    guard { |scope| call(@card.method(:on_run_start), scope); true }
   end
 
   def self._invoke
-    guard(finish_outputs: true) { |scope| call(@card.method(:main), scope) }
+    guard { |scope| outputs_json(call(@card.method(:main), scope)) }
   end
 end

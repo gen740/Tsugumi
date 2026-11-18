@@ -16,7 +16,7 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
     switch code {
     case "stale_project": return String(localized: "このフォルダのプロジェクト ID が変更または削除されました。このプロジェクトを閉じて開き直し、現在の ID で登録してください。会話の記録は削除していません。")
     case "conversation_identity_mismatch": return String(localized: "このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。")
-    default: return ChatGPTError.localizedMessage(message)
+    default: return ChatGPTError.localizedMessage(message, code: code)
     }
   }
   public var errorDescription: String? { description }
@@ -126,20 +126,27 @@ public actor CoreHostClient {
   public func activityBeforeQuit() async throws -> Bool {
     guard FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("host.ready").path) else { return false }
     let activity: Tsugumi_Host_HostActivityT = try await hostCall(
-      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), timeout: .seconds(3), existingOnly: true)
+      .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), existingOnly: true)
     return activity.busy
   }
 
-  public func stopResident(timeout: Duration = .seconds(47)) async {
+  public func stopResident(waitForExit: Bool = true) async {
     HostProcessLifetime.shared.end()
     let file = stateDirectory.appendingPathComponent("host.ready")
     guard let data = try? Data(contentsOf: file),
           let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let pid = value["pid"] as? Int32, pid > 1 else { return }
-    HostProcessLifetime.shared.requestStop(pid)
-    let deadline = ContinuousClock.now + timeout
-    while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
-      try? await Task.sleep(for: .milliseconds(100))
+    if !waitForExit {
+      HostProcessLifetime.shared.requestStop(pid)
+      return
+    }
+    await withCheckedContinuation { continuation in
+      let exit = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .global())
+      exit.setEventHandler { exit.cancel() }
+      exit.setCancelHandler { continuation.resume() }
+      exit.activate()
+      if kill(pid, 0) == 0 { HostProcessLifetime.shared.requestStop(pid) }
+      else { exit.cancel() }
     }
   }
 
@@ -227,7 +234,7 @@ public actor CoreHostClient {
         Task { await self?.closed(identity) }
       })
       try await transport.start()
-      _ = try await exchange("HelloRequest", ["token": token, "client_id": "macos-\(UUID().uuidString)"], host: host)
+      _ = try await exchange("HelloRequest", ["token": token], host: host)
     }
     for handler in hostObservers.values { handler(["type": "Connected"]) }
   }
@@ -252,17 +259,23 @@ public actor CoreHostClient {
   }
 
   private func exchange(_ method: String, _ fields: [String: Any], host: Bool) async throws -> [String: Any] {
+    try await ServiceWire.decode(exchangeFrame(method, fields, host: host), host: host)
+  }
+
+  private func exchangeFrame(_ method: String, _ fields: [String: Any], host: Bool) async throws -> Data {
     guard let transport = transports[host], nextID < UInt64.max else {
       throw CoreHostFailure(code: "disconnected", message: "The service connection is closed", requestID: nil)
     }
     nextID += 1
     let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
+    return try await send(frame, via: transport, timeout: .zero)
+  }
+
+  private func send(_ frame: Data, via transport: NativeByteTransport, timeout: Duration) async throws -> Data {
     let identity = connectionID
-    let data: Data
     do {
-      data = try await withCheckedThrowingContinuation { continuation in
-        let stoppingRuntime = method == "HostRuntimeRequest" && (fields["action"] as? Tsugumi_Host_RuntimeAction) == .shutdown
-        transport.call(frame, timeout: .seconds(stoppingRuntime ? 45 : ["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+      return try await withCheckedThrowingContinuation { continuation in
+        transport.call(frame, timeout: timeout, continuation: continuation)
       }
     } catch RPCError.disconnected {
       // The pending reply can fail before the close observer reaches this
@@ -270,7 +283,6 @@ public actor CoreHostClient {
       closed(identity)
       throw RPCError.disconnected
     }
-    return try ServiceWire.decode(data, host: host)
   }
 
   public func call(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
@@ -278,30 +290,32 @@ public actor CoreHostClient {
     return try await exchange(method, fields, host: ServiceWire.hostMethod(method, fields))
   }
 
+  func agentReply(_ method: String, _ fields: [String: Any]) async throws -> NativeObject {
+    try await connect()
+    return try await ServiceWire.decodeReply(exchangeFrame(method, fields, host: false), host: false)
+  }
+
+  public func agentCall<T: NativeObject>(_ method: String, _ fields: [String: Any]) async throws -> T {
+    guard let result = try await agentReply(method, fields) as? T else {
+      throw RPCError.unexpectedReply(method)
+    }
+    return result
+  }
+
+  public func createConversation(projectID: String) async throws -> String {
+    let result: Tsugumi_Agent_ConversationResultT = try await agentCall("ConversationCreateRequest", ["project_id": projectID])
+    return result.conversation.id
+  }
+
   /// Stateless presentation operations use the host contract, independently of a project socket.
   public func hostCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject,
-                                          timeout: Duration = .seconds(120), existingOnly: Bool = false) async throws -> T {
+                                          timeout: Duration = .zero, existingOnly: Bool = false) async throws -> T {
     try await connect(existingOnly: existingOnly)
     guard let transport = transports[true], nextID < UInt64.max else { throw RPCError.disconnected }
     nextID += 1
-    let request = Tsugumi_Host_RequestT()
-    request.value = Tsugumi_Host_RequestPayloadUnion(value, type: type)
-    let message = Tsugumi_Host_MessageT()
-    message.requestId = nextID
-    message.payload = Tsugumi_Host_PayloadUnion(request, type: .request)
-    var builder = FlatBufferBuilder(initialSize: 1024)
-    var object: Tsugumi_Host_MessageT? = message
-    let offset = Tsugumi_Host_Message.pack(&builder, obj: &object)
-    Tsugumi_Host_Message.finish(&builder, end: offset)
-    let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(builder.data, timeout: timeout, continuation: continuation)
-    }
-    var buffer = ByteBuffer(data: data)
-    let root: Tsugumi_Host_Message = getRoot(byteBuffer: &buffer)
-    let result = (Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_ReplyT)?.value?.value
-    if let failure = result as? Tsugumi_Service_FailureT {
-      throw CoreHostFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
-    }
+    let frame = ServiceWire.encodeHost(type, value, id: nextID)
+    let data = try await send(frame, via: transport, timeout: timeout)
+    let result = try ServiceWire.decodeReply(data, host: true)
     guard let result = result as? T else { throw CoreHostFailure(code: "protocol", message: "Invalid Host reply", requestID: nil) }
     return result
   }
@@ -374,12 +388,12 @@ public actor CoreHostClient {
     try await availability(config).usable
   }
 
-  public func availability(_ config: ProviderConfig) async throws -> (usable: Bool, message: String?) {
+  public func availability(_ config: ProviderConfig) async throws -> (usable: Bool, code: String?) {
     let selected = try await provider(config, asking: false)
     let request = Tsugumi_Host_ProviderStatusRequestT(); request.profile = "desktop"; request.id = config.connection; request.keyProfile = selected.keyProfile
     let reply: Tsugumi_Host_ProviderStatusT = try await hostCall(.providerstatusrequest, request)
     ModelCatalogSnapshot.shared.showAvailability(config.connection, reply.configured)
-    return (reply.configured, reply.message)
+    return (reply.configured, reply.code)
   }
 
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {

@@ -16,10 +16,10 @@
 #include <utility>
 #include <vector>
 
-#include "log_policy.hh"
 #include "model.hh"
 #include "nix.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -30,7 +30,12 @@ namespace sql {
 class Db;
 }
 
-using ExecutionResult = workerd::InvocationResult;
+struct ExecutionResult {
+  std::vector<Value> outputs;
+  std::optional<FailureData> failure;
+  std::vector<std::pair<LogStream, std::string>> logs;
+  bool log_truncated = false;
+};
 
 // One invocation handed to a backend.
 struct ExecutionRequest {
@@ -64,10 +69,13 @@ struct ExecutionRequest {
   std::function<void()> publish;
   // Native residents are reusable only after the scheduler accepts all
   // required outputs, their types and their paths. Throws Failed on rejection.
-  std::function<void(const ExecutionResult&)> validate = {};
+  std::function<void(workerd::InvocationResult&)> validate = {};
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
   std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)>
       transfer = {};
+  // First omission reported by a remote worker, before its logs are imported.
+  std::function<void()> log_truncated = {};
+  std::function<void(int64_t, int64_t)> on_remote_validation = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.

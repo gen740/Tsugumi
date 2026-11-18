@@ -2,11 +2,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import os
-import time
 from pathlib import Path
 
 import pytest
 
+from harness.file_events import wait_for_file
 from tsugumi_client import RpcFailure, new_id
 
 
@@ -80,23 +80,19 @@ def test_disconnecting_cancels_the_command_and_saves_the_result(shell_daemon, pr
     client = shell_daemon.connect()
     observer = shell_daemon.connect()
     operation = new_id()
+    os.mkfifo(project / "hold")
+    command = "printf ready > ready; read -r ignored < hold; printf escaped > escaped"
     with ThreadPoolExecutor(max_workers=1) as threads:
-        pending = threads.submit(shell, client, "printf ready > ready; sleep 20; printf escaped > escaped", opId=operation)
-        deadline = time.monotonic() + 3
-        while not (project / "ready").exists():
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        pending = threads.submit(shell, client, command, opId=operation)
+        wait_for_file(project / "ready")
         client.close()
         with pytest.raises((ConnectionError, OSError)):
-            pending.result(timeout=3)
-    deadline = time.monotonic() + 3
-    while True:
-        receipt = observer.call("OperationGetRequest", opId=operation).receipt
-        if receipt is not None and hasattr(receipt.result, "cancelled"):
-            assert receipt.result.cancelled
-            break
-        assert time.monotonic() < deadline
-        time.sleep(0.01)
+            pending.result()
+    # Duplicate requests join the pending operation and return its receipt.
+    result = shell(observer, command, opId=operation)
+    assert result.cancelled
+    receipt = observer.call("OperationGetRequest", opId=operation).receipt
+    assert receipt.result.cancelled
     assert not (project / "escaped").exists()
 
 
@@ -132,18 +128,18 @@ def test_running_shell_receipts_are_pending_and_duplicate_calls_join(shell_daemo
     second = shell_daemon.connect()
     observer = shell_daemon.connect()
     operation = new_id()
-    command = "printf x >> joined-executions; while [ ! -f release ]; do sleep 0.01; done; printf finished"
+    release = project / "release"
+    os.mkfifo(release)
+    command = "printf x >> joined-executions; read -r released < release; printf finished"
     with ThreadPoolExecutor(max_workers=2) as threads:
         running = threads.submit(shell, first, command, opId=operation)
-        deadline = time.monotonic() + 3
-        while not (project / "joined-executions").exists():
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+        wait_for_file(project / "joined-executions")
         assert observer.call("OperationGetRequest", opId=operation).state == OperationState.pending
         joined = threads.submit(shell, second, command, opId=operation)
-        (project / "release").touch()
-        assert bytes(running.result(timeout=3).stdoutBytes) == b"finished"
-        assert bytes(joined.result(timeout=3).stdoutBytes) == b"finished"
+        with release.open("w") as gate:
+            gate.write("release\n")
+        assert bytes(running.result().stdoutBytes) == b"finished"
+        assert bytes(joined.result().stdoutBytes) == b"finished"
     assert (project / "joined-executions").read_text() == "x"
 
 

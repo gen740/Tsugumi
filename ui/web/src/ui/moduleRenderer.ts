@@ -5,10 +5,11 @@ import { moduleSource } from '../model/moduleSources'
 /** Only this hidden, sandboxed frame renders canvas thumbnails. Expanded views
  *  keep their own interactive frame. An idle or failed renderer is destroyed. */
 export class FrameRenderer implements ThumbnailRenderer {
-  constructor(private timeoutMs = 30000, private source = moduleSource) {}
+  constructor(private source = moduleSource) {}
   private frame?: HTMLIFrameElement
   private ready?: Promise<void>
   private readyResolve?: () => void
+  private cancelDraw?: () => void
   private result?: { id: number; resolve(image: string): void; reject(error: Error): void }
   private sequence = 0
   private sent?: ThumbnailRequest
@@ -38,13 +39,15 @@ export class FrameRenderer implements ThumbnailRenderer {
       document.body.append(frame)
     }
     const frame = this.frame
+    const ready = this.ready
     frame.style.width = `${request.width}px`; frame.style.height = `${request.height}px`
-    let timeout: ReturnType<typeof setTimeout> | undefined
+
     try {
       const image = await Promise.race([
         (async () => {
           const code = await this.source(request.name)
-          await this.ready
+          await ready
+          if (this.frame !== frame) throw new Error('Chart preview closed')
           return await new Promise<string>((resolve, reject) => {
             const id = ++this.sequence
             this.result = { id, resolve, reject }
@@ -52,7 +55,7 @@ export class FrameRenderer implements ThumbnailRenderer {
             this.sent = request
           })
         })(),
-        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), this.timeoutMs) }),
+        new Promise<never>((_, reject) => { this.cancelDraw = () => reject(new Error('Chart preview closed')) }),
       ])
       // Composite Vega figures may be larger than the requested frame. Count
       // their actual PNG dimensions, not the frame size, against the cache.
@@ -62,12 +65,15 @@ export class FrameRenderer implements ThumbnailRenderer {
       if (header.getUint32(0) !== 0x89504e47 || header.getUint32(12) !== 0x49484452) throw new Error('Invalid chart PNG')
       return { image, pixelBytes: header.getUint32(16) * header.getUint32(20) * 4 }
     } finally {
-      clearTimeout(timeout)
-      this.result = undefined
+      if (this.frame === frame) { this.cancelDraw = undefined; this.result = undefined }
     }
   }
 
   close() {
+    this.cancelDraw?.()
+    this.readyResolve?.()
+    this.cancelDraw = undefined
+    this.result = undefined
     window.removeEventListener('message', this.listener)
     this.frame?.remove(); this.frame = undefined
     this.sent = undefined

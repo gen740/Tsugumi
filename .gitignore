@@ -25,5 +25,5 @@ __pycache__/
 /client/swift/.swiftpm/
 /vm/macos/runtime/.build/
 /vm/macos/runtime/.swiftpm/
-/cli/macos/.build/
-/cli/macos/.swiftpm/
+/cli/vmctl/.build/
+/cli/vmctl/.swiftpm/

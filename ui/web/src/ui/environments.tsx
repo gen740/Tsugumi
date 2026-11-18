@@ -1,9 +1,9 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react'
 import { L } from '../i18n'
-import { EnvironmentIdentity, EnvironmentSource, RecordedEnvironment, environmentChange, environmentPage, environmentPaths, findEnvironment, storeName } from '../model/environments'
+import { EnvironmentIdentity, EnvironmentSource, RecordedEnvironment, environmentChange, environmentPaths, findEnvironment, storeName } from '../model/environments'
 import { ProjectSession } from '../model/session'
 import { R, RPCClient, s } from '../wire/rpc'
-import { Button, Empty } from './controls'
+import { Button } from './controls'
 
 export function recordedEnvironmentSource(rpc: RPCClient): EnvironmentSource {
   return {
@@ -139,30 +139,6 @@ export function EnvironmentView({ session, runId, environmentId }: { session: Pr
       <DependencyPaths key={`${runId}:${environmentId}`} session={session} identity={{ run: runId, id: environmentId }} />
     </>}
   </section>
-}
-
-export function RunEnvironments({ session, runId, environmentId }: { session: ProjectSession; runId: string; environmentId: string }) {
-  const [selected, setSelected] = useState(environmentId)
-  const paging = useHistoryPage(async offset => {
-    if (!session.rpc) throw Error(L('実行環境に接続していません'))
-    const page = await environmentPage(recordedEnvironmentSource(session.rpc), runId, offset)
-    return { value: page, next: page.next }
-  }, [session.rpc, runId])
-  const { page, error } = paging
-  return <div className="scroll pad10 col gap8"><h3>{L('この実行の共有環境')}</h3>
-    {error && <p role="alert">{error}<Button onClick={paging.retry}>{L('再試行')}</Button></p>}
-    {!page && !error && <p>{L('読み込み中…')}</p>}
-    {page?.environments.map(e => <Button key={e.id} onClick={() => setSelected(e.id)} pressed={selected === e.id}>{storeName(e.manifest)} · {e.system} · {e.id.slice(0, 8)}</Button>)}
-    {paging.controls}
-    <EnvironmentView key={`${runId}:${selected}`} session={session} runId={runId} environmentId={selected} />
-  </div>
-}
-
-/** No definition is inspected, including when the selected invocation has no environment. */
-export function InvocationPackages({ session, runId, environmentId }: { session: ProjectSession; runId: string; environmentId: string }) {
-  if (!environmentId) return <Empty title={L('この呼び出しの環境は記録されていません')} icon="shippingbox"
-    description={L('依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。')} />
-  return <RunEnvironments key={`${runId}:${environmentId}`} session={session} runId={runId} environmentId={environmentId} />
 }
 
 export function EnvironmentComparison({ session, left, right }: { session: ProjectSession; left: EnvironmentIdentity; right: EnvironmentIdentity }) {

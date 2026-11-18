@@ -84,7 +84,7 @@ export function PermissionPrompt({ asked, groups = [], from, reload = false, onA
     return () => window.removeEventListener('keydown', key, true)
   }, [onAnswer, always, selected])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
-  const operation = asked.find((r) => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
+  const operation = asked.find((r) => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
   const kinds = operation || reload ? [] : permissionCatalog.kinds.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
@@ -112,7 +112,7 @@ export function PermissionPrompt({ asked, groups = [], from, reload = false, onA
 export function PermissionRequests({ asked, groups = [], selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   useObserve(permissionCatalog)
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
-  const operation = asked.find(r => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
+  const operation = asked.find(r => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter(r => r.startsWith('project_access '))
   return (
         <ul className="permission-list">

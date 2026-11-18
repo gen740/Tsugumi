@@ -198,7 +198,6 @@ export class GuideController extends Observable {
   /** An agent outside the page (Claude Code through the plugin) worked on the
    *  open project: the bird is there for it even without a model key here. */
   external = false
-  private externalIdle?: ReturnType<typeof setTimeout>
 
   /** The bird is in the window: Tsugumi can speak (a usable connection), or Claude Code works here. */
   get present() {
@@ -239,15 +238,14 @@ export class GuideController extends Observable {
   }
 
   /** Claude Code's tool calls on the open project. It has no turns the page
-   *  sees: the bird goes home when no call follows for a few seconds. */
+   *  sees: the bird goes home when the tool call finishes. */
   private externalWork(from: string, e: { kind: string; name?: string; arguments?: string }) {
-    clearTimeout(this.externalIdle)
     if (!this.external) {
       this.external = true
       this.changed()
     }
     if (e.kind === 'toolStarted' && e.name) this.chatWork(e.name, e.arguments ?? '{}', from)
-    if (e.kind === 'toolFinished') this.externalIdle = setTimeout(() => { if (this.work?.from === from) this.chatWorkEnded() }, 10_000)
+    if (e.kind === 'toolFinished' && this.work?.from === from) this.chatWorkEnded()
   }
   /** The chat's answer the bubble points to was asked for: the chat shows it marked. */
   chatFlash = 0
@@ -554,7 +552,7 @@ export class GuideController extends Observable {
   retry() {
     if (!this.connected || this.busy) return
     this.begin()
-    void api('/api/guide/retry', {})
+    void api('/api/guide/retry', {}).catch((e) => this.handle({ kind: 'error', message: e.message }))
   }
 
   /** A new conversation (the old one is gone; the tour stays). */
@@ -605,19 +603,20 @@ export class GuideController extends Observable {
         if (this.items[this.items.length - 1]?.role === 'assistant') this.items.pop()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
+        this.status = L('再試行中: {0}', e.message)
         break
       case 'finished':
         this.ended()
         this.flush()
         break
+      case 'cancelled':
       case 'error':
         this.ended()
         this.bubble = undefined
         this.queued = []
-        this.failed = e.message !== 'cancelled'
-        this.status = e.message === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message))
-        if (e.message !== 'cancelled') void this.refresh(true)
+        this.failed = e.kind === 'error'
+        this.status = e.kind === 'cancelled' ? L('回答を止めました。') : L('うまく答えられませんでした: {0}', modelErrorMessage(e.message, e.code))
+        if (e.kind === 'error') void this.refresh(true)
         break
       default:
         return

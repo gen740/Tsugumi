@@ -26,7 +26,7 @@ def sdk_list() -> str:
     """Public role methods and pure result constructors from the Python SDK."""
     tree = ast.parse(SDK.read_text())
     lines = ["    inputs.<port>, inputs.params.<field> (read-only generated objects)\n",
-             "    return {port: generated_object_or_bytes}; yield mappings for streaming\n"]
+             "    return {port: generated_object_or_bytes}\n"]
     for role in ("Inputs", "Report", "Run"):
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == role)
         receiver = role.lower()
@@ -70,8 +70,7 @@ def swift() -> str:
 
 def mcp() -> str:
     shared = prompt()
-    assert shared.count("- Making a Draft (") == 1
-    rules = shared.split("- Making a Draft (", 1)[0]
+    rules = shared[:shared.index("<!-- End of shared MCP rules -->\n")]
     transport = (HERE / "mcp-transport.md").read_text()
     # Claude Code keeps only 4096 characters of initialize.instructions. The
     # first open carries the complete shared rules without that truncation.

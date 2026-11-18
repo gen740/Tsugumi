@@ -4,6 +4,7 @@ import Foundation
 import Testing
 @testable import TsugumiAgentClient
 import TsugumiRPC
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 
@@ -28,7 +29,7 @@ import TsugumiRPC
 
     var session: ProjectSession { sessions[0] }
 
-    func start(slow: Double, options: [String], managed: Bool) async throws {
+    func start(options: [String], managed: Bool) async throws {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let state = directory.appendingPathComponent("state")
       await environment.install(state: state, support: directory.appendingPathComponent("support"))
@@ -49,7 +50,7 @@ import TsugumiRPC
       try releaseStream()
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
-                         "--port", "0", "--slow", "\(slow)", "--stream-release", streamRelease.path] + options
+                         "--port", "0", "--stream-release", streamRelease.path] + options
       let output = Pipe()
       model.standardOutput = output
       model.standardError = FileHandle.nullDevice
@@ -67,7 +68,7 @@ import TsugumiRPC
       _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
         "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture",
         "path": project.standardizedFileURL.path])
-      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
+      let _: Tsugumi_Agent_ConversationResultT = try await CoreHostClient.shared.agentCall("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
       let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
@@ -88,13 +89,8 @@ import TsugumiRPC
       let binary = core.executableURL
       let arguments = core.arguments
       let oldPID = servicePID ?? core.processIdentifier
-      kill(oldPID, SIGKILL)
+      try finishFixtureProcess(oldPID, signal: SIGKILL)
       if oldPID == core.processIdentifier { core.waitUntilExit() }
-      else {
-        let deadline = Date().addingTimeInterval(5)
-        while kill(oldPID, 0) == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(kill(oldPID, 0) != 0, "The previous fixture service did not exit")
-      }
       // Leave stale readiness in place: the observer may already have replaced
       // it with the winner's file. Validate the new PID instead of unlinking it.
       core = Process()
@@ -112,16 +108,20 @@ import TsugumiRPC
       // An observing client can win the startup lock. Status 4 means wait for
       // that service, not that the replacement service failed to start.
       let replacement = core
-      let deadline = Date().addingTimeInterval(15)
-      var ready: [String: Any]?
-      while ready == nil, Date() < deadline {
-        if let bytes = try? Data(contentsOf: readyFile),
-           let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-           let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
-           value["unix_socket"] is String,
-           value["host_socket"] is String, value["user_token"] is String { ready = value; break }
-        if !replacement.isRunning, replacement.terminationStatus != 4 { break }
-        try await Task.sleep(for: .milliseconds(50))
+      func read() -> [String: Any]? {
+        guard let bytes = try? Data(contentsOf: readyFile),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
+              value["unix_socket"] is String, value["host_socket"] is String,
+              value["user_token"] is String else { return nil }
+        return value
+      }
+      var ready = try fixtureReadiness(readyFile, pid: replacement.processIdentifier, read: read)
+      if ready == nil {
+        replacement.waitUntilExit()
+        if replacement.terminationStatus == 4 {
+          ready = try fixtureReadiness(readyFile, pid: nil, read: read)
+        }
       }
       let value = try #require(ready, "The host service did not become ready")
       servicePID = try #require(value["pid"] as? Int32)
@@ -186,19 +186,27 @@ import TsugumiRPC
     func holdStream() throws { try FileManager.default.removeItem(at: streamRelease) }
     func releaseStream() throws { try Data().write(to: streamRelease) }
 
-    func snapshot() async throws -> [String: Any] {
-      try await CoreHostClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
+    func snapshot() async throws -> Tsugumi_Agent_ConversationResultT {
+      try await CoreHostClient.shared.agentCall("ConversationGetRequest", ["conversation_id": conversationID])
     }
 
-    func finished() async throws -> [String: Any] {
-      let deadline = Date().addingTimeInterval(30)
-      var result = try await snapshot()
-      while result["busy"] as? Bool == true, Date() < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-        result = try await snapshot()
+    func finished() async throws -> Tsugumi_Agent_ConversationResultT {
+      // The host exposes the cursor and busy state together on EventsRequest.
+      var after: UInt64 = 0
+      while true {
+        try Task.checkCancellation()
+        let page: Tsugumi_Agent_EventsPageT = try await CoreHostClient.shared.agentCall("EventsRequest",
+          ["conversation_id": conversationID, "after_seq": after])
+        if !page.busy {
+          let result = try await snapshot()
+          try #require(!result.busy)
+          return result
+        }
+        after = page.nextSeq
+        if page.events.isEmpty {
+          try await Task.sleep(for: .milliseconds(20))
+        }
       }
-      try #require(result["busy"] as? Bool == false)
-      return result
     }
 
     func stop() async {
@@ -209,25 +217,16 @@ import TsugumiRPC
       if model.isRunning { kill(model.processIdentifier, SIGCONT) }
       if let pid = servicePID, pid != core.processIdentifier {
         // The lock winner belongs to this fixture even when the client launched it.
-        kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(5)
-        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        try? finishFixtureProcess(pid, signal: SIGTERM)
       }
       for process in [core, model] where process.isRunning {
-        process.terminate()
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        try? finishFixtureProcess(process.processIdentifier, signal: SIGTERM)
         process.waitUntilExit()
       }
       daemon?.stop()
       // The helper double outlives the host service, as the VM helper does.
       if let text = try? String(contentsOf: helperPID, encoding: .utf8), let pid = Int32(text), pid > 1 {
-        kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(5)
-        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        try? finishFixtureProcess(pid, signal: SIGTERM)
       }
       await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -235,11 +234,11 @@ import TsugumiRPC
     }
   }
 
-  func withFixture(slow: Double = 0.05, options: [String] = [], managed: Bool = false,
+  func withFixture(options: [String] = [], managed: Bool = false,
                    _ body: (Fixture) async throws -> Void) async throws {
     let fixture = Fixture()
     do {
-      try await fixture.start(slow: slow, options: options, managed: managed)
+      try await fixture.start(options: options, managed: managed)
       try await body(fixture)
       await fixture.stop()
     } catch {
@@ -248,7 +247,7 @@ import TsugumiRPC
     }
   }
 
-  func until(_ what: String, seconds: Double = 30, _ ok: @escaping @MainActor () -> Bool) async throws {
+  func until(_ what: String, _ ok: @escaping @MainActor () -> Bool) async throws {
     try await waitForModel(what, ok)
   }
 
@@ -257,13 +256,13 @@ import TsugumiRPC
   }
 
   @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
-    try await withFixture(slow: 0.3) { t in
+    try await withFixture { t in
       try await t.send("hello interrupted", holdingModel: true)
       // The core records preparing/model before sending the RPC acknowledgement.
       try await t.restartAgent()
       let before = try await t.snapshot()
-      try #require(before["resumable"] as? Bool == true)
-      let operation = try #require(before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+      try #require(before.resumable)
+      let operation = try #require(before.interruptedOperation)
       #expect(["preparing", "model"].contains(operation.kind))
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
@@ -272,10 +271,10 @@ import TsugumiRPC
       try await agent.open()
       try await agent.refresh()
       let after = try await t.snapshot()
-      #expect(after["busy"] as? Bool == false)
-      #expect(after["resumable"] as? Bool == true)
-      #expect(after["event_seq"] as? UInt64 == before["event_seq"] as? UInt64)
-      #expect((after["conversation"] as? Tsugumi_Agent_ConversationT)?.messages.count == 1)
+      #expect(!after.busy)
+      #expect(after.resumable)
+      #expect(after.eventSeq == before.eventSeq)
+      #expect(after.conversation.messages.count == 1)
       #expect(chat.interruptedOperation?.kind == operation.kind)
       t.session.start()
       try await SyncTests.connected(t.session)
@@ -286,7 +285,7 @@ import TsugumiRPC
   }
 
   @Test func aRestartWhileObservedShowsInterruptionWithoutResuming() async throws {
-    try await withFixture(slow: 2) { t in
+    try await withFixture { t in
       t.session.start()
       try await SyncTests.connected(t.session)
       try await t.send("hello interrupted", holdingModel: true)
@@ -296,13 +295,13 @@ import TsugumiRPC
       try await until("the restarted conversation is interrupted") { chat.interrupted }
       #expect(!chat.busy && !chat.failed)
       let snapshot = try await t.snapshot()
-      #expect(snapshot["resumable"] as? Bool == true)
-      #expect(try await t.snapshot()["event_seq"] as? UInt64 == snapshot["event_seq"] as? UInt64)
+      #expect(snapshot.resumable)
+      #expect(try await t.snapshot().eventSeq == snapshot.eventSeq)
     }
   }
 
   @Test func anInterruptedConversationAcceptsANewMessageWithoutResume() async throws {
-    try await withFixture(slow: 0.3) { t in
+    try await withFixture { t in
       try await t.send("hello interrupted", holdingModel: true)
       try await t.restartAgent()
       let chat = t.makeChat()
@@ -370,7 +369,7 @@ import TsugumiRPC
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { !chat.busy && reply(chat, after: 0) }
       let snapshot = try await t.snapshot()
-      let conversation = try #require(snapshot["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = snapshot.conversation
       let messages = conversation.messages.compactMap { $0 }
       let user = try #require(messages.first { $0.role == "user" })
       let content = try #require(JSONSerialization.jsonObject(with: Data((user.contentJson ?? "[]").utf8)) as? [[String: Any]])
@@ -391,7 +390,7 @@ import TsugumiRPC
   }
 
   @Test func aRunningCoreAnswerShowsAsWorkingAndTheChatGoesOn() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
@@ -414,7 +413,7 @@ import TsugumiRPC
   }
 
   @Test func aMessageAfterStoppingIsNotShownAsStopped() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
@@ -432,7 +431,7 @@ import TsugumiRPC
   }
 
   @Test func detachingTheUIKeepsTheAnswerAndReopeningReadsIt() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try t.holdStream()
       try await t.send()
       let left = t.makeChat()
@@ -442,14 +441,14 @@ import TsugumiRPC
       await left.detach().value
       try t.releaseStream()
       let complete = try await t.finished()
-      let conversation = try #require(complete["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = complete.conversation
       let messages = conversation.messages.compactMap { $0 }
       #expect(messages.map { $0.role } == ["user", "assistant"])
       let back = t.makeChat()
       try await until("the completed answer is restored") { back.currentId == t.conversationID && reply(back, after: 1) }
       #expect(!back.busy && !back.failed)
       #expect(back.items.count == 2)
-      #expect(try await t.snapshot()["busy"] as? Bool == false)
+      #expect(try await t.snapshot().busy == false)
     }
   }
 
@@ -463,9 +462,8 @@ import TsugumiRPC
       chat.compact()
       #expect(chat.busy && chat.status == String(localized: "会話を圧縮しています…"))
       try await until("compaction ended") { !chat.busy }
-      let trace = try await CoreHostClient.shared.call("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
-      let errors = (trace["events"] as? [[String: Any]] ?? []).compactMap { $0["event"] as? [String: Any] }
-        .filter { $0["kind"] as? String == "error" }.compactMap { $0["message"] as? String }
+      let trace: Tsugumi_Agent_EventsPageT = try await CoreHostClient.shared.agentCall("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
+      let errors = trace.events.compactMap { $0?.event }.filter { $0.kind == "error" }.compactMap(\.message)
       #expect(chat.status == nil && !chat.failed && !chat.contextFull, "\(chat.status ?? "-"); core errors: \(errors)")
       try await until("the compacted history is restored") { chat.items.contains { $0.archived } }
       #expect(chat.items.count == 8, "Only the original messages belong in the transcript: \(chat.items.map(\.text))")
@@ -473,7 +471,7 @@ import TsugumiRPC
   }
 
   @Test func aConversationThatCannotFitSaysToStartANewOne() async throws {
-    try await withFixture(slow: 0, options: ["--context-limit", "6000"]) { t in
+    try await withFixture(options: ["--context-limit", "6000"]) { t in
       let chat = t.makeChat()
       t.session.start()
       try await SyncTests.connected(t.session)
@@ -491,7 +489,7 @@ import TsugumiRPC
   }
 
   @Test func copiedProjectsNeverRestoreEachOthersChatOrPermission() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       let original = t.makeChat()
       try await until("copy A is open") { original.currentId == t.conversationID }
       try await t.send("Only copy A")
@@ -509,7 +507,7 @@ import TsugumiRPC
       #expect(identity.id != t.session.identity.id)
       let second = ProjectSession(identity: identity, environments: t.session.environments)
       let projectID = UUID().uuidString.lowercased()
-      second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
+      second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID)
       // A folder is registered under the identity it holds.
       try FileManager.default.createDirectory(at: copied.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
       try Data(projectID.utf8).write(to: copied.appendingPathComponent(".tsugumi/project-id"))
@@ -525,12 +523,12 @@ import TsugumiRPC
       try await until("an explicit cross-project selection is refused") { chat.status != nil && !chat.loading }
       #expect(chat.items.isEmpty && chat.permissionPrompt == nil)
       let saved = try await t.snapshot()
-      #expect(saved["project_id"] as? String == project.projectId)
+      #expect(saved.projectId == project.projectId)
     }
   }
 
   @Test func theChatModelFollowsSettingsEditedOutsideItsWindow() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       let chat = ChatController(session: t.session)
       t.keep(chat)
       let settings = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
@@ -549,13 +547,13 @@ import TsugumiRPC
   }
 
   @Test func compactionDoesNotReplaceStreamedRowsWithTheAgentsOlderCache() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Initial request")
       _ = try await t.finished()
       let chat = t.makeChat()
       try await until("the older snapshot is loaded") { chat.ready }
       let host = try await t.snapshot()
-      let conversation = try #require(host["conversation"] as? Tsugumi_Agent_ConversationT)
+      let conversation = host.conversation
       let row = try #require(conversation.rows.compactMap { $0 }.last)
       row.text = "New streamed progress"
       let snapshot = Tsugumi_Agent_ConversationT(); snapshot.id = t.conversationID; snapshot.rows = [row]
@@ -569,7 +567,7 @@ import TsugumiRPC
   }
 
   @Test func failedAndCancelledSelectionsKeepTheVisibleConversation() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Keep this conversation")
       _ = try await t.finished()
       let chat = t.makeChat()
@@ -589,7 +587,7 @@ import TsugumiRPC
   }
 
   @Test func theChatFollowsTheOpenSession() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send("Keep the selected conversation")
       _ = try await t.finished()
       let back = try t.makeSession()
@@ -603,7 +601,7 @@ import TsugumiRPC
       try await until("the selected transcript is visible") { first.ready && first.items.count == 2 }
       let visible = first.items.map(\.text)
       let project = try #require(t.session.endpointOverride)
-      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
+      let _: Tsugumi_Agent_ConversationResultT = try await CoreHostClient.shared.agentCall("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
       #expect(model.chat(for: t.session) === first)
       let replacement = model.chat(for: back)
       t.keep(replacement)
@@ -617,15 +615,15 @@ import TsugumiRPC
   }
 
   @Test func stoppingBeforeTheProjectConnectsKeepsItStopped() async throws {
-    try await withFixture(slow: 0) { t in
+    try await withFixture { t in
       try await t.send(holdingModel: true)
       let chat = t.makeChat()
       try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
       chat.cancel()
       let stopped = try await t.finished()
       try #require(kill(t.model.processIdentifier, SIGCONT) == 0)
-      #expect(stopped["resumable"] as? Bool == false)
-      #expect(stopped["continuable"] as? Bool == true)
+      #expect(!stopped.resumable)
+      #expect(stopped.continuable)
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the cancelled conversation is observed") { !chat.busy && chat.canContinue }

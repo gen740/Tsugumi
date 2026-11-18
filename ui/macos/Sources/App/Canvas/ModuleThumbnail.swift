@@ -307,6 +307,7 @@ final class ModuleThumbnails {
   private var jobs: [Key: Job] = [:]
   private var order: [Key] = []
   private var working = false
+  private var active: (key: Key, cancel: () -> Void)?
   private var web: WKWebView?
   private var release: Task<Void, Never>?
 
@@ -337,6 +338,9 @@ final class ModuleThumbnails {
   private func forget(_ id: UUID, of key: Key) {
     guard let c = jobs[key]?.waiting.removeValue(forKey: id) else { return }
     c.answer.resume(returning: nil)
+    if jobs[key]?.waiting.isEmpty == true, active?.key == key {
+      active?.cancel()
+    }
   }
 
   private func work() async {
@@ -346,7 +350,28 @@ final class ModuleThumbnails {
     while let key = next() {
       // Not wanted any more (a live display moved on, the frame was closed): skipped.
       guard let job = jobs[key], !job.waiting.isEmpty else { jobs[key] = nil; continue }
-      let result = await make(key, json: job.json, blobs: job.blobs)
+      let result: Result? = await withCheckedContinuation { answer in
+        let task = Task { @MainActor in
+          let result = await make(key, json: job.json, blobs: job.blobs)
+          guard !Task.isCancelled else { return }
+          active = nil
+          answer.resume(returning: result)
+        }
+        active = (key, { [self] in
+          task.cancel()
+          web?.stopLoading()
+          web = nil
+          active = nil
+          answer.resume(returning: nil)
+        })
+      }
+      active = nil
+      // A new waiter may have arrived after the previous render was cancelled.
+      guard let result else {
+        if jobs[key]?.waiting.isEmpty == true { jobs[key] = nil }
+        else if !order.contains(key) { order.append(key) }
+        continue
+      }
       keep(result, for: key)
       if case .image(let image) = result { Self.store(image, for: key) }
       for c in (jobs.removeValue(forKey: key)?.waiting ?? [:]).values { c.answer.resume(returning: result) }
@@ -456,14 +481,13 @@ final class ModuleThumbnails {
       let code = try await ModuleSources.source(key.name)
       let message: [String: Any] = ["name": key.name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() }, "code": code, "colorScheme": key.colorScheme, "interactive": false]
       // Drawn, and a moment later (what the libraries leave to a timer), before the picture is taken.
-      let state = try await withTimeout(seconds: 30) {
-        try await web.callAsyncJavaScript(
+      let state = try await web.callAsyncJavaScript(
           """
           await tsugumiRender(message)
           await new Promise((r) => setTimeout(r, 30))
           return document.body.dataset.state === 'error' ? document.body.dataset.error : ''
           """, arguments: ["message": message], contentWorld: .page) as? String
-      }
+      try Task.checkCancellation()
       if let state, !state.isEmpty { return .failed(state) }
       let config = WKSnapshotConfiguration()
       config.rect = web.bounds
@@ -473,7 +497,7 @@ final class ModuleThumbnails {
       return .image(image)
     } catch {
       // A page that hangs or whose process died is not used again.
-      web = nil
+      if !Task.isCancelled { web = nil }
       return .failed(error.localizedDescription)
     }
   }
@@ -491,48 +515,14 @@ final class ModuleThumbnails {
     config.userContentController.add(rules)
     let made = WKWebView(frame: CGRect(x: 0, y: 0, width: 640, height: 400), configuration: config)
     made.underPageBackgroundColor = .white
-    ModuleNavigation.shared.prepare(made)
-    made.loadHTMLString(try ModuleViewerHost.page(directory), baseURL: URL(string: "https://localhost/"))
-    // Until the page's script has run (tsugumiRender is there).
-    for _ in 0..<400 {
-      if let ready = try? await made.callAsyncJavaScript("return typeof window.tsugumiRender === 'function'", contentWorld: .page) as? Bool,
-         ready {
-        web = made
-        return made
-      }
-      try await Task.sleep(for: .milliseconds(30))
-    }
-    throw TimedOut()
+    try await ModuleNavigation.shared.load(made, html: ModuleViewerHost.page(directory))
+    try Task.checkCancellation()
+    web = made
+    return made
   }
-
-  /// Whether a continuation has been resumed (by the answer or by the timeout, whichever came first).
-  @MainActor private final class Once { var done = false }
 
   private struct TimedOut: LocalizedError {
     var errorDescription: String? { String(localized: "グラフの描画が終わりませんでした") }
   }
 
-  /// The page's answer or, when it has not come in time, an error: the call
-  /// into the page cannot be cancelled, so it is left behind (with its web view).
-  private func withTimeout<T>(seconds: Double, _ body: @escaping @MainActor () async throws -> T) async throws -> T {
-    let once = Once()
-    return try await withCheckedThrowingContinuation { (c: CheckedContinuation<T, Error>) in
-      let timer = Task { @MainActor in
-        try? await Task.sleep(for: .seconds(seconds))
-        if !once.done, !Task.isCancelled {
-          once.done = true
-          c.resume(throwing: TimedOut())
-        }
-      }
-      Task { @MainActor in
-        let outcome: Swift.Result<T, Error>
-        do { outcome = .success(try await body()) } catch { outcome = .failure(error) }
-        timer.cancel()
-        if !once.done {
-          once.done = true
-          c.resume(with: outcome)
-        }
-      }
-    }
-  }
 }

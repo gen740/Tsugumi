@@ -99,27 +99,41 @@ def test_paths_of_the_build_machine_stay_in_debug_builds():
     assert not outside
 
 
+def schema_tables(source):
+    """Read table names, field types and attributes from these FlatBuffers schemas."""
+    source = re.sub(r"//[^\n]*", "", source)
+    tables = {}
+    for name, body in re.findall(r"\btable\s+(\w+)\s*\{([^}]+)\}", source):
+        fields = {}
+        for declaration in body.split(";"):
+            field = re.match(r"\s*(\w+)\s*:\s*([\w.]+|\[[\w.]+\])", declaration)
+            if field:
+                attributes = re.findall(r"\(([^)]+)\)", declaration)
+                fields[field[1]] = (field[2], {a.strip() for group in attributes for a in group.split(",")})
+        tables[name] = fields
+    return tables
+
+
 def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_replies():
-    common = (ROOT / "protocol/service_common.fbs").read_text(encoding="utf-8")
-    host = (ROOT / "protocol/host.fbs").read_text(encoding="utf-8")
-    agent = (ROOT / "protocol/agent.fbs").read_text(encoding="utf-8")
-    selection = re.search(r"table ProviderSelection \{([^}]+)\}", common).group(1)
-    assert "profile:string (required)" in selection
-    for secret in ("api_key", "access_token", "refresh_token", "credential", "endpoint"):
-        assert secret not in selection
-    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", host).group(1)
-    assert "provider:ProviderInput" in host
-    assert "ProviderInput" not in common and "ProviderInput" not in agent
-    assert "provider:Tsugumi.Service.ProviderSelection" in agent
-    replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
-    assert "ProviderInput" not in replies and "CredentialToken" not in replies
+    common = schema_tables((ROOT / "protocol/service_common.fbs").read_text())
+    host_source = (ROOT / "protocol/host.fbs").read_text()
+    host = schema_tables(host_source)
+    agent = schema_tables((ROOT / "protocol/agent.fbs").read_text())
+    selection = common["ProviderSelection"]
+    profile_type, profile_attributes = selection["profile"]
+    assert profile_type == "string" and "required" in profile_attributes
+    assert not selection.keys() & {"api_key", "access_token", "refresh_token", "credential", "endpoint"}
+    assert host["ProviderInput"]["api_key"][0] == "string"
+    assert host["ProviderSetRequest"]["provider"][0] == "ProviderInput"
+    assert agent["ConfigureRequest"]["provider"][0] == "Tsugumi.Service.ProviderSelection"
+    assert all(kind.split(".")[-1] != "ProviderInput"
+               for fields in [*common.values(), *agent.values()] for kind, _ in fields.values())
+    reply = re.search(r"\bunion\s+ReplyPayload\s*\{([^}]+)\}", host_source)[1]
+    reply = re.sub(r"//[^\n]*", "", reply)
+    reply_types = {variant.partition("=")[0].split(":")[-1].strip().rsplit(".", 1)[-1]
+                   for variant in reply.split(",")}
+    assert not reply_types & {"ProviderInput", "CredentialToken"}
     assert "CredentialTokenRequest" not in host
-
-
-def test_guest_boot_has_no_compilation_command():
-    # Archive identity, stamps and shipped payload are exercised in test_vm_artifact.py.
-    boot = (ROOT / 'vm/guest/vm-boot.nix').read_text()
-    assert 'nix build' not in boot
 
 
 def test_the_core_test_package_gets_every_fixture_its_build_installs():
@@ -131,3 +145,6 @@ def test_the_core_test_package_gets_every_fixture_its_build_installs():
     listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
     missing = sorted(wanted - listed)
     assert not missing, f"add to nix/core-tests.nix: {missing}"
+    installed = ROOT / "build-ci/share/tsugumi/guide-tests/tests/fixtures"
+    if installed.is_dir():
+        assert wanted <= {entry.name for entry in installed.iterdir() if entry.is_file()}

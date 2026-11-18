@@ -249,8 +249,9 @@ export class HelperTeam {
       case 'finished':
         b.ended('done', now)
         break
+      case 'cancelled':
       case 'error':
-        b.ended(e.message === 'cancelled' ? 'stopped' : 'failed', now)
+        b.ended(e.kind === 'cancelled' ? 'stopped' : 'failed', now)
         break
     }
   }

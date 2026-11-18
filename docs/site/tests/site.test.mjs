@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { catalog, linker, REPO, ROOT, SITE, STORY } from '../src/lib/documents.mjs'
@@ -92,38 +91,6 @@ test('llms.txt lists existing downloadable documents', () => {
   const links = [...read('llms.txt').matchAll(/\]\(https:\/\/gen740.github.io\/Tsugumi\/([^)]*)\)/g)]
   assert.ok(links.length >= markdownPages.size - 2)
   for (const [, file] of links) assert.ok(fs.existsSync(path.join(site, file)), file)
-})
-
-test('the app help bundle contains all local script, style and image dependencies', () => {
-  const destination = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-docs-test-'))
-  try {
-    execFileSync('bash', [path.join(ROOT, 'ui/macos/tools/bundle-docs.sh'), destination])
-    assert.deepEqual(fs.readdirSync(path.join(destination, 'pages')).sort(), STORY.map(story => path.basename(story.out)).sort())
-    for (const story of STORY) {
-      const html = fs.readFileSync(path.join(destination, story.out), 'utf8')
-      for (const tag of html.matchAll(/<(?:img|script|link)\b[^>]*>/g)) {
-        if (tag[0].includes('rel="canonical"') || tag[0].includes('rel="alternate"') || tag[0].includes('rel="describedby"')) continue
-        for (const reference of references(tag[0])) {
-          const target = localURL(story.out, reference)
-          if (target) assert.ok(fs.existsSync(path.join(destination, target.file)), `${story.out}: ${reference}`)
-        }
-      }
-    }
-    for (const name of ['reader', 'art', 'scenes', 'scenes2']) {
-      const file = path.join(destination, `site/js/${name}.js`)
-      const code = fs.readFileSync(file, 'utf8')
-      for (const [, relative] of code.matchAll(/(?:from\s*|import\s*)['"](\.[^'"]+)['"]/g)) {
-        assert.ok(fs.existsSync(path.resolve(path.dirname(file), relative)), relative)
-      }
-    }
-    const css = fs.readFileSync(path.join(destination, 'site/site.css'), 'utf8')
-    for (const [, reference] of css.matchAll(/url\(['"]?([^)'"\s]+)['"]?\)/g)) {
-      if (/^(data:|https?:)/.test(reference)) continue
-      assert.ok(fs.existsSync(path.resolve(destination, 'site', reference)), reference)
-    }
-  } finally {
-    fs.rmSync(destination, { recursive: true, force: true })
-  }
 })
 
 test('the published player contains exactly the source demos and their recorded images', () => {

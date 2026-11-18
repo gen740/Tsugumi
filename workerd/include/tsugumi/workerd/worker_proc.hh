@@ -169,6 +169,7 @@ std::string worker_call_frame(
     const std::string& params, const std::vector<types::PortType>& outputs,
     const std::string& work, const std::string& tmp, const std::string& out,
     const std::vector<std::pair<std::string, std::string>>& env,
-    std::optional<uint64_t> deadline_ms);
+    std::optional<uint64_t> deadline_ms, const std::string& input_schema,
+    const std::string& output_schema);
 
 }  // namespace tsugumi

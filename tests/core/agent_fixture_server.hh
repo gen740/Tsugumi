@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -23,6 +24,7 @@ class ChildProcess {
              const std::filesystem::path& log) -> void;
   auto Stop(bool crash = false) -> void;
   auto Alive() -> bool;
+  auto Pid() const -> int { return pid_; }
 
  private:
   int pid_ = -1;
@@ -37,6 +39,9 @@ class TemporaryDirectory {
 
 auto Write(const std::filesystem::path& path, std::string_view text) -> void;
 auto Read(const std::filesystem::path& path) -> std::string;
+// Wait for a file publication or a change to its parent directory.
+auto WaitForPath(const std::filesystem::path& path,
+                 const std::function<bool()>& ready, int pid = -1) -> bool;
 auto Readiness(ChildProcess& process, const std::filesystem::path& path,
                const std::filesystem::path& log) -> std::string;
 
@@ -53,8 +58,8 @@ class ModelServer {
   auto Queue(std::string stream, bool hold = false, bool fragment = false)
       -> void;
   auto QueueHTTP(std::string body, int status = 200) -> void;
-  auto WaitForRequests(size_t count, std::chrono::milliseconds timeout =
-                                         std::chrono::seconds(5)) -> bool;
+  auto WaitForRequests(size_t count, std::stop_token stop = {}) -> bool;
+  auto WaitForRequests(size_t count, std::chrono::milliseconds timeout) -> bool;
   auto Requests() -> std::vector<std::string>;
   auto Headers() -> std::vector<std::string>;
   auto Release() -> void;
@@ -70,6 +75,7 @@ class ModelServer {
   auto Serve(std::stop_token stop) -> void;
   auto Handle(int socket, std::stop_token stop) -> void;
   int socket_ = -1;
+  int peer_ = -1;
   uint16_t port_ = 0;
   std::jthread thread_;
   std::mutex mutex_;

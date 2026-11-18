@@ -92,6 +92,7 @@ import json
 import re
 import socketserver
 import threading
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -367,8 +368,7 @@ def decide_drafts(messages, text, start):
             return ("text", f"Implemented and validated; the run could not start: {value.get('diagnostic')}")
         status = value.get("run", value)
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": status.get("run_id")})
+            return ("tool", "run_status", {"run_id": status.get("run_id"), "wait_seconds": 300})
         failure = (status.get("failure") or {}).get("diagnostic", "")
         return ("text", f"Implemented the Drafts and ran the workflow: {status.get('state')} {failure}")
     return ("text", "Done.")
@@ -434,8 +434,7 @@ def decide_comments(messages, text, start):
             return ("text", f"Followed the comments; the run could not start: {value.get('diagnostic')}")
         status = value.get("run", value)
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": status.get("run_id")})
+            return ("tool", "run_status", {"run_id": status.get("run_id"), "wait_seconds": 300})
         return ("text", f"Followed the comments and ran the workflow: {status.get('state')}")
     return ("text", "Done.")
 
@@ -603,8 +602,7 @@ def decide(messages, system="", tools=()):
         status = value_obj.get("run", value_obj)
         run_id = status.get("run_id")
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": run_id})
+            return ("tool", "run_status", {"run_id": run_id, "wait_seconds": 300})
         if report:
             return ("tool", "run_record", {"run_id": run_id, "card": {"segments": report.split("/")}})
         return ("text", f"Run {run_id} finished: {status.get('state')}.")
@@ -1208,11 +1206,7 @@ class Handler(BaseHTTPRequestHandler):
         # inspect/detach/cancel the UI without racing a wall-clock delay.
         if Handler.stream_release and (name == "response.output_text.delta" or
                 (name == "content_block_delta" and data.get("delta", {}).get("type") == "text_delta")):
-            deadline = time.monotonic() + 60
-            while not Handler.stream_release.exists():
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("model stream release was not signalled")
-                time.sleep(0.01)
+            wait_for_file(Handler.stream_release)
         if Handler.slow:
             time.sleep(Handler.slow)
 
@@ -1260,6 +1254,10 @@ def main():
     ChatGPT.expires = a.chatgpt_expires
     Handler.slow = a.slow
     Handler.stream_release = a.stream_release
+    if a.stream_release:
+        global wait_for_file
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
+        from harness.file_events import wait_for_file
     Handler.drop_once = a.drop_once
     Handler.cut_once = a.cut_once or a.window_cut_once
     if a.window_cut_once:

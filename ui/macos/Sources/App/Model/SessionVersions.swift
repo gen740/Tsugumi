@@ -86,7 +86,6 @@ extension ProjectSession {
   /// run from there opens a branch, and nothing later is lost.
   func startFrom(_ commit: String) async throws {
     guard let rpc else { throw RPCError.disconnected }
-    if runActive { throw VersionError.running }
     if dirty { throw VersionError.unsaved }
     _ = try await rpc.versionCheckout(baseRev: rev, opId: UUID(), origin: "ui", commit: commit)
     await refreshVersions()
@@ -94,11 +93,10 @@ extension ProjectSession {
 }
 
 enum VersionError: LocalizedError {
-  case unsaved, running
+  case unsaved
   var errorDescription: String? {
     switch self {
     case .unsaved: return String(localized: "未保存の変更があります。保存してから選んでください。")
-    case .running: return String(localized: "実行中は別の版に移れません。")
     }
   }
 }

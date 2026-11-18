@@ -7,10 +7,10 @@ Each proxy serves one client, so a request id identifies exactly one reply.
 
 from __future__ import annotations
 
+import select
 import socket
 import struct
 import threading
-import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -33,13 +33,9 @@ class Gate:
         self._deliver: Callable[[], None] | None = None
         self._error: str | None = None
 
-    def wait(self, timeout: float = 5.0) -> Gate:
+    def wait(self) -> Gate:
         """Return this gate once its reply is captured; fail on disconnect."""
-        if not self._ready.wait(timeout):
-            raise TimeoutError(
-                f"reply {self.request_id} was not captured within {timeout}s; "
-                + self._diagnostic()
-            )
+        self._ready.wait()
         with self._lock:
             error = self._error if self.frame is None else None
         if error is not None:
@@ -90,6 +86,7 @@ class ReplyProxy:
         self._gates: list[Gate] = []
         self._errors: list[str] = []
         self._started = False
+        self._wake: socket.socket | None = None
 
     @property
     def diagnostics(self) -> str:
@@ -129,10 +126,10 @@ class ReplyProxy:
         try:
             listener.bind(self.unix)
             listener.listen(1)
-            listener.settimeout(0.1)
+            wake, self._wake = socket.socketpair()
             with self._lock:
-                self._sockets.append(listener)
-            self._start_thread(self._accept, listener, name="rpc-proxy-accept")
+                self._sockets.extend((listener, wake, self._wake))
+            self._start_thread(self._accept, listener, wake, name="rpc-proxy-accept")
         except BaseException:
             listener.close()
             self.close()
@@ -152,16 +149,12 @@ class ReplyProxy:
             self._threads.append(thread)
             thread.start()
 
-    def _accept(self, listener: socket.socket) -> None:
+    def _accept(self, listener: socket.socket, wake: socket.socket) -> None:
         try:
-            while not self._closed.is_set():
-                try:
-                    downstream, _ = listener.accept()
-                    break
-                except socket.timeout:
-                    continue
-            else:
+            select.select([listener, wake], [], [])
+            if self._closed.is_set():
                 return
+            downstream, _ = listener.accept()
             upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             with self._lock:
                 if self._closed.is_set():
@@ -262,6 +255,12 @@ class ReplyProxy:
         self._closed.set()
         with self._lock:
             sockets, gates = list(self._sockets), list(self._gates)
+        # Darwin cannot interrupt accept by shutting down the listen socket.
+        if self._wake is not None:
+            try:
+                self._wake.send(b"x")
+            except OSError:
+                pass
         for gate in gates:
             gate._abort(reason)
         for sock in sockets:
@@ -272,16 +271,11 @@ class ReplyProxy:
             sock.close()
 
     def close(self) -> None:
-        """Close all sockets and finish background threads within two seconds."""
+        """Close the sockets to wake the accept and relay threads before joining."""
         self._shutdown("proxy closed")
         with self._lock:
             threads = list(self._threads)
-        deadline = time.monotonic() + 2.0
         for thread in threads:
             if thread is not threading.current_thread():
-                thread.join(max(0.0, deadline - time.monotonic()))
-        alive = [thread.name for thread in threads if thread.is_alive()]
-        if alive:
-            with self._lock:
-                self._errors.append("threads did not stop: " + ", ".join(alive))
+                thread.join()
         Path(self.unix).unlink(missing_ok=True)

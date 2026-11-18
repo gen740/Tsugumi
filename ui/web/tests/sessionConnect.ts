@@ -1,6 +1,4 @@
-// Reaching a tsugumid that has just started: a port that is not reachable at
-// once (WSL2 forwards a new port to Windows a moment later) is tried again for
-// a few seconds, and only a failure to reach it is told as one.
+// Report connection failures after the host confirms project readiness.
 import assert from 'node:assert/strict'
 import { RPCError } from '../src/wire/rpc'
 import { historyVersionMismatch } from '../shared/historyVersion'
@@ -19,7 +17,6 @@ globalThis.fetch = (async () => new Response(JSON.stringify({ state: 'ready', en
 type Inner = { openConnection(): Promise<void> }
 const open = async (fail: () => Error) => {
   const s = new ProjectSession('/p', 'k', 'p')
-  s.connectRetryDelays = [1, 1, 1]
   let tries = 0
   s.openTransport = async () => {
     tries++
@@ -30,10 +27,10 @@ const open = async (fail: () => Error) => {
 }
 
 try {
-  // Not reached: tried once and then once after each wait, then told as a connection failure.
+  // A transport failure is surfaced after the connection closes.
   {
     const { s, tries } = await open(() => new RPCError('disconnected', 'cannot connect to ws://127.0.0.1:1/rpc (1006)'))
-    assert.equal(tries, 4)
+    assert.equal(tries, 1)
     assert.equal(s.connected, false)
     assert.equal(s.connectionFailed, true)
     assert.match(s.connectionMessage ?? '', /cannot connect/)

@@ -20,32 +20,33 @@ struct WorkflowRef: Codable, Hashable {
 }
 
 enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
-  case general, comments, nix, source, ports, executions, artifacts, context
+  // In the sidebar's order. The Nix definition is edited in Source.
+  case general, source, ports, log, dependencies, executions, artifacts, notes
   var id: String { rawValue }
 
   var title: String {
     switch self {
     case .general: return String(localized: "一般")
-    case .comments: return String(localized: "コメント")
-    case .nix: return String(localized: "Nix 定義")
     case .source: return String(localized: "ソース")
     case .ports: return String(localized: "入出力")
+    case .log: return String(localized: "ログ")
+    case .dependencies: return String(localized: "依存")
     case .executions: return String(localized: "実行履歴")
     case .artifacts: return String(localized: "成果物")
-    case .context: return String(localized: "追加コンテキスト")
+    case .notes: return String(localized: "コメントと追加コンテキスト")
     }
   }
 
   var symbol: String {
     switch self {
     case .general: return "slider.horizontal.3"
-    case .comments: return "bubble.left"
-    case .nix: return "snowflake"
     case .source: return "doc.text"
     case .ports: return "arrow.left.arrow.right"
+    case .log: return "text.alignleft"
+    case .dependencies: return "shippingbox.and.arrow.backward"
     case .executions: return "clock.arrow.circlepath"
     case .artifacts: return "shippingbox"
-    case .context: return "text.bubble"
+    case .notes: return "bubble.left"
     }
   }
 }
@@ -54,6 +55,14 @@ struct CardRef: Codable, Hashable {
   var path: String
   var card: CardKey
   var category: CardEditorCategory = .general
+  /// A file of the definition to show in Source ("default.nix").
+  var file: String? = nil
+}
+
+/// A run and one of its invocations, as the Card window's Log shows it.
+struct CardLogSelection: Equatable {
+  let runId: String
+  let invocation: UInt64?
 }
 
 /// One tab of the workbench: a scope (the root workflow or a child workflow)

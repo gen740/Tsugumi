@@ -180,13 +180,9 @@ auto EditProjectField(const std::string& document,
   ValidJson(document);
   std::string target_name = edit.file_path;
   for (const auto& step : edit.selector) {
-    if (!step) continue;
     target_name += step->match_json.empty() ? "." + step->field
                                             : "[" + step->match_json + "]";
   }
-  if (!edit.old_value || !edit.new_value)
-    throw Failure("invalid_request",
-                  "old_value and new_value require explicit presence");
   if (edit.old_value->present) ValidJson(edit.old_value->json);
   if (edit.new_value->present) ValidJson(edit.new_value->json);
   auto tree = Spans(document).Value();
@@ -195,7 +191,7 @@ auto EditProjectField(const std::string& document,
   size_t index = 0;
   for (size_t step_index = 0; step_index < edit.selector.size(); ++step_index) {
     const auto& step = edit.selector[step_index];
-    if (!step || (step->field.empty() == step->match_json.empty()))
+    if (step->field.empty() == step->match_json.empty())
       throw Failure(
           "invalid_request",
           target_name + ": selector requires exactly one field or keyed match");
@@ -238,7 +234,7 @@ auto EditProjectField(const std::string& document,
         auto value = edit.new_value->json;
         for (size_t i = edit.selector.size(); i > step_index + 1; --i) {
           const auto& child = edit.selector[i - 1];
-          if (!child || (child->field.empty() == child->match_json.empty()))
+          if (child->field.empty() == child->match_json.empty())
             throw Failure("invalid_request",
                           target_name + ": invalid selector");
           if (child->match_json.empty())
@@ -650,12 +646,10 @@ auto PrepareProjectEdits(
   H::ProjectEditsT expanded;
   bool has_json = false;
   for (const auto& entry : edits.edits) {
-    if (entry && entry->value.AsProjectJSONEdit()) {
+    if (const auto* json_edit = entry->value.AsProjectJSONEdit()) {
       has_json = true;
-      const auto& edit = *entry->value.AsProjectJSONEdit();
+      const auto& edit = *json_edit;
       if (authorize) authorize(edit.file_path);
-      if (!edit.old_value || !edit.new_value)
-        throw Failure("invalid_request", "missing JSON edit values");
       const auto before = edit.old_value->present
                               ? std::optional(edit.old_value->json)
                               : std::nullopt;
@@ -693,10 +687,8 @@ auto PrepareProjectEdits(
                 : before;
         ReverseFields(edit.file_path, selected, after, {}, expanded);
       }
-    } else if (entry) {
-      expanded.edits.push_back(std::make_unique<H::ProjectEditT>(*entry));
     } else {
-      throw Failure("invalid_request", "empty project edit");
+      expanded.edits.push_back(std::make_unique<H::ProjectEditT>(*entry));
     }
   }
   if (has_json) {
@@ -737,7 +729,6 @@ auto PrepareProjectEdits(
                                         "read it and send its expected_hash")));
   };
   for (const auto& entry : edits.edits) {
-    if (!entry) throw Failure("invalid_request", "empty project edit");
     if (!entry->value.AsProjectFieldEdit()) {
       const auto path = entry->value.AsProjectTextEdit()
                             ? entry->value.AsProjectTextEdit()->file_path
@@ -752,7 +743,7 @@ auto PrepareProjectEdits(
         throw Failure("invalid_path", tree->prefix);
       std::map<std::string, std::string> expected, replacement;
       for (const auto& hash : tree->expected) {
-        if (!hash || !hash->path.starts_with(tree->prefix) ||
+        if (!hash->path.starts_with(tree->prefix) ||
             !expected.emplace(hash->path, hash->hash).second)
           throw Failure("invalid_request",
                         tree->prefix + ": invalid file closure");
@@ -770,7 +761,7 @@ auto PrepareProjectEdits(
       for (const auto& [path, hash] : expected)
         guard(path, file(path), hash, false);
       for (const auto& item : tree->files) {
-        if (!item || !item->path.starts_with(tree->prefix) ||
+        if (!item->path.starts_with(tree->prefix) ||
             !replacement.emplace(item->path, SourceBytes(item->bytes)).second)
           throw Failure("invalid_request",
                         tree->prefix + ": invalid replacement file");

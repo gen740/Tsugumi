@@ -18,7 +18,7 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
                    sources={"default.nix": '{ pkgs, inputs, params }: { run = "echo ' + greeting + '"; }'})
         graph.save(client)
         run_id = run(client)
-        status = wait_run(client, run_id, timeout=300)
+        status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         environment = client.call("RunEnvironmentsRequest", runId=run_id).environments[0]
         assert text(client.call("RunRecordRequest", runId=run_id, card=path("work")).record.summary.environmentId) == text(environment.id)
@@ -34,10 +34,11 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
             if page.nextOffset is None:
                 break
             offset = page.nextOffset
-        assert paths == sorted(actual.splitlines())
+        assert set(paths) == set(actual.splitlines())
+        assert len(paths) == len(set(paths))
         assert environment.pathCount == len(paths)
         # The ID is a number within the run; the derivation and manifest say what was built.
-        environments.append((run_id, (text(environment.derivation), text(environment.manifest)), paths))
+        environments.append((run_id, (text(environment.derivation), text(environment.manifest)), set(paths)))
     assert environments[0][1:] == environments[1][1:]
     assert environments[0][1] != environments[2][1]
     earlier = client.call("RunEnvironmentsRequest", runId=environments[0][0]).environments[0]
@@ -54,7 +55,7 @@ def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, pro
     observed = []
     for _ in range(2):
         run_id = run(client)
-        status = wait_run(client, run_id, timeout=600)
+        status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         observed.append(check_definition_tools(client, run_id))
     assert observed[0] == observed[1]

@@ -156,38 +156,30 @@ func accepted(value C.int) error {
 	}
 	return nil
 }
-func copied(ptr *C.uchar, n C.size_t) ([]byte, error) {
-	if uint64(n) > uint64(1<<31-1) {
-		return nil, Fail("type_mismatch", "input exceeds Go's copy limit")
-	}
+// WorkerCall bounds the input and params buffers well below the C.int limit.
+func copied(ptr *C.uchar, n C.size_t) []byte {
 	if ptr == nil {
-		return nil, nil
+		return nil
 	}
-	return C.GoBytes(unsafe.Pointer(ptr), C.int(n)), nil
+	return C.GoBytes(unsafe.Pointer(ptr), C.int(n))
 }
-func (scope *Scope) InputBytes(port string) ([]byte, error) {
-	name, err := cstring(port)
-	if err != nil {
-		return nil, err
-	}
-	defer C.free(unsafe.Pointer(name))
+func (scope *Scope) InputsBytes() ([]byte, error) {
 	var bytes []byte
-	err = scope.host(func(call *C.tsugumi_call) error {
+	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
-		p := C.tsugumi_go_input(call, name, &n)
-		bytes, err = copied(p, n)
-		return err
+		p := C.tsugumi_go_inputs(call, &n)
+		bytes = copied(p, n)
+		return nil
 	})
 	return bytes, err
 }
 func (scope *Scope) ParamsBytes() ([]byte, error) {
 	var bytes []byte
-	var err error
-	err = scope.host(func(call *C.tsugumi_call) error {
+	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
 		p := C.tsugumi_go_params(call, &n)
-		bytes, err = copied(p, n)
-		return err
+		bytes = copied(p, n)
+		return nil
 	})
 	return bytes, err
 }
@@ -196,17 +188,6 @@ func bytesPointer(bytes []byte) *C.uchar {
 		return nil
 	}
 	return (*C.uchar)(unsafe.Pointer(&bytes[0]))
-}
-func (scope *Scope) Emit(port string, bytes []byte) error {
-	name, err := cstring(port)
-	if err != nil {
-		return err
-	}
-	defer C.free(unsafe.Pointer(name))
-	// The host copies bytes synchronously; no Go pointer is retained by C.
-	return scope.host(func(call *C.tsugumi_call) error {
-		return accepted(C.tsugumi_go_emit(call, name, bytesPointer(bytes), C.size_t(len(bytes))))
-	})
 }
 func (scope *Scope) Log(text string) error {
 	value, err := cstring(text)
@@ -370,7 +351,7 @@ func describe(err error) (kind, message string) {
 // Invoke is called only by the generated C entry points. The worker guarantees
 // raw remains valid until this function returns. The call pointer never survives
 // close, even if user code keeps a Scope or starts its own goroutine.
-func Invoke(raw unsafe.Pointer, body func(*Scope) error) (result int) {
+func Invoke(raw unsafe.Pointer, body func(*Scope) error, packOutputs func()) (result int) {
 	call := (*C.tsugumi_call)(raw)
 	if C.tsugumi_go_check(call) == 0 {
 		return 1
@@ -403,7 +384,13 @@ func Invoke(raw unsafe.Pointer, body func(*Scope) error) (result int) {
 		if err := body(scope); err != nil {
 			return err
 		}
-		return scope.Wait()
+		if err := scope.Wait(); err != nil {
+			return err
+		}
+		if packOutputs != nil {
+			packOutputs()
+		}
+		return nil
 	})
 	if err == nil {
 		return 0
@@ -416,15 +403,6 @@ func Invoke(raw unsafe.Pointer, body func(*Scope) error) (result int) {
 	defer C.free(unsafe.Pointer(m))
 	_ = scope.host(func(call *C.tsugumi_call) error { C.tsugumi_go_log(call, m); C.tsugumi_go_fail(call, k, m); return nil })
 	return 1
-}
-
-func (scope *Scope) FinishOutputs() error {
-	return scope.host(func(call *C.tsugumi_call) error {
-		if C.tsugumi_go_finish_outputs(call) != 0 {
-			return Fail("output_invalid", "required outputs were not emitted")
-		}
-		return nil
-	})
 }
 
 // Report publishes presentation and log side effects during the call.

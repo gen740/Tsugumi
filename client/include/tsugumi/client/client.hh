@@ -21,6 +21,7 @@ struct Options : TransportOptions {
 class Connection {
  public:
   using Completion = std::function<void(Result)>;
+  // Builds a request for this connection using the supplied correlation ID.
   using BuildRequest = std::function<Bytes(uint64_t)>;
 
   explicit Connection(Options options);
@@ -38,17 +39,14 @@ class Connection {
 
   // IDs are assigned under the connection lock and given to the encoder.
   auto Call(BuildRequest build, Completion completion,
-            std::chrono::milliseconds timeout = std::chrono::seconds(60))
-      -> uint64_t;
-  auto Call(BuildRequest build,
-            std::chrono::milliseconds timeout = std::chrono::seconds(60))
+            std::chrono::milliseconds timeout = {}) -> uint64_t;
+  auto Call(BuildRequest build, std::chrono::milliseconds timeout = {})
       -> std::future<Result>;
 
   // For generated-language bindings: frame must contain a nonzero request ID
   // greater than all IDs previously submitted on this connection.
   auto CallFrame(Bytes frame, Completion completion,
-                 std::chrono::milliseconds timeout = std::chrono::seconds(60))
-      -> void;
+                 std::chrono::milliseconds timeout = {}) -> void;
   auto Close() -> void;
 
  private:

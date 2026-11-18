@@ -192,30 +192,34 @@ def test_transfer_permission_widening_still_requires_explicit_approval(project, 
     assert json.loads((project / path).read_bytes())["network"] is True
 
 
-def test_store_manifest_limit_reports_actual_limit_and_attached_alternative(project, core_factory):
+def test_store_manifest_limit_rejects_the_save(project, core_factory):
     setup(project)
     client = core_factory().connect()
+    original = client.call("ProjectInspectRequest")
     with pytest.raises(RpcFailure) as error:
-        client.call("ProjectSaveRequest", baseRev=0, opId=new_id(), origin="agent",
+        client.call("ProjectSaveRequest", baseRev=original.rev, opId=new_id(), origin="agent",
                     changes=[change("PutSource", path=f"definitions/data/{i}.csv", bytes=[])
                              for i in range(10001)])
     assert error.value.kind == "resource_limit"
-    assert "10001" in str(error.value) and "10000" in str(error.value)
-    assert "hostFolders" in str(error.value)
-    assert client.call("ProjectInspectRequest").rev == 0
+    snapshot = client.call("ProjectInspectRequest")
+    assert snapshot.rev == original.rev
+    assert {text(source.path): text(source.hash) for source in snapshot.sources} == {
+        text(source.path): text(source.hash) for source in original.sources
+    }
 
 
-def test_store_document_limit_reports_bytes_limit_and_attached_alternative(project, core_factory):
+def test_store_document_limit_rejects_the_save(project, core_factory):
     client = core_factory().connect()
-    document = json.loads(text(client.call("ProjectInspectRequest").projectJson))
-    document["name"] = "x" * (8 << 20)
-    encoded = json.dumps(document)
+    original = client.call("ProjectInspectRequest")
+    document = json.loads(text(original.projectJson))
+    encoded = json.dumps({**document, "name": "x" * (8 << 20)})
     with pytest.raises(RpcFailure) as error:
-        client.call("ProjectSaveRequest", baseRev=0, opId=new_id(), origin="agent",
+        client.call("ProjectSaveRequest", baseRev=original.rev, opId=new_id(), origin="agent",
                     changes=[change("SetProject", json=encoded)])
     assert error.value.kind == "resource_limit"
-    assert str(len(encoded) + 2) in str(error.value)  # layout.json is {}.
-    assert "8388608" in str(error.value) and "hostFolders" in str(error.value)
+    snapshot = client.call("ProjectInspectRequest")
+    assert snapshot.rev == original.rev
+    assert json.loads(text(snapshot.projectJson)) == document
 
 
 @pytest.mark.parametrize("suffix", ["", "/", "/."])
@@ -241,8 +245,8 @@ def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path,
 @pytest.mark.parametrize("shell_changes", [False, True])
 def test_disconnect_during_streamed_save_discards_all_changes(project, core_factory, tmp_path, shell_changes):
     """Both copy and successful-shell imports use this public cancellable save."""
-    import time
     from concurrent.futures import ThreadPoolExecutor
+    from harness.file_events import wait_for_file
     setup(project)
     source = (project / ".tsugumi/agent-files/test/commands/success/data.bin"
               if shell_changes else tmp_path / "attached/data.bin")
@@ -256,22 +260,16 @@ def test_disconnect_during_streamed_save_discards_all_changes(project, core_fact
     with ThreadPoolExecutor(max_workers=1) as threads:
         pending = threads.submit(caller.call, "ProjectSaveRequest", baseRev=0, opId=operation,
                                  origin="agent", changes=[], transfers=[transfer(source)])
-        deadline = time.monotonic() + 10
-        while not (project / ".tsugumi/transfer.started").exists():
-            assert not pending.done(), "save completed before cancellation was observed"
-            assert time.monotonic() < deadline
-            time.sleep(0.001)
+        wait_for_file(project / ".tsugumi/transfer.started")
+        assert not pending.done(), "save completed before cancellation was observed"
         caller.close()
         with pytest.raises((ConnectionError, OSError)):
-            pending.result(timeout=3)
+            pending.result()
     from Tsugumi.Data.OperationState import OperationState
-    deadline = time.monotonic() + 15
-    while True:
-        outcome = observer.call("OperationGetRequest", opId=operation)
-        if outcome.state == OperationState.completed:
-            break
-        assert time.monotonic() < deadline, "disconnected save never reached a terminal receipt"
-        time.sleep(0.01)
+    # ProjectOpen runs on the mutation lane behind the cancelled save.
+    observer.open()
+    outcome = observer.call("OperationGetRequest", opId=operation)
+    assert outcome.state == OperationState.completed
     assert observer.call("ProjectInspectRequest").rev == 0
     from Tsugumi.Data.FailureKind import FailureKind
     assert outcome.receipt.result.kind == FailureKind.cancelled

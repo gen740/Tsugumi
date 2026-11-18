@@ -18,24 +18,20 @@ def digest(path):
     return value.hexdigest()
 
 
-def members(payload):
-    checksums = {}
+def payload_identity(payload):
+    names = set()
     identity = None
     with tarfile.open(payload, mode="r|gz") as tar:
         for entry in tar:
-            with tar.extractfile(entry) as stream:
-                checksum = hashlib.sha256()
-                stamp = bytearray()
-                while chunk := stream.read(1024 * 1024):
-                    checksum.update(chunk)
-                    if entry.name == "vm-version":
-                        stamp.extend(chunk)
-                checksums[entry.name] = checksum.hexdigest()
-                if entry.name == "vm-version":
-                    identity = stamp.decode().strip()
-    if set(checksums) != {"vmlinux", "rootfs.erofs", "vm-version"}:
+            if not entry.isfile():
+                raise ValueError("unexpected VM payload contents")
+            names.add(entry.name)
+            if entry.name == "vm-version":
+                with tar.extractfile(entry) as stream:
+                    identity = stream.read().decode().strip()
+    if names != {"vmlinux", "rootfs.erofs", "vm-version"}:
         raise ValueError("unexpected VM payload contents")
-    return checksums, identity
+    return identity
 
 
 def verify(directory, identity, revision=None):
@@ -47,10 +43,7 @@ def verify(directory, identity, revision=None):
     for name, checksum in manifest["files"].items():
         if Path(name).name != name or digest(directory / name) != checksum:
             raise ValueError(f"VM artifact checksum mismatch: {name}")
-    checksums, stamp = members(directory / PAYLOAD)
-    if checksums != manifest["members"]:
-        raise ValueError("VM attachment checksum mismatch")
-    if stamp != identity:
+    if payload_identity(directory / PAYLOAD) != identity:
         raise ValueError("VM payload identity mismatch")
     return manifest
 
@@ -60,9 +53,9 @@ def build(args):
     destination.mkdir(parents=True, exist_ok=True)
     payload = destination / PAYLOAD
     shutil.copyfile(args.image / PAYLOAD, payload)
-    checksums, identity = members(payload)
+    identity = payload_identity(payload)
     manifest = {"identity": identity, "system": "aarch64-linux", "revision": args.revision,
-                "members": checksums, "files": {PAYLOAD: digest(payload)}}
+                "files": {PAYLOAD: digest(payload)}}
     manifest_path = destination / "vm-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     hashes = {**manifest["files"], manifest_path.name: digest(manifest_path)}

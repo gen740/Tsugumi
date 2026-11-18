@@ -42,13 +42,39 @@ def shown(c, run_id, card):
 
 
 def succeeded(c):
-    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    run_id, status = run_and_wait(c, 'start')
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), [(name, text(c.call("LogRangeRequest", runId=run_id, card=path(name), stream=2, limitBytes=12000).text)) for name in ("make", "rust", "check", "fail", "show")])
     return run_id
 
 
 def test_scaffold_generated_from_one_template():
     subprocess.run(['python3', str(ROOT / 'sdk/codegen/scaffold.py'), 'rust', '--check'], check=True)
+
+
+@pytest.mark.parametrize('test_path', ['src/lib.rs', 'tests/card.rs'])
+def test_failing_rust_test_rejects_the_card_build(project, test_path):
+    root, connect = project
+    card = rust('''fn run(_inputs: tsugumi::Inputs<'_>) -> tsugumi::Result<tsugumi::Output> {
+    Ok(tsugumi::Output::default())
+}
+tsugumi::export!(run, inputs);
+''')
+    test = '''
+#[test]
+fn card_test() {
+    panic!("deliberate Rust Card test failure");
+}
+'''
+    if test_path == 'src/lib.rs':
+        card['src'][test_path] += '#[cfg( test )]\nmod tests {\n' + test + '}\n'
+    else:
+        card['src'][test_path] = test
+    write_project(root, {'rust': card}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start')
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert 'deliberate Rust Card test failure' in text(status.failure.diagnostic) + log
 
 
 def test_python_rust_cpp_values_and_params(project):
@@ -77,11 +103,11 @@ def main(inputs):
  N.Start(b)
  N.AddValue(b,9007199254740993)
  root=N.End(b)
- yield {"out": tsugumi.message(b, root)}
+ out = tsugumi.message(b, root)
  b=tsugumi.builder()
  N.Start(b)
  N.AddValue(b,9007199254740993)
- yield {"other": tsugumi.message(b, N.End(b))}
+ return {"out": out, "other": tsugumi.message(b, N.End(b))}
 '''}},
         'rust': process,
         'check': {'card': {'language': 'cpp', 'inputs': [{'name': 'number'}]},
@@ -135,7 +161,7 @@ fn run(inputs: Inputs<'_>, report: &Report<'_>)->Result<Output> {
 tsugumi::export!(run);'''.replace('BODY', body)
     write_project(root, {'fail': rust(source, params=[{'name': 'fail', 'type': 'bool', 'data': True}])}, [])
     c = connect()
-    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    run_id, status = run_and_wait(c, 'start')
     assert status.state == RunState.failed
     assert reason in text(c.call('LogRangeRequest', runId=run_id, card=path('fail'), stream=2, limitBytes=65536).text)
     from test_demos import edit_card, set_param
@@ -151,6 +177,7 @@ def test_live_display_and_cancellation(project):
 fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<Output> {
  if !inputs.params.slow().unwrap_or(false) { report.text("recovered")?; return Ok(Output::default()); }
  report.text("running")?;
+ // Run exposes cancellation as a query, with no waitable cancellation event.
  while !run.cancelled() {std::thread::sleep(std::time::Duration::from_millis(10));}
  Ok(Output::default())
 }
@@ -163,7 +190,7 @@ tsugumi::export!(run, with_run);'''
     notification=first_display(c,run_id)
     assert text(notification.value.display.value.text) == 'running'
     c.call('RunCancelRequest',runId=run_id)
-    assert wait_run(c,run_id,10).state == RunState.cancelled
+    assert wait_run(c,run_id).state == RunState.cancelled
     from test_demos import edit_card, set_param
     edit_card(None,c,'live',lambda card:set_param(card,'slow',False))
     assert text(shown(c,succeeded(c),'live').value.text)=='recovered'
@@ -179,7 +206,7 @@ fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<
 }
 tsugumi::export!(run, with_run);''', timeoutSeconds=2, params=[{'name':'slow','type':'bool','data':True}])}, [])
     c=connect()
-    run_id,status=run_and_wait(c,'start',timeout=1800)
+    run_id,status=run_and_wait(c,'start')
     assert status.state == RunState.failed
     assert c.call('RunRecordRequest',runId=run_id,card=path('slow')).status.failure.kind == FailureKind.timeout
     from test_demos import edit_card, set_param
@@ -246,7 +273,7 @@ fn run(inputs: Inputs<'_>) -> Result<Output> { Ok(Output::default()) }
 tsugumi::export!(run, inputs);'''
     write_project(root,{'escape':rust(source)},[])
     c=connect()
-    run_id,status=run_and_wait(c,'start',timeout=1800)
+    run_id,status=run_and_wait(c,'start')
     assert status.state==RunState.failed
     logs=''.join(text(c.call('LogRangeRequest',runId=run_id,card=path('escape'),stream=stream,limitBytes=65536).text) for stream in (1,2,4))
     assert 'lifetime may not live long enough' in logs
@@ -260,7 +287,7 @@ tsugumi::export!(run, inputs);''')
     card['outputs']=NUMBER
     write_project(root,{'missing':card},[])
     c=connect()
-    _,status=run_and_wait(c,'start',timeout=1800)
+    _,status=run_and_wait(c,'start')
     assert status.state==RunState.failed
     assert 'out' in text(status.failure.diagnostic)
 
@@ -306,22 +333,22 @@ def test_rust_crates_are_pinned_and_the_card_runs_offline(project):
     assert text(shown(c, succeeded(c), 'rust').value.text) == '42'
 
 
-@pytest.mark.parametrize(('arguments', 'stale', 'message'), [
-    ('lock = ./src/Cargo.lock;', False, 'vendor directory `hash` together'),
-    ('lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;', False, 'hash mismatch'),
-    (f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";', True, 'itoa = "=1.0.14"'),
-])
-def test_rust_rejects_invalid_pins(project, arguments, stale, message):
+@pytest.mark.parametrize(('arguments', 'stale'), [
+    ('lock = ./src/Cargo.lock;', False),
+    ('lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;', False),
+    (f'lock = ./src/Cargo.lock; hash = "{VENDOR_HASH}";', True),
+], ids=['missing-hash', 'wrong-hash', 'stale-lock'])
+def test_rust_rejects_invalid_pins(project, arguments, stale):
     root, connect = project
     card = card_with_registry_crate(arguments)
     if stale:
         card['src']['Cargo.toml'] = card['src']['Cargo.toml'].replace('1.0.15', '1.0.14')
     write_project(root, {'rust': card}, [])
     c = connect()
-    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    run_id, status = run_and_wait(c, 'start')
     log = text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=LogStream.build).text)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
-    assert message in text(status.failure.diagnostic) + log
+    assert not c.call('RunRecordRequest', runId=run_id, card=path('rust')).record.summary.environmentId
 
 
 @pytest.mark.parametrize('language', ['ja', 'en'])

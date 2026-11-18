@@ -41,7 +41,7 @@ table ProviderStatusRequest { profile:string (required); id:string (required); k
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; }
+table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
 table SignInBegin { attempt_id:string (required); url:string (required); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -52,7 +52,7 @@ table SignInStatus { attempt_id:string; state:string (required); message:string;
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
-enum EnvironmentFailureCode:ubyte { None, ProcessExit, ReadinessTimeout, Cancelled, LaunchFailed }
+enum EnvironmentFailureCode:ubyte { None, ProcessExit, Cancelled, LaunchFailed }
 table EnvironmentRequest {
   project:string (required);
   action:EnvironmentAction;
@@ -69,7 +69,6 @@ table EnvironmentState {
   endpoint:string;
   token:string;
   project_id:string;
-  server_instance_id:string;
   unix_socket:string;
   pid:long;
   control_dir:string;
@@ -101,13 +100,20 @@ table HostTerminal { session:ulong; }
 table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
 table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
   virtualization_supported:bool; image_available:bool; image_version:string;
-  stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
+  stage:string; message:string; console:[string];
   environments:uint; vm_removed:bool;
   // Host-authored confirmation of the same policy sent to the VM helper.
   reset_confirmation_ja:string; reset_confirmation_en:string;
   // Actual VM-directory entries kept and discarded by the helper.
   reset_kept_files:[string]; reset_discarded_files:[string];
+  // The shared VM's size: what its next start uses (Settings, else the
+  // defaults), the defaults and the largest values for this Mac. Set by hostd.
+  vm_resources:VMResources; vm_default_resources:VMResources; vm_limits:VMResources;
+  // The store disk file now, in GiB (0 before it exists). Set by the helper.
+  store_disk_gib:uint;
 }
+/// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
+table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }

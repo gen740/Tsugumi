@@ -79,8 +79,8 @@ def test_escape_fails_and_names_the_path_without_deleting_it(tmp_path, monkeypat
     ("host.ready", "/runtime/tsugumi-hostd"),
 ])
 def test_cleanup_stops_detached_services_but_leaves_unrelated_processes(tmp_path, monkeypatch, with_group, ready, binary):
-    owned = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
-    unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+    owned = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'], start_new_session=True)
+    unrelated = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'], start_new_session=True)
     # A detached service can have no root argument: its own discovery file is
     # what establishes ownership. The unrelated service must remain alive.
     (tmp_path / ready).write_text(json.dumps({'pid': owned.pid}))
@@ -93,13 +93,13 @@ def test_cleanup_stops_detached_services_but_leaves_unrelated_processes(tmp_path
     monkeypatch.setattr(runner, 'marked_service_process', lambda pid, root: False)
     try:
         runner.stop_services(tmp_path, owned.pid if with_group else None)
-        assert owned.wait(timeout=5) == -signal.SIGTERM
+        assert owned.wait() == -signal.SIGTERM
         assert unrelated.poll() is None
     finally:
         for child in (owned, unrelated):
             if child.poll() is None:
                 child.kill()
-            child.wait(timeout=5)
+            child.wait()
 
 
 def test_cleanup_handles_unreadable_card_scratch_without_following_links(tmp_path):
@@ -118,7 +118,7 @@ def test_cleanup_handles_unreadable_card_scratch_without_following_links(tmp_pat
 
 
 def test_cleanup_includes_a_replacement_started_during_shutdown(tmp_path, monkeypatch):
-    children = [subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+    children = [subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'],
                                  start_new_session=True) for _ in range(2)]
     def inventory():
         for child in children:
@@ -128,12 +128,12 @@ def test_cleanup_includes_a_replacement_started_during_shutdown(tmp_path, monkey
     monkeypatch.setattr(runner, 'processes', inventory)
     try:
         runner.stop_services(tmp_path, children[0].pid)
-        assert all(child.wait(timeout=5) == -signal.SIGTERM for child in children)
+        assert all(child.wait() == -signal.SIGTERM for child in children)
     finally:
         for child in children:
             if child.poll() is None:
                 child.kill()
-            child.wait(timeout=5)
+            child.wait()
 
 
 def test_host_startup_failure_removes_its_socket_directory(tmp_path, monkeypatch):
@@ -162,16 +162,16 @@ def test_sdk_daemon_startup_failure_removes_its_work_directory(tmp_path, monkeyp
 
 
 def test_detached_web_startup_is_owned_before_discovery(tmp_path, monkeypatch):
-    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+    child = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'], start_new_session=True)
     monkeypatch.setattr(runner, 'processes', lambda: {child.pid: 'node /runtime/server.js'} if child.poll() is None else {})
     monkeypatch.setattr(runner, 'marked_service_process', lambda pid, root: pid == child.pid and root == tmp_path)
     try:
         runner.stop_services(tmp_path)
-        assert child.wait(timeout=5) == -signal.SIGTERM
+        assert child.wait() == -signal.SIGTERM
     finally:
         if child.poll() is None:
             child.kill()
-        child.wait(timeout=5)
+        child.wait()
 
 
 def test_web_environment_ownership_requires_the_exact_marker(tmp_path, monkeypatch):
@@ -183,21 +183,25 @@ def test_web_environment_ownership_requires_the_exact_marker(tmp_path, monkeypat
     assert not runner.marked_service_process(42, tmp_path / 'other')
 
 
-def test_vm_cleanup_sends_term_once_and_waits_for_guest_deadline(tmp_path, monkeypatch):
-    now = [0.0]
+def test_vm_cleanup_sends_term_once_and_waits_for_guest_exit(tmp_path, monkeypatch):
     sent = []
     grouped = []
-    monkeypatch.setattr(runner, 'processes', lambda: {1234: f'tsugumi-vmhost --support {tmp_path}/support'})
-    monkeypatch.setattr(runner.os, 'kill', lambda pid, sig: sent.append((pid, sig, now[0])))
+    observations = iter(["running", "syncing", "exited"])
+    seen = []
+
+    def processes():
+        state = next(observations, "exited")
+        seen.append(state)
+        if state == "exited":
+            return {}
+        return {1234: f'tsugumi-vmhost --support {tmp_path}/support'}
+
+    monkeypatch.setattr(runner, 'processes', processes)
+    monkeypatch.setattr(runner.os, 'kill', lambda pid, sig: sent.append((pid, sig)))
     monkeypatch.setattr(runner.os, 'killpg', lambda pid, sig: grouped.append((pid, sig)))
-    monkeypatch.setattr(runner.time, 'monotonic', lambda: now[0])
-    def advance(seconds):
-        now[0] += seconds
-        # Simulate the VM finishing its guest sync after 40 seconds.
-        if now[0] >= 40:
-            monkeypatch.setattr(runner, 'processes', dict)
-    monkeypatch.setattr(runner.time, 'sleep', advance)
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: 0)
+    monkeypatch.setattr(runner.time, 'sleep', lambda _: None)
     runner.stop_services(tmp_path, 1234)
-    assert sent == [(1234, signal.SIGTERM, 0.0)]
-    assert grouped == []
-    assert now[0] >= 40
+    assert sent == [(1234, signal.SIGTERM)]
+    assert not grouped
+    assert "exited" in seen

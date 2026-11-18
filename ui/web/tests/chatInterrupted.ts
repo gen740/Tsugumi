@@ -35,8 +35,11 @@ try {
   const c = Object.create(ChatController.prototype) as any
   Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, turn: 0, reload: 0, contentRevision: 0, available: true,
     transition: Promise.resolve(), session: { dir: '/p' }, currentId: '', folders: [], changed() {} })
+  let reading: Promise<unknown>
+  const reread = c.reread.bind(c)
+  c.reread = (id: string) => (reading = reread(id))
   c.select('s')
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await reading!
   c.failed = true // A lost stream's error must give way to the core interruption.
   await c.reread('s') // Reconnect uses this same read path.
   assert.deepEqual(requests.map(r => r.url), ['/api/chat/conversation', '/api/chat/conversation'])
@@ -47,16 +50,16 @@ try {
   assert.equal(c.canContinue, false)
   assert.match(c.status, /project_save.*call-7.*changes/)
   c.resume()
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await c.transition
   assert.equal(requests.at(-1)?.url, '/api/chat/resume')
   assert.equal(c.interrupted, false)
   assert.equal(c.busy, true)
   // A person can instead submit a new message without a Resume request.
   c.select('s')
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await reading!
   Object.assign(c, { references: [], skills: [], folderResources: new Map() })
   c.send('Please do this instead')
-  await new Promise(resolve => setTimeout(resolve, 0))
+  await c.transition
   assert.equal(requests.at(-1)?.url, '/api/chat/send')
   assert.equal(requests.filter(r => r.url === '/api/chat/resume').length, 1)
 } finally { globalThis.fetch = previousFetch }

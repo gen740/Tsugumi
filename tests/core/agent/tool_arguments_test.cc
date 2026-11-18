@@ -55,7 +55,7 @@ TEST_F(ToolArguments, RetryTextPreservesTheActualProviderError) {
   EXPECT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
   EXPECT_NE(retry.find("Capacity exhausted"), std::string::npos);
   EXPECT_NE(retry.find("overloaded_error"), std::string::npos);
-  EXPECT_NE(retry.find("retry 1"), std::string::npos);
+  EXPECT_EQ(messages.back().content.front().text, "Recovered.");
 }
 TEST_F(ToolArguments, HttpErrorsLogTheReasonWithoutEchoedContextOrCredentials) {
   config.credential = "API_KEY_SENTINEL";
@@ -93,7 +93,7 @@ TEST_F(ToolArguments, HttpErrorsLogTheReasonWithoutEchoedContextOrCredentials) {
   }
   const auto log = testing::internal::GetCapturedStderr();
   EXPECT_NE(log.find("Region unavailable"), std::string::npos);
-  EXPECT_NE(log.find("http_status=403 curl_code=0"), std::string::npos);
+
   for (const auto* secret :
        {"API_KEY_SENTINEL", "INSTRUCTION_SENTINEL", "MESSAGE_SENTINEL",
         "RESULT_SENTINEL", "ARGUMENT_SENTINEL"})

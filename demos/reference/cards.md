@@ -249,7 +249,7 @@ and its sources in src/. You can use input_types to read the resolved input defi
           return {"images": {"value": run.output_directory}}
   The whole SDK (Inputs, Report and Run; generated from their source):
     inputs.<port>, inputs.params.<field> (read-only generated objects)
-    return {port: generated_object_or_bytes}; yield mappings for streaming
+    return {port: generated_object_or_bytes}
     inputs.params
     inputs.has_input(port: str)
     inputs.input_bytes(port: str)
@@ -275,7 +275,7 @@ and its sources in src/. You can use input_types to read the resolved input defi
     tsugumi.builder(size=1024)
     tsugumi.message(value, root=None)
   raise tsugumi.Failure("output_invalid", "why") to fail with a reason; report.log writes a log line.
-  Return output mappings; use a generator yielding mappings for incremental batches of distinct ports; each port may be returned once per invocation.
+  Return one output mapping. Call Report methods to show updates during the invocation.
   Use report.figure(fig) for Matplotlib, Plotly and Altair. report.figure() renders open Matplotlib figures
   and drives animations; report.figure(wait=seconds) publishes live frames. Drawing alone never publishes.
   Plotly/Altair interactive plots carry at most 1 MiB of JSON, data inline.

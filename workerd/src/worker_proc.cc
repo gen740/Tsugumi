@@ -246,9 +246,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
                        {"/bin/chmod", "-h", "u+rwx", target.string()});
     repair.uid = sp.uid;
     repair.gid = sp.gid;
-    const auto result = proc::run(
-        repair, nullptr,
-        std::chrono::steady_clock::now() + std::chrono::seconds(5), {});
+    const auto result = proc::run(repair, nullptr, std::nullopt, {});
     if (!proc::exited_ok(result.status))
       throw std::system_error(
           EACCES, std::generic_category(),
@@ -675,6 +673,7 @@ WorkerOutcome WorkerProc::call(
       } catch (const Failed&) {
       }
       cancel_sent = true;
+      // A worker can ignore cancellation and otherwise never exit.
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {
@@ -737,12 +736,14 @@ WorkerOutcome WorkerProc::call(
       }
       switch (m->value_type()) {
         case W::WorkerPayload::WorkerDisplay:
-          try {
-            if (display)
-              display(
-                  wire::display(m->value_as_WorkerDisplay()->display(), msg));
-          } catch (const Failed&) {
-            // Presentation cannot fail the invocation.
+          if (display) {
+            auto presentation =
+                wire::display(m->value_as_WorkerDisplay()->display(), msg);
+            try {
+              display(presentation);
+            } catch (const Failed&) {
+              // Presentation sinks cannot fail the invocation.
+            }
           }
           break;
         case W::WorkerPayload::WorkerResult: {
@@ -805,7 +806,8 @@ std::string worker_call_frame(
     const std::string& params, const std::vector<types::PortType>& outputs,
     const std::string& work, const std::string& tmp, const std::string& out,
     const std::vector<std::pair<std::string, std::string>>& env,
-    std::optional<uint64_t> deadline_ms) {
+    std::optional<uint64_t> deadline_ms, const std::string& input_schema,
+    const std::string& output_schema) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) {
     return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size());
@@ -834,6 +836,8 @@ std::string worker_call_frame(
   auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
+  auto input_catalog = b.CreateString(input_schema);
+  auto output_catalog = b.CreateString(output_schema);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -845,6 +849,8 @@ std::string worker_call_frame(
   cb.add_temporary_directory(t);
   if (!out.empty()) cb.add_output_directory(o);
   cb.add_environment(evv);
+  cb.add_input_schema(input_catalog);
+  cb.add_output_schema(output_catalog);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);

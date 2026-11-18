@@ -20,11 +20,6 @@ $ErrorActionPreference = 'Stop'
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
   throw 'tsugumi: WSL2 is needed. Run "wsl --install" to install Linux, then run this again.'
 }
-# A login shell: Nix's installer puts it on PATH through the profile.
-wsl.exe --exec bash -lc 'command -v nix >/dev/null'
-if ($LASTEXITCODE -ne 0) {
-  throw 'tsugumi: Nix is needed in WSL (or no Linux is installed). Install it inside WSL as https://nixos.org/download says, then run this again.'
-}
 
 if ($env:TSUGUMI_INSTALL_BASE) {
   $base = $env:TSUGUMI_INSTALL_BASE

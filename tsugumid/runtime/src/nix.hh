@@ -1,5 +1,5 @@
 #include "tsugumi/workerd/manifest.hh"
-// Nix evaluation/build lane, generated Card SDK files and build cache.
+// Card evaluation and builds, generated Card SDK files and build cache.
 #pragma once
 
 #include <atomic>
@@ -25,8 +25,7 @@ class Service;
 class NixEvaluator;
 
 struct CardBuild {
-  // The body (`run`): a package with lib/main.so or lib/tsugumi-runtime naming
-  // an SDK artifact, or a bash script.
+  // The body (`run`): a package with lib/main.so, or a bash script.
   std::optional<std::string> package;
   std::optional<std::string> bash;
   std::string pre_run;
@@ -127,10 +126,7 @@ class NixRunner {
  private:
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
-  void acquire_lane(const std::atomic<bool>* cancel);
-  void release_lane();
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
-  std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
   // The prepared build of `card` (--prepared-cards), checked against the
   // evaluation the core would run now.
@@ -146,16 +142,14 @@ class NixRunner {
   std::filesystem::path sdk_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
-  // Serialized by the Nix lane. Retain at most one evaluation per Card,
-  // capped at 256 Cards; edits replace entries, and deleted Cards are pruned.
+  // At most one evaluation per Card, capped at 256 Cards; edits replace
+  // entries, and deleted Cards are pruned.
+  std::mutex evaluations_mu_;
   std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
   std::optional<std::map<std::string, schema::PreparedCard>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;
-  std::mutex lane_mu_;
-  std::condition_variable lane_cv_;
-  bool lane_busy_ = false;
   std::mutex sdk_mu_;
   std::map<std::string, SDKJob> sdk_jobs_;
   std::vector<std::thread> sdk_threads_;

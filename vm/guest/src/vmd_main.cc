@@ -22,14 +22,13 @@
 //
 //   1024  control, one request line per connection, one reply line:
 //           ping                            -> ok
-//           start <id> <cpus> <name> <slot> -> ok <rpc port>
+//           start <id> <name> <slot> [origins] -> ok <id>
 //           stop <id>                       -> ok
-//           forget <id>                     -> ok (stopped project's build
-//                                              roots and scratch go;
-//                                              data deletion)
-//           gc                              -> ok <bytes freed> <paths deleted>
-//                                              (the shared store's cleanup:
-//                                              what no root keeps)
+//           forget <id>                     -> ok (stop and delete build
+//                                              roots and scratch)
+//           forget-stopped <id>             -> ok (delete for a stopped project)
+//           gc                              -> ok (remove store paths without
+//                                              GC roots)
 //           status                          -> ok <id>:<pid>:<port> ...
 //           shell <id> <rows> <cols>        -> ok <session>, then the
 //                                              connection is the terminal
@@ -52,6 +51,7 @@
 #include <pty.h>
 #include <sched.h>
 #include <signal.h>
+#include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
@@ -59,10 +59,12 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -112,14 +114,6 @@ void logf(const char* fmt, ...) {
   std::vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
   std::fprintf(stderr, "vmd: %s\n", buf);
-}
-
-// A project id or folder tag: lower-case hex, as the app makes them.
-bool valid_id(const std::string& id) {
-  if (id.empty() || id.size() > 64) return false;
-  for (char c : id)
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
-  return true;
 }
 
 std::vector<std::string> split(const std::string& s) {
@@ -305,6 +299,14 @@ const std::string kSubstituters = "/run/tsugumi-substituters";
 // given (share entries host-<tag>) at /run/tsugumi/host/<tag> and those
 // attached to its chats (chat-<tag>) at /run/tsugumi/chat/<tag>, nothing of the
 // share, the store disk or other projects.
+// host-<tag> / chat-<tag> folders: the tag is lowercase hex, like a project id.
+bool valid_id(const std::string& id) {
+  if (id.empty() || id.size() > 64) return false;
+  for (char c : id)
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  return true;
+}
+
 ProjectView project_view(int slot, const std::string& id) {
   ProjectView v;
   std::string dir = opt.host + "/" + std::to_string(slot);
@@ -318,7 +320,6 @@ ProjectView project_view(int slot, const std::string& id) {
     std::string name = e.path().filename().string();
     bool host = name.starts_with("host-");
     bool chat = name.starts_with("chat-");
-    // host-<tag> / chat-<tag>: the tag is 16 hex digits, like a project id.
     if (!(host || chat) || !valid_id(name.substr(5))) continue;
     v.extra.emplace_back(
         e.path().string(),
@@ -417,18 +418,13 @@ std::string collect_garbage(bool verify = false) {
   for (ssize_t n; (n = ::read(out[0], buf, sizeof buf)) > 0;)
     text.append(buf, static_cast<size_t>(n));
   ::close(out[0]);
-  // The reaper collects the exit status.
-  int st = -1;
-  for (int i = 0; i < 600; ++i) {
-    {
-      std::lock_guard<std::mutex> l(mu);
-      if (auto it = exit_status.find(pid); it != exit_status.end()) {
-        st = it->second;
-        exit_status.erase(it);
-        break;
-      }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  if (pid < 0) return "error cannot start store maintenance";
+  int st;
+  {
+    std::unique_lock lock(mu);
+    exited.wait(lock, [&] { return exit_status.contains(pid); });
+    st = exit_status.at(pid);
+    exit_status.erase(pid);
   }
   logf("store %s: %s", verify ? "check/repair" : "cleanup", text.c_str());
   if (verify) {
@@ -443,21 +439,7 @@ std::string collect_garbage(bool verify = false) {
   }
   if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0))
     return "error nix-store --gc failed";
-  // "N store paths deleted, X MiB freed"
-  unsigned long long paths = 0;
-  double amount = 0;
-  char unit[8] = "";
-  if (auto at = text.rfind(" store paths deleted, "); at != std::string::npos) {
-    auto line = text.find_last_of('\n', at);
-    std::sscanf(text.c_str() + (line == std::string::npos ? 0 : line + 1),
-                "%llu store paths deleted, %lf %7s", &paths, &amount, unit);
-  }
-  double mul = std::string(unit) == "GiB"   ? 1073741824.0
-               : std::string(unit) == "MiB" ? 1048576.0
-               : std::string(unit) == "KiB" ? 1024.0
-                                            : 1.0;
-  return "ok " + std::to_string(static_cast<unsigned long long>(amount * mul)) +
-         " " + std::to_string(paths);
+  return "ok";
 }
 
 int project_main(void* arg) {
@@ -489,16 +471,6 @@ int project_main(void* arg) {
   return 127;
 }
 
-std::string sanitize_name(const std::string& s) {
-  std::string out;
-  for (char c : s)
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') || c == '-')
-      out += c;
-  if (out.empty()) out = "project";
-  return out.substr(0, 63);
-}
-
 std::string slot_dir(int slot) { return opt.host + "/" + std::to_string(slot); }
 
 // Mounts the slot's virtiofs device afresh (the app has just set its share).
@@ -514,9 +486,8 @@ std::string mount_slot(int slot) {
   return "";
 }
 
-std::string start_project(const std::string& id, int cpus,
-                          const std::string& name, int slot,
-                          const std::string& origins) {
+auto start_project(const std::string& id, const std::string& name, int slot,
+                   const std::string& origins) -> std::string {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
@@ -558,7 +529,7 @@ std::string start_project(const std::string& id, int cpus,
     ::close(log_fd);
     return "error pipe";
   }
-  ChildArgs args{sanitize_name(name),
+  ChildArgs args{name,
                  pr.uid,
                  sync[0],
                  log_fd,
@@ -578,7 +549,7 @@ std::string start_project(const std::string& id, int cpus,
                "--control-dir",
                "/control",
                "--cpus",
-               std::to_string(cpus),
+               std::to_string(::get_nprocs()),
                "--allow-missing-origin",
                "--gcroots-dir",
                kRoots + "/" + id,
@@ -592,8 +563,7 @@ std::string start_project(const std::string& id, int cpus,
   // The binary caches of this VM's nix-daemon, for the run records. A project
   // cannot read the daemon's settings (they sit beside the caches' credentials
   // under /run/tsugumi, which its view replaces); /init wrote this list.
-  if (::access(kSubstituters.c_str(), R_OK) == 0)
-    args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
+  args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
   // The pages that may connect (the Mac's tsugumi command): comma-separated.
   // Without any, as for the app, a browser's request is refused.
   for (size_t at = 0; at < origins.size();) {
@@ -648,25 +618,24 @@ std::string start_project(const std::string& id, int cpus,
   return "ok " + id;
 }
 
-std::string stop_project(const std::string& id) {
+auto stop_project(const std::string& id) -> void {
   std::unique_lock<std::mutex> l(mu);
   auto it = projects.find(id);
-  if (it == projects.end() || !it->second.running) return "ok";
+  if (it == projects.end() || !it->second.running) return;
   pid_t pid = it->second.pid;
   ::kill(pid, SIGTERM);
-  // tsugumid records interrupted runs on SIGTERM; give it time.
-  exited.wait_for(l, std::chrono::seconds(20),
-                  [&] { return !it->second.running; });
-  if (it->second.running) {
-    write_file(cgroup_dir(id) + "/cgroup.kill", "1");
-    exited.wait(l, [&] { return !it->second.running; });
-  }
-  return "ok";
+  // tsugumid records interrupted runs on SIGTERM before exiting.
+  exited.wait(l, [&] { return !it->second.running; });
 }
 
-std::string forget_project(const std::string& id) {
-  std::string r = stop_project(id);
-  if (r != "ok") return r;
+auto forget_project(const std::string& id, bool stop) -> std::string {
+  if (stop) {
+    stop_project(id);
+  } else {
+    std::lock_guard lock(mu);
+    if (auto it = projects.find(id); it != projects.end() && it->second.running)
+      return "error the project is running; stop it first";
+  }
   std::error_code ec;
   fs::remove_all(kRoots + "/" + id, ec);
   fs::remove_all(kScratch + "/" + id, ec);
@@ -874,13 +843,33 @@ int listen_vsock(int port) {
   return fd;
 }
 
+bool wait_for_empty_cgroup(const std::string& id) {
+  const auto path = cgroup_dir(id) + "/cgroup.events";
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return errno == ENOENT;
+  bool empty = false;
+  for (;;) {
+    char state[256];
+    const auto size = ::pread(fd, state, sizeof state, 0);
+    if (size < 0 && errno == EINTR) continue;
+    if (size <= 0) break;
+    if (std::string_view(state, static_cast<size_t>(size)).starts_with("populated 0\n")) {
+      empty = true;
+      break;
+    }
+    pollfd changed{fd, POLLPRI, 0};
+    if (::poll(&changed, 1, -1) < 0 && errno != EINTR) break;
+  }
+  ::close(fd);
+  return empty;
+}
+
 void shutdown_vm() {
   if (powering_off.exchange(true)) return;
   std::vector<std::string> ids;
   {
     std::lock_guard<std::mutex> l(mu);
-    for (const auto& [id, p] : projects)
-      if (p.running) ids.push_back(id);
+    for (const auto& [id, _] : projects) ids.push_back(id);
   }
   std::vector<std::jthread> stops;
   for (const auto& id : ids) stops.emplace_back([id] { stop_project(id); });
@@ -888,16 +877,18 @@ void shutdown_vm() {
   logf("syncing and remounting persistent disks read-only");
   // Run with the boot image's tools, independent of a cached vm-system.
   // The reaper may collect this child; the marker is managed by the script.
-  const auto child = ::fork();
+  bool drained = true;
+  for (const auto& id : ids) drained = wait_for_empty_cgroup(id) && drained;
+  if (!drained) logf("cannot verify that project cgroups drained; keeping dirty marker");
+  const auto child = drained ? ::fork() : -1;
   if (child == 0) {
     ::execl("/run/tsugumi/store-health", "store-health", "poweroff", "/persist",
-            nullptr);
+            "/run/tsugumi/vmd", nullptr);
     ::_exit(127);
   }
   if (child > 0) {
     std::unique_lock lock(mu);
-    exited.wait_for(lock, std::chrono::seconds(10),
-                    [&] { return exit_status.contains(child); });
+    exited.wait(lock, [&] { return exit_status.contains(child); });
     if (auto it = exit_status.find(child); it != exit_status.end()) {
       if (it->second != 0)
         logf("read-only remount failed; next boot will check the store");
@@ -907,6 +898,20 @@ void shutdown_vm() {
   logf("powering off");
   ::sync();
   ::reboot(RB_POWER_OFF);
+}
+
+// "ok <MemTotal> <MemAvailable> <Cached>" in KiB: the host's balloon follows
+// how much of its memory the guest has (MemTotal shrinks as it inflates).
+std::string memory() {
+  std::ifstream in("/proc/meminfo");
+  std::map<std::string, std::string> values;
+  std::string key, value, unit;
+  while (in >> key >> value) {
+    std::getline(in, unit);
+    values[key] = value;
+  }
+  return "ok " + values["MemTotal:"] + " " + values["MemAvailable:"] + " " +
+         values["Cached:"];
 }
 
 void control(int conn) {
@@ -924,16 +929,19 @@ void control(int conn) {
     r = "ok";
   else if (w[0] == "status")
     r = status();
+  else if (w[0] == "memory")
+    r = memory();
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";
-  } else if (w[0] == "start" && (w.size() == 5 || w.size() == 6))
-    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3],
-                      std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "");
-  else if (w[0] == "stop" && w.size() == 2)
-    r = stop_project(w[1]);
-  else if (w[0] == "forget" && w.size() == 2)
-    r = forget_project(w[1]);
+  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5))
+    r = start_project(w[1], w[2], std::atoi(w[3].c_str()),
+                      w.size() == 5 ? w[4] : "");
+  else if (w[0] == "stop" && w.size() == 2) {
+    stop_project(w[1]);
+    r = "ok";
+  } else if ((w[0] == "forget" || w[0] == "forget-stopped") && w.size() == 2)
+    r = forget_project(w[1], w[0] == "forget");
   else if (w[0] == "gc" && w.size() == 1)
     r = collect_garbage();
   else if (w[0] == "verify-store" && w.size() == 1)
@@ -1016,12 +1024,72 @@ void rpc(int conn) {
   ::close(conn);
 }
 
-void serve(int port, void (*handler)(int)) {
+// Boot waits for the daemon's socket or for the process to exit.
+int wait_daemon(pid_t pid, const fs::path& socket) {
+  const int child = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+  const int events = ::inotify_init1(IN_CLOEXEC);
+  if (child < 0 || events < 0 ||
+      ::inotify_add_watch(events, socket.parent_path().c_str(),
+                          IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF) < 0)
+    return 1;
+  for (;;) {
+    struct stat st{};
+    if (::stat(socket.c_str(), &st) == 0 && S_ISSOCK(st.st_mode)) return 0;
+    pollfd fds[] = {{child, POLLIN, 0}, {events, POLLIN, 0}};
+    const auto ready = ::poll(fds, 2, -1);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0 || fds[0].revents || !(fds[1].revents & POLLIN)) return 1;
+    std::array<char, 4096> buffer;
+    if (::read(events, buffer.data(), buffer.size()) <= 0) return 1;
+  }
+}
+
+// End every writer before the caller flushes the store and clears its marker.
+int stop_nix() {
+  for (;;) {
+    std::vector<pollfd> daemons;
+    for (const auto& proc : fs::directory_iterator("/proc")) {
+      const auto name = proc.path().filename().string();
+      char* end = nullptr;
+      const auto pid = std::strtol(name.c_str(), &end, 10);
+      if (*end || pid <= 0) continue;
+      const int fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+      if (fd < 0) {
+        if (errno == ESRCH) continue;
+        return 1;
+      }
+      std::string comm;
+      std::ifstream status(proc.path() / "comm");
+      pollfd process{fd, POLLIN, 0};
+      if (!std::getline(status, comm) || comm != "nix-daemon" ||
+          ::poll(&process, 1, 0) > 0) {
+        ::close(fd);
+        continue;
+      }
+      if (::syscall(SYS_pidfd_send_signal, fd, SIGTERM, nullptr, 0) < 0 &&
+          errno != ESRCH)
+        return 1;
+      daemons.push_back(process);
+    }
+    if (daemons.empty()) return 0;
+    for (auto& process : daemons) {
+      int ready;
+      do {
+        ready = ::poll(&process, 1, -1);
+      } while (ready < 0 && errno == EINTR);
+      ::close(process.fd);
+      if (ready < 0) return 1;
+    }
+  }
+}
+
+void serve(int port, void (*handler)(int), bool announce = false) {
   int fd = listen_vsock(port);
   if (fd < 0) {
     logf("cannot listen on vsock port %d: %s", port, std::strerror(errno));
     std::exit(1);
   }
+  if (announce) std::fprintf(stderr, "TSUGUMI-STAGE ready\n");
   for (;;) {
     int c = ::accept4(fd, nullptr, nullptr, SOCK_CLOEXEC);
     if (c < 0) continue;
@@ -1032,6 +1100,9 @@ void serve(int port, void (*handler)(int)) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--stop-nix") return stop_nix();
+  if (argc == 4 && std::string_view(argv[1]) == "--wait-daemon")
+    return wait_daemon(static_cast<pid_t>(std::atoi(argv[2])), argv[3]);
   for (int i = 1; i + 1 < argc; i += 2) {
     std::string k = argv[i];
     std::string v = argv[i + 1];
@@ -1084,10 +1155,9 @@ int main(int argc, char** argv) {
     std::unique_lock operation(lifecycle);
     shutdown_vm();
   }).detach();
-  std::thread(serve, opt.rpc_port, rpc).detach();
+  std::thread(serve, opt.rpc_port, rpc, false).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port,
        opt.rpc_port);
   // The host waits for this line on the console before connecting.
-  std::fprintf(stderr, "TSUGUMI-STAGE ready\n");
-  serve(opt.control_port, control);
+  serve(opt.control_port, control, true);
 }

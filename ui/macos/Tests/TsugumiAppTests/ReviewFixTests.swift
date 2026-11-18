@@ -105,7 +105,7 @@ extension SyncTests {
     session.start()
     try await Self.connected(session)
     let agent = RPCClient(endpoint: daemon.endpoint.url)
-    _ = try await agent.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await agent.connect(token: daemon.endpoint.token, expectedProjectId: nil)
     func save(_ name: String, _ content: String) async throws {
       let snapshot = try await agent.inspect()
       let meta = JSONValue.object([("name", .string(name)), ("content", .string(content))])

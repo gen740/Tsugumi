@@ -10,6 +10,7 @@ import WebKit
 private final class Outside: @unchecked Sendable {
   let port: UInt16
   private let socket: Int32
+  private let wake: Int32
   private let lock = NSLock()
   private var seen: [String] = []
   private var stopped = false
@@ -33,14 +34,26 @@ private final class Outside: @unchecked Sendable {
     _ = fcntl(fd, F_SETFL, O_NONBLOCK)
     port = UInt16(bigEndian: address.sin_port)
     socket = fd
+    var signal: [Int32] = [0, 0]
+    guard pipe(&signal) == 0 else {
+      let error = POSIXError(.init(rawValue: errno) ?? .EIO)
+      close(fd)
+      throw error
+    }
+    let stopped = signal[0]
+    wake = signal[1]
     Thread.detachNewThread { [self] in
-      while !lock.withLock({ stopped }) {
-        var waiting = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
-        guard poll(&waiting, 1, 20) > 0 else { continue }
+      defer { close(socket); close(stopped) }
+      while !lock.withLock({ self.stopped }) {
+        var waiting = [pollfd(fd: socket, events: Int16(POLLIN), revents: 0),
+                       pollfd(fd: stopped, events: Int16(POLLIN), revents: 0)]
+        guard poll(&waiting, 2, -1) > 0 else { continue }
+        if waiting[1].revents != 0 { return }
         let connection = accept(socket, nil, nil)
         guard connection >= 0 else { continue }
         // The request line says which part of the document got out.
         _ = fcntl(connection, F_SETFL, 0)
+        // A speculative preconnect may never send a request line.
         var wait = timeval(tv_sec: 0, tv_usec: 300_000)
         setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
         var bytes = [UInt8](repeating: 0, count: 512)
@@ -49,12 +62,15 @@ private final class Outside: @unchecked Sendable {
         lock.withLock { seen.append(line) }
         close(connection)
       }
-      close(socket)
     }
   }
 
   var requests: [String] { lock.withLock { seen } }
-  func stop() { lock.withLock { stopped = true } }
+  func stop() {
+    lock.withLock { stopped = true }
+    // Closing the write end wakes poll on the read end even on Darwin.
+    close(wake)
+  }
   func address(_ path: String) -> String { "http://127.0.0.1:\(port)/\(path)" }
 }
 
@@ -110,13 +126,20 @@ private func hostileDocument(_ out: Outside) -> String {
   return view.subviews.lazy.compactMap { webView(in: $0) }.first
 }
 
-@MainActor private func until(_ seconds: Double, _ done: @MainActor () async -> Bool) async -> Bool {
-  let end = Date().addingTimeInterval(seconds)
-  while Date() < end {
-    if await done() { return true }
-    try? await Task.sleep(for: .milliseconds(25))
+@MainActor private final class Navigation: NSObject, WKNavigationDelegate {
+  let finished = AsyncThrowingStream<Void, Error>.makeStream()
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    finished.continuation.finish()
   }
-  return false
+
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    finished.continuation.finish(throwing: error)
+  }
+
+  func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    finished.continuation.finish(throwing: error)
+  }
 }
 
 /// What the document looks like from outside the page's own scripts, which stay off.
@@ -137,9 +160,12 @@ private func hostileDocument(_ out: Outside) -> String {
   let out = try Outside()
   defer { out.stop() }
   let plain = WKWebView(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+  let navigation = Navigation()
+  plain.navigationDelegate = navigation
   plain.loadHTMLString("<!DOCTYPE html><script>document.documentElement.dataset.ran = 'inline'</script><img src=\"\(out.address("control.png"))\">", baseURL: nil)
-  try #require(await until(60) { !out.requests.isEmpty }, "the listener does not see a web view's requests")
-  try #require(await until(60) { await state(plain)["ran"] as? String == "inline" }, "the script marker is not readable")
+  for try await _ in navigation.finished.stream {}
+  try #require(!out.requests.isEmpty, "the listener does not see a web view's requests")
+  try #require(await state(plain)["ran"] as? String == "inline", "the script marker is not readable")
 }
 
 @MainActor @Test func theHTMLArtifactPreviewRunsNothingAndLoadsNothingFromOutside() async throws {

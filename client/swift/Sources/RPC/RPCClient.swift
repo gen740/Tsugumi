@@ -119,8 +119,8 @@ public final class NativeByteTransport: @unchecked Sendable {
     guard let handle else { continuation.resume(throwing: RPCError.disconnected); return }
     let parts = timeout.components
     let milliseconds = Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15
-    guard milliseconds > 0 else { continuation.resume(throwing: RPCError.timeout); return }
-    let bounded = UInt32(min(Double(UInt32.max), max(1, milliseconds)))
+    guard milliseconds >= 0 else { continuation.resume(throwing: RPCError.timeout); return }
+    let bounded = UInt32(min(Double(UInt32.max), milliseconds.rounded(.up)))
     data.withUnsafeBytes { bytes in
       tsugumi_client_call(handle, bytes.bindMemory(to: UInt8.self).baseAddress, data.count, bounded,
                           nativeReplyCallback, Unmanaged.passRetained(NativeReply(continuation)).toOpaque())
@@ -149,7 +149,7 @@ public actor RPCClient {
   }
 
   /// Opens the socket and performs SessionHello. The token never appears in URLs.
-  public func connect(token: String, clientId: UUID, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
+  public func connect(token: String, expectedProjectId: String?) async throws -> Tsugumi_RPC_HelloResultT {
     guard !started, !closed else { throw RPCError.disconnected }
     started = true
     // Native callbacks are ordered. A separate Task for every notification can
@@ -166,7 +166,6 @@ public actor RPCClient {
     }
     try await transport.start()
     let req = Tsugumi_RPC_SessionHelloRequestT()
-    req.clientId = clientId.uuidString.lowercased()
     req.token = token
     req.expectedProjectId = expectedProjectId
     let result: Tsugumi_RPC_HelloResultT = try await call(.sessionhellorequest, req)
@@ -184,7 +183,7 @@ public actor RPCClient {
 
   private func closedByPeer() { closed = true; receiveTask = nil; notify.finish() }
 
-  public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .seconds(60)) async throws -> R {
+  public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .zero) async throws -> R {
     let reply = try await send(type, value, timeout: timeout)
     guard let value = reply.value?.value as? R else {
       throw RPCError.unexpectedReply("expected \(R.self), got \(String(describing: reply.value?.type))")
@@ -218,8 +217,9 @@ public actor RPCClient {
     let offset = Tsugumi_RPC_Message.pack(&builder, obj: &object)
     Tsugumi_RPC_Message.finish(&builder, end: offset)
     let data = try await exchange(builder.data, timeout: timeout)
+    // The native connection verifies replies before delivering their bytes.
     var buffer = ByteBuffer(data: data)
-    let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+    let root: Tsugumi_RPC_Message = getRoot(byteBuffer: &buffer)
     guard let reply = Message(root).payload?.value as? Tsugumi_RPC_ReplyT else {
       throw RPCError.unexpectedReply("no reply value")
     }
@@ -233,7 +233,8 @@ public actor RPCClient {
     guard !closed else { return }
     do {
       var buffer = ByteBuffer(data: data)
-      let root: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
+      let root: Tsugumi_RPC_Message = getRoot(byteBuffer: &buffer)
+      // The native connection verifies and classifies notifications.
       let message = Message(root)
       guard message.payload?.type == .notification,
             let note = message.payload?.value as? Tsugumi_RPC_NotificationT,

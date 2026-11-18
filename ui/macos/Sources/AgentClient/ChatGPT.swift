@@ -30,18 +30,19 @@ public enum ChatGPTError: Error, CustomStringConvertible, Equatable {
     switch self { case .failed(let message): return "ChatGPT: \(message)" }
   }
 
-  public static func localizedMessage(_ message: String) -> String {
-    switch message {
-    case "Sign in to ChatGPT again":
-      return String(localized: "ChatGPT にもう一度サインインしてください。")
-    case "The ChatGPT plan is not enabled for this registration":
-      return String(localized: "このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。")
-    default: return message
-    }
+  public static func localizedMessage(_ message: String, code: String?) -> String {
+    providerMessage(code) ?? message
   }
 
-  /// The chat shows "Manage usage" with this error.
-  public static let usageLimitText = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
+  public static func providerMessage(_ code: String?) -> String? {
+    switch code {
+    case "chatgpt_sign_in_required":
+      return String(localized: "ChatGPT にもう一度サインインしてください。")
+    case "chatgpt_plan_disabled":
+      return String(localized: "このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。")
+    default: return nil
+    }
+  }
 }
 
 /// Browser opening and status polling; all OAuth and credential state is in hostd.
@@ -76,13 +77,15 @@ public actor ChatGPTAuth {
     public var result: SignInResult?
     public var message: String? = nil
   }
+  private static let reauthenticationMessage = ChatGPTError.providerMessage("chatgpt_sign_in_required")
+
   public func status() async -> Status {
     let value = (try? await request()) ?? [:]
     let accounts = infos(value)
     let result = (value["state"] as? String == "complete")
       ? accounts.first(where: \.active).map { SignInResult(account: $0, welcome: value["welcome"] as? String == $0.clientId) } : nil
-    return Status(accounts: accounts, result: result, message: value["message"] as? String == "Sign in to ChatGPT again"
-      ? String(localized: "ChatGPT にもう一度サインインしてください。") : nil)
+    return Status(accounts: accounts, result: result, message: accounts.contains { $0.active && !$0.signedIn }
+      ? Self.reauthenticationMessage : nil)
   }
   public func accounts() async -> [ChatGPTAccountInfo] { infos((try? await request()) ?? [:]) }
   public func accountsWithoutAsking() async -> [ChatGPTAccountInfo]? { guard let v = try? await request() else { return nil }; return infos(v) }

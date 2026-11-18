@@ -14,14 +14,14 @@ struct ExecutionServicesSettings: View {
 
   var body: some View {
     Form {
-      Section("このホストの公開鍵") {
+      Section {
         Text(hostPublicKey).monospaced().textSelection(.enabled)
         Button("公開鍵をコピー") {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(hostPublicKey, forType: .string)
         }.disabled(hostPublicKey.isEmpty)
-        Text("ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。")
-          .font(.caption).foregroundStyle(.secondary)
+      } header: {
+        InfoHeader("このホストの公開鍵", info: "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。")
       }
       Section("実行サービス") {
         ForEach(entries) { entry in

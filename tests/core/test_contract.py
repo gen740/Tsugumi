@@ -3,14 +3,15 @@
 from contextlib import ExitStack
 import hashlib
 import json
+import shlex
 import time
 
 import pytest
 
 from harness.fixtures import worker_project
 from harness.proxy import ReplyProxy
-from harness.scenario import wait_run
-from projects import builtin_project
+from harness.scenario import Project, STRING_OUTPUT, wait_run
+from projects import builtin_project, start_run, wait_for_log
 from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
@@ -99,7 +100,7 @@ def test_session_requires_hello_and_matching_project(daemon):
         with pytest.raises(RpcFailure) as error:
             client.hello()
         assert error.value.kind == "invalid_request"
-        negotiated = connect().call("SessionHelloRequest", clientId=new_id())
+        negotiated = connect().call("SessionHelloRequest")
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
@@ -372,12 +373,12 @@ def test_sdk_prepare_status_and_read(builtin_client):
     op = new_id()
     acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
     assert text(acc.opId) == op
-    deadline = time.monotonic() + 5
+    # SDK preparation has a status RPC but emits no completion notification.
     while True:
         st = c.call("CardSDKStatusRequest", opId=op)
         if st.state == SDKState.ready:
             break
-        assert time.monotonic() < deadline, "SDK preparation did not finish"
+        assert st.state == SDKState.pending
         time.sleep(0.02)
     names = {text(f.path).rsplit("/", 1)[1]: f for f in st.files}
     assert {"_inputs.fbs", "_outputs.fbs", "_params.fbs"} <= set(names)
@@ -403,6 +404,44 @@ def test_sdk_prepare_status_and_read(builtin_client):
     cleared = c.call("ProjectCacheClearRequest", opId=new_id())
     assert "history" in [text(x) for x in cleared.retained]
     assert c.call("ProjectInspectRequest").rev == rev + 1
+
+
+def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path, core_factory):
+    from Tsugumi.Data.CardState import CardState
+
+    daemon = core_factory(mocked_builds=True)
+    client = daemon.connect()
+    import os
+    release = tmp_path / "release"
+    os.mkfifo(release)
+    body = f"""
+        head -c {136 << 20} /dev/zero | tr '\\000' x
+        read -r release < {shlex.quote(str(release))}
+        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
+    """
+    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+                          manifest={"run": {"bash": body}}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    args = dict(runId=run_id, card=path("work"), invocation=1)
+    limit = 128 << 20
+    try:
+        stderr = wait_for_log(client, run_id, "work", LogStream.standard_error,
+                              lambda log: log.logTruncatedAtBytes is not None)
+        assert stderr.logTruncatedAtBytes == limit and not stderr.truncated
+        live = client.call("RunRecordRequest", **args).record.summary
+        assert live.state == CardState.running
+        assert live.logTruncatedAtBytes == limit
+        stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True)
+        assert 120 << 20 < stdout.sizeBytes <= limit
+    finally:
+        if client.call("RunStatusRequest", runId=run_id).state == RunState.running:
+            with release.open("w") as gate:
+                gate.write("release\n")
+    assert wait_run(client, run_id).state == RunState.succeeded
+    journal = client.call("LogRangeRequest", **args, stream=LogStream.journal)
+    assert journal.logTruncatedAtBytes == limit
+    for line in text(journal.text).splitlines():
+        assert isinstance(json.loads(line), dict)
 
 
 def test_run_logs_and_display(project, tmp_path, core_factory):

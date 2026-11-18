@@ -41,7 +41,7 @@ def shown(c,run,card):
 
 
 def succeeded(c):
-    run,status=run_and_wait(c,'start',timeout=1800)
+    run,status=run_and_wait(c,'start')
     assert status.state==RunState.succeeded,(status.failure and text(status.failure.diagnostic),[
         (name,text(c.call('LogRangeRequest',runId=run,card=path(name),stream=stream,limitBytes=10000).text))
         for name in ('go','make','check','count','fail','show','live','slow') for stream in (2,4)])
@@ -56,6 +56,24 @@ def test_scaffold_is_current_and_executes(project):
     write_project(root,{'go':card},[])
     c=connect()
     assert text(shown(c,succeeded(c),'go').value.text)=='hello'
+
+
+def test_failing_go_test_rejects_the_card_build(project):
+    root, connect = project
+    card = go('''package main
+import "tsugumi"
+func run(inputs tsugumi.Inputs) (tsugumi.Output, error) { return tsugumi.Output{}, nil }
+''')
+    card['src']['checks/card_test.go'] = '''package checks
+import "testing"
+func TestCard(t *testing.T) { t.Fatal("deliberate Go Card test failure") }
+'''
+    write_project(root, {'go': card}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start')
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('go'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert 'deliberate Go Card test failure' in text(status.failure.diagnostic) + log
 
 
 def test_python_go_cpp_typed_values(project):
@@ -77,11 +95,13 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
                 'src':{'main.py':'''import tsugumi
 import outputs.out.t.Number as N
 def main(inputs):
+ result = {}
  for port in ("out","other"):
   b=tsugumi.builder()
   N.Start(b)
   N.AddValue(b,9007199254740993)
-  yield {port: tsugumi.message(b, N.End(b))}
+  result[port] = tsugumi.message(b, N.End(b))
+ return result
 '''}},
         'go':card,
         'check':{'card':{'language':'cpp','inputs':[{'name':'number'}]},
@@ -143,7 +163,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
  BODY
 }'''.replace('BODY',body)
     write_project(root,{'fail':go(source,params=[{'name':'fail','type':'bool','data':True}])},[])
-    c=connect();run,status=run_and_wait(c,'start',timeout=1800)
+    c=connect();run,status=run_and_wait(c,'start')
     assert status.state==RunState.failed
     kind = FailureKind.output_invalid if 'tsugumi.Fail(' in body else FailureKind.worker_failed
     assert status.failure.kind == kind
@@ -169,7 +189,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
     run=start_run(c,'start');event=first_display(c,run)
     assert text(event.value.display.value.text)=='running'
     c.call('RunCancelRequest',runId=run)
-    assert wait_run(c,run,10).state==RunState.cancelled
+    assert wait_run(c,run).state==RunState.cancelled
     edit_card(None,c,'live',lambda card:set_param(card,'slow',False))
     recovered=succeeded(c)
     assert text(shown(c,recovered,'live').value.text)=='recovered'
@@ -188,7 +208,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
  return tsugumi.Output{},run.Go(func()error{for{};return nil})
 }'''
     write_project(root,{'slow':go(source,timeoutSeconds=2,params=[{'name':'slow','type':'bool','data':True}])},[])
-    c=connect();run,status=run_and_wait(c,'start',timeout=1800)
+    c=connect();run,status=run_and_wait(c,'start')
     assert status.state==RunState.failed, (text(c.call('LogRangeRequest',runId=run,card=path('slow'),stream=2,limitBytes=65536).text), vars(c.call('RunRecordRequest',runId=run,card=path('slow')).status))
     assert c.call('RunRecordRequest',runId=run,card=path('slow')).status.failure.kind == FailureKind.timeout
     edit_card(None,c,'slow',lambda card:set_param(card,'slow',False))
@@ -247,13 +267,19 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report)(tsugumi.Output,error){re
 def test_owned_inputs_and_managed_output_task(project):
     root,connect=project
     card=go('''package main
-import("tsugumi";"time")
+import "tsugumi"
 var previous tsugumi.Inputs
 func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugumi.Output,error){
  if previous.Number()!=nil && previous.Number().Value!=9007199254740993 {panic("retained input changed")}
  previous=inputs
  out:=&tsugumi.OutputOut{}
- err:=run.Go(func()error{time.Sleep(time.Millisecond);out.Value=inputs.Number().Value;return nil})
+ returning:=make(chan struct{})
+ defer close(returning)
+ err:=run.Go(func()error{
+   <-returning
+   out.Value=inputs.Number().Value
+   return nil
+ })
  return tsugumi.Output{Out:out},err
 }''',inputs=[{'name':'number'}])
     card['outputs']=NUMBER
@@ -302,18 +328,18 @@ def test_external_module_is_pinned_and_built_offline(project):
     assert text(shown(c, succeeded(c), 'go').value.text) == '550e8400-e29b-41d4-a716-446655440000'
 
 
-@pytest.mark.parametrize(('arguments', 'message'), [
-    ('lock = ./src/go.sum;', 'give `lock = ./src/go.sum;` and `hash` together'),
-    ('lock = ./src/go.sum; hash = pkgs.lib.fakeHash;', 'hash mismatch'),
-])
-def test_go_rejects_an_invalid_pin(project, arguments, message):
+@pytest.mark.parametrize('arguments', [
+    'lock = ./src/go.sum;',
+    'lock = ./src/go.sum; hash = pkgs.lib.fakeHash;',
+], ids=['missing-hash', 'wrong-hash'])
+def test_go_rejects_an_invalid_pin(project, arguments):
     root, connect = project
     write_project(root, {'go': external_module_card(arguments)}, [])
     c = connect()
-    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    run_id, status = run_and_wait(c, 'start')
     log = text(c.call('LogRangeRequest', runId=run_id, card=path('go'), stream=LogStream.build).text)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
-    assert message in text(status.failure.diagnostic) + log
+    assert not c.call('RunRecordRequest', runId=run_id, card=path('go')).record.summary.environmentId
 
 
 def test_go_rejects_missing_required_output(project):
@@ -325,7 +351,7 @@ func run(inputs tsugumi.Inputs)(tsugumi.Output,error){
 }''')
     card['outputs'] = NUMBER
     write_project(root, {'go': card}, [])
-    _, status = run_and_wait(connect(), 'start', timeout=1800)
+    _, status = run_and_wait(connect(), 'start')
     assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
 
 

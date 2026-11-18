@@ -116,7 +116,7 @@ console.log('Guide UI: core events and presentation, absent lists, no model or l
       CoreHost.prototype.getSettings = async function () {
         this.user.call = async <T = any>(method: string): Promise<T> => {
           if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', profile: 'desktop', model: 'fixture' } } as T
-          if (method === 'ProviderStatusRequest') return { configured: false, message: 'Sign in to ChatGPT again' } as T
+          if (method === 'ProviderStatusRequest') return { configured: false, code: 'chatgpt_sign_in_required' } as T
           if (method === 'GuideAdvanceRequest') return {} as T
           throw new Error(`Unexpected request: ${method}`)
         }

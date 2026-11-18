@@ -141,11 +141,12 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
   EXPECT_EQ(JsonString(JsonString(refused.View(), "/text"), "/value/kind"),
             "revision_conflict");
-  EXPECT_NE(JsonString(refused.View(), "/text").find("read the project again"),
-            std::string::npos);
+  const auto replay = Tool(conversation, "project_save", input, "stale");
+  ASSERT_TRUE(replay.Code().empty()) << replay.View();
+  EXPECT_TRUE(JsonBool(replay.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(replay.View(), "/text"), "/value/kind"),
+            "revision_conflict");
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
-  EXPECT_EQ(Tool(conversation, "project_save", input, "stale").View(),
-            refused.View());
 }
 
 TEST_F(AgentProjectFixture,
@@ -224,6 +225,7 @@ TEST_F(AgentProjectFixture,
   });
   // Always unblock approval on an assertion failure before joining the helper.
   std::string approval;
+  // Agent save approvals are read through AccessListRequest without a push event.
   const auto deadline = std::chrono::steady_clock::now() + 10s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =

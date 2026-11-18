@@ -10,7 +10,7 @@ install(FILES ruby/tsugumi.rb ruby/trim-gems.rb DESTINATION share/tsugumi/sdk/ru
 install(FILES rust/Cargo.toml rust/sdk-crates.lock rust/update-lock.py DESTINATION share/tsugumi/sdk/rust)
 install(FILES rust/src/runtime.rs DESTINATION share/tsugumi/sdk/rust/src)
 install(FILES go/go.mod go/runtime.go go/host.h go/update-lock.py DESTINATION share/tsugumi/sdk/go)
-install(FILES src/python_main.c src/go_host.c src/rust_host.c src/r_main.c src/julia_main.c src/native_host.h src/card_runtime.cc src/ruby_main.c src/json_face.cc DESTINATION share/tsugumi/sdk/src)
-install(FILES codegen/card_cpp.py codegen/card_csharp.py codegen/card_go.py codegen/card_json.py codegen/card_rust.py codegen/trim_packages.py DESTINATION share/tsugumi/sdk/codegen)
+install(FILES src/python_main.c src/go_host.c src/rust_host.c src/r_main.c src/julia_main.c src/native_host.h src/card_runtime.cc src/ruby_main.c DESTINATION share/tsugumi/sdk/src)
+install(FILES codegen/card_cpp.py codegen/card_csharp.py codegen/card_go.py codegen/card_rust.py codegen/trim_packages.py DESTINATION share/tsugumi/sdk/codegen)
 
 add_subdirectory(describe)

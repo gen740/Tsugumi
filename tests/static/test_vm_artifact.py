@@ -1,9 +1,10 @@
 """Guest artifact assembly and integrity."""
 import argparse
-import hashlib
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -29,9 +30,7 @@ def fixture(directory):
             entry.size = len(data)
             tar.addfile(entry, io.BytesIO(data))
     value = {"identity": "definition", "system": "aarch64-linux", "revision": "commit",
-             "files": {p.name: artifact.digest(p) for p in directory.iterdir()},
-             "members": {name: hashlib.sha256(data).hexdigest() for name, data in
-                         [("vmlinux", b"kernel"), ("rootfs.erofs", b"image"), ("vm-version", b"definition\n")]}}
+             "files": {p.name: artifact.digest(p) for p in directory.iterdir()}}
     (directory / "vm-manifest.json").write_text(json.dumps(value))
     return value
 
@@ -56,14 +55,6 @@ def test_wrong_archive_stamp_fails_even_with_updated_archive_checksum(tmp_path):
         artifact.verify(tmp_path, "another-definition")
 
 
-def test_attachment_checksums_match_extracted_bytes(tmp_path):
-    value = fixture(tmp_path)
-    value["members"]["rootfs.erofs"] = "0" * 64
-    (tmp_path / "vm-manifest.json").write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="attachment checksum"):
-        artifact.verify(tmp_path, "definition")
-
-
 def test_build_emits_payload_manifest_and_checksums(tmp_path):
     image, out = tmp_path / "image", tmp_path / "artifact"
     image.mkdir()
@@ -74,6 +65,8 @@ def test_build_emits_payload_manifest_and_checksums(tmp_path):
     value = artifact.verify(out, "definition", "commit")
     assert value["files"] == {artifact.PAYLOAD: artifact.digest(out / artifact.PAYLOAD)}
     assert (out / artifact.PAYLOAD).read_bytes() == (image / artifact.PAYLOAD).read_bytes()
-    assert (out / "SHA256SUMS").read_text() == "".join(
-        f"{artifact.digest(out / name)}  {name}\n"
-        for name in sorted([artifact.PAYLOAD, "vm-manifest.json"]))
+    checksums = dict(reversed(line.split(maxsplit=1))
+                     for line in (out / "SHA256SUMS").read_text().splitlines())
+    assert checksums == {name: artifact.digest(out / name) for name in (artifact.PAYLOAD, "vm-manifest.json")}
+    checker = ["sha256sum"] if shutil.which("sha256sum") else ["shasum", "-a", "256"]
+    subprocess.run([*checker, "-c", "SHA256SUMS"], cwd=out, check=True)

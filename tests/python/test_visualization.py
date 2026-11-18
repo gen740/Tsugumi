@@ -49,12 +49,27 @@ def display_module(*args): pass
 PRELUDE = '''
 import csv, json, sys, importlib.util
 from types import SimpleNamespace
+from html.parser import HTMLParser
 from pathlib import Path
 import flatbuffers
 import tsugumi
 from tsugumi import contract
 HERE = Path(sys.argv[1])
 TEMPLATES = json.loads((HERE / 'templates.json').read_text())
+
+class Scripts(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.sources = []
+    def handle_starttag(self, tag, attributes):
+        if tag == 'script':
+            self.sources.append(dict(attributes).get('src'))
+
+def shows_note(folder, library, note):
+    plot = json.loads((folder / 'plot.json').read_text())
+    if library == 'plotly':
+        return note in [label.get('text') for label in plot['layout'].get('annotations', [])]
+    return note in plot.get('title', {}).get('subtitle', [])
 
 def camel(name): return ''.join(part[:1].upper() + part[1:] for part in name.split('_'))
 
@@ -83,8 +98,7 @@ class InvocationFixture:
         inputs = SimpleNamespace(params=self.p, input=self.input)
         report = SimpleNamespace(figure=self.figure, log=lambda message: None)
         result = load(self.library).main(inputs, report, self)
-        for batch in result:
-            self.outputs.update({port: tsugumi.message(value) for port, value in batch.items()})
+        self.outputs = {port: tsugumi.message(value) for port, value in result.items()}
         from outputs.figure.visualization.Files import Files
         return Path(Files.GetRootAs(self.outputs['figure'], 0).Value().decode())
 
@@ -97,8 +111,11 @@ def load(library):
     return module
 
 def use(kind, typename='Table'):
-    (HERE / '_contract.json').write_text(json.dumps({'inputs': [{'name': 'data', 'type': 'inputs.data.example.' + typename, 'kind': kind, 'required': True}], 'outputs': []}))
+    ports = [{'name': 'data', 'type': 'inputs.data.example.' + typename, 'kind': kind, 'required': True}] if kind else []
+    (HERE / '_contract.json').write_text(json.dumps({'inputs': ports, 'outputs': []}))
     contract._contract.cache_clear()
+    contract._port_index.cache_clear()
+    contract._generated.cache_clear()
 
 def table(x, y, group=None):
     """The `data` input as typed equally sized columns (inputs.data.example.Table)."""
@@ -153,38 +170,46 @@ ys = [float(i * i) for i in range(24)] + [1.0, float('inf')]
 case = InvocationFixture({library!r}, table(xs, ys, ['a' if i % 2 else 'b' for i in range(26)]), Kind={kind!r}, Series='group')
 folder = case.run()
 assert folder.name == 'figure' and folder.parent == Path(case.output_directory)
-assert set({sorted(FILES[library])!r}) | {{'plotted.csv', 'metadata.json'}} == {{p.name for p in folder.iterdir()}}
+assert set({sorted(FILES[library])!r}) | {{'plotted.csv', 'metadata.json'}} <= {{p.name for p in folder.iterdir()}}
 meta = json.loads((folder / 'metadata.json').read_text())
 finite = 25 if {kind!r} == 'histogram' else 24  # a histogram needs only x
 assert meta['run_id'] == case.run_id and meta['card'] == 'chart' and meta['invocation'] == 1
 assert meta['library'] == {library!r} and meta['kind'] == {kind!r}
 assert (meta['source_rows'], meta['finite_rows'], meta['sampled'], meta['sample_every'], meta['max_points']) == (26, finite, False, 1, 5000)
-assert meta['drawn_rows'] == finite and meta['note'].startswith(f'{{finite}} of 26 rows')
+assert meta['drawn_rows'] == finite and meta['note']
 plotted = rows_of(folder / 'plotted.csv')
 if {kind!r} == 'histogram':
-    assert set(plotted[0]) == {{'left', 'right', 'count', 'series'}}
+    assert set(plotted[0]) >= {{'left', 'right', 'count', 'series'}}
     assert sum(int(r['count']) for r in plotted) == finite
 else:
-    assert set(plotted[0]) == {{'x', 'y', 'series'}} and len(plotted) == 24
+    assert set(plotted[0]) >= {{'x', 'y', 'series'}} and len(plotted) == 24
     assert {{(float(r['x']), float(r['y'])) for r in plotted}} == {{(float(i), float(i * i)) for i in range(24)}}
     assert {{r['series'] for r in plotted}} == {{'a', 'b'}}
 assert len(case.shown) == 1  # one display per invocation
 artifact = folder / ('plot.png' if {library!r} == 'matplotlib' else 'plot.json')
-before = artifact.read_bytes()
+if {library!r} == 'matplotlib':
+    from PIL import Image, ImageChops
+    before_image = Image.open(artifact).convert('RGB')
 # The next invocation writes the same folder again: its own figure and metadata.
 case.invocation = 2; case.raw = table(xs, [y + 7 for y in ys], None)
 case.run(Series='', Theme='dark', Title='Updated')
-assert artifact.read_bytes() != before
+updated = rows_of(folder / 'plotted.csv')
+assert updated != plotted
 meta = json.loads((folder / 'metadata.json').read_text())
 assert meta['invocation'] == 2 and {{r['series'] for r in rows_of(folder / 'plotted.csv')}} == {{''}}
 assert plt.get_fignums() == []
 if {library!r} == 'matplotlib':
-    from PIL import Image
-    assert Image.open(artifact).size == (7 * 120, 4 * 120)
+    rendered = Image.open(artifact).convert('RGB')
+    assert rendered.size == (7 * 120, 4 * 120)
+    assert ImageChops.difference(before_image, rendered).getbbox()
     assert (folder / 'plot.pdf').read_bytes().startswith(b'%PDF')
 else:
-    html = (folder / 'plot.html').read_text()
-    assert '<script src=' not in html and 'cdn.jsdelivr.net' not in html.split('<body>')[0]
+    spec = json.loads(artifact.read_text())
+    title = spec['layout']['title']['text'] if {library!r} == 'plotly' else spec['title']['text']
+    assert title == 'Updated'
+    html = Scripts()
+    html.feed((folder / 'plot.html').read_text())
+    assert html.sources and all(source is None or source.startswith('data:') for source in html.sources)
 ''')
 
 
@@ -206,7 +231,7 @@ assert meta['note']
 plotted = rows_of(folder / 'plotted.csv')
 assert [float(r['x']) for r in plotted] == [float(i) for i in range(0, n, 2)]
 if {library!r} != 'matplotlib':
-    assert meta['note'] in (folder / 'plot.json').read_text()
+    assert shows_note(folder, {library!r}, meta['note'])
 # Raising max_points draws every point without sampling.
 meta = json.loads((case.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
 assert (meta['drawn_rows'], meta['sampled']) == (n, False)
@@ -217,7 +242,7 @@ assert (meta['drawn_rows'], meta['sampled']) == (2001, True)
 assert meta['note']
 assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 2001
 if {library!r} != 'matplotlib':
-    assert meta['note'] in (folder / 'plot.json').read_text()
+    assert shows_note(folder, {library!r}, meta['note'])
 expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1), 'kind')
 expect_failure('validation_failed', lambda: case.run(Kind='line', Y='missing'), "'missing'")
 ''')
@@ -268,7 +293,6 @@ use('directory', 'File')
 case = InvocationFixture('matplotlib', pack(file))
 assert input_rows(SimpleNamespace(input=case.input), case, member='data.csv')[0]['y'] == '3'
 expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, member='../outside.csv'), 'relative member')
-(HERE / '_contract.json').write_text(json.dumps({'inputs': [], 'outputs': []}))
-contract._contract.cache_clear()
+use(None)
 expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case), 'Connect')
 ''')

@@ -53,18 +53,18 @@ TEST(DisplayModule, RetainedSnapshotRoundTripsNamedBinaryBlobs) {
             bytes);
   EXPECT_EQ(module->blobs()->Get(0)->data()->size(), 0u);
 }
-TEST(DisplayModule,
-     WorkerRejectsInvalidIdentityAndOversizedInputWhileCoreCarriesThem) {
+TEST(DisplayModule, WorkerChecksModuleContentsWhileCoreCarriesThem) {
   for (const auto& encoded :
        {module_display("plotly", "{}", {}),
         module_display("/nix/store/00000000000000000000000000000000-view", "{",
-                       {}),
-        module_display("/nix/store/00000000000000000000000000000000-view", "{}",
-                       {{"points", std::string((8u << 20) + 1, '\0')}})}) {
+                       {})}) {
     EXPECT_TRUE(workerd::validate_display(
         *flatbuffers::GetRoot<Tsugumi::Data::Display>(encoded.data())));
     EXPECT_TRUE(wire::standalone_display(encoded));
   }
+  EXPECT_TRUE(wire::standalone_display(module_display(
+      "/nix/store/00000000000000000000000000000000-view", "{}",
+      {{"points", std::string((8u << 20) + 1, '\0')}})));
 }
 TEST(DisplayModule, WorkerOwnsUtf8ValidationBeforeClientUnpacking) {
   for (const auto kind : {wire::D::DisplayValue::DisplayText,

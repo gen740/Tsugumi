@@ -206,21 +206,21 @@ public extension RPCClient {
   func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
     let r = Tsugumi_RPC_NixSourceResolveRequestT()
     r.ref = ref
-    return try await call(.nixsourceresolverequest, r, timeout: .seconds(300))
+    return try await call(.nixsourceresolverequest, r)
   }
 
   /// Deletes the project's build caches; documents and history are kept.
   func clearCache(opId: UUID) async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()
     r.opId = opId.uuidString.lowercased()
-    return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
+    return try await call(.projectcacheclearrequest, r)
   }
 
   func deleteRunScratch(opId: UUID, paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
     let r = Tsugumi_RPC_RunScratchDeleteRequestT()
     r.opId = opId.uuidString.lowercased()
     r.paths = paths
-    return try await call(.runscratchdeleterequest, r, timeout: .seconds(300))
+    return try await call(.runscratchdeleterequest, r)
   }
 
   func cacheUsage() async throws -> Tsugumi_RPC_ProjectCacheUsageResultT {
@@ -233,7 +233,7 @@ public extension RPCClient {
     let r = Tsugumi_RPC_RunHistoryDeleteRequestT()
     r.opId = opId.uuidString.lowercased()
     r.endedBefore = endedBefore.map { Int64($0.timeIntervalSince1970 * 1000) }
-    return try await call(.runhistorydeleterequest, r, timeout: .seconds(300))
+    return try await call(.runhistorydeleterequest, r)
   }
 
   // MARK: Versions (git)

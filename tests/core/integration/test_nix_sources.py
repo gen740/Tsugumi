@@ -13,6 +13,7 @@ import pytest
 from projects import builtin_project, card, card_in_card, conn, run_and_wait, write
 from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 REV = "0bf0f8bf67a1ffc03ad0234a7aef1eab8681cddb"
@@ -53,7 +54,7 @@ def opt_in(root, sources):
 def run(core_factory, root, *card_path, expected=RunState.succeeded):
     daemon = core_factory(project_root=root)
     c = daemon.connect()
-    run_id, status = run_and_wait(c, ["start"], timeout=600)
+    run_id, status = run_and_wait(c, ["start"])
     log = lambda stream: text(c.call("LogRangeRequest", runId=run_id, card=path(*card_path), stream=stream, limitBytes=65536).text)
     out, err = log(1), log(2)
     assert status.state == expected, (status.failure and text(status.failure.diagnostic), out, err)
@@ -280,7 +281,7 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         opt_in(root, [dict(source, overrides=custom), dict(source, name="original")])
         c = core_factory(project_root=root).connect()
         def output():
-            run_id, status = run_and_wait(c, ["start"], timeout=120)
+            run_id, status = run_and_wait(c, ["start"])
             assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
             return text(c.call("LogRangeRequest", runId=run_id, card=path("c"), stream=1).text)
         assert output() == "custom\npinned source\npinned patch\noriginal\n"
@@ -294,9 +295,10 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         custom["sample"]["override"]["src"]["fetchurl"]["sha256"] = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         doc["nixSources"][0]["overrides"] = custom
         save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
-        run_id, status = run_and_wait(c, ["start"], timeout=120)
+        run_id, status = run_and_wait(c, ["start"])
         assert status.state == RunState.failed
-        assert "hash mismatch" in text(status.failure.diagnostic)
+        assert status.failure.kind == FailureKind.nix_failed
+        assert not c.call("RunEnvironmentsRequest", runId=run_id).environments
 
 
 @pytest.mark.parametrize("customization", [

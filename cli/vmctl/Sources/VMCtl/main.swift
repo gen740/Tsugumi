@@ -1,6 +1,6 @@
 // tsugumi-vmctl: drives the shared VM without the app (tests, diagnosis).
 //
-//   tsugumi-vmctl --support DIR [--console] [--cpus N] [--memory GiB]
+//   tsugumi-vmctl --support DIR [--console]
 //   (TSUGUMI_VM_CMDLINE replaces the kernel command line, for diagnosis)
 //
 // Reads commands from stdin, one per line, and answers on stdout:
@@ -12,7 +12,8 @@
 //                               (runs in the project's terminal environment)
 //   quit                     -> stops every project and the VM, then exits
 // With --console the VM console goes to stderr.
-// Needs the com.apple.security.virtualization entitlement (codesign).
+// The sibling tsugumi-vmhost needs the com.apple.security.virtualization entitlement.
+import Darwin
 import Foundation
 import TsugumiLauncher
 
@@ -20,14 +21,11 @@ signal(SIGPIPE, SIG_IGN)  // a closed socket is an error, never the end of the p
 
 var support: URL?
 var echoConsole = false
-var resources = VMResources.default
 var args = CommandLine.arguments.dropFirst()
 while let a = args.popFirst() {
   switch a {
   case "--support": support = args.popFirst().map { URL(fileURLWithPath: $0) }
   case "--console": echoConsole = true
-  case "--cpus": resources.cpus = Int(args.popFirst() ?? "") ?? resources.cpus
-  case "--memory": resources.memoryGiB = Int(args.popFirst() ?? "") ?? resources.memoryGiB
   default:
     FileHandle.standardError.write(Data("usage: tsugumi-vmctl --support DIR [--console]\n".utf8))
     exit(2)
@@ -38,7 +36,7 @@ guard let support else {
   exit(2)
 }
 setvbuf(stdout, nil, _IOLBF, 0)
-let manager = EnvironmentManager(support: support, resources: resources)
+let manager = EnvironmentManager(support: support)
 if echoConsole {
   _ = manager.vm.console.observe { line in FileHandle.standardError.write(Data((line + "\n").utf8)) }
 }
@@ -95,7 +93,7 @@ Task {
         }
         say("exit \(status)")
       case "quit":
-        await manager.shutdown()
+        await manager.shutdownForUpdate()
         say("bye")
         exit(0)
       default:
@@ -105,7 +103,7 @@ Task {
       say("error " + "\(error)".replacingOccurrences(of: "\n", with: " "))
     }
   }
-  await manager.shutdown()
+  await manager.shutdownForUpdate()
   exit(0)
 }
 dispatchMain()

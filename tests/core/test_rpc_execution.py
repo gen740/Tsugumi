@@ -142,7 +142,7 @@ def test_timeout_ends_a_worker_that_ignores_cancellation(core_factory, project, 
 
     run_id = run(client)
     gate.wait()
-    status = wait_run(client, run_id, timeout=6)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.timeout
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
@@ -163,7 +163,7 @@ def test_deadline_is_the_reason_when_a_cooperative_worker_reports_cancelled(core
 
     run_id = run(client)
     gate.wait()
-    status = wait_run(client, run_id, timeout=6)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.timeout
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
@@ -189,11 +189,11 @@ def test_a_failure_after_the_stop_request_keeps_its_text(core_factory, project, 
     gate.wait()
     if not deadline:
         client.call("RunCancelRequest", runId=run_id)
-    status = wait_run(client, run_id, timeout=6)
+    status = wait_run(client, run_id)
     assert status.state == (RunState.failed if deadline else RunState.cancelled)
     failure = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).status.failure
     assert failure.kind == (FailureKind.timeout if deadline else FailureKind.cancelled)
-    assert "output_invalid: scripted rejection" in text(failure.diagnostic)
+    assert "scripted rejection" in text(failure.diagnostic)
 
 
 @pytest.mark.parametrize("cancel", [True, False], ids=["user-cancels-build", "build-deadline-expires"])
@@ -216,7 +216,7 @@ def test_build_wait_can_be_interrupted(core_factory, project, cancel):
     gate.wait()
     if cancel:
         client.call("RunCancelRequest", runId=run_id)
-    status = wait_run(client, run_id, timeout=6)
+    status = wait_run(client, run_id)
     assert status.state == (RunState.cancelled if cancel else RunState.failed)
     if not cancel:
         assert status.failure.kind == FailureKind.timeout

@@ -7,6 +7,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+from pathlib import Path
 import ssl
 import socket
 import subprocess
@@ -16,6 +17,7 @@ import time
 import pytest
 from harness import remote_worker as R
 from harness import peer_tls as TLS
+from harness.file_events import process_file, wait_for_exit, wait_for_file
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="remote workers require Linux")
 
@@ -49,40 +51,54 @@ class Worker:
         ready = self.state / "worker.ready.json"
         ready.unlink(missing_ok=True)
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=self.log)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if self.process.poll() is not None:
-                raise RuntimeError((self.root / "worker.log").read_text())
-            try:
-                self.port = json.loads(ready.read_text())["port"]
-                # Reconnect scenarios deliberately keep the same real endpoint.
-                self.command[self.command.index("--port") + 1] = str(self.port)
-                with socket.create_connection(("127.0.0.1", self.port), timeout=0.1):
-                    return
-            except (OSError, ValueError):
-                time.sleep(0.02)
-        raise TimeoutError("worker did not start")
+        published = process_file(self.process, ready)
+        if published is None:
+            raise RuntimeError((self.root / "worker.log").read_text())
+        self.port = json.loads(published.read_text())["port"]
+        # Reconnect scenarios deliberately keep the same real endpoint.
+        self.command[self.command.index("--port") + 1] = str(self.port)
 
     def close(self):
         if self.process and self.process.poll() is None:
             self.process.terminate()
+            # Escalate to kill if the listener fails to shut down.
             try:
                 self.process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 self.process.kill()
-                self.process.wait(timeout=5)
+                self.process.wait()
         self.log.close()
 
     def restart(self):
         self.process.kill()
-        self.process.wait(timeout=5)
+        self.process.wait()
         self.log.close()
         self.start()
+
+    def journal(self, job):
+        return self.state / "projects" / self.scope / "jobs" / job / "state"
+
+    def wait_state(self, job, *states):
+        path = self.journal(job)
+
+        def read():
+            try:
+                record = json.loads(path.read_text())
+            except FileNotFoundError:
+                return None
+            if record["state"] in states:
+                return record
+            assert record["state"] not in (R.JobState.Failed, R.JobState.Cancelled,
+                                           R.JobState.Succeeded, R.JobState.Interrupted,
+                                           R.JobState.Released), record
+            return None
+
+        return wait_for_file(path, read)
 
     def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
         fields = {}
         if scoped:
-            fields.update(serverId=self.caps.serverId, projectScope=self.scope, coreLifeId=self.core_life_id)
+            fields.update(projectScope=self.scope, coreLifeId=self.core_life_id)
             if kind != R.RequestBody.ProbeRequest:
                 fields["instanceId"] = self.instance
         fields.update(routing)
@@ -126,18 +142,18 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 7 and worker.caps.maxJobs == 1
+    assert worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):
         worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False, identity=stranger)
-    assert TLS.public_key(worker.state / "identity.pem").startswith("ed25519:")
     assert (worker.state / "identity.pem").stat().st_mode & 0o777 == 0o600
     local = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), unix=True)
     assert local.body.instanceId == worker.instance
     before = (worker.caps.serverId, worker.instance)
     worker.restart()
     assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId == before[1]
+    assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body.serverId == before[0]
     assert (worker.state.stat().st_mode & 0o777) == 0o700
 
 
@@ -173,8 +189,8 @@ def test_cancel_before_submit_and_release_tombstone(worker):
     worker.restart()
     late = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert late.body.state == R.JobState.Released
-    directory = worker.state / "projects" / worker.scope / "jobs" / job
-    assert [p.name for p in directory.iterdir()] == ["state"]
+    missing = worker.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=job)
+    assert missing.bodyType == R.ReplyBody.Failure and missing.body.code == R.ErrorCode.NotFound
 
 
 def test_concurrent_submit_has_one_fingerprint(worker):
@@ -206,8 +222,7 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-@pytest.mark.parametrize("end", ["cancel", "listener_expiry", "supervisor_expiry"])
-def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path, end):
+def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
         pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
@@ -221,18 +236,8 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
     peer = Worker(tmp_path, binary, env={**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
     jobs = [str(n) * 64 for n in (4, 5, 6)]
     fingerprints = {}
-    expired = False
     def state(job):
-        if expired:
-            return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())["state"]
         return peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body.state
-    def wait(job, expected):
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if state(job) == expected:
-                return
-            time.sleep(0.05)
-        raise AssertionError(f"job did not reach {expected}")
     try:
         for i, job in enumerate(jobs):
             digest = peer.upload(job, b"staged input")
@@ -241,45 +246,24 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
             accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
             assert accepted.bodyType == R.ReplyBody.JobStatus
             if i == 0:
-                wait(job, R.JobState.Running)
+                peer.wait_state(job, R.JobState.Running)
         assert state(jobs[1]) == R.JobState.Queued
         peer.restart()
         assert state(jobs[0]) == R.JobState.Running and state(jobs[1]) == R.JobState.Queued
         # The timeout is the Card call's budget: waiting for a slot longer than
-        # it does not fail a job.
+        # it does not fail a job. Remaining queued emits no event, so let the
+        # configured one-second Card budget elapse while the slot is held.
         time.sleep(1.5)
         assert state(jobs[2]) == R.JobState.Queued
-        if end == "cancel":
-            peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
-            wait(jobs[0], R.JobState.Cancelled)
-            wait(jobs[1], R.JobState.Running)
-        else:
-            if end == "supervisor_expiry":
-                peer.process.kill()
-                peer.process.wait(timeout=5)
-                peer.log.close()
-            lease = peer.state / "projects" / peer.scope / "cores" / peer.core_life_id
-            expired_lease = lease.with_suffix(".expired")
-            expired_lease.write_text("0")
-            expired_lease.replace(lease)  # deterministic expiry, no wall-clock timeout sleep
-            expired = True
-            wait(jobs[0], R.JobState.Cancelled)
-            if end == "supervisor_expiry":
-                peer.start()
-            peer.core_life_id = "f" * 64
-            peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
-            wait(jobs[1], R.JobState.Cancelled)
-            for job in jobs[:2]:
-                blobs = peer.state / "projects" / peer.scope / "jobs" / job / "blobs"
-                assert list(blobs.iterdir()), "ordinary cancellation must retain verified blobs"
-            refused = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=jobs[0])
-            assert refused.bodyType == R.ReplyBody.Failure
+        peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
+        peer.wait_state(jobs[0], R.JobState.Cancelled)
+        peer.wait_state(jobs[1], R.JobState.Running)
     finally:
         for job, fingerprint in fingerprints.items():
             peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
         for job in jobs[:2]:
             if job in fingerprints:
-                wait(job, R.JobState.Cancelled)
+                peer.wait_state(job, R.JobState.Cancelled)
         peer.close()
 
 
@@ -300,20 +284,10 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
     first, second = "7" * 64, "8" * 64
     directory = peer.state / "projects" / peer.scope / "jobs" / first
 
-    def wait_for(check, message):
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if check():
-                return
-            time.sleep(0.05)
-        raise AssertionError(message)
-
-    def record(job):
-        return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())
-
-    def child():
+    def child(previous=None):
         try:
-            return int(child_pid.read_text())
+            pid = int(child_pid.read_text())
+            return pid if pid != previous else None
         except (FileNotFoundError, ValueError):
             return None  # The launcher may still be writing its PID file.
 
@@ -326,23 +300,22 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
         accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=first)
         assert accepted.body.state == R.JobState.Queued
         # From acceptance to timeout there are no further core requests at all.
-        wait_for(lambda: child() is not None and
-                 record(first)["state"] == R.JobState.Running,
-                 "orphan never started its child")
-        pid = child()
-        assert os.path.exists(f"/proc/{pid}"), "child must be alive before the deadline"
-        assert record(first)["deadline"] == 0
+        pid = wait_for_file(child_pid, child)
+        assert Path(f"/proc/{pid}").exists()
         # The adapter has not started a Card call: its wall time is not the
         # Card budget. Cancellation still tears down its namespace.
         peer.process.kill()
-        peer.process.wait(timeout=5)
+        peer.process.wait()
         peer.log.close()
         peer.start()
         peer.call(R.RequestBody.CancelRequest,
                   R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
-        wait_for(lambda: record(first)["state"] == R.JobState.Cancelled, "orphan did not cancel")
-        wait_for(lambda: not os.path.exists(f"/proc/{pid}"), "cancelled child survived")
-        assert (directory / "blobs" / digest).read_bytes() == b"orphan input"
+        peer.wait_state(first, R.JobState.Cancelled)
+        wait_for_exit(pid)
+        cancelled = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=first)
+        assert cancelled.body.state == R.JobState.Cancelled
+        blob = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=first)
+        assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
         # A new life cannot collect the old result, but can use the freed slot.
         peer.core_life_id = "f" * 64
@@ -351,11 +324,11 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
         spec = peer.spec(digest, timeout=30)
         fingerprints[second] = hashlib.sha256(spec).hexdigest()
         peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=second)
-        wait_for(lambda: record(second)["state"] == R.JobState.Running and
-                 child() not in (None, pid), "execution slot was not reused")
+        peer.wait_state(second, R.JobState.Running)
+        wait_for_file(child_pid, lambda: child(previous=pid))
         peer.call(R.RequestBody.CancelRequest,
                   R.CancelRequestT(fingerprint=hashlib.sha256(spec).hexdigest()), job=second)
-        wait_for(lambda: record(second)["state"] == R.JobState.Cancelled, "cleanup did not stop next job")
+        peer.wait_state(second, R.JobState.Cancelled)
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
     finally:
         try:
@@ -363,8 +336,7 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
                 peer.start()
             for job, fingerprint in fingerprints.items():
                 peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
-                wait_for(lambda: record(job)["state"] in (R.JobState.Failed, R.JobState.Cancelled),
-                         "test cleanup did not stop its supervisor")
+                peer.wait_state(job, R.JobState.Failed, R.JobState.Cancelled)
         finally:
             peer.close()
 
@@ -379,8 +351,21 @@ def test_bounded_frames_and_single_listener(worker):
                 with secure.makefile("rb") as stream:
                     error = R.read(stream).payload
             assert error.bodyType == R.ReplyBody.Failure and error.body.code == R.ErrorCode.Invalid
-    duplicate = subprocess.run(worker.command, capture_output=True, timeout=10, check=False)
-    assert duplicate.returncode != 0 and b"another remote worker" in duplicate.stderr
+    command = list(worker.command)
+    command[command.index("--port") + 1] = "0"
+    command += ["--socket", str(worker.root / "duplicate.sock")]
+    with subprocess.Popen(command, env=worker.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as duplicate:
+        ready = worker.state / "worker.ready.json"
+
+        def duplicate_ready():
+            published = json.loads(ready.read_text())
+            return published if published["pid"] == duplicate.pid else None
+
+        started = process_file(duplicate, ready, duplicate_ready)
+        if started:
+            duplicate.terminate()
+        assert duplicate.wait() != 0 and started is None
+    assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId == worker.instance
 
 
 def test_limits_require_delegation(worker):

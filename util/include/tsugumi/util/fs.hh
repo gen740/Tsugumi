@@ -78,7 +78,7 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
 
-// Exclusive non blocking advisory lock held for the lifetime of the object.
+// Exclusive advisory lock held for the lifetime of the object.
 class FileLock {
  public:
   FileLock() = default;
@@ -86,10 +86,12 @@ class FileLock {
   FileLock& operator=(const FileLock&) = delete;
   FileLock(FileLock&& o) noexcept : fd_(o.fd_) { o.fd_ = -1; }
   ~FileLock();
+  static FileLock acquire(const stdfs::path& p);
   // Returns nullopt when another process holds the lock.
   static std::optional<FileLock> try_acquire(const stdfs::path& p);
 
  private:
+  static std::optional<FileLock> open(const stdfs::path& p, bool wait);
   int fd_ = -1;
 };
 

@@ -151,8 +151,7 @@ void WorkerPool::release(const std::string& card, const std::string& key,
       } else {
         ++it;
       }
-    resident_.push_back(
-        {card, key, std::move(worker), std::chrono::steady_clock::now()});
+    resident_.push_back({card, key, std::move(worker)});
   }
 }
 
@@ -210,21 +209,18 @@ void WorkerPool::reaper() {
       l.lock();
       refilling_.erase(key);
       if (w && !stopping_ && !standby_.count(key))
-        standby_[key] = {"", key, std::move(w),
-                         std::chrono::steady_clock::now()};
+        standby_[key] = {"", key, std::move(w)};
       else if (w) {
         l.unlock();
         w.reset();
         l.lock();
       }
     }
-    // Idle workers past the limit end.
+    // Release dead workers and bound retained standby memory.
     std::vector<std::unique_ptr<WorkerProc>> ended;
-    auto now = std::chrono::steady_clock::now();
     for (auto it = standby_.begin(); it != standby_.end();)
       if (auto rss = it->second.worker->rss_bytes();
           !it->second.worker->alive() ||
-          now - it->second.since > limits_.idle ||
           (rss && *rss > limits_.max_rss_bytes)) {
         ended.push_back(std::move(it->second.worker));
         it = standby_.erase(it);

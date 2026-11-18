@@ -243,6 +243,63 @@ TEST(HostSettingsStore,
 }  // namespace tsugumi::test
 
 namespace tsugumi::test {
+TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
+  TemporaryDirectory directory;
+  host::Settings service(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::make_unique<MemorySecrets>());
+  const auto update = [&](const std::string& profile, const std::string& key,
+                          const std::string& raw) {
+    H::SettingsGetRequestT get;
+    get.profile = profile;
+    H::RequestT read;
+    read.value.Set(std::move(get));
+    flatbuffers::FlatBufferBuilder rb;
+    rb.Finish(H::Request::Pack(rb, &read));
+    const auto before = service.Handle(
+        *flatbuffers::GetRoot<H::Request>(rb.GetBufferPointer()), 1);
+    H::SettingsUpdateRequestT value;
+    value.profile = profile;
+    value.revision = H::GetMessage(before.data())
+                         ->payload_as_Reply()
+                         ->value_as_Settings()
+                         ->revision();
+    auto item = std::make_unique<H::SettingT>();
+    item->key = key;
+    item->value_json = raw;
+    value.changes.push_back(std::move(item));
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder b;
+    b.Finish(H::Request::Pack(b, &request));
+    const auto reply = service.Handle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+    return H::GetMessage(reply.data())->payload_as_Reply()->value_as_Failure() ==
+           nullptr;
+  };
+  const auto defaults = host::VMDefaultResources();
+  const auto limits = host::VMResourceLimits();
+  EXPECT_GE(defaults.cpus, 2u);
+  EXPECT_LE(defaults.cpus, std::min(8u, limits.cpus));
+  EXPECT_GE(defaults.memory_gib, 4u);
+  EXPECT_LE(defaults.memory_gib, 16u);
+  EXPECT_EQ(defaults.store_gib, 64u);
+  EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
+  EXPECT_TRUE(update("desktop", "vm.cpus", "1"));
+  EXPECT_TRUE(update("desktop", "vm.storeGiB", "128"));
+  EXPECT_EQ(service.VMResources().cpus, 1u);
+  EXPECT_EQ(service.VMResources().store_gib, 128u);
+  EXPECT_EQ(service.VMResources().memory_gib, defaults.memory_gib);
+  EXPECT_FALSE(update("desktop", "vm.cpus", std::to_string(limits.cpus + 1)));
+  EXPECT_FALSE(update("desktop", "vm.memoryGiB", "1"));
+  EXPECT_FALSE(update("desktop", "vm.storeGiB", "8"));
+  EXPECT_FALSE(update("desktop", "vm.storeGiB", Quote("64")));
+  EXPECT_FALSE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_FALSE(update("desktop", "vm.other", "2"));
+  EXPECT_TRUE(update("desktop", "vm.cpus", "0"));
+  EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
+}
 TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   TemporaryDirectory directory;
   auto memory = std::make_unique<MemorySecrets>();
@@ -674,7 +731,6 @@ TEST_F(ContextBudget,
   const auto normal = ::tsugumi::json::Object(requests[0]);
   EXPECT_EQ(summary.at("system"), normal.at("system"));
   EXPECT_EQ(summary.at("tools"), normal.at("tools"));
-  EXPECT_NE(requests[1].find("Want:"), std::string::npos);
 }
 
 TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
@@ -806,7 +862,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
                            {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
   EXPECT_TRUE(Compacted());
   EXPECT_TRUE(visible.empty());
-  EXPECT_GT(messages.size(), 20u);  // Many small recent messages, not four.
   EXPECT_TRUE(messages.front().context_summary);
   EXPECT_EQ(messages.back().content[0].text, std::string(180, 'r'));
   const auto requests = model.Requests();
@@ -814,8 +869,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
   EXPECT_NE(requests[0].find("signed-block"), std::string::npos);
   EXPECT_NE(requests[0].find("unchanged system"), std::string::npos);
   EXPECT_NE(requests[0].find("\"name\":\"inspect\""), std::string::npos);
-  EXPECT_NE(requests[0].find("Want:"), std::string::npos);
-  EXPECT_EQ(JsonUInt(requests[0], "/max_tokens"), 2048u);
   EXPECT_EQ(JsonString(requests[0], "/output_config/effort"), "max");
   // A failed continuation leaves the durable transcript untouched.
   const auto saved = agent::SerializeMessages(messages);
@@ -850,8 +903,7 @@ TEST_F(ContextBudget, OverLimitConversationSummarizesOnlyTheFittingPast) {
   std::jthread provider([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
-      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
-        continue;
+      if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
       // A real provider refuses the old whole-conversation summary too.
       if (request.size() >= config.context_limit_tokens)

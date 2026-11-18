@@ -18,7 +18,6 @@ class BrowserTransport final : public Transport {
     int interval = 0;
     bool opened = false;
     bool closed = false;
-    std::chrono::steady_clock::time_point deadline;
 
     auto End(Error error) -> void {
       if (closed) return;
@@ -100,17 +99,10 @@ class BrowserTransport final : public Transport {
           current->End({ErrorCode::Closed, "WebSocket connection closed"});
           return true;
         });
-    state->deadline =
-        std::chrono::steady_clock::now() + state->options.connect_timeout;
     state->interval = emscripten_set_interval(
         +[](void* context) {
           auto current = static_cast<State*>(context)->shared_from_this();
-          if (!current->opened &&
-              std::chrono::steady_clock::now() >= current->deadline)
-            current->End(
-                {ErrorCode::Timeout, "WebSocket connection timed out"});
-          else if (!current->closed && current->events.tick)
-            current->events.tick();
+          if (!current->closed && current->events.tick) current->events.tick();
         },
         20, state.get());
   }

@@ -36,8 +36,8 @@ private func release(tag: String, draft: Bool = false, prerelease: Bool = false,
 @Test func checksumsAreReadFromShasumLines() throws {
   let h = String(repeating: "ab", count: 32)
   #expect(UpdateCheck.checksum(in: "\(h)  Tsugumi.zip\n", for: "Tsugumi.zip") == h)
-  #expect(UpdateCheck.checksum(in: "\(h.uppercased()) *Tsugumi.zip", for: "Tsugumi.zip") == h)
-  #expect(UpdateCheck.checksum(in: h, for: "Tsugumi.zip") == h)
+  #expect(UpdateCheck.checksum(in: "\(h.uppercased()) *Tsugumi.zip", for: "Tsugumi.zip") == nil)
+  #expect(UpdateCheck.checksum(in: h, for: "Tsugumi.zip") == nil)
   #expect(UpdateCheck.checksum(in: "\(h)  Other.zip", for: "Tsugumi.zip") == nil)
   #expect(UpdateCheck.checksum(in: "abc  Tsugumi.zip", for: "Tsugumi.zip") == nil)
   let file = testTemporaryDirectory.appendingPathComponent("tsugumi-sha-\(UUID().uuidString)")
@@ -65,8 +65,9 @@ private func release(tag: String, draft: Bool = false, prerelease: Bool = false,
 }
 
 @MainActor @Test func devAndReleaseBuildsKeepTheirVMsApart() throws {
-  #expect(AppChannel.release.supportDirectory.lastPathComponent == "Tsugumi")
-  #expect(AppChannel.dev.supportDirectory.lastPathComponent == "Tsugumi-dev")
+  // (supportDirectory follows TSUGUMI_SUPPORT_DIR, which the test runner sets)
+  #expect(AppChannel.release.supportFolderName == "Tsugumi")
+  #expect(AppChannel.dev.supportFolderName == "Tsugumi-dev")
   // a bundle without TsugumiChannel (swift run, tests) is dev
   #expect(AppChannel(bundle: Bundle(for: BundleToken.self)) == .dev)
   // a dev build never updates itself

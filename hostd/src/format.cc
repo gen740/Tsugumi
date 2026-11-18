@@ -225,18 +225,10 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
                 "SHFMT_NO_EDITORCONFIG=true"};
     spec.cwd = dir.string();
     std::string err;
-    std::atomic<bool> stop{false};
     auto res =
-        proc::run(spec, &stop,
-                  std::chrono::steady_clock::now() + std::chrono::seconds(20),
-                  [&](const std::string& line) {
-                    if (err.size() < 8192) err += line;
-                  });
-    if (res.cancelled)
-      throw ProjectFailure("cancelled", "formatting was cancelled");
-    if (res.timed_out)
-      throw ProjectFailure(
-          "timeout", std::string(tool.exe) + " did not finish within 20 s");
+        proc::run(spec, nullptr, std::nullopt, [&](const std::string& line) {
+          if (err.size() < 8192) err += line;
+        });
     if (!proc::exited_ok(res.status)) {
       // Syntax errors: keep the text unchanged and point at the position.
       static const std::regex pos(R"((\d+):(\d+))");

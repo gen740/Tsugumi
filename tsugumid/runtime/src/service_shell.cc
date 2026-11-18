@@ -428,6 +428,7 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
       result.cancelled = cancelled.load();
       result.timed_out = now >= deadline;
       proc::kill_group(pid, SIGTERM);
+      // A command can ignore TERM and retain the sandbox after cancellation.
       kill_at = now + std::chrono::milliseconds(250);
     }
     if (!child.reaped && kill_at && now >= *kill_at)
@@ -548,6 +549,7 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
                  "shell commands must run as an unprivileged project user");
   const auto* request = project_request(req)->value_as_ProjectShellRequest();
   const auto command = request->command()->str();
+  // This short shell endpoint exposes a caller-controlled runtime budget.
   const auto timeout = request->timeout_ms().value_or(10000);
   if (timeout == 0 || timeout > 30000)
     throw Failed(FailureKind::invalid_request,

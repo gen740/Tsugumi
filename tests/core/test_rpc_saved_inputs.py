@@ -40,7 +40,7 @@ def saved_file_subgraph(project, core_factory):
         files={"definitions/source/report.txt": CONTENTS},
     )
     client = core_factory().connect()
-    run_id, status = run_and_wait(client, "source", timeout=10)
+    run_id, status = run_and_wait(client, "source")
     if status.state != RunState.succeeded:
         # Setup failure must not be mistaken for the expected partial-run
         # assertion below (the xfail only accepts AssertionError).
@@ -66,7 +66,7 @@ def test_each_input_child_preserves_saved_files_across_partial_runs(saved_file_s
     """Repeated partial runs can reuse a nested Workflow's saved file input."""
     client, _ = saved_file_subgraph
     for _ in range(2):
-        run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
+        run_id, status = run_and_wait(client, "child", propagate=False)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert status.partialRun
         assert artifact_contents(client, run_id) == CONTENTS
@@ -92,7 +92,7 @@ def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgrap
     assert packed(client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))) == before
     assert artifact_contents(client, first_run) == CONTENTS
     for _ in range(2):
-        run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
+        run_id, status = run_and_wait(client, "child", propagate=False)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert status.partialRun
         assert artifact_contents(client, run_id) == CONTENTS

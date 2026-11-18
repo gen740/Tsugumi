@@ -135,8 +135,8 @@ def test_past_invocations_keep_their_own_state(core_factory, project):
     """An older run keeps its own identity and timestamps after a newer run."""
     builtin_project(project)
     client = core_factory().connect()
-    first, first_status = run_and_wait(client, "src", timeout=10)
-    second, second_status = run_and_wait(client, "src", timeout=10)
+    first, first_status = run_and_wait(client, "src")
+    second, second_status = run_and_wait(client, "src")
     assert first_status.state == second_status.state == RunState.succeeded
     assert first != second
 
@@ -152,7 +152,7 @@ def test_a_client_opening_later_gets_each_cards_latest_invocation(core_factory, 
     builtin_project(project)
     daemon = core_factory()
     client = daemon.connect()
-    run_id, status = run_and_wait(client, "src", timeout=10)
+    run_id, status = run_and_wait(client, "src")
     assert status.state == RunState.succeeded
 
     later = daemon.connect()

@@ -36,14 +36,14 @@ pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_DEMO_RUNS") != "1",
 
 def run(c, cards, *card, propagate=True):
     rid = start_run(c, list(card), propagate=propagate)
-    st = wait_run(c, rid, timeout=3000)
+    st = wait_run(c, rid)
     assert st.state == RunState.succeeded, {name: stderr(c, rid, name)[-2000:] for name in cards}
     return rid
 
 
 def rerun(c, card):
     rid = start_run(c, [card], propagate=False)
-    st = wait_run(c, rid, timeout=600)
+    st = wait_run(c, rid)
     assert st.state == RunState.succeeded, stderr(c, rid, card)[-2000:]
     return rid
 

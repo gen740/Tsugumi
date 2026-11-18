@@ -3,10 +3,10 @@
 from itertools import product
 import json
 import shutil
-import time
 
 import pytest
 
+from projects import wait_invocation
 from harness.observations import read_output
 from harness.scenario import Gate, Project, run, wait_run
 from harness.values import recorded_input_json, reference_json
@@ -94,7 +94,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
 
     run_id = run(client, "start", propagate=True)
-    assert wait_run(client, run_id, timeout=60).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
 
     def work_batch(note):
         if note.valueType != NotificationPayload.RunEvent:
@@ -123,7 +123,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     saved, = invocation_page(client, run_id, "work").batches
     assert saved.complete and saved.invocationCount == 12
     replay = run(client, "work", propagate=False)
-    assert wait_run(client, replay, timeout=60).state == RunState.succeeded
+    assert wait_run(client, replay).state == RunState.succeeded
     assert combinations(client, tmp_path / "decode", replay)[1] == expected
 
     daemon.stop()
@@ -229,7 +229,7 @@ def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, proje
     graph.save(client)
 
     run_id = run(client, "start", propagate=True)
-    status = wait_run(client, run_id, timeout=60)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
     latest = client.call("RunLatestInvocationsRequest", runId=run_id)
     assert not any([text(segment) for segment in row.card.segments] == ["work"] and row.executionService
@@ -249,7 +249,7 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project):
     graph.save(client)
 
     run_id = run(client, propagate=True, maxConcurrency=1)
-    status = wait_run(client, run_id, timeout=60)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
     batch, = invocation_page(client, run_id, "work").batches
     assert batch.complete and batch.failed and not batch.outputs
@@ -288,12 +288,12 @@ def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_fa
     graph.save(client)
 
     run_id = run(client, "start", propagate=True)
-    assert wait_run(client, run_id, timeout=60).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     assert len(invocation_page(client, run_id, "check").records) == 1
     daemon.restart()
     client = daemon.connect()
     replay = run(client, "work", propagate=True)
-    assert wait_run(client, replay, timeout=60).state == RunState.succeeded
+    assert wait_run(client, replay).state == RunState.succeeded
     page = invocation_page(client, replay, "work")
     assert len(page.records) == 2
     logs = [client.call("LogRangeRequest", runId=replay, card=path("work"), invocation=row.invocation,
@@ -319,10 +319,7 @@ def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_fact
     run_id = run(client, "work", propagate=True, maxConcurrency=3)
     failure.wait()
     hanging.wait()
-    deadline = time.monotonic() + 5
-    while not any(row.state == CardState.succeeded for row in invocation_page(client, run_id, "work").records):
-        assert time.monotonic() < deadline, "the first member did not complete"
-        time.sleep(0.01)
+    wait_invocation(client, run_id, "work", lambda row: row.state == CardState.succeeded)
     failure.release()
 
     assert wait_run(client, run_id).state == RunState.failed
@@ -376,10 +373,8 @@ def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, 
         gate.wait()
     for index in reversed(range(len(gates))):
         gates[index].release()
-        deadline = time.monotonic() + 5
-        while invocation_page(client, run_id, "work").records[index].state != CardState.succeeded:
-            assert time.monotonic() < deadline, f"member {index + 1} did not finish"
-            time.sleep(0.01)
+        wait_invocation(client, run_id, "work",
+                        lambda row: row.batchIndex == index + 1 and row.state == CardState.succeeded)
     assert wait_run(client, run_id).state == RunState.succeeded
     assert collected(client, tmp_path / "decode", run_id) == [{"value": 0}, {"value": 1}, {"value": 2}]
 
@@ -397,10 +392,10 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
 
     run_id = run(client, propagate=True, maxConcurrency=limit)
     for gate in gates[:slots]:
-        gate.wait(timeout=10)
+        gate.wait()
     assert not gates[slots].entered.exists()
     client.call("RunCancelRequest", runId=run_id)
-    assert wait_run(client, run_id, timeout=20).state == RunState.cancelled
+    assert wait_run(client, run_id).state == RunState.cancelled
     assert not gates[slots].entered.exists()
     page = invocation_page(client, run_id, "work")
     assert [row.state for row in page.records] == [CardState.cancelled] * slots
@@ -423,7 +418,7 @@ def test_each_input_code_consumes_one_complete_batch_per_arrival(core_factory, p
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right").save(client)
 
     run_id = run(client, "start", propagate=True)
-    assert wait_run(client, run_id, timeout=20).state == RunState.succeeded
+    assert wait_run(client, run_id).state == RunState.succeeded
     rows = invocation_page(client, run_id, "work").records
     assert len(rows) == 5
     assert {row.batchActivation for row in rows} == {1, 2}
@@ -451,7 +446,7 @@ def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, p
     graph.connect("work", "out", "merge", "feedback").save(client)
 
     run_id = run(client, "start", propagate=True)
-    status = wait_run(client, run_id, timeout=20)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
     work = invocation_page(client, run_id, "work")
     assert [(row.batchActivation, row.batchIndex, row.batchSize) for row in work.records] == [
@@ -474,7 +469,7 @@ def test_per_run_worker_budget_stops_before_starting_an_over_budget_batch(core_f
     graph.connect("work", "out", "merge", "feedback").save(client)
 
     run_id = run(client, "start", propagate=True, maxConcurrency=8)
-    status = wait_run(client, run_id, timeout=180)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
     seed, = invocation_page(client, run_id, "seed").batches
     work, = invocation_page(client, run_id, "work").batches

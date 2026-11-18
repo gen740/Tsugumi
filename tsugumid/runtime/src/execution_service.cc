@@ -10,7 +10,6 @@
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -148,17 +147,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         LogStream::standard_error,
         "Resident worker state started fresh: " + lease.replaced + ".\n");
 
-  auto invocation_log = std::make_shared<workerd::InvocationLog>(
-      [sink = request.log](uint64_t stream, const std::string& text) {
-        if (sink) sink(static_cast<LogStream>(stream), text);
-      },
-      request.log_limit_bytes);
   workerd::Invocation invocation;
   invocation.run_id = s.run_id;
   invocation.card = node.path;
   invocation.number = s.invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
+  invocation.input_schema = types::card_catalog(node.inputs, true);
+  invocation.output_schema = types::card_catalog(node.outputs, false);
   invocation.prepare_params = [&] {
     const auto ptype = NixRunner::params_type(node);
     return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,
@@ -174,10 +170,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (node.settings.timeout_seconds)
     invocation.timeout_ms = *node.settings.timeout_seconds * 1000;
   invocation.deadline_grace = std::chrono::milliseconds(500);
-  invocation.log = [invocation_log](LogStream stream, const std::string& text) {
-    invocation_log->append(static_cast<uint64_t>(stream), text);
-  };
-  invocation.finish_logs = [invocation_log] { invocation_log->finish(); };
+  invocation.log = request.log;
   invocation.display = request.display;
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
@@ -207,11 +200,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     if (request.transfer)
       request.transfer("copy", name.generic_string(), done, total);
   };
-  return workerd::run_invocation(
+  auto completed = workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
+  return {
+      std::move(completed.outputs), std::move(completed.failure), {}, false};
 }
 
 }  // namespace tsugumi

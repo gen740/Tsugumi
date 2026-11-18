@@ -87,6 +87,8 @@ Db::Db(const std::string& path, bool readonly) {
     db_ = nullptr;
     throw Error("open " + path + ": " + msg);
   }
+  // SQLite exposes no cross-process lock-release or cancellation event here.
+  // Bound how long it can hold this call when the lock owner makes no progress.
   sqlite3_busy_timeout(db_, 10000);
   // A database may come from a copied project: no schema-defined code runs
   // and its schema cannot be written around SQLite.

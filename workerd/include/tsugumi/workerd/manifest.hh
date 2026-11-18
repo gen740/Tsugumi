@@ -5,8 +5,7 @@
 
 namespace tsugumi::schema {
 // The manifest written by the SDK's tsugumi.manifest (read only). `run` is the
-// Card body: a package (store path; lib/main.so or lib/tsugumi-runtime naming
-// an SDK artifact) or a bash script, never both.
+// Card body: a package (store path; lib/main.so) or a bash script, never both.
 struct ManifestRun {
   Opt<"package", v::String> package;
   Opt<"bash", v::String> bash;

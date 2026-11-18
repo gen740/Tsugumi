@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiAgentClient
 @testable import TsugumiApp
 
@@ -86,10 +87,7 @@ private actor HostServiceLock {
        let data = try? Data(contentsOf: state.appendingPathComponent("host.ready")),
        let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let pid = record["pid"] as? Int32, pid > 1, pid != getpid() {
-      kill(pid, SIGTERM)
-      let deadline = Date().addingTimeInterval(5)
-      while kill(pid, 0) == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-      if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+      try? finishFixtureProcess(pid, signal: SIGTERM)
     }
     installedState = nil
     if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }

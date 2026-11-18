@@ -131,8 +131,8 @@ def test_missing_required_output_discards_resident_state(core_factory, tmp_path)
 def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, stop):
     """A child stops an idle resident; its next oversized frame still permits cancellation, timeout and shutdown."""
     import signal
-    import time
     from pathlib import Path
+    from harness.file_events import wait_for_file
     from harness.real_cards import NUM
     from projects import conn, start_run, wait_run
     from Tsugumi.Data.CardState import CardState
@@ -140,20 +140,26 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
 
     source = r'''
 #include <tsugumi/sdk/abi.h>
+#include <fcntl.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c) {
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase != TSUGUMI_RUN) return 0;
   char gate[4096], stopped[4096], sending[4096];
   snprintf(gate, sizeof gate, "%s/../home/stop", c->working_directory);
   snprintf(stopped, sizeof stopped, "%s/../home/stopped", c->working_directory);
   snprintf(sending, sizeof sending, "%s/../home/sending", c->working_directory);
+  if (mkfifo(gate, 0600) != 0) return 1;
   const pid_t worker = getpid();
   pid_t child = fork();
   if (child < 0) return 1;
   if (!child) {
-    while (access(gate, F_OK) != 0) usleep(10000);
+    int release = open(gate, O_RDONLY);
+    if (release < 0) _exit(4);
+    close(release);
     if (kill(worker, SIGSTOP) != 0) _exit(2);
     FILE* ready = fopen(stopped, "w");
     if (ready) fclose(ready);
@@ -165,8 +171,8 @@ int tsugumi_main(const tsugumi_call* c) {
     if (ready) fclose(ready);
     _exit(0);
   }
-  c->display_text(c->host, gate);
-  return c->emit_json(c->host, "out", "{\"value\":1}");
+  c->effects->display_text(c->host, gate);
+  return c->effects->outputs_json(c->host, "{\"out\":{\"value\":1}}", outputs);
 }
 '''
     definition = {
@@ -195,26 +201,20 @@ int tsugumi_main(const tsugumi_call* c) {
     assert st.state == RunState.succeeded, log(c, first, "resident", 2)
     record = c.call("RunRecordRequest", runId=first, card=path("resident")).record
     gate = Path(text(record.display.value.text))
-    gate.touch()
-    until = time.monotonic() + 10
-    while not gate.with_name("stopped").exists():
-        assert time.monotonic() < until, "child did not stop its resident worker"
-        time.sleep(0.01)
+    with gate.open("w"):
+        pass
+    wait_for_file(gate.with_name("stopped"))
     second = start_run(c, "source")
-    until = time.monotonic() + 60
-    # `running` is already visible during preparation, before acquiring a
-    # worker. Wait for actual frame bytes without letting the worker read them.
-    while not gate.with_name("sending").exists():
-        assert time.monotonic() < until, "resident did not begin receiving its second frame"
-        time.sleep(0.01)
+    # Running also covers preparation. Wait for actual bytes on the blocked socket.
+    wait_for_file(gate.with_name("sending"))
     if stop != "shutdown":
         if stop == "cancel":
             c.call("RunCancelRequest", runId=second)
-        state = wait_run(c, second, timeout=20).state
+        state = wait_run(c, second).state
         assert state == (RunState.cancelled if stop == "cancel" else RunState.failed)
         inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
         assert inv.workerReused
         assert inv.state == (CardState.cancelled if stop == "cancel" else CardState.failed)
         assert inv.failure.kind == (FailureKind.cancelled if stop == "cancel" else FailureKind.timeout)
     daemon.proc.send_signal(signal.SIGTERM)
-    assert daemon.proc.wait(timeout=10) == 0
+    assert daemon.proc.wait() == 0

@@ -53,9 +53,6 @@ auto Access::AccessDescription(const std::string& resource,
                                Tsugumi::Service::Access access,
                                const std::string& reason, bool needed)
     -> std::string {
-  if (reason.starts_with("operation_approval\n") ||
-      reason.starts_with("helper_scope\n"))
-    return "project_access " + reason;
   auto q = db.prepare(
       "SELECT title,coalesce((SELECT path FROM project_paths WHERE "
       "id=projects.id),'') "
@@ -76,6 +73,7 @@ auto Access::AccessDescription(const std::string& resource,
              {"title", json::Quote(title)},
              {"path", json::Quote(path)},
              {"access", json::Quote(Tsugumi::Service::EnumNameAccess(access))},
+             {"access_id", std::to_string(static_cast<unsigned>(access))},
              {"reason", json::Quote(reason)},
              {"needed_now", needed ? "true" : "false"}});
 }
@@ -83,8 +81,13 @@ auto Access::AccessDescription(const std::string& resource,
 auto Access::AccessDescriptions(const std::string& id,
                                 const std::string& project,
                                 Tsugumi::Service::Access needed,
-                                const std::string& reason)
+                                const std::string& reason, bool per_call)
     -> std::vector<std::string> {
+  if (per_call)
+    return {(needed == S::Access::HelperScope
+                 ? "project_access helper_scope\n"
+                 : "project_access operation_approval\n") +
+            reason};
   std::vector<std::string> asked{AccessDescription(project, needed, reason)};
   auto items = db.prepare(
       "SELECT access FROM access_prompt_items WHERE request=? ORDER BY access");
@@ -102,12 +105,9 @@ auto Access::RequestAccess(const std::string& project,
                            Tsugumi::Service::Access access,
                            const std::string& reason, bool per_call,
                            bool combine) -> std::string {
-  if (!per_call && (access == Tsugumi::Service::Access::HelperScope ||
-                    reason.find("operation_approval\n") != std::string::npos ||
-                    reason.find("helper_scope\n") != std::string::npos))
+  if (!per_call && access == S::Access::HelperScope)
     throw Failure("invalid_request",
-                  "The operation approval marker is reserved for "
-                  "core-generated requests");
+                  "Helper scope is a core-generated request");
   auto folder = db.prepare("SELECT project FROM folders WHERE id=?");
   folder.bind(1, project);
   registry.Lookup(folder.step() ? folder.text(0) : project);
@@ -162,7 +162,7 @@ auto Access::RequestAccess(const std::string& project,
   }
   std::vector<std::string> asked;
   for (const auto& description :
-       AccessDescriptions(id, project, access, reason))
+       AccessDescriptions(id, project, access, reason, per_call))
     asked.push_back(json::Quote(description));
   tx.commit();
   dependencies.event(conversation, json::Encode(json::Members{
@@ -314,7 +314,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       Human(human);
       auto p = r->value_as_AccessResolveRequest();
       auto q = db.prepare(
-          "SELECT project,conversation,access,state,reason FROM "
+          "SELECT project,conversation,access,state FROM "
           "access_requests WHERE id=?");
       q.bind(1, p->request_id()->str());
       if (!q.step()) throw Failure("not_found", "Access request not found");
@@ -332,11 +332,8 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         if (!p->allow()) return false;
         if (per_call || !p->selected() || p->selected()->size() == 0)
           return access == needed;
-        const auto line =
-            AccessDescription(q.text(0), access, q.text(4), access == needed);
-        return std::ranges::any_of(*p->selected(), [&](const auto* selected) {
-          return selected->string_view() == line;
-        });
+        return std::ranges::find(*p->selected(), access) !=
+               p->selected()->end();
       };
       const bool allow = chosen(needed);
       std::set<S::Access> offered{needed};
@@ -395,7 +392,9 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       }
       A::AccessListT result;
       auto q = db.prepare(
-          "SELECT id,project,conversation,access,reason,state "
+          "SELECT id,project,conversation,access,reason,state,"
+          "EXISTS(SELECT 1 FROM operation_approvals WHERE "
+          "request=access_requests.id) "
           "FROM access_requests WHERE (?='' OR conversation=?) "
           "ORDER BY rowid DESC LIMIT 500");
       q.bind(1, id).bind(2, id);
@@ -407,8 +406,9 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         entry->access = static_cast<Tsugumi::Service::Access>(q.i64(3));
         entry->reason = q.text(4);
         entry->state = q.text(5);
-        entry->asked = AccessDescriptions(entry->id, entry->project_id,
-                                          entry->access, entry->reason);
+        entry->asked = AccessDescriptions(
+            entry->id, entry->project_id, entry->access, entry->reason,
+            q.i64(6) || entry->access == S::Access::HelperScope);
         entry->groups = agent::AccessGroups(entry->asked);
         result.requests.push_back(std::move(entry));
       }

@@ -12,9 +12,9 @@ public interface ICard {
     ValueTask<Outputs> RunAsync(Inputs inputs) => throw Entry.MissingRunAsync(this);
     ValueTask<Outputs> RunAsync(Inputs inputs, Report report) => RunAsync(inputs);
     ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) => RunAsync(inputs, report);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs) => ValueTask.FromResult(new Outputs());
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
+    ValueTask OnRunStartAsync(Inputs inputs) => ValueTask.CompletedTask;
+    ValueTask OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
+    ValueTask OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
 }
 
 public static class Entry {
@@ -69,16 +69,17 @@ public static class Entry {
     }
 
     [UnmanagedCallersOnly]
-    public static int Execute(nint pointer) { try { return Invoke(pointer, false); } catch { return 1; } }
-    [UnmanagedCallersOnly]
-    public static int RunStart(nint pointer) { try { return Invoke(pointer, true); } catch { return 1; } }
+    public static int Execute(nint pointer, nint outputs) {
+        try { return Invoke(pointer, outputs); }
+        catch { return 1; }
+    }
     // Called once by host.cc before any other entry, with abi.h's layout.
     [UnmanagedCallersOnly]
     public static int CheckLayout(nint fields, nuint count) {
         try { return Layout.Check(fields, count) ? 0 : 1; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
-    private static int Invoke(nint pointer, bool start) {
+    private static unsafe int Invoke(nint pointer, nint outputs) {
         InvocationScope? scope = null;
         int result = 0;
         try {
@@ -87,9 +88,16 @@ public static class Entry {
             var inputs = new Inputs(scope);
             var report = new Report(scope);
             var run = new Run(scope);
-            var outputs = (start ? card.OnRunStartAsync(inputs, report, run) : card.RunAsync(inputs, report, run)).AsTask().GetAwaiter().GetResult();
-            outputs.SendAsync(scope).AsTask().GetAwaiter().GetResult();
-            if (!start) scope.FinishOutputs();
+            if (outputs == 0) {
+                card.OnRunStartAsync(inputs, report, run).AsTask().GetAwaiter().GetResult();
+            } else {
+                var value = card.RunAsync(inputs, report, run).AsTask().GetAwaiter().GetResult();
+                var bytes = value.Pack();
+                var target = (NativeBuffer*)outputs;
+                target->Data = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
+                target->Size = (nuint)bytes.Length;
+                bytes.AsSpan().CopyTo(new Span<byte>(target->Data, bytes.Length));
+            }
             result = 0;
         } catch (Exception error) {
             Console.Error.WriteLine(error);

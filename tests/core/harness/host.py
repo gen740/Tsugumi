@@ -6,12 +6,12 @@ import socket
 import struct
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 import flatbuffers
 
 from .daemon import BUILD
+from .file_events import process_file
 from .remote_worker import exact, string
 from Tsugumi.Host.Message import MessageT
 from Tsugumi.Host.Payload import Payload
@@ -45,22 +45,15 @@ class Host:
                 "--usage-scratch-dir", str(self.directory / "run-scratch"),
                 "--unix", str(Path(self.socket_directory.name) / "rpc"),
             ], stdout=self.log, stderr=self.log)
-            until = time.monotonic() + 15
-            while time.monotonic() < until:
-                if self.process.poll() is not None:
-                    raise RuntimeError(self.log_path.read_text())
-                try:
-                    self.ready = json.loads((self.directory / "host.ready").read_text())
-                    break
-                except FileNotFoundError:
-                    time.sleep(0.05)
-            else:
-                raise TimeoutError("hostd did not start")
+            ready = process_file(self.process, self.directory / "host.ready")
+            if ready is None:
+                raise RuntimeError(self.log_path.read_text())
+            self.ready = json.loads(ready.read_text())
             self.socket = socket.socket(socket.AF_UNIX)
             self.socket.settimeout(30)
             self.socket.connect(self.ready["host_socket"])
             self.stream = self.socket.makefile("rwb", buffering=0)
-            self.call("HelloRequest", token=self.ready["user_token"], clientId="remote-test")
+            self.call("HelloRequest", token=self.ready["user_token"])
         except BaseException:
             self.close()
             raise
@@ -112,10 +105,11 @@ class Host:
             self.socket.close()
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
+            # Escalate only if a fixture fails to shut down gracefully.
             try:
                 self.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.process.kill()
-                self.process.wait(timeout=5)
+                self.process.wait()
         self.log.close()
         self.socket_directory.cleanup()

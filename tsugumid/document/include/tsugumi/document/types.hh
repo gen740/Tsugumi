@@ -75,6 +75,10 @@ bool compatible(const Type& a, const Type& b);
 std::string render_closure(const Type& t, const std::string& prefix,
                            std::string& out, bool nested = false);
 
+// One Card ABI catalog, shared by binding generation and worker invocation.
+auto card_catalog(const std::vector<PortType>& ports, bool inputs)
+    -> std::string;
+
 // A union field of a root table, named as render_closure(t, prefix) names it.
 struct UnionField {
   std::string field;  // e.g. "value"

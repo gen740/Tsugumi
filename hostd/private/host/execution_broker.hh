@@ -23,7 +23,7 @@ class ExecutionBroker {
                  const std::filesystem::path& control, bool guest)
       -> Tsugumi::Host::ExecutionAuthorizationT;
   auto Revoke(const std::string& project) -> void;
-  auto endpoint() const -> std::string;
+  auto socket_path() const -> const std::string&;
   auto Stop() -> void;
 
  private:

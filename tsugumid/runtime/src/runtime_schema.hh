@@ -222,7 +222,6 @@ struct ServerReady {
   t::String<"token"> token;
   t::Uint32<"protocol"> protocol;
   t::String<"project_id"> project_id;
-  t::String<"server_instance_id"> server_instance_id;
   t::String<"unix_socket"> unix_socket;
   t::Int64<"pid"> pid;
 };

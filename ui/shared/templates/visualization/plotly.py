@@ -54,5 +54,5 @@ def main(inputs, report, run):
     embed_font(folder / "plot.html")
     report.figure(fig)
 
-    yield figure_result(run, folder, plotted, library="plotly", kind=kind, **facts)
     report.log(str(facts["note"]))
+    return figure_result(run, folder, plotted, library="plotly", kind=kind, **facts)

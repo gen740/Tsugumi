@@ -83,7 +83,7 @@ class SharedVM:
 
     def __init__(self):
         import atexit
-        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/macos" / ".build" / "debug" / "tsugumi-vmctl"))
+        vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/vmctl" / ".build" / "debug" / "tsugumi-vmctl"))
         self.directory = tempfile.TemporaryDirectory(prefix="vm-")
         support = Path(self.directory.name)
         support.mkdir(parents=True, exist_ok=True)
@@ -93,7 +93,7 @@ class SharedVM:
         with self.console.open("a") as log:
             self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
                                          stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1, env=env)
-        # Its answers are read by a thread so that every wait has a deadline.
+        # Queue replies and EOF so callers wait for the console protocol.
         self.lines: queue.Queue = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
         atexit.register(self.quit)
@@ -110,18 +110,18 @@ class SharedVM:
             cls._instance = SharedVM()
         return cls._instance
 
-    def command(self, line: str, until=lambda l: True, timeout: float = 900.0) -> list[str]:
+    def command(self, line: str, until=lambda l: True, timeout: float | None = None) -> list[str]:
         """Sends one command and reads its answer up to the line `until` accepts.
-        A vmctl that does not answer in time is ended (the next test starts a
-        new one) and the test fails with where to look."""
+        Quit has a grace period so fixture cleanup can proceed if VM shutdown stalls."""
         self.proc.stdin.write(line + '''
 ''')
         self.proc.stdin.flush()
         out = []
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             try:
-                l = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                l = self.lines.get(timeout=remaining)
             except queue.Empty:
                 self.proc.terminate()
                 try:

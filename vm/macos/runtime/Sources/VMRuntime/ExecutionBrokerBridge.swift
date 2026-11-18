@@ -1,4 +1,3 @@
-import TsugumiVMTypes
 import Darwin
 import Foundation
 import Virtualization
@@ -7,23 +6,22 @@ import Virtualization
 final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
   private let listener = VZVirtioSocketListener()
   private let lock = NSLock()
-  private var endpoint: String?
+  private var socketPath: String?
 
-  init(support: URL) {
+  override init() {
     super.init()
     listener.delegate = self
   }
 
   func install(on socket: VZVirtioSocketDevice) { socket.setSocketListener(listener, forPort: 1027) }
 
-  func configure(_ value: String) throws {
-    guard value.hasPrefix("unix:") else { throw LauncherError.notReady("invalid execution broker endpoint") }
-    lock.withLock { endpoint = String(value.dropFirst(5)) }
+  func configure(_ socket: String) {
+    lock.withLock { socketPath = socket }
   }
 
   func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
                 from socketDevice: VZVirtioSocketDevice) -> Bool {
-    guard let path = lock.withLock({ endpoint }) else { return false }
+    guard let path = lock.withLock({ socketPath }) else { return false }
     let guest = Guest(connection)
     Thread.detachNewThread { [guest] in
       do {

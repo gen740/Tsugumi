@@ -33,7 +33,7 @@
   },
   "ruby": {
     "_card.json": "{\n  \"language\": \"ruby\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
-    "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"ruby\" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n",
+    "default.nix": "{ pkgs, inputs, params }:\n{\n  run = inputs.tsugumi.rubyCard { src = ./src; };\n}\n",
     "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
     "src/main.rb": "def main(inputs)\n  { out: { value: \"hello\" } }\nend\n"
   },

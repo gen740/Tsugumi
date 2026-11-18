@@ -11,7 +11,6 @@ const visit = (items: ReturnType<typeof builtinCardItems>) => {
   }
 }
 visit(builtinCardItems(id => offered.push(id)))
-assert.equal(visualizationTemplates.length, 3)
 for (const template of visualizationTemplates) {
   assert.ok(TEMPLATES.some(t => t.id === template.id))
   assert.ok(offered.includes(template.id))

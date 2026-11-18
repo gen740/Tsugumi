@@ -20,7 +20,6 @@
 namespace tsugumi {
 
 struct WorkerLimits {
-  std::chrono::seconds idle{600};  // a standby worker unused this long ends
   uint64_t max_rss_bytes = 2ull << 30;  // larger standby workers end
   size_t max_standby = 32;              // idle and pending fresh workers
 };
@@ -60,7 +59,6 @@ class WorkerPool {
     std::string card;
     std::string key;
     std::unique_ptr<WorkerProc> worker;
-    std::chrono::steady_clock::time_point since;
   };
   std::unique_ptr<WorkerProc> spawn(WorkerSpawn spawn);
   void refill(const std::string& key, WorkerSpawn spawn);
@@ -83,7 +81,7 @@ class WorkerPool {
       spawns_;  // workers a call waits for
   uint64_t seq_ = 0;
   bool stopping_ = false;
-  std::thread reaper_;  // starts standby workers, ends idle ones
+  std::thread reaper_;  // starts standby workers, ends dead or oversized ones
 };
 
 }  // namespace tsugumi

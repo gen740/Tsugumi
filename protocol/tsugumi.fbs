@@ -252,9 +252,8 @@ table OperationReceipt {
 /// -> HelloResult. token is required on WebSocket. Project mismatch is
 /// permission_denied. Must be the first request, within 5 s of connecting.
 table SessionHelloRequest {
-  client_id:string (id: 0, required);
-  expected_project_id:string (id: 1);
-  token:string (id: 2);
+  expected_project_id:string (id: 0);
+  token:string (id: 1);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
@@ -981,6 +980,8 @@ table InvocationSummary {
   transfer_direction:string (id: 27);
   transfer_done:uint64 (id: 28);
   transfer_total:uint64 (id: 29);
+  /// The invocation omitted log output at this combined limit, in bytes.
+  log_truncated_at_bytes:uint64 = null (id: 30);
 }
 
 table StageTime {
@@ -1083,7 +1084,10 @@ table LogSlice {
   next_offset:uint64 = null (id: 2);
   size_bytes:uint64 = null (id: 3);
   exists:bool = null (id: 4);
+  /// More bytes exist outside this slice.
   truncated:bool = null (id: 5);
+  /// The invocation omitted log output at this combined limit, in bytes.
+  log_truncated_at_bytes:uint64 = null (id: 6);
 }
 
 table ViewSaveResult {
@@ -1168,6 +1172,8 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
+/// An absent end_offset and unspecified stream indicate invocation log
+/// metadata changed without new stream bytes.
 table LogAvailable {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);

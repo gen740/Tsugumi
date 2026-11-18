@@ -107,7 +107,6 @@ auto main(int argc, char** argv) -> int {
   tsugumi::Server server(options, &daemon);
   daemon.server = &server;
   server.start();
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
   fs::write_atomic(
       control / "server.ready",
       json::Encode(json::Members{

@@ -147,5 +147,5 @@ def main(inputs, report, run):
         finally:
             plt.close(fig)
 
-    yield figure_result(run, folder, plotted, library="matplotlib", kind=kind, **facts)
     report.log(str(facts["note"]))
+    return figure_result(run, folder, plotted, library="matplotlib", kind=kind, **facts)

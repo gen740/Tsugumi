@@ -180,6 +180,8 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   ib.add_transfer_direction(transfer_direction);
   ib.add_transfer_done(s.transfer_done);
   ib.add_transfer_total(s.transfer_total);
+  if (s.log_truncated_at_bytes)
+    ib.add_log_truncated_at_bytes(*s.log_truncated_at_bytes);
   ib.add_run_id(run);
   ib.add_card(card);
   ib.add_invocation(s.invocation);

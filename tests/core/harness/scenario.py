@@ -6,13 +6,13 @@ import json
 import os
 import shutil
 import sys
-import time
 from pathlib import Path
 
+from projects import wait_run as wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
-from Tsugumi.Data.RunState import RunState
 
 from .daemon import BUILD, ROOT
+from .file_events import wait_for_file
 
 # A mocked build has no pinned shell, so its Cards use the host's. NixOS and the
 # nixos/nix container have no /bin/bash and no tools in /usr/bin:/bin; there the
@@ -20,7 +20,6 @@ from .daemon import BUILD, ROOT
 HOST_BASH = "/bin/bash" if os.access("/bin/bash", os.X_OK) else shutil.which("bash")
 HOST_PATH = "/usr/bin:/bin" if HOST_BASH == "/bin/bash" else os.environ["PATH"]
 
-ENDED = {RunState.succeeded, RunState.failed, RunState.cancelled}
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
 FILE_OUTPUT = ('attribute "tsugumi"; table File { value:string; } '
                'table Outputs { doc:File (tsugumi:"file"); } root_type Outputs;')
@@ -31,18 +30,14 @@ class Gate:
         self.entered = directory / (name + ".started")
         self.released = directory / (name + ".release")
 
-    def wait(self, timeout=5):
-        end = time.monotonic() + timeout
-        while not self.entered.exists():
-            if time.monotonic() >= end:
-                raise TimeoutError(f"dependency did not reach gate {self.entered}")
-            time.sleep(0.01)
+    def wait(self):
+        wait_for_file(self.entered)
 
     def release(self):
         self.released.touch()
 
     def action(self):
-        return {"op": "gate", "entered": str(self.entered), "release": str(self.released), "timeout": 10}
+        return {"op": "gate", "entered": str(self.entered), "release": str(self.released)}
 
 
 def worker_launcher(directory: Path) -> Path:
@@ -100,16 +95,7 @@ class Project:
 
 
 def run(client, card="work", **fields):
+    client.ensure_subscription()
     accepted = client.call("RunRequest", baseRev=client.call("ProjectInspectRequest").rev,
                            opId=new_id(), origin="ui:test", card=path(*card.split("/")), **fields)
     return text(accepted.run.runId)
-
-
-def wait_run(client, run_id, timeout=60):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        status = client.call("RunStatusRequest", runId=run_id, timeout=min(2, max(0.01, end-time.monotonic())))
-        if status.state in ENDED:
-            return status
-        time.sleep(0.01)
-    raise TimeoutError(f"run {run_id} did not finish in {timeout}s")

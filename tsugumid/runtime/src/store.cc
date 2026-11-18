@@ -30,12 +30,6 @@ constexpr uintmax_t kCompactBytes = 8u << 20;
 constexpr size_t kKeepReceipts = 2000;
 constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
-bool utf8_boundary(const std::string& s, uint64_t off) {
-  if (off == 0 || off == s.size()) return true;
-  if (off > s.size()) return false;
-  return (static_cast<unsigned char>(s[off]) & 0xC0) != 0x80;
-}
-
 std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 
 // What a save may write: the documents and the source areas, never
@@ -189,7 +183,6 @@ auto Store::allocate_card_id(const std::string& stem,
     auto key = project_path + id;
     auto dir = project_path + def_dir(id);
     bool exists = issued.count(fold(key)) || canvas_ids.count(id) ||
-                  (project_path.empty() && doc->definitions.count(id)) ||
                   stdfs::exists(opts_.root / dir) ||
                   stdfs::exists(opts_.root / project_path / "externals" / id);
     auto source = doc->sources.lower_bound(dir);
@@ -697,10 +690,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
       case K::PutSource:
       case K::PatchSource:
       case K::RemoveSource: {
-        if (!fs::valid_relative_path(c.path))
+        const auto area = Document::classify_source_path(c.path);
+        if (area == Document::SourcePath::Invalid)
           throw Failed(FailureKind::invalid_path, "invalid path " + c.path,
                        {{"path", c.path}});
-        if (!Document::is_source_area(c.path))
+        if (area == Document::SourcePath::Protected)
           throw Failed(FailureKind::permission_denied,
                        c.path + " cannot be changed through source operations",
                        {{"path", c.path}});
@@ -750,19 +744,14 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                          {{"path", c.path}});
           text::PatchApplier patch(original);
           for (const auto& p : c.patches) {
-            if (p.offset < patch.cursor())
-              throw Failed(FailureKind::invalid_range,
-                           "patches must be ascending and non-overlapping");
-            if (p.offset + p.remove > original.size() ||
-                p.offset + p.remove < p.offset)
-              throw Failed(FailureKind::invalid_range,
-                           "patch exceeds the source size");
-            if (!utf8_boundary(original, p.offset) ||
-                !utf8_boundary(original, p.offset + p.remove))
-              throw Failed(FailureKind::invalid_range,
-                           "patch is not on a UTF-8 boundary",
+            try {
+              patch.append(p.offset, p.remove, p.text);
+            } catch (const text::PatchBoundaryError& error) {
+              throw Failed(FailureKind::invalid_range, error.what(),
                            {{"offset", std::to_string(p.offset)}});
-            patch.append(p.offset, p.remove, p.text);
+            } catch (const text::PatchRangeError& error) {
+              throw Failed(FailureKind::invalid_range, error.what());
+            }
           }
           if (c.patches.empty())
             throw Failed(FailureKind::invalid_request,
@@ -920,23 +909,14 @@ Store::Staged Store::stage_reload(const std::string& op_id,
                                   const std::string& origin) const {
   auto base = current();
   std::shared_ptr<Document> doc;
-  for (int attempt = 0;; ++attempt) {
-    try {
-      doc = load_from_disk(opts_.root);
-      break;
-    } catch (const DocumentError& e) {
-      // A file rewritten in place may be read half-written (or with a stale
-      // size through a VM's shared folder): read once more before failing.
-      if (attempt == 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        continue;
-      }
-      std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
-                                                            e.args.end());
-      throw Failed(failure_kind_from_name(e.code).value_or(
-                       FailureKind::invalid_document),
-                   e.what(), args);
-    }
+  try {
+    doc = load_from_disk(opts_.root);
+  } catch (const DocumentError& e) {
+    std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
+                                                          e.args.end());
+    throw Failed(
+        failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
+        e.what(), args);
   }
   Staged st;
   st.delta.base_rev = base->rev;

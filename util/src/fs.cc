@@ -379,12 +379,24 @@ FileLock::~FileLock() {
   if (fd_ >= 0) ::close(fd_);
 }
 
+FileLock FileLock::acquire(const stdfs::path& p) {
+  return std::move(open(p, true).value());
+}
+
 std::optional<FileLock> FileLock::try_acquire(const stdfs::path& p) {
+  return open(p, false);
+}
+
+std::optional<FileLock> FileLock::open(const stdfs::path& p, bool wait) {
   stdfs::create_directories(p.parent_path());
   int fd = ::open(p.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
   if (fd < 0)
     throw Error("open lock " + p.string() + ": " + std::strerror(errno));
-  if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+  int result;
+  do {
+    result = ::flock(fd, wait ? LOCK_EX : LOCK_EX | LOCK_NB);
+  } while (result < 0 && errno == EINTR);
+  if (result < 0) {
     int e = errno;
     ::close(fd);
     if (e == EWOULDBLOCK) return std::nullopt;

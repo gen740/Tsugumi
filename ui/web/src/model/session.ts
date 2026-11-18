@@ -344,7 +344,6 @@ export const errorText = (e: unknown): string => {
   return e instanceof Error ? e.message : String(e)
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /** A failure to reach the tsugumid, as opposed to one while reading the project. */
 class Unreached extends Error {
   constructor(readonly cause: unknown) {
@@ -383,10 +382,9 @@ export class ProjectSession extends Observable {
   /** The last connection failed before the project could be read (tsugumid was not reached), not while reading it. */
   connectionFailed = false
   /** Opens the transport to a tsugumid (the tests give their own). */
-  openTransport: (url: string) => Promise<Transport> = webSocketTransport
-  /** The waits between tries to reach a tsugumid that has just started (ms). */
-  connectRetryDelays = [200, 400, 800, 1600, 2000]
+  openTransport: (url: string, signal?: AbortSignal) => Promise<Transport> = webSocketTransport
   private connectionEpoch?: symbol
+  private connecting?: AbortController
   private client?: RPCClient
   private subscription?: string
   private lastSeq = 0n
@@ -597,16 +595,18 @@ export class ProjectSession extends Observable {
   private async openConnection() {
     if (this.closed) return
     const epoch = this.connectionEpoch = Symbol()
+    this.connecting?.abort()
+    const connection = this.connecting = new AbortController()
     this.connectionMessage = undefined
     this.changed()
     try {
       await this.refreshProjectTrust()
-      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir })
+      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir }, connection.signal)
       if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
-      const c = await this.reach(env.endpoint!, env.token)
+      const c = await this.reach(env.endpoint!, env.token, connection.signal)
       this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
       if (this.closed || epoch !== this.connectionEpoch) {
@@ -642,24 +642,27 @@ export class ProjectSession extends Observable {
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
       this.changed()
+    } finally {
+      if (this.connecting === connection) this.connecting = undefined
     }
   }
 
-  /** Connects to a tsugumid that has just started. Its port may not be
-   *  reachable at once (WSL2 forwards a new port to Windows a moment later),
-   *  so a connection that cannot be made is tried again for a few seconds. */
-  private async reach(endpoint: string, token: string | undefined): Promise<RPCClient> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const c = new RPCClient(await this.openTransport(endpoint))
-        registerModuleClient(c)
-        await c.connect(token)
-        return c
-      } catch (e) {
-        if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
-        if (this.closed || attempt >= this.connectRetryDelays.length) throw new Unreached(e)
-        await sleep(this.connectRetryDelays[attempt])
-      }
+  private async reach(endpoint: string, token: string | undefined, signal: AbortSignal): Promise<RPCClient> {
+    let client: RPCClient | undefined
+    try {
+      client = new RPCClient(await this.openTransport(endpoint, signal))
+      signal.throwIfAborted()
+      const provisional = client
+      const cancel = () => provisional.close()
+      signal.addEventListener('abort', cancel, { once: true })
+      try { await client.connect(token) }
+      finally { signal.removeEventListener('abort', cancel) }
+      registerModuleClient(client)
+      return client
+    } catch (e) {
+      client?.close()
+      if (e instanceof RPCError && e.code === 'disconnected') throw new Unreached(e)
+      throw e
     }
   }
 
@@ -713,6 +716,7 @@ export class ProjectSession extends Observable {
   /** The project was left: no more connections, whatever is under way. */
   close() {
     this.closed = true
+    this.connecting?.abort()
     this.offEvents?.()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
@@ -722,6 +726,8 @@ export class ProjectSession extends Observable {
   }
 
   async stopEnvironment() {
+    this.connectionEpoch = Symbol()
+    this.connecting?.abort()
     const c = this.client
     this.client = undefined
     c?.close()
@@ -2283,7 +2289,6 @@ export class ProjectSession extends Observable {
    *  run from there opens a branch, and nothing later is lost. */
   async startFrom(commit: string) {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    if (this.runActive) throw new Error(L('実行中は別の版に移れません。'))
     if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()

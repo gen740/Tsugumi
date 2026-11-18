@@ -56,7 +56,7 @@ auto type(const flatbuffers::Vector<uint8_t>* schema,
   return result;
 }
 
-auto make_result(const WorkerOutcome& outcome) -> std::string {
+auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
   flatbuffers::Offset<void> body;
@@ -66,10 +66,12 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
         W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
   } else {
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-    for (const auto& [name, value] : outcome.outputs) {
-      auto data = b.CreateVector(reinterpret_cast<const uint8_t*>(value.data()),
-                                 value.size());
-      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name), data));
+    for (const auto& value : outcome.outputs) {
+      auto data =
+          b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                         value.bytes.size());
+      outputs.push_back(
+          W::CreateWorkerOutput(b, b.CreateString(value.name), data));
     }
     kind = W::WorkerPayload::WorkerResult;
     body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
@@ -86,7 +88,7 @@ auto run_worker(const W::WorkerCall& call,
                 const stdfs::path& store, const WorkerStoreResult& env,
                 const WorkerProc::LogSink& log,
                 const WorkerProc::DisplaySink& display,
-                const fs::TransferProgress& progress) -> WorkerOutcome {
+                const fs::TransferProgress& progress) -> workerd::InvocationResult {
   schema::CardManifest manifest;
   if (schema::decode(env.manifest, manifest))
     throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
@@ -156,6 +158,8 @@ auto run_worker(const W::WorkerCall& call,
   request.number = call.invocation().value_or(0);
   request.inputs = values;
   request.outputs = std::move(outputs);
+  if (call.input_schema()) request.input_schema = call.input_schema()->str();
+  if (call.output_schema()) request.output_schema = call.output_schema()->str();
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
@@ -169,16 +173,16 @@ auto run_worker(const W::WorkerCall& call,
   request.delivery = workerd::OutputDelivery::transferred_files;
   request.stop_before_outputs = true;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
+  // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
   request.transfer = progress;
   request.display = display;
   return workerd::run_invocation(
-             [&](auto worker, bool keep, const auto& reason) {
-               pool.release(spawn.card, "", std::move(worker), keep, reason);
-             },
-             lease, false, request)
-      .outcome;
+      [&](auto worker, bool keep, const auto& reason) {
+        pool.release(spawn.card, "", std::move(worker), keep, reason);
+      },
+      lease, false, request);
 }
 
 }  // namespace
@@ -189,8 +193,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   const auto& derivation = job->derivation;
   const auto& output = job->output;
-  if (job->system != native_system())
-    throw std::runtime_error("remote job system mismatch");
   const std::set<std::string> accepted(job->input_blobs.begin(),
                                        job->input_blobs.end());
   const auto blob = [&](const std::string& digest) -> stdfs::path {
@@ -235,13 +237,21 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  InvocationLog invocation_log(logs, job->log_limit_bytes);
+  InvocationLog invocation_log(job->log_limit_bytes);
+  const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
-    invocation_log.append(static_cast<uint64_t>(stream), text);
+    if (invocation_log.truncated()) return;
+    if (auto entry = invocation_log.append(stream, text)) {
+      logs << *entry << '\n';
+    } else {
+      const int fd = ::open(truncation_marker.c_str(),
+                            O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+      if (fd >= 0) ::close(fd);
+    }
   };
   std::string display;
   WorkerStoreResult environment;
-  WorkerOutcome outcome;
+  InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.
   try {
@@ -290,10 +300,10 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
                                             : FailureKind::worker_failed,
                                         error.what());
   }
-  invocation_log.finish();
   remote::EnvironmentJson info;
   *info.paths = std::move(environment.closure);
   *info.built = environment.built;
+  *info.log_truncated = invocation_log.truncated();
   *info.directories = std::vector<std::string>{};
   const auto files = result_dir / "files";
   if (outcome.failure) stdfs::remove_all(files);

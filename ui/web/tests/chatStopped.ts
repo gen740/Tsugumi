@@ -8,7 +8,7 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
-const { ChatController, CONTEXT_FULL_TEXT } = await import('../src/model/chat')
+const { ChatController } = await import('../src/model/chat')
 
 const chat = () => {
   const c = Object.create(ChatController.prototype) as any
@@ -29,7 +29,7 @@ const STOPPED = '回答を停止しました（Workflow の実行は止めてい
   c.reloadCurrent = () => {}
   c.handle({ kind: 'compacted' })
   assert.equal(c.status, undefined)
-  c.handle({ kind: 'error', message: CONTEXT_FULL_TEXT })
+  c.handle({ kind: 'error', code: 'context_full', message: 'Context is full' })
   assert.equal(c.busy, false)
   assert.equal(c.contextFull, true)
   assert.match(c.status, /新しい会話を始めてください/)
@@ -40,7 +40,7 @@ const STOPPED = '回答を停止しました（Workflow の実行は止めてい
   c.handle({ kind: 'finished' })
   assert.equal(c.status, undefined)
 }
-const cancelled = { kind: 'error', message: 'cancelled' }
+const cancelled = { kind: 'cancelled' }
 
 // The next answer began first.
 let c = chat()
@@ -178,11 +178,13 @@ console.log('tool result identity and queued approvals: passed')
 for (const acknowledgeFirst of [false, true]) {
   const beforeFetch = globalThis.fetch
   let sent: any
+  const sentRequest = Promise.withResolvers<void>()
   let acknowledge!: () => void
   const accepted = new Promise<void>(resolve => { acknowledge = resolve })
   globalThis.fetch = (async (url, init) => {
     if (url === '/api/chat/send') {
       sent = JSON.parse(String(init?.body))
+      sentRequest.resolve()
       await accepted
       return { ok: true, json: async () => ({}) } as Response
     }
@@ -202,18 +204,21 @@ for (const acknowledgeFirst of [false, true]) {
     const c = chat()
     delete c.refreshAfterTurn
     Object.assign(c, { available: true, references: [], skills: [], folderResources: new Map() })
+    let refresh: Promise<unknown>
+    const reread = c.reread.bind(c)
+    c.reread = (id: string) => (refresh = reread(id))
     c.send('hello instead')
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await sentRequest.promise
     assert.equal(c.items.at(-1).text, 'hello instead')
-    if (acknowledgeFirst) acknowledge()
+    if (acknowledgeFirst) { acknowledge(); await c.transition }
     c.handle({ kind: 'text', text: 'Finished' })
     c.handle({ kind: 'finished' })
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await refresh!
     assert.equal(c.busy, false)
     assert.deepEqual(c.items.filter((i: any) => i.role === 'user').map((i: any) => i.text), ['hello interrupted', 'hello instead'])
     assert.equal(c.items[1].tool.ok, false)
     if (!acknowledgeFirst) acknowledge()
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await c.transition
     assert.equal(c.items.at(-2).text, 'hello instead')
   } finally { globalThis.fetch = beforeFetch }
 }

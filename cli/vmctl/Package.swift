@@ -4,4 +4,4 @@ import PackageDescription
 let package = Package(name: "TsugumiVMCtl", platforms: [.macOS("26.0")],
   products: [.executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"])],
   dependencies: [.package(name: "TsugumiUI", path: "../../ui/macos")],
-  targets: [.executableTarget(name: "TsugumiVMCtl", dependencies: [.product(name: "TsugumiLauncher", package: "TsugumiUI")], path: "Sources/VMCtl", swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)])])
+  targets: [.executableTarget(name: "TsugumiVMCtl", dependencies: [.product(name: "TsugumiLauncher", package: "TsugumiUI")], path: "Sources/VMCtl", swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))])])

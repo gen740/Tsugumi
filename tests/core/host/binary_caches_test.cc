@@ -48,20 +48,20 @@ TEST_F(BinaryCaches, RejectsInjectedSettingsAndCredentials) {
        {"file:///tmp/cache", "https://user:secret@example.org",
         "https://example.org?token=x", "https://example.org\ntrusted-users = *",
         "https://example.org/#fragment"})
-    EXPECT_THROW(ValidateBinaryCaches(List(Cache(url))), std::runtime_error);
+    EXPECT_THROW(SaveBinaryCaches(root, List(Cache(url))), std::runtime_error);
   auto cache = Cache();
   cache["publicKey"] = j::Quote("research:not-a-key\ntrusted-users = *");
-  EXPECT_THROW(ValidateBinaryCaches(List(cache)), std::runtime_error);
+  EXPECT_THROW(SaveBinaryCaches(root, List(cache)), std::runtime_error);
   cache = Cache("http://cache.example.org/team");
   cache["username"] = j::Quote("token");
   cache["password"] = j::Quote("secret");
-  EXPECT_THROW(ValidateBinaryCaches(List(cache)), std::runtime_error);
+  EXPECT_THROW(SaveBinaryCaches(root, List(cache)), std::runtime_error);
   cache["url"] = j::Quote("https://cache.example.org/team");
   cache["password"] = j::Quote("secret\nmachine elsewhere password secret");
-  EXPECT_THROW(ValidateBinaryCaches(List(cache)), std::runtime_error);
+  EXPECT_THROW(SaveBinaryCaches(root, List(cache)), std::runtime_error);
   cache = Cache();
-  EXPECT_THROW(ValidateBinaryCaches(j::Encode(std::vector<std::string>{
-                   j::Encode(cache), j::Encode(cache)})),
+  EXPECT_THROW(SaveBinaryCaches(root, j::Encode(std::vector<std::string>{
+                                          j::Encode(cache), j::Encode(cache)})),
                std::runtime_error);
 }
 TEST_F(BinaryCaches, StoresPrivateSettingsAndFreezesBootSnapshot) {
@@ -104,8 +104,7 @@ TEST_F(BinaryCaches, InvalidSettingsApplyNothingAndNeverEchoCredentials) {
     const auto snapshot = PrepareBinaryCaches(root);
     EXPECT_TRUE(snapshot.configuration.empty());
     EXPECT_TRUE(snapshot.netrc.empty());
-    EXPECT_NE(snapshot.problem.find("Only the default caches are used"),
-              std::string::npos);
+    EXPECT_FALSE(snapshot.problem.empty());
     EXPECT_EQ(snapshot.problem.find("secret-for-test"), std::string::npos);
   }
 }
@@ -126,9 +125,9 @@ TEST_F(BinaryCaches, OneHostHasOneCredential) {
     return j::Encode(
         std::vector<std::string>{j::Encode(first), j::Encode(second)});
   };
-  EXPECT_THROW(ValidateBinaryCaches(list()), std::runtime_error);
+  EXPECT_THROW(SaveBinaryCaches(root, list()), std::runtime_error);
   second["password"] = first["password"];
-  EXPECT_NO_THROW(ValidateBinaryCaches(list()));
+  EXPECT_NO_THROW(SaveBinaryCaches(root, list()));
 }
 }  // namespace
 }  // namespace tsugumi::host

@@ -2,7 +2,7 @@ import { useRef } from 'react'
 import { L } from '../i18n'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
-import { nixReferences } from '../model/nixReferences'
+import { nixLinkCount, nixReferences } from '../model/nixReferences'
 import { useObserve } from '../model/observable'
 import { CardKey, path, ProjectSession } from '../model/session'
 import { WorkflowTab } from '../model/workspace'
@@ -11,10 +11,13 @@ import { Button, Popover } from './controls'
 export function NixReferenceControls({ session, tab }: { session: ProjectSession; tab: WorkflowTab }) {
   useObserve(session, tab)
   const anchor = useRef<HTMLDivElement>(null)
-  return <div className="capsule material" ref={anchor}>
-    <Button kind="borderless" icon="snowflake" pressed={tab.showNixReferences}
-      help={L('保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。')} onClick={() => tab.toggleNixReferences()}>{L('Nix 参照（記述どおり）')}</Button>
-    <Button kind="borderless" icon="list.bullet" help={L('Nix 参照一覧')} onClick={() => { tab.showNixList = !tab.showNixList; tab.changed() }}>{L('一覧')}</Button>
+  return <div className="cv-nix-controls" ref={anchor}>
+    <Button kind="borderless" small icon="snowflake" pressed={tab.showNixReferences}
+      help={L('保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。')} onClick={() => tab.toggleNixReferences()}>{L('Nix 参照')}</Button>
+    {/* Turned on with nothing to draw here, the overlay says so instead of looking as if the button did nothing. */}
+    {tab.showNixReferences && nixLinkCount(session, tab.scope) === 0 && <span className="caption secondary" title={L('inputs.<入力ポート名> と書いた参照を表示します。')}>
+      {nixReferences(session).length === 0 ? L('default.nix に Card 間の参照はありません') : L('この階層には参照がありません（一覧に {0} 件）', nixReferences(session).length)}</span>}
+    <Button kind="borderless" small icon="list.bullet" help={L('Nix 参照一覧')} onClick={() => { tab.showNixList = !tab.showNixList; tab.changed() }}>{L('一覧')}</Button>
     <Popover open={tab.showNixList} onClose={() => { tab.showNixList = false; tab.changed() }} anchor={anchor} width={460}>
       <NixReferenceList session={session} tab={tab} />
     </Popover>
@@ -41,7 +44,7 @@ export function NixReferenceList({ session, tab }: { session: ProjectSession; ta
         </div>
         <code className="selectable wrap-pre">{ref.expression}</code>
         {!ref.valid && <span className="secondary">{L('参照を解決できません。Nix 定義と診断を確認してください。')}</span>}
-        <Button kind="borderless" onClick={() => { tab.showNixList = false; tab.changed(); app.openWindow(session, { kind: 'card', card: ref.source, category: 'nix' }) }}>{L('Nix 定義を開く')}</Button>
+        <Button kind="borderless" onClick={() => { tab.showNixList = false; tab.changed(); app.openWindow(session, { kind: 'card', card: ref.source, category: 'source', file: 'default.nix' }) }}>{L('Nix 定義を開く')}</Button>
       </div>)}
     </div>
   )

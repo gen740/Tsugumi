@@ -1,3 +1,4 @@
+import type { Access } from '../../shared/gen/tsugumi/service/access'
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
@@ -72,11 +73,7 @@ export interface ProviderInfo {
   thoughtModel?: string
 }
 
-/** The Agent's error at the ChatGPT plan's usage limit (ui/web/server/chatgpt.ts). */
-export const USAGE_LIMIT_TEXT = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 export const USAGE_URL = 'https://chatgpt.com/settings/usage'
-/** The Agent's error when the conversation cannot be made to fit the model's context (ui/web/server/agent.ts). */
-export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's context"
 
 interface ContentBlock {
   type: string
@@ -556,7 +553,13 @@ export class ChatController extends Observable {
     if (!p || p.id !== id) return
     this.removePermission(p.id)
     this.changed()
-    void api('/api/chat/permission', { id: p.id, allow, always, selected }).catch((e) => this.fail(e))
+    const access = selected?.flatMap(line => {
+      const prefix = 'project_access {'
+      if (!line.startsWith(prefix)) return []
+      const { access_id } = JSON.parse(line.slice('project_access '.length)) as { access_id: Access }
+      return [access_id]
+    })
+    void api('/api/chat/permission', { id: p.id, allow, always, selected: access }).catch((e) => this.fail(e))
   }
 
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */
@@ -606,7 +609,7 @@ export class ChatController extends Observable {
       case 'finished':
         this.writer(who).ended(true, now)
         return false
-      case 'discardText': case 'retrying': case 'error':
+      case 'discardText': case 'retrying': case 'error': case 'cancelled':
         this.writer(who).ended(false, now)
         return false
     }
@@ -663,27 +666,31 @@ export class ChatController extends Observable {
         this.reloadCurrent()
         break
       case 'retrying':
-        this.status = L('再試行中: {0}', modelErrorMessage(e.message))
+        this.status = L('再試行中: {0}', e.message)
         break
+      case 'cancelled':
       case 'error':
         // The stopped answer ended after the next one began, which goes on.
-        if (e.message === 'cancelled' && this.stopping && this.busy) {
+        if (e.kind === 'cancelled' && this.stopping && this.busy) {
           this.stopping = false
           break
         }
         this.stopping = false
         guide.chatTurnEnded(this, this.lastReply)
         guide.chatWorkEnded()
-        this.team.endAll(e.message === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
-        if (e.message === 'cancelled') this.notes = []
+        this.team.endAll(e.kind === 'cancelled' ? 'stopped' : 'failed', Date.now() / 1000)
+        if (e.kind === 'cancelled') {
+          this.canContinue = true
+          this.notes = []
+        }
         this.busy = false
-        this.failed = e.message !== 'cancelled'
-        this.usageLimited = e.message === USAGE_LIMIT_TEXT
-        this.contextFull = e.message === CONTEXT_FULL_TEXT
-        this.status = e.message === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
+        this.failed = e.kind === 'error'
+        this.usageLimited = e.kind === 'error' && e.code === 'subscription_sharing_usage_limit_exceeded'
+        this.contextFull = e.kind === 'error' && e.code === 'context_full'
+        this.status = e.kind === 'cancelled' ? L('回答を停止しました（Workflow の実行は止めていません）。')
           : this.usageLimited ? L('Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。')
           : this.contextFull ? L('この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。')
-          : L('エラー: {0}', modelErrorMessage(e.message))
+          : L('エラー: {0}', modelErrorMessage(e.message, e.code))
         this.refreshAfterTurn()
         break
       case 'finished':

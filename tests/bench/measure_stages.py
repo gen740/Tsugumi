@@ -139,10 +139,10 @@ def collect(client, run_id, cards=None):
 
 def run_once(client, start, timeout, *, cards=None, propagate=True):
     revision = client.call("ProjectInspectRequest").rev
+    client.ensure_subscription()
     begin = time.perf_counter_ns()
     accepted = client.call("RunRequest", baseRev=revision, opId=new_id(), origin="bench",
-                           card=path(*start.split("/")), propagate=propagate, maxConcurrency=1,
-                           timeout=timeout)
+                           card=path(*start.split("/")), propagate=propagate, maxConcurrency=1)
     run_id = text(accepted.run.runId)
     status = wait_run(client, run_id, timeout=timeout)
     wall_ms = (time.perf_counter_ns() - begin) / 1e6

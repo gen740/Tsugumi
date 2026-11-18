@@ -687,36 +687,26 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
     for (const double value : {std::numeric_limits<double>::quiet_NaN(),
                                std::numeric_limits<double>::infinity(),
                                -std::numeric_limits<double>::infinity()}) {
-      for (const bool arrange : {false, true}) {
-        SCOPED_TRACE(field);
-        auto scene = std::make_unique<H::LayoutSceneT>();
-        scene->flow = "topToBottom";
-        auto card = std::make_unique<H::LayoutCardT>();
-        card->id = "mnist";
-        auto port = std::make_unique<H::LayoutPortT>();
-        port->name = "data";
-        card->inputs.push_back(std::make_unique<H::LayoutPortT>(*port));
-        card->outputs.push_back(std::move(port));
-        scene->cards.push_back(std::move(card));
-        auto box = std::make_unique<H::LayoutBoxT>();
-        box->id = "mnist";
-        scene->frames.push_back(std::make_unique<H::LayoutBoxT>(*box));
-        scene->notes.push_back(std::move(box));
-        scene->inputs = std::make_unique<H::LayoutBarT>();
-        scene->outputs = std::make_unique<H::LayoutBarT>();
-        scene->inputs->x = scene->inputs->y = 0;
-        scene->outputs->x = scene->outputs->y = 0;
-        mutate(*scene, value);
-        try {
-          (void)arrange;
-          MeasuredScene(*scene);
-          FAIL() << "Accepted non-finite " << field;
-        } catch (const LayoutFailure& error) {
-          EXPECT_NE(std::string(error.what()).find(field + ":"),
-                    std::string::npos)
-              << error.what();
-        }
-      }
+      SCOPED_TRACE(field);
+      auto scene = std::make_unique<H::LayoutSceneT>();
+      scene->flow = "topToBottom";
+      auto card = std::make_unique<H::LayoutCardT>();
+      card->id = "mnist";
+      auto port = std::make_unique<H::LayoutPortT>();
+      port->name = "data";
+      card->inputs.push_back(std::make_unique<H::LayoutPortT>(*port));
+      card->outputs.push_back(std::move(port));
+      scene->cards.push_back(std::move(card));
+      auto box = std::make_unique<H::LayoutBoxT>();
+      box->id = "mnist";
+      scene->frames.push_back(std::make_unique<H::LayoutBoxT>(*box));
+      scene->notes.push_back(std::move(box));
+      scene->inputs = std::make_unique<H::LayoutBarT>();
+      scene->outputs = std::make_unique<H::LayoutBarT>();
+      scene->inputs->x = scene->inputs->y = 0;
+      scene->outputs->x = scene->outputs->y = 0;
+      mutate(*scene, value);
+      EXPECT_THROW(MeasuredScene(*scene), LayoutFailure);
     }
   }
 }

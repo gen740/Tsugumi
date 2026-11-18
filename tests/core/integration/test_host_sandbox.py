@@ -43,7 +43,7 @@ def stdout_of_network_card(core_factory, tmp_path, script: str, python: str | No
           [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
     d = core_factory(project_root=root)
     c = d.connect()
-    run_id, st = run_and_wait(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start")
     stderr = text(c.call("LogRangeRequest", runId=run_id, card=path("probe"), stream=2, limitBytes=65536).text)
     assert st.state == RunState.succeeded, log_of(c, run_id, "probe") + stderr
     return log_of(c, run_id, "probe")
@@ -171,7 +171,7 @@ def python_probe_client(core_factory, root: Path, main: str, pre: str | None = N
 def test_a_python_card_can_ask_for_its_directory_while_it_loads(core_factory, tmp_path):
     """A sandboxed Python card can query its working directory during module loading."""
     d, c = python_probe_client(core_factory, tmp_path / "p", CWD_AT_LOAD_MAIN)
-    _, shown = shown_by_probe(c, timeout=600)
+    _, shown = shown_by_probe(c)
     assert shown.endswith("/work"), shown
 
 

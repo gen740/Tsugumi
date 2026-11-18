@@ -34,7 +34,7 @@ struct Access {
       -> std::string;
   auto AccessDescriptions(const std::string& id, const std::string& project,
                           Tsugumi::Service::Access needed,
-                          const std::string& reason)
+                          const std::string& reason, bool per_call)
       -> std::vector<std::string>;
   auto RequestAccess(const std::string& project,
                      const std::string& conversation,

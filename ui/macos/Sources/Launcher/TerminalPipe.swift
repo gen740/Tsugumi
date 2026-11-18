@@ -16,11 +16,9 @@ final class TerminalPipe: @unchecked Sendable {
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { throw LauncherError.notReady("cannot create terminal bridge") }
     local = pair[0]; remote = pair[1]
     for fd in pair { noSigPipe(fd); _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
-    var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    setsockopt(remote, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     Thread.detachNewThread { [self] in
       defer {
-        stop(); Darwin.close(remote); ended()
+        stop(); output.sync { _ = Darwin.close(remote) }; ended()
         Task { _ = try? await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.close, "session": session]) }
       }
       var buffer = [UInt8](repeating: 0, count: 16384)
@@ -37,11 +35,12 @@ final class TerminalPipe: @unchecked Sendable {
   func stop() { lock.withLock { if !closed { closed = true; shutdown(remote, SHUT_RDWR) } } }
   func receive(_ value: [String: Any]) {
     output.async { [self] in
-      lock.withLock {
-        guard !closed else { return }
-        if let bytes = value["data"] as? [UInt8] { try? writeAll(remote, Data(bytes)) }
-        if value["closed"] as? Bool == true { closed = true; shutdown(remote, SHUT_RDWR) }
+      guard lock.withLock({ !closed }) else { return }
+      if let bytes = value["data"] as? [UInt8] {
+        do { try writeAll(remote, Data(bytes)) }
+        catch { stop() }
       }
+      if value["closed"] as? Bool == true { stop() }
     }
   }
 }
@@ -60,6 +59,7 @@ private func writeAll(_ fd: Int32, _ data: Data) throws {
     var off = 0
     while off < buf.count {
       let n = write(fd, buf.baseAddress! + off, buf.count - off)
+      if n < 0, errno == EINTR { continue }
       if n <= 0 { throw TerminalWriteFailed() }
       off += n
     }

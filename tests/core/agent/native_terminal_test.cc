@@ -104,9 +104,9 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   ASSERT_GT(request.session, 0u);
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30), [&] {
+    changed.wait(lock, [&] {
       return output.find(std::string("\0READY\0", 7)) != output.npos || closed;
-    }));
+    });
     ASSERT_FALSE(closed);
   }
   request.action = H::TerminalAction::Input;
@@ -120,8 +120,7 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   service.Handle(request);
   {
     std::unique_lock lock(mutex);
-    ASSERT_TRUE(changed.wait_for(lock, std::chrono::seconds(30),
-                                 [&] { return closed; }));
+    changed.wait(lock, [&] { return closed; });
     EXPECT_EQ(output.find("MUST_NOT_CROSS"), output.npos);
     // Actual NUL bytes distinguish command output from echoed/readline-wrapped
     // input and prompts, even in a narrow PTY. Split only at the first '='.

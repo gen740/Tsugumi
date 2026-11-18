@@ -207,15 +207,26 @@ constexpr const char* kRunCols =
     "runs.run_id), "
     "partial_run, uses_partial_result";
 
-InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id,
-                              int cached_col = -1, int detail_col = -1,
-                              int service_col = -1) {
+auto log_truncated_at(sql::Db& db, const std::string& run_id,
+                      const CardPath& card, uint64_t invocation)
+    -> std::optional<uint64_t> {
+  auto st = db.prepare(
+      "SELECT limit_bytes FROM log_truncations WHERE "
+      "run_id=? AND card=? AND invocation=?");
+  st.bind(1, run_id).bind(2, key(card)).bind(3, invocation);
+  return st.step() ? st.opt_u64(0) : std::nullopt;
+}
+
+InvocationSummaryData inv_row(sql::Db& db, const sql::Stmt& st,
+                              const std::string& run_id, int cached_col = -1,
+                              int detail_col = -1, int service_col = -1) {
   // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms,
   // failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
   s.card = unkey(st.text(0));
   s.invocation = st.u64(1);
+  s.log_truncated_at_bytes = log_truncated_at(db, run_id, s.card, s.invocation);
   s.state = static_cast<CardState>(st.i64(2));
   if (!st.is_null(3)) s.phase = static_cast<Phase>(st.i64(3));
   s.started_at = st.opt_i64(4);
@@ -288,6 +299,10 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT, file_content_hash TEXT,
   PRIMARY KEY(run_id, card, invocation, side, port));
 CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(log_truncations(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
+  limit_bytes INTEGER NOT NULL, PRIMARY KEY(run_id, card, invocation));
+CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
@@ -313,7 +328,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 // Version of the local history's tables (PRAGMA user_version).
 // Includes partial-run provenance, portable run commits and File content
 // digests.
-constexpr int kHistoryVersion = 11;
+constexpr int kHistoryVersion = 13;
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string fault)
@@ -368,10 +383,10 @@ CREATE TABLE IF NOT EXISTS statuses(
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_jobs(
   job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  instance TEXT NOT NULL, server_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+  instance TEXT NOT NULL, fingerprint TEXT NOT NULL,
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_releases(
-  job_id TEXT PRIMARY KEY, service TEXT NOT NULL, server_id TEXT NOT NULL,
+  job_id TEXT PRIMARY KEY, service TEXT NOT NULL,
   instance TEXT NOT NULL, fingerprint TEXT NOT NULL, delete_data INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
@@ -649,14 +664,13 @@ auto History::interrupt_batches(sql::Db& db, const std::string& run_id)
 
 auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
   const auto& inv = job.invocation;
-  db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?)")
+  db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?)")
       .bind(1, inv.execution_job_id)
       .bind(2, inv.run_id)
       .bind(3, key(inv.card))
       .bind(4, inv.invocation)
       .bind(5, job.instance)
-      .bind(6, job.server_id)
-      .bind(7, crypto::sha256_hex(job.spec))
+      .bind(6, crypto::sha256_hex(job.spec))
       .run();
 }
 
@@ -715,17 +729,16 @@ void History::complete_invocation(sql::Db& db,
       .run();
   if (!s.execution_job_id.empty()) {
     auto pending = db.prepare(
-        "SELECT server_id,instance,fingerprint FROM remote_jobs WHERE "
+        "SELECT instance,fingerprint FROM remote_jobs WHERE "
         "job_id=?");
     pending.bind(1, s.execution_job_id);
     if (pending.step())
-      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?,?)")
+      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?)")
           .bind(1, s.execution_job_id)
           .bind(2, s.execution_service)
           .bind(3, pending.text(0))
           .bind(4, pending.text(1))
-          .bind(5, pending.text(2))
-          .bind(6, !s.failure || s.failure->kind != FailureKind::interrupted)
+          .bind(5, !s.failure || s.failure->kind != FailureKind::interrupted)
           .run();
     db.prepare("DELETE FROM remote_jobs WHERE job_id=?")
         .bind(1, s.execution_job_id)
@@ -910,6 +923,19 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
           {run_id, card, invocation, stream, i0 + text.size()}};
 }
 
+auto History::mark_log_truncated(sql::Db& db, const std::string& run_id,
+                                 const CardPath& card, uint64_t invocation,
+                                 uint64_t limit_bytes) -> void {
+  db.prepare(
+        "INSERT OR IGNORE INTO log_truncations(run_id, card, invocation, "
+        "limit_bytes) VALUES(?,?,?,?)")
+      .bind(1, run_id)
+      .bind(2, key(card))
+      .bind(3, invocation)
+      .bind(4, limit_bytes)
+      .run();
+}
+
 std::vector<LogEnd> History::append_run_journal(sql::Db& db,
                                                 const std::string& run_id,
                                                 const std::string& text) {
@@ -986,7 +1012,7 @@ std::vector<InvocationSummaryData> History::latest_invocations(
   st.bind(1, run_id);
   std::vector<InvocationSummaryData> out;
   while (st.step()) {
-    auto row = inv_row(st, run_id, 9, 10, 11);
+    auto row = inv_row(db, st, run_id, 9, 10, 11);
     // A status newer than the Card's last record is the one a client wants.
     if (!out.empty() && out.back().card == row.card)
       out.back() = std::move(row);
@@ -1060,7 +1086,7 @@ std::vector<InvocationSummaryData> History::invocations(
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
   std::vector<InvocationSummaryData> out;
-  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10, 11));
+  while (st.step()) out.push_back(inv_row(db, st, run_id, 9, 10, 11));
   return out;
 }
 
@@ -1074,7 +1100,7 @@ std::optional<InvocationRecordData> History::invocation(
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   InvocationRecordData r;
-  r.summary = inv_row(st, run_id, 12, 13);
+  r.summary = inv_row(db, st, run_id, 12, 13);
   r.record_io = st.i64(9) != 0;
   r.input_sources = sources_from(st.text(10));
   if (!st.is_null(11)) r.display = wire::standalone_display(st.blob(11));
@@ -1091,7 +1117,7 @@ std::optional<InvocationSummaryData> History::status(sql::Db& db,
       "FROM statuses WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
-  return inv_row(st, run_id, -1, 9, 10);
+  return inv_row(db, st, run_id, -1, 9, 10);
 }
 
 std::optional<uint64_t> History::latest_invocation(sql::Db& db,
@@ -1263,7 +1289,11 @@ void History::clear_live(const InvocationSummaryData& s) {
 void History::overlay(InvocationSummaryData& s) {
   if (s.state != CardState::running && s.state != CardState::preparing) return;
   std::lock_guard<std::mutex> l(live_mu_);
-  if (auto it = live_.find(live_key(s)); it != live_.end()) s = it->second;
+  if (auto it = live_.find(live_key(s)); it != live_.end()) {
+    const auto truncated_at = s.log_truncated_at_bytes;
+    s = it->second;
+    s.log_truncated_at_bytes = truncated_at;
+  }
 }
 
 void History::update_detail(sql::Db& db, const InvocationSummaryData& s) {
@@ -1444,13 +1474,16 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     if (card && invocation) st.bind(4, *invocation);
   };
   LogRead out;
+  if (card && invocation)
+    out.log_truncated_at_bytes =
+        log_truncated_at(db, run_id, *card, *invocation);
   {
-    auto st = db.prepare(std::string("SELECT MAX(") + col +
-                         " + length(data)), COUNT(*) FROM logs WHERE " + where);
+    auto st = db.prepare(std::string("SELECT ") + col +
+                         " + length(data) FROM logs WHERE " + where +
+                         " ORDER BY " + col + " DESC LIMIT 1");
     bind(st);
-    st.step();
-    out.exists = st.i64(1) > 0;
-    out.size = st.is_null(0) ? 0 : st.u64(0);
+    out.exists = st.step();
+    if (out.exists) out.size = st.u64(0);
   }
   if (tail)
     offset = out.size > limit ? out.size - limit : 0;
@@ -1462,10 +1495,11 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
   std::string buf;
   uint64_t buf_start = offset;
   {
-    auto st =
-        db.prepare(std::string("SELECT ") + col + ", data FROM logs WHERE " +
-                   where + " AND " + col + " + length(data) > ?5 AND " + col +
-                   " < ?6 ORDER BY " + col);
+    auto st = db.prepare(std::string("SELECT ") + col +
+                         ", data FROM logs WHERE " + where + " AND " + col +
+                         " >= (SELECT " + col + " FROM logs WHERE " + where +
+                         " AND " + col + " <= ?5 ORDER BY " + col +
+                         " DESC LIMIT 1) AND " + col + " < ?6 ORDER BY " + col);
     bind(st);
     st.bind(5, offset).bind(6, end);
     bool first = true;
@@ -1552,8 +1586,8 @@ std::vector<std::string> History::delete_runs(
     for (const auto* table :
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
-          "ivalues", "logs", "artifacts", "displays", "statuses",
-          "active_environments"}) {
+          "ivalues", "logs", "log_truncations", "artifacts", "displays",
+          "statuses", "active_environments"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
       for (const auto& id : ids) {

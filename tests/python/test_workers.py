@@ -11,12 +11,14 @@ import re
 
 import pytest
 
+from harness.observations import decode_scalar, read_output
 from conftest import real_environment
 from projects import card, conn
 from projects import put, run_and_wait, write
 from test_cards_container import NUM, bash, load, log
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
@@ -137,7 +139,7 @@ def test_resident_worker_serves_later_runs(env):
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
     reload(c)
-    first, st = run_and_wait(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
     second, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, second, "count", 2)
@@ -162,7 +164,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
     from test_cards_container import reload
     reload(c)
-    first, st = run_and_wait(c, "start", timeout=2400)
+    first, st = run_and_wait(c, "start")
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
     assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
                                             log(c, first, "make", 2), log(c, first, "read", 2))
@@ -192,7 +194,7 @@ root_type Outputs;
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
     from test_cards_container import reload
     reload(c)
-    run_id, st = run_and_wait(c, "start", timeout=2400)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)
     recs = invocations(c, run_id, "fresh")
     assert len(recs) == 4
@@ -221,12 +223,12 @@ let f = x: f (x + 1); in { run = f 0; }
                    "loop": {"language": "bash", "_outputs": NUM, "_nix": loop_nix},
                    "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
              [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
-    run_id, st = run_and_wait(c, "start", timeout=600)
+    run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}
     assert rec["loop"].state == CardState.failed
     diag = text(rec["loop"].failure.diagnostic)
     assert "recursion" in diag or "max-call-depth" in diag or "stack overflow" in diag, diag
-    assert rec["slow"].state == CardState.failed and rec["slow"].failure.kind == 14, text(rec["slow"].failure.diagnostic)
+    assert rec["slow"].state == CardState.failed and rec["slow"].failure.kind == FailureKind.timeout, text(rec["slow"].failure.diagnostic)
     assert rec["ok"].state == CardState.succeeded
     # tsugumid and its evaluator still work.
     c.call("ProjectInspectRequest")
@@ -234,9 +236,8 @@ let f = x: f (x + 1); in { run = f 0; }
     assert c.call("RunRecordRequest", runId=run_id, card=path("ok")).status.state == CardState.succeeded
 
 
-# Reaches 1.1.1.1:80 over TCP (bash's /dev/tcp, no DNS): value 1 when it connects.
-REACH = ('if (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null; then v=1; else v=0; fi; '
-         'echo "{\\"out\\":{\\"value\\":$v}}" > "$TSUGUMI_OUTPUT"')
+# Reach 1.1.1.1:80 over TCP (bash's /dev/tcp, no DNS).
+REACH = 'if (exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null; then reachable=true; else reachable=false; fi'
 
 
 def number(c, run_id, card_id):
@@ -254,23 +255,26 @@ def fan_out(names):
 
 
 def test_network_is_off_unless_the_card_allows_it(env):
-    """Experimental network setting: without it no worker step (preRun, run,
-    postRun) reaches outside; with it, the run step does. Sandboxed and not."""
+    """The network setting applies to both preRun and the Card body."""
+    outputs = "table Reach { before:bool; body:bool; } table Outputs { out:Reach (required); } root_type Outputs;"
+    body = REACH + """
+printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_OUTPUT"
+"""
     cards = {"trigger": {"template": "trigger"}}
     for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": False},
                            "open": {"network": True}, "open_unsandboxed": {"network": True, "sandbox": False}}.items():
-        cards[name] = bash(REACH + '; echo "reach=$v"', inputs=["go"],
-                           pre=REACH.replace('> "$TSUGUMI_OUTPUT"', "> /dev/null") + '; echo "pre=$v" >&2', **settings)
+        cards[name] = bash(body, inputs=["go"], outputs=outputs, recordIO=True,
+                           pre=REACH + '; export PRE_REACH="$reachable"', **settings)
     names = [n for n in cards if n != "trigger"]
     cards["fan"], wires = fan_out(names)
     c = load(env, cards, [card("start", "trigger"), card("fan", "fan")] + [card(n, n) for n in names], wires)
-    run_id, st = run_and_wait(c, "start", timeout=900)
-    for name in ("closed", "closed_unsandboxed", "open", "open_unsandboxed"):
-        out = number(c, run_id, name)
-        want = "reach=1" if name.startswith("open") else "reach=0"
-        assert want in out, (name, out)
-        err = log(c, run_id, name, stream=2)
-        assert ("pre=1" if name.startswith("open") else "pre=0") in err, (name, err)
+    run_id, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded
+    for name in names:
+        payload = read_output(c, run_id, card=name)
+        expected = name.startswith("open")
+        assert bool(decode_scalar(payload, "bool", field=0)) == expected, name
+        assert bool(decode_scalar(payload, "bool", field=1)) == expected, name
 
 
 def test_mac_folders_are_read_only_unless_written(env, tmp_path):
@@ -294,7 +298,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     env.stop()
     env.start()
     c = env.client()
-    run_id, st = run_and_wait(c, "start", timeout=900)
+    run_id, st = run_and_wait(c, "start")
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")

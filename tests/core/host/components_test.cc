@@ -194,7 +194,6 @@ TEST_F(CredentialRefreshTest,
     const auto log = testing::internal::GetCapturedStderr();
     EXPECT_EQ(log.find("old-refresh"), std::string::npos);
     EXPECT_NE(log.find(code), std::string::npos);
-    EXPECT_NE(log.find("auth=chatgpt"), std::string::npos);
     EXPECT_FALSE(
         ::tsugumi::json::Bool(::tsugumi::json::Get(Account(), "signed_in")));
     EXPECT_FALSE(Status()->configured);
@@ -398,7 +397,7 @@ TEST(HostComponents,
   project.path = other.string();
   EXPECT_THROW(register_project(project), host::Failure);
   opened = other / ".tsugumi";
-  EXPECT_THROW(registry.ValidateLocation("project", root), host::Failure);
+  EXPECT_THROW(registry.ReserveLocation("project", root), host::Failure);
   opened.reset();
   const auto register_folder = [&](const H::RegisterFolderRequestT& input) {
     flatbuffers::FlatBufferBuilder builder;

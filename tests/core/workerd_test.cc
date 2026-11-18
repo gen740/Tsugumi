@@ -6,7 +6,6 @@
 #include <atomic>
 #include <filesystem>
 #include <iostream>
-#include <sstream>
 #include <thread>
 
 #include "journal.hh"
@@ -34,7 +33,7 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60,
+auto spec(const std::string& digest, uint64_t build_timeout_ms = 60,
           uint64_t log_limit = 8u << 20) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
@@ -42,7 +41,7 @@ auto spec(const std::string& digest, uint32_t timeout = 60,
   s.output = "/nix/store/00000000000000000000000000000000-test";
   s.invocation_sha256 = digest;
   s.input_blobs = {digest};
-  s.timeout_seconds = timeout;
+  s.build_timeout_ms = build_timeout_ms;
   s.log_limit_bytes = log_limit;
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &s));
@@ -55,114 +54,41 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   p.bytes.assign(data.begin(), data.end());
   return p;
 }
-auto log_entries(const std::string& bytes)
-    -> std::vector<std::pair<uint64_t, std::string>> {
-  std::vector<std::pair<uint64_t, std::string>> result;
-  std::istringstream input(bytes);
-  std::string line;
-  while (std::getline(input, line)) {
-    remote::LogJson entry;
-    expect(!schema::decode(line, entry), "invalid NDJSON log record");
-    result.emplace_back(*entry.stream, *entry.text);
-  }
-  return result;
-}
 auto log_test() -> void {
-  // Fill the budget exactly, then append a notice outside it. The complete
-  // result must still fit the core's shared import limit.
-  std::ostringstream boundary;
-  InvocationLog maximum(boundary, remote::kMaxLogLimitBytes);
-  maximum.append(1, std::string(remote::kMaxLogLimitBytes - 23, 'x'));
-  expect(boundary.str().size() == remote::kMaxLogLimitBytes,
-         "boundary entry did not fill budget");
-  maximum.append(2, "overflow");
-  maximum.finish();
-  expect(boundary.str().size() > remote::kMaxLogLimitBytes &&
-             boundary.str().size() <= remote::kMaxLogResultBytes,
-         "truncation notice exceeds import allowance");
-  // 25 encoded bytes: the raw text fits, but JSON escaping and framing do not
-  // fit in a 23-byte budget. A dropped entry must not look like a complete log.
-  std::ostringstream output;
-  InvocationLog log(output, 23);
-  log.append(1, "\n");
-  log.finish();
-  remote::LogJson entry;
-  std::istringstream lines(output.str());
-  std::string line;
-  expect(static_cast<bool>(std::getline(lines, line)),
-         "missing truncation notice");
-  expect(!schema::decode(line, entry) && *entry.stream == 3 &&
-             !entry.text->empty(),
-         "invalid truncation notice");
-  expect(!std::getline(lines, line), "unexpected log entry");
+  InvocationLog sample(kInvocationLogLimitBytes);
+  const auto build = sample.append(LogStream::build, "build");
+  const auto error = sample.append(LogStream::standard_error, "\n");
+  expect(build && error, "sample entries omitted");
+  const auto build_size = build->size() + 1;
+  const auto error_size = error->size() + 1;
+  InvocationLog maximum(build_size + error_size);
+  expect(maximum.append(LogStream::build, "build").has_value(), "build entry omitted");
+  expect(maximum.append(LogStream::standard_error, "\n").has_value(), "exact fit was rejected");
+  expect(!maximum.truncated(), "an exact fit was marked truncated");
+  expect(!maximum.append(LogStream::standard_error, "overflow") &&
+             maximum.truncated(),
+         "omitted entry was not marked truncated");
+  expect(!maximum.append(LogStream::journal, "journal"),
+         "wrote an entry after truncation");
 
-  const auto encoded = [](uint64_t stream, std::string text) {
-    remote::LogJson value;
-    *value.stream = stream;
-    *value.text = std::move(text);
-    return schema::encode(value) + '\n';
-  };
-  const auto first = encoded(4, "build"), second = encoded(2, "error");
-  for (const auto limit :
-       {first.size() + second.size(), first.size() + second.size() + 1}) {
-    std::ostringstream complete;
-    InvocationLog full(complete, limit);
-    full.append(4, "build");
-    full.append(2, "error");
-    full.finish();
-    expect(log_entries(complete.str()) == log_entries(first + second),
-           "complete log was changed or marked truncated");
-  }
-  std::ostringstream combined;
-  InvocationLog bounded(combined, first.size() + second.size() - 1);
-  bounded.append(4, "build");
-  bounded.append(2, "error");
-  bounded.append(1, std::string(100, 'x'));
-  bounded.finish();
-  const auto once = combined.str();
-  bounded.finish();
-  expect(combined.str() == once, "duplicate truncation notice");
-  const auto entries = log_entries(once);
-  expect(entries.size() == 2 &&
-             entries[0] == std::pair<uint64_t, std::string>{4, "build"} &&
-             entries[1].first == 3 && !entries[1].second.empty(),
+  InvocationLog escaped(error_size - 1);
+  expect(!escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
+         "budget did not account for JSON escaping and the line ending");
+
+  InvocationLog combined(build_size + error_size - 1);
+  expect(combined.append(LogStream::build, "build").has_value(), "build entry omitted");
+  expect(!combined.append(LogStream::standard_error, "\n") && combined.truncated(),
          "combined stream budget was not enforced");
-
-  std::ostringstream tiny;
-  InvocationLog minimum(tiny, 1);
-  minimum.append(1, "too large");
-  minimum.append(2, "also too large");
-  minimum.finish();
-  const auto minimum_entries = log_entries(tiny.str());
-  expect(minimum_entries.size() == 1 && minimum_entries[0].first == 3 &&
-             !minimum_entries[0].second.empty(),
-         "tiny budget suppressed the truncation notice");
-  std::ostringstream local, remote;
-  InvocationLog worker(remote, 80);
-  InvocationLog recording(
-      [&](uint64_t stream, const std::string& text) {
-        tsugumi::remote::LogJson entry;
-        *entry.stream = stream;
-        *entry.text = text;
-        local << schema::encode(entry) << '\n';
-      },
-      80);
-  for (const auto& text :
-       {std::string("build"), std::string("stdout"), std::string(100, 'x')}) {
-    worker.append(1, text);
-    recording.append(1, text);
-  }
-  worker.finish();
-  recording.finish();
-  expect(log_entries(local.str()) == log_entries(remote.str()),
-         "local and remote recording budgets differ");
 }
 auto protocol_test() -> void {
   const std::string digest(64, 'a');
   expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17,
          "job lost the core log budget");
+  expect(
+      parse_spec(spec(digest, 60, kInvocationLogLimitBytes))->log_limit_bytes ==
+          kInvocationLogLimitBytes,
+      "remote worker refused the shared limit");
   R::RequestT q;
-  q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');
   auto c = chunk(std::string("binary\0payload", 14));
   q.body.Set(c);
@@ -177,7 +103,7 @@ auto protocol_test() -> void {
   auto restored = decode(bytes);
   const auto* request = restored->payload.AsRequest();
   expect(request && request->body.AsPutBlobRequest()->bytes == c.bytes &&
-             request->server_id == q.server_id,
+             request->project_scope == q.project_scope,
          "protocol roundtrip");
   for (const auto& data :
        {std::string{}, bytes.substr(0, 11), std::string(32, '\0')})
@@ -203,13 +129,13 @@ auto journal_test(const stdfs::path& root) -> void {
   const auto fingerprint = crypto::sha256_hex(bytes);
   expect(j.status(job).state == R::JobState::Missing,
          "unknown job must be missing");
-  rejected([&] { j.submit(job, bytes, core); });
+  rejected([&] { j.submit(job, bytes, *parse_spec(bytes), core); });
   j.put(job, p, core);
   j.put(job, p, core);
   R::GetBlobRequestT get;
   get.digest = p.digest;
-  expect(j.get(job, get).bytes == p.bytes, "blob roundtrip");
-  rejected([&] { other.get(job, get); });
+  expect(j.get(job, get, core).bytes == p.bytes, "blob roundtrip");
+  rejected([&] { other.get(job, get, core); });
   auto corrupt = p;
   corrupt.digest = std::string(64, 'a');
   rejected([&] { j.put(job, corrupt, core); });
@@ -229,16 +155,19 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(job, tail, core);
   get.digest = large.digest;
   get.offset = kChunkBytes;
-  expect(j.get(job, get).bytes == tail.bytes, "chunked binary transfer");
+  expect(j.get(job, get, core).bytes == tail.bytes, "chunked binary transfer");
   get.limit = kChunkBytes + 1;
-  rejected([&] { j.get(job, get); });
-  auto accepted = j.submit(job, bytes, core);
+  rejected([&] { j.get(job, get, core); });
+  auto accepted = j.submit(job, bytes, *parse_spec(bytes), core);
   expect(accepted.state == R::JobState::Queued &&
              accepted.fingerprint == fingerprint,
          "submit receipt");
-  expect(j.submit(job, bytes, core).deadline == accepted.deadline,
-         "resubmission reset deadline");
-  rejected([&] { j.submit(job, spec(p.digest, 61), core); });
+  expect(j.submit(job, bytes, *parse_spec(bytes), core).fingerprint ==
+             accepted.fingerprint,
+         "resubmission changed the receipt");
+  rejected([&] {
+    j.submit(job, spec(p.digest, 61), *parse_spec(spec(p.digest, 61)), core);
+  });
   rejected([&] { j.cancel(job, std::string(64, 'f')); });
   rejected([&] { j.put(job, p, core); });
   rejected([&] { j.release(job, fingerprint); });
@@ -264,14 +193,19 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(std::distance(stdfs::directory_iterator(j.job_path(job)),
                        stdfs::directory_iterator{}) == 1,
          "tombstone kept payload");
-  expect(j.submit(job, bytes, core).state == R::JobState::Released,
+  expect(j.submit(job, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Released,
          "release allowed a late replay");
   j.cancel(cancelled, fingerprint);
-  expect(j.submit(cancelled, bytes, core).state == R::JobState::Cancelled,
+  expect(j.submit(cancelled, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Cancelled,
          "cancel-before-submit allowed execution");
-  rejected([&] { j.submit(cancelled, spec(p.digest, 62), core); });
+  rejected([&] {
+    j.submit(cancelled, spec(p.digest, 62), *parse_spec(spec(p.digest, 62)),
+             core);
+  });
   j.put(second, p, core);
-  j.submit(second, bytes, core);
+  j.submit(second, bytes, *parse_spec(bytes), core);
   Journal reopened(root / "a");
   expect(reopened.status(second).state == R::JobState::Queued,
          "queue lost on reopen");
@@ -282,7 +216,7 @@ auto journal_test(const stdfs::path& root) -> void {
          "interrupted invocation was rerun");
   const std::string result_job(64, '7');
   j.put(result_job, p, core);
-  j.submit(result_job, bytes, core);
+  j.submit(result_job, bytes, *parse_spec(bytes), core);
   j.claim(result_job, 100, 1, "boot");
   const auto output = j.job_path(result_job) / "work/result";
   private_directory(output);
@@ -305,7 +239,7 @@ auto journal_test(const stdfs::path& root) -> void {
   const auto result = j.import_results(result_job);
   R::GetBlobRequestT manifest_request;
   manifest_request.digest = result;
-  auto manifest_data = j.get(result_job, manifest_request);
+  auto manifest_data = j.get(result_job, manifest_request, core);
   flatbuffers::Verifier verifier(manifest_data.bytes.data(),
                                  manifest_data.bytes.size());
   expect(verifier.VerifyBuffer<R::ResultManifest>(nullptr),
@@ -331,12 +265,12 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(interrupted_upload, suffix, core);
   R::GetBlobRequestT repaired;
   repaired.digest = partial.digest;
-  expect(j.get(interrupted_upload, repaired).bytes == partial.bytes,
+  expect(j.get(interrupted_upload, repaired, core).bytes == partial.bytes,
          "last-chunk retry did not publish the blob");
   // A crashed release leaves the tombstone before payload deletion; recovery
   // completes it. No run data are promoted into the persistent store.
   fs::write_atomic(j.job_path(job) / "leftover", "data", 0600);
-  reopened.expire(job);
+  reopened.clean_released(job);
   expect(!stdfs::exists(j.job_path(job) / "leftover"),
          "release recovery did not erase scratch");
   auto insecure = root / "insecure";
@@ -353,22 +287,20 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   auto bytes = spec(input.digest, 0);
   auto settings = parse_spec(bytes);
   settings->build_timeout_ms = 1;
-  settings->timeout_seconds = 2;
   flatbuffers::FlatBufferBuilder builder;
   builder.Finish(R::JobSpec::Pack(builder, settings.get()));
   bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
                builder.GetSize());
-  const auto submitted = journal.submit(job, bytes, core);
-  expect(submitted.deadline == 0,
-         "a Card deadline must not start while queued");
-  journal.expire(job);
+  journal.clean_released(job);
+  expect(journal.status(job).state == R::JobState::Uploading,
+         "cleanup discarded a staged upload");
+  expect(journal.submit(job, bytes, *parse_spec(bytes), core).state ==
+             R::JobState::Queued,
+         "submission did not queue the job");
   expect(journal.claim(job, 1, 1, "boot"),
          "queue consumed a Card or build budget");
-  expect(journal.status(job).deadline == 0,
-         "job has an aggregate wall deadline");
   auto decoded = parse_spec(bytes);
-  expect(decoded->build_timeout_ms == 1 && decoded->timeout_seconds == 2,
-         "build and call budgets were not kept separately");
+  expect(decoded->build_timeout_ms == 1, "build budget was not preserved");
 }
 }  // namespace
 }  // namespace tsugumi::workerd

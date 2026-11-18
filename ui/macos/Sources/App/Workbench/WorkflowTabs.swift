@@ -10,6 +10,7 @@ struct WorkflowTabs: View {
   @Bindable var workspace: Workspace
   @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
+  @State private var trustAnswered = false
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
   @Environment(\.controlActiveState) private var activeState
@@ -53,10 +54,12 @@ struct WorkflowTabs: View {
       }
       }
     }
-    .tsugumiLoading(EnvironmentOverlay.loading(session))
-    .alert("このプロジェクトを信頼しますか？", isPresented: Binding(get: { session.projectTrust == 0 }, set: { _ in })) {
-      Button("信頼する") { Task { await session.setProjectTrust(true) } }
-      Button("信頼しない", role: .cancel) { Task { await session.setProjectTrust(false) } }
+    .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
+      ? { session.stopEnvironment() } : nil)
+    // Answered once: saving the answer takes a moment, and the alert must not come back meanwhile.
+    .alert("このプロジェクトを信頼しますか？", isPresented: Binding(get: { session.projectTrust == 0 && !trustAnswered }, set: { _ in })) {
+      Button("信頼する") { trustAnswered = true; Task { await session.setProjectTrust(true) } }
+      Button("信頼しない", role: .cancel) { trustAnswered = true; Task { await session.setProjectTrust(false) } }
     } message: {
       Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。")
     }
@@ -236,6 +239,13 @@ enum EnvironmentOverlay {
     case .ready:
       if session.connectionMessage != nil { return nil }
       return LoadingContent(title: String(localized: "プロジェクトを読み込んでいます…"), detail: "project snapshot", dirty: dirty)
+    }
+  }
+
+  static func canCancel(_ session: ProjectSession) -> Bool {
+    switch session.environment {
+    case .preparing, .starting, .reconnecting: return !session.connected
+    default: return false
     }
   }
 

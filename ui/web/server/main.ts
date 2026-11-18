@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
 import { cancelChats, resumeChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
-import { EnvironmentManager, EnvState, projectKey } from './environment'
+import { EnvironmentManager, EnvState } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
 import { CoreHostError } from './coreHost'
@@ -248,7 +248,7 @@ const routes: Record<string, Handler> = {
   'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
-    return { path: recent.path, key: projectKey(recent.path).key, name: recent.name }
+    return { path: recent.path, key: recent.path, name: recent.name }
   },
   'POST /api/project/create': (b) => hostRequest('HostProjectCreateRequest', { parent: b.parent, name: b.name, flow: b.flow }),
   'POST /api/project/duplicate': (b) => hostRequest('HostProjectDuplicateRequest', { path: b.path, parent: b.parent, name: b.name }),
@@ -273,11 +273,11 @@ const routes: Record<string, Handler> = {
     const page = String(b.page)
     pageProjects.delete(page)
     const elsewhere = [...streams.values()].some((p) => !p.detached && p.id !== page && pageProjects.get(p.id) === dir)
-    if (elsewhere) return { stopped: false }
+    if (elsewhere) return { ok: true }
     broadcast({ type: 'projectClosed', project: dir })
     cancelChats(dir)
     for (const t of terminals.values()) if (t.project === dir) stopTerminal(t)
-    return { stopped: false }
+    return { ok: true }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/stop': async (b) => {
@@ -286,8 +286,6 @@ const routes: Record<string, Handler> = {
   },
   'GET /api/env/list': () => Promise.all(envs.list().map(async (e) => ({ key: e.key, project: e.project,
     name: (await hostRequest('HostProjectInfoRequest', { path: e.project })).name, state: publicState(e.state) }))),
-  // Another run of the tsugumi command: a page opens (its key goes to `open` alone).
-  'POST /api/host/identify': () => ({ build: buildIdentity }),
   'POST /api/page/open': (b) => {
     openPage(b.path ? projectDir(b.path) : undefined)
     return { ok: true }
@@ -379,7 +377,9 @@ function send(res: http.ServerResponse, status: number, v: unknown) {
   res.end(JSON.stringify(v))
 }
 
-const server = http.createServer(async (req, res) => {
+// Active uploads can pause. Node's idle keep-alive limit only releases pooled
+// descriptors after a completed response. An SSE response remains open.
+const server = http.createServer({ headersTimeout: 0, requestTimeout: 0 }, async (req, res) => {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v)
   try {
     await handle(req, res)
@@ -435,7 +435,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url, controller.signal))
     } catch (e) {
       send(res, e instanceof HttpError ? e.status : e instanceof CoreHostError ? 400 : 500,
-        e instanceof CoreHostError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
+        e instanceof CoreHostError ? { code: e.code, error: hostProjectErrorText(e.code, e.message) } : { error: (e as Error).message ?? String(e) })
     } finally { res.off('close', disconnected) }
     return
   }
@@ -462,6 +462,9 @@ async function openOnRunningServer(): Promise<boolean> {
 const releaseStartup = await startupLock(support)
 try {
   if (await openOnRunningServer()) {
+    if (process.send) await new Promise<void>((resolve, reject) => {
+      process.send!(JSON.parse(fs.readFileSync(serverFile, 'utf8')), undefined, {}, (error: Error | null) => error ? reject(error) : resolve())
+    })
     releaseStartup()
     process.exit(0)
   }
@@ -490,6 +493,10 @@ server.on('listening', () => {
   fs.rmSync(serverFile + '.tmp', { force: true })
   fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ build: buildIdentity, port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
+  if (process.connected) {
+    process.send?.({ build: buildIdentity, port: p, pid: process.pid, agentKey } satisfies ServerInfo)
+    process.disconnect?.()
+  }
   releaseStartup()
   if (reuseServer) console.log(L('終了するには Ctrl-C を押します。'))
   if (openBrowser) openPage(launchProject)

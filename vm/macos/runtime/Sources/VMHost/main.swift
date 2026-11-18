@@ -10,16 +10,12 @@ import Virtualization
 signal(SIGPIPE, SIG_IGN)
 _ = setsid()
 var support: URL?, imageDir: URL?
-var resources = VMResources.default
 var arguments = CommandLine.arguments.dropFirst()
 while let argument = arguments.popFirst() {
   guard let value = arguments.popFirst() else { exit(2) }
   switch argument {
   case "--support": support = URL(fileURLWithPath: value)
   case "--image": imageDir = URL(fileURLWithPath: value)
-  case "--cpus": if let n = Int(value), n > 0 { resources.cpus = n }
-  case "--memory": if let n = Int(value), n > 0 { resources.memoryGiB = n }
-  case "--store": if let n = Int(value), n > 0 { resources.storeGiB = n }
   default: exit(2)
   }
 }
@@ -107,6 +103,8 @@ let watchers = Watchers()
   }
   value.storePath = vm.directory.appendingPathComponent("store.img").path
   value.storeExists = FileManager.default.fileExists(atPath: value.storePath ?? "")
+  let size = (try? FileManager.default.attributesOfItem(atPath: value.storePath ?? "")[.size] as? UInt64) ?? 0
+  value.storeDiskGib = UInt32(size >> 30)
   value.virtualizationSupported = VZVirtualMachine.isSupported
   value.imageAvailable = image != nil
   value.imageVersion = image?.version
@@ -136,10 +134,15 @@ final class Terminals: @unchecked Sendable {
     }
   }
   func closeAll() { lock.withLock { for fd in descriptors.values { shutdown(fd, SHUT_RDWR) } } }
-  func input(_ session: UInt64, _ data: [UInt8]) throws {
-    try lock.withLock {
-      guard let fd = descriptors[session] else { return }
-      try writeAllToTerminal(fd, Data(data))
+  func input(_ session: UInt64, _ data: [UInt8]) async throws {
+    let fd = lock.withLock { descriptors[session].map { dup($0) } ?? -1 }
+    guard fd >= 0 else { return }
+    try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Void, Error>) in
+      Thread.detachNewThread {
+        defer { Darwin.close(fd) }
+        do { try writeAllToTerminal(fd, Data(data)); answer.resume() }
+        catch { answer.resume(throwing: error) }
+      }
     }
   }
   func close(_ session: UInt64) { lock.withLock { if let fd = descriptors[session] { shutdown(fd, SHUT_RDWR) } } }
@@ -160,7 +163,7 @@ actor Driver {
   private var bridges: [String: LoopbackBridge] = [:]
   func boot(_ request: Tsugumi_VMHost_BootT) async throws {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
-    try vm.configureBroker(request.brokerEndpoint)
+    vm.configureBroker(request.brokerSocket)
     guard let image else { throw LauncherError.imageMissing }
     let preparing = !FileManager.default.fileExists(atPath: vm.directory.appendingPathComponent("store.img").path)
     let token = vm.observe { state in
@@ -171,6 +174,8 @@ actor Driver {
       }
     }
     defer { vm.stopObserving(token) }
+    let size = request.resources
+    let resources = VMResources(cpus: Int(size.cpus), memoryGiB: Int(size.memoryGib), storeGiB: Int(size.storeGib))
     try await vm.start(image: image, resources: resources, cacheConfiguration: request.cacheConfiguration ?? "", cacheNetrc: request.cacheNetrc ?? "", cacheProblem: request.cacheProblem ?? "")
   }
   func shares(_ key: String, _ mounts: [Tsugumi_VMHost_MountT?]) async throws -> Int {
@@ -184,7 +189,7 @@ actor Driver {
   func process(_ key: String) async throws -> Tsugumi_VMHost_ProcessT {
     let value = Tsugumi_VMHost_ProcessT()
     guard case .running = vm.state else { return value }
-    let status = try await vm.request("status", timeout: 10)
+    let status = try await vm.request("status")
     for item in status.split(separator: " ") {
       let parts = item.split(separator: ":")
       if parts.count == 2, parts[0] == key, let pid = Int64(parts[1]) {
@@ -193,21 +198,21 @@ actor Driver {
         value.endpoint = "ws://127.0.0.1:\(bridges[key]!.port)/rpc"
       }
     }
-    if !value.running {
-      bridges.removeValue(forKey: key)?.close()
-      await vm.detach(key)
-    }
+    if !value.running { await detach(key) }
     return value
   }
   func run(_ request: Tsugumi_VMHost_RunT) async throws -> Tsugumi_VMHost_ProcessT {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(resources.cpus)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    _ = try await vm.request("start \(request.key) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
     return try await process(request.key)
   }
   func stop(_ key: String) async throws {
     if case .running = vm.state { _ = try await vm.request("stop \(key)") }
+    await detach(key)
+  }
+  private func detach(_ key: String) async {
     bridges.removeValue(forKey: key)?.close()
     await vm.detach(key)
   }
@@ -217,20 +222,21 @@ actor Driver {
     case .state: result.console = vm.console.snapshot.suffix(200).map { Optional($0) }
     case .shutdown: exitState.begin(); await vm.shutdown(exiting: true); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
     case .verifystore:
-      result.message = try await vm.request("verify-store", timeout: 3600)
+      await vm.hold(); defer { vm.release() }
+      result.message = try await vm.request("verify-store")
     case .cleanupstore:
-      let fields = try await vm.request("gc", timeout: 3600).split(separator: " ")
-      result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
+      await vm.hold(); defer { vm.release() }
+      try await vm.request("gc")
     case .forgetproject:
       let key = request.projectId ?? ""
-      guard !(try await process(key)).running else { throw LauncherError.notReady("the project is running; stop it first") }
-      _ = try await vm.request("forget \(key)")
+      try await vm.request("forget-stopped \(key)")
+      await detach(key)
     case .command:
       guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
       result.message = try await vm.request(request.command ?? "")
     default: throw LauncherError.notReady("unsupported VM runtime operation")
     }
-    let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists
+    let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists; result.storeDiskGib = current.storeDiskGib
     return result
   }
   func reset(_ request: Tsugumi_VMHost_ResetT) async throws -> Tsugumi_Host_HostRuntimeT {
@@ -251,23 +257,25 @@ actor Driver {
     let result = Tsugumi_Host_HostTerminalT(); result.session = request.session
     switch request.action {
     case .open_:
-      guard let key = request.project, (try await process(key)).running else { throw LauncherError.notReady("the project is not running") }
+      guard let key = request.project else { throw LauncherError.notReady("the project is not running") }
       let fd = try await vm.connect(port: SharedVM.controlPort)
-      var timeout = timeval(tv_sec: 5, tv_usec: 0)
-      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
       do {
         try writeAllToTerminal(fd, Data("shell \(key) \(max(request.rows, 2)) \(max(request.cols, 10))\n".utf8))
         var line = Data(), byte: UInt8 = 0
         while Darwin.read(fd, &byte, 1) == 1, byte != 10 { line.append(byte) }
-        let fields = String(decoding: line, as: UTF8.self).split(separator: " ")
-        guard fields.count == 2, fields[0] == "ok", let session = UInt64(fields[1]) else { throw LauncherError.notReady("cannot open terminal") }
+        let reply = String(decoding: line, as: UTF8.self)
+        let fields = reply.split(separator: " ")
+        guard fields.count == 2, fields[0] == "ok", let session = UInt64(fields[1]) else {
+          let reason = reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "cannot open terminal"
+          throw LauncherError.notReady(reason)
+        }
         result.session = session
         peer.emit(encode(result, reply: .hostterminal, id: id))
         terminals.add(fd, session)
         return
       } catch { Darwin.close(fd); throw error }
-    case .input: try terminals.input(request.session, request.data)
-    case .resize: _ = try await vm.request("resize \(request.session) \(max(request.rows, 2)) \(max(request.cols, 10))", timeout: 5)
+    case .input: try await terminals.input(request.session, request.data)
+    case .resize: _ = try await vm.request("resize \(request.session) \(max(request.rows, 2)) \(max(request.cols, 10))")
     case .close: terminals.close(request.session)
     }
     peer.emit(encode(result, reply: .hostterminal, id: id))
@@ -303,8 +311,6 @@ Thread.detachNewThread {
     let fd = accept(listener, nil, nil)
     if fd < 0 { if errno == EINTR { continue }; break }
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC); noSigPipe(fd)
-    var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     let peer = Peer(fd)
     Thread.detachNewThread {
       defer {

@@ -75,9 +75,10 @@ export class RPCError extends Error {
 export const disconnected = () => new RPCError('disconnected', L('tsugumid との接続が切れました'))
 
 export interface Transport {
+  /** Resolves with the verified reply matched to the request ID. */
   call(frame: Uint8Array, timeoutMs: number): Promise<Uint8Array>
   close(): void
-  /** Set by the client. */
+  /** Set by the client. The transport delivers verified notifications here. */
   onEvent?: (frame: Uint8Array) => void
   onClose?: (reason: string) => void
 }
@@ -114,8 +115,8 @@ export class RPCClient {
   }
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
-  async connect(token: string | undefined, clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
+  async connect(token: string | undefined, expectedProjectId?: string): Promise<R.HelloResultT> {
+    const req = Object.assign(new R.SessionHelloRequestT(), { token: token ?? null, expectedProjectId: expectedProjectId ?? null })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }
@@ -136,7 +137,6 @@ export class RPCClient {
     try {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
-      if (message.payloadType() !== Payload.Notification) throw new Error('unexpected notification')
       const raw = message.payload(new R.Notification()) as R.Notification
       const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
         ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
@@ -149,15 +149,11 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, id: bigint, timeoutMs: number): Promise<ReplyT> {
+  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<ReplyT> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
-    if (message.requestId() !== id || message.payloadType() !== Payload.Reply) {
-      this.close()
-      throw new RPCError('protocol', 'unexpected RPC reply')
-    }
     const wire = message.payload(new Reply()) as Reply
     const reply = wire.valueType() === R.ReplyPayload.RecordResult
       ? new ReplyT(R.ReplyPayload.RecordResult, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
@@ -166,14 +162,13 @@ export class RPCClient {
   }
 
   /** Sends one request and waits for its reply. Failure replies throw RPCFailure. */
-  async call<T>(type: RequestPayload, value: RequestT['value'], timeoutMs = 60_000): Promise<T> {
+  async call<T>(type: RequestPayload, value: RequestT['value'], timeoutMs = 0): Promise<T> {
     const id = this.nextId++
     const msg = new MessageT(id, Payload.Request, new RequestT(type, value))
     const b = new Builder(1024)
     b.finish(msg.pack(b), 'TSG1')
-    const reply = await this.dispatch(b.asUint8Array().slice(), id, timeoutMs)
+    const reply = await this.dispatch(b.asUint8Array().slice(), timeoutMs)
     if (reply.valueType === R.ReplyPayload.Failure) throw new RPCFailure(reply.value as D.FailureT)
-    if (reply.valueType === R.ReplyPayload.NONE) throw new RPCError('unexpected', 'empty reply')
     return reply.value as T
   }
 
@@ -206,7 +201,7 @@ export class RPCClient {
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
     return this.call<R.RunHistoryDeleteResultT>(RequestPayload.RunHistoryDeleteRequest,
-      Object.assign(new R.RunHistoryDeleteRequestT(), { opId, endedBefore: endedBefore === null ? null : BigInt(endedBefore) }), 300_000)
+      Object.assign(new R.RunHistoryDeleteRequestT(), { opId, endedBefore: endedBefore === null ? null : BigInt(endedBefore) }))
   }
   /** The types of an _outputs.fbs text as the core compiles them (bfbs); with
    *  a port and a type, also the text with that port changed. Saves nothing. */
@@ -312,14 +307,14 @@ export class RPCClient {
   }
   /** Looks a flake up for nixSources (nothing is saved). */
   resolveNixSource(ref: string) {
-    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)
+    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }))
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
-    return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
+    return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }))
   }
   deleteRunScratch(opId: string, paths: string[]) {
-    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths), 300_000)
+    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths))
   }
   cacheUsage() {
     return this.call<R.ProjectCacheUsageResultT>(RequestPayload.ProjectCacheUsageRequest, new R.ProjectCacheUsageRequestT())
@@ -383,13 +378,14 @@ const nativeError = (error: NativeClientError) => new RPCError(
 )
 
 /** Browser project connections use the shared C++ byte transport. */
-export async function webSocketTransport(url: string): Promise<Transport> {
+export async function webSocketTransport(url: string, signal?: AbortSignal): Promise<Transport> {
   if (!wasmModule) {
     const moduleUrl = '/client/tsugumi-client.js'
     wasmModule = import(moduleUrl).then((module) => module.default() as Promise<WasmModule>)
     wasmModule.catch(() => { wasmModule = undefined })
   }
   const module = await wasmModule
+  signal?.throwIfAborted()
   const client = new module.RpcClient(url, 0)
   let released = false
   const release = () => {
@@ -411,12 +407,15 @@ export async function webSocketTransport(url: string): Promise<Transport> {
     // Free the binding after the C++ callback has unwound.
     queueMicrotask(release)
   })
+  signal?.addEventListener('abort', release, { once: true })
   try {
     await new Promise<void>((resolve, reject) => client.start((error) => error ? reject(nativeError(error)) : resolve()))
     return transport
   } catch (error) {
     release()
     throw error
+  } finally {
+    signal?.removeEventListener('abort', release)
   }
 }
 

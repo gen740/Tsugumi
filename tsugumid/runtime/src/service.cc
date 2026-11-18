@@ -411,8 +411,8 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           throw;
         }
         lock.lock();
-        if (live.max_jobs && (live.active_jobs >= live.max_jobs ||
-                              worker_slots_[target.id] >= live.max_jobs)) {
+        if (live.active_jobs >= live.max_jobs ||
+            worker_slots_[target.id] >= live.max_jobs) {
           candidates[*choice.index].free = false;
           continue;
         }
@@ -449,6 +449,32 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     release();
     throw;
   }
+}
+
+auto Service::prepare_early_build(const Node& node, BuildRequest& build)
+    -> bool {
+  const auto targets = remote_targets();
+  std::vector<WorkerCandidate> candidates;
+  for (const auto& target : targets)
+    candidates.push_back({target.id, target.grade, target.available});
+  std::string resident;
+  if (node.settings.reuse_worker) {
+    std::lock_guard guard(worker_selection_mutex_);
+    if (auto it = resident_targets_.find(path_key(node.path));
+        it != resident_targets_.end())
+      resident = it->second;
+  }
+  const auto choice =
+      select_worker(candidates, node.settings.worker_condition.get(),
+                    node.settings.execution_service, resident);
+  if (!choice.index || targets[*choice.index].id != kLocalExecutionService)
+    return false;
+  try {
+    execution_service_->prepare(node, {}, build);
+  } catch (const Failed&) {
+    return false;  // the activation reports it
+  }
+  return true;
 }
 
 auto Service::remote_execution() -> RemoteExecutionService& {
@@ -541,6 +567,9 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   execution_service_.reset();  // the project's resident and standby workers end
+  // Queued history writes announce themselves through the server, which
+  // outlives the service only until it is closed.
+  if (history_) history_->flush();
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
   cache_usage_.reset();
@@ -1288,12 +1317,9 @@ std::vector<ChangeIn> decode_changes(
   return out;
 }
 
-void require_mutation(std::optional<uint64_t> base_rev,
-                      const flatbuffers::String* op_id) {
+auto require_base_rev(std::optional<uint64_t> base_rev) -> void {
   if (!base_rev)
     throw Failed(FailureKind::invalid_request, "base_rev is required");
-  if (!crypto::is_operation_id(op_id->str()))
-    throw Failed(FailureKind::invalid_request, "invalid op_id");
 }
 
 auto RequireApprovedPermissions(
@@ -1339,7 +1365,7 @@ void Service::save(RequestIn& req) {
                      "the save was cancelled before committing");
     };
     check_cancelled();
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto changes = decode_changes(r->changes());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
@@ -1444,7 +1470,7 @@ void Service::reload(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict,
@@ -1536,8 +1562,6 @@ auto Service::version_operation(RequestIn& req,
   const auto digest = request_digest(request);
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
-    if (!crypto::is_operation_id(op_id))
-      throw Failed(FailureKind::invalid_request, "invalid op_id");
     const auto commit = operation();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) {
@@ -1561,7 +1585,7 @@ void Service::version_checkout(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "reload", digest)) return;
   try {
-    require_mutation(r->base_rev(), r->op_id());
+    require_base_rev(r->base_rev());
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict,

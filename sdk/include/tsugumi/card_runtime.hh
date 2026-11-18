@@ -22,7 +22,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "tsugumi/sdk/abi.h"
@@ -90,36 +89,13 @@ class Call {
  public:
   explicit Call(const tsugumi_call* call) : c_(call) {}
 
-  const uint8_t* input(std::string_view port) const;  // nullptr when absent
-  void finish_outputs() const;
-  void emit(std::string_view port,
-            const flatbuffers::FlatBufferBuilder& b) const;
+  auto inputs() const -> const uint8_t* { return c_->inputs; }
 
-  template <class Table, class T>
-  void unpack(std::string_view port, T& out) const {
-    const uint8_t* d = input(port);
-    if (!d)
-      throw Failure("input_missing",
-                    "input " + std::string(port) + " was not provided");
-    flatbuffers::GetRoot<Table>(d)->UnPackTo(&out);
-  }
-  template <class Table, class T>
-  void unpack(std::string_view port, std::optional<T>& out) const {
-    if (const uint8_t* d = input(port))
-      flatbuffers::GetRoot<Table>(d)->UnPackTo(&out.emplace());
-  }
   template <class Table, class T>
   void unpack_params(T& out) const {
     if (c_->params && c_->params_size)
       flatbuffers::GetRoot<Table>(c_->params)->UnPackTo(&out);
   }
-  template <class Table, class T>
-  void emit_object(std::string_view port, const T& obj) const {
-    flatbuffers::FlatBufferBuilder b;
-    b.Finish(Table::Pack(b, &obj));
-    emit(port, b);
-  }
-
  private:
   const tsugumi_call* c_;
 };

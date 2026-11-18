@@ -58,5 +58,5 @@ def main(inputs, report, run):
     embed_font(folder / "plot.html")
     report.figure(chart)
 
-    yield figure_result(run, folder, plotted, library="altair", kind=kind, **facts)
     report.log(str(facts["note"]))
+    return figure_result(run, folder, plotted, library="altair", kind=kind, **facts)

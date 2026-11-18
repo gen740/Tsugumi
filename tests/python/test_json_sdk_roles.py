@@ -1,4 +1,4 @@
-"""Exercise interpreter role dispatch and incremental results without sockets."""
+"""Exercise interpreter role dispatch and one returned result without sockets."""
 import os
 from pathlib import Path
 import shutil
@@ -16,7 +16,7 @@ def executable(name):
     return value
 
 
-def test_r_roles_hook_and_result_closure(tmp_path):
+def test_r_roles_hook_and_result(tmp_path):
     rscript = executable("RSCRIPT")
     if subprocess.run([rscript, "--vanilla", "-e", 'quit(status=if (requireNamespace("jsonlite", quietly=TRUE)) 0 else 1)'], capture_output=True).returncode:
         pytest.skip("R jsonlite is not available")
@@ -27,14 +27,12 @@ events <- list()
   args <- list(...)
   switch(name,
     tsugumi_params = '{"factor":2}',
-    tsugumi_input = if (args[[1]] == "number") '{"value":21}' else NULL,
+    tsugumi_inputs = '{"number":{"value":21}}',
     tsugumi_info = c("test", "step", ".", ".", ".")[[args[[1]] + 1]],
     tsugumi_invocation = 7,
     tsugumi_cancelled = FALSE,
     tsugumi_remaining = -1,
-    tsugumi_output = { events[[length(events)+1]] <<- args; TRUE },
     tsugumi_display = TRUE,
-    tsugumi_finish_outputs = TRUE,
     tsugumi_log = NULL,
     tsugumi_fail = stop(args[[1]]),
     stop("unexpected host call: ", name))
@@ -54,34 +52,27 @@ main <- function(inputs, report, run) {
   }
   saved_run <<- run
   report$text("ready")
-  n <- 0
-  function() {
-    n <<- n + 1
-    if (n == 1) list(result = list(value = 42)) else NULL
-  }
+  list(result = list(value = 42))
 }
-stopifnot(.tsugumi_invoke(TRUE), .tsugumi_invoke(FALSE))
+stopifnot(.tsugumi_invoke(TRUE), jsonlite::fromJSON(.tsugumi_invoke(FALSE))$result$value == 42)
 stopifnot(inherits(try(saved_run$cancelled(), silent=TRUE), "try-error"))
-stopifnot(.tsugumi_invoke(FALSE))
-stopifnot(events[[1]][[1]] == "hook", events[[2]][[1]] == "result")
-stopifnot(jsonlite::fromJSON(events[[2]][[2]])$value == 42)
+stopifnot(jsonlite::fromJSON(.tsugumi_invoke(FALSE))$result$value == 42)
 ''')
     subprocess.run([rscript, "--vanilla", str(script), str(ROOT / "sdk/r/tsugumi.R")], check=True)
 
 
-def test_ruby_roles_stream_and_callback_lifetime(tmp_path):
+def test_ruby_roles_result_and_callback_lifetime(tmp_path):
     script = tmp_path / "roles.rb"
     script.write_text(r'''
 module TsugumiHost
   @events = []
   class << self
     attr_reader :events
-    def inputs = [['number', 3, '{"value":21}']]
+    def inputs = '{"number":{"value":21}}'
+    def input_kind(port) = 3
     def params = '{"factor":2}'
     def info = {'run_id'=>'test', 'card'=>'step', 'invocation'=>7,
                 'working_directory'=>'.', 'temporary_directory'=>'.', 'output_directory'=>'.'}
-    def output(port, value) = @events << [port, JSON.parse(value)]
-    def finish_outputs; end
     def display_text(text); end
     def log(text); end
     def cancelled? = false
@@ -103,15 +94,12 @@ class Tsugumi::Card
     rescue FrozenError
     end
     $saved_report = report
-    Enumerator.new do |stream|
-      report.text('ready')
-      stream << {result: {value: 42}}
-    end
+    report.text('ready')
+    {result: {value: 42}}
   end
 end
 Tsugumi.instance_variable_set(:@card, Tsugumi::Card.new)
-raise unless Tsugumi._run_start && Tsugumi._invoke
-raise unless TsugumiHost.events == [['hook', {'value'=>1}], ['result', {'value'=>42}]]
+raise unless Tsugumi._run_start && JSON.parse(Tsugumi._invoke) == {'result'=>{'value'=>42}}
 begin
   $saved_report.log('late')
   raise 'callback outlived invocation'
@@ -121,7 +109,7 @@ end
     subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
 
 
-def test_ruby_unjoined_threads_fail_before_required_outputs(tmp_path):
+def test_ruby_unjoined_threads_fail_before_returning_outputs(tmp_path):
     script = tmp_path / "threads.rb"
     script.write_text(r'''
 require ARGV[0]
@@ -131,11 +119,7 @@ module TsugumiHost
     attr_reader :events
     def info = {}
     def params = '{}'
-    def inputs = []
-    def finish_outputs
-      @events << :finish
-      raise ArgumentError, 'required outputs were not emitted'
-    end
+    def inputs = '{}'
     def fail(kind, message) = @events << [kind, message]
   end
 end
@@ -151,19 +135,17 @@ raise unless TsugumiHost.events.length == 1
 kind, message = TsugumiHost.events.first
 raise unless kind == 'worker_failed' && message.include?('join Ruby threads')
 raise if $leftover.alive?
-# With no leftover thread, required-output validation still runs.
+# The next invocation may complete and return an empty Outputs value.
 class Tsugumi::Card
   def main(inputs) = nil
 end
 TsugumiHost.events.clear
-raise if Tsugumi._invoke
-raise unless TsugumiHost.events.first == :finish
-raise unless TsugumiHost.events.last[1].include?('required outputs')
+raise unless Tsugumi._invoke == '{}' && TsugumiHost.events.empty?
 ''')
     subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
 
 
-def test_julia_roles_hook_and_result_iterator(tmp_path):
+def test_julia_roles_hook_and_result(tmp_path):
     compiler = shutil.which(os.environ.get("CC", "cc"))
     if not compiler:
         pytest.skip("C compiler is not available")
@@ -172,11 +154,9 @@ def test_julia_roles_hook_and_result_iterator(tmp_path):
 #include <stdint.h>
 #include <stdio.h>
 const char* tsugumi_native_params(void) { return "{\"factor\":2}"; }
-const char* tsugumi_native_input(const char* port) { (void)port; return "{\"value\":21}"; }
+const char* tsugumi_native_inputs(void) { return "{\"number\":{\"value\":21}}"; }
 const char* tsugumi_native_info(int field) { (void)field; return "."; }
 uint64_t tsugumi_native_invocation(void) { return 7; }
-int tsugumi_native_output(const char* port, const char* json) { printf("%s:%s\n", port, json); return 0; }
-int tsugumi_native_finish_outputs(void) { return 0; }
 int tsugumi_native_display(const char* json) { (void)json; return 0; }
 void tsugumi_native_log(const char* text) { (void)text; }
 int tsugumi_native_cancelled(void) { return 0; }
@@ -187,6 +167,10 @@ void tsugumi_native_fail(const char* text) { fprintf(stderr, "%s\n", text); }
     subprocess.run([compiler, "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
     script = tmp_path / "roles.jl"
     script.write_text(r'''
+using Libdl
+library = dlopen(ARGS[2])
+const TSUGUMI_HOST = (; (name => dlsym(library, "tsugumi_native_" * string(name)) for name in
+    (:inputs, :params, :info, :invocation, :display, :log, :cancelled, :remaining_ms, :fail))...)
 include(ARGS[1])
 using .Tsugumi
 function on_run_start(inputs, report, run)
@@ -205,17 +189,16 @@ function main(inputs, report, run)
     end
     global saved_run = run
     report.text("ready")
-    (Dict("result" => Dict("value" => 42)) for _ in 1:1)
+    Dict("result" => Dict("value" => 42))
 end
-@assert Tsugumi.invoke(true) && Tsugumi.invoke(false)
+@assert Tsugumi.invoke(true)
+@assert Tsugumi.parse_json(Tsugumi.invoke(false))["result"]["value"] == 42
 for method in (cancelled, remaining_ms)
     rejected = try; method(saved_run); false; catch; true; end
     @assert rejected
 end
-@assert Tsugumi.invoke(false)
+@assert Tsugumi.parse_json(Tsugumi.invoke(false))["result"]["value"] == 42
 ''')
-    result = subprocess.run([executable("JULIA"), "--startup-file=no", "--history-file=no", str(script), str(ROOT / "sdk/julia/tsugumi.jl")],
-                            env={**os.environ, "TSUGUMI_NATIVE_LIBRARY": str(library), "JULIA_DEPOT_PATH": str(tmp_path / "depot")},
+    subprocess.run([executable("JULIA"), "--startup-file=no", "--history-file=no", str(script), str(ROOT / "sdk/julia/tsugumi.jl"), str(library)],
+                            env={**os.environ, "JULIA_DEPOT_PATH": str(tmp_path / "depot")},
                             text=True, capture_output=True, check=True)
-    assert 'hook:{"value":1}' in result.stdout
-    assert 'result:{"value":42}' in result.stdout

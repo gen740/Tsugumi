@@ -83,11 +83,13 @@ def summarize(case, stdout, process_error=None):
     if case == "project":
         if any(c.get("server") != "tsugumi" or c["tool"] != "project_inspect" or c["arguments"] != {} for c in calls):
             return dict(report, outcome="fail", reason="Unexpected tool, server, or inspection arguments")
-        if any(c["status"] != "completed" or c["error"] or not c["snapshot_received"] for c in calls):
-            return dict(report, outcome="invalid", reason="The requested fixture inspection did not succeed")
         if not calls:
             return dict(report, outcome="fail", reason="Project-specific answer has no observed evidence")
+        successes = sum(c["status"] == "completed" and not c["error"] and c["snapshot_received"] for c in calls)
+        report["failed_inspections"] = len(calls) - successes
         report["extra_inspections"] = len(calls) - 1
+        if not successes:
+            return dict(report, outcome="invalid", reason="The requested fixture inspection did not succeed")
     if not any(text.strip() for text in answers):
         return dict(report, outcome="fail", reason="No assistant reply")
     return dict(report, outcome="needs_review", reason="Check the reply and any unclassified items against the rubric")

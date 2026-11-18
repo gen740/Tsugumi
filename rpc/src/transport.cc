@@ -607,7 +607,7 @@ void TransportServer::loop() {
       ids.push_back(c.id);
       ++it;
     }
-    int rc = ::poll(fds.data(), fds.size(), 500);
+    int rc = ::poll(fds.data(), fds.size(), -1);
     if (rc < 0 && errno != EINTR) break;
     size_t i = 0;
     if (fds[i].revents & POLLIN) {

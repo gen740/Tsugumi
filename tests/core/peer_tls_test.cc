@@ -48,10 +48,8 @@ auto Exchange(const peer_tls::Context& server, const peer_tls::Context& client)
   });
   try {
     peer_tls::Stream stream(client, pair[1], false);
-    for (char byte : std::string("PING")) {
+    for (char byte : std::string("PING"))
       stream.Write(std::string_view(&byte, 1));
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
     result.client = stream.Read(4) == "PONG";
   } catch (...) {
   }

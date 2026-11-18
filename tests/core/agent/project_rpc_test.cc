@@ -180,13 +180,10 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
     return Tool(conversation, "project_copy", args);
   });
   const auto staging = directory.path / "project/.tsugumi/document-files";
-  const auto deadline = std::chrono::steady_clock::now() + 10s;
-  while (!std::filesystem::exists(directory.path /
-                                  "project/.tsugumi/transfer.started")) {
-    ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
-    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
-    std::this_thread::sleep_for(1ms);
-  }
+  const auto marker = directory.path / "project/.tsugumi/transfer.started";
+  ASSERT_TRUE(WaitForPath(marker, [&] { return std::filesystem::exists(marker); },
+                          project.Pid()));
+  ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
   if (GetParam()) {
     external->Close();
     EXPECT_THROW(copying.get(), std::runtime_error);
@@ -202,11 +199,9 @@ TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
                     .empty());
     EXPECT_EQ(copying.get().Code(), "cancelled");
   }
-  const auto stopped = std::chrono::steady_clock::now() + 15s;
-  while (!std::filesystem::is_empty(staging)) {
-    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
-    std::this_thread::sleep_for(1ms);
-  }
+  ASSERT_TRUE(WaitForPath(staging / "entries", [&] {
+    return std::filesystem::is_empty(staging);
+  }, project.Pid()));
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),
             "0");
@@ -236,17 +231,9 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
         R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=1 2>/dev/null"})");
   });
   const auto staging = directory.path / "project/.tsugumi/document-files";
-  const auto deadline = std::chrono::steady_clock::now() + 20s;
-  while (!std::filesystem::exists(directory.path /
-                                  "project/.tsugumi/transfer.started")) {
-    if (saving.wait_for(0ms) == std::future_status::ready) {
-      FAIL() << "The successful isolated shell could not reach import: "
-             << saving.get().View();
-      return;
-    }
-    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
-    std::this_thread::sleep_for(1ms);
-  }
+  const auto marker = directory.path / "project/.tsugumi/transfer.started";
+  ASSERT_TRUE(WaitForPath(marker, [&] { return std::filesystem::exists(marker); },
+                          project.Pid()));
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest,
                    [&](Builder& b) {
                      return A::CreateConversationCancelRequest(
@@ -256,11 +243,9 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
                   .Code()
                   .empty());
   EXPECT_EQ(saving.get().Code(), "cancelled");
-  const auto stopped = std::chrono::steady_clock::now() + 15s;
-  while (!std::filesystem::is_empty(staging)) {
-    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
-    std::this_thread::sleep_for(1ms);
-  }
+  ASSERT_TRUE(WaitForPath(staging / "entries", [&] {
+    return std::filesystem::is_empty(staging);
+  }, project.Pid()));
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),
             "0");
@@ -850,7 +835,7 @@ TEST_F(AgentProjectFixture,
       R"({"command":"sed -i.bak 's/before/after/' definitions/edit/src/data.txt; rm definitions/edit/src/data.txt.bak; printf scratch-data > scratch/from-shell"})");
   ASSERT_TRUE(edited.Code().empty()) << edited.View();
   const auto text = JsonString(edited.View(), "/text");
-  ASSERT_NE(text.find("\"exit_code\":0"), std::string::npos) << text;
+  ASSERT_EQ(JsonUInt(text, "/value/exit_code"), 0u);
   EXPECT_EQ(JsonString(text, "/value/save/delta/origin"), "agent");
   EXPECT_EQ(Read(directory.path / "project/definitions/edit/src/data.txt"),
             "after\n");
@@ -905,9 +890,11 @@ TEST_F(AgentProjectFixture,
     auto pending = std::async(std::launch::async, [&] {
       return Tool(
           conversation, "project_shell",
-          R"({"command":"printf staged > definitions/edit/src/data.txt; printf ready > scratch/started; sleep 1","timeout_ms":10000})");
+          R"({"command":"printf staged > definitions/edit/src/data.txt; mkfifo scratch/release && printf ready > scratch/started && read -r released < scratch/release","timeout_ms":10000})");
     });
     std::filesystem::path marker;
+    // The private scratch directory is chosen by the Host. Agent exposes
+    // snapshots but no push event with its path while the command is active.
     const auto deadline = std::chrono::steady_clock::now() + 3s;
     while (std::chrono::steady_clock::now() < deadline) {
       const auto private_root = directory.path / "project/.tsugumi/agent-files";
@@ -936,9 +923,11 @@ TEST_F(AgentProjectFixture,
                        })
                       .Code()
                       .empty());
-    } else
+    } else {
       Write(source, "person's concurrent external edit");
-    ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+      Write(marker.parent_path() / "release", "continue\n");
+    }
+
     const auto result = pending.get();
     if (cancel) {
       EXPECT_EQ(result.Code(), "cancelled");
@@ -949,6 +938,7 @@ TEST_F(AgentProjectFixture,
       EXPECT_EQ(Read(source), "person's concurrent external edit");
     }
     std::filesystem::remove(marker);
+    std::filesystem::remove(marker.parent_path() / "release");
   }
 }
 
@@ -1240,10 +1230,10 @@ TEST_F(AgentProjectFixture, FirstProjectAccessAsksForThreeInOneDurablePrompt) {
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(std::vector{
-                                    b.CreateString(asked->Get(0)->str()),
-                                    b.CreateString(asked->Get(1)->str()),
-                                    b.CreateString(asked->Get(2)->str())}))
+                                b.CreateVector(
+                                    std::vector{Tsugumi::Service::Access::Read,
+                                                Tsugumi::Service::Access::Write,
+                                                Tsugumi::Service::Access::Run}))
                          .Union();
                    })
                   .Code()
@@ -1268,31 +1258,13 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("partial-access");
   const auto pending = Inspect(conversation);
   ASSERT_EQ(pending.Code(), "grant_required");
-  const auto AccessChoice = [&](const std::string& conversation,
-                                Tsugumi::Service::Access access) {
-    const auto reply =
-        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-          return A::CreateAccessListRequest(b, b.CreateString(conversation))
-              .Union();
-        });
-    for (const auto* line :
-         *reply.Value()->value_as_AccessList()->requests()->Get(0)->asked())
-      if (JsonString(line->str().substr(std::string("project_access ").size()),
-                     "/access") == Tsugumi::Service::EnumNameAccess(access))
-        return line->str();
-    throw std::runtime_error("Missing requested access");
-  };
-  const auto readChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Read);
-  const auto writeChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(
-                                    std::vector{b.CreateString(readChoice),
-                                                b.CreateString(writeChoice)}))
+                                b.CreateVector(std::vector{
+                                    Tsugumi::Service::Access::Read,
+                                    Tsugumi::Service::Access::Write}))
                          .Union();
                    })
                   .Code()
@@ -1335,28 +1307,12 @@ TEST_F(AgentProjectFixture, NeededAccessCanBeLeftOutWhileAnotherIsAllowed) {
   const auto conversation = Conversation("omitted-needed-access");
   const auto pending = Inspect(conversation);
   ASSERT_EQ(pending.Code(), "grant_required");
-  const auto AccessChoice = [&](const std::string& conversation,
-                                Tsugumi::Service::Access access) {
-    const auto reply =
-        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-          return A::CreateAccessListRequest(b, b.CreateString(conversation))
-              .Union();
-        });
-    for (const auto* line :
-         *reply.Value()->value_as_AccessList()->requests()->Get(0)->asked())
-      if (JsonString(line->str().substr(std::string("project_access ").size()),
-                     "/access") == Tsugumi::Service::EnumNameAccess(access))
-        return line->str();
-    throw std::runtime_error("Missing requested access");
-  };
-  const auto writeChoice =
-      AccessChoice(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& b) {
                      return A::CreateAccessResolveRequest(
                                 b, b.CreateString(pending.RequestId()), true,
-                                b.CreateVector(
-                                    std::vector{b.CreateString(writeChoice)}))
+                                b.CreateVector(std::vector{
+                                    Tsugumi::Service::Access::Write}))
                          .Union();
                    })
                   .Code()
@@ -1442,7 +1398,6 @@ TEST(AgentShellProbe, DirectProjectRequest) {
               hello
                   ? R::CreateSessionHelloRequest(
                         b,
-                        b.CreateString("00000000-0000-4000-8000-000000000001"),
                         b.CreateString(
                             std::getenv("TSUGUMI_SHELL_PROBE_PROJECT")),
                         b.CreateString(
@@ -1831,6 +1786,24 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
 }
 
+auto AnthropicReadResult(std::string_view request) -> json::Members {
+  std::string call;
+  for (const auto& message :
+       json::Array(json::Get(json::Object(request), "messages"))) {
+    for (const auto& raw :
+         json::Array(json::Get(json::Object(message), "content"))) {
+      const auto block = json::Object(raw);
+      if (json::Text(block, "type") == "tool_use" &&
+          json::Text(block, "name") == "project_file_read")
+        call = json::Text(block, "id");
+      if (!call.empty() && json::Text(block, "type") == "tool_result" &&
+          json::Text(block, "tool_use_id") == call)
+        return block;
+    }
+  }
+  return {};
+}
+
 TEST_F(AgentProjectFixture, AuthorizedProjectImagesReachTheModelAsImages) {
   ModelServer model;
   model.Queue(AnthropicTool("read-image", "project_file_read",
@@ -1845,14 +1818,24 @@ TEST_F(AgentProjectFixture, AuthorizedProjectImagesReachTheModelAsImages) {
   const auto state = WaitUntilIdle(conversation);
   ASSERT_NE(state.find("I received the project image."), std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_EQ(requests[0].find("iVBORw0KGgo"), std::string::npos);
-  EXPECT_NE(requests[1].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(requests[1].find("\"media_type\":\"image/png\""),
-            std::string::npos);
-  EXPECT_NE(requests[1].find("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD"
-                             "UlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="),
-            std::string::npos);
-  EXPECT_NE(requests[1].find("shown with this result"), std::string::npos);
+  EXPECT_TRUE(AnthropicReadResult(requests[0]).empty());
+  const auto result = AnthropicReadResult(requests[1]);
+  ASSERT_FALSE(result.empty());
+  EXPECT_FALSE(json::Bool(json::Get(result, "is_error")));
+  const auto content = json::Array(json::Get(result, "content"));
+  bool found = false;
+  for (const auto& raw : content) {
+    const auto block = json::Object(raw);
+    if (json::Text(block, "type") != "image") continue;
+    found = true;
+    const auto source = json::Object(json::Get(block, "source"));
+    EXPECT_EQ(json::Text(source, "media_type"), "image/png");
+    std::string image;
+    ASSERT_TRUE(crypto::base64_decode(json::Text(source, "data"), image));
+    EXPECT_EQ(image, Read(directory.path /
+                          "project/definitions/picture/src/pixel.png"));
+  }
+  EXPECT_TRUE(found);
 }
 
 TEST_F(AgentProjectFixture,
@@ -1923,10 +1906,12 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(Send(conversation, "Read the picture.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
-  const auto request = model.Requests()[1];
-  EXPECT_EQ(request.find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(request.find("incomplete or invalid image"), std::string::npos);
-  EXPECT_EQ(request.find("iVBORw0KGgo"), std::string::npos);
+  const auto result = AnthropicReadResult(model.Requests()[1]);
+  ASSERT_FALSE(result.empty());
+  EXPECT_FALSE(json::Bool(json::Get(result, "is_error")));
+  const auto summary = json::Text(result, "content");
+  EXPECT_EQ(json::Text(json::Object(summary), "reply"), "FileContent");
+  EXPECT_EQ(summary.find("iVBORw0KGgo"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture, AModelThatRejectsImagesCanContinueWithTheToolText) {
@@ -1946,10 +1931,29 @@ TEST_F(AgentProjectFixture, AModelThatRejectsImagesCanContinueWithTheToolText) {
                 .find("I continued with the image description."),
             std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[1].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_EQ(requests[2].find("\"type\":\"image\""), std::string::npos);
-  EXPECT_NE(requests[2].find("model rejected this image"), std::string::npos);
-  EXPECT_NE(Events(conversation).View().find("retrying"), std::string::npos);
+  const auto initial = AnthropicReadResult(requests[1]);
+  const auto replay = AnthropicReadResult(requests[2]);
+  ASSERT_FALSE(initial.empty());
+  ASSERT_FALSE(replay.empty());
+  EXPECT_EQ(json::Text(initial, "tool_use_id"),
+            json::Text(replay, "tool_use_id"));
+  const auto blocks = json::Array(json::Get(initial, "content"));
+  EXPECT_TRUE(std::ranges::any_of(blocks, [](const auto& raw) {
+    return json::Text(json::Object(raw), "type") == "image";
+  }));
+  const auto text = std::ranges::find_if(blocks, [](const auto& raw) {
+    return json::Text(json::Object(raw), "type") == "text";
+  });
+  ASSERT_NE(text, blocks.end());
+  const auto original = json::Text(json::Object(*text), "text");
+  ASSERT_FALSE(original.empty());
+  EXPECT_TRUE(json::Text(replay, "content").starts_with(original));
+  const auto events = Events(conversation);
+  const auto* page = events.Value()->value_as_EventsPage();
+  ASSERT_NE(page, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*page->events(), [](const auto* entry) {
+    return entry->event()->kind()->str() == "retrying";
+  }));
 }
 
 TEST_F(AgentProjectFixture,
@@ -2036,7 +2040,7 @@ TEST_F(AgentProjectFixture, ConcurrentPluginToolsDoNotBlockTheUsersApproval) {
   const auto approval = Grant(conversation);
   EXPECT_FALSE(approval.empty());
   for (auto& tool : tools) {
-    ASSERT_EQ(tool.wait_for(8s), std::future_status::ready);
+
     EXPECT_TRUE(tool.get().Code().empty());
   }
   EXPECT_EQ(model.Requests().size(), 8u);
@@ -2064,7 +2068,7 @@ TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
   EXPECT_EQ(JsonString(text, "/value/stdout_bytes"), "allowed");
   EXPECT_EQ(JsonString(text, "/value/stderr_bytes"), "diagnostic");
-  EXPECT_NE(text.find("\"exit_code\":3"), std::string::npos);
+  EXPECT_EQ(JsonUInt(text, "/value/exit_code"), 3u);
 }
 
 TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
@@ -2160,6 +2164,7 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   ASSERT_TRUE(Send(conversation, "Start a command, then wait.").Code().empty());
   // Scratch is private. Wait for the recorded call rather than writing a
   // marker into a shared host temporary directory.
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -2191,6 +2196,7 @@ TEST_F(AgentProjectFixture,
     return Tool(conversation, "project_shell",
                 R"({"command":"sleep 20","timeout_ms":30000})");
   });
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -2204,7 +2210,7 @@ TEST_F(AgentProjectFixture,
                    })
                   .Code()
                   .empty());
-  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+
   EXPECT_EQ(pending.get().Code(), "cancelled");
   const auto events = Events(conversation).View();
   EXPECT_NE(events.find("toolStarted"), std::string::npos);
@@ -2226,13 +2232,14 @@ TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
     return Tool(conversation, "project_shell",
                 R"({"command":"sleep 20","timeout_ms":30000})");
   });
+  // Agent exposes toolStarted through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
   ASSERT_NE(Events(conversation).View().find("toolStarted"), std::string::npos);
   Revoke(grant);
-  ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
+
   EXPECT_EQ(pending.get().Code(), "cancelled");
   EXPECT_EQ(Tool(conversation, "project_shell", R"({"command":"true"})").Code(),
             "grant_required");
@@ -2314,11 +2321,10 @@ TEST_F(AgentProjectFixture,
           " && test ! -r " + quote(marker.string()) +
           " && printf private > \"$TMPDIR/diagnostic\" && cat "
           "\"$TMPDIR/diagnostic\"");
-  EXPECT_NE(private_tmp.find("\"exit_code\":0"), std::string::npos)
-      << private_tmp;
+  EXPECT_EQ(JsonUInt(private_tmp, "/value/exit_code"), 0u);
   EXPECT_EQ(JsonString(private_tmp, "/value/stdout_bytes"), "private");
   const auto next = run("test ! -e \"$TMPDIR/diagnostic\"");
-  EXPECT_NE(next.find("\"exit_code\":0"), std::string::npos) << next;
+  EXPECT_EQ(JsonUInt(next, "/value/exit_code"), 0u);
   const auto result =
       run("TSUGUMI_SHELL_PROBE_ENDPOINT=" + quote("unix:" + socket) +
           " TSUGUMI_SHELL_PROBE_PROJECT=" + quote(project_id) +
@@ -2326,7 +2332,7 @@ TEST_F(AgentProjectFixture,
           quote(JsonString(project_ready, "/token")) + " " +
           quote(probe.filename().string()) +
           " --gtest_filter=AgentShellProbe.DirectProjectRequest");
-  EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
+  EXPECT_EQ(JsonUInt(result, "/value/exit_code"), 0u);
   EXPECT_NE(
       JsonString(result, "/value/stdout_bytes").find("DIRECT_RPC_BLOCKED"),
       std::string::npos);
@@ -2464,8 +2470,20 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
   ASSERT_EQ(next.Code(), "grant_required");
   ASSERT_FALSE(next.RequestId().empty());
   EXPECT_NE(next.RequestId(), pending.RequestId());
-  EXPECT_NE(next.Failure()->message()->str().find("sandbox_off work"),
-            std::string::npos);
+  const auto access =
+      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& builder) {
+        return A::CreateAccessListRequest(builder,
+                                          builder.CreateString(conversation))
+            .Union();
+      });
+  const auto* requests = access.Value()->value_as_AccessList()->requests();
+  ASSERT_NE(requests, nullptr);
+  const auto asked = std::ranges::find_if(*requests, [&](const auto* item) {
+    return item->id()->str() == next.RequestId();
+  });
+  ASSERT_NE(asked, requests->end());
+  EXPECT_EQ((*asked)->access(), Tsugumi::Service::Access::CardPermissions);
+  EXPECT_EQ((*asked)->state()->str(), "pending");
   EXPECT_EQ(
       Tool(conversation, "project_reload", arguments, "reload-b").RequestId(),
       next.RequestId());
@@ -2486,8 +2504,16 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       Tool(conversation, "project_reload", arguments, "reload-b");
   ASSERT_TRUE(reloaded.Code().empty());
   ASSERT_FALSE(JsonBool(reloaded.View(), "/isError")) << reloaded.View();
-  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").View(),
-            reloaded.View());
+  const auto accepted = JsonString(
+      JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
+  EXPECT_NE(accepted, JsonString(snapshot, "/value/rev"));
+  const auto replay =
+      Tool(conversation, "project_reload", arguments, "reload-b");
+  ASSERT_TRUE(replay.Code().empty());
+  EXPECT_FALSE(JsonBool(replay.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
+                       "/value/rev"),
+            accepted);
 }
 
 TEST_F(AgentProjectFixture,
@@ -2562,10 +2588,33 @@ TEST_F(AgentProjectFixture,
     EXPECT_EQ(Tool(conversation, name, arguments, call_id + "-new").Code(),
               "grant_required");
   }
-  const auto recorded = Get(conversation).View();
-  EXPECT_NE(recorded.find("operation_approval"), std::string::npos);
-  EXPECT_NE(recorded.find("Declined; nothing changed"), std::string::npos);
-  EXPECT_NE(recorded.find("Approved; outcome:"), std::string::npos);
+  const auto recorded = Get(conversation);
+  const auto* tools =
+      recorded.Value()->value_as_ConversationResult()->conversation()->tools();
+  ASSERT_NE(tools, nullptr);
+  for (const auto& operation : operations) {
+    for (const bool denied : {false, true}) {
+      const auto call = (denied ? "approval:decline-" : "approval:approve-") +
+                        operation.first;
+      const auto found = std::ranges::find_if(
+          *tools, [&](const auto* tool) { return tool->id()->str() == call; });
+      ASSERT_NE(found, tools->end()) << call;
+      EXPECT_EQ((*found)->name()->str(), "operation_approval");
+      EXPECT_EQ((*found)->state()->str(), "completed");
+      EXPECT_EQ((*found)->is_error(), denied);
+    }
+  }
+  const auto versions = Tool(conversation, "version_graph", "{}");
+  namespace J = ::tsugumi::json;
+  const auto graph_value = J::Object(
+      J::Get(J::Object(JsonString(versions.View(), "/text")), "value"));
+  const auto commits = J::Array(J::Get(graph_value, "commits"));
+  EXPECT_TRUE(std::ranges::any_of(commits, [](const auto& commit) {
+    const auto tags = J::Array(J::Get(J::Object(commit), "tags", "[]"));
+    return std::ranges::any_of(tags, [](const auto& tag) {
+      return J::String(tag) == "approved-version";
+    });
+  }));
 }
 
 TEST_F(AgentProjectFixture,
@@ -2609,7 +2658,21 @@ TEST_F(AgentProjectFixture,
                                   "clear\nOnly this call"))
             .Union();
       });
-  EXPECT_EQ(reply.Code(), "invalid_request");
+  ASSERT_TRUE(reply.Code().empty()) << reply.View();
+  const auto id = reply.Value()->value_as_AccessResult()->id()->str();
+  const auto listed =
+      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+        return A::CreateAccessListRequest(b, b.CreateString(conversation))
+            .Union();
+      });
+  for (const auto* entry : *listed.Value()->value_as_AccessList()->requests()) {
+    if (entry->id()->str() != id) continue;
+    ASSERT_EQ(entry->asked()->size(), 1);
+    EXPECT_TRUE(
+        entry->asked()->Get(0)->string_view().starts_with("project_access {"));
+    return;
+  }
+  FAIL() << "Missing access request";
 }
 
 TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {

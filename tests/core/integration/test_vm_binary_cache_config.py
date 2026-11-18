@@ -20,6 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GUEST = "/run/tsugumi/binary-caches"
 DEFAULTS = ["https://cache.nixos.org", "https://tsugumi.cachix.org"]
+DEFAULT_KEY_NAMES = {"cache.nixos.org-1", "tsugumi.cachix.org-1"}
 KEY = "research:" + "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
 
 pytestmark = pytest.mark.skipif(shutil.which("nix") is None, reason="needs nix")
@@ -60,7 +61,7 @@ def test_without_configured_caches_the_guest_uses_only_the_pinned_defaults(tmp_p
     code, values, error = effective(tmp_path, snapshot)
     assert code == 0, error
     assert values["substituters"].split() == DEFAULTS
-    assert [key.split(":")[0] for key in values["trusted-public-keys"].split()] == ["cache.nixos.org-1", "tsugumi.cachix.org-1"]
+    assert {key.split(":")[0] for key in values["trusted-public-keys"].split()} == DEFAULT_KEY_NAMES
     assert values["trusted-users"].split() == ["root"]
     assert GUEST not in values["netrc-file"]
 
@@ -73,8 +74,9 @@ def test_a_configured_cache_is_added_to_the_defaults(tmp_path):
     code, values, error = effective(tmp_path, snapshot)
     assert code == 0, error
     assert values["substituters"].split() == DEFAULTS + ["https://cache.example.org/team"]
-    assert values["trusted-public-keys"].split()[-1] == KEY
-    assert len(values["trusted-public-keys"].split()) == 3
+    keys = set(values["trusted-public-keys"].split())
+    assert KEY in keys
+    assert {key.split(":")[0] for key in keys - {KEY}} == DEFAULT_KEY_NAMES
     assert values["trusted-users"].split() == ["root"]
     assert values["netrc-file"] == f"{GUEST}/netrc"
 

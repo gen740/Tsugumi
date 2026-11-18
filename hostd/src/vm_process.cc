@@ -125,8 +125,9 @@ class VMProcess final : public EnvironmentProcess {
   ~VMProcess() override { Shutdown(); }
   auto Shutdown() -> void override {
     if (stopping_.exchange(true)) return;
-    // Do not launch a helper merely to stop it. Its own deadline bounds the
-    // guest shutdown, even when earlier requests have become stuck.
+    startup_stop_.request_stop();
+    // Do not launch a helper merely to stop it. Wait for guest poweroff
+    // acknowledged by the resident helper.
     if (Socket socket{TryConnect()}; socket.fd >= 0) {
       try {
         H::HostRuntimeRequestT stop;
@@ -149,17 +150,13 @@ class VMProcess final : public EnvironmentProcess {
   }
   auto Guest() const -> bool override { return true; }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    V::BootT boot;
-    boot.key = launch.key;
-    boot.broker_endpoint = options_.broker_endpoint;
-    const auto caches = PrepareBinaryCaches(options_.support);
-    boot.cache_configuration = caches.configuration;
-    boot.cache_netrc = caches.netrc;
-    boot.cache_problem = caches.problem;
-    Call(std::move(boot));
+    // VM boot is shared. Cancelling this caller releases its wait and never
+    // sends the project start command; other callers can still use the VM.
+    Call(Boot(launch.key), launch.stop);
+    if (launch.stop.stop_requested())
+      throw std::runtime_error("Environment start cancelled");
     V::RunT run;
     run.key = launch.key;
-    run.cpus = options_.cpus;
     auto name = std::filesystem::path(launch.project).filename().string();
     for (auto& ch : name)
       if (!std::isalnum(static_cast<unsigned char>(ch)) ||
@@ -176,13 +173,12 @@ class VMProcess final : public EnvironmentProcess {
   auto Inspect(H::EnvironmentStateT& ready) -> std::optional<int64_t> override {
     V::ProcessRequestT request;
     request.key = ready.key;
-    const auto reply = Call(std::move(request));
-    const auto* process = reply->value.AsProcess();
-    if (!process || !process->running || process->pid <= 0) return std::nullopt;
-    ready.endpoint = process->endpoint;
+    const auto process = CallProcess(std::move(request));
+    if (!process.running) return std::nullopt;
+    ready.endpoint = process.endpoint;
     ready.unix_socket.clear();
-    Remember(process->pid, ready.key);
-    return process->pid;
+    Remember(process.pid, ready.key);
+    return process.pid;
   }
   auto Verify(const H::EnvironmentStateT& ready) -> bool override {
     auto copy = ready;
@@ -196,16 +192,16 @@ class VMProcess final : public EnvironmentProcess {
     V::ProcessRequestT request;
     request.key = Key(pid);
     try {
-      const auto reply = Call(std::move(request));
-      const auto* process = reply->value.AsProcess();
-      return process && process->running && process->pid == pid
-                 ? std::nullopt
-                 : std::optional<int>(-1);
+      const auto process = CallProcess(std::move(request));
+      return process.running && process.pid == pid ? std::nullopt
+                                                   : std::optional<int>(-1);
     } catch (...) {
       // A transport failure does not prove a guest process has stopped.
       return std::nullopt;
     }
   }
+  // Signal waits for the guest’s stop acknowledgement and process exit.
+  auto WaitForExit(int64_t, bool) -> void override {}
   auto Signal(int64_t pid, int) -> void override {
     V::ProcessRequestT request;
     request.key = Key(pid);
@@ -215,9 +211,7 @@ class VMProcess final : public EnvironmentProcess {
   auto GuardStart(const std::string& key) -> void override {
     V::ProcessRequestT request;
     request.key = key;
-    const auto reply = Call(std::move(request));
-    if (const auto* process = reply->value.AsProcess();
-        process && process->running)
+    if (CallProcess(std::move(request)).running)
       throw EnvironmentFailure(
           "A resident project process cannot be authenticated",
           "Stop the environment and retry.", "");
@@ -225,15 +219,8 @@ class VMProcess final : public EnvironmentProcess {
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
     if (request.action == H::RuntimeAction::CleanupStore ||
-        request.action == H::RuntimeAction::VerifyStore) {
-      V::BootT boot;
-      boot.broker_endpoint = options_.broker_endpoint;
-      const auto caches = PrepareBinaryCaches(options_.support);
-      boot.cache_configuration = caches.configuration;
-      boot.cache_netrc = caches.netrc;
-      boot.cache_problem = caches.problem;
-      Call(std::move(boot));
-    }
+        request.action == H::RuntimeAction::VerifyStore)
+      Call(Boot(""));
     auto reply = request.action == H::RuntimeAction::Reset
                      ? Call(VMResetPolicy())
                      : Call(request);
@@ -252,12 +239,25 @@ class VMProcess final : public EnvironmentProcess {
   std::string path_;
   std::mutex open_mutex_, watch_mutex_, keys_mutex_;
   std::atomic<int> watch_fd_ = -1;
+  std::stop_source startup_stop_;
   std::atomic<bool> stopping_ = false;
   std::mutex calls_mutex_;
   std::set<int> calls_;
   int64_t helper_pid_ = 0;
   std::jthread watcher_;
   std::map<int64_t, std::string> keys_;
+  auto Boot(const std::string& key) -> V::BootT {
+    V::BootT boot;
+    boot.key = key;
+    boot.broker_socket = options_.broker_socket;
+    const auto caches = PrepareBinaryCaches(options_.support);
+    boot.cache_configuration = caches.configuration;
+    boot.cache_netrc = caches.netrc;
+    boot.cache_problem = caches.problem;
+    boot.resources =
+        std::make_unique<H::VMResourcesT>(options_.resources());
+    return boot;
+  }
   auto Remember(int64_t pid, const std::string& key) -> void {
     std::lock_guard lock(keys_mutex_);
     keys_[pid] = key;
@@ -294,10 +294,6 @@ class VMProcess final : public EnvironmentProcess {
     if (::connect(socket.fd, reinterpret_cast<sockaddr*>(&address),
                   sizeof address))
       return -1;
-    timeval timeout{1800, 0};
-    ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-    timeout.tv_sec = 5;
-    ::setsockopt(socket.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
     const auto fd = socket.fd;
     socket.fd = -1;
     return fd;
@@ -307,24 +303,23 @@ class VMProcess final : public EnvironmentProcess {
     if (auto fd = TryConnect(); fd >= 0) return fd;
     EnvironmentLaunch launch;
     launch.vm_helper = true;
-    launch.arguments = {options_.binary.string(),        "--support",
-                        options_.support.string(),       "--image",
-                        options_.image.string(),         "--cpus",
-                        std::to_string(options_.cpus),   "--memory",
-                        std::to_string(options_.memory), "--store",
-                        std::to_string(options_.store)};
+    launch.arguments = {options_.binary.string(), "--support",
+                        options_.support.string(), "--image",
+                        options_.image.string()};
     launch.log = options_.support / "vmhost.log";
     auto native = NativeEnvironmentProcess();
     helper_pid_ = native->Launch(launch);
-    const auto deadline = std::chrono::steady_clock::now() + 15s;
-    while (std::chrono::steady_clock::now() < deadline) {
-      if (auto fd = TryConnect(); fd >= 0) return fd;
+    int connected = -1;
+    WaitForNativeReadiness(path_, helper_pid_, startup_stop_.get_token(), [&] {
+      connected = TryConnect();
+      if (connected >= 0) return true;
       if (native->Poll(helper_pid_, true).has_value())
         throw std::runtime_error(
             "VM helper exited during startup; see vmhost.log");
-      std::this_thread::sleep_for(50ms);
-    }
-    throw std::runtime_error("VM helper did not become ready; see vmhost.log");
+      return false;
+    });
+    if (connected < 0) throw std::runtime_error("VM helper start cancelled");
+    return connected;
   }
   auto Watch() -> void {
     std::lock_guard lock(watch_mutex_);
@@ -334,9 +329,8 @@ class VMProcess final : public EnvironmentProcess {
     watch_fd_ = Connect();
     try {
       Send(watch_fd_, V::WatchT{});
-      auto message = Read(watch_fd_);
-      if (!message->payload.AsReply())
-        throw std::runtime_error("VM helper did not acknowledge Watch");
+      // The helper acknowledges Watch before subscribing this peer.
+      Read(watch_fd_);
     } catch (...) {
       ::close(watch_fd_);
       watch_fd_ = -1;
@@ -348,7 +342,6 @@ class VMProcess final : public EnvironmentProcess {
             while (!stop.stop_requested()) {
               auto message = Read(fd);
               const auto* event = message->payload.AsEvent();
-              if (!event) throw std::runtime_error("Expected VM helper event");
               if (const auto* progress = event->value.AsProgress())
                 options_.progress(*progress);
               if (const auto* runtime = event->value.AsHostRuntime())
@@ -364,7 +357,7 @@ class VMProcess final : public EnvironmentProcess {
         });
   }
   template <class T>
-  auto Call(T value) -> std::unique_ptr<V::ReplyT> {
+  auto Call(T value, std::stop_token stop = {}) -> std::unique_ptr<V::ReplyT> {
     Watch();
     Socket socket{Connect()};
     {
@@ -380,6 +373,8 @@ class VMProcess final : public EnvironmentProcess {
         self.calls_.erase(fd);
       }
     } finished{*this, socket.fd};
+    std::stop_callback cancelled(stop,
+                                 [&] { ::shutdown(socket.fd, SHUT_RDWR); });
     Send(socket.fd, std::move(value));
     auto message = Read(socket.fd);
     auto* reply = message->payload.AsReply();
@@ -387,6 +382,10 @@ class VMProcess final : public EnvironmentProcess {
       throw EnvironmentFailure(failure->message, failure->recovery,
                                failure->log);
     return std::make_unique<V::ReplyT>(*reply);
+  }
+  auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {
+    auto reply = Call(std::move(request));
+    return std::move(*reply->value.AsProcess());
   }
 };
 }  // namespace

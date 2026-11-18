@@ -151,7 +151,8 @@ export type AgentEvent =
   | { kind: 'retrying'; message: string }
   /** The text streamed so far in this reply is dropped: it is asked again. */
   | { kind: 'discardText' }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
+  | { kind: 'cancelled' }
   | { kind: 'finished' }
   /** What a helper started by `delegate` does (its own events). */
   | { kind: 'helperStarted'; text: string }

@@ -98,7 +98,9 @@ struct Service::State {
         requests(4),
         tool_requests(4),
         wait_requests(4),
-        terminal_requests(1) {
+        terminal_requests(1),
+        terminal_closes(1),
+        environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
         [this](const std::string& id, const json::Members& values) {
@@ -213,7 +215,7 @@ struct Service::State {
         db, registry, *host_settings, *tools, *turns,
         [this](std::string raw) { return Scrub(std::move(raw)); });
     events = std::make_unique<host::HostEvents>(
-        state_gate, terminal_requests, [this](uint64_t session) {
+        state_gate, terminal_closes, [this](uint64_t session) {
           H::HostTerminalRequestT close;
           close.action = H::TerminalAction::Close;
           close.session = session;
@@ -223,7 +225,8 @@ struct Service::State {
       execution_broker = std::make_unique<host::ExecutionBroker>(
           options.state_dir, options.broker_socket);
     if (!options.vm.binary.empty()) {
-      options.vm.broker_endpoint = execution_broker->endpoint();
+      options.vm.broker_socket = execution_broker->socket_path();
+      options.vm.resources = [this] { return host_settings->VMResources(); };
       options.vm.progress = [this](const Tsugumi::VMHost::ProgressT& value) {
         H::EnvironmentProgressT progress;
         progress.project = "";
@@ -250,20 +253,16 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
-    options.environment.prepare_project_identity =
+    options.environment.reserve_project_identity =
         [this](const std::filesystem::path& root) {
           std::lock_guard lock(mutex);
           const auto file = root / ".tsugumi/project-id";
-          if (const auto id = fs::read_file(file)) {
-            if (!crypto::is_short_id(*id))
-              throw Failure("invalid_project",
-                            "Recreate this development project for the new "
-                            "identifier format");
-            registry.ValidateLocation(*id, root);
+          if (const auto id = fs::read_file(file);
+              id && crypto::is_short_id(*id)) {
             db.prepare("INSERT OR IGNORE INTO identifiers VALUES('project',?)")
                 .bind(1, *id)
                 .run();
-            return;
+            return registry.ReserveLocation(*id, root);
           }
           std::string id;
           for (;;) {
@@ -272,7 +271,14 @@ struct Service::State {
             known.bind(1, id);
             if (!known.step()) break;
           }
-          fs::write_atomic(file, id, 0600);
+          auto release = registry.ReserveLocation(id, root);
+          try {
+            fs::write_atomic(file, id, 0600);
+          } catch (...) {
+            release();
+            throw;
+          }
+          return release;
         };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
@@ -356,6 +362,9 @@ struct Service::State {
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>>
       tool_stops;
   Lane terminal_requests;
+  // A close must wake an input blocked by terminal backpressure.
+  Lane terminal_closes;
+  Lane environment_stops;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
@@ -565,18 +574,9 @@ struct Service::State {
               item->folder = folder;
               item->resource = "folder:" + ready.project_id + ":" +
                                crypto::sha256_hex(folder);
-              H::RegisterFolderRequestT registration;
-              registration.project_id = ready.project_id;
-              registration.resource_id = item->resource;
-              registration.folder = folder;
-              registration.title =
-                  std::filesystem::path(folder).filename().string();
-              flatbuffers::FlatBufferBuilder builder;
-              builder.Finish(
-                  H::RegisterFolderRequest::Pack(builder, &registration));
-              registry.RegisterFolder(
-                  *flatbuffers::GetRoot<H::RegisterFolderRequest>(
-                      builder.GetBufferPointer()));
+              registry.AttachFolder(
+                  ready.project_id, item->resource, folder,
+                  std::filesystem::path(folder).filename().string());
               result.folders.push_back(std::move(item));
             }
             transaction.commit();
@@ -612,7 +612,16 @@ struct Service::State {
         throw Failure("unavailable", "Environment service is not running");
       auto input = std::unique_ptr<H::HostRuntimeRequestT>(
           r->value_as_HostRuntimeRequest()->UnPack());
-      return wire::HostReply(request.request_id, environments->Runtime(*input));
+      auto result = environments->Runtime(*input);
+      if (!options.vm.binary.empty()) {
+        result.vm_resources =
+            std::make_unique<H::VMResourcesT>(host_settings->VMResources());
+        result.vm_default_resources =
+            std::make_unique<H::VMResourcesT>(host::VMDefaultResources());
+        result.vm_limits =
+            std::make_unique<H::VMResourcesT>(host::VMResourceLimits());
+      }
+      return wire::HostReply(request.request_id, std::move(result));
     }
     if (const auto* terminal = r->value_as_HostTerminalRequest()) {
       auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());
@@ -643,10 +652,13 @@ struct Service::State {
       const auto support = options.vm.support.empty()
                                ? options.state_dir.parent_path()
                                : options.vm.support;
-      if (const auto* put = r->value_as_BinaryCachesPutRequest())
-        host::SaveBinaryCaches(support, put->caches_json()->string_view());
       H::BinaryCachesT result;
-      result.caches_json = host::LoadBinaryCaches(support);
+      if (const auto* put = r->value_as_BinaryCachesPutRequest()) {
+        result.caches_json = put->caches_json()->str();
+        host::SaveBinaryCaches(support, result.caches_json);
+      } else {
+        result.caches_json = host::LoadBinaryCaches(support);
+      }
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (r->value_type() == H::RequestPayload::ProjectPermissionsRequest ||
@@ -729,10 +741,9 @@ struct Service::State {
         Human(human);
         const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
             r->value_as_ProjectOperateRequest()->UnPack());
-        const auto project = operation->project_id;
         lock.unlock();
-        const auto reply = tools->OperateProject(
-            project, *operation, {"ui", {}, {}, {}}, shutdown.get_token());
+        const auto reply = tools->OperateProject(*operation, {"ui", {}, {}, {}},
+                                                 shutdown.get_token());
         if (reply.wire.empty())
           throw Failure("unavailable", "operation returned no typed outcome");
         H::ProjectOperationResultT result;
@@ -793,6 +804,8 @@ auto Service::Shutdown() -> void {
   state_->tool_requests.stop();
   state_->wait_requests.stop();
   state_->terminal_requests.stop();
+  state_->terminal_closes.stop();
+  state_->environment_stops.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
   state_->host_settings.reset();
@@ -887,6 +900,10 @@ auto Service::dispatch(RequestIn request) -> void {
     } catch (const Failure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);
+    } catch (const agent::ProviderError& e) {
+      const auto code = e.reason_code();
+      bytes = fail(request.request_id, code.empty() ? "invalid_request" : code,
+                   state_->Scrub(e.what()), {});
     } catch (const std::exception& e) {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});
@@ -897,14 +914,22 @@ auto Service::dispatch(RequestIn request) -> void {
     }
     server->reply(request.conn, std::move(bytes));
   };
-  const bool terminal =
-      host && H::GetMessage(request.frame->data())
-                      ->payload_as_Request()
-                      ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto& lane = terminal  ? state_->terminal_requests
-               : waiting ? state_->wait_requests
-               : tool    ? state_->tool_requests
-                         : state_->requests;
+  const auto* host_request =
+      host ? H::GetMessage(request.frame->data())->payload_as_Request()
+           : nullptr;
+  const auto* terminal =
+      host_request ? host_request->value_as_HostTerminalRequest() : nullptr;
+  const auto* environment =
+      host_request ? host_request->value_as_EnvironmentRequest() : nullptr;
+  auto& lane =
+      environment && environment->action() == H::EnvironmentAction::Stop
+          ? state_->environment_stops
+      : terminal && terminal->action() == H::TerminalAction::Close
+          ? state_->terminal_closes
+      : terminal ? state_->terminal_requests
+      : waiting  ? state_->wait_requests
+      : tool     ? state_->tool_requests
+                 : state_->requests;
   if (!lane.submit(task)) {
     if (tool_stop) {
       std::lock_guard lock(state_->mutex);
