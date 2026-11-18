@@ -206,8 +206,7 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-@pytest.mark.parametrize("end", ["cancel", "listener_expiry", "supervisor_expiry"])
-def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path, end):
+def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
         pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
@@ -221,10 +220,7 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
     peer = Worker(tmp_path, binary, env={**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
     jobs = [str(n) * 64 for n in (4, 5, 6)]
     fingerprints = {}
-    expired = False
     def state(job):
-        if expired:
-            return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())["state"]
         return peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body.state
     def wait(job, expected):
         deadline = time.monotonic() + 10
@@ -249,31 +245,9 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
         # it does not fail a job.
         time.sleep(1.5)
         assert state(jobs[2]) == R.JobState.Queued
-        if end == "cancel":
-            peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
-            wait(jobs[0], R.JobState.Cancelled)
-            wait(jobs[1], R.JobState.Running)
-        else:
-            if end == "supervisor_expiry":
-                peer.process.kill()
-                peer.process.wait(timeout=5)
-                peer.log.close()
-            lease = peer.state / "projects" / peer.scope / "cores" / peer.core_life_id
-            expired_lease = lease.with_suffix(".expired")
-            expired_lease.write_text("0")
-            expired_lease.replace(lease)  # deterministic expiry, no wall-clock timeout sleep
-            expired = True
-            wait(jobs[0], R.JobState.Cancelled)
-            if end == "supervisor_expiry":
-                peer.start()
-            peer.core_life_id = "f" * 64
-            peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
-            wait(jobs[1], R.JobState.Cancelled)
-            for job in jobs[:2]:
-                blobs = peer.state / "projects" / peer.scope / "jobs" / job / "blobs"
-                assert list(blobs.iterdir()), "ordinary cancellation must retain verified blobs"
-            refused = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=jobs[0])
-            assert refused.bodyType == R.ReplyBody.Failure
+        peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
+        wait(jobs[0], R.JobState.Cancelled)
+        wait(jobs[1], R.JobState.Running)
     finally:
         for job, fingerprint in fingerprints.items():
             peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)

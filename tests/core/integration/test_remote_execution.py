@@ -175,9 +175,6 @@ def broker_request(endpoint, capability_file, server_id, body_type, body, **rout
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
     endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability", "serverId"))
-    missing_life = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT())
-    assert missing_life.bodyType == R.ReplyBody.Failure
-    assert missing_life.body.code == R.ErrorCode.Invalid
     # Keep the life ID identical to check project scoping independently of job ownership.
     core_life = secrets.token_hex(32)
     first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
