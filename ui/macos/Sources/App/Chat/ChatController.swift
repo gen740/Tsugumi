@@ -111,6 +111,26 @@ final class ChatController {
     items.append(Item(role: "user", text: question))
     items.append(Item(role: "assistant", text: answer))
   }
+
+  /// A step with a failed tool call, as the host presents one (UI scripts).
+  func showFailureSample() {
+    let result = #"{"reply":"Failure","value":{"kind":"build_failed","args":[{"key":"card","value":"compare"}],"diagnostic":"compare.cc:12:5: error: use of undeclared identifier 'sequnce'\n   12 |     sequnce.push_back(n);\n      |     ^~~~~~~\n1 error generated.\nninja: build stopped: subcommand failed."}}"#
+    func row(_ v: [String: Any]) -> ChatRow? {
+      var all: [String: Any] = ["id": UUID().uuidString, "kind": "", "role": "", "text": "", "name": "", "arguments": "", "result": "",
+                                "state": "", "archived": false, "summaryJa": "", "summaryEn": "", "scopeJa": "", "scopeEn": "",
+                                "instruction": "", "failed": 0, "recovered": 0, "links": [], "children": []]
+      all.merge(v) { $1 }
+      return (try? JSONSerialization.data(withJSONObject: all)).flatMap { try? JSONDecoder().decode(ChatRow.self, from: $0) }
+    }
+    guard let tool = row(["kind": "tool", "name": "run", "state": "failed", "arguments": #"{"card":"compare"}"#, "result": result,
+                          "summaryJa": "run · compare · 失敗（build failed）: compare.cc:12:5: error: use of undeclared identifier 'sequnce'…",
+                          "summaryEn": "run · compare · failed (build failed): compare.cc:12:5: error: use of undeclared identifier 'sequnce'…"]),
+          let toolDict = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(tool)),
+          let step = row(["kind": "step", "state": "failed", "failed": 1, "summaryJa": "1 件の操作・1 件失敗", "summaryEn": "1 operation; 1 failed",
+                          "children": [toolDict]])
+    else { return }
+    items.append(Item(role: "step", text: "", presentation: step))
+  }
   private var displayedId = ""
   var ready: Bool { !loading && !currentId.isEmpty && displayedId == currentId }
   private(set) var loading = false

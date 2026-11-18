@@ -18,10 +18,7 @@ import Testing
           let outputs = kind == .branch || kind == .fork ? [PortData(name: "a"), PortData(name: "b")] : [PortData(name: "out")]
           let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)
           let g = CardGeometry(data, flow: flow)
-          let node = CardNodeView(data: data, flow: flow, zoom: zoom)
-          let outline = g.outline(in: g.outlineRect)
-          let scaled = outline.applying(CGAffineTransform(scaleX: zoom, y: zoom))
-          let hit = node.hitShape(g, outline: scaled)
+          let hit = CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: false)
           let body = kind == .trigger ? CGPoint(x: 55, y: 17) : g.iconCenter(in: g.outlineRect)
           let point = CGPoint(x: body.x * zoom, y: body.y * zoom)
           #expect(hit.contains(point), "\(kind), \(flow), \(zoom)")

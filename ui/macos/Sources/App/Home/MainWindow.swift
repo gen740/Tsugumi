@@ -36,6 +36,7 @@ struct MainWindow: View {
         }
       case .settings: openSettings()
       case .explainer: openWindow(id: "explainer")
+      case .debug: openWindow(id: "debug")
       case .project(let url): model.openProject(url, from: workspace, openWindow: openWindow)
       case .newProject: model.newProject(from: workspace, openWindow: openWindow)
       }

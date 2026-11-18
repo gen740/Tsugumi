@@ -87,6 +87,7 @@
 "CPU 上限（ミリコア）" = "CPU limit (millicores)";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
+"Canvas の状態を表示" = "Show canvas state";
 "Canvas（フォーカスがあるとき）" = "Canvas (when focused)";
 "Card SDK を準備" = "Prepared the Card SDK";
 "Card SDK を準備しています" = "Preparing the Card SDK";
@@ -94,10 +95,12 @@
 "Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）" = "Show inside the Card in Card (read only; to edit, open the project in externals by itself)";
 "Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。" = "A Card in Card is this project's own copy in externals. Its ports map to the inside through the boundary of its tsugumi.json. Go inside to edit its Cards and connections.";
 "Card が見つかりません" = "Card not found";
+"Card と配線のキーを詳細に表示" = "Show Card and wire keys in details";
 "Card の定義" = "Card definition";
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。" = "Relative to this Card's definition folder. Use project: for a path relative to its owning project.";
 "Card の実行" = "Run Cards";
 "Card の実行履歴から、前の入力と出力をいつでも見返せるよ" = "A Card's Run History keeps every earlier input and output.";
+"Card の当たり範囲（青）と、配線を選べる帯（橙）を Canvas に重ねて描きます。" = "Draws over the canvas where each Card takes a click (blue) and the band that selects each wire (orange).";
 "Card の権限の変更" = "Change Card permissions";
 "Card の種類のアイコンを使います" = "Uses the icon of the Card's kind";
 "Card の設定画面で開きます" = "Opens in the Card's settings";
@@ -369,6 +372,7 @@
 "すべての実行履歴を削除しますか？" = "Delete the whole run history?";
 "すべての実行環境を初期化…" = "Reset all environments…";
 "すべての実行環境を初期化しますか？" = "Reset all environments?";
+"すべてオフにする" = "Turn all off";
 "すべて選択" = "Select All";
 "すべて閉じる" = "Collapse All";
 "すべて開く" = "Expand All";
@@ -414,6 +418,7 @@
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
 "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。" = "When on, search queries go through the connected provider to its search service. The Agent is told to keep unpublished data out of them, but this cannot be guaranteed. Queries and sources stay in the chat. Searches may be charged.";
+"カメラ、Card と配線の数、最後の配線ルーティングにかかった時間を Canvas の隅に出します。" = "Shows the camera, the number of Cards and wires, and how long the last wire routing took, in a corner of the canvas.";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
 "ガイドのツグミに聞く" = "Ask Tsugumi the Guide";
@@ -433,6 +438,7 @@
 "キーを削除" = "Delete key";
 "キーを押してください…" = "Press a key…";
 "クリックで次のヒント" = "Click for the next tip";
+"クリックの当たり判定を表示" = "Show click areas";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
 "グラフの更新" = "Chart updates";
 "グラフを表示するには？" = "How do I show a chart?";
@@ -526,10 +532,13 @@
 "ツグミは冬に日本へ渡ってくる鳥。数歩跳ねては立ち止まって、あたりを確かめるよ" = "A tsugumi (dusky thrush) winters in Japan: a few hops, a stop, a look around.";
 "ツグミへの質問" = "Question for Tsugumi";
 "ツグミへの返事" = "Reply to Tsugumi";
+"ツールのエラーを詳しく表示" = "Show tool errors in full";
 "ツールの詳細" = "Tool details";
 "テキスト検索" = "Text search";
 "テキスト検索…" = "Text Search…";
 "テーマ" = "Theme";
+"デバッグ" = "Debug";
+"デバッグパネル" = "Debug Panel";
 "デフォルト" = "Default";
 "デフォルトに戻す" = "Use the Default";
 "デモ" = "Demos";
@@ -632,6 +641,7 @@
 "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
 "ホストの状態フォルダ「%@」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。" = "The host state folder \"%@\" was written by another version of Tsugumi. Move or rename this folder to set it aside, then start Tsugumi again.";
 "ホーム" = "Home";
+"ポインタを置いたときの詳細に、tsugumi.json やログでの Card キーと接続の番号を加えます。" = "Adds the Card key and the connection number, as in tsugumi.json and the logs, to the details shown under the pointer.";
 "ポートの並びを元に戻す" = "Reset Port Order";
 "メッセージの準備" = "Preparing the message";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
@@ -958,6 +968,7 @@
 "失敗" = "Failed";
 "失敗: %@" = "Failed: %@";
 "失敗したので結果はありません" = "It failed, so there is no result";
+"失敗したツール呼び出しに、短い理由に加えて引数と返ってきた結果の全文を出します。" = "Shows a failed tool call's arguments and its whole result, not only the short reason.";
 "失敗の種類" = "Failure kind";
 "宇宙・地球" = "Space and Earth";
 "完了" = "Done";
@@ -1066,6 +1077,7 @@
 "差分・保存前" = "Patch · not saved";
 "差分・保存済み" = "Patch · saved";
 "幅 %lld" = "Width %lld";
+"引数" = "Arguments";
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
 "待機列" = "Queued";
