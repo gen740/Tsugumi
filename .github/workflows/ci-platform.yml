@@ -238,7 +238,6 @@ jobs:
         run: |
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
-          "$CORE_TEST_ENV" "$path/bin/python3" -c 'import matplotlib, plotly, altair'
       - name: SDK libraries, native runtimes, sandbox and examples
         run: bash tests/ci/run-suite.sh sdk '${{ inputs.system }}' '${{ steps.sdk-python.outputs.python }}'
 

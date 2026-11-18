@@ -14,14 +14,19 @@ let
   vega = library "vega" "build/vega.min.js";
   lite = library "vega-lite" "build/vega-lite.min.js";
   embed = library "vega-embed" "build/vega-embed.min.js";
-  source = pkgs.runCommand "tsugumi-builtin-view-source" { } ''
+  plotlySource = pkgs.runCommand "tsugumi-plotly-source" { } ''
     mkdir -p $out
-    cp ${../views}/*.js $out/
+    cp ${../views/plotly.js} $out/plotly.js
     cp ${plotly}/plotly.min.js $out/plotly.umd
+  '';
+  vegaSource = pkgs.runCommand "tsugumi-vega-source" { } ''
+    mkdir -p $out
+    cp ${../views/vega-lite.js} $out/vega-lite.js
     cp ${vega}/build/vega.min.js $out/vega.umd
     cp ${lite}/build/vega-lite.min.js $out/vega-lite.umd
     cp ${embed}/build/vega-embed.min.js $out/vega-embed.umd
   '';
+
 in
 {
   line-chart = bundle {
@@ -30,12 +35,12 @@ in
     name = "tsugumi-view-line-chart";
   };
   plotly = bundle {
-    src = source;
+    src = plotlySource;
     entry = "plotly.js";
     name = "tsugumi-view-plotly";
   };
   vega-lite = bundle {
-    src = source;
+    src = vegaSource;
     entry = "vega-lite.js";
     name = "tsugumi-view-vega-lite";
   };

@@ -45,28 +45,20 @@ try {
     assert.equal(s.connectionFailed, false)
     assert.match(s.connectionMessage ?? '', /bad hello/)
   }
-  // Retrying never opts in to archiving. Only a typed mismatch exposes the
-  // separate action, and a second click while it starts has no effect.
+  // A failed history open stays failed until the person retries explicitly.
   {
     const mismatch = { kind: 'incompatible_history', found: '2', expected: '3' }
     assert.deepEqual(historyVersionMismatch(mismatch), mismatch)
-    assert.equal(historyVersionMismatch({ ...mismatch, kind: 'database_corrupt' }), undefined)
-    assert.equal(historyVersionMismatch({ ...mismatch, found: 2 }), undefined)
     const routes: string[] = []
     globalThis.fetch = (async (url) => {
       routes.push(String(url))
-      return new Response(JSON.stringify({ state: 'failed', historyVersionMismatch: { ...mismatch, found: 'pending' } }))
+      return new Response(JSON.stringify({ state: 'failed', historyVersionMismatch: mismatch }))
     }) as typeof fetch
     const session = new ProjectSession('/p', 'k', 'p')
-    session.archiveHistoryAndStart()
-    assert.deepEqual(routes, [])
     await (session as unknown as Inner).openConnection()
     assert.equal(session.environment.state, 'failed')
-    assert.equal(session.environment.historyVersionMismatch?.found, 'pending')
-    session.archiveHistoryAndStart()
-    session.archiveHistoryAndStart()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    assert.deepEqual(routes, ['/api/project/trust', '/api/env/start', '/api/project/trust', '/api/env/archive-history'])
+    assert.equal(session.environment.historyVersionMismatch?.found, '2')
+    assert.ok(routes.every(route => !route.includes('archive')))
     session.dispose()
   }
 } finally {

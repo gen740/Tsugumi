@@ -30,23 +30,4 @@ struct InvalidDisplayTests {
     if case .unavailable = display.value {} else { Issue.record("Duplicate blob names were accepted") }
   }
 
-  @Test func invalidUTF8DoesNotReachTheGeneratedStringInitializer() throws {
-    var builder = FlatBufferBuilder(initialSize: 128)
-    let text = builder.create(string: "x")
-    let content = Tsugumi_Data_DisplayText.createDisplayText(&builder, textOffset: text)
-    let segments = builder.createVector(ofStrings: ["card"])
-    let card = Tsugumi_Data_CardPath.createCardPath(&builder, segmentsVectorOffset: segments)
-    let run = builder.create(string: "run")
-    let display = Tsugumi_Data_Display.createDisplay(&builder, cardOffset: card, runIdOffset: run,
-      invocation: 1, revision: 0, valueType: .displaytext, valueOffset: content)
-    builder.finish(offset: display)
-    var bytes = builder.data
-    // The sole 'x' is the display string; its length and terminator stay valid.
-    let index = try #require(bytes.firstIndex(of: UInt8(ascii: "x")))
-    bytes[index] = 255
-    var buffer = ByteBuffer(data: bytes)
-    let wire: Tsugumi_Data_Display = try getCheckedRoot(byteBuffer: &buffer)
-    let decoded = unpackDisplay(wire)
-    if case .unavailable? = recordedDisplay(decoded)?.value {} else { Issue.record("Invalid UTF-8 was displayed") }
-  }
 }

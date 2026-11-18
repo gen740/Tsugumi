@@ -158,7 +158,7 @@ def test_sdk_daemon_startup_failure_removes_its_work_directory(tmp_path, monkeyp
     daemon = fixtures.Daemon(tmp_path / 'project')
     with pytest.raises(FileNotFoundError):
         daemon.start()
-    assert not daemon.sock_dir.exists()
+    assert not daemon.directory.exists()
 
 
 def test_detached_web_startup_is_owned_before_discovery(tmp_path, monkeypatch):

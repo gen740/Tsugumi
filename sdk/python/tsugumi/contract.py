@@ -41,11 +41,18 @@ def ports(side: str = "inputs") -> list[dict]:
     return [dict(p) for p in _contract()[side]]
 
 
+@cache
+def _port_index(side):
+    return {p["name"]: p for p in ports(side)}
+
+
 def port(name: str, side: str = "inputs") -> Optional[dict]:
     """The port of that name, or None when the Card has none (or it is an unconnected input)."""
-    return next((p for p in ports(side) if p["name"] == name), None)
+    found = _port_index(side).get(name)
+    return dict(found) if found is not None else None
 
 
+@cache
 def _generated(name: str, suffix: str = "") -> Any:
     found = port(name)
     if found is None:

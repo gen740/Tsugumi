@@ -40,13 +40,8 @@ final class ExitState: @unchecked Sendable {
   private let lock = NSLock()
   private var ending = false
   var isEnding: Bool { lock.withLock { ending } }
-  func begin() {
-    let first = lock.withLock { let first = !ending; ending = true; return first }
-    if first {
-      // Also bound a stuck Virtualization.framework stop callback.
-      DispatchQueue.global().asyncAfter(deadline: .now() + 42) { exit(1) }
-    }
-  }
+  func begin() { lock.withLock { ending = true } }
+
 }
 let exitState = ExitState()
 @Sendable func endVMHost(signal: Bool = false) async {
@@ -93,7 +88,7 @@ final class Peer: @unchecked Sendable {
 final class Watchers: @unchecked Sendable {
   private let lock = NSLock()
   private var peers: [Int32: Peer] = [:]
-  func add(_ peer: Peer) -> Bool { lock.withLock { guard peers.count < 8 else { return false }; peers[peer.fd] = peer; return true } }
+  func add(_ peer: Peer) { lock.withLock { peers[peer.fd] = peer } }
   func remove(_ peer: Peer) -> Bool { lock.withLock {
     guard peers.removeValue(forKey: peer.fd) != nil else { return false }
     return peers.isEmpty
@@ -178,21 +173,15 @@ actor Driver {
     defer { vm.stopObserving(token) }
     try await vm.start(image: image, resources: resources, cacheConfiguration: request.cacheConfiguration ?? "", cacheNetrc: request.cacheNetrc ?? "", cacheProblem: request.cacheProblem ?? "")
   }
-  func validate(_ key: String) throws {
-    guard key.count == 16, key.allSatisfy({ $0.isHexDigit }) else { throw LauncherError.notReady("invalid project identity") }
-  }
   func shares(_ key: String, _ mounts: [Tsugumi_VMHost_MountT?]) async throws -> Int {
-    try validate(key)
     var entries: [String: URL] = [:], readOnly: Set<String> = []
     for mount in mounts.compactMap({ $0 }) {
-      guard !mount.name.contains("/"), mount.path.hasPrefix("/") else { throw LauncherError.notReady("invalid VM mount") }
       entries[mount.name] = URL(fileURLWithPath: mount.path)
       if mount.readOnly { readOnly.insert(mount.name) }
     }
     return try await vm.attach(key, entries, readOnly: readOnly)
   }
   func process(_ key: String) async throws -> Tsugumi_VMHost_ProcessT {
-    try validate(key)
     let value = Tsugumi_VMHost_ProcessT()
     guard case .running = vm.state else { return value }
     let status = try await vm.request("status", timeout: 10)
@@ -213,19 +202,11 @@ actor Driver {
   func run(_ request: Tsugumi_VMHost_RunT) async throws -> Tsugumi_VMHost_ProcessT {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
-    let command = request.archiveIncompatibleHistory ? "archive-history" : "start"
-    var last: Error = LauncherError.notReady("mount is not ready")
-    for _ in 0..<50 {
-      do {
-        let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-        _ = try await vm.request("\(command) \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(resources.cpus)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
-        return try await process(request.key)
-      } catch { last = error; try await Task.sleep(for: .milliseconds(100)) }
-    }
-    throw last
+    let origins = request.origins.compactMap { $0 }.joined(separator: ",")
+    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(resources.cpus)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    return try await process(request.key)
   }
   func stop(_ key: String) async throws {
-    try validate(key)
     if case .running = vm.state { _ = try await vm.request("stop \(key)") }
     bridges.removeValue(forKey: key)?.close()
     await vm.detach(key)
@@ -240,15 +221,8 @@ actor Driver {
     case .cleanupstore:
       let fields = try await vm.request("gc", timeout: 3600).split(separator: " ")
       result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
-    case .histories:
-      result.histories = try await vm.request("histories").split(separator: " ").compactMap { item in
-        let fields = item.split(separator: ":")
-        guard fields.count == 4 else { return nil }
-        let row = Tsugumi_Host_RuntimeHistoryT(); row.id = String(fields[0]); row.bytes = UInt64(fields[1]) ?? 0; row.lastStartMs = Int64(fields[2]) ?? 0; row.running = fields[3] == "1"; return row
-      }
-    case .deletehistory:
+    case .forgetproject:
       let key = request.projectId ?? ""
-      guard key.count == 16, key.allSatisfy({ $0.isHexDigit }) else { throw LauncherError.notReady("invalid project identity") }
       guard !(try await process(key)).running else { throw LauncherError.notReady("the project is running; stop it first") }
       _ = try await vm.request("forget \(key)")
     case .command:
@@ -299,17 +273,14 @@ actor Driver {
     peer.emit(encode(result, reply: .hostterminal, id: id))
   }
 }
-DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
-  if watchers.isEmpty { Task { await endVMHost() } }
-}
 let driver = Driver()
 @Sendable func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
-  guard message.requestId > 0, let request = message.payload?.value as? Tsugumi_VMHost_RequestT, let value = request.value?.value else { throw LauncherError.notReady("invalid VM adapter request") }
+  guard let request = message.payload?.value as? Tsugumi_VMHost_RequestT, let value = request.value?.value else { throw LauncherError.notReady("invalid VM adapter request") }
   let id = message.requestId
   switch value {
   case is Tsugumi_VMHost_WatchT:
     peer.emit(encode(Tsugumi_Service_AcknowledgementT(), reply: .acknowledgement, id: id))
-    guard watchers.add(peer) else { throw LauncherError.notReady("too many VM watchers") }
+    watchers.add(peer)
     peer.emit(encode(runtime(), event: .hostruntime))
   case let request as Tsugumi_VMHost_BootT:
     try await driver.boot(request); peer.emit(encode(Tsugumi_Service_AcknowledgementT(), reply: .acknowledgement, id: id))
@@ -332,8 +303,6 @@ Thread.detachNewThread {
     let fd = accept(listener, nil, nil)
     if fd < 0 { if errno == EINTR { continue }; break }
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC); noSigPipe(fd)
-    var uid: uid_t = 0, gid: gid_t = 0
-    guard getpeereid(fd, &uid, &gid) == 0, uid == geteuid() else { Darwin.close(fd); continue }
     var timeout = timeval(tv_sec: 5, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     let peer = Peer(fd)

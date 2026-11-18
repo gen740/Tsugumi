@@ -99,20 +99,11 @@ For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. T
 
 ## Manual tools
 
-- `python3 ui/macos/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
+- `python3 hostd/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
 - `tests/ci-remote-worker.sh`: run Cards through hostd's Host RPC, mutual-TLS broker and packaged `tsugumi-workerd` on Linux; requires listeners and Nix builds. The script name describes the remote worker scenario.
 - `nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift`: probe WebGPU and adapter availability in an offscreen WKWebView.
-- `python3 sdk/codegen/scaffold_go.py`: synchronize the host Go scaffold in `ui/shared/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
-- `python3 sdk/codegen/scaffold_rust.py`: synchronize the host Rust scaffold in `ui/shared/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
-
-The host state format checks need no sockets: `tests/static/test_host_state_format.py`
-compares all host database table/index definitions (including shared conversation
-tables) with the digest beside `kStateFormat` in `hostd/private/host/state_format.hh`.
-Raise the number and record the new digest when changing those definitions.
-`HostStateFormat.*` in `tsugumi_host_settings_tests` covers fresh state, incompatible
-or missing numbers, preservation of existing databases and concurrent creation.
-Native readiness/Home tests and `ui/web/tests/hostReadiness.ts` check that a format
-refusal reaches the person with the folder path and recovery instructions.
+- `python3 sdk/codegen/scaffold.py go`: synchronize the host Go scaffold in `ui/shared/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
+- `python3 sdk/codegen/scaffold.py rust`: synchronize the host Rust scaffold in `ui/shared/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
 
 Scripted Mac trials can register a trusted root before the first project opens:
 

@@ -54,7 +54,6 @@ struct Environments::Impl {
     std::vector<std::string> origins;
     int64_t pid = 0;
     bool child = false;
-    std::vector<std::string> secrets;
   };
   EnvironmentOptions options;
   EnvironmentAuthorization authorization;
@@ -183,53 +182,15 @@ struct Environments::Impl {
     event.stage = stage;
     progress(event);
   }
-  auto RememberSecret(Entry& entry, const std::string& secret) -> void {
-    if (!secret.empty() && std::find(entry.secrets.begin(), entry.secrets.end(),
-                                     secret) == entry.secrets.end())
-      entry.secrets.push_back(secret);
-    std::sort(entry.secrets.begin(), entry.secrets.end(),
-              [](const auto& a, const auto& b) { return a.size() > b.size(); });
-  }
-  auto RememberSecrets(Entry& entry) -> void {
-    RememberSecret(entry, entry.state.token);
-    try {
-      if (const auto raw = fs::read_file(entry.state.ready_file))
-        RememberSecret(entry, json::Text(json::Object(*raw), "token"));
-    } catch (const std::exception&) {
-    }
-    RememberSecret(
-        entry, fs::read_file(std::filesystem::path(entry.state.control_dir) /
-                             "execution-broker-capability")
-                   .value_or(""));
-  }
-  auto Redact(const Entry& entry, std::string text) -> std::string {
-    for (const auto& secret : entry.secrets) {
-      size_t offset = 0;
-      while ((offset = text.find(secret, offset)) != std::string::npos) {
-        // Preserve byte positions so bounding the tail cannot expose the end
-        // of a credential that crossed the read boundary.
-        text.replace(offset, secret.size(), secret.size(), '*');
-        offset += secret.size();
-      }
-    }
-    return text;
-  }
   auto LogTail(const Entry& entry) -> std::string {
     const auto log = std::filesystem::path(entry.state.control_dir) /
                      (options.process->Guest() ? "tsugumid.log" : "server.log");
     std::error_code error;
     const auto size = std::filesystem::file_size(log, error);
     if (error) return "";
-    // Include enough prefix to redact a credential straddling the tail
-    // boundary.
-    size_t limit = 65536;
-    for (const auto& secret : entry.secrets)
-      limit = std::max(limit, 65536 + secret.size());
-    auto text = Redact(
-        entry, fs::read_range(log, size > limit ? size - limit : 0, limit)
-                   .value_or(""));
-    if (text.size() > 65536) text.erase(0, text.size() - 65536);
-    return text;
+    constexpr size_t limit = 65536;
+    return fs::read_range(log, size > limit ? size - limit : 0, limit)
+        .value_or("");
   }
   auto Revoke(Entry& entry) -> void {
     authorization.revoke(entry.state.key);
@@ -248,17 +209,16 @@ struct Environments::Impl {
               const EnvironmentFailure* failure = nullptr,
               H::EnvironmentFailureCode code =
                   H::EnvironmentFailureCode::LaunchFailed) -> void {
-    RememberSecrets(entry);
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
     entry.state.failure_code = code;
     entry.state.recovery =
         failure ? failure->recovery : "Check the log and retry.";
-    entry.state.log = failure ? Redact(entry, failure->log) : LogTail(entry);
+    entry.state.log = failure ? failure->log : LogTail(entry);
     if (entry.state.log.size() > 65536)
       entry.state.log.erase(0, entry.state.log.size() - 65536);
-    entry.state.message = Redact(entry, message);
+    entry.state.message = message;
     if (!entry.state.log.empty()) {
       const auto& log = entry.state.log;
       entry.state.message +=
@@ -306,20 +266,11 @@ struct Environments::Impl {
       ready.pid = static_cast<int64_t>(json::UInt(json::Get(object, "pid")));
       ready.endpoint = json::Text(object, "endpoint");
       ready.token = json::Text(object, "token");
-      RememberSecret(entry, ready.token);
       ready.project_id = json::Text(object, "project_id");
       ready.server_instance_id = json::Text(object, "server_instance_id");
       ready.unix_socket = json::Text(object, "unix_socket");
-      if (json::UInt(json::Get(object, "protocol")) != 1 || ready.pid <= 0 ||
-          ready.token.empty() || ready.project_id.empty() ||
-          ready.server_instance_id.empty() ||
-          (!options.process->Guest() && ready.unix_socket.empty()) ||
-          (!options.process->Guest() && entry.pid && entry.pid != ready.pid))
-        return false;
       const auto handle = options.process->Inspect(ready);
-      if (!handle || (entry.pid && entry.pid != *handle) ||
-          !Alive(*handle, entry.child))
-        return false;
+      if (!handle) return false;
       if (options.process->Guest() && entry.mounted.empty()) {
         // Restore actual shares after a hostd restart, never guess from paths
         // currently present in either filesystem.
@@ -352,7 +303,6 @@ struct Environments::Impl {
   auto Authorize(Entry& entry) -> H::ExecutionAuthorizationT {
     auto grant = authorization.authorize(entry.state.key, entry.state.project,
                                          entry.state.control_dir);
-    RememberSecret(entry, fs::read_file(grant.capability_file).value_or(""));
     entry.state.execution_scope_unavailable = !grant.available;
     return grant;
   }
@@ -462,7 +412,6 @@ struct Environments::Impl {
       if (options.process->Guest() && !entry.requirements)
         entry.requirements = load_host_requirements(entry.state.project);
       auto launch = Plan(entry);
-      launch.archive = request.archive_incompatible_history;
       launch.arguments = {
           options.tsugumid.string(),
           "--project",
@@ -494,8 +443,6 @@ struct Environments::Impl {
         launch.arguments.push_back("--scratch-dir");
         launch.arguments.push_back((control / "scratch").string());
       }
-      if (request.archive_incompatible_history)
-        launch.arguments.push_back("--archive-incompatible-history");
       for (const auto& origin : request.origins) {
         launch.arguments.push_back("--allow-origin");
         launch.arguments.push_back(origin);
@@ -527,8 +474,8 @@ struct Environments::Impl {
           const auto required = Plan(entry).mounts;
           if (options.process->Guest() && planned != required)
             throw std::runtime_error(
-                "Host requirements changed during startup; retry the "
-                "environment");
+                "Host requirements changed during "
+                "startup; retry the environment");
           Notify(entry);
           return;
         }
@@ -568,7 +515,6 @@ struct Environments::Impl {
     }
   }
   auto Stop(Entry& entry) -> void {
-    RememberSecrets(entry);
     // State/Stop can be the first operation after an hostd restart.
     if (!entry.pid) ReadReady(entry);
     Revoke(entry);
@@ -650,7 +596,7 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     stop.action = H::EnvironmentAction::Stop;
     const auto state = Handle(stop);
     input.project_id = state.key;
-    input.action = H::RuntimeAction::DeleteHistory;
+    input.action = H::RuntimeAction::ForgetProject;
     auto result = impl_->options.process->Runtime(input);
     std::filesystem::remove_all(
         std::filesystem::path(state.control_dir).parent_path());

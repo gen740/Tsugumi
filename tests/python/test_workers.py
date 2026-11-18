@@ -116,7 +116,7 @@ auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
 def env(tmp_path_factory):
     root = tmp_path_factory.mktemp("workers") / "p"
     write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
-    e = real_environment(root, "tsugumi-test-workers")
+    e = real_environment(root)
     yield e
     e.cleanup()
 
@@ -217,7 +217,6 @@ let f = x: f (x + 1); in { run = f 0; }
                 '''"sleep 60; mkdir -p $out/lib"; }
 ''')
     ok = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
-    import time
     c = load(env, {"trigger": {"template": "trigger"},
                    "loop": {"language": "bash", "_outputs": NUM, "_nix": loop_nix},
                    "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},

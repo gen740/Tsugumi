@@ -38,7 +38,6 @@ from Tsugumi.RPC.Request import RequestT  # noqa: E402
 
 
 FAILURE_NAMES = {v: k for k, v in vars(FailureKind).items() if not k.startswith("_")}
-REPLY_NAMES = {v: k for k, v in vars(ReplyPayload).items() if not k.startswith("_")}
 
 
 def new_id() -> str:
@@ -298,7 +297,7 @@ class Client:
     # -- conveniences ------------------------------------------------------------
 
     def hello(self, token: Optional[str] = None, project: Optional[str] = None):
-        return self.call("SessionHelloRequest", protocol=1, clientId=new_id(), token=token,
+        return self.call("SessionHelloRequest", clientId=new_id(), token=token,
                          expectedProjectId=project)
 
     def open(self, view_id: Optional[str] = None):

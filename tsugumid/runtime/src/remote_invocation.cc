@@ -98,13 +98,14 @@ auto stage_remote_archive(const RemoteJobClient& client,
   return archive_digest;
 }
 
-auto stage_remote_invocation(
-    const RemoteJobClient& client, const std::string& service,
-    const std::string& server_id, const std::string& instance,
-    const std::string& job_id, const std::vector<stdfs::path>& file_roots,
-    const std::string& archive_digest, const ExecutionRequest& request,
-    uint32_t heartbeat_interval_seconds, uint32_t missed_heartbeats)
-    -> std::string {
+auto stage_remote_invocation(const RemoteJobClient& client,
+                             const std::string& service,
+                             const std::string& server_id,
+                             const std::string& instance,
+                             const std::string& job_id,
+                             const std::vector<stdfs::path>& file_roots,
+                             const std::string& archive_digest,
+                             const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
   *invocation.network = request.node.settings.network;
   *invocation.implementation_index = request.build.implementation_index;
@@ -210,8 +211,6 @@ auto stage_remote_invocation(
              schema::encode(invocation), request.cancel);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
-  job.heartbeat_interval_seconds = heartbeat_interval_seconds;
-  job.missed_heartbeats = missed_heartbeats;
   job.input_blobs.assign(blobs.begin(), blobs.end());
   job.invocation_sha256 = invocation_digest;
   job.system = request.build.derivation.system;
@@ -229,7 +228,6 @@ auto stage_remote_invocation(
     job.cpu_millis = request.node.settings.execution_resources->cpu_millis;
     job.memory_bytes = request.node.settings.execution_resources->memory_bytes;
   }
-  workerd::validate_spec(job);
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &job));
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};

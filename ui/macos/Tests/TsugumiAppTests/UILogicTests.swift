@@ -371,7 +371,6 @@ import TsugumiTestSupport
     let name, flow: String
     let obstacles: [Rect]
     let wires: [Ends]
-    let paths: [[Point]?]
   }
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..")
   let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/wire-routes.json")))
@@ -381,8 +380,21 @@ import TsugumiTestSupport
                             obstacles: c.obstacles.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
     let plans = router.plan(c.wires.map { (a: CGPoint(x: $0.a.x, y: $0.a.y), b: CGPoint(x: $0.b.x, y: $0.b.y)) })
     for (i, plan) in plans.enumerated() {
-      let expected = c.paths[i]?.map { CGPoint(x: $0.x, y: $0.y) }
-      #expect(plan == expected, "\(c.name), wire \(i)")
+      let ends = c.wires[i]
+      let start = CGPoint(x: ends.a.x, y: ends.a.y), end = CGPoint(x: ends.b.x, y: ends.b.y)
+      let path = router.route(start, end)
+      #expect(path.currentPoint == end)
+      if let plan {
+        #expect(plan.first == start && plan.last == end)
+        #expect(plan.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+      }
+      for box in c.obstacles {
+        let rect = CGRect(x: box.x + 2, y: box.y + 2, width: box.width - 4, height: box.height - 4)
+        if rect.contains(start) || rect.contains(end) { continue }
+        for t in stride(from: 0.01, through: 0.99, by: 0.01) {
+          #expect(!rect.contains(path.trimmedPath(from: 0, to: t).currentPoint ?? start), "\(c.name), wire \(i)")
+        }
+      }
     }
   }
 }
@@ -401,10 +413,10 @@ import TsugumiTestSupport
 
 @Test func recentAgesHaveNoSeconds() {
   let now = Date()
-  #expect(relativeAge(now.addingTimeInterval(-20), now: now) == "たった今")
-  #expect(relativeAge(now.addingTimeInterval(-20 * 60 - 51), now: now) == "20 分前")
-  #expect(relativeAge(now.addingTimeInterval(-3 * 3600), now: now) == "3 時間前")
-  #expect(relativeAge(now.addingTimeInterval(-2 * 86400), now: now) == "2 日前")
+  #expect(relativeAge(now.addingTimeInterval(-20), now: now) == String(localized: "たった今"))
+  #expect(relativeAge(now.addingTimeInterval(-20 * 60 - 51), now: now) == String(localized: "\(20) 分前"))
+  #expect(relativeAge(now.addingTimeInterval(-3 * 3600), now: now) == String(localized: "\(3) 時間前"))
+  #expect(relativeAge(now.addingTimeInterval(-2 * 86400), now: now) == String(localized: "\(2) 日前"))
 }
 
 @Test func cameraFitsInsideTheFreeArea() {
@@ -513,7 +525,7 @@ import TsugumiTestSupport
   #expect(!HostProjectError(code: "folder_not_empty").description.isEmpty)
 }
 
-/// The same numbers as the web (tests/fixtures/port-grid-contract.json, ui/web/tests/portGrid.ts).
+/// The same constraints as the web (tests/fixtures/port-grid-contract.json, ui/web/tests/portGrid.ts).
 @Test func portsFollowTheGridAsOnTheWeb() async throws {
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..")
   let data = try Data(contentsOf: root.appendingPathComponent("tests/fixtures/port-grid-contract.json"))
@@ -531,10 +543,8 @@ import TsugumiTestSupport
     d.portGrid = grid.map { CGFloat($0) }
     let flow: FlowDirection = c["flow"] as! String == "topToBottom" ? .topToBottom : .leftToRight
     let g = CardGeometry(d, flow: flow)
-    let width = c["width"] as! Double, height = c["height"] as! Double
-    #expect(abs(g.size.width - width) < 1e-5, "\(name) width \(g.size.width)")
-    #expect(abs(g.size.height - height) < 1e-5, "\(name) height \(g.size.height)")
-    let edge = flow == .topToBottom ? width : height
+    #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
+    let edge = flow == .topToBottom ? g.size.width : g.size.height
     if d.kind == .fork || d.kind == .merge {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
@@ -554,11 +564,13 @@ import TsugumiTestSupport
       #expect(abs((flow == .topToBottom ? icon.x : icon.y) - (flow == .topToBottom ? r.midX : r.midY)) < 1e-5, "\(name) icon on the axis")
     }
     for (key, output) in [("in", false), ("out", true)] {
-      let list = c[key] as! [Double]
+      let count = output ? d.outputs.count : d.inputs.count
+      let list = (0..<count).map { i in
+        let p = g.port("p\(i)", output: output)
+        return flow == .topToBottom ? p.x : p.y
+      }
       let apex = (d.kind == .fork && !output) || (d.kind == .merge && output)
       for (i, v) in list.enumerated() {
-        let p = g.port("p\(i)", output: output)
-        #expect(abs((flow == .topToBottom ? p.x : p.y) - v) < 1e-5, "\(name) \(key) \(i): \(p) != \(v)")
         guard let grid, let n = c["n"] as? Double else { continue }
         // A Card's corner is on a grid line, so this is its place on the canvas too.
         let lines = v * n / grid

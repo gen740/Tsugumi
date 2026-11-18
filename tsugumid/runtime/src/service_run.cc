@@ -258,10 +258,7 @@ void Service::run_history(RequestIn& req) {
   if (r->card()) card = wire::card_arg(r->card());
   bool artifacts_only = r->artifacts_only().value_or(false);
   uint32_t limit = page_limit(r->limit());
-  std::string qd = crypto::sha256_hex(
-      "history|" + (card ? path_key(*card) : std::string("\x01")) + "|" +
-      (artifacts_only ? "1" : "0"));
-  auto [hi, after] = r->cursor() ? history_->open_cursor(r->cursor()->str(), qd)
+  auto [hi, after] = r->cursor() ? history_->open_cursor(r->cursor()->str())
                                  : std::pair<int64_t, std::string>{-1, ""};
   std::vector<int64_t> seqs;
   auto runs = history_->read([&, hi_ = hi, after_ = after](sql::Db& db) {
@@ -294,9 +291,8 @@ void Service::run_history(RequestIn& req) {
   }
   auto v = b.CreateVector(out);
   auto cur =
-      more
-          ? b.CreateString(history_->make_cursor(qd, top, std::to_string(last)))
-          : flatbuffers::Offset<flatbuffers::String>();
+      more ? b.CreateString(history_->make_cursor(top, std::to_string(last)))
+           : flatbuffers::Offset<flatbuffers::String>();
   R::RunPageBuilder pb(b);
   pb.add_runs(v);
   if (more) pb.add_next_cursor(cur);
@@ -343,11 +339,9 @@ void Service::run_invocations(RequestIn& req) {
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
   uint32_t limit = page_limit(r->limit());
-  std::string qd =
-      crypto::sha256_hex("invocations|" + run_id + "|" + path_key(card));
   uint64_t after = 0;
   if (r->cursor())
-    after = std::stoull(history_->open_cursor(r->cursor()->str(), qd).second);
+    after = std::stoull(history_->open_cursor(r->cursor()->str()).second);
   auto [rows, batches] = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
@@ -366,7 +360,7 @@ void Service::run_invocations(RequestIn& req) {
   for (const auto& s : rows) out.push_back(wire::invocation(b, s));
   auto v = b.CreateVector(out);
   auto cur = more ? b.CreateString(history_->make_cursor(
-                        qd, 0, std::to_string(rows.back().invocation)))
+                        0, std::to_string(rows.back().invocation)))
                   : flatbuffers::Offset<flatbuffers::String>();
   std::vector<flatbuffers::Offset<R::RunBatch>> batch_rows;
   for (const auto& batch : batches)
@@ -401,8 +395,8 @@ auto Service::run_environments(RequestIn& req) -> void {
     s.bind(1, run);
     while (s.step()) caches.push_back(b.CreateString(s.text(0)));
     auto q = db.prepare(
-        "SELECT id, derivation, manifest, system, path_count FROM "
-        "build_environments "
+        "SELECT id, derivation, manifest, system, path_count "
+        "FROM build_environments "
         "WHERE run_id=? ORDER BY rowid LIMIT ? OFFSET ?");
     q.bind(1, run).bind(2, static_cast<int>(limit + 1)).bind(3, offset);
     while (q.step()) {
@@ -464,8 +458,8 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
       throw Failed(FailureKind::not_found, "unknown run environment");
     const auto recorded_count = environment.u64(0);
     auto actual = db.prepare(
-        "SELECT count(*) FROM environment_paths WHERE run_id=? AND "
-        "environment_id=?");
+        "SELECT count(*) FROM environment_paths WHERE "
+        "run_id=? AND environment_id=?");
     actual.bind(1, run).bind(2, id);
     actual.step();
     if (actual.u64(0) != recorded_count)
@@ -488,10 +482,10 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
     // EXCEPT computes the exact store-path difference without materializing
     // closures in a client.
     const auto predicate = std::string{
-        "FROM (SELECT path FROM environment_paths WHERE run_id=?1 AND "
-        "environment_id=?2 "
-        "EXCEPT SELECT path FROM environment_paths WHERE run_id=?4 AND "
-        "environment_id=?5) "
+        "FROM (SELECT path FROM environment_paths WHERE run_id=?1 "
+        "AND environment_id=?2 "
+        "EXCEPT SELECT path FROM environment_paths WHERE run_id=?4 "
+        "AND environment_id=?5) "
         "WHERE instr(lower(path), lower(?3))>0 "};
     auto count = db.prepare("SELECT count(*) " + predicate);
     count.bind(1, run)
@@ -864,11 +858,8 @@ void Service::artifact_list(RequestIn& req) {
   std::optional<uint64_t> inv;
   if (r->invocation()) inv = *r->invocation();
   uint32_t limit = page_limit(r->limit());
-  std::string qd = crypto::sha256_hex("artifacts|" + run_id + "|" +
-                                      (card ? path_key(*card) : "\x01") + "|" +
-                                      (inv ? std::to_string(*inv) : ""));
   std::string after;
-  if (r->cursor()) after = history_->open_cursor(r->cursor()->str(), qd).second;
+  if (r->cursor()) after = history_->open_cursor(r->cursor()->str()).second;
   auto rows = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
@@ -896,10 +887,9 @@ void Service::artifact_list(RequestIn& req) {
     char inv_buf[32];
     std::snprintf(inv_buf, sizeof inv_buf, "%020llu",
                   static_cast<unsigned long long>(l.invocation));
-    cur = b.CreateString(history_->make_cursor(qd, 0,
-                                               path_key(l.card) + "\x1f" +
-                                                   inv_buf + "\x1f" + l.output +
-                                                   "\x1f" + l.artifact_id));
+    cur = b.CreateString(
+        history_->make_cursor(0, path_key(l.card) + "\x1f" + inv_buf + "\x1f" +
+                                     l.output + "\x1f" + l.artifact_id));
   }
   R::ArtifactPageBuilder pb(b);
   pb.add_artifacts(v);
@@ -945,9 +935,7 @@ void Service::artifact_read(RequestIn& req) {
   auto a = history_->read([&](sql::Db& db) {
     return History::artifact(db, r->artifact_id()->str());
   });
-  // Copied rows must still name folders inside this run.
-  if (!a || !crypto::is_run_id(a->run_id) ||
-      !fs::valid_relative_path(a->artifact_id) || a->members.empty())
+  if (!a || a->members.empty())
     throw Failed(FailureKind::not_found, "unknown artifact");
   const ArtifactMemberData* member = nullptr;
   if (a->kind == PortKind::File) {

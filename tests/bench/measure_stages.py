@@ -192,7 +192,7 @@ def main():
     from run import stage_project, workspace
     directory = workspace(args.out)
     root = args.project.resolve() if args.project else stage_project(directory / "project", args.scenario)
-    daemon = Daemon(root, history_dir=directory / "history")
+    daemon = Daemon(root)
     result = {"path": "local", "scenario": args.scenario, "runs": [], "summary": {},
               "workspace": str(directory), "daemon_directory": str(daemon.directory)}
     try:

@@ -113,9 +113,7 @@ final class ServiceWireTests: XCTestCase {
     let value = try XCTUnwrap((Tsugumi_Host_MessageT(message).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_ProviderSetRequestT)
     XCTAssertTrue(value.ephemeral)
     XCTAssertEqual(value.source, "keychain")
-    XCTAssertTrue(ServiceWire.hostMethod("ModelSelectionRequest", [:]))
-    let selection = try ServiceWire.encode("ModelSelectionRequest", fields: ["profile": "desktop", "purpose": "summary"], id: 2, host: true)
-    XCTAssertFalse(selection.isEmpty)
+
   }
 
 
@@ -173,53 +171,6 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertEqual(decoded["sessionId"] as? String, "desktop")
     XCTAssertTrue(try XCTUnwrap(decoded["choices"] as? [String]).isEmpty)
     XCTAssertTrue(try XCTUnwrap(decoded["actions"] as? [Any]).isEmpty)
-  }
-
-  func testExecutionHeartbeatSettingsRoundTripAndValidate() throws {
-    for (interval, missed) in [(UInt32(15), UInt32(0)), (2, 3), (UInt32.max, UInt32.max)] {
-      let (_, object) = try ServiceWire.request("ExecutionServicePutRequest", [
-        "heartbeatIntervalSeconds": interval, "missedHeartbeats": missed,
-      ], host: true)
-      let value = try XCTUnwrap(object as? Tsugumi_Host_ExecutionServicePutRequestT)
-      XCTAssertEqual(value.heartbeatIntervalSeconds, interval)
-      XCTAssertEqual(value.missedHeartbeats, missed)
-      let bytes = try ServiceWire.encode("ExecutionServicePutRequest", fields: [
-        "id": "compute", "name": "Compute", "endpoint": "tls://worker:8765", "workerPublicKey": "ed25519:test",
-        "heartbeatIntervalSeconds": interval, "missedHeartbeats": missed,
-      ], id: 2, host: true)
-      var buffer = ByteBuffer(data: bytes)
-      let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
-      let request = try XCTUnwrap(message.payload(type: Tsugumi_Host_Request.self))
-      let decoded = try XCTUnwrap(request.value(type: Tsugumi_Host_ExecutionServicePutRequest.self))
-      XCTAssertEqual(decoded.heartbeatIntervalSeconds, interval)
-      XCTAssertEqual(decoded.missedHeartbeats, missed)
-      var builder = FlatBufferBuilder(initialSize: 256)
-      let id = builder.create(string: "compute")
-      let name = builder.create(string: "Compute")
-      let endpoint = builder.create(string: "tls://worker:8765")
-      let key = builder.create(string: "ed25519:test")
-      let caps = Tsugumi_Host_ExecutionCapabilities.createExecutionCapabilities(&builder, serverIdOffset: id, nativeSystemOffset: id)
-      let service = Tsugumi_Host_ExecutionService.createExecutionService(&builder, idOffset: id, nameOffset: name,
-        endpointOffset: endpoint, workerPublicKeyOffset: key, capabilitiesOffset: caps,
-        heartbeatIntervalSeconds: interval, missedHeartbeats: missed)
-      let vector = builder.createVector(ofOffsets: [service])
-      let services = Tsugumi_Host_ExecutionServices.createExecutionServices(&builder, servicesVectorOffset: vector, hostPublicKeyOffset: key)
-      let reply = Tsugumi_Host_Reply.createReply(&builder, valueType: .executionservices, valueOffset: services)
-      let messageOffset = Tsugumi_Host_Message.createMessage(&builder, requestId: 2, payloadType: .reply, payloadOffset: reply)
-      Tsugumi_Host_Message.finish(&builder, end: messageOffset)
-      let state = try ServiceWire.decode(builder.data, host: true)
-      let entries = try XCTUnwrap(state["services"] as? [[String: Any]])
-      XCTAssertEqual(entries.first?["heartbeatIntervalSeconds"] as? UInt32, interval)
-      XCTAssertEqual(entries.first?["missedHeartbeats"] as? UInt32, missed)
-    }
-    for (key, values) in [
-      ("heartbeatIntervalSeconds", [0, -1, 1.5, 4294967296, true, "15"] as [Any]),
-      ("missedHeartbeats", [-1, 1.5, 4294967296, true, "0"] as [Any]),
-    ] {
-      for value in values {
-        XCTAssertThrowsError(try ServiceWire.request("ExecutionServicePutRequest", [key: value], host: true))
-      }
-    }
   }
 
   func testExecutionSettingsUseTheHostContract() throws {
@@ -307,7 +258,6 @@ final class ServiceWireTests: XCTestCase {
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let request = try XCTUnwrap((Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_EnvironmentRequestT)
     XCTAssertEqual(request.action, .start)
-    XCTAssertTrue(request.archiveIncompatibleHistory)
     XCTAssertTrue(request.origins.isEmpty)
     XCTAssertTrue(request.folders.isEmpty)
     let state = Tsugumi_Host_EnvironmentStateT(); state.project = "/project"; state.key = "key"; state.phase = .ready; state.endpoint = "ws://localhost:1/rpc"

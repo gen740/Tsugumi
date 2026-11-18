@@ -172,7 +172,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
-    case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
+    case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
     }
   }
@@ -232,8 +232,6 @@ private struct UpdateSettings: View {
       if let why = updater.unavailable {
         Text(why).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       } else {
-        Toggle("アップデートを自動的に確認する", isOn: $updater.automatic)
-          .help("起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。")
         HStack {
           status
           Spacer()
@@ -251,7 +249,7 @@ private struct UpdateSettings: View {
   @ViewBuilder private var status: some View {
     switch updater.state {
     case .idle:
-      if updater.automatic { Text("まもなく確認します").foregroundStyle(.secondary) } else { Text("未確認").foregroundStyle(.secondary) }
+      Text("未確認").foregroundStyle(.secondary)
     case .checking:
       HStack(spacing: 6) { ProgressView().controlSize(.small); Text("確認しています") }
     case .upToDate:
@@ -259,7 +257,7 @@ private struct UpdateSettings: View {
     case .downloading(let v):
       HStack(spacing: 6) { ProgressView().controlSize(.small); Text("\(v) をダウンロードしています") }
     case .ready(let v):
-      Text("\(v) の準備ができました。次に終了したときに更新します。")
+      Text("\(v) の準備ができました。「再起動して更新」で更新できます。")
     case .failed(let m):
       Text(m).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(3)
     }
@@ -753,7 +751,6 @@ private struct ConnectionSettings: View {
       }
       .overlay { if sessions.isEmpty { ContentUnavailableView("開いているプロジェクトはありません", systemImage: "network.slash") } }
       EnvironmentStorageSettings()
-      VMHistorySettings()
     }
     .padding()
   }
@@ -780,7 +777,7 @@ private struct EnvironmentStorageSettings: View {
   var body: some View {
     GroupBox("実行環境のデータ") {
       VStack(alignment: .leading, spacing: 8) {
-        Text("実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。")
+        Text("実行環境（全プロジェクト共通の VM、その Nix store のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Text(model.environments.support.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -878,86 +875,6 @@ private struct EnvironmentStorageSettings: View {
       }
       working = false
       await model.refreshSetup()
-    }
-  }
-}
-
-/// Run histories kept in the VM, one per project id: size, last start and
-/// the folder when the app knows it. Deleting one also removes that
-/// project's build roots; a project still on disk reads its runs back from
-/// .tsugumi/runs.sqlite when it is opened again.
-private struct VMHistorySettings: View {
-  @Environment(AppModel.self) private var model
-  @State private var rows: [EnvironmentManager.VMHistory]?
-  @State private var folders: [String: String] = [:]
-  @State private var working = false
-  @State private var message: String?
-  @State private var pending: EnvironmentManager.VMHistory?
-
-  var body: some View {
-    GroupBox("VM 内の実行履歴") {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        if let rows {
-          if rows.isEmpty { Text("ありません。").foregroundStyle(.secondary) }
-          ForEach(rows) { r in
-            HStack {
-              VStack(alignment: .leading) {
-                Text(folders[r.id] ?? String(localized: "フォルダが見つからないプロジェクト")).lineLimit(1).truncationMode(.middle)
-                Text("\(r.id)  \(r.lastStart.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "")")
-                  .font(.caption.monospaced()).foregroundStyle(.secondary)
-              }
-              Spacer()
-              Text(ByteCountFormatter.string(fromByteCount: Int64(r.bytes), countStyle: .file)).monospacedDigit()
-              Button("削除…", role: .destructive) { pending = r }
-                .disabled(working || r.running)
-                .help(r.running ? String(localized: "開いているプロジェクトは削除できません") : "")
-            }
-          }
-        }
-        HStack {
-          Button(rows == nil ? "一覧を表示" : "再読込") { load() }.disabled(working)
-          if working { ProgressView().controlSize(.small) }
-          if let message { Text(message).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-        }
-      }
-      .padding(6)
-    }
-    .confirmationDialog("VM 内の実行履歴を削除しますか？", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
-                        presenting: pending) { r in
-      Button("削除", role: .destructive) { delete(r) }
-      Button("キャンセル", role: .cancel) {}
-    } message: { r in
-      Text(folders[r.id] != nil
-           ? String(localized: "プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。")
-           : String(localized: "このプロジェクトの実行履歴とビルドの登録を削除します。"))
-    }
-  }
-
-  private func load() {
-    working = true
-    message = nil
-    Task {
-      var known: [String: String] = [:]
-      for r in model.recents {
-        if let id = try? ProjectIdentity(url: URL(fileURLWithPath: r.path)).id { known[id] = r.path }
-      }
-      for s in model.sessions.values { known[s.identity.id] = s.identity.url.path }
-      folders = known
-      do { rows = try await model.environments.vmHistories().sorted { ($0.lastStart ?? .distantPast) > ($1.lastStart ?? .distantPast) } }
-      catch { message = String(localized: "読めませんでした: ") + "\(error)" }
-      working = false
-    }
-  }
-
-  private func delete(_ r: EnvironmentManager.VMHistory) {
-    working = true
-    message = nil
-    Task {
-      do { try await model.environments.deleteVMData(id: r.id) } catch { message = String(localized: "削除できませんでした: ") + "\(error)" }
-      working = false
-      load()
     }
   }
 }

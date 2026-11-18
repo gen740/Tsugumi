@@ -93,7 +93,7 @@ def host(tmp_path):
                 with socket.socket(socket.AF_UNIX) as peer:
                     peer.settimeout(10)
                     peer.connect(ready["host_socket"])
-                    hello = exchange(peer, 1, "HelloRequest", {"client_id": "host-python-test", "protocol": 1,
+                    hello = exchange(peer, 1, "HelloRequest", {"client_id": "host-python-test",
                         "token": ready["external_token" if external else "user_token"]})
                     if hello.valueType == ReplyPayload.Failure: return {"code": hello.value.code.decode()}
                     assert hello.valueType == ReplyPayload.HelloResult

@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(
 
 def project(root, script, name):
     write(root, {"trigger": {"template": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
-    return VMEnv(root, name).start()
+    return VMEnv(root).start()
 
 
 def test_projects_share_the_store_but_not_users_views_or_processes(tmp_path):
@@ -143,7 +143,7 @@ in
     write(root, {"trigger": {"template": "trigger"}, "one": {"language": "cpp", "_outputs": NUM, "_nix": nix}},
          [c_("start", "trigger"), c_("one", "one")], [])
     put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
-    p = VMEnv(root, "P").start()
+    p = VMEnv(root).start()
     copy = None
     try:
         rid, st = run_and_wait(p.client(), "start")
@@ -168,7 +168,7 @@ in
         p.stop()
         import shutil
         shutil.copytree(root, tmp_path / "P2", symlinks=True)
-        copy = VMEnv(tmp_path / "P2", "P2").start()
+        copy = VMEnv(tmp_path / "P2").start()
         rid, st = run_and_wait(copy.client(), "start")
         assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
         assert "tsugumi-card.json" in copy.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{copy.id}")
@@ -217,7 +217,7 @@ def test_closed_projects_give_their_slot_back(tmp_path):
     for i in range(18):  # more than the 16 slots
         root = tmp_path / f"p{i}"
         builtin_project(root)
-        env = VMEnv(root, f"slot-{i}").start()
+        env = VMEnv(root).start()
         try:
             c = env.client()
             assert c.call("ProjectInspectRequest").rev >= 0
@@ -232,7 +232,7 @@ def test_a_crashed_tsugumid_is_started_again_with_its_documents(tmp_path):
     from projects import builtin_project
     root = tmp_path / "p"
     builtin_project(root)
-    env = VMEnv(root, "crash").start()
+    env = VMEnv(root).start()
     try:
         rev = env.client().call("ProjectInspectRequest").rev
         env.crash()
@@ -248,7 +248,7 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
     keeps serving, the running project included, and starts another."""
     from projects import builtin_project
     builtin_project(tmp_path / "a")
-    a = VMEnv(tmp_path / "a", "before-bad").start()
+    a = VMEnv(tmp_path / "a").start()
     try:
         vm = a.vm
         bad = ["start ../x 1 /tmp 3", "start a/b 1 /tmp 3", "start x", "stop ../../etc", "stop", "forget ..",
@@ -260,7 +260,7 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
         assert vm.command("vm ping")[-1].strip() == "ok"
         assert a.client().call("ProjectInspectRequest").rev >= 0
         builtin_project(tmp_path / "b")
-        b = VMEnv(tmp_path / "b", "after-bad").start()
+        b = VMEnv(tmp_path / "b").start()
         try:
             assert b.client().call("ProjectInspectRequest").rev >= 0
         finally:

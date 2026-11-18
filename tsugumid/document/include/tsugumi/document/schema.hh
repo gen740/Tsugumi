@@ -55,7 +55,6 @@ struct Project {
   Opt<"agentExclude", v::Array<v::String>> agent_exclude;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default
   // true.
-  Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
   // The ports this project has as a Card in Card (an external of another
   // project): outer port name -> a port of one of its Cards.

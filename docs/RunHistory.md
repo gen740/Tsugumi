@@ -6,7 +6,7 @@ Open a run to see what its Cards received, produced and kept. A run can contain 
 
 A **Partial run** (**部分実行**) consumes saved inputs when running one Card or from a Card downstream. It exists only for debugging, because AI-written code rarely works at once. Its result is not a result of the Workflow. Results computed from these values carry the mark downstream; a run consuming them downstream, or a later run consuming those saved values, also shows **Uses a partial run's result** (**部分実行の結果を使用**). Both marks can apply. Running the whole Workflow replaces the saved values and clears their provenance. **Record I/O** and **Retain artifact** are obeyed, and the kept values and artifacts retain the producing run's marks. The marks appear with runs, history, comparisons and kept results. Inputs always come from the last saved inputs; there is no choice of an earlier run.
 
-The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in status replies, `RunSummary.status` in run lists and comparisons, and run events. These flags are stored with the run and copied with history, independently of whether input/output bytes or artifacts are kept.
+The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in status replies, `RunSummary.status` in run lists and comparisons, and run events. These flags are stored with the run in the primary history, independently of whether input/output bytes or artifacts are kept.
 
 ## Inspect an invocation
 
@@ -36,7 +36,7 @@ Search for part of a package name, such as `python`, and expand a matching entry
 
 **Compare Runs** marks Cards whose last invocation’s environment changed and lists **Removed runtime dependencies** on the left and **Added runtime dependencies** on the right. Both lists support search and paging. The core computes the exact difference between the two recorded closures in SQLite, so clients do not download every path. A missing environment reports that the comparison is unavailable rather than treating it as an empty closure.
 
-Both UIs use `RunEnvironments`, `RunEnvironmentUses`, and `RunEnvironmentPaths`. These requests read recorded history only and never evaluate or build Nix. The records remain available after restarting, editing definitions, and importing history from another machine; they do not require the original store paths to exist locally.
+Both UIs use `RunEnvironments`, `RunEnvironmentUses`, and `RunEnvironmentPaths`. These requests read recorded history only and never evaluate or build Nix. The records remain available after restarting, editing definitions, and copying the whole project from another machine; they do not require the original store paths to exist locally.
 
 The list uses the original history record. Configured cache endpoints, where recorded, describe which caches were available for builds. A path can come from a cache, the local store or a local build. [Binary cache provenance](BinaryCaches.md#storage-and-application)
 
@@ -54,16 +54,14 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 
 ## Copy or delete history
 
-With **Save the run history in the project** enabled, finished records, including the commit of the code that ran, are written to `.tsugumi/runs.sqlite` as well as to the local history. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files with it. The project's git history holds versions of the document and code. Outputs and logs live in run history.
+Run records are written directly to `.tsugumi/runs.sqlite`. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files. There is no second history database or import/export pass. The project's git history holds versions of its document and code; outputs and logs live in run history.
 
-If Tsugumi cannot open the project because its run history uses a different format, the startup page shows the versions involved. Choose **Archive History and Start** to keep the incompatible database files in a separate archive and open the project. If the archive is interrupted, choose **Resume Archiving and Start**. Records kept only in the archive are unavailable in the app. **Retry** attempts to open the project again without archiving. See the archive locations under [History storage](#history-storage).
-
-Archiving leaves active remote jobs running on the execution host. Confirm they have finished or been cancelled before updating Tsugumi or archiving. The archive keeps the host history. Accepted remote job scratch stays available until the host durably records and acknowledges the outcome; acknowledgement removes inputs, outputs and logs, leaving replay tombstones. [Remote execution](RemoteExecution.md#journal-and-scratch-lifetime)
+If the history format is incompatible, close the project and move `.tsugumi/runs.sqlite` and its SQLite sidecars together to a location you choose before reopening. Tsugumi leaves the database untouched and has no archive/recovery command.
 
 In **Settings → project → Run History**, choose the range and **Delete…** to remove its records and retained artifacts. Saved last inputs used for partial runs remain available. This action is unavailable during a run. **Delete** beside a project under **Build Cache** removes its build registrations and build work files. Invocation outputs and diagnostic work folders are separate scratch. Starting a run and reopening a project keep earlier scratch, including folders whose run record is missing. Under **Build Cache**, review **Past scratch in this project**: each folder (`runs/<project run number>` or `recovery`) and its size are listed; unreadable sizes are explicitly unknown and do not prevent deletion. **Delete listed scratch…** removes only the folders shown when you choose the action. The latest run started on this machine has its scratch kept available for reruns and is excluded; deleting scratch is unavailable during a run or while external results are pending. Run History deletion also removes scratch belonging to the selected runs. Local invocation scratch is deleted only by these explicit actions. Recorded File / Directory values, artifacts and saved last inputs have independent copies; deleting scratch does not remove them. Recorded file values show the current kept-file location alongside the original value, or an explicit missing-content message. The original recorded bytes and hash stay unchanged when a project is copied. Artifact previews and downloads read retained copies and explicitly report missing content (including an incomplete project copy). Displays are stored in SQLite and do not depend on scratch. [History storage](#history-storage) · [Build and scratch space](Usage.md#manage-build-and-scratch-space)
 
 ## History storage
 
-Archives contain the database and its SQLite sidecars together under `history-archive-<UUID>` beside the database. On Mac, the primary archive is on the VM history disk; for a directly run daemon it is in the project state directory. The portable archive is in the project's `.tsugumi/`.
+The primary database is `.tsugumi/runs.sqlite`; retained per-run files are under `.tsugumi/runs/`. Saved inputs and their schemas remain available after explicit run-history deletion.
 
 [Storage paths and deletion controls](security.md#8-where-data-is-kept-and-how-to-delete-it).

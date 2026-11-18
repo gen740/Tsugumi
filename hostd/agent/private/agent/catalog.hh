@@ -40,8 +40,6 @@ class Catalog {
   auto FamilyTool(std::string_view family, std::string_view action,
                   ModelRole role) const -> std::string;
   auto Allows(std::string_view name, ModelRole role) const -> bool;
-  auto ValidateArguments(std::string_view name,
-                         std::string_view arguments) const -> void;
   auto Request(std::string_view name, std::string_view arguments,
                uint64_t id) const -> std::string;
   auto Reply(std::string_view bytes) const -> std::string;

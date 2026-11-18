@@ -22,12 +22,9 @@ import importlib
 import os
 import sys
 import threading
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import _tsugumi_host as _host
-
-if TYPE_CHECKING:
-    import flatbuffers
 
 __all__ = ["Inputs", "Report", "Run", "Failure", "builder", "message"]
 
@@ -139,10 +136,11 @@ def _freeze(value):
 
 
 class Inputs:
-    __slots__ = ("_values", "_params")
+    __slots__ = ("_values", "_params", "_decoded")
 
     def __init__(self) -> None:
         object.__setattr__(self, "_values", {name: (kind, bytes(data)) for name, kind, data in _host.inputs()})
+        object.__setattr__(self, "_decoded", {})
         from params.Params import ParamsT
         object.__setattr__(self, "_params", _freeze(ParamsT.InitFromPackedBuf(_host.params())))
 
@@ -158,7 +156,9 @@ class Inputs:
         port = contract.port(name)
         if port is not None and not port["required"] and not self.has_input(name):
             return None
-        return _freeze(contract.input_object(self, name))
+        if name not in self._decoded:
+            self._decoded[name] = _freeze(contract.input_object(self, name))
+        return self._decoded[name]
 
     def has_input(self, port: str) -> bool:
         return port in self._values

@@ -1,5 +1,7 @@
 """Opt-in marimo scaffolds running through the real daemon and worker."""
+import base64
 import json
+import re
 import os
 
 import pytest
@@ -37,8 +39,8 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         assert json.loads(read('bindings.json')) == {'source': 7, 'factor': 2}
         members = {text(m.path) for m in art.members}
         assert {'source/notebook.py', 'metadata.json', 'bindings.json'} <= members
-        figure = next(name for name in members if name.startswith('assets/cell-') and name.endswith('.png'))
-        assert read(figure).startswith(b'\x89PNG\r\n\x1a\n')
+        figure = re.search(rb'data:image/png;base64,([A-Za-z0-9+/=]+)', html)[1]
+        assert base64.b64decode(figure).startswith(b'\x89PNG\r\n\x1a\n')
         assert json.loads(read('metadata.json')) == {
             'source': 'notebook.py', 'run_id': rid, 'card': 'notebook',
             'invocation': record.summary.invocation,

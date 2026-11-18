@@ -6,7 +6,7 @@ namespace Tsugumi.VMHost;
 table Watch {}
 table Boot { key:string; broker_endpoint:string (required); cache_configuration:string; cache_netrc:string; cache_problem:string; }
 table Mount { name:string (required); path:string (required); read_only:bool; }
-table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); archive_incompatible_history:bool; }
+table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); }
 enum ProcessAction:ubyte { Poll, Stop }
 table ProcessRequest { key:string (required); action:ProcessAction; }
 union RequestPayload { Watch, Boot, Run, ProcessRequest, Reset, HostRuntimeRequest:Tsugumi.Host.HostRuntimeRequest, HostTerminalRequest:Tsugumi.Host.HostTerminalRequest }

@@ -95,8 +95,6 @@ final class AppModel {
     return c
   }
 
-  /// The open session for a window value, opening the project if needed.
-  func session(ref: ProjectRef) -> ProjectSession? { try? session(for: ref.url) }
 
   init(refreshOnInit: Bool = true, requestHome: ((String, [String: Any]) async throws -> [String: Any])? = nil) {
     self.requestHome = requestHome
@@ -118,7 +116,6 @@ final class AppModel {
       return try await CoreHostClient.shared.call(method, fields)
     }
     catch let failure as CoreHostFailure {
-      if failure.code == "state_format" { throw failure }
       throw HostProjectError(code: failure.code)
     }
   }

@@ -26,7 +26,7 @@ From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you wan
 
 ### Automatic updates
 
-Releases check GitHub's latest release after starting and every six hours. If there is a new version, it is downloaded, its checksum, signature, bundle id and version number are checked, and it replaces the app **the next time you quit** (the resident execution environment continues independently of the app). To update at once, choose "Restart to Update" on the home screen or "Restart to update to …" in the application menu. Under "General" → "Updates" in the settings you can see the current version, check by hand and turn automatic checks on or off.
+Use **Check for Updates…** in the application menu or **General → Updates** in Settings to check GitHub and download a newer release. Its checksum, signature, bundle ID and version are verified. Choose **Restart to Update** to install it after orderly runtime shutdown. Checks and installation do not run automatically.
 
 - The folder the app is in (usually `/Applications`) must be writable. An app opened with the quarantine attribute still on (running from elsewhere through App Translocation) cannot update; move it to `/Applications` and remove the quarantine attribute.
 - The ad hoc signature changes with each version, so the first time an updated version uses an API key, macOS asks once for access to the keychain (choose "Always Allow" and that version will not ask again).

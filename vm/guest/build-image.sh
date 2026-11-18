@@ -89,7 +89,6 @@ else
 fi
 mkdir -p "$repo/dist"
 if [ "$attr" = vm ]; then
-  "${verify[@]}" "$out" "$identity"
   rm -rf "$dist_vm"
   mv "$out" "$dist_vm"
 elif [ "$attr" = kernel ]; then

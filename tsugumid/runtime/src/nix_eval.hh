@@ -56,7 +56,6 @@ struct NixCall {
 struct NixResult : WorkerStoreResult {
   bool execution_list = false;
   uint32_t implementation_count = 1;
-  std::filesystem::path root;
   uint64_t evaluation_epoch = 0;
 };
 
@@ -99,7 +98,6 @@ class NixEvaluator {
   // applied here before derivations cross into the restricted Card evaluator.
   // It also supplies the target system, cancellation, deadline and log.
   FlakeInfo flake(const NixCall& call, const std::string& ref);
-  bool valid(const std::string& store_path);
 
   // Resident memory of the evaluator's heap (Boehm GC), in bytes.
 

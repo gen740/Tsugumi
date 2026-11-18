@@ -41,13 +41,11 @@ struct Options {
   stdfs::path workerd;
   uint32_t cpus = 2;
   stdfs::path gcroots_dir;
-  stdfs::path history_dir;
   stdfs::path run_scratch_dir;
   stdfs::path scratch_dir;
   stdfs::path usage_roots_dir;
   stdfs::path usage_scratch_dir;
   stdfs::path usage_file;
-  bool archive_incompatible_history = false;
   stdfs::path host_folders;
   bool project_shell = false;
   stdfs::path substituters_file;
@@ -62,8 +60,7 @@ void usage() {
       "                [--allow-origin ORIGIN]... [--allow-missing-origin] "
       "[--sdk-dir DIR]\n"
       "                [--worker PATH] [--workerd PATH] [--cpus N] "
-      "[--gcroots-dir DIR] [--history-dir DIR]\n"
-      "                [--archive-incompatible-history]\n"
+      "[--gcroots-dir DIR]\n"
       "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
       "[--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
       "                [--usage-file FILE]\n"
@@ -107,8 +104,6 @@ std::optional<Options> parse(int argc, char** argv) {
       o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--gcroots-dir")
       o.gcroots_dir = next();
-    else if (a == "--history-dir")
-      o.history_dir = next();
     else if (a == "--run-scratch-dir")
       o.run_scratch_dir = next();
     else if (a == "--scratch-dir")
@@ -119,8 +114,6 @@ std::optional<Options> parse(int argc, char** argv) {
       o.usage_scratch_dir = next();
     else if (a == "--usage-file")
       o.usage_file = next();
-    else if (a == "--archive-incompatible-history")
-      o.archive_incompatible_history = true;
     else if (a == "--host-folders")
       o.host_folders = next();
     else if (a == "--project-shell")
@@ -228,13 +221,11 @@ int run_daemon(int argc, char** argv) {
   so.fault = opt.fault;
   so.env_cpus = opt.cpus;
   so.gcroots_dir = opt.gcroots_dir;
-  so.history_dir = opt.history_dir;
   so.run_scratch_dir = opt.run_scratch_dir;
   so.scratch_dir = opt.scratch_dir;
   so.usage_roots_dir = opt.usage_roots_dir;
   so.usage_scratch_dir = opt.usage_scratch_dir;
   so.usage_file = opt.usage_file;
-  so.archive_incompatible_history = opt.archive_incompatible_history;
   so.host_folders = opt.host_folders;
   so.project_shell = opt.project_shell;
   so.substituters_file = opt.substituters_file;
@@ -269,18 +260,6 @@ int run_daemon(int argc, char** argv) {
       *error.found = e.found;
       *error.expected = e.expected;
       *error.source = e.source;
-      *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json",
-                       schema::encode(error), 0600);
-    }
-    log::error(std::string("cannot open the project: ") + e.what());
-    return 6;
-  } catch (const HistoryOpenError& e) {
-    if (!opt.control_dir.empty()) {
-      schema::StartupError error;
-      *error.kind = e.code == HistoryOpenCode::NotRegular
-                        ? "history_not_regular"
-                        : "history_archive_conflict";
       *error.message = e.what();
       fs::write_atomic(opt.control_dir / "server.startup-error.json",
                        schema::encode(error), 0600);

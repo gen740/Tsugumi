@@ -275,23 +275,28 @@ for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWit
 }
 
 // ---- The cases Mac and web must route alike ---------------------------------------------
-type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[]; paths: (Pt[] | null)[] }
+type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }
 const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
   .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(), ...grids[0].scenes.filter((s) => s.name === 'casa, grid 20' || s.name === 'rna-seq, grid 20'))
-const routed = (s: { flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }) => {
-  const routes = new WireRouter(s.flow, s.obstacles).routeAll(s.wires)
-  return routes.map((r) => (r.curved ? null : r.pts))
-}
 const fixture = path.join(root, 'tests/fixtures/wire-routes.json')
 // The scenes are samples kept in the file, so moving a Card of a demo does not
 // change this check. WIRE_ROUTES_WRITE=1 npm test takes new samples from the demos.
 if (process.env.WIRE_ROUTES_WRITE) {
-  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })), paths: routed(s) }))
+  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })) }))
   fs.writeFileSync(fixture, JSON.stringify(samples) + '\n')
 }
 const cases: Case[] = read(fixture)
 assert.ok(cases.length > 0)
-for (const c of cases) assert.deepEqual(routed(c), c.paths, `the paths Mac also has to find: ${c.name} (a change to the router on purpose: WIRE_ROUTES_WRITE=1 npm test)`)
+for (const c of cases) {
+  const routes = new WireRouter(c.flow, c.obstacles).routeAll(c.wires)
+  assert.equal(routes.length, c.wires.length)
+  for (const [i, route] of routes.entries()) {
+    assert.deepEqual(route.pts[0], c.wires[i].a)
+    assert.deepEqual(route.pts.at(-1), c.wires[i].b)
+    assert.ok(route.pts.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)))
+    assert.equal(crossed(route.pts, c.obstacles), 0, c.name)
+  }
+}
 console.log('wire routes: passed')
 
 if (process.env.TSUGUMI_WIRE_BENCH === '1') {

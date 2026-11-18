@@ -1,11 +1,10 @@
 #include "host/version_text.hh"
 
-#include <git2.h>
-
 #include <algorithm>
 #include <set>
 
 #include "host/projects.hh"
+#include "tsugumi/util/git.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -113,38 +112,16 @@ constexpr size_t kDiffFileLimit = 4000;
 // ---- libgit2 handles
 // ---------------------------------------------------------
 
-struct Init {
-  Init() { git_libgit2_init(); }
-};
-void init_once() { static Init i; }
+using git::init_once;
+using git::Ptr;
 
-template <class T, void (*F)(T*)>
-struct Ptr {
-  T* p = nullptr;
-  Ptr() = default;
-  Ptr(const Ptr&) = delete;
-  Ptr& operator=(const Ptr&) = delete;
-  ~Ptr() {
-    if (p) F(p);
-  }
-  T** out() { return &p; }
-  T* get() const { return p; }
-  explicit operator bool() const { return p != nullptr; }
-};
 using Repo = Ptr<git_repository, git_repository_free>;
-using Index = Ptr<git_index, git_index_free>;
 using Tree = Ptr<git_tree, git_tree_free>;
 using Commit = Ptr<git_commit, git_commit_free>;
 using Sig = Ptr<git_signature, git_signature_free>;
-using Ref = Ptr<git_reference, git_reference_free>;
 using Note = Ptr<git_note, git_note_free>;
-using Walk = Ptr<git_revwalk, git_revwalk_free>;
 using Diff = Ptr<git_diff, git_diff_free>;
-using Object = Ptr<git_object, git_object_free>;
-using RefIter = Ptr<git_reference_iterator, git_reference_iterator_free>;
 using Patch = Ptr<git_patch, git_patch_free>;
-using TreeEntry = Ptr<git_tree_entry, git_tree_entry_free>;
-using Blob = Ptr<git_blob, git_blob_free>;
 
 void check(int rc, const std::string& what) {
   if (rc >= 0) return;

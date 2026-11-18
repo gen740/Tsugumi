@@ -2,6 +2,8 @@
 // from the core does to it, and what the toggle, a click on a link and
 // hovering a Card show.
 import assert from 'node:assert/strict'
+import TestRenderer from 'react-test-renderer'
+import { L } from '../src/i18n'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import * as R from '../shared/gen/tsugumi/rpc'
 
@@ -87,16 +89,16 @@ tab.selectNixReference(picked.id)
 assert.equal(tab.showNixList, true)
 assert.deepEqual(ends(active()), ['report>analysis'])
 const html = renderToStaticMarkup(<NixReferenceList session={session} tab={tab} />)
-const rows = html.split('<code').slice(0, -1).map(before => before.slice(before.lastIndexOf('border:1px solid')))
-assert.equal(rows.length, 3, 'the list keeps the invalid reference the canvas cannot draw')
-assert.deepEqual(rows.map(r => r.startsWith('border:1px solid var(--purple)')), [false, true, false], 'only the picked link is the selected row')
-assert.ok(html.includes('参照を解決できません'), 'the invalid reference says so')
+const rendered = TestRenderer.create(<NixReferenceList session={session} tab={tab} />)
+assert.equal(rendered.root.findAllByType('code').length, 3, 'the list keeps unresolved references too')
+assert.ok(html.includes(L('参照を解決できません。Nix 定義と診断を確認してください。')))
+rendered.unmount()
 
 // The toggle says what the layer is, pressed or not.
 tab.showNixList = false
 const on = renderToStaticMarkup(<NixReferenceControls session={session} tab={tab} />)
-assert.ok(on.includes('Nix 参照（記述どおり）'), 'these are the references as written')
-assert.ok(on.includes('別名や計算で決まる参照は含みません'), 'and what that leaves out')
+assert.ok(on.includes(L('Nix 参照（記述どおり）')))
+assert.ok(on.includes(L('保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。')))
 
 // Turning the layer off drops the hover with it.
 tab.hoverNixCard('analysis')

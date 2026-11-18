@@ -102,7 +102,7 @@ let
     cp -r ${src}/. $out/
     cp -r ${sdk.csharp}/. $out/Generated/
     cp ${pkgs.flatbuffers.src}/net/FlatBuffers/*.cs $out/FlatBuffers/
-    cp ${sdkRoot}/csharp/*.cs $out/Tsugumi/
+    cp ${sdkRoot + "/csharp"}/*.cs $out/Tsugumi/
     ${lib.optionalString (lock != null) "cp ${lock} $out/packages.lock.json"}
     cat > $out/Card.csproj <<'PROJECT'
     <Project Sdk="Microsoft.NET.Sdk">
@@ -154,7 +154,7 @@ let
         -p:Deterministic=true -p:ContinuousIntegrationBuild=true \
         -p:DebugType=None -p:DebugSymbols=false -p:GenerateDocumentationFile=false \
         -p:PublishReferencesDocumentationFiles=false --output $out
-      python3 ${sdkRoot}/codegen/trim_packages.py $out
+      python3 ${sdkRoot + "/codegen/trim_packages.py"} $out
       runHook postBuild
     '';
     dontInstall = true;
@@ -166,13 +166,13 @@ let
     dontConfigure = true;
     buildPhase = ''
       $CXX -std=c++20 -O2 -fPIC -shared -Wall -Wextra -Werror \
-        -I${sdkRoot}/include \
+        -I${sdkRoot + "/include"} \
         -I${dotnet}/share/dotnet/packs/Microsoft.NETCore.App.Host.${rid}/${runtime.version}/runtimes/${rid}/native \
         -DTSUGUMI_HOSTFXR='"${runtime}/share/dotnet/host/fxr/${runtime.version}/libhostfxr${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
         -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
         -DTSUGUMI_ASSEMBLY='"${managed}/Card.dll"' \
         -DTSUGUMI_RUNTIMECONFIG='"${managed}/Card.runtimeconfig.json"' \
-        ${sdkRoot}/csharp/host.cc -o runtime.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
+        ${sdkRoot + "/csharp/host.cc"} -o runtime.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
     '';
     installPhase = ''
       mkdir -p $out/lib

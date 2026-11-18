@@ -399,49 +399,20 @@ private struct RunHistorySettings: View {
   @State private var message: String?
   @State private var failed = false
   @State private var confirm = false
-  @State private var revisionEdit = RevisionEdit()
-  @State private var pendingSaving = true
-
-  private var saving: Binding<Bool> {
-    let baseRev = session.rev
-    return Binding(
-      get: { session.project["saveRunHistory"]?.bool ?? true },
-      set: { on in
-        revisionEdit.reload(baseRev)
-        pendingSaving = on
-        Task { await saveHistorySetting() }
-      })
-  }
-
-  private func saveHistorySetting(overwrite: Bool = false) async {
-    let before = revisionEdit.jsonBase("tsugumi.json", initial: session.project, overwrite: overwrite)
-    var after = before ?? .object([]); after["saveRunHistory"] = .bool(pendingSaving)
-    _ = await revisionEdit.apply(session) { $0.appendEdits([$0.jsonEdit("tsugumi.json", old: before, new: after)]) }
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Form {
-        Section {
-          Toggle("実行履歴をプロジェクトに保存する", isOn: saving).disabled(!session.isEditable)
-          Text("実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
         Section("削除") {
           Picker("対象", selection: $scope) {
             Text("指定した日時より前に終わった実行").tag(Scope.before)
             Text("すべての実行").tag(Scope.all)
           }
           if scope == .before { DatePicker("日時", selection: $before) }
-          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
+          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }
       .formStyle(.grouped)
-      RevisionEditNotice(edit: revisionEdit, text: { "saveRunHistory: \(pendingSaving)" },
-                         overwrite: { Task { await saveHistorySetting(overwrite: true) } },
-                         reload: { revisionEdit.reload(session.rev) })
-        .padding(.horizontal, 12)
       HStack {
         if let message { Text(message).font(.callout).foregroundStyle(failed ? .red : .secondary).textSelection(.enabled) }
         Spacer()
@@ -515,10 +486,8 @@ private struct CacheSettings: View {
             if let available = session.cacheUsage?.storeAvailableBytes {
               LabeledContent("store ディスクの空き", value: bytes(available))
             }
-            if session.cacheUsage?.large == true {
-              Text("ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。")
-            }
-            Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。")
+
+            Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。")
               .font(.caption).foregroundStyle(.secondary)
             if let measured = session.cacheUsage?.measuredAt {
               LabeledContent("計測日時", value: Date(timeIntervalSince1970: Double(measured) / 1000).formatted())
@@ -590,6 +559,7 @@ private struct CacheSettings: View {
       }
     }
     .padding(16)
+    .task { await session.refreshCacheUsage() }
     .confirmationDialog("選択した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
       Button("削除", role: .destructive) {
         working = true

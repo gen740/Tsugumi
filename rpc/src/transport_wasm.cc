@@ -120,12 +120,6 @@ class BrowserTransport final : public Transport {
       return {ErrorCode::Closed, "WebSocket is not open"};
     if (bytes.empty() || bytes.size() > state_->options.max_frame_bytes)
       return {ErrorCode::InvalidArgument, "RPC message exceeds its limit"};
-    size_t buffered = 0;
-    if (emscripten_websocket_get_buffered_amount(state_->socket, &buffered) !=
-        EMSCRIPTEN_RESULT_SUCCESS)
-      return {ErrorCode::Transport, "cannot inspect WebSocket outbox"};
-    if (buffered + bytes.size() > state_->options.max_queued_bytes)
-      return {ErrorCode::Backpressure, "WebSocket outbox is full"};
     if (emscripten_websocket_send_binary(state_->socket, bytes.data(),
                                          static_cast<uint32_t>(bytes.size())) !=
         EMSCRIPTEN_RESULT_SUCCESS)
@@ -149,10 +143,6 @@ auto MakeTransport(const TransportOptions& options)
   if (!options.endpoint.starts_with("ws://") &&
       !options.endpoint.starts_with("wss://"))
     throw std::invalid_argument("browser RPC requires a WebSocket endpoint");
-  if (!options.max_frame_bytes || options.max_frame_bytes > UINT32_MAX ||
-      options.max_queued_bytes < options.max_frame_bytes ||
-      options.connect_timeout.count() <= 0)
-    throw std::invalid_argument("invalid RPC transport limits");
   return std::make_shared<BrowserTransport>(options);
 }
 

@@ -100,25 +100,19 @@ enum UpdateCheck {
 
 /// Updates of a release build from the GitHub releases of the repository.
 ///
-/// Once after launch and then every six hours (or when asked from the menu
-/// or the settings) it reads the latest release; a newer one is downloaded
-/// next to the app, its checksum and signature checked, and it takes the
-/// app's place when the app quits: the VM has been powered off by then, so
-/// no run is cut short by an update. "Restart to Update" quits and opens the
-/// new version. A build from source (AppChannel.dev) never updates itself.
+/// Checks and downloads when asked. Installation requires Restart to Update.
 @MainActor @Observable
 final class Updater {
   static let shared = Updater()
   nonisolated static let repository = "gen740/Tsugumi"
   nonisolated static var releasesPage: URL { URL(string: "https://github.com/\(repository)/releases")! }
-  private static let automaticKey = "update.automatic"
 
   enum State: Equatable {
     case idle
     case checking
     case upToDate
     case downloading(String)
-    /// Downloaded and checked: installed when the app quits.
+    /// Downloaded and checked: ready for explicit installation.
     case ready(String)
     case failed(String)
   }
@@ -127,20 +121,12 @@ final class Updater {
   private(set) var lastCheck: Date?
   let currentVersion: String
   let build: String
-  /// Checks by themselves after launch and every six hours.
-  var automatic: Bool {
-    didSet {
-      UserDefaults.standard.set(automatic, forKey: Self.automaticKey)
-      schedule()
-    }
-  }
-
   private let app: URL
   private let bundleID: String
   private let channel: AppChannel
   private var staged: URL?
   private(set) var relaunch = false
-  private var loop: Task<Void, Never>?
+  private(set) var installing = false
 
   init(bundle: Bundle = .main, channel: AppChannel = .current) {
     app = bundle.bundleURL
@@ -148,13 +134,12 @@ final class Updater {
     self.channel = channel
     currentVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-    automatic = UserDefaults.standard.object(forKey: Self.automaticKey) as? Bool ?? true
   }
 
   /// Why this copy of the app cannot update itself (nil: it can).
   var unavailable: String? {
     if channel == .dev || app.pathExtension != "app" {
-      return String(localized: "ソースからビルドした開発版（Tsugumi Dev）は自動更新しません。")
+      return String(localized: "ソースからビルドした開発版（Tsugumi Dev）はこの機能では更新できません。")
     }
     if app.path.contains("/AppTranslocation/") {
       return String(localized: "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。")
@@ -164,27 +149,6 @@ final class Updater {
       return String(localized: "\(folder.path) に書き込めないため、このアプリを更新できません。")
     }
     return nil
-  }
-
-  /// From applicationDidFinishLaunching: the periodic checks of a release
-  /// build, except in scripted runs (UI scripts, smoke tests).
-  func start() {
-    let env = ProcessInfo.processInfo.environment
-    guard env["TSUGUMI_UI_SCRIPT"] == nil, env["TSUGUMI_SMOKE_DEMO"] == nil else { return }
-    schedule()
-  }
-
-  private func schedule() {
-    loop?.cancel()
-    loop = nil
-    guard automatic, unavailable == nil else { return }
-    loop = Task { [weak self] in
-      try? await Task.sleep(for: .seconds(20))
-      while !Task.isCancelled {
-        await self?.check()
-        try? await Task.sleep(for: .seconds(6 * 3600))
-      }
-    }
   }
 
   var busy: Bool {
@@ -198,7 +162,7 @@ final class Updater {
   /// asked from the menu, so the outcome is said in a dialog.
   func check(manual: Bool = false) async {
     if let why = unavailable {
-      if manual { Self.alert(String(localized: "このアプリは自動更新できません"), why) }
+      if manual { Self.alert(String(localized: "このアプリは更新できません"), why) }
       return
     }
     if case .ready(let v) = state {
@@ -228,6 +192,7 @@ final class Updater {
   /// Quits (asking about unsaved edits as usual) and opens the new version.
   func installAndRelaunch() {
     guard case .ready = state else { return }
+    installing = true
     restart()
   }
 
@@ -237,14 +202,12 @@ final class Updater {
     terminate()
   }
 
-  var hasStagedUpdate: Bool { staged != nil }
-
-  func cancelRelaunch() { relaunch = false }
+  func cancelRelaunch() { relaunch = false; installing = false }
 
   /// From applicationWillTerminate: the downloaded version takes the app's
   /// place. Any failure keeps the current app as it is.
   func installIfReady(reopen: @MainActor (URL) -> Void = Updater.openAfterExit) {
-    if let new = staged, FileManager.default.fileExists(atPath: new.path) {
+    if installing, let new = staged, FileManager.default.fileExists(atPath: new.path) {
       do {
         _ = try FileManager.default.replaceItemAt(app, withItemAt: new, backupItemName: nil, options: [.usingNewMetadataOnly])
         LSRegisterURL(app as CFURL, true)
@@ -257,7 +220,7 @@ final class Updater {
   }
 
   private static func openAfterExit(_ app: URL) {
-    // Opened once this UI has exited; ongoing work remains in the resident host.
+    // Open the app after this UI has exited.
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
     p.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
@@ -271,7 +234,7 @@ final class Updater {
   private func askToRelaunch(_ version: String) {
     let a = NSAlert()
     a.messageText = String(localized: "Tsugumi \(version) の準備ができました")
-    a.informativeText = String(localized: "再起動すると新しい版になります。あとにした場合は、次に終了したときに更新します。")
+    a.informativeText = String(localized: "再起動すると新しい版になります。あとにした場合は、メニューや設定から更新できます。")
     a.addButton(withTitle: String(localized: "再起動して更新"))
     a.addButton(withTitle: String(localized: "あとで"))
     if a.runModal() == .alertFirstButtonReturn { installAndRelaunch() }

@@ -21,9 +21,16 @@ def received_snapshot(result):
     for block in result.get("content", []):
         if block.get("type") == "text":
             try:
-                if json.loads(block["text"]) == SNAPSHOT:
+                value = json.loads(block["text"])
+                expected = SNAPSHOT['value']
+                snapshot = value['value']
+                wanted = next(d for d in expected['definitions'] if d['id'] == 'initial')
+                actual = next(d for d in snapshot['definitions'] if d['id'] == 'initial')
+                wanted_params = {p['name']: p['data'] for p in json.loads(wanted['card_json'])['params']}
+                actual_params = {p['name']: p['data'] for p in json.loads(actual['card_json'])['params']}
+                if value['reply'] == SNAPSHOT['reply'] and wanted_params.items() <= actual_params.items():
                     return True
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, StopIteration, TypeError):
                 continue
     return False
 

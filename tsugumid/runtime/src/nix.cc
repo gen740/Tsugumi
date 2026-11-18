@@ -666,9 +666,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     const auto key = call.evaluation_key();
     const auto card = path_key(node.path);
     std::erase_if(evaluations_, [&](const auto& item) {
-      return std::none_of(
-          graph.nodes.begin(), graph.nodes.end(),
-          [&](const auto& n) { return path_key(n.path) == item.first; });
+      return !graph.index.contains(item.first);
     });
     auto found = evaluations_.find(card);
     if (call.on_phase) call.on_phase(false);
@@ -679,7 +677,6 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
         throw NixImplementationLimit(
             "input and run list expansion exceeds 256 combinations");
       res.built = false;
-      res.root.clear();
     } else {
       evaluations_.erase(card);
       log::info("Card full evaluation " + std::to_string(++full_evaluations_));

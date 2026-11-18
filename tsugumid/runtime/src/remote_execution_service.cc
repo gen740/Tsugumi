@@ -78,9 +78,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client,
                           std::string target, std::string system,
                           std::string server_id, std::string instance,
-                          stdfs::path archive,
-                          uint32_t heartbeat_interval_seconds,
-                          uint32_t missed_heartbeats)
+                          stdfs::path archive)
       : service_(service),
         client_(client),
         target_(std::move(target)),
@@ -88,9 +86,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
         server_id_(std::move(server_id)),
         instance_(std::move(instance)),
         archive_(std::move(archive)),
-        transport_(archive_),
-        heartbeat_interval_seconds_(heartbeat_interval_seconds),
-        missed_heartbeats_(missed_heartbeats) {}
+        transport_(archive_) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&)
       -> PreparedRemoteExecution& = delete;
@@ -118,8 +114,6 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string instance_;
   stdfs::path archive_;
   ArchiveDerivationTransport transport_;
-  uint32_t heartbeat_interval_seconds_;
-  uint32_t missed_heartbeats_;
 };
 
 auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
@@ -137,10 +131,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       request.cancel, [&](uint64_t done, uint64_t total) {
         if (request.transfer) request.transfer("upload", "Nix", done, total);
       });
-  auto spec = stage_remote_invocation(
-      client_, target_, server_id_, instance_, s.execution_job_id,
-      service_.file_roots(), archive_digest, request,
-      heartbeat_interval_seconds_, missed_heartbeats_);
+  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_,
+                                      s.execution_job_id, service_.file_roots(),
+                                      archive_digest, request);
   if (request.cancel.load())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -252,8 +245,7 @@ auto RemoteExecutionService::prepare(const Node& node,
     throw Failed(FailureKind::unsupported, "execution service " +
                                                settings.execution_service +
                                                " is not registered");
-  auto probe = client_.probe(target->id, target->server_id,
-                             target->heartbeat_interval_seconds);
+  auto probe = client_.probe(target->id, target->server_id);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
   if (system.empty())
     throw Failed(FailureKind::unsupported, "remote worker system is unknown");
@@ -268,8 +260,7 @@ auto RemoteExecutionService::prepare(const Node& node,
   auto prepared = std::make_unique<PreparedRemoteExecution>(
       service_, client_, target->id, std::move(system),
       std::move(probe.server_id), std::move(probe.instance),
-      directory / (".derivation-" + crypto::uuid4()),
-      target->heartbeat_interval_seconds, target->missed_heartbeats);
+      directory / (".derivation-" + crypto::uuid4()));
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
   return prepared;

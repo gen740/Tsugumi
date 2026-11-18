@@ -59,11 +59,6 @@ struct ServiceOptions {
   std::filesystem::path usage_scratch_dir;
   // The VM supervisor publishes one shared measurement for all projects.
   std::filesystem::path usage_file;
-  // Folder of the run history database (history.sqlite). Empty: the
-  // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
-  // runs are then also kept in the project (.tsugumi/runs.sqlite).
-  std::filesystem::path history_dir;
-  bool archive_incompatible_history = false;
   // Folders of the Mac the app shares with this project, one per path at
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
@@ -73,7 +68,7 @@ struct ServiceOptions {
   // per line, written by a launcher whose daemon reads settings this process
   // cannot see (the shared VM). Empty: this process's own Nix configuration.
   std::filesystem::path substituters_file;
-  Limits limits;
+  TransportLimits limits;
 };
 
 class Service : public RequestSink {
@@ -127,8 +122,6 @@ class Service : public RequestSink {
                                    const std::vector<RemoteTarget>& targets)
       -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
-  void schedule_export();
-  auto refresh_cache_usage() -> void;
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& record_json);
 
@@ -143,6 +136,11 @@ class Service : public RequestSink {
   void save(RequestIn& req);
   auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
+  auto complete_reload(RequestIn& req, const std::string& op_id,
+                       const std::string& digest, const Document& base,
+                       Store::Staged& staged) -> void;
+  auto version_operation(RequestIn& req,
+                         const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
   void scratch_delete(RequestIn& req);
@@ -256,21 +254,9 @@ class Service : public RequestSink {
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
 
   std::mutex view_mu_;
-  std::string cursor_secret_;
 
   // The project's copy of finished runs (.tsugumi/runs.sqlite), written
   // shortly after runs end when the project keeps its run history.
-  std::filesystem::path runs_copy() const {
-    return store_->state_dir() / "runs.sqlite";
-  }
-  void export_loop();
-  void export_now();
-  std::mutex export_mu_;
-  std::condition_variable export_cv_;
-  std::optional<std::chrono::steady_clock::time_point> export_first_;
-  std::optional<std::chrono::steady_clock::time_point> export_last_;
-  bool export_stop_ = false;
-  std::thread exporter_;
 };
 
 // Canonical request digests (all arguments except request_id, defaults

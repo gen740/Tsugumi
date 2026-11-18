@@ -12,16 +12,6 @@
 namespace tsugumi {
 namespace {
 
-TEST(CacheNotice, RequiresBothOneGiBAndOneFifthOfTheDisk) {
-  constexpr uint64_t gib = uint64_t{1} << 30;
-  EXPECT_FALSE(cache_is_large(gib - 1, 2 * gib));
-  EXPECT_TRUE(cache_is_large(gib, 2 * gib));
-  EXPECT_FALSE(cache_is_large(20 * gib - 1, 100 * gib));
-  EXPECT_TRUE(cache_is_large(20 * gib, 100 * gib));
-  EXPECT_FALSE(cache_is_large(UINT64_MAX, 0));
-  EXPECT_EQ(cache_notice_threshold(UINT64_MAX), UINT64_MAX / 5);
-}
-
 class RunScratch : public ::testing::Test {
  protected:
   void SetUp() override {

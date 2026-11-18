@@ -195,12 +195,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       {
         std::lock_guard lock(mutex);
         if (boundary) RequireHelperPermission(conversation, *boundary);
-        const auto resource = authorization.empty() ? project : authorization;
-        for (const auto grant :
-             {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-          if (!access_service.HasGrant(resource, conversation, grant))
-            throw Failure("permission_denied",
-                          "project grant was revoked before commit");
       }
       if (boundary && boundary->scoped()) {
         const auto read = HelperReader(

@@ -27,8 +27,6 @@ struct StateJson {
   schema::t::Uint64<"start"> start;
   schema::t::String<"boot"> boot;
   schema::t::String<"core_life_id"> core_life_id;
-  schema::t::Uint64<"heartbeat_interval_seconds"> heartbeat_interval_seconds;
-  schema::t::Uint64<"missed_heartbeats"> missed_heartbeats;
 };
 struct Fd {
   int value;
@@ -61,10 +59,7 @@ auto now_ms() -> uint64_t {
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
-auto check_id(std::string_view value) -> void {
-  if (!crypto::is_sha256_hex(value))
-    throw Error(R::ErrorCode::Invalid, "expected a 64-hex identity");
-}
+
 auto private_directory(const stdfs::path& path) -> void {
   if (!path.is_absolute())
     throw std::runtime_error("state directory must be absolute");
@@ -81,7 +76,6 @@ auto identity(const stdfs::path& directory, const std::string& name)
   if (!stdfs::exists(path))
     fs::write_atomic(path, crypto::random_token(32), 0600);
   auto value = bounded_file(path, 64);
-  check_id(value);
   return value;
 }
 auto discard_tree(const stdfs::path& path) -> void {
@@ -105,17 +99,14 @@ Journal::Journal(stdfs::path root) : root_(std::move(root)) {
   private_directory(root_);
   private_directory(root_ / "jobs");
   private_directory(root_ / "locks");
-  private_directory(root_ / "cores");
   instance_ = identity(root_, "instance_id");
 }
 auto Journal::job_path(std::string_view job) const -> stdfs::path {
-  check_id(job);
   return root_ / "jobs" / job;
 }
 auto Journal::locked(
     std::string_view job,
     const std::function<void(const stdfs::path&)>& action) const -> void {
-  check_id(job);
   Fd fd{::open((root_ / "locks" / job).c_str(),
                O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
   if (fd.value < 0 || ::flock(fd.value, LOCK_EX) != 0)
@@ -143,9 +134,7 @@ auto Journal::read(const stdfs::path& directory) const -> Record {
           *s.pid,
           *s.start,
           *s.boot,
-          *s.core_life_id,
-          static_cast<uint32_t>(*s.heartbeat_interval_seconds),
-          static_cast<uint32_t>(*s.missed_heartbeats)};
+          *s.core_life_id};
 }
 auto Journal::write(const stdfs::path& directory, const Record& r) const
     -> void {
@@ -161,8 +150,6 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
   *s.start = r.start;
   *s.boot = r.boot;
   *s.core_life_id = r.core_life_id;
-  *s.heartbeat_interval_seconds = r.heartbeat_interval_seconds;
-  *s.missed_heartbeats = r.missed_heartbeats;
   fs::write_atomic(directory / "state", schema::encode(s), 0600);
 }
 auto Journal::status(std::string_view job) const -> Record {
@@ -173,58 +160,15 @@ auto Journal::status(std::string_view job) const -> Record {
 auto Journal::spec(std::string_view job) const -> std::string {
   return bounded_file(job_path(job) / "spec.fb", kMaxSpec);
 }
-auto Journal::touch_core(std::string_view core, uint64_t now) -> void {
-  check_id(core);
-  // Serialize renewals across carriers. Cancel the expired life's jobs before
-  // renewal, even if its reconnect arrives before the next listener tick.
-  Fd lock{::open((root_ / "cores" / (std::string(core) + ".lock")).c_str(),
-                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
-  if (lock.value < 0 || ::flock(lock.value, LOCK_EX) != 0)
-    throw std::runtime_error("cannot lock core lease");
-  const auto path = root_ / "cores" / core;
-  for (const auto& job : jobs())
-    if (status(job).core_life_id == core) expire_core(job, now);
-  fs::write_atomic(path, std::to_string(now), 0600);
-}
-
 auto Journal::require_owner(std::string_view job, std::string_view core) const
     -> void {
-  check_id(core);
   const auto state = status(job);
   if (!state.core_life_id.empty() && state.core_life_id != core)
     throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
 }
 
-auto Journal::expire_core(std::string_view job, uint64_t now) -> void {
-  locked(job, [&](const auto& dir) {
-    auto state = read(dir);
-    if (state.core_life_id.empty() || terminal(state.state) ||
-        state.state == R::JobState::Uploading || !state.missed_heartbeats)
-      return;
-    check_id(state.core_life_id);
-    const auto lease = fs::read_file(root_ / "cores" / state.core_life_id);
-    if (lease) {
-      const auto last = std::stoull(*lease);
-      constexpr auto grace = static_cast<uint64_t>(kHeartbeatGrace.count());
-      // Divide instead of multiplying two uint32 settings and milliseconds.
-      if (now < last || now - last < grace ||
-          (now - last - grace) / 1000 / state.heartbeat_interval_seconds <
-              state.missed_heartbeats)
-        return;
-    }
-    // Use precisely the ordinary cancellation transition and data policy.
-    state.state = state.state == R::JobState::Running ||
-                          state.state == R::JobState::Cancelling
-                      ? R::JobState::Cancelling
-                      : R::JobState::Cancelled;
-    write(dir, state);
-  });
-}
-
 auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
                   std::string_view core) -> void {
-  check_id(core);
-  check_id(c.digest);
   if (c.total > kMaxBlob || c.bytes.size() > kChunkBytes ||
       c.offset > c.total || c.bytes.size() > c.total - c.offset ||
       (c.bytes.empty() && c.total != 0))
@@ -305,7 +249,6 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
 }
 auto Journal::get(std::string_view job, const R::GetBlobRequestT& r) const
     -> R::BlobChunkT {
-  check_id(r.digest);
   if (!r.limit || r.limit > kChunkBytes)
     throw Error(R::ErrorCode::Invalid, "invalid chunk limit");
   R::BlobChunkT result;
@@ -327,7 +270,6 @@ auto Journal::get(std::string_view job, const R::GetBlobRequestT& r) const
 }
 auto Journal::submit(std::string_view job, std::string_view bytes,
                      std::string_view core) -> Record {
-  check_id(core);
   const auto fingerprint = crypto::sha256_hex(bytes);
   Record result;
   locked(job, [&](const auto& dir) {
@@ -351,8 +293,6 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
     result = {};
     result.state = R::JobState::Queued;
     result.core_life_id = core;
-    result.heartbeat_interval_seconds = s->heartbeat_interval_seconds;
-    result.missed_heartbeats = s->missed_heartbeats;
     result.fingerprint = fingerprint;
     result.deadline = 0;
     write(dir, result);
@@ -361,7 +301,6 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
 }
 auto Journal::cancel(std::string_view job, const std::string& fingerprint)
     -> Record {
-  check_id(fingerprint);
   Record result;
   locked(job, [&](const auto& dir) {
     result = read(dir);
@@ -386,7 +325,6 @@ auto Journal::erase_scratch(const stdfs::path& dir) const -> void {
 }
 auto Journal::release(std::string_view job, const std::string& fingerprint)
     -> void {
-  check_id(fingerprint);
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state == R::JobState::Missing) return;

@@ -5,28 +5,16 @@ public struct VMImage: Sendable, Equatable {
   public let directory: URL
   public var archive: URL { directory.appendingPathComponent("tsugumi-vm.tar.gz") }
   public let version: String
-  public let sha256: String
-  public let checksums: [String: String]
 
   private struct Manifest: Decodable {
     let identity: String
-    let system: String
-    let files: [String: String]
-    let members: [String: String]
   }
 
   public init?(directory: URL) {
     guard let data = try? Data(contentsOf: directory.appendingPathComponent("vm-manifest.json")),
-          let manifest = try? JSONDecoder().decode(Manifest.self, from: data),
-          manifest.system == "aarch64-linux", !manifest.identity.isEmpty,
-          let hash = manifest.files["tsugumi-vm.tar.gz"], hash.count == 64,
-          Set(manifest.members.keys) == Set(["vmlinux", "rootfs.erofs", "vm-version"]),
-          manifest.members.values.allSatisfy({ $0.count == 64 }),
-          FileManager.default.fileExists(atPath: directory.appendingPathComponent("tsugumi-vm.tar.gz").path) else { return nil }
+          let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { return nil }
     self.directory = directory
     version = manifest.identity
-    sha256 = hash
-    checksums = manifest.members
   }
 
   public static func find(bundle: Bundle = .main) -> VMImage? {

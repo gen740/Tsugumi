@@ -16,7 +16,7 @@ import { errorText, ProjectSession } from '../model/session'
 import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Stepper, TextField, Toggle } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
-import { ProjectSettingsContent } from './projectViews'
+import { PROJECT_SETTINGS_PANES, type ProjectSettingsPane, ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ChatGPTSettings } from './chatgpt'
@@ -36,17 +36,12 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
-export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache'
-const PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
-  { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' }, { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
-  { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' }, { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
-]
 function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
     case 'general': return L('このプロジェクト（{0}/tsugumi.json）', name)
     case 'canvas': return L('このプロジェクト（{0}/layout.json）', name)
-    case 'history': return L('このプロジェクトの実行環境（書き出しは {0}/.tsugumi/runs.sqlite）', name)
+    case 'history': return L('このプロジェクトの実行環境（{0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')
   }
 }
@@ -76,7 +71,7 @@ export function ApplicationSettings() {
   }
   const projects = [...app.sessions.values()].sort((a, b) => a.scopeName([]).localeCompare(b.scopeName([])))
   const project = projects.find((s) => s.dir === projectPath) ?? projects[0]
-  const pane = stored.startsWith('project.') && project ? PANES.find((p) => 'project.' + p.id === stored) : undefined
+  const pane = stored.startsWith('project.') && project ? PROJECT_SETTINGS_PANES.find((p) => 'project.' + p.id === stored) : undefined
   const category = CATS.find((c) => c.id === stored) ?? CATS[0]
   const current = pane ? 'project.' + pane.id : category.id
 
@@ -102,7 +97,7 @@ export function ApplicationSettings() {
                 </>
               )}
             </div>
-            {PANES.map((p) => (
+            {PROJECT_SETTINGS_PANES.map((p) => (
               <button key={p.id} type="button" className={`nav-row${current === 'project.' + p.id ? ' selected' : ''}`} onClick={() => select('project.' + p.id)}>
                 <Icon name={p.icon} />{p.title}
               </button>

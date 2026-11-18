@@ -12,5 +12,5 @@ let package = Package(
     .systemLibrary(name: "TsugumiClientC", path: "Sources/ClientC"),
     .target(name: "TsugumiRPC", dependencies: ["TsugumiClientC", .product(name: "FlatBuffers", package: "flatbuffers")], path: "Sources/RPC",
       swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)],
-      linkerSettings: [.unsafeFlags(["-L", clientLib, "-L", transportLib]), .linkedLibrary("curl"), .linkedLibrary("c++")], plugins: ["FlatcPlugin"]),
+      linkerSettings: [.unsafeFlags(["-L", clientLib, "-L", transportLib, "-L", URL(fileURLWithPath: clientLib).deletingLastPathComponent().path]), .linkedLibrary("curl"), .linkedLibrary("c++")], plugins: ["FlatcPlugin"]),
   ])

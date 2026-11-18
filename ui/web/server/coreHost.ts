@@ -33,7 +33,6 @@ class Connection {
   private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private opening?: Promise<void>
   // A plugin retry after the page answers must resume the approved call ID.
-  private approvals = new Map<string, string>()
 
   constructor(private host: CoreHost, private external: boolean, private hostContract = false) {}
 
@@ -45,7 +44,23 @@ class Connection {
     const ready = await this.host.ready()
     const socket = net.createConnection(this.hostContract ? ready.host_socket : ready.unix_socket)
     this.socket = socket
-    let input = Buffer.alloc(0)
+    const chunks: Buffer[] = []
+    let available = 0
+    const take = (size: number): Buffer => {
+      const result = Buffer.allocUnsafe(size)
+      let copied = 0
+      while (copied < size) {
+        const chunk = chunks[0]
+        const count = Math.min(chunk.length, size - copied)
+        chunk.copy(result, copied, 0, count)
+        copied += count
+        if (count === chunk.length) chunks.shift()
+        else chunks[0] = chunk.subarray(count)
+      }
+      available -= size
+      return result
+    }
+    let length: number | undefined
     const fail = (error: Error) => {
       if (this.socket !== socket) return
       this.socket = undefined
@@ -58,15 +73,17 @@ class Connection {
     socket.on('close', () => fail(new Error('Service connection closed')))
     socket.on('data', (data) => {
       try {
-        input = Buffer.concat([input, data])
-        while (input.length >= 4) {
-          const length = input.readUInt32LE(0)
-          if (length === 0 || length > 16 << 20) throw new Error('Invalid service frame length')
-          if (input.length < length + 4) break
-          const reply = decodeReply(input.subarray(4, 4 + length), this.hostContract)
-          input = input.subarray(4 + length)
+        chunks.push(data)
+        available += data.length
+        while (true) {
+          if (length === undefined) {
+            if (available < 4) break
+            length = take(4).readUInt32LE(0)
+          }
+          if (available < length) break
+          const reply = decodeReply(take(length), this.hostContract)
+          length = undefined
           if (reply.event) { this.host.event(reply.event); continue }
-          if (reply.id > this.nextId || reply.id === 0n) throw new Error('Invalid service request ID')
           const p = this.waiting.get(reply.id)
           if (!p) continue // A late reply after its deadline.
           this.waiting.delete(reply.id)
@@ -82,7 +99,7 @@ class Connection {
       socket.once('error', (e) => { clearTimeout(timer); reject(e) })
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token,
-      client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}`, protocol: 1 })
+      client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}` })
     if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
   }
 
@@ -122,20 +139,7 @@ class Connection {
     signal?.throwIfAborted()
     await this.open()
     signal?.throwIfAborted()
-    if (!this.external || method !== 'ToolCallRequest') return this.write(method, value, signal)
-    const call = { ...(value as Record<string, unknown>) }
-    const key = JSON.stringify([call.conversation_id, call.project_id, call.name, call.arguments_json])
-    call.op_id = this.approvals.get(key) ?? call.op_id
-    try {
-      const result = await this.write(method, call, signal)
-      this.approvals.delete(key)
-      return result
-    } catch (error) {
-      if (error instanceof CoreHostError && error.code === 'grant_required' && error.message.includes('operation_approval\n'))
-        this.approvals.set(key, String(call.op_id))
-      else if (error instanceof CoreHostError && (error.code === 'permission_denied' || error.code === 'conflict')) this.approvals.delete(key)
-      throw error
-    }
+    return this.write(method, value, signal)
   }
 }
 
@@ -177,17 +181,6 @@ export class CoreHost {
   }
 
   async ready(): Promise<Ready> {
-    const file = path.join(this.state, 'host.ready')
-    const read = (): Ready | undefined => {
-      try {
-        const r = JSON.parse(fs.readFileSync(file, 'utf8')) as Ready
-        if (r.protocol !== 1 || !r.unix_socket || !r.host_socket || !r.user_token || !r.external_token || !r.pid) return undefined
-        process.kill(r.pid, 0)
-        return r
-      } catch { return undefined }
-    }
-    const existing = read()
-    if (existing) return existing
     return this.starting ??= (async () => {
       const socketDir = fs.mkdtempSync(path.join(process.env.TSUGUMI_SOCKET_DIR ?? '/tmp', 'tsugumi-host-'))
       // Only the service creates and numbers state. Move its startup log into
@@ -198,27 +191,26 @@ export class CoreHost {
       const logPath = fs.existsSync(this.state) ? stateLog : path.join(parent, `.host-startup-${randomUUID()}.log`)
       const log = fs.openSync(logPath, 'a', 0o600)
       fs.chmodSync(socketDir, 0o700)
-      const child = spawn(this.binary, ['--state-dir', this.state, '--unix', path.join(socketDir, 'agent.sock'),
-        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.hostArguments ?? [])], { detached: true, stdio: ['ignore', log, log] })
+      const child = spawn(this.binary, ['--ensure', '--state-dir', this.state, '--unix', path.join(socketDir, 'agent.sock'),
+        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.hostArguments ?? [])], { detached: true, stdio: ['ignore', 'pipe', log] })
       fs.closeSync(log)
-      child.unref()
-      let error: Error | undefined
-      child.on('error', (e) => { error = e })
-      const end = Date.now() + 15_000
-      while (Date.now() < end) {
-        if (error) throw error
-        const next = read()
-        if (next) {
-          if (logPath !== stateLog && next.pid === child.pid) fs.renameSync(logPath, stateLog)
-          return next
-        }
-        if (child.exitCode !== null) {
-          if (child.exitCode === 5) throw new CoreHostError('state_format', L('ホストの状態フォルダ「{0}」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。', this.state), undefined, this.state)
-          throw new CoreHostError('startup_exit', `Host service exited during startup; see ${logPath}`, undefined, logPath)
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50))
-      }
-      throw new CoreHostError('readiness_timeout', `Host service did not become ready; see ${logPath}`, undefined, logPath)
+      return await new Promise<Ready>((resolve, reject) => {
+        let bytes = ''
+        child.stdout!.setEncoding('utf8')
+        child.stdout!.on('data', chunk => {
+          bytes += chunk
+          if (!bytes.includes('\n')) return
+          try {
+            const next = JSON.parse(bytes.slice(0, bytes.indexOf('\n'))) as Ready
+            if (logPath !== stateLog && next.pid === child.pid) fs.renameSync(logPath, stateLog)
+            child.stdout!.destroy()
+            child.unref()
+            resolve(next)
+          } catch (error) { reject(error) }
+        })
+        child.once('error', reject)
+        child.once('exit', () => reject(new CoreHostError('startup_exit', `Host service exited during startup; see ${logPath}`, undefined, logPath)))
+      })
     })().finally(() => { this.starting = undefined })
   }
 
@@ -273,7 +265,7 @@ export class CoreHost {
       const schema = new BFBS(new Uint8Array(fs.readFileSync(this.schema)))
       const requests = schema.enums.find((e) => e.name === 'Tsugumi.Agent.RequestPayload')?.values
         .filter((v) => v.value !== 0 && v.unionType && !['HelloRequest', 'ToolCallCancelRequest', 'CallIdRequest'].includes(v.name)).map((v) => v.name) ?? []
-      this.api = new ToolCatalog(schema, requests, 'Tsugumi.Agent')
+      this.api = new ToolCatalog(schema, requests)
     }
     return this.api
   }
@@ -328,7 +320,6 @@ export class RemoteAgent {
   }
 
   private adopt(result: RemoteConversation) {
-    if (result.conversation.id !== this.id) throw new Error('The host returned a different conversation')
     this.conversation = result.conversation
     this.busy = result.busy
     this.resumable = result.resumable === true
@@ -341,7 +332,9 @@ export class RemoteAgent {
     this.adopt(await this.host.user.call<RemoteConversation>('ConversationGetRequest', { conversation_id: this.id }))
   }
 
-  observe(listener: (e: AgentEvent) => void) {
+  private interested = () => true
+  observe(listener: (e: AgentEvent) => void, interested = this.interested) {
+    this.interested = interested
     this.listener = listener
     if (this.observing || this.changing) return
     this.observing = true
@@ -351,6 +344,7 @@ export class RemoteAgent {
   private async poll(identity: number) {
     try {
       while (this.observing && identity === this.observationID) {
+        if (!this.busy && !this.interested()) { this.observing = false; return }
         const result = await this.host.user.call<{ events: { seq: bigint; event: AgentEvent }[]; next_seq: bigint; busy: boolean; rows: ChatRow[]; hasRows: boolean }>(
           'EventsRequest', { conversation_id: this.id, after_seq: this.seq })
         if (identity !== this.observationID) return

@@ -32,12 +32,6 @@ namespace tsugumi {
 
 namespace {
 
-int64_t mono_ms() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::steady_clock::now().time_since_epoch())
-      .count();
-}
-
 void set_nonblock(int fd) {
   int fl = ::fcntl(fd, F_GETFL, 0);
   ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
@@ -77,7 +71,6 @@ struct TransportServer::Conn {
   bool hello_seen = false;
   bool closing = false;            // close now
   bool close_after_flush = false;  // close once the outbox drained
-  int64_t connected_at;
   std::string rbuf;
   std::string ws_fragments;
   bool ws_fragmenting = false;
@@ -242,18 +235,6 @@ void TransportServer::apply(Command& cmd) {
     drop(*it->second, "closed by server");
 }
 
-void TransportServer::enforce_outbox(Conn& c) {
-  if (c.outq.size() <= opts_.limits.outbox_messages &&
-      c.out_bytes <= opts_.limits.outbox_bytes)
-    return;
-  // Hand what the socket accepts to the kernel first; only a peer that does
-  // not read is disconnected.
-  on_writable(c);
-  if (c.outq.size() > opts_.limits.outbox_messages ||
-      c.out_bytes > opts_.limits.outbox_bytes)
-    drop(c, "outbox limit exceeded (slow peer)");
-}
-
 void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   if (c.closing) return;
   if (is_reply) c.inflight.erase(opts_.codec.completed(bytes));
@@ -261,7 +242,6 @@ void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   Conn::Out o;
   o.raw = std::move(bytes);
   c.outq.push_back(std::move(o));
-  enforce_outbox(c);
 }
 
 void TransportServer::enqueue_note(Conn& c, const PendingMessage& n) {
@@ -281,7 +261,6 @@ void TransportServer::enqueue_note(Conn& c, const PendingMessage& n) {
   o.note = n;
   c.out_bytes += n.approx_bytes;
   c.outq.push_back(std::move(o));
-  enforce_outbox(c);
 }
 
 // Moves the next queued item into the write buffer. Returns false when empty.
@@ -358,34 +337,11 @@ void TransportServer::accept_on(int lfd, bool websocket) {
     if (websocket) {
       int one2 = 1;
       ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one2, sizeof one2);
-    } else {
-      // Same user only on the Unix socket.
-#if defined(__APPLE__)
-      uid_t uid;
-      gid_t gid;
-      if (::getpeereid(fd, &uid, &gid) != 0 || uid != ::geteuid()) {
-        ::close(fd);
-        continue;
-      }
-#else
-      struct ucred cred;
-      socklen_t len = sizeof cred;
-      if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 ||
-          cred.uid != ::geteuid()) {
-        ::close(fd);
-        continue;
-      }
-#endif
-    }
-    if (conns_.size() >= opts_.limits.max_connections) {
-      ::close(fd);
-      continue;
     }
     auto c = std::make_unique<Conn>();
     c->id = next_id_++;
     c->fd = fd;
     c->websocket = websocket;
-    c->connected_at = mono_ms();
     conns_[c->id] = std::move(c);
   }
 }
@@ -474,23 +430,22 @@ bool TransportServer::handle_ws_handshake(Conn& c) {
 }
 
 void TransportServer::parse_ws(Conn& c) {
+  size_t consumed = 0;
   while (!c.closing) {
-    auto& b = c.rbuf;
-    if (b.size() < 2) return;
+    const auto b = std::string_view(c.rbuf).substr(consumed);
+    if (b.size() < 2) break;
     auto b0 = static_cast<uint8_t>(b[0]);
     auto b1 = static_cast<uint8_t>(b[1]);
     bool fin = b0 & 0x80;
     int opcode = b0 & 0x0F;
-    if (b0 & 0x70) return drop(c, "websocket reserved bits");
-    if (!(b1 & 0x80)) return drop(c, "unmasked client frame");
     uint64_t len = b1 & 0x7F;
     size_t off = 2;
     if (len == 126) {
-      if (b.size() < 4) return;
+      if (b.size() < 4) break;
       len = (uint64_t(uint8_t(b[2])) << 8) | uint8_t(b[3]);
       off = 4;
     } else if (len == 127) {
-      if (b.size() < 10) return;
+      if (b.size() < 10) break;
       len = 0;
       for (int i = 0; i < 8; ++i) len = (len << 8) | uint8_t(b[2 + i]);
       off = 10;
@@ -498,13 +453,12 @@ void TransportServer::parse_ws(Conn& c) {
     if (len > opts_.limits.max_frame_bytes ||
         c.ws_fragments.size() + len > opts_.limits.max_frame_bytes)
       return drop(c, "frame too large");
-    if (b.size() < off + 4 + len) return;
+    if (b.size() < off + 4 + len) break;
     const char* mask = b.data() + off;
-    std::string payload = b.substr(off + 4, len);
+    std::string payload(b.substr(off + 4, len));
     for (size_t i = 0; i < payload.size(); ++i) payload[i] ^= mask[i % 4];
-    b.erase(0, off + 4 + len);
+    consumed += off + 4 + len;
     if (opcode >= 0x8) {
-      if (!fin || len > 125) return drop(c, "invalid control frame");
       if (opcode == 0x8) {
         std::string close_frame = "\x88";
         close_frame += static_cast<char>(0);
@@ -537,8 +491,6 @@ void TransportServer::parse_ws(Conn& c) {
       }
     } else if (opcode == 0x0) {
       if (!c.ws_fragmenting) return drop(c, "unexpected continuation");
-      if (c.ws_fragments.size() + payload.size() > opts_.limits.max_frame_bytes)
-        return drop(c, "message too large");
       c.ws_fragments += payload;
       if (fin) {
         c.ws_fragmenting = false;
@@ -549,21 +501,13 @@ void TransportServer::parse_ws(Conn& c) {
       return drop(c, "unknown opcode");
     }
   }
+  c.rbuf.erase(0, consumed);
 }
-
-// What a peer may send before its Hello (the WebSocket handshake included).
-constexpr size_t kPreAuthBytes = 64 * 1024;
 
 void TransportServer::on_readable(Conn& c) {
   char buf[65536];
   bool eof = false;
-  // Before Hello a peer sends a handshake and one small frame: more is
-  // dropped. After it, a frame at a time is buffered (the rest waits in the
-  // socket until these are handled).
-  const size_t limit = c.authenticated
-                           ? size_t(opts_.limits.max_frame_bytes) + sizeof buf
-                           : kPreAuthBytes;
-  while (!c.closing && c.rbuf.size() < limit) {
+  while (!c.closing) {
     ssize_t r = ::recv(c.fd, buf, sizeof buf, 0);
     if (r == 0) {
       eof = true;
@@ -580,19 +524,19 @@ void TransportServer::on_readable(Conn& c) {
   if (c.websocket) {
     if (c.ws_open || handle_ws_handshake(c)) parse_ws(c);
   } else {
-    while (!c.closing && c.rbuf.size() >= 4) {
+    size_t consumed = 0;
+    while (!c.closing && c.rbuf.size() - consumed >= 4) {
       uint32_t len;
-      std::memcpy(&len, c.rbuf.data(), 4);
+      std::memcpy(&len, c.rbuf.data() + consumed, 4);
       if (len == 0 || len > opts_.limits.max_frame_bytes)
         return drop(c, "invalid frame length");
-      if (c.rbuf.size() < 4 + size_t(len)) break;
-      std::string frame = c.rbuf.substr(4, len);
-      c.rbuf.erase(0, 4 + size_t(len));
+      if (c.rbuf.size() - consumed < 4 + size_t(len)) break;
+      std::string frame = c.rbuf.substr(consumed + 4, len);
+      consumed += 4 + size_t(len);
       handle_frame(c, std::move(frame));
     }
+    c.rbuf.erase(0, consumed);
   }
-  if (!c.authenticated && !c.closing && c.rbuf.size() >= kPreAuthBytes)
-    return drop(c, "too much data before Hello");
   if (eof) drop(c, "peer closed");
 }
 
@@ -616,8 +560,6 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
     return;
   }
   if (!c.authenticated) return fail(AdmissionFailure::Unauthenticated);
-  if (c.inflight.size() >= opts_.limits.max_inflight)
-    return fail(AdmissionFailure::Busy);
   c.inflight.insert(rid);
   sink_->dispatch(std::move(in));
 }
@@ -632,7 +574,6 @@ void TransportServer::loop() {
       }
       for (auto& c : cmds) apply(c);
     }
-    int64_t now = mono_ms();
     std::vector<pollfd> fds;
     std::vector<ConnId> ids;
     fds.push_back({wake_r_, POLLIN, 0});
@@ -651,9 +592,6 @@ void TransportServer::loop() {
     }
     for (auto it = conns_.begin(); it != conns_.end();) {
       Conn& c = *it->second;
-      if (!c.authenticated && !c.closing &&
-          now - c.connected_at > opts_.limits.hello_timeout_ms)
-        drop(c, "no Hello within 5 seconds");
       if (c.close_after_flush && c.outq.empty() && c.wpos >= c.wbuf.size())
         c.closing = true;
       if (c.closing && c.wpos >= c.wbuf.size()) {

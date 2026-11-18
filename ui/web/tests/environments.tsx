@@ -1,6 +1,7 @@
 // Packages in the run history: read from what an invocation recorded, never
 // from the current definition, and plain about an invocation without a record.
 import assert from 'node:assert/strict'
+import { L } from '../src/i18n'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { EnvironmentSource, environmentPaths, findEnvironment, storeName } from '../src/model/environments'
 import type { ProjectSession } from '../src/model/session'
@@ -27,8 +28,8 @@ assert.deepEqual(calls, [])
 let touched = 0
 const untouchable = new Proxy({}, { get() { touched++; return undefined } }) as unknown as ProjectSession
 const empty = renderToStaticMarkup(<InvocationPackages session={untouchable} runId="run" environmentId="" />)
-assert.ok(empty.includes('この呼び出しの環境は記録されていません'))
-assert.ok(empty.includes('現在の Nix 定義からは求めません'))
+assert.ok(empty.includes(L('この呼び出しの環境は記録されていません')))
+assert.ok(empty.includes(L('依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。')))
 assert.equal(touched, 0, 'the session (its RPC, its document) is not consulted at all')
 
 // A recorded environment is found by walking the run's own pages, and stops there.
@@ -112,12 +113,12 @@ assert.equal(moreUsers.nextOffset, null)
 assert.equal(differenceCalls.at(-1)!.runId, 'imported-run')
 // Rendering a changed environment exposes both directions and the closure caveat.
 const changed = renderToStaticMarkup(<EnvironmentComparison session={{ rpc: historyRPC } as unknown as ProjectSession} left={{ run: 'left', id: 'old' }} right={{ run: 'right', id: 'new' }} />)
-for (const text of ['環境が変わった Card', '削除された実行時の依存パス', '追加された実行時の依存パス', 'ビルド時の依存関係の完全な一覧ではありません']) assert.ok(changed.includes(text))
+for (const text of ['環境が変わった Card', '削除された実行時の依存パス', '追加された実行時の依存パス', '実行時の closure は、ビルド時の依存関係の完全な一覧ではありません。']) assert.ok(changed.includes(L(text)))
 const missing = renderToStaticMarkup(<EnvironmentComparison session={untouchable} left={{ run: 'left', id: '' }} right={{ run: 'right', id: 'new' }} />)
-assert.ok(missing.includes('比較できません'))
-assert.ok(!missing.includes('追加された実行時の依存パス'))
+assert.ok(missing.includes(L('比較できません')))
+assert.ok(!missing.includes(L('追加された実行時の依存パス')))
 assert.equal(touched, 0)
 const fullPath = '/nix/store/' + 'a'.repeat(32) + '-python-3.13'
 const pathHTML = renderToStaticMarkup(<StorePath value={fullPath} />)
-assert.ok(pathHTML.includes('<summary>python-3.13</summary>'))
+assert.ok(pathHTML.includes('python-3.13'))
 assert.ok(pathHTML.includes(fullPath) && pathHTML.includes('selectable'))

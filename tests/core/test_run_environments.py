@@ -8,15 +8,15 @@ import pytest
 from harness.fixtures import worker_project
 from harness.scenario import HOST_BASH, STRING_OUTPUT, Project, run, wait_run
 from Tsugumi.Data.RunState import RunState
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 
 
 @pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 12])
-def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
+def test_incompatible_history_database_is_kept(core_factory, project, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
-    history_dir = tmp_path / "history"
-    history_dir.mkdir()
-    database = history_dir / "history.sqlite"
+    history_dir = project / ".tsugumi"
+    history_dir.mkdir(exist_ok=True)
+    database = history_dir / "runs.sqlite"
     connection = sqlite3.connect(database)
     try:
         connection.execute("CREATE TABLE fixture (note TEXT NOT NULL)")
@@ -29,7 +29,7 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
 
     from harness.daemon import StartupFailure
     with pytest.raises(StartupFailure) as failure:
-        core_factory(history_dir=history_dir)
+        core_factory()
 
     assert failure.value.kind == "incompatible_history"
     assert failure.value.record["found"] == str(version)
@@ -68,7 +68,7 @@ def inventory(client, run_id, card="work"):
 
 def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory, project, tmp_path):
     """Cached runs and portable history retain the exact recorded environment."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     runs = []
@@ -81,8 +81,7 @@ def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory,
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, mocked_builds=True,
-                            history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project, mocked_builds=True)
     assert inventory(restored.connect(), runs[0]) == expected
     daemon.start()
     assert inventory(daemon.connect(), runs[1]) == expected
@@ -97,7 +96,7 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
                       "s3://bucket/cache?profile=private-profile\n"
                       "file:///private-cache-dir\n")
     expected = ["https://cache.nixos.org", "https://private.example.org/team", "s3://bucket/cache"]
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history",
+    daemon = core_factory(mocked_builds=True, mocked_worker=True,
                           args=["--substituters-file", str(listed)])
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
@@ -113,7 +112,6 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
-                            history_dir=tmp_path / "restored-history",
                             args=["--substituters-file", str(listed)]).connect()
     page = restored.call("RunEnvironmentsRequest", runId=run_id)
     assert [text(url) for url in page.substituters] == expected
@@ -269,7 +267,7 @@ def test_build_failure_has_no_claimed_environment(core_factory, project):
 
 def test_deleting_history_removes_its_environment_inventory(core_factory, project, tmp_path):
     """Deleted run environments stay deleted after the project history is restored."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     run_id = run(client)
@@ -279,7 +277,7 @@ def test_deleting_history_removes_its_environment_inventory(core_factory, projec
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     with pytest.raises(RpcFailure) as error:
         restored.connect().call("RunEnvironmentPathsRequest", runId=run_id, environmentId=environment_id)
     assert error.value.kind == "not_found"
@@ -287,7 +285,7 @@ def test_deleting_history_removes_its_environment_inventory(core_factory, projec
 
 def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_path):
     """Renaming a Card preserves its environment and portable invocation history."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     run_id = run(client)
@@ -299,7 +297,7 @@ def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     assert inventory(restored.connect(), run_id, "work") == expected
 
 
@@ -314,7 +312,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
     assert wait_run(client, run_id).state == RunState.succeeded
     environment_id, _ = inventory(client, run_id)
     requests = [
-        ("SessionHelloRequest", {"protocol": 1, "client_id": new_id()}),
+        ("SessionHelloRequest", {"client_id": new_id()}),
         ("RunEnvironmentsRequest", {"run_id": run_id}),
         ("RunEnvironmentPathsRequest", {"run_id": run_id, "environment_id": environment_id, "limit": 1}),
     ]
@@ -334,7 +332,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
 def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory, project, tmp_path):
     """Crash recovery preserves the environment and service of an interrupted execution."""
     from harness.scenario import Gate
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     gate = Gate(tmp_path, "executing")
     worker_project(client, project, tmp_path, [gate.action()])
@@ -355,7 +353,7 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     copied_client = restored.connect()
     assert inventory(copied_client, run_id)[0] == environment_id
     rows = copied_client.call("RunLatestInvocationsRequest", runId=run_id).records

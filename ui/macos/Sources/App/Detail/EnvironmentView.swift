@@ -12,6 +12,7 @@ struct RecordedStorePath: View {
 }
 
 struct RecordedDependencyPaths: View {
+  var source: EnvironmentHistorySource? = nil
   let session: ProjectSession
   let identity: RecordedEnvironmentIdentity
   var excluding: RecordedEnvironmentIdentity?
@@ -49,7 +50,7 @@ struct RecordedDependencyPaths: View {
       page = nil; error = nil
       guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
       do {
-        let result = try await EnvironmentHistorySource(rpc: rpc).paths(identity, offset: offsets.last ?? 0, query: query, excluding: excluding)
+        let result = try await (source ?? EnvironmentHistorySource(rpc: rpc)).paths(identity, offset: offsets.last ?? 0, query: query, excluding: excluding)
         try Task.checkCancellation()
         page = result
       } catch { if !Task.isCancelled { self.error = String(describing: error) } }
@@ -188,6 +189,7 @@ struct InvocationPackagesView: View {
 }
 
 struct RecordedEnvironmentComparison: View {
+  var source: EnvironmentHistorySource? = nil
   let session: ProjectSession
   let left: RecordedEnvironmentIdentity
   let right: RecordedEnvironmentIdentity
@@ -206,11 +208,11 @@ struct RecordedEnvironmentComparison: View {
         HStack(alignment: .top, spacing: 12) {
           VStack(alignment: .leading) {
             Text("削除された実行時の依存パス").bold()
-            RecordedDependencyPaths(session: session, identity: left, excluding: right)
+            RecordedDependencyPaths(source: source, session: session, identity: left, excluding: right)
           }.frame(maxWidth: .infinity, alignment: .leading)
           VStack(alignment: .leading) {
             Text("追加された実行時の依存パス").bold()
-            RecordedDependencyPaths(session: session, identity: right, excluding: left)
+            RecordedDependencyPaths(source: source, session: session, identity: right, excluding: left)
           }.frame(maxWidth: .infinity, alignment: .leading)
         }
       }

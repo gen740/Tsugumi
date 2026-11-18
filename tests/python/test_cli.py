@@ -259,22 +259,42 @@ def test_the_release_publishes_what_the_script_takes():
         assert f"dist/{name} dist/{name}.sha256" in workflow, name
 
 
-def test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there():
-    script = (ROOT / "cli" / "install.ps1").read_text()
-    # `irm | iex` does not read it as UTF-8.
-    assert script.isascii()
-    # Runs install.sh in the distribution, with no shell of WSL's own expanding anything first.
-    assert """wsl.exe --exec env "TSUGUMI_INSTALL_BASE=$base" bash -lc 'curl -fsSL $TSUGUMI_INSTALL_BASE/install.sh | sh'""" in script
-    assert "wsl.exe --cd ~ --exec .local/bin/tsugumi %*" in script
-    assert "wsl.exe -- " not in script
-    # Says what is missing, and does not change PATH.
-    assert "wsl --install" in script and "Nix is needed" in script
-    assert "SetEnvironmentVariable" not in script
-    # Never delete the Windows launcher on preview or a failed WSL uninstall.
-    wrapper = script[script.index("@echo off"):script.index('''
-'@''', script.index("@echo off"))]
-    assert wrapper.index("if errorlevel 1 exit /b %errorlevel%") < wrapper.index('del "%~f0"')
-    assert 'if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)' in wrapper
+def test_windows_installer_is_ascii_for_irm_decoding():
+    assert (ROOT / 'cli/install.ps1').read_text().isascii()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows launcher behavior requires Windows and WSL command doubles')
+def test_windows_launcher_forwards_arguments_and_preserves_failed_uninstall(tmp_path):
+    # The real installer is run with a recording WSL function; it writes the launcher.
+    import json
+    powershell = shutil.which('pwsh') or shutil.which('powershell')
+    if not powershell:
+        pytest.skip('PowerShell is required')
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    log = tmp_path / 'wsl.jsonl'
+    driver = tmp_path / 'install.ps1'
+    installer = str(ROOT / 'cli/install.ps1').replace("'", "''")
+    driver.write_text("function wsl.exe { $args | ConvertTo-Json -Compress | Add-Content $env:WSL_LOG; $global:LASTEXITCODE=0 }; . '" + installer + "'", encoding='ascii')
+    environment = dict(os.environ, USERPROFILE=str(profile), WSL_LOG=str(log))
+    result = subprocess.run([powershell, '-NoProfile', '-File', str(driver)], env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    requests = [json.loads(line) for line in log.read_text().splitlines()]
+    assert all(request[0] == '--exec' for request in requests)
+    launcher = profile / '.local/bin/tsugumi.cmd'
+    assert launcher.is_file()
+    # cmd resolves the recording WSL command first; preview/failure keep the launcher.
+    double = tmp_path / 'wsl.cmd'
+    double.write_text('@echo off\necho %*>>"%WSL_ARGS%"\nexit /b %WSL_STATUS%\n', encoding='ascii')
+    environment.update(PATH=str(tmp_path) + os.pathsep + environment['PATH'], WSL_ARGS=str(tmp_path / 'argv'), WSL_STATUS='1')
+    failed = subprocess.run(['cmd', '/c', str(launcher), 'uninstall', '--yes'], env=environment)
+    assert failed.returncode == 1 and launcher.exists()
+    environment['WSL_STATUS'] = '0'
+    subprocess.run(['cmd', '/c', str(launcher), 'uninstall'], env=environment, check=True)
+    assert launcher.exists()
+    subprocess.run(['cmd', '/c', str(launcher), 'uninstall', '--yes'], env=environment, check=True)
+    assert not launcher.exists()
+    assert '--cd ~ --exec .local/bin/tsugumi uninstall --yes' in (tmp_path / 'argv').read_text()
 
 
 # ---- Uninstalling --------------------------------------------------------------
@@ -551,7 +571,7 @@ def core_settings(root: Path, changes: dict | None = None):
                 return reply.payload.value
 
         call(1, RequestPayload.HelloRequest,
-             HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test", protocol=1), ReplyPayload.HelloResult)
+             HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test"), ReplyPayload.HelloResult)
         settings = call(2, RequestPayload.SettingsGetRequest,
                         SettingsGetRequestT(profile="desktop"), ReplyPayload.Settings)
         if changes is not None:

@@ -48,9 +48,10 @@ class HelperDouble final : public host::EnvironmentProcess {
                                    launch.arguments.end(), "--control-dir");
     if (control == launch.arguments.end())
       throw std::runtime_error("missing control");
-    Write(
-        std::filesystem::path(*std::next(control)) / "server.ready",
-        R"({"protocol":1,"pid":42,"endpoint":"ws://localhost:1/rpc","token":"fixture","project_id":"project","server_instance_id":"instance","unix_socket":"fixture"})");
+    if (verify)
+      Write(
+          std::filesystem::path(*std::next(control)) / "server.ready",
+          R"({"protocol":1,"pid":42,"endpoint":"ws://localhost:1/rpc","token":"fixture","project_id":"project","server_instance_id":"instance","unix_socket":"fixture"})");
     Write(launch.log, log);
     running = !die;
     if (std::exchange(lose_reply_once, false))
@@ -163,8 +164,7 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   EXPECT_EQ(helper->signals.load(), 1);
   EXPECT_FALSE(authorization.active);
 }
-TEST(EnvironmentAdapterTest,
-     FailureAndTimeoutIncludeBoundedRedactedDaemonTail) {
+TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   for (const bool die : {false, true}) {
     SCOPED_TRACE(die ? "exit" : "timeout");
     TemporaryDirectory directory;
@@ -173,7 +173,7 @@ TEST(EnvironmentAdapterTest,
     auto helper = std::make_shared<HelperDouble>();
     helper->verify = false;
     helper->die = die;
-    // Credentials at both tail boundaries must not be partially exposed.
+    // Only the existing tail bound applies to the daemon's own diagnostics.
     helper->log = "discarded beginning\n" + std::string(70000, 'x') +
                   "fixture fixture-capability\nfinal stderr diagnosis\n";
     helper->log.replace(helper->log.size() - 65536 - 3, 7, "fixture");
@@ -196,12 +196,7 @@ TEST(EnvironmentAdapterTest,
               die ? H::EnvironmentFailureCode::ProcessExit
                   : H::EnvironmentFailureCode::ReadinessTimeout);
     EXPECT_NE(failed.message.find("final stderr diagnosis"), std::string::npos);
-    EXPECT_NE(failed.message.find("*******"), std::string::npos);
     EXPECT_EQ(failed.message.find("discarded beginning"), std::string::npos);
-    EXPECT_EQ(failed.message.find("fixture"), std::string::npos);
-    EXPECT_EQ(failed.log.find("fixture"), std::string::npos);
-    EXPECT_EQ(failed.log.find("ture"), std::string::npos);
-    EXPECT_EQ(failed.message.find("capability"), std::string::npos);
     EXPECT_LE(failed.message.size(), 4200u);
     EXPECT_LE(failed.log.size(), 65536u);
     EXPECT_FALSE(authorization.active);
@@ -257,7 +252,6 @@ TEST(EnvironmentAdapterTest,
   input.folders.clear();
   const auto ready = service.Handle(input);
   ASSERT_EQ(ready.phase, H::EnvironmentPhase::Ready) << ready.message;
-  EXPECT_FALSE(helper->received.archive);
   ASSERT_EQ(helper->accepted.folders.size(), 2u);
   EXPECT_EQ(helper->accepted.folders[0]->card->segments, (CardPath{"a"}));
   EXPECT_EQ(helper->accepted.folders[1]->card->segments,

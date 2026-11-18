@@ -386,6 +386,20 @@ export function Prompt({ title, initial, placeholder, confirm, onConfirm, onCanc
 }
 
 /** Horizontal split with draggable dividers (HSplitView). */
+export function dragResize(move: (event: MouseEvent) => void, finish: () => void) {
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    window.removeEventListener('blur', up)
+    document.body.classList.remove('resizing-h')
+    finish()
+  }
+  document.body.classList.add('resizing-h')
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+  window.addEventListener('blur', up)
+}
+
 export function HSplit({ children, sizes, min, onResize, storageKey }: {
   children: ReactNode[]; sizes: (number | null)[]; min?: number[]; onResize?: (s: (number | null)[]) => void; storageKey?: string
 }) {
@@ -413,24 +427,20 @@ export function HSplit({ children, sizes, min, onResize, storageKey }: {
               const sign = target === i ? 1 : -1
               const pane = (e.currentTarget.parentElement?.parentElement?.children[target] as HTMLElement)
               const start = pane?.getBoundingClientRect().width ?? 200
+              let final = w
               const move = (m: MouseEvent) => {
                 const nw = Math.max(min?.[target] ?? 120, start + sign * (m.clientX - startX))
                 setW((old) => {
                   const n = [...old]
                   n[target] = nw
                   onResize?.(n)
-                  if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(n)) } catch {}
+                  final = n
                   return n
                 })
               }
-              const up = () => {
-                window.removeEventListener('mousemove', move)
-                window.removeEventListener('mouseup', up)
-                document.body.classList.remove('resizing-h')
-              }
-              document.body.classList.add('resizing-h')
-              window.addEventListener('mousemove', move)
-              window.addEventListener('mouseup', up)
+              dragResize(move, () => {
+                if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(final)) } catch {}
+              })
             }} />
           )}
         </SplitPane>

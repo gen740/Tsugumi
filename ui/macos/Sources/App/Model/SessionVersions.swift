@@ -31,7 +31,7 @@ extension ProjectSession {
       request.wires = raw.wires.compactMap { w in w.map { w in
         let value = Tsugumi_Host_VersionCanvasWireT(); value.from = w.from; value.to = w.to; return value
       } }
-      versionCanvases[commit] = try await CoreHostClient.shared.layoutCall(.versioncanvasrequest, request)
+      versionCanvases[commit] = try await CoreHostClient.shared.hostCall(.versioncanvasrequest, request)
     } catch { notice = String(describing: error) }
   }
 

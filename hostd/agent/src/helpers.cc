@@ -6,6 +6,7 @@
 #include "agent/helper_scope.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
+#include "agent/text.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "host/access.hh"
@@ -64,8 +65,7 @@ auto Helpers::HelperResult(const std::string& output,
       {"conversation_id", json::Quote(conversation)},
       {"call_id", json::Quote(call)},
       {"task", std::to_string(task)},
-      {"error",
-       json::Quote(Turns::Excerpt(json::Text(value, "error"), 0, 1024))},
+      {"error", json::Quote(Excerpt(json::Text(value, "error"), 0, 1024))},
       {"report", json::Quote(report)}});
 }
 
@@ -148,12 +148,10 @@ auto Helpers::RunHelper(const std::string& conversation,
           .bind(
               7,
               static_cast<int>(
-                  json::Array(
-                      json::Get(
-                          json::Object(conversations->ConversationJson(
-                              conversations->GetConversation(conversation))),
-                          "archive", "[]"))
-                      .size() +
+                  conversations
+                      ->ConversationData(
+                          conversations->GetConversation(conversation))
+                      .archive.size() +
                   std::ranges::count_if(
                       ParseMessages(conversations->GetConversation(conversation)
                                         .messages),

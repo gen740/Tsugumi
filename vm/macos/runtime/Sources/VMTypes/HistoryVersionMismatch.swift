@@ -4,7 +4,6 @@ import Foundation
 public struct HistoryVersionMismatch: Sendable, Equatable {
   public let found: String
   public let expected: String
-  public var archiveInterrupted: Bool { found == "pending" }
 
   public init?(diagnostic: [String: Any]) {
     guard diagnostic["kind"] as? String == "incompatible_history",

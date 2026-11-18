@@ -12,9 +12,7 @@
 //                  other projects are not); a private /tmp
 //   cgroup         /sys/fs/cgroup/tsugumi/<id>: stopping a project ends
 //                  exactly its processes and never another project's
-//   run history    its database on the run history disk (/history-disk/<id>,
-//                  seen by the project as /history); the project keeps a copy
-//                  of finished runs in .tsugumi/runs.sqlite
+//   run history    the project database at /project/.tsugumi/runs.sqlite
 //   Nix            the shared store through the one nix-daemon; build roots
 //                  under /nix/var/nix/gcroots/tsugumi/projects/<id>, a folder
 //                  only vmd creates (the parent is not writable by projects);
@@ -27,11 +25,9 @@
 //           start <id> <cpus> <name> <slot> -> ok <rpc port>
 //           stop <id>                       -> ok
 //           forget <id>                     -> ok (stopped project's build
-//                                              roots and run history go;
+//                                              roots and scratch go;
 //                                              data deletion)
-//           histories                       -> ok <id>:<bytes>:<last start
-//           ms>:<0|1 running> ... gc                              -> ok <bytes
-//           freed> <paths deleted>
+//           gc                              -> ok <bytes freed> <paths deleted>
 //                                              (the shared store's cleanup:
 //                                              what no root keeps)
 //           status                          -> ok <id>:<pid>:<port> ...
@@ -116,13 +112,6 @@ void logf(const char* fmt, ...) {
   std::vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
   std::fprintf(stderr, "vmd: %s\n", buf);
-}
-
-bool valid_id(const std::string& id) {
-  if (id.empty() || id.size() > 64) return false;
-  for (char c : id)
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
-  return true;
 }
 
 std::vector<std::string> split(const std::string& s) {
@@ -244,7 +233,6 @@ void ensure_user(const std::string& id, uid_t uid) {
 struct ProjectView {
   std::string project;
   std::string control;
-  std::string history;
   std::string scratch;
   std::string rpc;
   std::string slots;
@@ -272,22 +260,12 @@ void die(const char* what) {
 
 const std::string kRoots = "/nix/var/nix/gcroots/tsugumi/projects";
 
-// Only malformed entries go. A build result may be a computation someone kept.
+// The supervisor owns the project build root directory.
 void prepare_project_roots() {
   fs::create_directories(kRoots);
   if (::chown(kRoots.c_str(), 0, 0) != 0)
     throw std::runtime_error(system_error("chown", kRoots));
   ::chmod(kRoots.c_str(), 0755);
-  std::error_code ec;
-  for (const auto& e : fs::directory_iterator(kRoots, ec)) {
-    struct stat st{};
-    if (::lstat(e.path().c_str(), &st) != 0) continue;
-    if (!S_ISDIR(st.st_mode)) {
-      logf("removing malformed build root entry %s",
-           e.path().filename().c_str());
-      fs::remove_all(e.path(), ec);
-    }
-  }
 }
 
 std::vector<std::string> project_env(const std::string& id) {
@@ -307,8 +285,6 @@ std::vector<std::string> project_env(const std::string& id) {
 const std::string kScratch = "/persist/run-scratch";
 const std::string kUsage = "/run/tsugumi-cache-usage";
 std::unique_ptr<tsugumi::CacheUsage> cache_usage;
-const std::string kHistory = "/history-disk";
-std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 // Per project: the folder of its tsugumid's socket (0700, the project's user).
 const std::string kRpc = "/run/tsugumi-rpc";
 std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
@@ -317,7 +293,7 @@ std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
 const std::string kSubstituters = "/run/tsugumi-substituters";
 
 // Mount namespace of one project: its folder and control folder at /project
-// and /control, its run history at /history, the folders of the Mac it was
+// and /control, the folders of the Mac it was
 // given (share entries host-<tag>) at /run/tsugumi/host/<tag> and those
 // attached to its chats (chat-<tag>) at /run/tsugumi/chat/<tag>, nothing of the
 // share, the store disk or other projects.
@@ -326,7 +302,6 @@ ProjectView project_view(int slot, const std::string& id) {
   std::string dir = opt.host + "/" + std::to_string(slot);
   v.project = dir + "/project";
   v.control = dir + "/control";
-  v.history = history_dir(id);
   v.scratch = kScratch + "/" + id;
   v.rpc = rpc_dir(id);
   v.slots = fs::path(opt.host).parent_path().string();
@@ -357,9 +332,6 @@ void enter_project_view(const ProjectView& v) {
     die("bind /project");
   if (::mount(v.control.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0)
     die("bind /control");
-  if (::mount(v.history.c_str(), "/history", nullptr,
-              MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0)
-    die("bind /history");
   if (::mount(v.scratch.c_str(), "/scratch", nullptr,
               MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0)
     die("bind /scratch");
@@ -383,8 +355,6 @@ void enter_project_view(const ProjectView& v) {
   // /mnt (a tmpfs holding every slot mount) goes, with all slots under it.
   if (::umount2(v.slots.c_str(), MNT_DETACH) != 0) die("hide the slots");
   ::umount2("/persist", MNT_DETACH);  // the store disk (the /nix overlay stays)
-  ::umount2(kHistory.c_str(),
-            MNT_DETACH);  // every project's history but this one
   if (::mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777") != 0)
     die("private /tmp");
   ::mkdir("/tmp/home", 0700);
@@ -538,87 +508,32 @@ std::string mount_slot(int slot) {
 
 std::string start_project(const std::string& id, int cpus,
                           const std::string& name, int slot,
-                          const std::string& origins,
-                          bool archive_history = false) {
+                          const std::string& origins) {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
-  if (slot < 0 || slot > 63) return "error invalid slot";
-  for (const auto& [other, op] : projects)
-    if (op.running && op.slot == slot)
-      return "error slot " + std::to_string(slot) + " is in use";
   if (auto err = mount_slot(slot); !err.empty()) return err;
   std::string p = slot_dir(slot) + "/project";
   std::string c = slot_dir(slot) + "/control";
-  if (!fs::is_regular_file(p + "/tsugumi.json"))
-    return "error the project folder is not shared";
-  if (!fs::is_directory(c)) return "error the control folder is not shared";
   Project pr;
   pr.id = id;
   pr.slot = slot;
   pr.uid = uid_for(id);
   ensure_user(id, pr.uid);
-  // Build roots of this project, kept while the project exists. Only vmd
-  // creates the folder; anything else in its place is replaced, never followed.
+  const auto prepare = [&](const std::string& path, mode_t mode) {
+    fs::create_directories(path);
+    if (::chown(path.c_str(), pr.uid, pr.uid) != 0)
+      return system_error("chown", path);
+    ::chmod(path.c_str(), mode);
+    return std::string{};
+  };
   std::string roots = kRoots + "/" + id;
-  struct stat rst{};
-  if (::lstat(roots.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
-    std::error_code ec;
-    fs::remove(roots, ec);
-  }
-  ::mkdir(roots.c_str(), 0755);
-  if (::lstat(roots.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode))
-    return "error cannot create the build root folder";
-  if (::lchown(roots.c_str(), pr.uid, pr.uid) != 0)
-    return system_error("lchown", roots);
-  ::chmod(roots.c_str(), 0755);
-  ::utimensat(AT_FDCWD, roots.c_str(), nullptr,
-              AT_SYMLINK_NOFOLLOW);  // last use, shown in settings
-  fs::create_directories(kScratch);
-  ::chmod(kScratch.c_str(), 0700);
+  if (auto error = prepare(roots, 0755); !error.empty()) return error;
+  ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);
   std::string scratch = kScratch + "/" + id;
-  if (::lstat(scratch.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
-    std::error_code ec;
-    fs::remove(scratch, ec);
-  }
-  ::mkdir(scratch.c_str(), 0700);
-  if (::lstat(scratch.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode))
-    return "error cannot create run scratch";
-  if (::lchown(scratch.c_str(), pr.uid, pr.uid) != 0)
-    return system_error("lchown", scratch);
-  ::chmod(scratch.c_str(), 0700);
-  // Run history on its own disk, readable by this project only; kept until
-  // the project's data is deleted (never by age).
-  std::string hist = history_dir(id);
-  if (::chown(kHistory.c_str(), 0, 0) != 0)
-    return system_error("chown", kHistory);
-  ::chmod(kHistory.c_str(), 0700);
-  if (::lstat(hist.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
-    std::error_code ec;
-    fs::remove(hist, ec);
-  }
-  ::mkdir(hist.c_str(), 0700);
-  if (::lstat(hist.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode))
-    return "error cannot create the run history folder";
-  if (::lchown(hist.c_str(), pr.uid, pr.uid) != 0)
-    return system_error("lchown", hist);
-  ::chmod(hist.c_str(), 0700);
-  // The folder of tsugumid's socket: nothing of the project listens on the
-  // VM's loopback (Cards allowed the network share it), and other projects'
-  // users cannot enter this folder.
+  if (auto error = prepare(scratch, 0700); !error.empty()) return error;
   std::string rpc = rpc_dir(id);
-  fs::create_directories(kRpc);
-  ::chmod(kRpc.c_str(), 0711);
-  if (::lstat(rpc.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
-    std::error_code ec;
-    fs::remove(rpc, ec);
-  }
-  ::mkdir(rpc.c_str(), 0700);
-  if (::lstat(rpc.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode))
-    return "error cannot create the rpc folder";
-  if (::lchown(rpc.c_str(), pr.uid, pr.uid) != 0)
-    return system_error("lchown", rpc);
-  ::chmod(rpc.c_str(), 0700);
+  if (auto error = prepare(rpc, 0700); !error.empty()) return error;
   std::string cg = cgroup_dir(id);
   fs::create_directories(cg);
   // The control folder is the project's: a link there is never followed by
@@ -659,8 +574,6 @@ std::string start_project(const std::string& id, int cpus,
                "--allow-missing-origin",
                "--gcroots-dir",
                kRoots + "/" + id,
-               "--history-dir",
-               "/history",
                "--run-scratch-dir",
                "/scratch",
                "--usage-file",
@@ -668,7 +581,6 @@ std::string start_project(const std::string& id, int cpus,
                "--host-folders",
                "/run/tsugumi/host",
                "--project-shell"};
-  if (archive_history) args.argv.push_back("--archive-incompatible-history");
   // The binary caches of this VM's nix-daemon, for the run records. A project
   // cannot read the daemon's settings (they sit beside the caches' credentials
   // under /run/tsugumi, which its view replaces); /init wrote this list.
@@ -728,12 +640,6 @@ std::string start_project(const std::string& id, int cpus,
   return "ok " + id;
 }
 
-bool cgroup_empty(const std::string& id) {
-  std::ifstream in(cgroup_dir(id) + "/cgroup.procs");
-  std::string line;
-  return !std::getline(in, line) || line.empty();
-}
-
 std::string stop_project(const std::string& id) {
   std::unique_lock<std::mutex> l(mu);
   auto it = projects.find(id);
@@ -743,19 +649,11 @@ std::string stop_project(const std::string& id) {
   // tsugumid records interrupted runs on SIGTERM; give it time.
   exited.wait_for(l, std::chrono::seconds(20),
                   [&] { return !it->second.running; });
-  // Whatever is left of exactly this project ends now.
-  write_file(cgroup_dir(id) + "/cgroup.kill", "1");
-  for (int i = 0; i < 100 && !cgroup_empty(id); ++i) {
-    l.unlock();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    l.lock();
+  if (it->second.running) {
+    write_file(cgroup_dir(id) + "/cgroup.kill", "1");
+    exited.wait(l, [&] { return !it->second.running; });
   }
-  bool empty = cgroup_empty(id);
-  it->second.running = false;
-  // The slot goes back to the app (which then empties its share).
-  ::umount2(slot_dir(it->second.slot).c_str(), MNT_DETACH);
-  logf("stopped %s%s", id.c_str(), empty ? "" : " (processes remain)");
-  return empty ? "ok" : "error processes of the project remain";
+  return "ok";
 }
 
 std::string forget_project(const std::string& id) {
@@ -764,10 +662,6 @@ std::string forget_project(const std::string& id) {
   std::error_code ec;
   fs::remove_all(kRoots + "/" + id, ec);
   fs::remove_all(kScratch + "/" + id, ec);
-  if (cache_usage) cache_usage->refresh();
-  std::error_code hec;
-  fs::remove_all(history_dir(id), hec);
-  if (!ec) ec = hec;
   ::rmdir(cgroup_dir(id).c_str());
   std::lock_guard<std::mutex> l(mu);
   projects.erase(id);
@@ -779,35 +673,6 @@ std::string status() {
   std::string out = "ok";
   for (const auto& [id, p] : projects)
     if (p.running) out += " " + id + ":" + std::to_string(p.pid);
-  return out;
-}
-
-// Run history kept per project: size and last start (of the build roots
-// folder).
-std::string histories() {
-  std::set<std::string> running;
-  {
-    std::lock_guard<std::mutex> l(mu);
-    for (const auto& [id, p] : projects)
-      if (p.running) running.insert(id);
-  }
-  std::string out = "ok";
-  std::error_code ec;
-  for (const auto& e : fs::directory_iterator(kHistory, ec)) {
-    std::string id = e.path().filename().string();
-    if (!valid_id(id) || !e.is_directory(ec)) continue;
-    uintmax_t bytes = 0;
-    for (const auto& f : fs::directory_iterator(e.path(), ec))
-      if (f.is_regular_file(ec)) bytes += f.file_size(ec);
-    struct stat st{};
-    long long ms = 0;
-    if (::stat((kRoots + "/" + id).c_str(), &st) == 0 ||
-        ::stat(e.path().c_str(), &st) == 0)
-      ms = static_cast<long long>(st.st_mtim.tv_sec) * 1000 +
-           st.st_mtim.tv_nsec / 1000000;
-    out += " " + id + ":" + std::to_string(bytes) + ":" + std::to_string(ms) +
-           ":" + (running.count(id) ? "1" : "0");
-  }
   return out;
 }
 
@@ -1051,22 +916,21 @@ void control(int conn) {
     r = "ok";
   else if (w[0] == "status")
     r = status();
-  else if ((w[0] == "start" || w[0] == "archive-history") &&
-           (w.size() == 5 || w.size() == 6) && valid_id(w[1]))
+  else if (w[0] == "cache-usage") {
+    cache_usage->snapshot();
+    r = "ok";
+  } else if (w[0] == "start" && (w.size() == 5 || w.size() == 6))
     r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3],
-                      std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "",
-                      w[0] == "archive-history");
-  else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1]))
+                      std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "");
+  else if (w[0] == "stop" && w.size() == 2)
     r = stop_project(w[1]);
-  else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1]))
+  else if (w[0] == "forget" && w.size() == 2)
     r = forget_project(w[1]);
   else if (w[0] == "gc" && w.size() == 1)
     r = collect_garbage();
   else if (w[0] == "verify-store" && w.size() == 1)
     r = collect_garbage(true);
-  else if (w[0] == "histories" && w.size() == 1)
-    r = histories();
-  else if (w[0] == "shell" && w.size() == 4 && valid_id(w[1])) {
+  else if (w[0] == "shell" && w.size() == 4) {
     operation.unlock();
     shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
     ::close(conn);
@@ -1184,8 +1048,8 @@ int main(int argc, char** argv) {
   }
   if (opt.tsugumid.empty() || opt.tini.empty() || opt.bash.empty()) {
     std::fprintf(stderr,
-                 "usage: tsugumi-vmd --tsugumid PATH --tini PATH --bash PATH "
-                 "[--path PATH] [--cert-file FILE]\n");
+                 "usage: tsugumi-vmd --tsugumid PATH --tini PATH "
+                 "--bash PATH [--path PATH] [--cert-file FILE]\n");
     return 2;
   }
   ::signal(SIGPIPE, SIG_IGN);
@@ -1198,6 +1062,10 @@ int main(int argc, char** argv) {
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
   prepare_project_roots();
+  fs::create_directories(kScratch);
+  ::chmod(kScratch.c_str(), 0700);
+  fs::create_directories(kRpc);
+  ::chmod(kRpc.c_str(), 0711);
   tsugumi::NixStore::init_process();
   cache_usage = std::make_unique<tsugumi::CacheUsage>(
       kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);

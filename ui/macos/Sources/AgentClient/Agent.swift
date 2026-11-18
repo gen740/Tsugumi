@@ -8,29 +8,6 @@ public protocol ToolTransport: Sendable {
   func project() async throws -> AgentProject?
 }
 
-/// Durable trace of one tool call.
-public struct ToolRecord: Codable, Equatable {
-  public enum State: String, Codable { case pending, sent, completed, skipped }
-  public var id: String
-  public var name: String
-  public var arguments: String
-  public var opId: String?
-  public var state: State
-  public var result: String?
-  public var isError = false
-
-  public init(id: String, name: String, arguments: String, opId: String? = nil, state: State,
-              result: String? = nil, isError: Bool = false) {
-    self.id = id
-    self.name = name
-    self.arguments = arguments
-    self.opId = opId
-    self.state = state
-    self.result = result
-    self.isError = isError
-  }
-}
-
 /// Presentation assembled by hostd from structured messages and task records.
 public struct ChatRow: Codable, Equatable, Sendable, Identifiable {
   public var id: String
@@ -54,49 +31,12 @@ public struct ChatRow: Codable, Equatable, Sendable, Identifiable {
   public var children: [ChatRow]
 }
 
-/// A snapshot of a conversation persisted by the core Agent service.
-public struct HelperTrace: Codable, Equatable {
-  public var call: String
-  public var task: UInt32
-  public var messages: [ChatMessage]
-  public var state: String
-}
-public struct Conversation: Codable, Equatable {
+/// The native client's presentation snapshot; hostd owns the full trace.
+public struct Conversation: Equatable {
   public var id = ""
-  public var title: String?
-  public var updatedAt = Date()
-  public var messages: [ChatMessage] = []
-  /// Messages replaced by the summary when the context was compacted. The
-  /// model no longer sees them, but the full history stays readable and searchable.
-  public var archive: [ChatMessage] = []
-  public var tools: [ToolRecord] = []
-  public var helpers: [HelperTrace] = []
   public var rows: [ChatRow] = []
   public var usage = Usage()
-  public var summary: String?  // compacted history
-
   public init() {}
-
-  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, helpers, rows, usage, summary }
-
-  public init(from d: Decoder) throws {
-    let c = try d.container(keyedBy: CodingKeys.self)
-    id = try c.decode(String.self, forKey: .id)
-    title = try c.decodeIfPresent(String.self, forKey: .title)
-    updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date(timeIntervalSince1970: 0)
-    messages = try c.decode([ChatMessage].self, forKey: .messages)
-    archive = try c.decodeIfPresent([ChatMessage].self, forKey: .archive) ?? []
-    tools = try c.decode([ToolRecord].self, forKey: .tools)
-    helpers = try c.decodeIfPresent([HelperTrace].self, forKey: .helpers) ?? []
-    rows = try c.decodeIfPresent([ChatRow].self, forKey: .rows) ?? []
-    usage = try c.decode(Usage.self, forKey: .usage)
-    summary = try c.decodeIfPresent(String.self, forKey: .summary)
-  }
-
-  /// Everything said in this conversation, including compacted messages.
-  public var fullHistory: [ChatMessage] { archive + messages }
-
-
 }
 
 public enum AgentEvent: Sendable {
@@ -299,6 +239,7 @@ public actor Agent {
         while !Task.isCancelled {
           let result = try await AgentObservation.read { try await self.request("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
           try Task.checkCancellation()
+          var refreshed = false
           for item in result["events"] as? [[String: Any]] ?? [] {
             sequence = max(sequence, item["seq"] as? UInt64 ?? sequence)
             guard let event = item["event"] as? [String: Any] else { continue }
@@ -306,7 +247,7 @@ public actor Agent {
               let asked = event["asked"] as? [String] ?? ["project_access Project content"]
               _ = try await answerAccess(request, asked: asked, groups: event["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
             } else if let event = Self.event(event) {
-              if case .finished = event { try await AgentObservation.read { try await self.refresh() } }
+              if case .finished = event { try await AgentObservation.read { try await self.refresh() }; refreshed = true }
               try Task.checkCancellation()
               if case .finished = event, resumable { events(.interrupted) }
               else { events(event) }
@@ -316,7 +257,7 @@ public actor Agent {
           sequence = max(sequence, result["next_seq"] as? UInt64 ?? sequence)
           busy = result["busy"] as? Bool ?? false
           if !busy {
-            try await AgentObservation.read { try await self.refresh() }
+            if !refreshed { try await AgentObservation.read { try await self.refresh() } }
             try Task.checkCancellation()
             if resumable { events(.interrupted) }
             break
@@ -347,17 +288,10 @@ public actor Agent {
     guard let approver else { throw CancellationError() }
     let answer = await approver(asked, groups)
     try Task.checkCancellation()
-    var allowed = Set(asked).isSubset(of: answer)
-    var additional: [String] = []
-    for request in asked {
-      guard let data = String(request.dropFirst("project_access ".count)).data(using: .utf8),
-            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let access = value["access"] as? String else { continue }
-      if value["needed_now"] as? Bool == true { allowed = answer.contains(request) }
-      else if answer.contains(request) { additional.append(access) }
-    }
+    var allowed = false
     do {
-      _ = try await self.request("AccessResolveRequest", ["request_id": request, "allow": allowed, "also_allow": additional])
+      let result = try await self.request("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": Array(answer)])
+      allowed = result["accepted"] as? Bool ?? false
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
       return try await answerAccess(request, asked: asked, groups: groups)

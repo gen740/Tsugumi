@@ -204,7 +204,12 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
   EXPECT_NE(preview.find("old"), std::string::npos);
   EXPECT_EQ(preview.find("recent"), std::string::npos);
   EXPECT_EQ(preview.find("active"), std::string::npos);
-  EXPECT_NE(preview.find("\"run_count\":1"), std::string::npos);
+  EXPECT_EQ(json::UInt(json::Get(
+                json::Object(preview.substr(
+                    preview.find('{'),
+                    preview.find('\n', preview.find('{')) - preview.find('{'))),
+                "run_count")),
+            1u);
   EXPECT_EQ(run_ids, std::vector<std::string>{json::Quote("old")});
   // A run completing after the final description must not enter the RPC's
   // deletion set. Only IDs collected from that description go over the wire.

@@ -6,15 +6,14 @@ import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 
-/// Registers the selected project endpoint with core's Agent service.
+/// Supplies the selected project identity to the Agent service.
 struct RPCToolTransport: ToolTransport {
   let session: ProjectSession
   @MainActor func project() async throws -> AgentProject? {
     let endpoint: Endpoint
     if let override = session.endpointOverride { endpoint = override }
     else { endpoint = try await session.environments.start(session.identity) }
-    return AgentProject(id: endpoint.projectId, endpoint: endpoint.url.absoluteString, token: endpoint.token,
-                        title: session.identity.url.lastPathComponent, path: session.identity.url.standardizedFileURL.path)
+    return AgentProject(id: endpoint.projectId)
   }
 }
 
@@ -230,7 +229,6 @@ final class ChatController {
 
   // MARK: - Sessions
 
-  private func url(_ id: String) -> URL { dir.appendingPathComponent("sessions/\(id).json") }
 
   /// Conversations are listed from core and are independent of UI sessions.
   func refreshSessions() {

@@ -156,7 +156,7 @@ def project(tmp_path):
     opened = []
 
     def connect():
-        env = real_environment(root, "tsugumi-test-languages") if IN_VM else Daemon(root).start()
+        env = real_environment(root) if IN_VM else Daemon(root).start()
         opened.append(env)
         c = env.client()
         if not IN_VM:
@@ -687,7 +687,6 @@ end
 
 @pytest.mark.parametrize("language", ["r", "julia"])
 def test_display_arrives_before_completion_and_cancel_stops_worker(project, language):
-    import time
     from projects import start_run, wait_run
     root, connect = project
     nix, name, source = LIVE[language]

@@ -72,11 +72,6 @@ struct Document {
   static bool is_source_area(const std::string& rel);
   // Version opt-ins never name internal state or Git metadata, at any depth.
   static auto valid_version_path(const std::string& rel) -> bool;
-
-  const std::string& pkgs_path() const { return project.pkgs_path->value(); }
-  bool save_run_history() const {
-    return project.save_run_history->value_or(true);
-  }
 };
 using DocumentPtr = std::shared_ptr<const Document>;
 
@@ -99,7 +94,6 @@ auto initial_project_json(const std::string& name) -> std::string;
 // Strictly decodes and shape-checks one document part. Throws
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
-auto check_opaque_layout(const std::string& text) -> void;
 schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text);
 void check_meta_json(const std::string& text);

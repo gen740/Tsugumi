@@ -150,7 +150,7 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       Readiness(project, directory.path / "project-control/server.ready",
                 directory.path / "project.log");
   const auto hello = Request(1, "SessionHelloRequest",
-                             "{\"protocol\":1,\"client_id\":\"1a363cee-72b1-"
+                             "{\"client_id\":\"1a363cee-72b1-"
                              "4713-8e1c-251354239be5\",\"token\":" +
                                  Quote(JsonString(server, "/token")) + "}");
   const auto inspect = Run(hello + Request(2, "ProjectInspectRequest", "{}"),

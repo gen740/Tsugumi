@@ -34,10 +34,6 @@ namespace D = Tsugumi::Data;
 using FBB = flatbuffers::FlatBufferBuilder;
 namespace stdfs = std::filesystem;
 
-// The protocol versions this server speaks (SessionHello negotiates).
-constexpr uint32_t kMinProtocol = 1;
-constexpr uint32_t kProtocol = 1;
-
 // ---------------------------------------------------------------------------
 // Request digests
 
@@ -244,14 +240,9 @@ std::vector<std::string> configured_substituters(const stdfs::path& file) {
 }  // namespace
 
 Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
-  cursor_secret_ = crypto::random_token(32);
-  mutation_lane_ = std::make_unique<Lane>(
-      1, opts_.limits.mutation_queue_limit,
-      std::chrono::milliseconds(opts_.limits.queue_wait_ms));
-  read_pool_ = std::make_unique<Lane>(
-      6, 1024, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
-  shell_lane_ = std::make_unique<Lane>(
-      2, 8, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
+  mutation_lane_ = std::make_unique<Lane>(1);
+  read_pool_ = std::make_unique<Lane>(6);
+  shell_lane_ = std::make_unique<Lane>(2);
 }
 
 Service::~Service() { shutdown(); }
@@ -259,23 +250,9 @@ Service::~Service() { shutdown(); }
 void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
-  auto history_db =
-      (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) /
-      "history.sqlite";
-  if (!opts_.history_dir.empty()) stdfs::create_directories(opts_.history_dir);
-  History::prepare_storage(history_db, runs_copy(),
-                           opts_.archive_incompatible_history, opts_.fault);
-  history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
+  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
+                                       opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
-  // Runs kept in the project and missing here (a copied or moved project).
-  try {
-    if (auto n = history_->import_runs(runs_copy()))
-      log::info("history: " + std::to_string(n) +
-                " runs from .tsugumi/runs.sqlite");
-  } catch (const std::exception& e) {
-    log::error(std::string("history: cannot read .tsugumi/runs.sqlite: ") +
-               e.what());
-  }
   // Local folders (never the project share): the evaluator's inputs by
   // content and the workers' own folders.
   auto scratch =
@@ -308,8 +285,6 @@ void Service::open() {
       cache_usage_ = std::make_unique<CacheUsage>(opts_.usage_roots_dir,
                                                   opts_.usage_scratch_dir);
   }
-  exporter_ = std::thread([this] { export_loop(); });
-  schedule_export();  // runs that ended before (and interrupted ones)
 }
 
 auto Service::file_roots() const -> std::vector<stdfs::path> {
@@ -430,8 +405,7 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
         lock.unlock();
         RemoteProbe live;
         try {
-          live = remote_jobs_.probe(target.id, target.server_id,
-                                    target.heartbeat_interval_seconds);
+          live = remote_jobs_.probe(target.id, target.server_id);
         } catch (...) {
           lock.lock();
           throw;
@@ -567,69 +541,9 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   execution_service_.reset();  // the project's resident and standby workers end
-  if (exporter_.joinable()) {
-    {
-      std::lock_guard<std::mutex> l(export_mu_);
-      export_stop_ = true;
-    }
-    export_cv_.notify_all();
-    exporter_.join();
-    // What the last runs (and interrupted ones) recorded goes to the project.
-    history_->flush();
-    export_now();
-  }
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
   cache_usage_.reset();
-}
-
-auto Service::refresh_cache_usage() -> void {
-  if (cache_usage_) cache_usage_->refresh();
-}
-
-void Service::schedule_export() {
-  {
-    std::lock_guard<std::mutex> l(export_mu_);
-    auto now = std::chrono::steady_clock::now();
-    if (!export_first_) export_first_ = now;
-    export_last_ = now;
-  }
-  export_cv_.notify_all();
-}
-
-// Once writes have paused for 2 s, or 30 s after the first request at the
-// latest.
-void Service::export_loop() {
-  std::unique_lock<std::mutex> l(export_mu_);
-  while (!export_stop_) {
-    if (!export_last_) {
-      export_cv_.wait(l);
-      continue;
-    }
-    auto due = std::min(*export_first_ + std::chrono::seconds(30),
-                        *export_last_ + std::chrono::seconds(2));
-    if (std::chrono::steady_clock::now() < due) {
-      export_cv_.wait_until(l, due);
-      continue;
-    }
-    export_first_.reset();
-    export_last_.reset();
-    l.unlock();
-    export_now();
-    l.lock();
-  }
-}
-
-void Service::export_now() {
-  if (!store_->current()->save_run_history()) return;
-  try {
-    if (auto n = history_->export_runs(runs_copy()))
-      log::info("history: " + std::to_string(n) +
-                " runs to .tsugumi/runs.sqlite");
-  } catch (const std::exception& e) {
-    log::error(std::string("history: cannot write .tsugumi/runs.sqlite: ") +
-               e.what());
-  }
 }
 
 std::vector<std::string> Service::capabilities() {
@@ -702,18 +616,6 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
                             FailureData::make(k, std::move(msg))),
         false);
   };
-  if (!h->protocol())
-    return failure(FailureKind::invalid_request, "protocol is required");
-  // The newest version both speak.
-  uint32_t client_max = *h->protocol();
-  uint32_t client_min = h->min_protocol().value_or(client_max);
-  uint32_t chosen = std::min(client_max, kProtocol);
-  if (client_min > client_max || chosen < std::max(client_min, kMinProtocol))
-    return failure(FailureKind::protocol_mismatch,
-                   "server speaks protocol " + std::to_string(kMinProtocol) +
-                       " to " + std::to_string(kProtocol));
-  if (!crypto::is_uuid(h->client_id()->str()))
-    return failure(FailureKind::invalid_request, "client_id must be a UUID");
   if (in.websocket) {
     if (!h->token() || !crypto::equal_secret(h->token()->str(), opts_.token))
       return failure(FailureKind::unauthenticated, "invalid token");
@@ -729,14 +631,9 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   auto caps = capabilities();
   std::vector<flatbuffers::Offset<flatbuffers::String>> cv;
   for (const auto& c : caps) cv.push_back(b.CreateString(c));
-  const auto& l = opts_.limits;
-  auto limits = R::CreateLimits(
-      b, l.max_frame_bytes, l.max_connections, l.max_inflight,
-      l.mutation_queue_limit, l.queue_wait_ms, l.outbox_messages,
-      l.outbox_bytes, l.page_limit, l.file_chunk_bytes, l.log_chunk_bytes);
-  auto r = R::CreateHelloResult(b, chosen, b.CreateString(store_->project_id()),
+  auto r = R::CreateHelloResult(b, b.CreateString(store_->project_id()),
                                 b.CreateString(opts_.server_instance_id),
-                                limits, b.CreateVector(cv));
+                                b.CreateVector(cv));
   return {
       wire::reply(b, in.request_id, R::ReplyPayload::HelloResult, r.Union()),
       true};
@@ -762,18 +659,13 @@ void Service::on_lane(Lane& lane, RequestIn req,
     std::lock_guard lock(cancellations_mu_);
     save_cancellations_[key] = req.cancelled;
   }
-  bool ok = lane.submit([this, req, fn](bool expired) mutable {
+  bool ok = lane.submit([this, req, fn]() mutable {
     auto cleanup = [this, &req](void*) {
       if (!req.cancelled) return;
       std::lock_guard lock(cancellations_mu_);
       save_cancellations_.erase({req.conn, req.request_id});
     };
     std::unique_ptr<void, decltype(cleanup)> guard(this, cleanup);
-    if (expired)
-      return fail(
-          req, FailureData::make(
-                   FailureKind::timeout,
-                   "the request waited longer than 30 s and was not executed"));
     try {
       (this->*fn)(req);
     } catch (const Failed& f) {
@@ -1272,7 +1164,6 @@ std::string finish_receipt(FBB& b, const std::string& op_id,
 
 void Service::publish_delta(const Delta& delta) {
   // Keeping the run history switched on: the project's copy catches up.
-  if (delta.project_changed && exporter_.joinable()) schedule_export();
   auto shared = std::make_shared<Delta>(delta);
   Note n;
   n.kind = Note::Kind::Doc;
@@ -1531,6 +1422,22 @@ void Service::save(RequestIn& req) {
   }
 }
 
+auto Service::complete_reload(RequestIn& req, const std::string& op_id,
+                              const std::string& digest, const Document& base,
+                              Store::Staged& staged) -> void {
+  std::string receipt;
+  store_->commit(staged, "reload", digest, [&](const Delta* d) {
+    FBB b(1 << 14);
+    auto sr = save_result(b, d, base);
+    receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
+    return receipt;
+  });
+  if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
+  reply(req, receipt_reply(req.request_id, receipt, false));
+  if (staged.delta.doc) publish_delta(staged.delta);
+  finish_op(op_id, receipt);
+}
+
 void Service::reload(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ProjectReloadRequest();
   std::string op_id = r->op_id()->str();
@@ -1555,19 +1462,7 @@ void Service::reload(RequestIn& req) {
                                  *staged.doc->resolution,
                                  r->approved_permissions());
     }
-    std::string receipt;
-    store_->commit(staged, "reload", digest, [&](const Delta* d) {
-      FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      receipt =
-          finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
-      return receipt;
-    });
-    if (staged.delta.doc)
-      scheduler_->document_changed(*base, *staged.delta.doc);
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    if (staged.delta.doc) publish_delta(staged.delta);
-    finish_op(op_id, receipt);
+    complete_reload(req, op_id, digest, *base, staged);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
     throw;
@@ -1616,43 +1511,34 @@ void Service::note_run_end(const RunStatusData& s,
 }
 
 void Service::version_init(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_VersionInitRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(project_request(req));
-  if (replay_or_join(req, op_id, "version", digest)) return;
-  try {
-    if (!crypto::is_operation_id(op_id))
-      throw Failed(FailureKind::invalid_request, "invalid op_id");
-    auto commit = versions_->init();
-    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
-    history_->write_sync([&](sql::Db& db) {
-      History::put_receipt(db, op_id, "version", digest, receipt);
-    });
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    finish_op(op_id, receipt);
-  } catch (const Failed& f) {
-    store_failure_receipt(op_id, "version", digest, f.failure);
-    throw;
-  } catch (const std::exception& e) {
-    auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "version", digest, f);
-    throw Failed(f);
-  }
+  version_operation(req, [&] { return versions_->init(); });
 }
 
 void Service::version_mark(RequestIn& req) {
   const auto* r = project_request(req)->value_as_VersionMarkRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(project_request(req));
+  version_operation(req, [&] {
+    if (!versions_->enabled())
+      throw Failed(FailureKind::invalid_request,
+                   "the project is not versioned yet");
+    return versions_->mark(r->name()->str(),
+                           r->message() ? r->message()->str() : "");
+  });
+}
+
+auto Service::version_operation(RequestIn& req,
+                                const std::function<std::string()>& operation)
+    -> void {
+  const auto* request = project_request(req);
+  const auto* id = request->value_as_VersionInitRequest()
+                       ? request->value_as_VersionInitRequest()->op_id()
+                       : request->value_as_VersionMarkRequest()->op_id();
+  const auto op_id = id->str();
+  const auto digest = request_digest(request);
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_operation_id(op_id))
       throw Failed(FailureKind::invalid_request, "invalid op_id");
-    if (!versions_->enabled())
-      throw Failed(FailureKind::invalid_request,
-                   "the project is not versioned yet");
-    auto commit = versions_->mark(r->name()->str(),
-                                  r->message() ? r->message()->str() : "");
+    const auto commit = operation();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) {
       History::put_receipt(db, op_id, "version", digest, receipt);
@@ -1692,19 +1578,7 @@ void Service::version_checkout(RequestIn& req) {
     versions_->checkout(r->commit()->str());
     // The files are those of the version now: read them like a reload.
     auto staged = store_->stage_reload(op_id, r->origin()->str());
-    std::string receipt;
-    store_->commit(staged, "reload", digest, [&](const Delta* d) {
-      FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      receipt =
-          finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
-      return receipt;
-    });
-    if (staged.delta.doc)
-      scheduler_->document_changed(*base, *staged.delta.doc);
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    if (staged.delta.doc) publish_delta(staged.delta);
-    finish_op(op_id, receipt);
+    complete_reload(req, op_id, digest, *base, staged);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
     throw;
@@ -1800,7 +1674,6 @@ void Service::cache_clear(RequestIn& req) {
                            ? store_->state_dir() / "cache" / "gcroots"
                            : opts_.gcroots_dir;
     fs::write_atomic(roots / ".name", opts_.root.filename().string(), 0644);
-    if (cache_usage_) cache_usage_->refresh();
     FBB b;
     std::vector<flatbuffers::Offset<flatbuffers::String>> del;
     std::vector<flatbuffers::Offset<flatbuffers::String>> ret;
@@ -1862,8 +1735,8 @@ void Service::scratch_delete(RequestIn& req) {
   try {
     if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
       throw Failed(FailureKind::busy,
-                   "scratch cannot be deleted while a run or external results "
-                   "are pending");
+                   "scratch cannot be deleted while a run "
+                   "or external results are pending");
     const auto latest = history_->read(History::latest_run);
     const auto protected_path = latest ? "runs/" + *latest->status.run_id : "";
     std::set<std::string> paths;
@@ -1907,7 +1780,6 @@ void Service::scratch_delete(RequestIn& req) {
     history_->write_sync([&](sql::Db& db) {
       History::put_receipt(db, op_id, "scratch_delete", digest, receipt);
     });
-    refresh_cache_usage();
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
   } catch (const Failed& f) {
@@ -1944,21 +1816,19 @@ void Service::history_delete(RequestIn& req) {
       uint64_t n = 0;
       std::error_code ec;
       for (const auto& f :
-           {history_->path(), stdfs::path(history_->path().string() + "-wal"),
-            runs_copy()})
+           {history_->path(), stdfs::path(history_->path().string() + "-wal")})
         if (stdfs::is_regular_file(f, ec)) n += stdfs::file_size(f, ec);
       return n;
     };
     uint64_t before = sizes();
     const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
-    auto ids = history_->delete_runs(runs_copy(), r->ended_before(), run_ids);
+    auto ids = history_->delete_runs(r->ended_before(), run_ids);
     for (const auto& id : ids)
       if (crypto::is_run_id(id)) remove_run_scratch(run_scratch_ / "runs" / id);
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files +=
         scratch_before > scratch_after ? scratch_before - scratch_after : 0;
-    refresh_cache_usage();
     // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
@@ -2181,11 +2051,8 @@ void Service::file_list(RequestIn& req) {
   if (!prefix.empty() && entries.empty() && !files.count(path))
     throw Failed(FailureKind::not_found, path + " does not exist",
                  {{"path", path}});
-  std::string qd =
-      crypto::sha256_hex("list|" + path + "|" + std::to_string(depth) + "|" +
-                         (dirs ? "1" : "0") + "|" + std::to_string(doc->rev));
   std::string after;
-  if (r->cursor()) after = history_->open_cursor(r->cursor()->str(), qd).second;
+  if (r->cursor()) after = history_->open_cursor(r->cursor()->str()).second;
   FBB b;
   std::vector<flatbuffers::Offset<R::SourceInfo>> out;
   std::string last;
@@ -2226,7 +2093,7 @@ void Service::file_list(RequestIn& req) {
     last = p;
   }
   auto ev = b.CreateVector(out);
-  auto cur = more ? b.CreateString(history_->make_cursor(qd, 0, last))
+  auto cur = more ? b.CreateString(history_->make_cursor(0, last))
                   : flatbuffers::Offset<flatbuffers::String>();
   R::SourcePageBuilder pb(b);
   pb.add_rev(doc->rev);

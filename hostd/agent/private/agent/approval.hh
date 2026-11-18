@@ -55,7 +55,7 @@ inline auto DescribeOperation(
     targets["run_count"] = std::to_string(runs.size());
     targets["removes"] = json::Quote(
         "Run records, values, logs, kept files and scratch, including the "
-        "project's history copy; pending remote results are retained.");
+        "project's primary history; pending remote results are retained.");
   } else if (name == "project_cache_clear" || name == "run_scratch_delete") {
     const auto usage = read("project_cache_usage", {});
     const auto current = json::Text(usage, "current_project");

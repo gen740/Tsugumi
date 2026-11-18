@@ -131,16 +131,8 @@ auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
   const auto quota = std::to_string(spec.cpu_millis * 1000) + " 1000000";
   cgroup_write(path / "cpu.max", quota);
   cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
-  auto cpu = fs::read_file_or_throw(path / "cpu.max");
-  auto memory = fs::read_file_or_throw(path / "memory.max");
-  if (cpu != quota + "\n" ||
-      std::stoull(memory) !=
-          spec.memory_bytes / static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)) *
-              static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)))
-    throw std::runtime_error("kernel did not apply the requested job limits");
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
-  check_id(job);
   return ::open((journal.root() / "locks" / (job + ".supervisor")).c_str(),
                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 }
@@ -242,7 +234,6 @@ class Daemon {
     return c;
   }
   auto project(const std::string& scope) -> std::shared_ptr<Journal> {
-    check_id(scope);
     std::lock_guard guard(project_mutex_);
     auto& entry = projects_[scope];
     if (!entry)
@@ -250,9 +241,6 @@ class Daemon {
     return entry;
   }
   auto handle(const R::RequestT& q) -> R::MessageT {
-    if (!q.server_id.empty() && q.server_id != server_)
-      throw Error(R::ErrorCode::InstanceChanged,
-                  "endpoint now serves a different worker");
     if (q.body.type == R::RequestBody::NONE ||
         q.body.type == R::RequestBody::CatalogRequest)
       throw Error(R::ErrorCode::Invalid, "invalid remote request");
@@ -262,18 +250,14 @@ class Daemon {
                     "host-authorized project scope required");
       return reply(capabilities());
     }
-    if (q.server_id.empty())
-      throw Error(R::ErrorCode::Rejected, "pinned server identity required");
     const auto journal = project(q.project_scope);
     if ((!q.instance_id.empty() && q.instance_id != journal->instance()) ||
         (q.body.type != R::RequestBody::ProbeRequest && q.instance_id.empty()))
       throw Error(R::ErrorCode::InstanceChanged,
                   "project journal identity changed");
     if (q.body.type == R::RequestBody::ProbeRequest) {
-      journal->touch_core(q.core_life_id);
       return reply(capabilities(journal->instance()));
     }
-    check_id(q.job_id);
     if (q.body.type != R::RequestBody::CancelRequest &&
         q.body.type != R::RequestBody::ReleaseRequest)
       journal->require_owner(q.job_id, q.core_life_id);
@@ -361,7 +345,6 @@ class Daemon {
           Fd lock(supervisor_lock(*p, job));
           if (lock.value < 0)
             throw std::runtime_error("cannot open supervisor lock");
-          p->expire_core(job);
           auto state = p->status(job);
           if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
             ++active;
@@ -517,7 +500,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
     int status = 0;
     for (;;) {
-      journal.expire_core(job);
       const auto current = journal.status(job);
       if (current.state == R::JobState::Cancelling)
         throw std::runtime_error("cancelled");
@@ -538,7 +520,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
       throw std::runtime_error("worker failed: " + diagnostic);
     }
     result = journal.import_results(job);
-    journal.expire_core(job);
     outcome = R::JobState::Succeeded;
   } catch (const std::exception& e) {
     diagnostic = e.what();

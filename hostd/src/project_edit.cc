@@ -653,8 +653,6 @@ auto PrepareProjectEdits(
     if (entry && entry->value.AsProjectJSONEdit()) {
       has_json = true;
       const auto& edit = *entry->value.AsProjectJSONEdit();
-      if (!fs::valid_relative_path(edit.file_path))
-        throw Failure("invalid_path", edit.file_path);
       if (authorize) authorize(edit.file_path);
       if (!edit.old_value || !edit.new_value)
         throw Failure("invalid_request", "missing JSON edit values");
@@ -714,7 +712,6 @@ auto PrepareProjectEdits(
   const auto known = Paths(base);
   auto file = [&](const std::string& path) -> std::optional<std::string>& {
     if (authorize) authorize(path);
-    if (!fs::valid_relative_path(path)) throw Failure("invalid_path", path);
     if (!files.contains(path)) {
       const auto found = base.files.find(path);
       originals[path] =

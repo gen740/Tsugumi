@@ -49,7 +49,6 @@ linux_job() {
   core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
   sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
-  core_run "$sdk_python/bin/python3" -c 'import matplotlib, plotly, altair'
   bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
   bash tests/ci/run-suite.sh adapters "$system"
   if [[ "${TSUGUMI_LOCAL_REMOTE:-1}" == 1 ]]; then

@@ -28,7 +28,6 @@ FAULTS = {
     "save_during_apply": "partial_apply",
     "invocation_record": "history_invocation",
     "run_acceptance": "run_acceptance",
-    "archive_after_main_move": "history_archive_after_main",
     "save_exception": "save_throws",
     "transfer_gate": "transfer_gate",
 }
@@ -53,14 +52,13 @@ class StartupFailure(RuntimeError):
 
 class Daemon:
     def __init__(self, project: Path, *, mocked_builds=False, worker=None, fault=None,
-                 history_dir=None, args=None):
+                 args=None, env=None):
         self.project = project
+        self.env = env or {}
         self.binary = MOCK_DAEMON if mocked_builds else DAEMON
         self.worker = Path(worker or WORKER)
         self.fault = fault
         self.args = list(args or [])
-        if history_dir is not None:
-            self.args += ["--history-dir", str(history_dir)]
         self.directory = Path(tempfile.mkdtemp(prefix="tsugumi-rpc-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.directory / "rpc")
         self.control = self.directory / "control"
@@ -71,11 +69,9 @@ class Daemon:
         self.proc = None
         self.clients = []
 
-    def start(self, timeout=20):
+    def start(self, timeout=20, expect_exit=False):
         if self.proc and self.proc.poll() is None:
             raise RuntimeError("daemon already running")
-        if not self.binary.is_file():
-            raise FileNotFoundError(f"build the test targets first: {self.binary}")
         ready = self.control / "server.ready"
         ready.unlink(missing_ok=True)
         env = dict(os.environ)
@@ -84,6 +80,7 @@ class Daemon:
         env["TSUGUMI_MOCK_CONTROL"] = str(self.gates)
         if self.fault:
             env.update(TSUGUMI_ENABLE_FAULTS="1", TSUGUMI_FAULT=FAULTS[self.fault])
+        env.update(self.env)
         args = [str(self.binary), "--scratch-dir", str(self.directory / "scratch"),
                 "--run-scratch-dir", str(self.directory / "run-scratch"),
                 "--project", str(self.project), "--unix", self.unix,
@@ -92,11 +89,15 @@ class Daemon:
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]
         args += self.args
         try:
+            if not self.binary.is_file():
+                raise FileNotFoundError(f"build the test targets first: {self.binary}")
             with self.log.open("ab") as log:
                 self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=log)
             end = time.monotonic() + timeout
             while time.monotonic() < end:
                 if self.proc.poll() is not None:
+                    if expect_exit:
+                        return self
                     record_path = self.control / "server.startup-error.json"
                     record = json.loads(record_path.read_text()) if record_path.exists() else {}
                     raise StartupFailure(self.proc.returncode, record, self.diagnostics())
@@ -106,7 +107,7 @@ class Daemon:
                 time.sleep(0.01)
             raise TimeoutError(f"daemon startup timed out:\n{self.diagnostics()}")
         except BaseException:
-            self.stop()
+            self.close()
             raise
 
     def connect(self, *, websocket=False, unix=None):

@@ -12,6 +12,7 @@
 #include "host/registry.hh"
 #include "host/settings.hh"
 #include "host/version_text.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/json_object.hh"
 
@@ -24,15 +25,6 @@ using agent::ContentBlock;
 using agent::ProviderAPI;
 using agent::ProviderAuth;
 namespace {
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
-auto Human(bool human) -> void {
-  if (!human)
-    throw Failure("permission_denied",
-                  "This operation requires the authenticated user");
-}
-
 auto FoldAscii(std::string text) -> std::string {
   std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));

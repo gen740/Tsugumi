@@ -158,7 +158,7 @@ class Remote:
         try:
             self.socket.connect(ready["host_socket"])
             self.stream = self.socket.makefile("rwb", buffering=0)
-            self.call("HelloRequest", token=ready["user_token"], clientId="bench", protocol=1)
+            self.call("HelloRequest", token=ready["user_token"], clientId="bench")
             self.call("ExecutionServicePutRequest", id=self.service, name="Execution baseline",
                       endpoint=endpoint, workerPublicKey=public_key, verify=True)
             self.registered = True
@@ -207,7 +207,7 @@ def fixture_metrics(client, run):
 def execute_bundle(root, scenario, timeout, remote, runs, metadata):
     """A fresh daemon per repetition; residents live for 50 serial requests."""
     project = make_project(root / "project", scenario, remote.service if remote else None)
-    daemon = Daemon(project, history_dir=root / "history")
+    daemon = Daemon(project)
     metadata.update(project=str(project), daemon_directory=str(daemon.directory), setup=[],
                     daemon_processes_started=0, run_ids=[])
     capability = daemon.control / "execution-broker-capability"

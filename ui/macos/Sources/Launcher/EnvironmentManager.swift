@@ -16,7 +16,6 @@ public actor EnvironmentManager {
   private var observers: [String: [UUID: @Sendable (EnvironmentState) -> Void]] = [:]
   private var pipes: [UInt64: TerminalPipe] = [:]
   private var pendingOutput: [UInt64: [String: Any]] = [:]
-  public private(set) var allowedOrigins: [String] = []
 
   public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
     let support = support ?? AppChannel.current.supportDirectory
@@ -45,7 +44,6 @@ public actor EnvironmentManager {
     return id
   }
   public func stopObserving(_ project: ProjectIdentity, _ token: UUID) { observers[project.id]?[token] = nil }
-  public func state(_ project: ProjectIdentity) -> EnvironmentState { states[project.id] ?? .stopped }
   private func adopt(_ value: [String: Any]) -> EnvironmentState {
     let state: EnvironmentState
     switch value["phase"] as? Tsugumi_Host_EnvironmentPhase ?? .stopped {
@@ -72,10 +70,10 @@ public actor EnvironmentManager {
     case "HostTerminalData":
       if let value = event["value"] as? [String: Any], let session = value["session"] as? UInt64 {
         if let pipe = pipes[session] { pipe.receive(value) }
-        else if pendingOutput.count < 16 {
+        else {
           let previous = pendingOutput[session] ?? [:]
           let bytes = (previous["data"] as? [UInt8] ?? []) + (value["data"] as? [UInt8] ?? [])
-          if bytes.count <= 65536 { pendingOutput[session] = ["data": bytes, "closed": (previous["closed"] as? Bool ?? false) || (value["closed"] as? Bool ?? false)] }
+          pendingOutput[session] = ["data": bytes, "closed": (previous["closed"] as? Bool ?? false) || (value["closed"] as? Bool ?? false)]
         }
       }
     case "Disconnected":
@@ -84,14 +82,13 @@ public actor EnvironmentManager {
     default: break
     }
   }
-  private func environment(_ project: ProjectIdentity, _ action: Tsugumi_Host_EnvironmentAction, archive: Bool = false) async throws -> EnvironmentState {
+  private func environment(_ project: ProjectIdentity, _ action: Tsugumi_Host_EnvironmentAction) async throws -> EnvironmentState {
     await prepare()
-    let reply = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": action,
-      "origins": allowedOrigins, "archive_incompatible_history": archive])
+    let reply = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": action])
     return adopt(reply)
   }
-  @discardableResult public func start(_ project: ProjectIdentity, archiveIncompatibleHistory: Bool = false) async throws -> Endpoint {
-    switch try await environment(project, .start, archive: archiveIncompatibleHistory) {
+  @discardableResult public func start(_ project: ProjectIdentity) async throws -> Endpoint {
+    switch try await environment(project, .start) {
     case .ready(let endpoint): return endpoint
     case .incompatibleHistory(let issue): throw LauncherError.incompatibleHistory(issue)
     case .failed(let message, _, let log): throw LauncherError.startFailed(reason: message, log: log)
@@ -123,7 +120,6 @@ public actor EnvironmentManager {
     vm.adopt(reply)
     return reply
   }
-  public func runtimeCommand(_ command: String) async throws -> String { try await runtime(.command, command: command)["message"] as? String ?? "" }
   public func verifyStore() async throws -> String {
     try await runtime(.verifystore)["message"] as? String ?? ""
   }
@@ -131,21 +127,9 @@ public actor EnvironmentManager {
     let reply = try await runtime(.cleanupstore)
     return (reply["bytes"] as? UInt64 ?? 0, Int(reply["paths"] as? UInt32 ?? 0))
   }
-  public struct VMHistory: Sendable, Identifiable, Hashable { public let id: String; public let bytes: UInt64; public let lastStart: Date?; public let running: Bool }
-  public func vmHistories() async throws -> [VMHistory] {
-    let reply = try await runtime(.histories)
-    return (reply["histories"] as? [[String: Any]] ?? []).compactMap { row in
-      guard let id = row["id"] as? String else { return nil }
-      let ms = row["last_start_ms"] as? Int64 ?? 0
-      return VMHistory(id: id, bytes: row["bytes"] as? UInt64 ?? 0, lastStart: ms > 0 ? Date(timeIntervalSince1970: Double(ms) / 1000) : nil, running: row["running"] as? Bool ?? false)
-    }
-  }
-  public func deleteVMData(id: String) async throws { _ = try await runtime(.deletehistory, key: id) }
-  public func deleteData(_ project: ProjectIdentity) async throws { _ = try await runtime(.deleteenvironment, project: project.url.path) }
   public func activityBeforeQuit() async throws -> Bool { try await client.activityBeforeQuit() }
   public func shutdownForQuit() async { await client.stopResident(timeout: .seconds(2)) }
   public func shutdownForUpdate() async { await client.stopResident() }
-  public func shutdown() async { _ = try? await runtime(.shutdown) }
   public func resetConfirmation(english: Bool) async throws -> String {
     let reply = try await runtime()
     return reply[english ? "reset_confirmation_en" : "reset_confirmation_ja"] as? String ?? ""

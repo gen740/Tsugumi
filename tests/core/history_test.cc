@@ -1,6 +1,7 @@
+#include "history.hh"
+
 #include <gtest/gtest.h>
 
-#include "history.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "wire.hh"
@@ -8,7 +9,7 @@
 namespace tsugumi {
 namespace {
 
-TEST(HistoryCopy, NotebookFailurePositionRoundtrip) {
+TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   auto failure = FailureData::make(FailureKind::worker_failed,
                                    "calculation: ZeroDivisionError\nTraceback");
   failure.args = {
@@ -20,7 +21,7 @@ TEST(HistoryCopy, NotebookFailurePositionRoundtrip) {
   EXPECT_EQ(restored->kind, failure.kind);
 }
 
-TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
+TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -28,63 +29,8 @@ TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  for (const int version : {5, 6, 7, 8, 9, 10, 11}) {
-    for (const bool portable : {false, true}) {
-      const std::string expected = portable ? "9" : "11";
-      if (std::to_string(version) == expected) continue;
-      SCOPED_TRACE(std::to_string(version) +
-                   (portable ? " portable" : " local"));
-      const auto local = directory / "history.sqlite";
-      const auto copy = directory / "runs.sqlite";
-      const auto database = portable ? copy : local;
-      {
-        sql::Db db(database.string());
-        db.exec(
-            "CREATE TABLE fixture(note TEXT); INSERT INTO fixture "
-            "VALUES('retained')");
-        if (portable) {
-          db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)");
-          db.prepare(
-                "INSERT INTO meta VALUES('format', 'tsugumi-runs'), "
-                "('version', ?)")
-              .bind(1, std::to_string(version))
-              .run();
-        } else {
-          db.exec("PRAGMA user_version=" + std::to_string(version));
-        }
-      }
-      const auto original = fs::read_file_or_throw(database);
-      try {
-        History::prepare_storage(local, copy, false, {});
-        FAIL() << "incompatible history was accepted";
-      } catch (const IncompatibleHistory& error) {
-        EXPECT_EQ(error.found, std::to_string(version));
-        EXPECT_EQ(error.expected, expected);
-        EXPECT_EQ(error.source, portable ? "portable" : "local");
-        EXPECT_NE(std::string(error.what())
-                      .find("has schema version " + std::to_string(version) +
-                            ", but this Tsugumi requires " + expected),
-                  std::string::npos);
-      }
-      if (!portable)
-        EXPECT_THROW(History(database, "secret"), IncompatibleHistory);
-      EXPECT_EQ(fs::read_file_or_throw(database), original);
-      EXPECT_FALSE(std::filesystem::exists(portable ? local : copy));
-      std::filesystem::remove(database);
-    }
-  }
-}
-
-TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
-  const auto directory = std::filesystem::temp_directory_path() /
-                         ("tsugumi-history-" + crypto::uuid4());
-  std::filesystem::create_directories(directory);
-  struct Cleanup {
-    std::filesystem::path path;
-    ~Cleanup() { std::filesystem::remove_all(path); }
-  } cleanup{directory};
-  History original(directory / "original.sqlite", "secret");
-  History restored(directory / "restored.sqlite", "secret");
+  History original(directory / "original.sqlite");
+  History restored(directory / "original.sqlite");
   std::string error;
   const auto type = types::compile(
       "table File { value:string; } root_type File;", "File", &error);
@@ -127,8 +73,6 @@ TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
     std::filesystem::remove(file);
   }
   ASSERT_NE(hashes[0], hashes[1]);
-  ASSERT_EQ(original.export_runs(directory / "runs.sqlite"), 3u);
-  ASSERT_EQ(restored.import_runs(directory / "runs.sqlite"), 3u);
   for (size_t i = 0; i < runs.size(); ++i) {
     for (const bool input : {false, true}) {
       restored.read([&](sql::Db& db) {
@@ -143,7 +87,7 @@ TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
   }
 }
 
-TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
+TEST(RunHistory, RoundTripPreservesEveryRunFieldIncludingCommit) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -151,8 +95,8 @@ TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  History original(directory / "original.sqlite", "secret");
-  History restored(directory / "restored.sqlite", "secret");
+  History original(directory / "original.sqlite");
+  History restored(directory / "original.sqlite");
   for (const auto state :
        {RunState::succeeded, RunState::failed, RunState::cancelled}) {
     RunSummaryData input;
@@ -182,8 +126,6 @@ TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
           .bind(1, *input.status.run_id)
           .run();
     });
-    ASSERT_EQ(original.export_runs(directory / "runs.sqlite"), 1);
-    ASSERT_EQ(restored.import_runs(directory / "runs.sqlite"), 1);
     const auto before = original.read(
         [&](sql::Db& db) { return History::run(db, *input.status.run_id); });
     const auto after = restored.read(
@@ -254,10 +196,9 @@ TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
       });
     }
   }
-  EXPECT_EQ(restored.import_runs(directory / "runs.sqlite"), 0);
 }
 
-TEST(HistoryCopy, OlderImportedRunCannotReplaceTheLatestLocalRun) {
+TEST(RunHistory, SavedInputProvenanceSurvivesBothSnapshotPathsAndReplacement) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -265,38 +206,7 @@ TEST(HistoryCopy, OlderImportedRunCannotReplaceTheLatestLocalRun) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  History local(directory / "local.sqlite", "secret");
-  History elsewhere(directory / "elsewhere.sqlite", "secret");
-  RunSummaryData here, imported;
-  here.status.run_id = "1";
-  here.status.state = RunState::succeeded;
-  here.status.accepted_at = 100;
-  imported = here;
-  imported.status.run_id = "2";
-  imported.status.accepted_at = 50;
-  local.write_sync(
-      [&](sql::Db& db) { History::insert_run(db, here, crypto::uuid4()); });
-  elsewhere.write_sync(
-      [&](sql::Db& db) { History::insert_run(db, imported, crypto::uuid4()); });
-  ASSERT_EQ(elsewhere.export_runs(directory / "copy.sqlite"), 1);
-  ASSERT_EQ(local.import_runs(directory / "copy.sqlite"), 1);
-  local.read([&](sql::Db& db) {
-    const auto latest = History::latest_run(db);
-    ASSERT_TRUE(latest);
-    EXPECT_EQ(latest->status.run_id, here.status.run_id);
-    EXPECT_TRUE(History::run(db, *imported.status.run_id));
-  });
-}
-
-TEST(HistoryCopy, SavedInputProvenanceSurvivesBothSnapshotPathsAndReplacement) {
-  const auto directory = std::filesystem::temp_directory_path() /
-                         ("tsugumi-history-" + crypto::uuid4());
-  std::filesystem::create_directories(directory);
-  struct Cleanup {
-    std::filesystem::path path;
-    ~Cleanup() { std::filesystem::remove_all(path); }
-  } cleanup{directory};
-  History history(directory / "history.sqlite", "secret");
+  History history(directory / "history.sqlite");
   for (const bool partial : {true, false}) {
     SavedInputGroup group{"in", true, {}, partial};
     history.write_sync([&](sql::Db& db) {
@@ -314,7 +224,7 @@ TEST(HistoryCopy, SavedInputProvenanceSurvivesBothSnapshotPathsAndReplacement) {
   }
 }
 
-TEST(HistoryCopy, DeletionCannotExpandBeyondTheApprovedRuns) {
+TEST(RunHistory, DeletionCannotExpandBeyondTheApprovedRuns) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -322,8 +232,7 @@ TEST(HistoryCopy, DeletionCannotExpandBeyondTheApprovedRuns) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  History history(directory / "history.sqlite", "secret");
-  const auto copy = directory / "copy.sqlite";
+  History history(directory / "history.sqlite");
   RunSummaryData approved, running;
   approved.status.run_id = "1";
   approved.status.state = RunState::succeeded;
@@ -334,32 +243,28 @@ TEST(HistoryCopy, DeletionCannotExpandBeyondTheApprovedRuns) {
     History::insert_run(db, approved, crypto::uuid4());
     History::insert_run(db, running, crypto::uuid4());
   });
-  ASSERT_EQ(history.export_runs(copy), 1);
   const std::vector<std::string> selected{*approved.status.run_id};
   // The second run was not shown for approval. It finishes before deletion.
   running.status.state = RunState::succeeded;
   running.status.ended_at = 20;
   history.write_sync(
       [&](sql::Db& db) { History::update_run(db, running.status); });
-  ASSERT_EQ(history.export_runs(copy), 1);
 
   EXPECT_TRUE(
-      history.delete_runs(copy, std::nullopt, std::vector<std::string>{})
-          .empty());
-  EXPECT_EQ(history.delete_runs(copy, std::nullopt, selected), selected);
+      history.delete_runs(std::nullopt, std::vector<std::string>{}).empty());
+  EXPECT_EQ(history.delete_runs(std::nullopt, selected), selected);
   history.read([&](sql::Db& db) {
     EXPECT_FALSE(History::run(db, *approved.status.run_id));
     EXPECT_TRUE(History::run(db, *running.status.run_id));
   });
-  History restored(directory / "restored.sqlite", "secret");
-  ASSERT_EQ(restored.import_runs(copy), 1);
+  History restored(directory / "history.sqlite");
   restored.read([&](sql::Db& db) {
     EXPECT_FALSE(History::run(db, *approved.status.run_id));
     EXPECT_TRUE(History::run(db, *running.status.run_id));
   });
 }
 
-TEST(HistoryCopy, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
+TEST(RunHistory, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -367,7 +272,7 @@ TEST(HistoryCopy, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  History history(directory / "history.sqlite", "secret");
+  History history(directory / "history.sqlite");
   RunSummaryData old, recent, running;
   old.status.run_id = "1";
   old.status.state = RunState::succeeded;
@@ -381,14 +286,13 @@ TEST(HistoryCopy, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
     for (const auto& run : {old, recent, running})
       History::insert_run(db, run, crypto::uuid4());
   });
-  const auto copy = directory / "absent.sqlite";
   const std::vector<std::string> selected{
       *old.status.run_id, *recent.status.run_id, *running.status.run_id,
       crypto::uuid4(), *old.status.run_id};
-  EXPECT_EQ(history.delete_runs(copy, 20, selected),
+  EXPECT_EQ(history.delete_runs(20, selected),
             std::vector<std::string>{*old.status.run_id});
   // The UI's all-runs request still deletes only finished runs.
-  EXPECT_EQ(history.delete_runs(copy, std::nullopt, std::nullopt),
+  EXPECT_EQ(history.delete_runs(std::nullopt, std::nullopt),
             std::vector<std::string>{*recent.status.run_id});
   history.read([&](sql::Db& db) {
     EXPECT_TRUE(History::run(db, *running.status.run_id));

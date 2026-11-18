@@ -144,6 +144,8 @@ struct Resolution {
   std::vector<Node> nodes;
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;              // between executable nodes only
+  std::vector<std::map<std::string, std::vector<size_t>>> incoming;
+  std::vector<std::vector<size_t>> outgoing;
   std::vector<Diag> diags;
   // Boundary aliases produced by the same leaf resolution as executable wires.
   std::map<std::tuple<std::string, std::string, bool>,

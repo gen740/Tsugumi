@@ -30,7 +30,7 @@ def measure(language, directory, timeout):
     for external in (root / "externals").iterdir():
         if external.name != selected:
             shutil.rmtree(external)
-    daemon = Daemon(root, history_dir=directory / f"history-{language}")
+    daemon = Daemon(root)
     result = {"path": "local", "scenario": language, "runs": [], "summary": {},
               "project": str(root), "daemon_directory": str(daemon.directory)}
     try:

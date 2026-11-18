@@ -46,7 +46,7 @@ class ScopedEnvironment {
   std::optional<std::string> previous_;
 };
 
-// Only the broker transport/dispatch is a double. Core heartbeats and the
+// Only the broker transport/dispatch is a double. The core and the
 // listener's journal (including touch-before-renew expiry) are production code.
 class JournalBroker : public testing::Test {
  protected:
@@ -91,8 +91,7 @@ class JournalBroker : public testing::Test {
     std::unique_lock lock(mutex_);
     return changed_.wait_for(lock, 60s, [&] { return probes_ >= count; });
   }
-  auto Submit(RemoteJobClient& client, const std::string& job,
-              uint32_t missed = 1) -> std::string {
+  auto Submit(RemoteJobClient& client, const std::string& job) -> std::string {
     std::istringstream input("input");
     const auto digest = crypto::sha256_hex("input");
     client.put_blob("worker", server, journal->instance(), job, digest, 5,
@@ -105,8 +104,6 @@ class JournalBroker : public testing::Test {
     spec.input_blobs = {digest};
     spec.timeout_seconds = 60;
     spec.log_limit_bytes = 8u << 20;
-    spec.heartbeat_interval_seconds = 1;
-    spec.missed_heartbeats = missed;
     flatbuffers::FlatBufferBuilder b;
     b.Finish(R::JobSpec::Pack(b, &spec));
     const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
@@ -156,7 +153,6 @@ class JournalBroker : public testing::Test {
         if (q.body.AsProbeRequest()) {
           // Advance lease time explicitly; machine load cannot expire it.
           lease_time_ += 1150;
-          journal->touch_core(q.core_life_id, lease_time_);
           R::CapabilitiesT caps;
           caps.server_id = server;
           caps.instance_id = journal->instance();
@@ -218,23 +214,12 @@ class JournalBroker : public testing::Test {
   std::unique_ptr<ScopedEnvironment> endpoint, capability;
 };
 
-TEST_F(JournalBroker,
-       OneMissedHeartbeatAllowsRealClientProbesAfterTheInterval) {
-  RemoteJobClient client;
-  client.probe("worker", server, 1);
-  const std::string job(64, '1');
-  Submit(client, job);
-  ASSERT_TRUE(journal->claim(job, 1, 1, "boot"));
-  ASSERT_TRUE(WaitForProbes(4));
-  EXPECT_EQ(journal->status(job).state, R::JobState::Running);
-}
-
 TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   RemoteJobClient previous;
   const std::string completed(64, '2'), queued(64, '3'), collected(64, '4');
   std::map<std::string, std::string> fingerprints;
   for (const auto& job : {completed, queued, collected}) {
-    fingerprints[job] = Submit(previous, job, 0);
+    fingerprints[job] = Submit(previous, job);
     fs::write_atomic(journal->job_path(job) / "work/result/output", "output",
                      0600);
     fs::write_atomic(journal->job_path(job) / "supervisor.log", "log", 0600);

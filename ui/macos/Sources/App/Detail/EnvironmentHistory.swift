@@ -13,8 +13,21 @@ struct RecordedEnvironmentIdentity: Equatable {
   var uses: (Tsugumi_RPC_RunEnvironmentUsesRequestT) async throws -> Tsugumi_RPC_EnvironmentUsePageT
 
   init(rpc: RPCClient) {
-    environments = { try await rpc.call(.runenvironmentsrequest, $0) }
-    paths = { try await rpc.call(.runenvironmentpathsrequest, $0) }
+    var pages: [String: Task<Tsugumi_RPC_BuildEnvironmentPageT, Error>] = [:]
+    var differences: [String: Task<Tsugumi_RPC_EnvironmentPathPageT, Error>] = [:]
+    environments = { request in
+      let key = "\(request.runId):\(request.offset ?? 0)"
+      let task = pages[key] ?? Task { try await rpc.call(.runenvironmentsrequest, request) as Tsugumi_RPC_BuildEnvironmentPageT }
+      pages[key] = task
+      do { return try await task.value } catch { pages[key] = nil; throw error }
+    }
+    paths = { request in
+      let key = "\(request.runId):\(request.environmentId):\(request.offset ?? 0):\(request.query ?? ""):\(request.excludingRunId ?? ""):\(request.excludingEnvironmentId ?? "")"
+      let task = differences[key] ?? Task { try await rpc.call(.runenvironmentpathsrequest, request) as Tsugumi_RPC_EnvironmentPathPageT }
+      differences[key] = task
+      defer { differences[key] = nil }
+      return try await task.value
+    }
     uses = { try await rpc.call(.runenvironmentusesrequest, $0) }
   }
 

@@ -647,10 +647,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
         });
         break;
       case K::SetLayout:
-        wrap([&] {
-          check_opaque_layout(c.json);
-          doc->layout_json = c.json;
-        });
+        wrap([&] { doc->layout_json = c.json; });
         break;
       case K::PutDefinition: {
         if (!valid_id(c.id))

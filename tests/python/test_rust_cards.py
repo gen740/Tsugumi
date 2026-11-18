@@ -5,10 +5,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_language_cards import project  # pytest fixture
 
 from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import project, write_project as write_language_project
+from test_language_cards import write_project as write_language_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
@@ -47,7 +48,7 @@ def succeeded(c):
 
 
 def test_scaffold_generated_from_one_template():
-    subprocess.run(['python3', str(ROOT / 'sdk/codegen/scaffold_rust.py'), '--check'], check=True)
+    subprocess.run(['python3', str(ROOT / 'sdk/codegen/scaffold.py'), 'rust', '--check'], check=True)
 
 
 def test_python_rust_cpp_values_and_params(project):

@@ -7,6 +7,7 @@
 #include "host/projects.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -15,8 +16,9 @@ TEST(HostFormat, JsonAndDiagnosticsNeverReadOrWriteAProject) {
   request.path = "definitions/missing/_card.json";
   request.text = R"({"a":[1,2],"b":{}})";
   const auto result = Format(request);
-  EXPECT_EQ(result.text,
-            "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n");
+  EXPECT_EQ(json::Array(json::Get(json::Object(result.text), "a")),
+            (std::vector<std::string>{"1", "2"}));
+  EXPECT_TRUE(json::Object(json::Get(json::Object(result.text), "b")).empty());
   EXPECT_TRUE(result.diagnostics.empty());
   request.text = result.text;
   EXPECT_EQ(Format(request).text, result.text);

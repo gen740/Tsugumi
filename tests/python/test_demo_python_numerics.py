@@ -29,7 +29,7 @@ import pytest
 
 from conftest import demo_environment
 from projects import start_run, wait_run
-from test_demos import connect, display_text, edit_card, set_param, stderr
+from test_demos import connect, edit_card, set_param, stderr
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 

@@ -21,8 +21,6 @@ struct Record {
   uint64_t start = 0;
   std::string boot;
   std::string core_life_id;
-  uint32_t heartbeat_interval_seconds = 15;
-  uint32_t missed_heartbeats = 0;
   auto status() const -> R::JobStatusT;
 };
 
@@ -30,7 +28,6 @@ auto now_ms() -> uint64_t;
 auto private_directory(const stdfs::path& path) -> void;
 auto identity(const stdfs::path& directory, const std::string& name)
     -> std::string;
-auto check_id(std::string_view value) -> void;
 auto discard_tree(const stdfs::path& path) -> void;
 auto file_digest(const stdfs::path& path, uint64_t limit = kMaxBlob)
     -> std::string;
@@ -46,8 +43,6 @@ class Journal {
   auto jobs() const -> std::vector<std::string>;
   auto status(std::string_view job) const -> Record;
   auto spec(std::string_view job) const -> std::string;
-  auto touch_core(std::string_view core, uint64_t now = now_ms()) -> void;
-  auto expire_core(std::string_view job, uint64_t now = now_ms()) -> void;
   auto require_owner(std::string_view job, std::string_view core) const -> void;
   auto put(std::string_view job, const R::PutBlobRequestT& chunk,
            std::string_view core) -> void;

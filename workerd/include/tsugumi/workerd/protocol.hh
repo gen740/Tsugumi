@@ -43,6 +43,5 @@ auto reply(T value) -> R::MessageT {
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT;
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT>;
-auto validate_spec(const R::JobSpecT& spec) -> void;
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

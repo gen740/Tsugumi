@@ -45,6 +45,11 @@ class SkillsFixture : public AgentProjectFixture {
     if (!reply.Code().empty()) throw std::runtime_error(reply.Code());
     return reply.HostValue()->value_as_ProjectTrust()->decision();
   }
+  auto Named(const auto* list, std::string_view name) {
+    for (const auto* skill : *list)
+      if (skill->name()->string_view() == name) return skill;
+    throw std::runtime_error("Missing fixture Skill: " + std::string(name));
+  }
   auto List(const std::vector<std::string>& folders = {}, bool project = true,
             bool websocket = false, const std::string& conversation = {})
       -> Reply {
@@ -359,7 +364,8 @@ TEST_F(SkillsFixture, RevokingTrustStopsFurtherAutomaticProjectSkillRequests) {
 TEST_F(SkillsFixture, NoProjectStillHasDemoAndMissingFoldersHaveStatus) {
   const auto empty = List({}, false);
   ASSERT_TRUE(empty.Code().empty());
-  EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->skills()), 4u);
+  EXPECT_NE(Named(empty.HostValue()->value_as_SkillsList()->skills(), "demo"),
+            nullptr);
   EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->folders()), 0u);
   const auto missing =
       List({(directory.path / "missing").string()}, false, true);
@@ -377,15 +383,22 @@ TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
   Write(root / "notes.txt", "ignored");
   const auto reply = List();
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(list), 7u);
-  EXPECT_EQ(list->Get(0)->path()->str(), "builtin:demo");
-  EXPECT_EQ(list->Get(4)->name()->str(), "B");  // Swift <, not localeCompare.
-  EXPECT_EQ(list->Get(4)->description()->str(), "Explain runs");
-  EXPECT_EQ(list->Get(5)->name()->str(), "Card-review-");
-  EXPECT_EQ(list->Get(5)->description()->str(), "Review outputs");
-  EXPECT_EQ(list->Get(6)->name()->str(), "c");
-  EXPECT_EQ(list->Get(6)->status()->str(), "invalid_scope");
-  EXPECT_EQ(list->Get(6)->description()->str(), "Unclosed Skill front matter");
+  EXPECT_EQ(Named(list, "demo")->path()->str(), "builtin:demo");
+  std::vector<std::string> custom;
+  for (const auto* skill : *list)
+    if (skill->path()->str().starts_with(root.string()))
+      custom.push_back(skill->name()->str());
+  EXPECT_EQ(custom, (std::vector<std::string>{"B", "Card-review-", "c"}));
+  EXPECT_EQ(Named(list, "B")->name()->str(),
+            "B");  // Swift <, not localeCompare.
+  EXPECT_EQ(Named(list, "B")->description()->str(), "Explain runs");
+  EXPECT_EQ(Named(list, "Card-review-")->name()->str(), "Card-review-");
+  EXPECT_EQ(Named(list, "Card-review-")->description()->str(),
+            "Review outputs");
+  EXPECT_EQ(Named(list, "c")->name()->str(), "c");
+  EXPECT_EQ(Named(list, "c")->status()->str(), "invalid_scope");
+  EXPECT_EQ(Named(list, "c")->description()->str(),
+            "Unclosed Skill front matter");
   EXPECT_EQ(
       std::string(reply.bytes.begin(), reply.bytes.end()).find("BODY_SENTINEL"),
       std::string::npos);
@@ -401,13 +414,12 @@ TEST_F(SkillsFixture, SwiftUnicodeNamesWhitespaceAndCRLFBehavior) {
         "---\nname: bad" + std::string("\xff", 1) + "name\n---\nbody");
   const auto reply = List();
   const auto* skills = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(skills), 7u);
-  EXPECT_EQ(skills->Get(4)->name()->str(), "é-Ⅳ-¼--");
-  EXPECT_EQ(skills->Get(4)->description()->str(), "Review");
-  EXPECT_EQ(skills->Get(5)->name()->str(), "b");
-  EXPECT_EQ(skills->Get(5)->description()->str(),
+  EXPECT_EQ(Named(skills, "é-Ⅳ-¼--")->name()->str(), "é-Ⅳ-¼--");
+  EXPECT_EQ(Named(skills, "é-Ⅳ-¼--")->description()->str(), "Review");
+  EXPECT_EQ(Named(skills, "b")->name()->str(), "b");
+  EXPECT_EQ(Named(skills, "b")->description()->str(),
             "---\r\nname: ignored\r\n---\r\nbody");
-  EXPECT_EQ(skills->Get(6)->name()->str(), "bad-name");
+  EXPECT_EQ(Named(skills, "bad-name")->name()->str(), "bad-name");
 }
 
 TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {

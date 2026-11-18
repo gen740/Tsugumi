@@ -766,7 +766,7 @@ views.points = inputs.tsugumi.wasmViewModule {
 
 The processing Card and `report.module("points", config, blobs)` are unchanged.
 The builder compiles C11 or C++20 with Emscripten as a Wasm side module. Its
-output contains `view.wasm`, a byte-count file and an `index.js` symlink to
+output contains `view.wasm` and an `index.js` symlink to
 `inputs.tsugumi.wasmViewTemplate`, one shared Nix output independent of every
 Card's source. `inputs.tsugumi.wasmViewHeaders` supplies the headers separately.
 The standard `<webgpu/webgpu.h>` is the webgpu-headers snapshot from the pinned

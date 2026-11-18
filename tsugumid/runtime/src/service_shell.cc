@@ -515,11 +515,8 @@ auto Service::dispatch_shell(RequestIn req) -> void {
     shell_cancellations_[key] = cancelled;
   }
   const bool accepted = shell_lane_->submit([this, req, cancelled,
-                                             key](bool expired) mutable {
+                                             key]() mutable {
     try {
-      if (expired)
-        throw Failed(FailureKind::timeout,
-                     "the shell request expired before starting");
       if (cancelled->load())
         throw Failed(FailureKind::cancelled,
                      "the shell request was cancelled before starting");

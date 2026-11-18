@@ -84,14 +84,6 @@ struct TsugumiApp: App {
     .defaultSize(width: 900, height: 600)
     .restorationBehavior(.disabled)
 
-    // The documents (README.md, docs/*.md) with their figures: Help menu, Home.
-    Window("Tsugumi を知る", id: "explainer") {
-      Explainer.ExplainerWindow().frame(minWidth: 1000, minHeight: 640)
-    }
-    .windowStyle(.hiddenTitleBar)
-    .defaultSize(width: 1440, height: 900)
-    .restorationBehavior(.disabled)
-
     Window("実行環境のコンソール", id: "console") {
       VMConsoleView().environment(model).environment(prefs)
     }
@@ -131,9 +123,8 @@ struct UpdateMenuItem: View {
 
 /// Help menu: the documents, read with their figures.
 struct OpenExplainerButton: View {
-  @Environment(\.openWindow) private var openWindow
   var body: some View {
-    Button("Tsugumi を知る") { openWindow(id: "explainer") }
+    Button("Tsugumi を知る") { Explainer.open() }
   }
 }
 
@@ -174,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       || AppModel.shared.openChats.contains { $0.busy }
   }
   @MainActor var stopRuntime: () async -> Void = {
-    if Updater.shared.hasStagedUpdate {
+    if Updater.shared.installing {
       await AppModel.shared.environments.shutdownForUpdate()
     } else {
       await AppModel.shared.environments.shutdownForQuit()
@@ -268,7 +259,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       AppPreferences.shared.applyTheme()
       SmokeTest.runIfRequested(AppModel.shared)
       UIScript.runIfRequested()
-      Updater.shared.start()
     }
   }
 

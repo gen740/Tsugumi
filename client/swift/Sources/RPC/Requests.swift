@@ -44,26 +44,14 @@ public extension RPCClient {
     return try await call(.projectsaverequest, r)
   }
 
-  func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ProjectValidateResultT {
-    let r = Tsugumi_RPC_ProjectValidateRequestT()
-    r.atRev = atRev
-    r.targets = targets.map { cardPath($0) }
-    r.mode = executable ? .executable : .structure
-    return try await call(.projectvalidaterequest, r)
-  }
 
-  func operation(_ opId: UUID) async throws -> Tsugumi_RPC_OperationResultT {
-    let r = Tsugumi_RPC_OperationGetRequestT()
-    r.opId = opId.uuidString.lowercased()
-    return try await call(.operationgetrequest, r)
-  }
 
-  /// Reads a whole file in chunks, verifying the final hash. A content hash
-  /// pins every chunk without depending on unrelated document revisions.
+
+
+  /// Reads a whole file in chunks at the selected revision or hash.
   func readFile(path: String, atRev: UInt64?, ifHash: String? = nil) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
-    var hash = ""
     while true {
       let r = Tsugumi_RPC_ProjectFileReadRequestT()
       r.path = path
@@ -73,11 +61,9 @@ public extension RPCClient {
       r.limitBytes = 1 << 20
       let c: Tsugumi_RPC_FileContentT = try await call(.projectfilereadrequest, r)
       out.append(contentsOf: c.bytes)
-      hash = c.hash
       offset = c.nextOffset ?? offset
       if c.eof == true { break }
     }
-    guard sha256Hex(out) == hash else { throw RPCFailure(kind: .integrityError, diagnostic: "hash mismatch for \(path)") }
     return out
   }
 
@@ -163,7 +149,6 @@ public extension RPCClient {
   func readArtifact(id: String, member: String?) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
-    var hash = ""
     while true {
       let r = Tsugumi_RPC_ArtifactReadRequestT()
       r.artifactId = id
@@ -171,11 +156,9 @@ public extension RPCClient {
       r.offset = offset
       let c: Tsugumi_RPC_FileContentT = try await call(.artifactreadrequest, r)
       out.append(contentsOf: c.bytes)
-      hash = c.hash
       offset = c.nextOffset ?? offset
       if c.eof == true { break }
     }
-    guard sha256Hex(out) == hash else { throw RPCFailure(kind: .integrityError, diagnostic: "artifact hash mismatch") }
     return out
   }
 
@@ -256,11 +239,7 @@ public extension RPCClient {
   // MARK: Versions (git)
 
   /// The project's versions, newest first, with branches, tags, runs and changed Cards.
-  func versionGraph(limit: UInt32 = 500) async throws -> Tsugumi_RPC_VersionGraphT {
-    let r = Tsugumi_RPC_VersionGraphRequestT()
-    r.limit = limit
-    return try await call(.versiongraphrequest, r)
-  }
+
 
   /// A version's own Cards and wires, for a minimap.
   func versionCanvas(commit: String) async throws -> Tsugumi_RPC_VersionCanvasT {

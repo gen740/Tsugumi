@@ -201,7 +201,7 @@ async function guide(): Promise<RemoteAgent> {
     guideAgent = await new RemoteAgent(core, 'guide', guideProject, 'guide').open()
   }
   await core.configure(await guideProvider(), 'guide')
-  guideAgent.observe(guideEvents)
+  guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
   await guideAgent.refresh()
   return guideAgent
 }
@@ -272,21 +272,10 @@ const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
 async function answerPermission(id: string, allow: boolean, selected?: string[]) {
-  const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
-  const asked = access.requests.find(r => r.id === id)?.asked ?? []
-  let neededAllowed = allow
-  const additional: string[] = []
-  for (const request of asked) {
-    if (!request.startsWith('project_access ') || request.includes('operation_approval\n')) continue
-    const item = JSON.parse(request.slice('project_access '.length))
-    const checked = allow && (selected ? selected.includes(request) : item.needed_now === true)
-    if (item.needed_now === true) neededAllowed = checked
-    else if (checked) additional.push(item.access)
-  }
-  await core.user.call('AccessResolveRequest', { request_id: id, allow: neededAllowed, also_allow: additional })
+  const result = await core.user.call<{ accepted: boolean }>('AccessResolveRequest', { request_id: id, allow, selected })
   const waiting = permissionWaits.get(id)
   permissionWaits.delete(id)
-  waiting?.resolve(neededAllowed)
+  waiting?.resolve(result.accepted)
   if (waiting) ctx.broadcast({ type: 'chat', project: waiting.project, session: waiting.session,
     event: { kind: 'permissionAnswered', id } })
 }
@@ -328,7 +317,7 @@ class ChatHost {
         }
       }
     }
-    a.observe(this.events(id))
+    a.observe(this.events(id), () => ctx.listeners() > 0)
     await a.refresh()
     return a
   }
@@ -352,6 +341,8 @@ class ChatHost {
     return (event: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event })
   }
 
+  resume() { for (const [id, conversation] of this.conversations) conversation.observe(this.events(id), () => ctx.listeners() > 0) }
+
   detach() { for (const conversation of this.conversations.values()) conversation.close() }
 
   async sessions() {
@@ -374,7 +365,7 @@ class ChatHost {
     await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
       if (!(error instanceof CoreHostError) || error.code !== 'permission_denied') throw error
     })
-    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id })).id
+    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id, name, arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}) })).id
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
         arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op }, signal)
@@ -397,6 +388,11 @@ function chatFor(dir: string): ChatHost {
 }
 
 /** A disconnected page does not own the lifetime of a core conversation. */
+export function resumeChats() {
+  for (const host of chats.values()) host.resume()
+  if (guideAgent) guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
+}
+
 export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
@@ -451,8 +447,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
-    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) c.broadcast({ type: 'settingsChanged' })
+    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) {
+      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }))
+    }
   })
+  const initialSettings = loadSettings()
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
@@ -629,10 +628,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/folder/detach': async (b) => {
     const project = projectDir(b.path)
-    const access = await core.user.call<{ grants: { id: string; project_id: string; active: boolean }[] }>('AccessListRequest')
-    for (const grant of access.grants.filter((g) => g.active && g.project_id === String(b.resource))) {
-      await core.user.call('AccessRevokeRequest', { grant_id: grant.id })
-    }
     await chatFor(project).detachFolder(String(b.folder))
     return { ok: true }
   },
@@ -708,9 +703,5 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
-  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL, signal?: AbortSignal) => {
-    await loadSettings()
-    signal?.throwIfAborted()
-    return handler(body, url, signal)
-  }]))
+  return Object.fromEntries(Object.entries(routes).map(([key, route]) => [key, async (body, url) => { await initialSettings; return route(body, url) }]))
 }

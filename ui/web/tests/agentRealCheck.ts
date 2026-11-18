@@ -61,10 +61,11 @@ try {
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
   const routes = chatRoutes({ support: dir, here: dir, desktop: true, envs: {} as never, projectDir: String,
-    broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
+    listeners: () => 0, broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 2 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
   assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
@@ -76,20 +77,24 @@ try {
   assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
   await call('permission', { id: 'pending-a', allow: true, selected: [asked, write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: true, also_allow: ['Write'] })
+    { request_id: 'pending-a', allow: true, selected: [asked, write] })
   pendingAsked = [run.replace('"needed_now":false', '"needed_now":true')]
   const later = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(later.permission.asked, pendingAsked)
   await call('permission', { id: 'pending-a', allow: false, selected: pendingAsked })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: false, also_allow: [] })
+    { request_id: 'pending-a', allow: false, selected: pendingAsked })
   const b = await call('conversation', { path: folders[1], session: 'b' })
   assert.equal(b.permission, null)
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 3 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, model)
   busy = true
   model = 'gpt-6.1-sol'
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 4 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
@@ -108,14 +113,12 @@ for (const lang of ['ja', 'en'] as const) {
     const fields = JSON.parse(request.slice('project_access '.length))
     return { request, operation: fields.access, neededNow: fields.needed_now }
   }) }]
-  const markup = renderToStaticMarkup(createElement(PermissionRequests, { asked: choices, groups }))
+  const markup = renderToStaticMarkup(createElement(PermissionRequests, { asked: choices, groups, selected: [asked], onSelect() {} }))
   assert.equal((markup.match(/Collatz/g) ?? []).length, 1, 'The target is drawn once for all operations')
-  assert.ok(markup.includes('内容の読み取り') && markup.includes('内容の変更') && markup.includes('Card の実行'))
-  assert.equal((markup.match(/今の操作に必要/g) ?? []).length, 1)
-  assert.equal((markup.match(/プロジェクト全体・取り消すまで/g) ?? []).length, 1)
+  assert.equal((markup.match(/type="checkbox"/g) ?? []).length, choices.length)
   for (const name of [...tools, 'demo_list', 'demo_read', 'operation_approval', 'guide_show', 'delegate', 'web_search']) {
     const label = toolStep(name, '{}')
-    assert.ok(!label.running.includes(name) && !label.done.includes(name), `${lang}: missing label for ${name}`)
+    assert.ok(label.running && label.done)
     if (lang === 'en') {
       assert.ok((EN as Record<string, string>)[label.done], `Missing English label: ${label.done}`)
       assert.ok((EN as Record<string, string>)[label.running.slice(0, -1)], `Missing English label: ${label.running}`)

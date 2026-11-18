@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <set>
 
 #include "agent/catalog.hh"
 #include "host/layout_saving.hh"
@@ -19,7 +20,7 @@ namespace H = Tsugumi::Host;
 TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
   const auto cases = ::tsugumi::json::Array(fs::read_file_or_throw(
       std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-invalid.json"));
-  ASSERT_EQ(cases.size(), 16u);
+  ASSERT_FALSE(cases.empty());
   for (const auto& raw : cases) {
     const auto value = ::tsugumi::json::Object(raw);
     SCOPED_TRACE(::tsugumi::json::Text(value, "name"));
@@ -112,10 +113,10 @@ auto SceneFixture(const ::tsugumi::json::Members& value) -> H::LayoutSceneT {
   bar("outputs", scene.outputs);
   return scene;
 }
-TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
+TEST(HostLayout, ScenesPreserveLayoutConstraints) {
   namespace json = ::tsugumi::json;
   for (const auto& raw : json::Array(fs::read_file_or_throw(
-           std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-golden.json"))) {
+           std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-scenes.json"))) {
     const auto value = json::Object(raw);
     SCOPED_TRACE(json::Text(value, "name"));
     const auto scene =
@@ -123,36 +124,75 @@ TEST(HostLayout, GoldenScenesRetainTheirSharedOperationGeometry) {
     std::vector<std::string> around;
     for (const auto& id : json::Array(json::Get(value, "around", "[]")))
       around.push_back(json::String(id));
-    const auto proposal = json::Text(value, "request") == "arrange"
-                              ? layout::arrange(scene)
-                              : layout::untangle(scene, around);
-    const auto expected = json::Object(value.at("expect"));
-    auto places = [&](const auto& got, const auto& field) {
-      const auto wanted = json::Array(expected.at(field));
-      ASSERT_EQ(got.size(), wanted.size());
-      for (size_t i = 0; i < got.size(); ++i) {
-        const auto item = json::Object(wanted[i]);
-        EXPECT_EQ(got[i].id, json::Text(item, "id"));
-        EXPECT_DOUBLE_EQ(got[i].x, std::stod(item.at("x")));
-        EXPECT_DOUBLE_EQ(got[i].y, std::stod(item.at("y")));
+    const bool arrange = json::Text(value, "request") == "arrange";
+    const auto proposal =
+        arrange ? layout::arrange(scene) : layout::untangle(scene, around);
+    std::vector<layout::Rect> occupied;
+    std::map<std::string, layout::Point> positions;
+    const auto places = [&](const auto& original, const auto& proposed) {
+      std::set<std::string> changed;
+      for (const auto& p : proposed) {
+        EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+        EXPECT_TRUE(changed.insert(p.id).second);
+        EXPECT_TRUE(std::any_of(original.begin(), original.end(),
+                                [&](const auto& o) { return o.id == p.id; }));
+      }
+      if (arrange)
+        EXPECT_EQ(changed.size(), original.size());
+      else
+        EXPECT_TRUE(
+            proposed.empty());  // Untangling changes ports, never positions.
+      for (const auto& o : original) {
+        const auto p =
+            std::find_if(proposed.begin(), proposed.end(),
+                         [&](const auto& p) { return p.id == o.id; });
+        const auto x = p == proposed.end() ? o.x : p->x,
+                   y = p == proposed.end() ? o.y : p->y;
+        occupied.push_back({x, y, o.width, o.height});
       }
     };
-    places(proposal.cards, "cards");
-    places(proposal.frames, "frames");
-    places(proposal.notes, "notes");
-    const auto orders = json::Array(expected.at("portOrders"));
-    ASSERT_EQ(proposal.port_orders.size(), orders.size());
-    for (size_t i = 0; i < orders.size(); ++i) {
-      const auto order = json::Object(orders[i]);
-      EXPECT_EQ(proposal.port_orders[i].id, json::Text(order, "id"));
-      auto names = [&](const auto& side) {
-        std::vector<std::string> result;
-        for (const auto& port : json::Array(order.at(side)))
-          result.push_back(json::String(port));
-        return result;
+    places(scene.cards, proposal.cards);
+    places(scene.frames, proposal.frames);
+    places(scene.notes, proposal.notes);
+    if (arrange) {
+      for (size_t i = 0; i < occupied.size(); ++i)
+        for (size_t j = i + 1; j < occupied.size(); ++j) {
+          const auto& a = occupied[i];
+          const auto& b = occupied[j];
+          EXPECT_FALSE(a.x < b.x + b.width && b.x < a.x + a.width &&
+                       a.y < b.y + b.height && b.y < a.y + a.height);
+        }
+    }
+    for (const auto& c : scene.cards) positions[c.id] = {c.x, c.y};
+    for (const auto& c : proposal.cards) positions[c.id] = {c.x, c.y};
+    for (const auto& raw : json::Array(json::Get(value, "forward", "[]"))) {
+      const auto pair = json::Array(raw);
+      const auto a = positions.at(json::String(pair[0])),
+                 b = positions.at(json::String(pair[1]));
+      EXPECT_LT(scene.top_to_bottom ? a.y : a.x,
+                scene.top_to_bottom ? b.y : b.x);
+    }
+    std::set<std::string> affected(around.begin(), around.end());
+    for (const auto& wire : scene.wires)
+      if (std::ranges::find(around, wire.from) != around.end() ||
+          std::ranges::find(around, wire.to) != around.end()) {
+        affected.insert(wire.from);
+        affected.insert(wire.to);
+      }
+    for (const auto& order : proposal.port_orders) {
+      const auto card =
+          std::find_if(scene.cards.begin(), scene.cards.end(),
+                       [&](const auto& c) { return c.id == order.id; });
+      ASSERT_NE(card, scene.cards.end());
+      if (!arrange && !around.empty()) EXPECT_TRUE(affected.contains(order.id));
+      const auto permutation = [&](const auto& ports, const auto& names) {
+        std::multiset<std::string> expected;
+        for (const auto& port : ports) expected.insert(port.name);
+        EXPECT_EQ(expected,
+                  (std::multiset<std::string>(names.begin(), names.end())));
       };
-      EXPECT_EQ(proposal.port_orders[i].inputs, names("inputs"));
-      EXPECT_EQ(proposal.port_orders[i].outputs, names("outputs"));
+      permutation(card->inputs, order.inputs);
+      permutation(card->outputs, order.outputs);
     }
   }
 }

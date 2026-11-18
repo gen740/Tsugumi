@@ -60,8 +60,6 @@ class Gateway(socketserver.UnixStreamServer):
         self.core_ids = set()
         self.probe_count = 0
         self.probe_times = []
-        self.heartbeat_interval = 15
-        self.missed_heartbeats = 0
         self.grade = 1
         self.blobs = set()
         self.blob_contents = {}
@@ -116,7 +114,7 @@ class Gateway(socketserver.UnixStreamServer):
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
-                heartbeatIntervalSeconds=self.heartbeat_interval, missedHeartbeats=self.missed_heartbeats, grade=self.grade)]))
+                grade=self.grade)]))
         assert R.string(q.serverId) == self.server_id
         if R.string(q.serverId) != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
@@ -324,30 +322,6 @@ def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
-
-@pytest.mark.parametrize("interval,missed", [(1, 3), (2, 0)])
-def test_registered_heartbeat_policy_reaches_job_and_controls_probes(project, remote_gateway, core_factory, tmp_path, interval, missed):
-    remote_gateway.heartbeat_interval = interval
-    remote_gateway.missed_heartbeats = missed
-    client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
-    run_id = start_run(client, "work", propagate=False)
-    live = wait_for_state(client, run_id, RemoteExecutionState.running)
-    spec = remote_gateway.specs[text(live.executionJobId)]
-    assert spec.heartbeatIntervalSeconds == interval
-    assert spec.missedHeartbeats == missed
-    # The policy is typed in the submitted spec. Observe a later heartbeat;
-    # throughput on a shared runner is not a correctness assertion.
-    deadline = time.monotonic() + 60
-    while remote_gateway.probe_count < 4:
-        assert time.monotonic() < deadline, "periodic heartbeat never arrived"
-        time.sleep(0.05)
-    if os.environ.get("TSUGUMI_HEARTBEAT_BENCH") == "1":
-        import runpy
-        runpy.run_path(str(Path(__file__).parents[1] / "bench/heartbeat.py"))["verify"](remote_gateway.probe_times, interval)
-    remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
 
 def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):

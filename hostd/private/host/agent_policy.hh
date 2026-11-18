@@ -1,10 +1,40 @@
 #pragma once
 
+#include <set>
 #include <string_view>
 
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
+
+inline const std::set<std::string> OwnedFields{"origin",
+                                               "op_id",
+                                               "save_intent",
+                                               "approved_permissions",
+                                               "run_ids",
+                                               "restrict_to_run_ids",
+                                               "check_permissions",
+                                               "read_only",
+                                               "hide_credentials",
+                                               "no_project_socket",
+                                               "transfers",
+                                               "working_directory",
+                                               "writable_paths",
+                                               "mounts",
+                                               "output_prefix",
+                                               "workspace_only",
+                                               "protected_paths",
+                                               "excluded_paths"};
+inline auto StripOwnedFields(std::string_view name, bool mutating,
+                             json::Members& args) -> void {
+  for (const auto& field : OwnedFields) {
+    if (field == "op_id" && !mutating) continue;
+    if ((field == "run_ids" || field == "restrict_to_run_ids") &&
+        name != "run_history_delete")
+      continue;
+    args.erase(field);
+  }
+}
 
 // Metadata presentation only: file/source bytes and arbitrary user JSON are
 // opaque. Integrity hashes remain exact because mutations use them for CAS.

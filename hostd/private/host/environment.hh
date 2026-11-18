@@ -41,7 +41,6 @@ struct EnvironmentLaunch {
   std::string key, project, control;
   std::vector<std::string> origins, folders;
   std::vector<EnvironmentMount> mounts;
-  bool archive = false;
   // The VM helper has a separate, named startup environment contract.
   bool vm_helper = false;
   std::vector<std::string> arguments;

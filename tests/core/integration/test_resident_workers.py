@@ -7,7 +7,6 @@ from harness.scenario import Project
 from projects import card, run_and_wait, write
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.Data.FailureKind import FailureKind
 
 
 def test_more_than_32_residents_keep_their_state(core_factory, tmp_path):

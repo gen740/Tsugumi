@@ -224,6 +224,7 @@ struct RunComparisonView: View {
   let onClose: () -> Void
   @State private var left: String
   @State private var right: String
+  @State private var source: EnvironmentHistorySource?
   @State private var rows: [ComparedRunRow]?
   @State private var error: String?
   @State private var diff: Tsugumi_Host_VersionDiffT?
@@ -263,7 +264,7 @@ struct RunComparisonView: View {
             ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right), displayPath: session.displayPath)])
             versionDifference
             if rows.isEmpty { ContentUnavailableView("記録がありません", systemImage: "tray") }
-            ForEach(rows) { ComparedRunCardView(session: session, row: $0, leftRun: left, rightRun: right) }
+            ForEach(rows) { ComparedRunCardView(source: source, session: session, row: $0, leftRun: left, rightRun: right) }
           } else { ProgressView() }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -297,6 +298,7 @@ struct RunComparisonView: View {
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
     guard !left.isEmpty, !right.isEmpty, left != right else { return }
     do {
+        source = EnvironmentHistorySource(rpc: rpc)
       let result = try await RunComparison.load(rpc, left: left, right: right)
       guard !Task.isCancelled else { return }
       rows = result
@@ -318,6 +320,7 @@ struct RunComparisonView: View {
 }
 
 private struct ComparedRunCardView: View {
+  var source: EnvironmentHistorySource?
   let session: ProjectSession
   let row: ComparedRunRow
   let leftRun: String
@@ -338,7 +341,7 @@ private struct ComparedRunCardView: View {
             status(row.right).frame(maxWidth: .infinity, alignment: .leading)
           }.padding(6).background(row.left?.summary.state != row.right?.summary.state || row.left?.summary.durationMs != row.right?.summary.durationMs ? changed : .clear)
           ComparedFieldsView(title: "実行条件", values: RunComparison.conditions(row.left, row.right, displayPath: session.displayPath))
-          RecordedEnvironmentComparison(session: session,
+          RecordedEnvironmentComparison(source: source, session: session,
             left: .init(run: leftRun, id: (row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId ?? ""),
             right: .init(run: rightRun, id: (row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId ?? ""))
             .id(leftRun + ":" + rightRun + ":" + row.card)

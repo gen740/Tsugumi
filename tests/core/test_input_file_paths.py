@@ -102,7 +102,7 @@ def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(cor
     source = "definitions/load/data/events.txt"
     data = b"\x00\xff\x80\xc3(\n"
     (owner / source).write_bytes(data)
-    daemon = core_factory(history_dir=tmp_path / "history-original")
+    daemon = core_factory()
     client = daemon.connect()
 
     def recorded():
@@ -128,7 +128,7 @@ def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(cor
     daemon.stop()
     copied_project = tmp_path / "copied"
     shutil.copytree(project, copied_project, symlinks=True)
-    copied = core_factory(project_root=copied_project, history_dir=tmp_path / "history-copy")
+    copied = core_factory(project_root=copied_project)
     outputs = copied.connect().call("RunRecordRequest", runId=first_id, card=path(*segments)).record.outputs
     assert len(outputs) == 1
     value = outputs[0]

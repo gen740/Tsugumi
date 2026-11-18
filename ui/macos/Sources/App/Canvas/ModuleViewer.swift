@@ -143,6 +143,7 @@ struct ModuleViewerHost: NSViewRepresentable {
     var loading: Task<Void, Never>?
     private var ready = false
     private var pending: [String: Any]?
+    private var sent: (String, String, [String: Data])?
     private var shown: (String, String, [String: Data], Bool, String)?
     init(error: Binding<String>) { self.error = error }
 
@@ -170,8 +171,12 @@ struct ModuleViewerHost: NSViewRepresentable {
         do {
           let code = try await ModuleSources.source(name)
           guard !Task.isCancelled else { return }
-          pending = ["name": name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() },
-                     "code": code, "interactive": interactive, "colorScheme": colorScheme, "visible": true]
+          var message: [String: Any] = ["name": name, "interactive": interactive, "colorScheme": colorScheme, "visible": true]
+          if sent?.0 != name { message["code"] = code }
+          if sent?.0 != name || sent?.1 != json || sent?.2 != blobs {
+            message["json"] = json; message["blobs"] = blobs.mapValues { $0.base64EncodedString() }
+          }
+          pending = message
           flush()
         } catch { if !Task.isCancelled { self.error.wrappedValue = error.localizedDescription } }
       }
@@ -179,6 +184,7 @@ struct ModuleViewerHost: NSViewRepresentable {
     private func flush() {
       guard ready, let message = pending, let web else { return }
       pending = nil
+      if let shown { sent = (shown.0, shown.1, shown.2) }
       Task {
         _ = try? await web.callAsyncJavaScript("return await tsugumiRender(message)", arguments: ["message": message], contentWorld: .page)
       }
@@ -187,6 +193,7 @@ struct ModuleViewerHost: NSViewRepresentable {
       guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any] else { return }
       if body["tsugumi"] as? String == "ready" { ready = true; flush() }
       else if body["tsugumi"] as? String == "state" {
+        if body["state"] as? String == "error" { sent = nil }
         error.wrappedValue = body["state"] as? String == "error" ? String((body["message"] as? String ?? "").prefix(4096)) : ""
       }
     }

@@ -187,8 +187,7 @@ class BrokerFixture : public AgentFixture {
   }
   auto Put(std::string key = {}, std::string id = "worker",
            std::string endpoint = {}, bool verify = true,
-           std::string name = "Test worker", uint32_t interval = 15,
-           uint32_t missed = 0, uint64_t grade = 1) -> Reply {
+           std::string name = "Test worker", uint64_t grade = 1) -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
           return H::CreateExecutionServicePutRequest(
@@ -200,7 +199,7 @@ class BrokerFixture : public AgentFixture {
                              : endpoint),
                      b.CreateString(key.empty() ? worker->identity.public_key()
                                                 : key),
-                     verify, interval, missed, grade)
+                     verify, grade)
               .Union();
         });
   }
@@ -335,8 +334,7 @@ TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
   ASSERT_EQ(ListSize(services), 1u);
   EXPECT_EQ(services->Get(0)->id()->str(), "local");
   EXPECT_EQ(services->Get(0)->grade(), 0u);
-  ASSERT_TRUE(
-      Put({}, "worker", {}, true, "worker", 15, 0, UINT64_MAX).Code().empty());
+  ASSERT_TRUE(Put({}, "worker", {}, true, "worker", UINT64_MAX).Code().empty());
   Restart();
   listed = List();
   services = listed.HostValue()->value_as_ExecutionServices()->services();
@@ -346,40 +344,6 @@ TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
   const auto& entries = catalog->payload.AsReply()->body.AsCatalog()->services;
   ASSERT_EQ(entries.size(), 2u);
   EXPECT_EQ(entries[1]->grade, UINT64_MAX);
-}
-TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
-  ASSERT_TRUE(Put().Code().empty());
-  auto listed = List();
-  auto* service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), 15u);
-  EXPECT_EQ(service->missed_heartbeats(), 0u);
-  const auto capability = Authorize("project");
-  ASSERT_TRUE(Put({}, "worker", {}, false, "Test worker", 2, 3).Code().empty());
-  Restart();
-  listed = List();
-  service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), 2u);
-  EXPECT_EQ(service->missed_heartbeats(), 3u);
-  const auto response = Broker(R::CatalogRequestT{}, capability);
-  const auto* catalog = response->payload.AsReply()->body.AsCatalog();
-  ASSERT_NE(catalog, nullptr);
-  ASSERT_EQ(catalog->services.size(), 2u);
-  EXPECT_TRUE(catalog->services[1]->available);
-  EXPECT_EQ(catalog->services[1]->heartbeat_interval_seconds, 2u);
-  EXPECT_EQ(catalog->services[1]->missed_heartbeats, 3u);
-  EXPECT_FALSE(
-      Put({}, "worker", {}, false, "Test worker", 0, 3).Code().empty());
-  ASSERT_TRUE(
-      Put({}, "worker", {}, false, "Test worker", UINT32_MAX, UINT32_MAX)
-          .Code()
-          .empty());
-  listed = List();
-  service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), UINT32_MAX);
-  EXPECT_EQ(service->missed_heartbeats(), UINT32_MAX);
 }
 TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
   const auto capability = Authorize("project");
@@ -462,14 +426,15 @@ TEST_F(BrokerFixture, AuthorizationSurvivesRestartAndRevocationIsDurable) {
       Broker(R::CatalogRequestT{}, next)->payload.AsReply()->body.AsFailure(),
       nullptr);
 }
-TEST_F(BrokerFixture, StaleRegistrationIsRejectedBeforeContactingTheWorker) {
+TEST_F(BrokerFixture, PinnedRegistrationOwnsTheWorkerIdentity) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   const auto count = worker->Requests().size();
-  auto changed = Broker(R::StatusRequestT{}, capability, std::string(64, 'c'));
-  EXPECT_EQ(changed->payload.AsReply()->body.AsFailure()->code,
-            R::ErrorCode::RegistrationChanged);
-  EXPECT_EQ(worker->Requests().size(), count);
+  auto changed = Broker(R::ProbeRequestT{}, capability, std::string(64, 'c'));
+  ASSERT_NE(changed->payload.AsReply()->body.AsCapabilities(), nullptr);
+  EXPECT_EQ(changed->payload.AsReply()->body.AsCapabilities()->server_id,
+            worker->server);
+  EXPECT_EQ(worker->Requests().size(), count + 1);
   // Malformed frames cannot affect the daemon or trigger outbound requests.
   {
     Socket socket{
@@ -480,7 +445,7 @@ TEST_F(BrokerFixture, StaleRegistrationIsRejectedBeforeContactingTheWorker) {
     EXPECT_THROW(ReadMessage(socket.fd), std::runtime_error);
   }
   EXPECT_TRUE(List().Code().empty());
-  EXPECT_EQ(worker->Requests().size(), count);
+  EXPECT_EQ(worker->Requests().size(), count + 1);
 }
 }  // namespace
 }  // namespace tsugumi::test

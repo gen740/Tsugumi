@@ -27,7 +27,7 @@ export interface ServerInfo {
 /** Immutable runtime location and bundle contents distinguish installations
  * and rebuilds, including two builds with the same release version. */
 export function serverBuild(script: string): string {
-  const hash = createHash('sha256').update(fs.realpathSync(script)).update('\0').update(fs.readFileSync(script))
+  const hash = createHash('sha256').update(fs.realpathSync(script)).update('\0').update(`${fs.statSync(script).size}:${fs.statSync(script).mtimeMs}`)
   const repo = runtimeRoot(path.dirname(script))
   // Nix can reuse the Web output while changing the native runtime injected
   // by the command's wrapper. The plugin and its child inherit the same paths.
@@ -37,7 +37,7 @@ export function serverBuild(script: string): string {
   ]) {
     const binary = process.env[name] ?? (fallback ? path.join(process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build'), fallback) : '')
     hash.update('\0' + binary)
-    if (binary && fs.existsSync(binary)) hash.update(fs.readFileSync(binary))
+    if (binary && fs.existsSync(binary)) { const stat = fs.statSync(binary); hash.update(`${stat.size}:${stat.mtimeMs}`) }
   }
   return hash.digest('hex')
 }
@@ -45,11 +45,6 @@ export function serverBuild(script: string): string {
 export function readServer(data: string): ServerInfo | undefined {
   try {
     const s = JSON.parse(fs.readFileSync(path.join(data, 'server.json'), 'utf8'))
-    if (!s || typeof s.build !== 'string' || !/^[a-f0-9]{64}$/.test(s.build) ||
-        !Number.isInteger(s.port) || s.port < 1 || s.port > 65535 ||
-        !Number.isInteger(s.pid) || s.pid < 1 || typeof s.agentKey !== 'string' || !/^[a-f0-9]{64}$/.test(s.agentKey)) {
-      throw new Error('Invalid server.json; stop the running Tsugumi host and remove this file before restarting.')
-    }
     return s
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined
@@ -73,11 +68,6 @@ export async function runningServer(data: string, build: string): Promise<Server
     throw e
   }
   if (s.build !== build) throw new Error(`A different Tsugumi build is running (PID ${s.pid}, http://127.0.0.1:${s.port}/). Stop that host and restart tsugumi to use this build.`)
-  // A live but unresponsive host must not lead to a duplicate host.
-  const r = await serverRequest(s, '/api/host/identify')
-  if (!r.ok || (await r.json() as { build?: string }).build !== build) {
-    throw new Error(`The running Tsugumi host (PID ${s.pid}) could not be verified. Stop it before restarting.`)
-  }
   return s
 }
 

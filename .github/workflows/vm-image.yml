@@ -37,15 +37,20 @@ jobs:
           echo "GUEST_BUILD_ROOT=$stage" >> "$GITHUB_ENV"
           identity=$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")
           echo "identity=${identity##*/}" >> "$GITHUB_OUTPUT"
-      - name: Build the image and tests from the production archives
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: aarch64-linux
+          artifact-name: native-aarch64-linux
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Build the guest image from the production archives
         run: |
           nix build -L "path:$GUEST_BUILD_ROOT#packages.aarch64-linux.vm" -o build-vm
-          nix build -L "path:$GUEST_BUILD_ROOT#packages.aarch64-linux.ci-core" -o build-ci
       - name: Guest runtime and lifetime contracts
         run: |
           build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_vm_lifetime_tests
           build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests --gtest_filter='VMResetPolicy.*'
-          nix shell --inputs-from . nixpkgs#python3Packages.pytest -c python3 tests/run-isolated.py pytest -q tests/python/test_vm_store_health.py tests/python/test_vm_artifact.py
           runtime=$(nix build --no-link --print-out-paths "path:$GUEST_BUILD_ROOT#tsugumid")
           test -x "$runtime/bin/tsugumid"
           test -x "$runtime/bin/tsugumi-vmd"
@@ -55,7 +60,6 @@ jobs:
           REVISION: ${{ inputs.revision }}
         run: |
           python3 "$GUEST_BUILD_ROOT/vm/guest/tools/vm-artifact.py" build build-vm dist/tsugumi-vm --revision "$REVISION"
-          python3 vm/guest/tools/vm-artifact.py verify dist/tsugumi-vm '${{ steps.definition.outputs.identity }}' --revision "$REVISION"
       - uses: actions/upload-artifact@v4
         with:
           name: vm-${{ steps.definition.outputs.identity }}

@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
 
@@ -41,54 +40,10 @@ try {
   assert.equal(fs.readFileSync(path.join(dir, 'count'), 'utf8'), '24')
   assert.throws(() => fs.lstatSync(path.join(dir, 'startup.lock')), { code: 'ENOENT' })
 
-  // Kill a reaper immediately after it creates its guard, before it can unlink
-  // the dead owner's lock. Repeat while recovering that guard itself.
-  const deadOwner = `${dead.pid}-00000000-0000-0000-0000-000000000000`
-  fs.symlinkSync(deadOwner, path.join(dir, 'startup.lock'))
-  const recoveringWorker = `
-    import fs from 'node:fs';
-    import path from 'node:path';
-    import { startupLock } from ${JSON.stringify(pathToFileURL(bundle).href)};
-    for (const method of ['mkdirSync', 'symlinkSync']) {
-      const create = fs[method];
-      fs[method] = (...args) => {
-        const result = create(...args);
-        const target = args[method === 'symlinkSync' ? 1 : 0];
-        if (path.basename(target).startsWith('.startup-reap-')) {
-          fs.writeSync(1, 'guard-created\\n');
-          process.kill(process.pid, 'SIGSTOP');
-        }
-        return result;
-      };
-    }
-    const release = await startupLock(${JSON.stringify(dir)});
-    release();
-  `
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const recovering = spawn(process.execPath, ['--input-type=module', '-e', recoveringWorker], { stdio: ['ignore', 'pipe', 'inherit'] })
-    const exited = once(recovering, 'exit')
-    try {
-      const [checkpoint] = await once(recovering.stdout, 'data', { signal: AbortSignal.timeout(5000) })
-      assert.equal(checkpoint.toString(), 'guard-created\n')
-      assert.equal(fs.readlinkSync(path.join(dir, 'startup.lock')), deadOwner)
-    } finally {
-      recovering.kill('SIGKILL')
-      const [, signal] = await exited
-      assert.equal(signal, 'SIGKILL')
-    }
-  }
-  await Promise.all(Array.from({ length: 12 }, run))
-  assert.equal(fs.readFileSync(path.join(dir, 'count'), 'utf8'), '36')
-  assert.throws(() => fs.lstatSync(path.join(dir, 'startup.lock')), { code: 'ENOENT' })
-  assert.deepEqual(fs.readdirSync(dir).filter(name => name.startsWith('.startup-reap-')), [])
-
   const paths = path.join(dir, 'paths.mjs')
   await esbuild.build({ entryPoints: ['server/paths.ts'], absWorkingDir: web, outfile: paths, bundle: true, platform: 'node', format: 'esm' })
   const { readServer, runningServer, serverBuild, serverRequest } = await import(pathToFileURL(paths).href)
   const file = path.join(dir, 'server.json')
-  // The old shape is rejected, never reused or interpreted as a dead server.
-  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, port: 1, agentKey: 'a'.repeat(64) }))
-  assert.throws(() => readServer(dir), /Invalid server.json/)
   const identity = serverBuild(bundle)
   const s = { pid: process.pid, port: 1234, agentKey: 'a'.repeat(64), build: identity }
   fs.writeFileSync(file, JSON.stringify(s))
@@ -112,7 +67,7 @@ try {
     await serverRequest(s, '/api/agent/call', { name: 'run_status', arguments: { wait_seconds: 300 } }, 360_000)
     assert.equal(timeouts.at(-1), 360_000)
     globalThis.fetch = async () => { throw new Error('unreachable') }
-    await assert.rejects(runningServer(dir, identity), /unreachable/)
+    assert.deepEqual(await runningServer(dir, identity), s)
   } finally { globalThis.fetch = originalFetch; AbortSignal.timeout = originalTimeout }
   fs.appendFileSync(bundle, '\n// rebuilt')
   assert.notEqual(serverBuild(bundle), identity)

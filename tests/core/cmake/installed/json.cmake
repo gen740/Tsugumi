@@ -8,7 +8,7 @@ add_library(tsugumi_util STATIC IMPORTED)
 set_target_properties(tsugumi_util PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_util.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_util INTERFACE PkgConfig::SQLITE3 Threads::Threads)
+target_link_libraries(tsugumi_util INTERFACE tsugumi_crypto PkgConfig::SQLITE3 Threads::Threads)
 if(NOT APPLE)
   pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
   target_link_libraries(tsugumi_util INTERFACE PkgConfig::CRYPTO)

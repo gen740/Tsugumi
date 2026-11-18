@@ -389,12 +389,7 @@ enum TsugumiThread {
     g.stroke(p, with: .color(TsugumiPalette.thread), style: StrokeStyle(lineWidth: 2, lineCap: .round))
   }
 
-  private static func line(_ a: CGPoint, _ b: CGPoint) -> Path {
-    var p = Path()
-    p.move(to: a)
-    p.addLine(to: b)
-    return p
-  }
+
 }
 
 /// The temari (kagari-wound) the bird unwinds, low-poly like the bird: a ball

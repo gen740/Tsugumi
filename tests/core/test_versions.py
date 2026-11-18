@@ -86,6 +86,7 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert [text(tag) for entry in graph(c).commits for tag in (entry.tags or [])] == ["second-text"]
     # Starting from the first version: the documents are that version's,
     # and a change there opens a branch; the later one stays.
+    original_branch = text(graph(c).branch)
     rev = c.call("ProjectInspectRequest").rev
     c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=first)
     assert src_text(c) == "first"
@@ -93,7 +94,7 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     _, st3 = run_and_wait(c, "start")
     g = graph(c)
     branches = {text(b) for x in g.commits for b in (x.branches or [])}
-    assert text(g.branch).startswith("try-") and len(branches) == 2, branches
+    assert text(g.branch) != original_branch and {original_branch, text(g.branch)} <= branches, branches
     third = next(x for x in g.commits if text(x.id) == text(st3.commit))
     assert [text(p) for p in third.parents] == [first]
 
@@ -175,7 +176,6 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     assert [text(r.state) for r in by["別の文を試す"].runs] == ["failed"]
     assert not by["別の文を試す"].runs[0].summary  # the history file gives none
     assert src_text(c) == "final"
-    parent = next(entry for entry in graph(c).commits if text(entry.message) == "計画")
 
 
 
@@ -409,20 +409,18 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
         assert e.kind == "not_found"
 
 
-def test_compare_runs_keeps_parameters_and_diffs_the_selected_versions(tmp_path, core_factory):
-    """Comparison reads immutable parameters and a direct diff, without checkout or writes."""
+def test_run_parameters_remain_recorded_across_edits_and_restart(tmp_path, core_factory):
+    """Earlier runs retain their parameters after edits and daemon restart."""
     root = tmp_path / "compare"
     builtin_project(root, text="first")
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
-    run1, first = run_and_wait(c, "src")
+    run1, _ = run_and_wait(c, "src")
     set_text(c, "intermediate")
     run_and_wait(c, "src")
     set_text(c, "third")
-    run3, third = run_and_wait(c, "src")
-    before = c.call("ProjectInspectRequest")
-    head = text(graph(c).head)
+    run3, _ = run_and_wait(c, "src")
     set_text(c, "current document")
 
     def check(client):

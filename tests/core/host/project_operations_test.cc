@@ -121,13 +121,13 @@ TEST(ProjectOperationUndo,
   ASSERT_EQ(inverse.edits.size(), 1);
   SaveBase current = before;
   current.files["tsugumi.json"] =
-      R"({"name":"new","canvas":{"cards":[],"connections":[]},"saveRunHistory":false})";
+      R"({"name":"new","canvas":{"cards":[],"connections":[]},"agentExcludedPaths":["private"]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   const auto change = json::Object(json::Array(plan.at("changes")).front());
   const auto restored =
       json::Object(json::Text(json::Object(change.at("value")), "json"));
   EXPECT_EQ(json::Text(restored, "name"), "old");
-  EXPECT_EQ(restored.at("saveRunHistory"), "false");
+  EXPECT_EQ(json::Array(restored.at("agentExcludedPaths")).size(), 1u);
   current.files["tsugumi.json"] =
       R"({"name":"changed-by-someone-else","canvas":{"cards":[],"connections":[]}})";
   try {

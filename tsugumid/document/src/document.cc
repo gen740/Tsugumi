@@ -189,8 +189,8 @@ auto check_version_paths(const schema::Project& p) -> void {
     for (const auto& path : *paths)
       if (!Document::valid_version_path(path))
         invalid(
-            "versionPaths: expected a relative file or folder outside .git and "
-            ".tsugumi",
+            "versionPaths: expected a relative file or folder outside .git "
+            "and .tsugumi",
             {{"path", path}});
 }
 
@@ -245,13 +245,6 @@ schema::CardLink parse_link_json(const std::string& id,
     invalid(rel + ": \"external\" must name a folder of externals/",
             {{"path", rel}});
   return l;
-}
-
-auto check_opaque_layout(const std::string& text) -> void {
-  if (text.size() > 8 * 1024 * 1024)
-    throw DocumentError("resource_limit", "layout.json exceeds 8 MiB");
-  decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>("layout.json",
-                                                                  text);
 }
 
 schema::CardDefinition parse_card_json(const std::string& id,
@@ -410,7 +403,6 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
 
   auto layout_text = fs::read_file(root / "layout.json");
   doc->layout_json = layout_text ? *layout_text : kEmptyLayout;
-  check_opaque_layout(doc->layout_json);
   if (layout_text)
     doc->disk_hashes["layout.json"] = crypto::sha256_hex(*layout_text);
 

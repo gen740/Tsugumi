@@ -105,12 +105,12 @@ class Worker:
         assert response.bodyType == R.ReplyBody.Ack
         return digest
 
-    def spec(self, digest, timeout=30, interval=15, missed=0):
+    def spec(self, digest, timeout=30):
         return R.pack(R.JobSpecT(system=self.caps.nativeSystem,
             derivation="/nix/store/00000000000000000000000000000000-test.drv",
             output="/nix/store/00000000000000000000000000000000-test", invocationSha256=digest,
             inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20,
-            heartbeatIntervalSeconds=interval, missedHeartbeats=missed))
+            ))
 
 
 @pytest.fixture
@@ -236,7 +236,7 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
     try:
         for i, job in enumerate(jobs):
             digest = peer.upload(job, b"staged input")
-            spec = peer.spec(digest, timeout=1 if i == 2 else 60, interval=15, missed=3)
+            spec = peer.spec(digest, timeout=1 if i == 2 else 60)
             fingerprints[job] = hashlib.sha256(spec).hexdigest()
             accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
             assert accepted.bodyType == R.ReplyBody.JobStatus
@@ -321,7 +321,7 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
     fingerprints = {}
     try:
         digest = peer.upload(first, b"orphan input")
-        spec = peer.spec(digest, timeout=5, interval=1, missed=0)
+        spec = peer.spec(digest, timeout=5)
         fingerprints[first] = hashlib.sha256(spec).hexdigest()
         accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=first)
         assert accepted.body.state == R.JobState.Queued
@@ -331,7 +331,6 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
                  "orphan never started its child")
         pid = child()
         assert os.path.exists(f"/proc/{pid}"), "child must be alive before the deadline"
-        assert record(first)["missed_heartbeats"] == 0
         assert record(first)["deadline"] == 0
         # The adapter has not started a Card call: its wall time is not the
         # Card budget. Cancellation still tears down its namespace.
@@ -349,7 +348,7 @@ def test_never_heartbeat_orphan_cancels_child_and_reuses_slot(tmp_path):
         peer.core_life_id = "f" * 64
         peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
         digest = peer.upload(second, b"next input")
-        spec = peer.spec(digest, timeout=30, interval=1, missed=0)
+        spec = peer.spec(digest, timeout=30)
         fingerprints[second] = hashlib.sha256(spec).hexdigest()
         peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=second)
         wait_for(lambda: record(second)["state"] == R.JobState.Running and

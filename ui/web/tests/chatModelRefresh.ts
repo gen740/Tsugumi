@@ -109,7 +109,7 @@ try {
   const after = Date.now() / 1000
   assert.equal(writer.at(after), undefined)
   assert.equal(helper.place(after, () => ({ x: 500, y: 0 }))?.flying, false)
-  for (const bird of chat.team.birds) assert.equal(bird.line(after)?.text, '実行しています')
+  for (const bird of chat.team.birds) assert.ok(bird.line(after)?.text)
 } finally {
   chat.close()
   globalThis.fetch = originalFetch

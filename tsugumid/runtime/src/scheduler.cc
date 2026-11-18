@@ -1740,13 +1740,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               const std::string rel =
                   (project_relative ? node.project_dir : node.def_dir) + file;
               if (!fs::valid_relative_path(file) || !doc_->sources.count(rel))
-                throw Failed(FailureKind::invalid_path,
-                             "input file " + rel +
-                                 " is not a project source; use a path "
-                                 "relative to the Card's "
-                                 "definition folder, or project:<path> for its "
-                                 "project root",
-                             {{"path", rel}});
+                throw Failed(
+                    FailureKind::invalid_path,
+                    "input file " + rel +
+                        " is not a project source; use a path relative "
+                        "to the Card's "
+                        "definition folder, or project:<path> for its "
+                        "project root",
+                    {{"path", rel}});
               auto data = svc_.store().read_source(*doc_, rel);
               auto dest = invocation_dir(node, s.invocation) / "out" /
                           stdfs::path(rel).filename();
@@ -2084,8 +2085,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           // graph ends. Startup records interruption before remote cleanup.
           db.prepare(
                 "DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
-                "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=statuses.run_id "
-                "AND j.card=statuses.card "
+                "SELECT 1 FROM remote_jobs AS j WHERE "
+                "j.run_id=statuses.run_id AND j.card=statuses.card "
                 "AND j.invocation=statuses.invocation)")
               .bind(1, *sum.status.run_id)
               .run();
@@ -2243,10 +2244,11 @@ std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
         if (p.optional) continue;
         bool fed = false;
         bool only_waiting = true;
-        for (const auto& e : res.edges)
-          if (e.to == i && e.to_port == p.name) {
+        if (const auto port = res.incoming[i].find(p.name);
+            port != res.incoming[i].end())
+          for (const auto from : port->second) {
             fed = true;
-            only_waiting &= waits.count(e.from) > 0;
+            only_waiting &= waits.count(from) > 0;
           }
         if (fed && only_waiting) {
           waits.insert(i);
@@ -2286,10 +2288,10 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       targets.insert(i);
       bool from_outside = false;
       bool any_in = false;
-      for (const auto& e : res.edges)
-        if (e.to == i) {
+      for (const auto& [port, froms] : res.incoming[i])
+        for (const auto from : froms) {
           any_in = true;
-          from_outside |= !inside(e.from);
+          from_outside |= !inside(from);
         }
       if (from_outside)
         seeds.push_back(i);
@@ -2305,11 +2307,10 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       while (!stack.empty()) {
         size_t i = stack.back();
         stack.pop_back();
-        for (const auto& e : res.edges)
-          if (e.from == i && !targets.count(e.to) &&
-              res.nodes[e.to].kind != Template::Draft) {
-            targets.insert(e.to);
-            stack.push_back(e.to);
+        for (const auto to : res.outgoing[i])
+          if (!targets.count(to) && res.nodes[to].kind != Template::Draft) {
+            targets.insert(to);
+            stack.push_back(to);
           }
       }
     }
@@ -2323,9 +2324,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       if (res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft)
         continue;
       targets.insert(i);
-      bool has_in = false;
-      for (const auto& e : res.edges) has_in |= e.to == i;
-      if (!has_in) starts.push_back(i);
+      if (res.incoming[i].empty()) starts.push_back(i);
     }
   } else {
     std::vector<size_t> stack = {t};
@@ -2333,8 +2332,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
       size_t i = stack.back();
       stack.pop_back();
       if (!targets.insert(i).second) continue;
-      for (const auto& e : res.edges)
-        if (e.from == i) stack.push_back(e.to);
+      for (const auto to : res.outgoing[i]) stack.push_back(to);
     }
     starts.push_back(t);
   }
@@ -2566,8 +2564,6 @@ std::optional<Note> Scheduler::latest_display_note(
 }
 
 void Scheduler::finished(RunExec* exec) {
-  svc_.schedule_export();
-  svc_.refresh_cache_usage();
   std::lock_guard<std::mutex> l(mu_);
   std::shared_ptr<RunExec> done;
   if (active_.get() == exec) done = std::move(active_);

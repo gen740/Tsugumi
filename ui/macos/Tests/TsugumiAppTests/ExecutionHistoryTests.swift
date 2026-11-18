@@ -12,7 +12,7 @@ import Testing
 
 // Serialize with the fixtures that temporarily override the core service state directory.
 extension ChatResumeTests {
-  @MainActor @Test func executionHistoryRecoveryRequiresExplicitArchive() async throws {
+  @MainActor @Test func executionHistoryFailurePreservesTheMismatch() async throws {
     let dir = try SyncTests.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let support = dir.appendingPathComponent("test-support")
@@ -28,7 +28,7 @@ extension ChatResumeTests {
       "unix_socket": socket, "host_socket": socket, "user_token": "fixture"])
       .write(to: state.appendingPathComponent("host.ready"))
     let host = Task {
-      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Bool], Error>) in
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, Error>) in
         Thread.detachNewThread {
           continuation.resume(with: Result {
             func acceptPeer() throws -> Int32 {
@@ -60,10 +60,10 @@ extension ChatResumeTests {
 
             let peer = try acceptPeer()
             defer { Darwin.close(peer) }
-            var archives: [Bool] = []
+            var attempts = 0
             var latest = Tsugumi_Host_EnvironmentStateT()
             latest.project = identity.url.path; latest.key = identity.id; latest.phase = .stopped
-            while archives.count < 3 {
+            while attempts < 1 {
               guard let bytes = try VMHostIPC.read(peer) else { throw POSIXError(.EPROTO) }
               var buffer = ByteBuffer(data: bytes)
               let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
@@ -77,11 +77,9 @@ extension ChatResumeTests {
                 if input.action == .start {
                   let environment = Tsugumi_Host_EnvironmentStateT()
                   environment.project = identity.url.path; environment.key = identity.id
-                  let attempt = archives.count
-                  archives.append(input.archiveIncompatibleHistory)
+                  attempts += 1
                   environment.phase = .failed; environment.message = "cannot open history"
-                  let diagnostic = ["kind": attempt < 2 ? "incompatible_history" : "database_corrupt",
-                                    "found": attempt == 1 ? "pending" : "2", "expected": "3"]
+                  let diagnostic = ["kind": "incompatible_history", "found": "2", "expected": "3"]
                   environment.startupErrorJson = String(decoding: try JSONSerialization.data(withJSONObject: diagnostic), as: UTF8.self)
                   latest = environment
                 } else {
@@ -96,7 +94,7 @@ extension ChatResumeTests {
               Tsugumi_Host_Message.finish(&builder, end: result)
               try VMHostIPC.write(builder.data, to: peer)
             }
-            return archives
+            return attempts
           })
         }
       }
@@ -121,25 +119,7 @@ extension ChatResumeTests {
     }
     #expect(mismatch.found == "2")
     #expect(mismatch.expected == "3")
-    #expect(!mismatch.archiveInterrupted)
-    session.start()
-    try await waitForProblem(found: "pending")
-    if case .incompatibleHistory(let pending) = session.environment {
-      #expect(pending.archiveInterrupted)
-      #expect(!LauncherError.incompatibleHistory(pending).description.contains("pending"))
-    } else {
-      Issue.record("Expected an interrupted archive")
-    }
-    session.archiveHistoryAndStart()
-    try await waitForProblem(found: nil)
-    #expect(try await host.value == [false, false, true])
-    guard case .failed = session.environment else {
-      Issue.record("Expected an ordinary startup failure for a corrupt database")
-      await session.close()
-      return
-    }
-    session.archiveHistoryAndStart()
-    if case .failed = session.environment {} else { Issue.record("A corrupt database cannot be archived here") }
+    #expect(try await host.value == 1)
     await session.close()
   }
 }

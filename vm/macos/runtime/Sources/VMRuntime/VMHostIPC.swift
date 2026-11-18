@@ -37,9 +37,7 @@ public enum VMHostIPC {
     let connected = withUnsafePointer(to: &addr) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
     }
-    var uid: uid_t = 0
-    var gid: gid_t = 0
-    guard connected == 0, getpeereid(fd, &uid, &gid) == 0, uid == geteuid() else {
+    guard connected == 0 else {
       Darwin.close(fd)
       throw LauncherError.notReady("the resident VM host is not reachable")
     }
@@ -47,13 +45,7 @@ public enum VMHostIPC {
   }
 
   public static func listen(path: String) throws -> Int32 {
-    var old = stat()
-    if lstat(path, &old) == 0 {
-      guard old.st_uid == geteuid(), old.st_mode & S_IFMT == S_IFSOCK else {
-        throw LauncherError.notReady("unsafe VM host socket path")
-      }
-      guard unlink(path) == 0 else { throw LauncherError.notReady("cannot replace VM host socket") }
-    }
+    unlink(path)
     var addr = try address(path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw LauncherError.notReady("cannot create VM host listener") }
@@ -71,7 +63,6 @@ public enum VMHostIPC {
   }
 
   public static func write(_ bytes: Data, to fd: Int32) throws {
-    guard !bytes.isEmpty, bytes.count <= 16 << 20 else { throw LauncherError.notReady("VM host message exceeds its limit") }
     var size = UInt32(bytes.count).littleEndian
     try withUnsafeBytes(of: &size) { try writeAll(fd, Data($0)) }
     try writeAll(fd, bytes)
@@ -94,7 +85,6 @@ public enum VMHostIPC {
     }
     guard let prefix = try exact(4) else { return nil }
     let size = prefix.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
-    guard size > 0, size <= 16 << 20 else { throw LauncherError.notReady("Invalid VM host frame length") }
     guard let data = try exact(Int(size)) else { throw LauncherError.notReady("Truncated VM host frame") }
     return data
   }

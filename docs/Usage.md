@@ -78,7 +78,7 @@ On Mac, the app and the installed browser command use the project's environment 
 
 Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's total run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them. For this project, select individual past scratch folders and review the selected total, then choose **Delete selected scratch…**. A folder whose size cannot be measured shows **Unknown**; the selected total excludes unknown sizes. The latest run stays available for reruns; older scratch remains until a person deletes it, including after restarting.
 
-The core suggests reviewing this pane when build caches or run scratch occupy at least 20% of their disk and at least 1 GiB. The notice never deletes anything. Build sizes are cached NAR estimates; scratch sizes sum file lengths without following links. Measurements can take up to a minute to refresh; errors and unknown sizes are shown explicitly. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
+Opening this Settings pane measures build and scratch usage. Build sizes use NAR estimates; scratch sizes sum file lengths without following links. Errors and unknown sizes are shown explicitly. There is no background polling or large-cache notice. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
 
 ## Card settings and app settings
 

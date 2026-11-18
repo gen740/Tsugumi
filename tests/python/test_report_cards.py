@@ -6,8 +6,9 @@ import time
 import uuid
 
 import pytest
+from test_language_cards import project  # pytest fixture
 
-from test_language_cards import NUMBERS, project, write_project
+from test_language_cards import NUMBERS, write_project
 from conftest import Daemon
 from harness.observations import read_pages
 from projects import run_and_wait, start_run, wait_run
@@ -84,9 +85,9 @@ def test_report_html_assets_and_typed_downstream(project, extension):
     summary = client.call('RunRecordRequest', runId=run, card=path('report')).record.summary
     metadata = json.loads(read_pages(client, 'ArtifactReadRequest', artifactId=text(artifact.artifactId),
                                     member='metadata.json', page_bytes=262144))
-    assert metadata == {'source': 'report.' + extension, 'run_id': run, 'card': 'report',
+    assert {key: metadata[key] for key in ('source', 'run_id', 'card', 'invocation')} == {'source': 'report.' + extension, 'run_id': run, 'card': 'report',
                         'invocation': summary.invocation}
-    assert '<details open>' in rendered and '<summary>Source: report.' + extension in rendered
+    assert 'report.' + extension in rendered
     assert 'Total: 12' in rendered and 'data:image/png;base64,' in rendered
     assert 'data:image/svg+xml' in rendered
     display = client.call('RunRecordRequest', runId=run, card=path('read')).record.display

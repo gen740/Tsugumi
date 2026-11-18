@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react'
 import { L } from '../i18n'
 import { EnvironmentIdentity, EnvironmentSource, RecordedEnvironment, environmentChange, environmentPage, environmentPaths, findEnvironment, storeName } from '../model/environments'
 import { ProjectSession } from '../model/session'
@@ -20,36 +20,72 @@ export function recordedEnvironmentSource(rpc: RPCClient): EnvironmentSource {
   }
 }
 
+const EnvironmentReads = createContext<EnvironmentSource | undefined>(undefined)
+export function EnvironmentReadScope({ rpc, children }: { rpc?: RPCClient; children: ReactNode }) {
+  const source = useMemo(() => {
+    if (!rpc) return undefined
+    const original = recordedEnvironmentSource(rpc)
+    const pages = new Map<string, ReturnType<EnvironmentSource['environments']>>()
+    const paths = new Map<string, ReturnType<EnvironmentSource['paths']>>()
+    return {
+      environments(run, offset) {
+        const key = `${run}:${offset}`
+        let page = pages.get(key)
+        if (!page) { page = original.environments(run, offset).catch(e => { pages.delete(key); throw e }); pages.set(key, page) }
+        return page
+      },
+      paths(run, environment, offset, query, excluding) {
+        const key = JSON.stringify([run, environment, String(offset), query, excluding])
+        let page = paths.get(key)
+        if (!page) { page = original.paths(run, environment, offset, query, excluding).finally(() => paths.delete(key)); paths.set(key, page) }
+        return page
+      },
+    } satisfies EnvironmentSource
+  }, [rpc])
+  return <EnvironmentReads.Provider value={source}>{children}</EnvironmentReads.Provider>
+}
+function useEnvironmentSource(rpc?: RPCClient) {
+  const scoped = useContext(EnvironmentReads)
+  return useMemo(() => scoped ?? (rpc ? recordedEnvironmentSource(rpc) : undefined), [scoped, rpc])
+}
+
+function useHistoryPage<T>(read: (offset: bigint) => Promise<{ value: T; next: bigint | null }>, dependencies: unknown[]) {
+  const [offsets, setOffsets] = useState([0n])
+  const [result, setResult] = useState<{ value: T; next: bigint | null }>()
+  const [error, setError] = useState<string>()
+  const [attempt, setAttempt] = useState(0)
+  const offset = offsets.at(-1)!
+  useEffect(() => {
+    let alive = true
+    setResult(undefined); setError(undefined)
+    void read(offset).then(p => { if (alive) setResult(p) }).catch(e => { if (alive) setError(String(e.message ?? e)) })
+    return () => { alive = false }
+  }, [...dependencies, offset, attempt])
+  return { page: result?.value, error, retry: () => setAttempt(a => a + 1), reset: () => setOffsets([0n]),
+    controls: <div className="row gap8"><Button disabled={!result || offsets.length === 1} onClick={() => setOffsets(v => v.slice(0, -1))}>{L('前へ')}</Button>
+      <span>{L('ページ')} {offsets.length}</span><Button disabled={!result || result.next === null} onClick={() => { if (result?.next != null) setOffsets(v => [...v, result.next!]) }}>{L('次へ')}</Button></div> }
+}
+
 export function StorePath({ value }: { value: string }) {
   return <details><summary>{storeName(value)}</summary><code className="selectable wrap-pre">{value}</code></details>
 }
 
 /** Every navigation replaces the page; closures are never accumulated in memory. */
 export function DependencyPaths({ session, identity, excluding }: { session: ProjectSession; identity: EnvironmentIdentity; excluding?: EnvironmentIdentity }) {
+  const source = useEnvironmentSource(session.rpc)
   const [query, setQuery] = useState('')
-  const [offsets, setOffsets] = useState([0n])
-  const [page, setPage] = useState<{ paths: string[]; next: bigint | null; total: bigint }>()
-  const [error, setError] = useState<string>()
-  const [attempt, setAttempt] = useState(0)
-  const offset = offsets[offsets.length - 1]
-  useEffect(() => {
-    let alive = true
-    setPage(undefined); setError(undefined)
-    if (!session.rpc) { setError(L('実行環境に接続していません')); return }
-    void environmentPaths(recordedEnvironmentSource(session.rpc), identity.run, identity.id, offset, query, excluding)
-      .then(p => { if (alive) setPage(p) }).catch(e => { if (alive) setError(String(e.message ?? e)) })
-    return () => { alive = false }
-  }, [session.rpc, identity.run, identity.id, excluding?.run, excluding?.id, offset, query, attempt])
+  const paging = useHistoryPage(async offset => {
+    if (!source) throw Error(L('実行環境に接続していません'))
+    const page = await environmentPaths(source, identity.run, identity.id, offset, query, excluding)
+    return { value: page, next: page.next }
+  }, [source, identity.run, identity.id, excluding?.run, excluding?.id, query])
+  const { page, error } = paging
   return <section className="col gap8">
-    <label>{L('依存パスを検索')}<input value={query} onChange={e => { setQuery(e.target.value); setOffsets([0n]) }} /></label>
+    <label>{L('依存パスを検索')}<input value={query} onChange={e => { setQuery(e.target.value); paging.reset() }} /></label>
     <p className="caption">{L('検索結果を 100 件ずつ表示します。')} {page && String(page.total)}</p>
-    {error ? <p role="alert">{error} <Button onClick={() => setAttempt(a => a + 1)}>{L('再試行')}</Button></p>
+    {error ? <p role="alert">{error} <Button onClick={paging.retry}>{L('再試行')}</Button></p>
       : !page ? <p>{L('読み込み中…')}</p> : page.paths.length ? page.paths.map(p => <StorePath key={p} value={p} />) : <p>{L('一致する依存パスはありません')}</p>}
-    <div className="row gap8">
-      <Button disabled={!page || offsets.length === 1} onClick={() => setOffsets(v => v.slice(0, -1))}>{L('前へ')}</Button>
-      <span>{L('ページ')} {offsets.length}</span>
-      <Button disabled={!page || page.next === null} onClick={() => { if (page?.next !== null && page?.next !== undefined) setOffsets(v => [...v, page.next!]) }}>{L('次へ')}</Button>
-    </div>
+    {paging.controls}
   </section>
 }
 
@@ -61,25 +97,16 @@ export async function recordedEnvironmentUses(rpc: RPCClient, runId: string, env
 }
 
 function EnvironmentUses({ session, runId, environmentId }: { session: ProjectSession; runId: string; environmentId: string }) {
-  const [offsets, setOffsets] = useState([0n])
-  const [page, setPage] = useState<R.EnvironmentUsePageT>()
-  const [error, setError] = useState<string>()
-  const [attempt, setAttempt] = useState(0)
-  const offset = offsets.at(-1)!
-  useEffect(() => {
-    let alive = true
-    setPage(undefined); setError(undefined)
-    if (!session.rpc) { setError(L('実行環境に接続していません')); return }
-    void recordedEnvironmentUses(session.rpc, runId, environmentId, offset)
-      .then(p => { if (alive) setPage(p) }).catch(e => { if (alive) setError(String(e.message ?? e)) })
-    return () => { alive = false }
-  }, [session.rpc, runId, environmentId, offset, attempt])
+  const paging = useHistoryPage(async offset => {
+    if (!session.rpc) throw Error(L('実行環境に接続していません'))
+    const page = await recordedEnvironmentUses(session.rpc, runId, environmentId, offset)
+    return { value: page, next: page.nextOffset }
+  }, [session.rpc, runId, environmentId])
+  const { page, error } = paging
   return <section><h4>{L('この環境を共有する Card と呼び出し')}</h4>
-    {error ? <p role="alert">{error}<Button onClick={() => setAttempt(a => a + 1)}>{L('再試行')}</Button></p> : !page ? <p>{L('読み込み中…')}</p>
+    {error ? <p role="alert">{error}<Button onClick={paging.retry}>{L('再試行')}</Button></p> : !page ? <p>{L('読み込み中…')}</p>
       : page.uses.map(u => <p key={`${s(u.card)}:${u.invocation}`}>{session.displayPath(s(u.card).split('/'))} · #{String(u.invocation)}</p>)}
-    <Button disabled={!page || offsets.length === 1} onClick={() => setOffsets(v => v.slice(0, -1))}>{L('前へ')}</Button>
-    <span> {L('ページ')} {offsets.length} </span>
-    <Button disabled={!page || page.nextOffset === null} onClick={() => { if (page?.nextOffset != null) setOffsets(v => [...v, page.nextOffset!]) }}>{L('次へ')}</Button>
+    {paging.controls}
   </section>
 }
 
@@ -116,26 +143,17 @@ export function EnvironmentView({ session, runId, environmentId }: { session: Pr
 
 export function RunEnvironments({ session, runId, environmentId }: { session: ProjectSession; runId: string; environmentId: string }) {
   const [selected, setSelected] = useState(environmentId)
-  const [offsets, setOffsets] = useState([0n])
-  const [page, setPage] = useState<{ environments: RecordedEnvironment[]; next: bigint | null }>()
-  const [error, setError] = useState<string>()
-  const [attempt, setAttempt] = useState(0)
-  const offset = offsets.at(-1)!
-  useEffect(() => {
-    let alive = true
-    setPage(undefined); setError(undefined)
-    if (!session.rpc) { setError(L('実行環境に接続していません')); return }
-    void environmentPage(recordedEnvironmentSource(session.rpc), runId, offset)
-      .then(p => { if (alive) setPage(p) }).catch(e => { if (alive) setError(String(e.message ?? e)) })
-    return () => { alive = false }
-  }, [session.rpc, runId, offset, attempt])
+  const paging = useHistoryPage(async offset => {
+    if (!session.rpc) throw Error(L('実行環境に接続していません'))
+    const page = await environmentPage(recordedEnvironmentSource(session.rpc), runId, offset)
+    return { value: page, next: page.next }
+  }, [session.rpc, runId])
+  const { page, error } = paging
   return <div className="scroll pad10 col gap8"><h3>{L('この実行の共有環境')}</h3>
-    {error && <p role="alert">{error}<Button onClick={() => setAttempt(a => a + 1)}>{L('再試行')}</Button></p>}
+    {error && <p role="alert">{error}<Button onClick={paging.retry}>{L('再試行')}</Button></p>}
     {!page && !error && <p>{L('読み込み中…')}</p>}
     {page?.environments.map(e => <Button key={e.id} onClick={() => setSelected(e.id)} pressed={selected === e.id}>{storeName(e.manifest)} · {e.system} · {e.id.slice(0, 8)}</Button>)}
-    <div><Button disabled={!page || offsets.length === 1} onClick={() => setOffsets(v => v.slice(0, -1))}>{L('前へ')}</Button>
-      <span> {L('ページ')} {offsets.length} </span>
-      <Button disabled={!page || page.next === null} onClick={() => { if (page?.next != null) setOffsets(v => [...v, page.next!]) }}>{L('次へ')}</Button></div>
+    {paging.controls}
     <EnvironmentView key={`${runId}:${selected}`} session={session} runId={runId} environmentId={selected} />
   </div>
 }

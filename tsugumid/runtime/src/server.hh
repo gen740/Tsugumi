@@ -3,13 +3,6 @@
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/rpc/transport.hh"
 namespace tsugumi {
-struct Limits : TransportLimits {
-  uint32_t mutation_queue_limit = 128;
-  uint32_t queue_wait_ms = 30000;
-  uint32_t page_limit = 500;
-  uint32_t file_chunk_bytes = 1u << 20;
-  uint32_t log_chunk_bytes = 256u << 10;
-};
 inline auto project_request(const RequestIn& in)
     -> const Tsugumi::RPC::Request* {
   return Tsugumi::RPC::GetMessage(in.frame->data())->payload_as_Request();

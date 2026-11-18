@@ -11,7 +11,7 @@ add_dependencies(tsugumid-mock tsugumid tsugumi-worker tsugumi-workerd tsugumi-r
 if(NOT TSUGUMI_INSTALLED_CORE)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME core_rpc
-    COMMAND ${Python3_EXECUTABLE} -m pytest -q --core-report -m "not environment" ${CMAKE_CURRENT_SOURCE_DIR})
+    COMMAND ${Python3_EXECUTABLE} -m pytest -q -m "not environment" ${CMAKE_CURRENT_SOURCE_DIR})
   set_tests_properties(core_rpc PROPERTIES
     TIMEOUT 300
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}

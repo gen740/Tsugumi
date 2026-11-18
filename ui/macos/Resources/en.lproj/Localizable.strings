@@ -20,7 +20,7 @@
 "%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
 "%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
-"%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
+"%@ の準備ができました。「再起動して更新」で更新できます。" = "%@ is ready. Choose Restart to Update to install it.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
 "%@ を Workflow に配置しました（未保存）。" = "Placed %@ in the Workflow (not saved).";
@@ -195,7 +195,7 @@
 "Skill を検索" = "Search Skills";
 "TLS 接続先を入力してください（例: tls://worker.example:8765）。" = "Enter a TLS endpoint, such as tls://worker.example:8765.";
 "Tsugumi %@ の準備ができました" = "Tsugumi %@ is ready";
-"Tsugumi %@ の準備ができました。次に終了したときに更新します。" = "Tsugumi %@ is ready. It is installed the next time you quit.";
+"Tsugumi %@ の準備ができました。「再起動して更新」で更新できます。" = "Tsugumi %@ is ready. Choose Restart to Update to install it.";
 "Tsugumi で何ができる？" = "What can Tsugumi do?";
 "Tsugumi のアニメーション" = "Tsugumi animation";
 "Tsugumi のプロジェクトではありません: %@" = "Not a Tsugumi project: %@";
@@ -211,8 +211,6 @@
 "VM を起動しています" = "Booting the VM";
 "VM イメージ %@" = "VM image %@";
 "VM イメージを展開しています" = "Unpacking the VM image";
-"VM 内の実行履歴" = "Run history in the VM";
-"VM 内の実行履歴を削除しますか？" = "Delete the run history in the VM?";
 "Vega-Lite のグラフ" = "Vega-Lite chart";
 "Web を検索" = "Searched the web";
 "Web を検索しています" = "Searching the web";
@@ -302,7 +300,7 @@
 "このアカウントを使う" = "Use This Account";
 "このアプリの Nixpkgs に固定" = "Pin to This App's Nixpkgs";
 "このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
-"このアプリは自動更新できません" = "This app cannot update itself";
+"このアプリは更新できません" = "This app cannot update itself";
 "このアプリ（この Mac のユーザー設定）" = "This app (this Mac's user settings)";
 "このタブで開く" = "Open in This Tab";
 "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。" = "The tokens on this device were removed, but the revocation at OpenAI could not be confirmed. You can disconnect Tsugumi in ChatGPT settings.";
@@ -320,10 +318,9 @@
 "このプロジェクトの tsugumid を起動しています" = "Starting this project's tsugumid";
 "このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。" = "External execution requires a filesystem that reports the project folder’s creation time.";
 "このプロジェクトの会話記録は別のプロジェクト ID に属しています。バックアップから対応する .tsugumi フォルダを復元してください。新しい会話を始める場合は、プロジェクトを閉じ、agent.sqlite を .tsugumi の外に移動して保管してから開き直してください。会話の記録は削除していません。" = "This project's conversation records belong to another project identity. Restore the matching .tsugumi folder from a backup. To start new conversations, close the project, move agent.sqlite out of .tsugumi to preserve it, then reopen the project. Conversation records have not been deleted.";
-"このプロジェクトの実行履歴とビルドの登録を削除します。" = "Deletes this project's run history and build registrations.";
+"このプロジェクトの実行環境（%@/.tsugumi/runs.sqlite）" = "This project's environment (%@/.tsugumi/runs.sqlite)";
 "このプロジェクトの実行環境（VM の中）" = "This project's environment (in the VM)";
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";
-"このプロジェクトの実行環境（書き出しは %@/.tsugumi/runs.sqlite）" = "This project's environment (exported to %@/.tsugumi/runs.sqlite)";
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
 "このプロジェクトの過去の scratch" = "Past scratch in this project";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
@@ -390,7 +387,6 @@
 "まだ実行していません" = "Not run yet";
 "まだ結果がありません" = "No result yet";
 "まだ結果がありません（実行すると表示されます）" = "No result yet (run to see one)";
-"まもなく確認します" = "Checking shortly";
 "もう一方の処理が終わるのを待ってから、再試行してください。" = "Wait for the other operation to finish, then retry.";
 "やり直す" = "Redo";
 "アイコン" = "Icon";
@@ -400,7 +396,6 @@
 "アップデート" = "Updates";
 "アップデートを確認…" = "Check for Updates…";
 "アップデートを確認できませんでした" = "Could not check for updates";
-"アップデートを自動的に確認する" = "Check for updates automatically";
 "アプリ" = "App";
 "アプリに VM イメージが含まれていません。開発中は vm/guest/build-image.sh --vm で作成してください。" = "The app has no VM image. During development, make one with vm/guest/build-image.sh --vm.";
 "インデントガイドを表示" = "Show indent guides";
@@ -491,7 +486,7 @@
 "スキップ" = "Skipped";
 "スキップして始める" = "Skip and Start";
 "ソース" = "Source";
-"ソースからビルドした開発版（Tsugumi Dev）は自動更新しません。" = "Builds from source (Tsugumi Dev) do not update themselves.";
+"ソースからビルドした開発版（Tsugumi Dev）はこの機能では更新できません。" = "Builds from source (Tsugumi Dev) cannot be updated with this feature.";
 "ソースを開く…" = "Open Sources…";
 "ソースコードを整形" = "Format source code";
 "タイムライン" = "Timeline";
@@ -561,7 +556,6 @@
 "ネットワークを設定しています" = "Setting up the network";
 "ノートを読み込めませんでした: %@" = "Could not load note: %@";
 "ノートを読み込んでいます…" = "Loading note…";
-"ハートビート間隔（秒）" = "Heartbeat interval (seconds)";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "バイナリキャッシュ" = "Binary Caches";
@@ -574,7 +568,7 @@
 "パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
-"ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Build cache uses estimated NAR sizes; scratch sums file sizes without following links. Shared dependencies count in each project, so build sizes do not add up to the total. Measurements refresh once per minute.";
+"ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。" = "Build cache uses estimated NAR sizes; scratch sums file sizes without following links. Shared dependencies count in each project, so build sizes do not add up to the total. Measurements refresh when Settings opens.";
 "ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。" = "Build cache or run scratch is growing. Review the contents and choose what to delete.";
 "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。" = "Build cache or run scratch is growing. Review sizes and deletion candidates in Settings → Build Cache.";
 "ビルドキャッシュを削除" = "Deleted the build cache";
@@ -609,7 +603,6 @@
 "プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）" = "Preview (select, drag, collapse and zoom; the project is not changed)";
 "プロジェクト" = "Project";
 "プロジェクトが大きすぎます（64 MB まで）。" = "The project is too large (up to 64 MB).";
-"プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。" = "Runs in the project's .tsugumi/runs.sqlite are read again the next time it opens.";
 "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。" = "Applies to every conversation and helper in the project until revoked.";
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
@@ -626,6 +619,7 @@
 "プロジェクトを読み込めませんでした" = "Could not load the project";
 "プロジェクトを読み込んでいます…" = "Loading the project…";
 "プロジェクトを読んでいます" = "Reading the project";
+"プロジェクトを閉じ、.tsugumi/runs.sqlite を別の場所に保管してから開き直してください。" = "Close the project, keep .tsugumi/runs.sqlite in another location, then reopen the project.";
 "プロジェクトを開く" = "Open Project";
 "プロジェクトを開く…" = "Open Project…";
 "プロジェクトを開くと実行環境が起動し、その記録がここに表示されます。" = "When a project opens, the environment starts and its log appears here.";
@@ -689,7 +683,6 @@
 "並列実行数: %lld" = "Parallel runs: %lld";
 "中断" = "Interrupted";
 "中止" = "Cancel";
-"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.";
 "今すぐ再起動" = "Restart now";
 "今すぐ確認" = "Check Now";
 "今の定義と追加パスの内容に名前を付けて残します（git の tag）。" = "Name the current definitions and additional version paths (a Git tag).";
@@ -765,7 +758,6 @@
 "信頼するフォルダ" = "Trusted folders";
 "値" = "Value";
 "停止" = "Stop";
-"停止までの連続未受信回数" = "Consecutive missed heartbeats before stopping";
 "停止中" = "Stopping";
 "停止済み" = "Stopped";
 "偶数を半分にする" = "Halves even numbers";
@@ -820,7 +812,7 @@
 "再読込" = "Reload";
 "再起動して %@ に更新" = "Restart to Update to %@";
 "再起動して更新" = "Restart to Update";
-"再起動すると新しい版になります。あとにした場合は、次に終了したときに更新します。" = "Restart to use the new version. Otherwise it is installed the next time you quit.";
+"再起動すると新しい版になります。あとにした場合は、メニューや設定から更新できます。" = "Restart to use the new version. Otherwise, install it later from the menu or Settings.";
 "再適用のために保持した編集内容" = "Edits kept to reapply";
 "再開" = "Resume";
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
@@ -996,7 +988,7 @@
 "実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
-"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
+"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), from .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
 "実行の詳細" = "Run details";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
@@ -1030,9 +1022,7 @@
 "実行履歴なし" = "No runs";
 "実行履歴の形式が異なります" = "Incompatible Run History";
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
-"実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (code commit, values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
 "実行履歴はありません" = "No run history";
-"実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行方式" = "Execution";
@@ -1060,19 +1050,16 @@
 "実行環境イメージを読み込んでいます" = "Loading the environment image";
 "実行環境内（このプロジェクトだけが見えます）" = "Inside the environment (only this project is visible)";
 "実行環境（Nixpkgs）" = "Environment (Nixpkgs)";
-"実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。" = "The environment (the VM all projects share, its Nix store and run history disk images, each project's control folder) is in the folder below. Projects' documents and artifacts, and the run history saved in a project (.tsugumi/runs.sqlite), are in the project folders, not here.";
+"実行環境（全プロジェクト共通の VM、その Nix store のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。" = "The environment (the VM all projects share, its Nix store disk image, each project's control folder) is in the folder below. Projects' documents and artifacts, and the run history saved in a project (.tsugumi/runs.sqlite), are in the project folders, not here.";
 "対応" = "Supported";
 "対象" = "Which";
 "対象システム" = "Target system";
 "小さく" = "Smaller";
 "展開" = "Expand";
-"履歴の退避が中断されました" = "History Archive Interrupted";
-"履歴の退避を再開して起動" = "Resume Archiving and Start";
 "履歴を検索" = "Search history";
 "履歴を読み込めません: %@" = "Cannot read the history: %@";
 "履歴を読み込めませんでした" = "Could not read the history";
 "履歴を読み込んでいます…" = "Reading the history…";
-"履歴を退避して起動" = "Archive History and Start";
 "左から右" = "Left to right";
 "左の実行" = "Left run";
 "差分が大きいため一部を表示しています。" = "The diff is large; only part is shown.";
@@ -1372,7 +1359,6 @@
 "起動: python3 tests/fixtures/model_fixture.py --port %lld" = "Start: python3 tests/fixtures/model_fixture.py --port %lld";
 "起動しています" = "Starting";
 "起動中: %@" = "Starting: %@";
-"起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
 "追加された実行時の依存パス" = "Added runtime dependencies";
 "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here like inputs.sources.ciao.packages.ciao. It is fixed by its commit and hash. Adding, updating and removing are saved at once. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";

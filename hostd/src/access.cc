@@ -2,11 +2,13 @@
 
 #include <set>
 
+#include "agent/context.hh"
 #include "agent/presentation.hh"
 #include "agent/store.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/projects.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -17,17 +19,7 @@ namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 using agent::Cancelled;
 using agent::Message;
-namespace {
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
-auto Human(bool human) -> void {
-  if (!human)
-    throw Failure("permission_denied",
-                  "This operation requires the authenticated user");
-}
-
-}  // namespace
+namespace {}  // namespace
 Access::Access(StateGate& gate, sql::Db& db, ProjectRegistry& registry,
                agent::ConversationStore& conversations, bool& stopping,
                Dependencies dependencies)
@@ -197,26 +189,26 @@ auto Access::Require(const std::string& project,
       RequestAccess(project, conversation, access, reason, false, true);
   if (!wait)
     throw Failure("grant_required", "Explicit user permission is required", id);
-  while (!HasGrant(project, conversation, access)) {
+  changed.wait(lock, stop, [&] {
     if (stop.stop_requested() || stopping) throw Cancelled();
+    if (HasGrant(project, conversation, access)) return true;
     auto q = db.prepare("SELECT state FROM access_requests WHERE id=?");
     q.bind(1, id);
     if (!q.step() || q.text(0) == "denied")
       throw Failure("permission_denied", "The user declined access");
-    changed.wait_for(lock, std::chrono::milliseconds(100));
-  }
+    return false;
+  });
+  if (stop.stop_requested()) throw Cancelled();
 }
 
 auto Access::AuthorizeContext(const std::string& id,
                               const std::vector<Message>& messages) -> void {
   std::lock_guard lock(mutex);
-  for (const auto& message : messages)
-    for (const auto& block : message.content)
-      for (const auto& resource : block.resource_ids)
-        if (!HasGrant(resource, id, Tsugumi::Service::Access::Read))
-          throw Failure("permission_denied",
-                        "The conversation contains content whose permission "
-                        "was revoked; clear it before continuing");
+  for (const auto& resource : agent::Resources(messages))
+    if (!HasGrant(resource, id, Tsugumi::Service::Access::Read))
+      throw Failure("permission_denied",
+                    "The conversation contains content whose permission "
+                    "was revoked; clear it before continuing");
 }
 
 auto Access::Revoke(const std::string& resource, S::Access access) -> void {
@@ -322,7 +314,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       Human(human);
       auto p = r->value_as_AccessResolveRequest();
       auto q = db.prepare(
-          "SELECT project,conversation,access,state FROM "
+          "SELECT project,conversation,access,state,reason FROM "
           "access_requests WHERE id=?");
       q.bind(1, p->request_id()->str());
       if (!q.step()) throw Failure("not_found", "Access request not found");
@@ -335,42 +327,35 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       const bool per_call =
           operation.step() || static_cast<Tsugumi::Service::Access>(q.i64(2)) ==
                                   Tsugumi::Service::Access::HelperScope;
-      if (p->allow() && !per_call &&
-          static_cast<Tsugumi::Service::Access>(q.i64(2)) !=
-              Tsugumi::Service::Access::HelperScope) {
-        auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
-        grant.bind(1, p->request_id()->str())
-            .bind(2, q.text(0))
-            .bind(3, q.i64(2))
-            .run();
-      }
-      std::set<Tsugumi::Service::Access> offered;
+      const auto needed = static_cast<S::Access>(q.i64(2));
+      const auto chosen = [&](S::Access access) {
+        if (!p->allow()) return false;
+        if (per_call || !p->selected()) return access == needed;
+        const auto line =
+            AccessDescription(q.text(0), access, q.text(4), access == needed);
+        return std::ranges::any_of(*p->selected(), [&](const auto* selected) {
+          return selected->string_view() == line;
+        });
+      };
+      const bool allow = chosen(needed);
+      std::set<S::Access> offered{needed};
       auto items =
           db.prepare("SELECT access FROM access_prompt_items WHERE request=?");
       items.bind(1, p->request_id()->str());
-      while (items.step())
-        offered.insert(static_cast<Tsugumi::Service::Access>(items.i64(0)));
-      if (p->also_allow()) {
-        for (const auto access : *p->also_allow()) {
-          if (per_call ||
-              access == static_cast<Tsugumi::Service::Access>(q.i64(2)) ||
-              !offered.contains(access))
-            throw Failure(
-                "invalid_request",
-                "Only other accesses listed in this prompt can be allowed");
-        }
-        std::set<Tsugumi::Service::Access> allowed(p->also_allow()->begin(),
-                                                   p->also_allow()->end());
-        for (const auto access : allowed) {
+      while (items.step()) offered.insert(static_cast<S::Access>(items.i64(0)));
+      if (!per_call)
+        for (const auto permission : offered) {
+          if (!chosen(permission)) continue;
           auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,1)");
-          grant.bind(1, crypto::uuid4())
+          grant
+              .bind(1, permission == needed ? p->request_id()->str()
+                                            : crypto::uuid4())
               .bind(2, q.text(0))
-              .bind(3, static_cast<int>(access))
+              .bind(3, static_cast<int>(permission))
               .run();
         }
-      }
       auto update = db.prepare("UPDATE access_requests SET state=? WHERE id=?");
-      update.bind(1, p->allow() ? "allowed" : "denied")
+      update.bind(1, allow ? "allowed" : "denied")
           .bind(2, p->request_id()->str())
           .run();
       tx.commit();
@@ -379,12 +364,13 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
           json::Encode(json::Members{
               {"kind", json::Quote("permissionAnswered")},
               {"id", json::Quote(p->request_id()->str())},
-              {"ok", p->allow() ? "true" : "false"},
-              {"text",
-               json::Quote(p->allow() ? "Approved this request"
-                                      : "Declined; nothing changed")}}));
+              {"ok", allow ? "true" : "false"},
+              {"text", json::Quote(allow ? "Approved this request"
+                                         : "Declined; nothing changed")}}));
       changed.notify_all();
-      return wire::AgentReply(request.request_id, S::AcknowledgementT{});
+      S::AcknowledgementT result;
+      result.accepted = allow;
+      return wire::AgentReply(request.request_id, result);
     }
     case A::RequestPayload::AccessRevokeRequest: {
       Human(human);

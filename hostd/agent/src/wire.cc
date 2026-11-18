@@ -55,8 +55,7 @@ auto Usage(std::string_view stored) -> Tsugumi::Service::UsageT {
   out.cache_write_tokens = json::UInt(json::Get(o, "cacheWriteTokens"));
   return out;
 }
-auto Conversation(std::string_view stored) -> A::ConversationT {
-  const auto o = json::Object(stored);
+auto Conversation(const json::Members& o) -> A::ConversationT {
   A::ConversationT out;
   out.id = json::Text(o, "id");
   out.title = json::Text(o, "title");
@@ -80,7 +79,6 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
     tool->id = json::Text(t, "id");
     tool->name = json::Text(t, "name");
     tool->arguments_json = json::Text(t, "arguments");
-    tool->op_id = json::Text(t, "opId");
     tool->state = json::Text(t, "state");
     tool->result_json = json::Text(t, "result");
     tool->is_error = json::Bool(json::Get(t, "isError"));

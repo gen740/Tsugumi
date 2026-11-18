@@ -88,9 +88,6 @@ class PreparedExecution {
 class ExecutionService {
  public:
   virtual ~ExecutionService() = default;
-  // Whether a build made earlier in the run for a Card serves its later
-  // invocations.
-  virtual auto reuses_builds() const -> bool = 0;
   // Checks that the invocation can run here and configures the backend's
   // part of `build` (worker kind, target system and closure transport). Called
   // before the Card is evaluated, for every activation.
@@ -103,7 +100,6 @@ class LocalExecutionService final : public ExecutionService {
  public:
   LocalExecutionService(Service& service, std::filesystem::path scratch_root);
 
-  auto reuses_builds() const -> bool override { return true; }
   auto prepare(const Node& node, const std::filesystem::path& directory,
                BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;

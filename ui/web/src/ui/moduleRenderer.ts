@@ -11,6 +11,7 @@ export class FrameRenderer implements ThumbnailRenderer {
   private readyResolve?: () => void
   private result?: { id: number; resolve(image: string): void; reject(error: Error): void }
   private sequence = 0
+  private sent?: ThumbnailRequest
   private listener = (event: MessageEvent) => {
     if (event.source !== this.frame?.contentWindow) return
     const data = event.data
@@ -47,7 +48,8 @@ export class FrameRenderer implements ThumbnailRenderer {
           return await new Promise<string>((resolve, reject) => {
             const id = ++this.sequence
             this.result = { id, resolve, reject }
-            frame.contentWindow?.postMessage({ name: request.name, json: request.json, blobs: request.blobs, code, colorScheme: request.colorScheme, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
+            frame.contentWindow?.postMessage({ name: request.name, ...(this.sent?.name !== request.name || this.sent?.json !== request.json || this.sent?.blobs !== request.blobs ? { json: request.json, blobs: request.blobs } : {}), ...(this.sent?.name !== request.name ? { code } : {}), colorScheme: request.colorScheme, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
+            this.sent = request
           })
         })(),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), this.timeoutMs) }),
@@ -68,6 +70,7 @@ export class FrameRenderer implements ThumbnailRenderer {
   close() {
     window.removeEventListener('message', this.listener)
     this.frame?.remove(); this.frame = undefined
+    this.sent = undefined
     this.ready = undefined; this.readyResolve = undefined
   }
 }

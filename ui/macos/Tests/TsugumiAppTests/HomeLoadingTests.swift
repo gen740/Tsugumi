@@ -63,7 +63,7 @@ import Testing
 @MainActor @Test func homeShowsHostStateRecoveryInsteadOfAGenericProjectError() async {
   let message = "The host state folder /private/tmp/host-core was written by another version of Tsugumi. Move or rename this folder, then start Tsugumi again."
   let model = AppModel(refreshOnInit: false, requestHome: { _, _ in
-    throw CoreHostFailure(code: "state_format", message: message, requestID: nil)
+    throw CoreHostFailure(code: "unavailable", message: message, requestID: nil)
   })
   await model.refreshHome()
   #expect(model.recentsError == message)

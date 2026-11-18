@@ -45,6 +45,7 @@ def scaffold(tmp_path, monkeypatch):
         input_object=lambda inputs, name: getattr(inputs, name),
         params_object=lambda inputs: inputs.params,
     )
+    monkeypatch.syspath_prepend(str(ROOT / 'sdk/python/tsugumi'))
     adapter = load('notebook_adapter', ROOT / 'sdk/python/tsugumi/notebook.py')
     monkeypatch.setitem(sys.modules, 'tsugumi', SimpleNamespace(Failure=Failure, contract=contract))
     monkeypatch.setitem(sys.modules, 'tsugumi.notebook', adapter)

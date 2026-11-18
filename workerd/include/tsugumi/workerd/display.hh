@@ -31,6 +31,7 @@ inline auto validate_display(const Tsugumi::Data::Display& display)
       const auto* s = display.value_as_DisplayScalar();
       if (!s || !s->value() || !std::isfinite(*s->value()))
         return "display scalar must be finite";
+      if (s->label() && !utf8(s->label())) return "display label is not UTF-8";
       break;
     }
     case D::DisplayValue::DisplayTable: {
@@ -108,9 +109,9 @@ inline auto validate_display(const Tsugumi::Data::Display& display)
           const auto id =
               blob && blob->name() ? blob->name()->string_view() : "";
           if (id.empty() || id.size() > 128 || id == "." || id == ".." ||
-              id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
-                                   "RSTUVWXYZ0123456789_.-") !=
-                  std::string_view::npos ||
+              id.find_first_not_of(
+                  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
+                  "TUVWXYZ0123456789_.-") != std::string_view::npos ||
               !names.insert(id).second)
             return "a module blob name must be a unique id";
           if (!blob->data() || blob->data()->size() > (8u << 20) - bytes)

@@ -90,7 +90,6 @@ static auto TransformLayout(
     const std::string& project, const std::string& text, const LayoutRead& read,
     int action, const Tsugumi::Host::LayoutSceneT* measurements = nullptr,
     const Tsugumi::Host::ProjectMoveT* move = nullptr) -> std::string {
-  ValidateLayout(text);
   auto doc = json::Object(text);
   auto positions = json::Object(json::Get(doc, "cards", "{}"));
   const auto graph =
@@ -578,13 +577,13 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     }
   }
   for (const auto& [prefix, layout] : layouts) {
-    ValidateLayout(layout.text);
     auto change = json::Object(changes.at(layout.index));
     auto value = json::Object(json::Get(change, "value"));
     if (json::Text(change, "value_type") == "RemoveSource" &&
         layout.text == "{}")
       continue;
-    value[layout.source ? "bytes" : "json"] = json::Quote(layout.text);
+    value[layout.source ? "bytes" : "json"] = json::Quote(
+        projects.contains(prefix) ? layout.text : ValidateLayout(layout.text));
     if (layout.source) {
       change["value_type"] = json::Quote("PutSource");
       value.erase("patches");

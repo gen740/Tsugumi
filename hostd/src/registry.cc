@@ -11,16 +11,6 @@ namespace {
 auto Text(const flatbuffers::String* value) -> std::string {
   return value ? value->str() : "";
 }
-auto ValidateIdentity(const std::string& project,
-                      const std::filesystem::path& path) -> void {
-  const auto identity = fs::read_file(path / ".tsugumi/project-id");
-  if (!identity || *identity != project)
-    throw Failure(
-        "stale_project",
-        "This folder's project identity changed or was removed. Close and "
-        "reopen this project to register its current identity. Conversation "
-        "records have not been deleted.");
-}
 }  // namespace
 ProjectRegistry::ProjectRegistry(StateGate& g, sql::Db& database,
                                  ConversationPath opened)
@@ -41,11 +31,9 @@ auto ProjectRegistry::ValidateLocation(const std::string& project,
       std::filesystem::canonical(old.text(0)) != path)
     throw Failure("conflict",
                   "This project identity is registered in another folder");
-  ValidateIdentity(project, path);
 }
 auto ProjectRegistry::Lookup(const std::string& id)
     -> ProjectRegistry::Project {
-  Location(id);
   auto q = db.prepare("SELECT endpoint,token FROM projects WHERE id=?");
   q.bind(1, id);
   if (!q.step())
@@ -59,9 +47,6 @@ auto ProjectRegistry::Location(const std::string& project)
   q.bind(1, project);
   if (!q.step()) return std::nullopt;
   const std::filesystem::path path(q.text(0));
-  // Offline folders remain registered; a readable folder with a different
-  // identity is stale and must never route RPC or conversation writes.
-  if (std::filesystem::is_directory(path)) ValidateIdentity(project, path);
   return path;
 }
 auto ProjectRegistry::Locations() -> std::vector<std::string> {
@@ -165,8 +150,8 @@ auto ProjectRegistry::AttachedRoot(const std::string& project,
   managed.bind(1, project);
   if (!managed.step()) return folder;
   auto root = db.prepare(
-      "SELECT execution_path FROM project_attached_roots WHERE project=? AND "
-      "path=?");
+      "SELECT execution_path FROM project_attached_roots "
+      "WHERE project=? AND path=?");
   root.bind(1, project).bind(2, folder);
   if (!root.step())
     throw Failure(

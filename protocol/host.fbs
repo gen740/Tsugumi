@@ -58,7 +58,6 @@ table EnvironmentRequest {
   action:EnvironmentAction;
   origins:[string];
   folders:[string];
-  archive_incompatible_history:bool;
 }
 // Host-selected attached roots in the running project environment.
 table AttachedRoot { host_path:string (required); execution_path:string (required); }
@@ -89,14 +88,13 @@ table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, ForgetProject, Reset, DeleteEnvironment, Command, VerifyStore }
 // Snapshot for the app's quit confirmation, including work from other clients.
 // Connections alone are not work. This neither stops nor transfers any work.
 /// -> HostActivity. Agent turns, host requests and project-core activity.
 table HostActivityRequest {}
 table HostActivity { busy:bool; }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
-table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
 table HostTerminalRequest { project:string; action:TerminalAction; session:ulong; rows:uint = 24; cols:uint = 80; data:[ubyte]; }
 table HostTerminal { session:ulong; }
@@ -104,7 +102,7 @@ table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
 table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
   virtualization_supported:bool; image_available:bool; image_version:string;
   stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
-  histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
+  environments:uint; vm_removed:bool;
   // Host-authored confirmation of the same policy sent to the VM helper.
   reset_confirmation_ja:string; reset_confirmation_en:string;
   // Actual VM-directory entries kept and discarded by the helper.
@@ -257,17 +255,15 @@ table GuideState {
 }
 
 // Execution services contain public pins only. Private TLS keys never cross RPC.
-// Heartbeat intervals are >= 1 second; missed_heartbeats = 0 means never.
-// New registrations default to 15 seconds and never expire for silence.
 table ExecutionServicesRequest {}
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; grade:ulong = 1; }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
 table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); grade:ulong = 1; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 

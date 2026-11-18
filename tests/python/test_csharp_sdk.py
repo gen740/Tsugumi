@@ -190,7 +190,7 @@ def test_invalid_entry_names_the_candidate_and_rejection(tmp_path, name, method,
 
 
 def open_environment(root, name):
-    env = real_environment(root, name) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
+    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
     c = env.client()
     if isinstance(env, Daemon): c.hello()
     return env, c
@@ -388,7 +388,7 @@ def test_production_creation_scaffold(tmp_path):
         "nix":template["default.nix"], "outputs":template["_outputs.fbs"],
         "src":{name.removeprefix("src/"):body for name,body in template.items() if name.startswith("src/")}}},
         [("start","out","hello","in")])
-    env = real_environment(root, "tsugumi-test-csharp-scaffold") if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
+    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
     c = env.client()
     try:
         if isinstance(env, Daemon): c.hello()

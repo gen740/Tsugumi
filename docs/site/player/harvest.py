@@ -36,7 +36,7 @@ os.environ.setdefault("TSUGUMI_PY_BINDINGS", str(BUILD / "generated" / "python")
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from conftest import Daemon  # noqa: E402
-from projects import ENDED, start_run, wait_run  # noqa: E402
+from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
 from Tsugumi.Data.CardState import CardState  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402

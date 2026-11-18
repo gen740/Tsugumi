@@ -92,17 +92,6 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
 cp "$repo/ui/shared/modules/viewer.html" "$repo/ui/shared/modules/viewer.js" "$mods/"
-# Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
-# what they use (Sources/App/Explainer/ExplainerWindow.swift).
-(cd "$repo" && nix run .#build-doc)
-bash "$repo/ui/macos/tools/bundle-docs.sh" "$app/Contents/Resources/explainer"
-# Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
-# each demo and the images it names, without what only builds that data.
-thumbs="$app/Contents/Resources/player-data"
-mkdir -p "$thumbs/assets"
-player="$(cd "$repo" && nix build .#site-player --no-link --print-out-paths)"
-find "$player/player-data" -maxdepth 1 -name '*.json' ! -name index.json -exec cp {} "$thumbs/" \;
-find "$player/player-data/assets" -type f ! -name '*.json' -exec cp {} "$thumbs/assets/" \;
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/ui/macos/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/ui/macos/Resources/ja.lproj" "$repo/ui/macos/Resources/en.lproj" "$app/Contents/Resources/"

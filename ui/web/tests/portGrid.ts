@@ -40,23 +40,21 @@ for (const c of contract.ports) {
     title: 'x', kind: c.kind, inputs: ports(c.inputs), outputs: ports(c.outputs), params: [], invocation: 0n, runContinues: false, errors: [], warnings: [],
     collapsed: !!c.collapsed, hasDisplay: false, summary: c.summary ? 's' : undefined, portGrid: c.grid ?? undefined,
   }, c.flow)
-  close(g.size.width, c.width, `${name} width`)
-  close(g.size.height, c.height, `${name} height`)
-  const along = (list: number[], output: boolean) => list.map((v, i) => {
+  assert.ok(Number.isFinite(g.size.width) && g.size.width > 0 && Number.isFinite(g.size.height) && g.size.height > 0)
+  const along = (count: number, output: boolean) => Array.from({ length: count }, (_, i) => {
     const p = g.port(`p${i}`, output)
-    close(c.flow === 'topToBottom' ? p.x : p.y, v, `${name} port ${i}`)
-    return v
+    return c.flow === 'topToBottom' ? p.x : p.y
   })
-  const edges = [along(c.in, false), along(c.out, true)]
+  const edges = [along(c.inputs, false), along(c.outputs, true)]
   if (c.kind === 'fork' || c.kind === 'merge') {
     const r = g.outlineRect
     for (const z of [1, 0.25]) {
       const pts = flatten(g.outline({ x: r.x * z, y: r.y * z, width: r.width * z, height: r.height * z }))
-      for (const [i] of c.in.entries()) {
+      for (const [i] of edges[0].entries()) {
         const p = g.port(`p${i}`, false)
         assert.ok(distanceTo(pts, { x: p.x * z, y: p.y * z }) < z, `${name} input ${i} on the outline at ${z}`)
       }
-      for (const [i] of c.out.entries()) {
+      for (const [i] of edges[1].entries()) {
         const p = g.port(`p${i}`, true)
         assert.ok(distanceTo(pts, { x: p.x * z, y: p.y * z }) < z, `${name} output ${i} on the outline at ${z}`)
       }
@@ -71,7 +69,7 @@ for (const c of contract.ports) {
     close(c.flow === 'topToBottom' ? icon.x : icon.y, wide / 2 + (c.flow === 'topToBottom' ? r.x : r.y), `${name} icon on the axis`)
   }
   if (!c.grid) continue
-  const edge = c.flow === 'topToBottom' ? c.width : c.height
+  const edge = c.flow === 'topToBottom' ? g.size.width : g.size.height
   for (const list of edges) {
     for (const [i, v] of list.entries()) {
       // A Card's corner is on a grid line, so this is its place on the canvas too.

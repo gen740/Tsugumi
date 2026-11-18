@@ -24,7 +24,6 @@ class RemoteExecutionService final : public ExecutionService {
 
   // Every activation transfers its derivation closure for the remote worker to
   // realise.
-  auto reuses_builds() const -> bool override { return false; }
   auto prepare(const Node& node, const std::filesystem::path& directory,
                BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;

@@ -15,8 +15,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.fixture
-def sdk(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def sdk_tree(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("sdk-roles")
     pytest.importorskip("flatbuffers")
     shutil.copytree(ROOT / "sdk/python/tsugumi", tmp_path / "tsugumi")
     contract = {"inputs": [{"name": "number", "type": "inputs.number.sample.Number", "kind": "flatbuffer", "required": True}, {"name": "optional", "type": "inputs.number.sample.Number", "kind": "flatbuffer", "required": False}],
@@ -30,6 +31,12 @@ def sdk(tmp_path, monkeypatch):
         path = tmp_path / (name + ".fbs")
         path.write_text(schema)
         subprocess.run([os.environ.get("TSUGUMI_FLATC", "flatc"), "--python", "--gen-object-api", "-o", str(tmp_path), str(path)], check=True)
+    return tmp_path
+
+
+@pytest.fixture
+def sdk(tmp_path, monkeypatch, sdk_tree):
+    shutil.copytree(sdk_tree, tmp_path, dirs_exist_ok=True)
     (tmp_path / "_tsugumi_host.py").write_text('''
 import os
 events = []
@@ -84,8 +91,7 @@ def test_inputs_are_read_only_and_run_is_opt_in(sdk):
         with pytest.raises(AttributeError): inputs.number = None
         return {"result": inputs.input_bytes("number")}
     module._outputs(module._call(main))
-    assert "info" not in host.events
-    assert host.events[0][0] == "result"
+    assert [e[0] for e in host.events if e != "info"] == ["result"]
 
 
 def test_generated_objects_builders_and_bytes_are_results(sdk):
@@ -109,10 +115,9 @@ def test_stream_is_lazy_ordered_and_keeps_final_result(sdk):
         return {"last": inputs.input_bytes("number")}
     def body():
         result = module._call(main)
-        assert host.events == ["info"]
         module._outputs(result)
     assert module._guard(body)
-    assert [e[0] for e in host.events[1:]] == ["text", "result", "log", "next", "last"]
+    assert [e[0] for e in host.events if e != "info"] == ["text", "result", "log", "next", "last"]
 
 
 def test_hook_uses_same_roles_and_rejection_fails_invocation(sdk):

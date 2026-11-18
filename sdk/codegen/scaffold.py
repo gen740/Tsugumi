@@ -1,15 +1,15 @@
-"""Generate the host Go scaffold from its SDK template, including go.mod/go.sum."""
+"""Synchronize a host language scaffold from its SDK template."""
 import argparse
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE = ROOT / 'sdk/go/template'
 
 
-def generate(check=False):
-    files = {str(p.relative_to(TEMPLATE)): p.read_text() for p in sorted(TEMPLATE.rglob('*')) if p.is_file()}
-    path = ROOT / 'ui/shared/templates/go.json'
+def generate(language, check=False):
+    template_root = ROOT / f'sdk/{language}/template'
+    files = {str(p.relative_to(template_root)): p.read_text() for p in sorted(template_root.rglob('*')) if p.is_file()}
+    path = ROOT / f'ui/shared/templates/{language}.json'
     template = json.loads(path.read_text())
     template = {name: text for name, text in template.items() if not name.startswith('src/')}
     template.update({'src/' + name: text for name, text in files.items()})
@@ -24,5 +24,7 @@ def generate(check=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('language', choices=['go', 'rust'])
     parser.add_argument('--check', action='store_true')
-    generate(parser.parse_args().check)
+    args = parser.parse_args()
+    generate(args.language, args.check)

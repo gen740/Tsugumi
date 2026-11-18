@@ -383,20 +383,6 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   const [message, setMessage] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [confirm, setConfirm] = useState(false)
-  const [revisionEdit] = useState(() => new RevisionEdit())
-  const [pendingSaving, setPendingSaving] = useState(true)
-  useObserve(revisionEdit)
-  const baseRev = session.rev
-  const saving = bool(get(session.project, 'saveRunHistory')) ?? true
-  const setSaving = async (on: boolean, overwrite = false) => {
-    if (!overwrite) revisionEdit.reload(baseRev)
-    setPendingSaving(on)
-    const before = revisionEdit.jsonBase('tsugumi.json', session.project, overwrite)
-    const after = clone(before)
-    if (!isObj(after)) return
-    after.set('saveRunHistory', on)
-    await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))
-  }
   const del = async () => {
     setWorking(true)
     setMessage(undefined)
@@ -414,12 +400,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
-            <Row label={L('実行履歴をプロジェクトに保存する')}>
-              <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
-            </Row>
-          </Section>
-          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />
@@ -432,8 +413,6 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `saveRunHistory: ${pendingSaving}`}
-        overwrite={() => void setSaving(pendingSaving, true)} reload={() => revisionEdit.reload(session.rev)} />
       <div className="detail-foot">
         {message && <span className="callout selectable" style={{ color: failed ? 'var(--red)' : 'var(--secondary)' }}>{message}</span>}
         <span className="spacer" />
@@ -465,6 +444,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
   const [selectedScratch, setSelectedScratch] = useState<Set<string>>(() => new Set())
   const [scratchSelection, setScratchSelection] = useState<string[]>()
   const [scratchResult, setScratchResult] = useState<R.RunScratchDeleteResultT>()
+  useEffect(() => { void session.refreshCacheUsage() }, [session])
   const scratch = session.cacheUsage?.projects.find(p => s(p.project) === s(session.cacheUsage?.currentProject))?.runScratch ?? []
   const candidates = scratch.filter(p => s(p.path) !== `runs/${s(session.cacheUsage?.protectedRun)}`)
   const deleteScratch = async () => {
@@ -500,8 +480,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />
         {session.cacheUsage?.storeAvailableBytes != null && <Value label={L('store ディスクの空き')} value={formatBytes(session.cacheUsage.storeAvailableBytes)} />}
-        {session.cacheUsage?.large && <div className="callout">{L('ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。')}</div>}
-        <div className="caption secondary">{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
+        <div className="caption secondary">{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。')}</div>
         {session.cacheUsage?.measuredAt != null && <Value label={L('計測日時')} value={new Date(Number(session.cacheUsage.measuredAt)).toLocaleString()} />}
         {session.cacheUsage?.error && <div className="caption selectable">{s(session.cacheUsage.error)}</div>}
         {session.cacheUsage?.projects.map(p => {

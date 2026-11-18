@@ -69,26 +69,19 @@ TEST(ShortIdentifiers, AlphabetAndDirectoryNamesHaveNoCaseAliases) {
   EXPECT_TRUE(crypto::is_run_id("12"));
 }
 
-TEST(ShortIdentifiers,
-     RunSequenceSurvivesRestartDeletionAndAnEmptyPortableCopy) {
+TEST(ShortIdentifiers, RunSequenceSurvivesRestartAndDeletion) {
   IdentifierDirectory directory;
-  const auto local = directory.path / "history.sqlite",
-             copy = directory.path / "runs.sqlite";
+  const auto local = directory.path / "runs.sqlite";
   {
-    History history(local, "test-secret");
+    History history(local);
     history.write_sync([](sql::Db& db) {
       EXPECT_EQ(History::next_run_id(db), "1");
       EXPECT_EQ(History::next_run_id(db), "2");
       db.exec("DELETE FROM runs");
     });
-    EXPECT_EQ(history.export_runs(copy), 0u);
   }
-  History restarted(local, "test-secret");
+  History restarted(local);
   restarted.write_sync(
-      [](sql::Db& db) { EXPECT_EQ(History::next_run_id(db), "3"); });
-  History imported(directory.path / "imported.sqlite", "test-secret");
-  EXPECT_EQ(imported.import_runs(copy), 0u);
-  imported.write_sync(
       [](sql::Db& db) { EXPECT_EQ(History::next_run_id(db), "3"); });
 }
 

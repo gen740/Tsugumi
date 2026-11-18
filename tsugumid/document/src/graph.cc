@@ -281,6 +281,12 @@ class Builder {
     res_ = std::make_shared<Resolution>();
     scope(doc_.project, "", {}, 0);
     connect_all();
+    res_->incoming.resize(res_->nodes.size());
+    res_->outgoing.resize(res_->nodes.size());
+    for (const auto& edge : res_->edges) {
+      res_->incoming[edge.to][edge.to_port].push_back(edge.from);
+      res_->outgoing[edge.from].push_back(edge.to);
+    }
     resolve_types();
     resolve_execution_shapes();
     finish_checks();
@@ -1126,9 +1132,12 @@ class Builder {
   void compute_guarantees() {
     size_t n = res_->nodes.size();
     using Set = std::vector<char>;
-    std::vector<std::map<std::string, std::vector<size_t>>> in(n);
-    for (const auto& e : res_->edges)
-      if (e.from != e.to) in[e.to][e.to_port].push_back(e.from);
+    auto in = res_->incoming;
+    for (size_t i = 0; i < n; ++i) {
+      for (auto& [port, froms] : in[i]) std::erase(froms, i);
+      std::erase_if(in[i],
+                    [](const auto& port) { return port.second.empty(); });
+    }
     // Only nodes that can ever fire take part; others guarantee nothing.
     std::vector<char> reach(n, 0);
     std::vector<size_t> stack;
@@ -1140,10 +1149,10 @@ class Builder {
     while (!stack.empty()) {
       size_t i = stack.back();
       stack.pop_back();
-      for (const auto& e : res_->edges)
-        if (e.from == i && !reach[e.to]) {
-          reach[e.to] = 1;
-          stack.push_back(e.to);
+      for (const auto to : res_->outgoing[i])
+        if (!reach[to]) {
+          reach[to] = 1;
+          stack.push_back(to);
         }
     }
     std::vector<Set> g(n, Set(n, 1));
@@ -1162,9 +1171,7 @@ class Builder {
           for (size_t u : froms) {
             if (!reach[u]) continue;
             any_from = true;
-            Set via = g[u];
-            via[u] = 1;
-            for (size_t k = 0; k < n; ++k) s[k] &= via[k];
+            for (size_t k = 0; k < n; ++k) s[k] &= g[u][k] || k == u;
           }
           if (!any_from) continue;
           const auto* p = node.input(port);

@@ -30,16 +30,7 @@ def _check(run):
         raise Failure("timeout", "Visualization deadline reached")
 
 
-def _plain(value):
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if isinstance(value, (list, tuple)):
-        return [_plain(v) for v in value]
-    if hasattr(value, "tolist"):
-        return _plain(value.tolist())
-    if hasattr(value, "__dict__"):
-        return {k: _plain(v) for k, v in vars(value).items()}
-    return value
+from .plain import plain as _plain
 
 
 def input_rows(inputs, run, field="", member="data.csv"):

@@ -5,10 +5,11 @@ import shutil
 import time
 
 import pytest
+from test_language_cards import project  # pytest fixture
 
 from conftest import ROOT, Daemon, real_environment
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import project, write_project
+from test_language_cards import write_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
@@ -35,7 +36,7 @@ def ruby_project(tmp_path):
             data = json.loads(file.read_text())
             data.pop('sandbox', None)
             file.write_text(json.dumps(data))
-        env = real_environment(root, 'tsugumi-test-ruby') if IN_VM else Daemon(root).start()
+        env = real_environment(root) if IN_VM else Daemon(root).start()
         environments.append(env)
         client = env.client()
         if not IN_VM:

@@ -15,7 +15,7 @@ import pytest
 
 from conftest import ROOT, demo_environment
 from projects import ENDED, start_run, wait_run
-from tsugumi_client import line_chart_series, RpcFailure, change, new_id, path, text
+from tsugumi_client import line_chart_series, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload

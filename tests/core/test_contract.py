@@ -83,8 +83,8 @@ def test_completed_save_can_be_replayed_after_restart(daemon):
     assert saved.rev == replay.rev and project_json(saved)["name"] == "persisted"
 
 
-def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
-    """Hello authenticates a session, negotiates a common protocol and checks project identity."""
+def test_session_requires_hello_and_matching_project(daemon):
+    """Hello authenticates a session and checks project identity."""
     with ExitStack() as connections:
         def connect():
             return connections.enter_context(Client(unix=daemon.unix))
@@ -99,12 +99,7 @@ def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
         with pytest.raises(RpcFailure) as error:
             client.hello()
         assert error.value.kind == "invalid_request"
-        for fields in ({"protocol": 2}, {"protocol": 3, "minProtocol": 2}):
-            with pytest.raises(RpcFailure) as error:
-                connect().call("SessionHelloRequest", clientId=new_id(), **fields)
-            assert error.value.kind == "protocol_mismatch"
-        negotiated = connect().call("SessionHelloRequest", protocol=3, minProtocol=1, clientId=new_id())
-        assert negotiated.protocol == 1
+        negotiated = connect().call("SessionHelloRequest", clientId=new_id())
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
@@ -346,7 +341,7 @@ def test_explicit_false_is_not_omitted(builtin_client):
 
 
 def test_history_pagination_and_cursor_checks(builtin_client):
-    """History pages keep a stable scan while new runs finish and reject changed filters."""
+    """History pages keep a stable scan while new runs finish and reject malformed cursors."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
     for _ in range(5):
@@ -366,7 +361,7 @@ def test_history_pagination_and_cursor_checks(builtin_client):
         cur = text(p.nextCursor) if p.nextCursor else None
     assert len(seen) == 5 and len(set(seen)) == 5
     with pytest.raises(RpcFailure) as e:
-        c.call("RunHistoryRequest", limit=2, cursor=text(page1.nextCursor), artifactsOnly=True)
+        c.call("RunHistoryRequest", limit=2, cursor="not-a-cursor")
     assert e.value.kind == "invalid_cursor"
 
 

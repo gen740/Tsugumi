@@ -1,5 +1,6 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
+import TestRenderer from 'react-test-renderer'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
@@ -82,8 +83,10 @@ for (const flow of ['topToBottom', 'leftToRight'] as const) {
             `${kind} body is free of port targets at ${zoom}, ${flow}`)
         }
       }
-      const html = renderToStaticMarkup(<CardNodeView data={data} flow={flow} zoom={zoom} />)
-      assert.ok(html.includes(`width:${hit}px;height:${hit}px`), 'rendering uses the routing target size')
+      const rendered = TestRenderer.create(<CardNodeView data={data} flow={flow} zoom={zoom} />)
+      const targets = rendered.root.findAll(node => node.props.style?.width === hit && node.props.style?.height === hit)
+      assert.ok(targets.length > 0, 'rendering uses the routing target size')
+      rendered.unmount()
     }
   }
 }

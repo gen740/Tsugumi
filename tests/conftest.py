@@ -35,7 +35,7 @@ SHARED_RULE_FILES = {
     "tests/core/test_definitions.py", "tests/core/test_rpc_values.py",
     "tests/core/test_settings_exclusion.py",
     "tests/core/test_meta_opaque.py", "tests/core/test_versions.py",
-    "tests/core/test_rpc_drafts.py", "tests/core/test_prompt_examples.py",
+    "tests/core/test_rpc_drafts.py",
 }
 SHARED_RULE_CASES = {
     "test_operation_conflict_and_required_fields", "test_document_validation",

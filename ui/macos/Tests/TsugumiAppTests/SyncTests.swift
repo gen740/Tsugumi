@@ -254,7 +254,7 @@ import TsugumiTestSupport
     left["canvas"]?["cards"] = .array(kept)
     let request = Tsugumi_Host_LayoutValidateRequestT()
     request.json = again.layoutJson; request.removedCards = ["b"]
-    let validated: Tsugumi_Host_LayoutValidatedT = try await CoreHostClient.shared.layoutCall(.layoutvalidaterequest, request)
+    let validated: Tsugumi_Host_LayoutValidatedT = try await CoreHostClient.shared.hostCall(.layoutvalidaterequest, request)
     let cleaned = validated.json
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [FixtureChange.setProject(left.serialized()), FixtureChange.removeDefinition(id: "b"), Change.setLayout(cleaned)])

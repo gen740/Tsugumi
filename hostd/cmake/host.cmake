@@ -30,8 +30,6 @@ add_library(tsugumi_host_core STATIC
   ${_tsugumi_host_transport_sources}
   ${_tsugumi_host_util_sources}
   ${PROJECT_SOURCE_DIR}/hostd/src/access.cc
-  ${PROJECT_SOURCE_DIR}/hostd/src/state_format.cc
-  ${PROJECT_SOURCE_DIR}/hostd/src/state_gate.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/store.cc
   ${_tsugumi_host_settings_sources}
   ${PROJECT_SOURCE_DIR}/hostd/src/demo_references.cc

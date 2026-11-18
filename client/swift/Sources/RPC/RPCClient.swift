@@ -4,7 +4,6 @@ import TsugumiClientC
 
 public typealias Message = Tsugumi_RPC_MessageT
 public typealias RequestPayload = Tsugumi_RPC_RequestPayload
-public typealias ReplyPayload = Tsugumi_RPC_ReplyPayload
 public typealias FailureKind = Tsugumi_Data_FailureKind
 
 /// The generated failure kinds are plain values (the generated file cannot
@@ -14,30 +13,22 @@ extension Tsugumi_Data_FailureKind: @unchecked Sendable {}
 /// A structured failure returned by tsugumid (never matched by its text).
 public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public let kind: FailureKind
-  public let args: [String: String]
   public let permissions: [String]
   public let diagnostic: String?
   public let currentRev: UInt64?
-  public let retryAfterMs: UInt32?
 
   public init(_ f: Tsugumi_Data_FailureT) {
     kind = f.kind
-    var a: [String: String] = [:]
-    for kv in f.args { if let kv { a[kv.key] = kv.value } }
-    args = a
     permissions = f.args.compactMap { $0 }.filter { $0.key == "permission" }.map(\.value)
     diagnostic = f.diagnostic
     currentRev = f.currentRev
-    retryAfterMs = f.retryAfterMs
   }
 
   public init(kind: FailureKind, diagnostic: String) {
     self.kind = kind
-    args = [:]
     permissions = []
     self.diagnostic = diagnostic
     currentRev = nil
-    retryAfterMs = nil
   }
 
   public var description: String { "\(kind): \(diagnostic ?? "")" }
@@ -149,7 +140,6 @@ public actor RPCClient {
   private var closed = false
   private var started = false
   private var receiveTask: Task<Void, Never>?
-  public private(set) var hello: Tsugumi_RPC_HelloResultT?
 
   public init(endpoint: URL) {
     var cont: AsyncStream<NotificationEvent>.Continuation!
@@ -176,12 +166,10 @@ public actor RPCClient {
     }
     try await transport.start()
     let req = Tsugumi_RPC_SessionHelloRequestT()
-    req.protocol_ = 1
     req.clientId = clientId.uuidString.lowercased()
     req.token = token
     req.expectedProjectId = expectedProjectId
     let result: Tsugumi_RPC_HelloResultT = try await call(.sessionhellorequest, req)
-    hello = result
     return result
   }
 
@@ -281,90 +269,8 @@ public extension Tsugumi_Data_CardPathT {
 
 public func cardPath(_ segments: [String]) -> Tsugumi_Data_CardPathT { Tsugumi_Data_CardPathT(segments) }
 
-/// Decode presentation separately: invalid UTF-8 must never trap the generated
-/// object API's required String initializers or disappear as replacement text.
+/// Decode the presentation value validated by the worker.
 public func unpackDisplay(_ wire: Tsugumi_Data_Display) -> Tsugumi_Data_DisplayT {
-  var valid = true
-  switch wire.valueType {
-  case .displaytext:
-    if let text = wire.value(type: Tsugumi_Data_DisplayText.self) {
-      valid = (text.textSegmentArray?.count ?? Int.max) <= 1 << 20 && text.text != nil
-    } else { valid = false }
-  case .displayscalar:
-    if let scalar = wire.value(type: Tsugumi_Data_DisplayScalar.self) {
-      valid = scalar.value?.isFinite == true && scalar.label != nil
-    } else { valid = false }
-  case .displaytable:
-    if let table = wire.value(type: Tsugumi_Data_DisplayTable.self) {
-      var bytes = 0
-      valid = !table.columns.isEmpty && table.columns.count <= 64 && table.rows.count <= 10000
-      if valid {
-        for column in table.columns {
-          guard let column, column.utf8.count <= 4096 else { valid = false; break }
-          bytes += column.utf8.count + 8
-        }
-        for row in table.rows {
-          guard valid && row.cells.count == table.columns.count else { valid = false; break }
-          for cell in row.cells {
-            guard let cell, cell.utf8.count <= 4096 else { valid = false; break }
-            bytes += cell.utf8.count + 8
-            if bytes > 16 << 20 { valid = false; break }
-          }
-        }
-      }
-    } else { valid = false }
-  case .displayimage:
-    if let image = wire.value(type: Tsugumi_Data_DisplayImage.self) {
-      valid = image.data.count <= 8 << 20 && image.mediaType != nil && (image.altSegmentArray == nil || image.alt != nil)
-    } else { valid = false }
-  case .displaypointcloud:
-    if let cloud = wire.value(type: Tsugumi_Data_DisplayPointCloud.self) {
-      valid = cloud.x.count <= 1000000 && cloud.y.count == cloud.x.count && cloud.z.count == cloud.x.count &&
-        (cloud.colors.isEmpty || cloud.colors.count == cloud.x.count)
-    } else { valid = false }
-  case .displaymodule:
-    if let module = wire.value(type: Tsugumi_Data_DisplayModule.self) {
-      valid = module.module != nil && module.configJson != nil && module.blobs.count <= 64
-      var bytes = 0
-      if valid {
-        for blob in module.blobs {
-          guard blob.name != nil else { valid = false; break }
-          bytes += blob.data.count
-          if bytes > 8 << 20 { valid = false; break }
-        }
-      }
-    } else { valid = false }
-  default: break
-  }
-  if valid { return wire.unpack() }
-  let value = Tsugumi_Data_DisplayT()
-  value.card = wire.card!.unpack()
-  value.runId = wire.runId ?? ""
-  value.invocation = wire.invocation
-  value.revision = wire.revision
-  return value
-}
-
-private func unpackRecordResult(_ wire: Tsugumi_RPC_RecordResult) -> Tsugumi_RPC_RecordResultT {
-  let value = Tsugumi_RPC_RecordResultT()
-  value.exists = wire.exists
-  value.selectedInvocation = wire.selectedInvocation
-  value.run = wire.run!.unpack()
-  value.status = wire.status!.unpack()
-  value.aggregate = wire.aggregate!.unpack()
-  value.recordingDisabled = wire.recordingDisabled
-  value.truncated = wire.truncated
-  value.orphaned = wire.orphaned
-  if let record = wire.record {
-    let r = Tsugumi_RPC_InvocationRecordT()
-    r.summary = record.summary!.unpack()
-    r.inputs = record.inputs.map { $0.unpack() }
-    r.outputs = record.outputs.map { $0.unpack() }
-    r.inputSources = record.inputSources.map { $0.unpack() }
-    r.display = record.display.map(unpackDisplay)
-    r.recordIo = record.recordIo
-    r.paramsJson = record.paramsJson
-    value.record = r
-  }
-  return value
+  var value = wire
+  return value.unpack()
 }

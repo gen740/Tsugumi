@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 
+#include "host/agent_policy.hh"
 #include "host/failure.hh"
 #include "tsugumi/protocol/host_generated.h"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -78,25 +79,6 @@ auto Docs(
   return out;
 }
 
-const std::set<std::string> kOwnedFields{"origin",
-                                         "op_id",
-                                         "save_intent",
-                                         "approved_permissions",
-                                         "run_ids",
-                                         "restrict_to_run_ids",
-                                         "check_permissions",
-                                         "read_only",
-                                         "hide_credentials",
-                                         "no_project_socket",
-                                         "transfers",
-                                         "working_directory",
-                                         "writable_paths",
-                                         "mounts",
-                                         "output_prefix",
-                                         "workspace_only",
-                                         "protected_paths",
-                                         "excluded_paths"};
-
 auto OwnOperationId(const reflection::Object& object) -> bool {
   const auto name = object.name()->str();
   return object.fields()->LookupByKey("op_id") &&
@@ -152,7 +134,7 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
   std::vector<std::string> required;
   for (const auto* field : *object.fields()) {
     const auto name = field->name()->str();
-    if (field->deprecated() || (top && kOwnedFields.contains(name) &&
+    if (field->deprecated() || (top && host::OwnedFields.contains(name) &&
                                 (name != "op_id" || OwnOperationId(object))))
       continue;
     const auto& type = *field->type();
@@ -281,102 +263,6 @@ auto Output(const reflection::Object& object, std::string_view raw)
       it->second = json::Quote(it->second);
   }
   return json::Encode(values);
-}
-
-struct UnknownArgument {
-  std::string field;
-  std::string path;
-};
-auto UnknownField(const std::string& schema, const std::string& raw,
-                  const std::string& path) -> std::optional<UnknownArgument> {
-  const auto spec = json::Object(schema);
-  const auto alternatives = spec.contains("oneOf") ? "oneOf" : "anyOf";
-  if (spec.contains(alternatives)) {
-    std::optional<UnknownArgument> first;
-    size_t best_score = SIZE_MAX;
-    for (const auto& variant : json::Array(spec.at(alternatives))) {
-      const auto unknown = UnknownField(variant, raw, path);
-      if (!unknown) return {};
-      // Select the closest documented variant, so an extra field on a text
-      // edit is not misreported as a field from the structured-edit variant.
-      const auto shape = json::Object(variant);
-      const auto values =
-          raw.starts_with('{') ? json::Object(raw) : json::Members{};
-      const auto properties =
-          json::Object(json::Get(shape, "properties", "{}"));
-      size_t score = 0;
-      for (const auto& required :
-           json::Array(json::Get(shape, "required", "[]")))
-        if (!values.contains(json::String(required))) ++score;
-      for (const auto& [key, ignored] : values) {
-        (void)ignored;
-        if (!properties.contains(key)) ++score;
-      }
-      if (score < best_score) {
-        first = unknown;
-        best_score = score;
-      }
-    }
-    return first;
-  }
-  if (raw.starts_with('{') && spec.contains("properties")) {
-    const auto properties = json::Object(spec.at("properties"));
-    for (const auto& [key, value] : json::Object(raw)) {
-      if (!properties.contains(key)) {
-        if (json::Get(spec, "additionalProperties") == "false")
-          return UnknownArgument{key, path + "." + key};
-      } else if (auto unknown =
-                     UnknownField(properties.at(key), value, path + "." + key))
-        return unknown;
-    }
-  } else if (raw.starts_with('[') && spec.contains("items")) {
-    size_t i = 0;
-    for (const auto& value : json::Array(raw)) {
-      if (auto unknown = UnknownField(spec.at("items"), value,
-                                      path + "[" + std::to_string(i++) + "]"))
-        return unknown;
-    }
-  }
-  return {};
-}
-auto HasField(const std::string& schema, const std::string& field) -> bool {
-  const auto spec = json::Object(schema);
-  if (spec.contains("properties")) {
-    const auto properties = json::Object(spec.at("properties"));
-    if (properties.contains(field)) return true;
-    for (const auto& [key, child] : properties) {
-      (void)key;
-      if (HasField(child, field)) return true;
-    }
-  }
-  if (spec.contains("items") && HasField(spec.at("items"), field)) return true;
-  for (const auto* alternatives : {"anyOf", "oneOf"})
-    for (const auto& child : json::Array(json::Get(spec, alternatives, "[]")))
-      if (HasField(child, field)) return true;
-  return false;
-}
-auto ArgumentDiagnostic(const Catalog& catalog, std::string_view tool,
-                        const UnknownArgument& unknown) -> std::string {
-  auto message = std::string(tool) + ": unknown field '" + unknown.field +
-                 "' at " + unknown.path + ".";
-  if (tool == "project_save")
-    message +=
-        " project_save takes changes tagged with value_type and value "
-        "(SetProject, PutDefinition, PutSource, RemoveDefinition, "
-        "SetLayout, etc.).";
-  std::vector<std::string> accepts;
-  for (const auto& candidate : catalog.tools())
-    if (candidate.spec.name != tool &&
-        HasField(candidate.spec.input_schema, unknown.field))
-      accepts.push_back(candidate.spec.name);
-  if (!accepts.empty()) {
-    message += " Use ";
-    for (size_t i = 0; i < accepts.size(); ++i)
-      message += (i ? ", " : "") + accepts[i];
-    message +=
-        " for '" + unknown.field + "' edits/arguments in its documented shape.";
-  }
-  return message;
 }
 
 auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
@@ -667,25 +553,6 @@ auto Catalog::Json() const -> std::string {
   return json::Encode(tools);
 }
 
-auto Catalog::ValidateArguments(std::string_view name,
-                                std::string_view arguments) const -> void {
-  const auto* tool = Find(name);
-  std::string input_schema;
-  if (name == "tools") {
-    for (const auto& spec : ModelSpecs())
-      if (spec.name == name) input_schema = spec.input_schema;
-  } else if (tool) {
-    input_schema = tool->spec.input_schema;
-  } else {
-    return;
-  }
-  if (const auto unknown =
-          UnknownField(input_schema, json::Encode(json::Object(arguments)),
-                       std::string(name)))
-    throw host::Failure("invalid_request",
-                        ArgumentDiagnostic(*this, name, *unknown));
-}
-
 auto Catalog::Request(std::string_view name, std::string_view arguments,
                       uint64_t id) const -> std::string {
   const auto* tool = Find(name);
@@ -716,14 +583,6 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
                                   {"value", Normalize(*object, arguments)}})}});
   auto parser = Parser();
   if (!parser->ParseJson(body.c_str())) {
-    const std::string marker = "unknown field: ";
-    const auto at = parser->error_.find(marker);
-    if (at != std::string::npos) {
-      const auto field = parser->error_.substr(at + marker.size());
-      throw host::Failure(
-          "invalid_request",
-          ArgumentDiagnostic(Catalog{}, name, {field, std::string(name)}));
-    }
     auto diagnostic = parser->error_;
     std::replace(diagnostic.begin(), diagnostic.end(), '\n', ' ');
     throw host::Failure(

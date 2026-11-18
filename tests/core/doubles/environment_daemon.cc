@@ -26,17 +26,15 @@ class Daemon final : public tsugumi::RequestSink {
       -> std::pair<std::string, bool> override {
     const auto* input =
         project_request(request)->value_as_SessionHelloRequest();
-    const bool accepted =
-        input && input->protocol() == 1 && input->client_id() &&
-        tsugumi::crypto::is_uuid(input->client_id()->str()) && input->token() &&
-        input->token()->str() == token && input->expected_project_id() &&
-        input->expected_project_id()->str() == project;
+    const bool accepted = input && input->token() &&
+                          input->token()->str() == token &&
+                          input->expected_project_id() &&
+                          input->expected_project_id()->str() == project;
     flatbuffers::FlatBufferBuilder b;
     if (!accepted) return {"", false};
-    const auto limits = R::CreateLimits(b);
     std::vector<flatbuffers::Offset<flatbuffers::String>> capabilities;
-    auto hello = R::CreateHelloResult(b, 1, b.CreateString(project),
-                                      b.CreateString(instance), limits,
+    auto hello = R::CreateHelloResult(b, b.CreateString(project),
+                                      b.CreateString(instance),
                                       b.CreateVector(capabilities));
     auto reply = R::CreateReply(b, R::ReplyPayload::HelloResult, hello.Union());
     R::FinishMessageBuffer(
@@ -67,14 +65,9 @@ auto main(int argc, char** argv) -> int {
   namespace fs = tsugumi::fs;
   std::filesystem::path project, control;
   std::string unix_socket;
-  bool archive = false;
   std::vector<std::string> origins;
   for (int i = 1; i < argc; ++i) {
     const std::string option(argv[i]);
-    if (option == "--archive-incompatible-history") {
-      archive = true;
-      continue;
-    }
     if (++i == argc) return 2;
     const std::string value(argv[i]);
     if (option == "--project") project = value;
@@ -84,7 +77,6 @@ auto main(int argc, char** argv) -> int {
   }
   const auto record = json::Encode(json::Members{
       {"origins", json::Encode(origins)},
-      {"archive", archive ? "true" : "false"},
       {"broker", json::Quote(std::getenv("TSUGUMI_EXECUTION_BROKER")
                                  ? std::getenv("TSUGUMI_EXECUTION_BROKER")
                                  : "")},
@@ -95,17 +87,6 @@ auto main(int argc, char** argv) -> int {
   {
     std::ofstream launches(project / "launches", std::ios::app);
     launches << record << '\n';
-  }
-  if (std::filesystem::exists(project / "incompatible")) {
-    if (!archive) {
-      fs::write_atomic(
-          control / "server.startup-error.json",
-          R"({"code":"history_version_mismatch","stored_version":"999","expected_version":"5","location":"local"})",
-          0600);
-      return 8;
-    }
-    std::filesystem::rename(project / "incompatible",
-                            project / "archived-by-explicit-request");
   }
   sigset_t signals;
   sigemptyset(&signals);

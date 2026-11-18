@@ -13,7 +13,7 @@ from Tsugumi.RPC.Message import Message
 
 
 def hello_frame(request_id: int, token: str | None, *, client_id=None) -> bytes:
-    fields = {"protocol": 1, "clientId": client_id or new_id()}
+    fields = {"clientId": client_id or new_id()}
     if token is not None:
         fields["token"] = token
     return encode_request(request_id, "SessionHelloRequest", make("SessionHelloRequest", **fields))

@@ -1,7 +1,5 @@
 #include "versions.hh"
 
-#include <git2.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -17,6 +15,7 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/document/schema.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/git.hh"
 #include "tsugumi/util/log.hh"
 #include "version_record.hh"
 
@@ -33,24 +32,9 @@ constexpr const char* kIgnore = ".tsugumi/\n.DS_Store\n";
 // ---- libgit2 handles
 // ---------------------------------------------------------
 
-struct Init {
-  Init() { git_libgit2_init(); }
-};
-void init_once() { static Init i; }
+using git::init_once;
+using git::Ptr;
 
-template <class T, void (*F)(T*)>
-struct Ptr {
-  T* p = nullptr;
-  Ptr() = default;
-  Ptr(const Ptr&) = delete;
-  Ptr& operator=(const Ptr&) = delete;
-  ~Ptr() {
-    if (p) F(p);
-  }
-  T** out() { return &p; }
-  T* get() const { return p; }
-  explicit operator bool() const { return p != nullptr; }
-};
 using Repo = Ptr<git_repository, git_repository_free>;
 using Index = Ptr<git_index, git_index_free>;
 using Tree = Ptr<git_tree, git_tree_free>;

@@ -26,6 +26,18 @@ auto KnownPayload(Tag tag) -> bool {
   return tag > Tag::NONE && tag <= Tag::MAX;
 }
 
+template <class Message>
+auto RequestReply(const Message* message) -> std::optional<Envelope> {
+  const auto id = message->request_id();
+  if (id && message->payload_as_Request() &&
+      KnownPayload(message->payload_as_Request()->value_type()))
+    return Envelope{Kind::Request, id};
+  if (id && message->payload_as_Reply() &&
+      KnownPayload(message->payload_as_Reply()->value_type()))
+    return Envelope{Kind::Reply, id};
+  return std::nullopt;
+}
+
 auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
   flatbuffers::Verifier verifier(bytes.data(), bytes.size());
   if (protocol == Protocol::Project) {
@@ -58,46 +70,16 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Agent RPC buffer");
     const auto* message = A::GetMessage(bytes.data());
-    const auto id = message->request_id();
-    switch (message->payload_type()) {
-      case A::Payload::Request:
-        if (id && message->payload_as_Request() &&
-            KnownPayload(message->payload_as_Request()->value_type()))
-          return {Kind::Request, id};
-        break;
-      case A::Payload::Reply:
-        if (id && message->payload_as_Reply() &&
-            KnownPayload(message->payload_as_Reply()->value_type()))
-          return {Kind::Reply, id};
-        break;
-      default:
-        break;
-    }
+    if (auto envelope = RequestReply(message)) return *envelope;
   } else if (protocol == Protocol::Host) {
     namespace A = Tsugumi::Host;
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Host RPC buffer");
     const auto* message = A::GetMessage(bytes.data());
-    const auto id = message->request_id();
-    switch (message->payload_type()) {
-      case A::Payload::Request:
-        if (id && message->payload_as_Request() &&
-            KnownPayload(message->payload_as_Request()->value_type()))
-          return {Kind::Request, id};
-        break;
-      case A::Payload::Reply:
-        if (id && message->payload_as_Reply() &&
-            KnownPayload(message->payload_as_Reply()->value_type()))
-          return {Kind::Reply, id};
-        break;
-      case A::Payload::Event:
-        if (!id && message->payload_as_Event() &&
-            KnownPayload(message->payload_as_Event()->value_type()))
-          return {Kind::Event, 0};
-        break;
-      default:
-        break;
-    }
+    if (auto envelope = RequestReply(message)) return *envelope;
+    if (!message->request_id() && message->payload_as_Event() &&
+        KnownPayload(message->payload_as_Event()->value_type()))
+      return {Kind::Event, 0};
   }
   throw std::runtime_error("invalid RPC envelope");
 }
@@ -153,6 +135,15 @@ struct Connection::State {
       callback = std::exchange(start_callback, {});
     }
     if (callback) callback({});
+  }
+
+  auto Deadline() -> std::optional<std::chrono::steady_clock::time_point> {
+    std::lock_guard lock(mutex);
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    for (const auto& [id, request] : pending)
+      if (!deadline || request.deadline < *deadline)
+        deadline = request.deadline;
+    return deadline;
   }
 
   auto Tick() -> void {
@@ -226,8 +217,6 @@ struct Connection::State {
         error = {ErrorCode::Closed, "RPC transport is not open"};
       else if (timeout.count() <= 0)
         error = {ErrorCode::InvalidArgument, "timeout must be positive"};
-      else if (pending.size() >= options.max_pending_requests)
-        error = {ErrorCode::Backpressure, "too many pending RPC requests"};
       else {
         try {
           id = next_id;
@@ -305,20 +294,23 @@ auto Connection::Start(std::function<void(Error)> completion) -> void {
   }
   const std::weak_ptr<State> weak = state_;
   try {
-    transport_->Start({[weak] {
-                         if (auto state = weak.lock()) state->Opened();
-                       },
-                       [weak](Bytes bytes) {
-                         if (auto state = weak.lock())
-                           state->Receive(std::move(bytes));
-                       },
-                       [weak](Error error) {
-                         if (auto state = weak.lock())
-                           state->End(std::move(error));
-                       },
-                       [weak] {
-                         if (auto state = weak.lock()) state->Tick();
-                       }});
+    transport_->Start(
+        {[weak] {
+           if (auto state = weak.lock()) state->Opened();
+         },
+         [weak](Bytes bytes) {
+           if (auto state = weak.lock()) state->Receive(std::move(bytes));
+         },
+         [weak](Error error) {
+           if (auto state = weak.lock()) state->End(std::move(error));
+         },
+         [weak] {
+           if (auto state = weak.lock()) state->Tick();
+         },
+         [weak] {
+           if (auto state = weak.lock()) return state->Deadline();
+           return std::optional<std::chrono::steady_clock::time_point>{};
+         }});
   } catch (const std::exception& error) {
     state_->End({ErrorCode::Transport, error.what()});
   }

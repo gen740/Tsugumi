@@ -82,7 +82,7 @@ def combinations(client, directory, run_id):
 def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     """One trigger runs the complete Cartesian product and the saved inputs replay it in order."""
     history_dir = tmp_path / "history"
-    daemon = core_factory(mocked_builds=True, history_dir=history_dir)
+    daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
     graph = Project(project).card("start", {"template": "trigger"})
     producer(graph, "left", [10, 20])
@@ -129,7 +129,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     daemon.stop()
     copied = tmp_path / "copied-project"
     shutil.copytree(project, copied, symlinks=True)
-    restored = core_factory(project_root=copied, history_dir=tmp_path / "restored-history").connect()
+    restored = core_factory(project_root=copied).connect()
     batch, = invocation_page(restored, run_id, "work").batches
     assert batch.complete and batch.invocationCount == 12
     assert combinations(restored, tmp_path / "decode", run_id)[1] == expected

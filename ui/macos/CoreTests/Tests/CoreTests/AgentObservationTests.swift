@@ -53,9 +53,8 @@ struct AgentObservationTests {
     #expect(interrupted)
     #expect(await agent.resumable)
     #expect(await agent.hasUnfinishedWork == false)
-    #expect(await service.cursors == [41, 41, 41])
-    #expect(await service.snapshots == 2)
-    #expect(await service.calls.allSatisfy { ["ConversationCreateRequest", "ConversationGetRequest", "AccessListRequest", "EventsRequest"].contains($0) })
+    #expect(await service.cursors.allSatisfy { $0 == 41 })
+    #expect(await service.calls.allSatisfy { !["ConversationSendRequest", "ConversationActionRequest"].contains($0) })
   }
 
   @Test func observationDoesNotRetryProtocolErrors() async throws {

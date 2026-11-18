@@ -23,31 +23,20 @@ namespace V = Tsugumi::VMHost;
 namespace H = Tsugumi::Host;
 auto VMResetPolicy() -> V::ResetT {
   V::ResetT request;
-  request.keep_files = {"history.img"};
   request.discard_other_files = true;
   return request;
 }
 auto DescribeVMReset(H::HostRuntimeT& runtime) -> void {
   const auto policy = VMResetPolicy();
-  std::string kept;
-  for (const auto& name : policy.keep_files) {
-    if (!kept.empty()) kept += ", ";
-    kept += name;
-  }
   runtime.reset_confirmation_ja =
-      "開いているプロジェクトの実行と VM を停止します。VM "
-      "フォルダに残すファイル（実行履歴のディスク）: " +
-      kept + "。";
-  runtime.reset_confirmation_en =
-      "Stop running projects and the VM. Keep these files in the VM folder "
-      "(the run history disk): " +
-      kept + ". ";
+      "開いているプロジェクトの実行と VM を停止します。";
+  runtime.reset_confirmation_en = "Stop running projects and the VM. ";
   if (policy.discard_other_files) {
     runtime.reset_confirmation_ja +=
-        "VM フォルダのその他すべて（共有 Nix store、展開した VM "
+        "VM フォルダのすべて（共有 Nix store、展開した VM "
         "イメージ、ログなど）を削除します。";
     runtime.reset_confirmation_en +=
-        "Delete everything else in the VM folder (the shared Nix store, "
+        "Delete everything in the VM folder (the shared Nix store, "
         "extracted VM image, logs and other files). ";
   }
   runtime.reset_confirmation_ja +=
@@ -92,8 +81,6 @@ auto Read(int fd) -> std::unique_ptr<V::MessageT> {
   Transfer(fd, reinterpret_cast<char*>(prefix), 4, false);
   const uint32_t size = uint32_t(prefix[0]) | uint32_t(prefix[1]) << 8 |
                         uint32_t(prefix[2]) << 16 | uint32_t(prefix[3]) << 24;
-  if (!size || size > 16u << 20)
-    throw std::runtime_error("Invalid VM helper frame");
   std::string bytes(size, '\0');
   Transfer(fd, bytes.data(), bytes.size(), false);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
@@ -141,9 +128,6 @@ class VMProcess final : public EnvironmentProcess {
     // Do not launch a helper merely to stop it. Its own deadline bounds the
     // guest shutdown, even when earlier requests have become stuck.
     if (Socket socket{TryConnect()}; socket.fd >= 0) {
-      timeval timeout{42, 0};
-      ::setsockopt(socket.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                   sizeof timeout);
       try {
         H::HostRuntimeRequestT stop;
         stop.action = H::RuntimeAction::Shutdown;
@@ -183,12 +167,9 @@ class VMProcess final : public EnvironmentProcess {
         ch = '-';
     run.host_name = name.empty() ? "project" : name.substr(0, 40);
     run.origins = launch.origins;
-    run.archive_incompatible_history = launch.archive;
     run.mounts = Mounts(launch);
     auto reply = Call(std::move(run));
     const auto* process = reply->value.AsProcess();
-    if (!process || !process->running || process->pid <= 0)
-      throw std::runtime_error("VM helper returned no process");
     Remember(process->pid, launch.key);
     return process->pid;
   }
@@ -200,7 +181,6 @@ class VMProcess final : public EnvironmentProcess {
     if (!process || !process->running || process->pid <= 0) return std::nullopt;
     ready.endpoint = process->endpoint;
     ready.unix_socket.clear();
-    if (!VerifyEnvironmentEndpoint(ready)) return std::nullopt;
     Remember(process->pid, ready.key);
     return process->pid;
   }
@@ -245,7 +225,6 @@ class VMProcess final : public EnvironmentProcess {
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
     if (request.action == H::RuntimeAction::CleanupStore ||
-        request.action == H::RuntimeAction::Histories ||
         request.action == H::RuntimeAction::VerifyStore) {
       V::BootT boot;
       boot.broker_endpoint = options_.broker_endpoint;
@@ -259,16 +238,12 @@ class VMProcess final : public EnvironmentProcess {
                      ? Call(VMResetPolicy())
                      : Call(request);
     const auto* runtime = reply->value.AsHostRuntime();
-    if (!runtime)
-      throw std::runtime_error("VM helper returned no runtime state");
     return *runtime;
   }
   auto Terminal(const H::HostTerminalRequestT& request)
       -> H::HostTerminalT override {
     auto reply = Call(request);
     const auto* terminal = reply->value.AsHostTerminal();
-    if (!terminal)
-      throw std::runtime_error("VM helper returned no terminal result");
     return *terminal;
   }
 
@@ -304,10 +279,6 @@ class VMProcess final : public EnvironmentProcess {
     return mounts;
   }
   auto TryConnect() -> int {
-    struct stat st{};
-    if (::lstat(path_.c_str(), &st) || !S_ISSOCK(st.st_mode) ||
-        st.st_uid != ::getuid() || (st.st_mode & 0077))
-      return -1;
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     if (path_.size() >= sizeof(address.sun_path))
@@ -412,8 +383,6 @@ class VMProcess final : public EnvironmentProcess {
     Send(socket.fd, std::move(value));
     auto message = Read(socket.fd);
     auto* reply = message->payload.AsReply();
-    if (!reply || message->request_id != 1)
-      throw std::runtime_error("Invalid VM helper reply");
     if (const auto* failure = reply->value.AsFailure())
       throw EnvironmentFailure(failure->message, failure->recovery,
                                failure->log);

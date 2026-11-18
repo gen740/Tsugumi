@@ -1,0 +1,8 @@
+add_library(tsugumi_crypto STATIC ${PROJECT_SOURCE_DIR}/util/src/crypto.cc)
+target_include_directories(tsugumi_crypto PUBLIC ${PROJECT_SOURCE_DIR}/util/include)
+if(NOT APPLE)
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  target_link_libraries(tsugumi_crypto PRIVATE OpenSSL::Crypto)
+endif()
+install(TARGETS tsugumi_crypto ARCHIVE DESTINATION lib)
+install(FILES ${PROJECT_SOURCE_DIR}/util/include/tsugumi/util/crypto.hh DESTINATION include/tsugumi/util)

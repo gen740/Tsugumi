@@ -1,10 +1,7 @@
 import { modelErrorMessage } from './i18n'
-// Calls to the host server (files, processes, the Agent). Mutating calls
-// carry a header that a cross-origin page cannot send.
+// Calls to the host server (files, processes, the Agent).
 
 import type { HistoryVersionMismatch } from '../shared/historyVersion'
-
-export class ApiError extends Error {}
 
 let settingsRevision: Record<string, number> | undefined
 
@@ -14,10 +11,10 @@ export async function api<T = any>(path: string, body?: unknown): Promise<T> {
     body = { revision: settingsRevision, ...(body as object) }
   }
   const r = await fetch(path, body === undefined
-    ? { headers: { 'x-tsugumi': '1' } }
-    : { method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
+    ? {}
+    : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new ApiError(modelErrorMessage(v.error ?? `HTTP ${r.status}`))
+  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`))
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
@@ -99,7 +96,6 @@ export interface SetupStatus {
   sdk: { path: string; ok: boolean }
   nix: { ok: boolean }
   repo: string
-  building: { running: boolean; code?: number; log: string } | null
 }
 
 export interface Demo {

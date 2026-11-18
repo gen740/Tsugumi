@@ -114,8 +114,6 @@ def serve(peer):
                                      "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
                         for origin in request.origins or []:
                             arguments.extend(["--allow-origin", text(origin)])
-                        if request.archiveIncompatibleHistory:
-                            arguments.append("--archive-incompatible-history")
                         environment = dict(os.environ, TSUGUMI_EXECUTION_BROKER=broker_endpoint, TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=str(mounts["control"] / "execution-broker-capability"))
                         processes[key] = subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         value, tag = status(key), ReplyPayload.Process

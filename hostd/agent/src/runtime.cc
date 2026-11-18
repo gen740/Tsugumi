@@ -136,16 +136,6 @@ auto AddUsage(Usage& total, const Usage& next) -> void {
   total.cache_write_tokens += next.cache_write_tokens;
 }
 
-auto Resources(const std::vector<Message>& messages)
-    -> std::vector<std::string> {
-  std::set<std::string> ids;
-  for (const auto& message : messages) {
-    for (const auto& block : message.content)
-      ids.insert(block.resource_ids.begin(), block.resource_ids.end());
-  }
-  return {ids.begin(), ids.end()};
-}
-
 auto ContextOverflow(std::string reason) -> bool {
   std::transform(reason.begin(), reason.end(), reason.begin(),
                  [](unsigned char c) { return std::tolower(c); });
@@ -302,8 +292,7 @@ auto Reconcile(std::vector<Message>& messages, const RuntimeHooks& hooks,
 auto ModelTurn(const ProviderConfig& config, std::string_view system,
                std::vector<Message>& messages,
                const std::vector<ToolSpec>& tools, std::stop_token stop,
-               const RuntimeHooks& hooks, uint32_t max_retries,
-               bool persist_changes = true) -> ModelReply {
+               const RuntimeHooks& hooks, uint32_t max_retries) -> ModelReply {
   for (uint32_t attempt = 0;; ++attempt) {
     CheckCancelled(stop);
     // Recheck on every retry: a user's revocation can happen during backoff.
@@ -345,7 +334,6 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
           }
         }
         if (removed) {
-          if (persist_changes) Save(hooks, messages);
           if (streamed) Emit(hooks, {"discardText", {}, {}, {}, true, 0, {}});
           Emit(hooks, {"retrying",
                        "The model rejected a tool image; continuing without it",
@@ -449,7 +437,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       request_context.result_limit = context->result_limit;
       try {
         reply = ModelTurn(config, system, request_messages, tools, stop, hooks,
-                          options_.max_retries, false);
+                          options_.max_retries);
         context_refusals = 0;
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
@@ -693,7 +681,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
   auto silent_hooks = hooks;
   silent_hooks.event = {};
   auto reply = ModelTurn(compact_config, system, bounded_input, tools, stop,
-                         silent_hooks, options_.max_retries, false);
+                         silent_hooks, options_.max_retries);
   if (reply.stop_reason == "max_tokens" || reply.stop_reason == "tool_use")
     throw ProviderError("model did not complete the conversation summary");
   std::string text;

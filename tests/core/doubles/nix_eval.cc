@@ -166,7 +166,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
 }
 
 auto NixEvaluator::reuse(const NixCall&, const NixResult& result) -> bool {
-  return valid(result.derivation.output);
+  return fs::resolves_inside(impl_->products, result.derivation.output) &&
+         std::filesystem::is_regular_file(result.derivation.output);
 }
 
 auto NixEvaluator::make_available(const NixCall& call,
@@ -202,12 +203,12 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
       result.closure.end());
   if (!call.root_dir.empty()) {
     std::filesystem::create_directories(call.root_dir);
-    result.root =
+    const auto root =
         call.root_dir / (call.root_prefix + product.filename().string());
-    auto temporary = result.root;
+    auto temporary = root;
     temporary += ".tmp-" + crypto::random_token(6);
     std::filesystem::create_symlink(product, temporary);
-    std::filesystem::rename(temporary, result.root);
+    std::filesystem::rename(temporary, root);
   }
   return result;
 }
@@ -226,11 +227,6 @@ auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
   FlakeInfo result;
   result.json = *product;
   return result;
-}
-
-auto NixEvaluator::valid(const std::string& store_path) -> bool {
-  return fs::resolves_inside(impl_->products, store_path) &&
-         std::filesystem::is_regular_file(store_path);
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

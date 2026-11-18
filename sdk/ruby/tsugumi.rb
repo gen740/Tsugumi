@@ -165,8 +165,9 @@ module Tsugumi
   class Inputs
     def initialize(scope)
       @params = Tsugumi.freeze_input(scope.params)
-      @kinds = TsugumiHost.inputs.to_h { |name, kind, _| [name, kind] }.freeze
-      @values = TsugumiHost.inputs.to_h { |name, _, json| [name, Tsugumi.freeze_input(JSON.parse(json, allow_nan: true))] }.freeze
+      inputs = TsugumiHost.inputs
+      @kinds = inputs.to_h { |name, kind, _| [name, kind] }.freeze
+      @values = inputs.to_h { |name, _, json| [name, Tsugumi.freeze_input(JSON.parse(json, allow_nan: true))] }.freeze
       freeze
     end
     attr_reader :params

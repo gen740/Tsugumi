@@ -80,7 +80,6 @@ auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
 
 auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
   if (call.name != "tools") return call;
-  catalog.ValidateArguments(call.name, call.arguments);
   const auto args = json::Object(call.arguments);
   const auto action = json::Text(args, "action");
   if (action.empty()) return call;
@@ -158,8 +157,6 @@ auto Tools::PrepareLayoutSave(const std::string& project,
           throw Failure("invalid_request", "Invalid layout source bytes");
         text += decoded;
       }
-      if (text.size() > 8 * 1024 * 1024)
-        throw Failure("resource_limit", "Layout document exceeds 8 MiB");
       if (json::Bool(json::Get(chunk, "eof"))) break;
       const auto next = json::Get(chunk, "next_offset");
       const auto position = json::UInt(json::String(next, next));
@@ -577,8 +574,8 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
           .Call([&](uint64_t id) {
             flatbuffers::FlatBufferBuilder b;
             auto h = R::CreateSessionHelloRequest(
-                b, 1, b.CreateString(crypto::uuid4()), b.CreateString(project),
-                endpoint.token.empty() ? 0 : b.CreateString(endpoint.token), 1);
+                b, b.CreateString(crypto::uuid4()), b.CreateString(project),
+                endpoint.token.empty() ? 0 : b.CreateString(endpoint.token));
             auto r = R::CreateRequest(b, R::RequestPayload::SessionHelloRequest,
                                       h.Union());
             R::FinishMessageBuffer(
@@ -832,7 +829,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (c.role == "guide" && call.name != "tools" &&
       !catalog.Allows(call.name, role))
     throw Failure("permission_denied", "Tool unavailable for the guide role");
-  catalog.ValidateArguments(call.name, call.arguments);
   auto args = json::Object(call.arguments);
   if (call.name == "tools") {
     const auto family = json::Text(args, "family");
@@ -1144,17 +1140,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                            Tsugumi::Service::Access::Read, wait, stop,
                            "Read the user-selected attached folder", {});
   }
-  for (const auto* field :
-       {"origin", "approved_permissions", "check_permissions", "read_only",
-        "hide_credentials", "no_project_socket", "transfers",
-        "working_directory", "writable_paths", "mounts", "protected_paths",
-        "workspace_only", "output_prefix", "excluded_paths"})
-    args.erase(field);
-  if (call.name == "run_history_delete") {
-    args.erase("run_ids");
-    args.erase("restrict_to_run_ids");
-  }
-  if (spec->mutating) args.erase("op_id");
+  host::StripOwnedFields(call.name, spec->mutating, args);
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
                                          json::Encode(args));
   auto op_id = conversation + "-" + call.id;
@@ -1444,23 +1430,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   {
     std::lock_guard lock(mutex);
-    if (!access_service.HasGrant(
-            authorization.empty() ? project : authorization, conversation,
-            Tsugumi::Service::Access::Read))
-      throw Failure("permission_denied",
-                    "Access was revoked while the operation was running");
-    for (const auto& resource : file_resources)
-      if (!access_service.HasGrant(resource, conversation,
-                                   Tsugumi::Service::Access::Read))
-        throw Failure("permission_denied",
-                      "Folder access was revoked during the operation");
     conversations->RememberResource(
         conversation, authorization.empty() ? project : authorization);
     if (!folder_resource.empty()) {
-      if (!access_service.HasGrant(folder_resource, conversation,
-                                   Tsugumi::Service::Access::Read))
-        throw Failure("permission_denied",
-                      "Folder access was revoked while reading");
       conversations->RememberResource(conversation, folder_resource);
     }
     auto q = conversations->ConversationDatabase(conversation)
@@ -1604,11 +1576,6 @@ auto Tools::Hooks(const std::string& id, bool helper,
         "receipts WHERE conversation=? AND id=?");
     q.bind(1, id).bind(2, call.id);
     if (!q.step()) return std::nullopt;
-    if (!access_service.HasGrant(boundary && !boundary->authorization().empty()
-                                     ? boundary->authorization()
-                                     : q.text(3),
-                                 id, Tsugumi::Service::Access::Read))
-      return ToolResult{"Project access has been revoked", true, {}, {}};
     if (q.text(0) == "completed")
       return ToolOutput(
           q.text(1), q.i64(2) != 0,
@@ -1687,7 +1654,39 @@ auto Tools::Handle(const RequestIn& request, bool human,
           r->value_as_CallIdRequest()->conversation_id()->str();
       conversations->OwnConversation(conversation, human);
       A::CallIdT result;
-      result.id = AllocateCall(conversation);
+      const auto* input = r->value_as_CallIdRequest();
+      if (input->name() && input->arguments_json()) {
+        const auto call = ResolveCall(
+            {"", input->name()->str(), input->arguments_json()->str()},
+            ModelRole::Main);
+        if (const auto* spec = catalog.Find(call.name)) {
+          auto args = json::Object(call.arguments);
+          host::StripOwnedFields(call.name, spec->mutating, args);
+          const auto project =
+              conversations->GetConversation(conversation).project;
+          const auto digest = crypto::sha256_hex(call.name + "\n" + project +
+                                                 "\n" + json::Encode(args));
+          auto receipts =
+              conversations->ConversationDatabase(conversation)
+                  .prepare(
+                      "SELECT id FROM receipts WHERE conversation=? AND "
+                      "digest=? AND state<>'completed' ORDER BY id DESC");
+          receipts.bind(1, conversation).bind(2, digest);
+          while (receipts.step()) {
+            auto approval = db.prepare(
+                "SELECT 1 FROM operation_approvals o JOIN access_requests a ON "
+                "a.id=o.request WHERE o.conversation=? AND o.call=? AND "
+                "a.state "
+                "IN ('pending','allowed')");
+            approval.bind(1, conversation).bind(2, receipts.text(0));
+            if (approval.step()) {
+              result.id = receipts.text(0);
+              break;
+            }
+          }
+        }
+      }
+      if (result.id.empty()) result.id = AllocateCall(conversation);
       return wire::AgentReply(request.request_id, std::move(result));
     }
     case A::RequestPayload::ToolCatalogRequest: {

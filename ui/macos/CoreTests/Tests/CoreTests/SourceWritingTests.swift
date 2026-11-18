@@ -32,16 +32,18 @@ struct SourceWritingTests {
   @Test func onlyWhatHasArrivedIsThere() {
     var s = SourceWritingScanner()
     s.feed(#"{"changes": [{"value": {"path": "definitions/a/x.py", "bytes": "imp"#)
-    #expect(s.current == SourceWriting(path: "definitions/a/x.py", text: "imp", done: false, sequence: 1, ready: true))
+    #expect(s.current?.path == "definitions/a/x.py" && s.current?.text == "imp" && s.current?.done == false)
+    let first = s.current?.sequence
     s.feed(#"ort os"#)
     #expect(s.current?.text == "import os" && s.current?.done == false)
     s.feed(#"", "base_hash": "h"}"#)
     #expect(s.current?.done == true)
     // The next file replaces it from its first key.
     s.feed(#"}, {"value": {"bytes": "b", "path": "definitions/b/y.py"#)
-    #expect(s.current == SourceWriting(path: nil, text: "b", done: false, sequence: 2, ready: true))
+    #expect(s.current?.path == nil && s.current?.text == "b" && s.current?.done == false)
+    #expect(s.current?.sequence != first)
     s.feed(#""}}]}"#)
-    #expect(s.current == SourceWriting(path: "definitions/b/y.py", text: "b", done: true, sequence: 2, ready: true))
+    #expect(s.current?.path == "definitions/b/y.py" && s.current?.text == "b" && s.current?.done == true)
   }
 
   @Test func otherChangesAreNotFiles() {

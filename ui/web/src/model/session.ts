@@ -431,8 +431,6 @@ export class ProjectSession extends Observable {
   /** Edits wait for the run to end (the core keeps Card changes back while it runs). */
   /** Last user-facing problem of an action (run refused, import failed, ...). */
   cacheUsage?: R.ProjectCacheUsageResultT
-  private cacheUsageTimer?: ReturnType<typeof setTimeout>
-  private cacheNoticeShown = false
   notice?: string
 
   private readonly documentRevisions = new DocumentRevisions()
@@ -594,20 +592,16 @@ export class ProjectSession extends Observable {
     void this.openConnection()
   }
 
-  archiveHistoryAndStart() {
-    if (this.closed || this.environment.state !== 'failed' || !this.environment.historyVersionMismatch) return
-    this.environment = { state: 'starting', message: '' }
-    void this.openConnection('/api/env/archive-history')
-  }
 
-  private async openConnection(route: '/api/env/start' | '/api/env/archive-history' = '/api/env/start') {
+
+  private async openConnection() {
     if (this.closed) return
     const epoch = this.connectionEpoch = Symbol()
     this.connectionMessage = undefined
     this.changed()
     try {
       await this.refreshProjectTrust()
-      const env = await api<EnvPublicState>(route, { path: this.dir })
+      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir })
       if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env
       this.changed()
@@ -627,7 +621,6 @@ export class ProjectSession extends Observable {
       this.subscription = s(opened.subscriptionId)
       this.lastSeq = opened.seq ?? 1n
       this.connected = true
-      void this.refreshCacheUsage()
       this.listen(c)
       c.onClose = () => {
         if (this.client !== c) return
@@ -720,7 +713,6 @@ export class ProjectSession extends Observable {
   /** The project was left: no more connections, whatever is under way. */
   close() {
     this.closed = true
-    clearTimeout(this.cacheUsageTimer)
     this.offEvents?.()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
@@ -1574,17 +1566,25 @@ export class ProjectSession extends Observable {
       setTimeout(() => this.client && this.refreshExternals(), 0)
       return
     }
+    const definitionIds = new Map<string, Set<string>>()
+    for (const p of paths) {
+      const split = p.lastIndexOf('/definitions/')
+      if (split < 0) continue
+      const [id, file, extra] = p.slice(split + '/definitions/'.length).split('/')
+      if (extra || !['_card.json', '_link.json'].includes(file)) continue
+      const prefix = p.slice(0, split + 1)
+      const ids = definitionIds.get(prefix) ?? new Set<string>()
+      ids.add(id); definitionIds.set(prefix, ids)
+    }
     const atRev = this.rev
     const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
     this.externalsTask = (async () => {
       const found = new Map<string, ExternalProject>()
-      const read = new Map<string, string>()
       const doc = async (rel: string): Promise<J | undefined> => {
         const h = hashes.get(rel)
         if (!h) return undefined
         try {
           const d = await client.readFile(rel, atRev)
-          read.set(rel, h)
           return tryParse(new TextDecoder().decode(d))
         } catch {
           return undefined
@@ -1596,25 +1596,15 @@ export class ProjectSession extends Observable {
         // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
         const parts = prefix.split('/').filter(Boolean)
         if (parts.length < 2 || parts.length % 2 !== 0 || parts[parts.length - 2] !== 'externals') continue
-        const proj = await doc(p)
+        const [proj, layout] = await Promise.all([doc(p), doc(prefix + 'layout.json')])
         if (proj === undefined) continue
-        const ext: ExternalProject = { project: proj, layout: (await doc(prefix + 'layout.json')) ?? obj(), definitions: new Map() }
-        // Every definition folder of the external (placed or not).
-        const ids = new Set<string>()
-        for (const q of paths) {
-          if (!q.startsWith(prefix + 'definitions/')) continue
-          const rest = q.slice((prefix + 'definitions/').length).split('/')
-          if (rest.length === 2 && ['_card.json', '_link.json'].includes(rest[1])) ids.add(rest[0])
-        }
+        const ext: ExternalProject = { project: proj, layout: layout ?? obj(), definitions: new Map() }
+        const ids = definitionIds.get(prefix) ?? new Set<string>()
         for (const id of [...ids].sort()) {
           const dir = `${prefix}definitions/${id}/`
-          const meta = await doc(dir + '_meta.json')
-          const l = await doc(dir + '_link.json')
+          const [meta, l, card] = await Promise.all(['_meta.json', '_link.json', '_card.json'].map(file => doc(dir + file)))
           if (l !== undefined) ext.definitions.set(id, { card: obj(), meta, link: l })
-          else {
-            const c = await doc(dir + '_card.json')
-            if (c !== undefined) ext.definitions.set(id, { card: c, meta })
-          }
+          else if (card !== undefined) ext.definitions.set(id, { card, meta })
         }
         found.set(prefix, ext)
       }
@@ -2172,18 +2162,13 @@ export class ProjectSession extends Observable {
   }
 
   async refreshCacheUsage() {
-    clearTimeout(this.cacheUsageTimer)
     if (this.closed || !this.connected || !this.client) return
     try {
+      await api('/api/runtime/cache-usage', {})
       const usage = await this.client.cacheUsage()
       this.cacheUsage = usage
-      if (usage.large && !this.cacheNoticeShown && !this.notice) {
-        this.notice = L('ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。')
-        this.cacheNoticeShown = true
-      } else if (!usage.large && usage.buildBytes !== null) this.cacheNoticeShown = false
       this.changed()
     } catch { /* A failed measurement never interrupts execution. */ }
-    if (!this.closed && this.connected) this.cacheUsageTimer = setTimeout(() => void this.refreshCacheUsage(), 15000)
   }
 
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {

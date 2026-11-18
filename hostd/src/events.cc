@@ -36,7 +36,7 @@ auto HostEvents::HostDisconnected(ConnId connection) -> void {
     }
   }
   for (const auto session : sessions)
-    terminal_requests.submit([this, session](bool) {
+    terminal_requests.submit([this, session]() {
       try {
         close_terminal(session);
       } catch (...) {

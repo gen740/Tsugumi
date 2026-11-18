@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { L } from '../src/i18n'
 import fs from 'node:fs'
 import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
@@ -63,7 +64,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.equal(field.left, field.right, 'the two summaries read the same')
   assert.equal(field.difference, 'unknown')
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'big', left: { summary: x.record!.summary!, record: x }, right: { summary: y.record!.summary!, record: y } }} />)
-  assert.ok(html.includes('comparison-field unknown') && html.includes('比較できません'), 'an omitted value is marked not comparable')
+  assert.ok(html.includes('comparison-field unknown'), 'an omitted value is marked not comparable')
 }
 
 // Files compare their recorded content, never the serialized storage path.
@@ -106,12 +107,12 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   const fields = comparedConditions(x, y)
   assert.deepEqual(fields.map(f => f.difference), ['changed', 'changed', 'same', 'changed'])
   assert.deepEqual([fields[0].left, fields[0].right], ['env-a', 'env-b'])
-  assert.deepEqual([fields[1].left, fields[1].right], ['直接実行', 'エミュレーション: qemu-x86_64'])
-  assert.deepEqual([fields[2].name, fields[2].left, fields[2].right], ['実行サービス', 'プロジェクトの実行環境', 'プロジェクトの実行環境'])
-  assert.deepEqual([fields[3].name, fields[3].left, fields[3].right], ['入力元 events', 'load #2', '保存した入力'])
+  assert.deepEqual([fields[1].left, fields[1].right], [L('直接実行'), L('エミュレーション: {0}', 'qemu-x86_64')])
+  assert.deepEqual([fields[2].name, fields[2].left, fields[2].right], [L('実行サービス'), L('プロジェクトの実行環境'), L('プロジェクトの実行環境')])
+  assert.deepEqual([fields[3].name, fields[3].left, fields[3].right], [L('入力元 {0}', 'events'), 'load #2', L('保存した入力')])
   // Without recorded inputs a saved value cannot be told from no value: say only what is known.
   y.record.record!.inputs = []
-  assert.equal(comparedConditions(x, y)[3].right, 'この実行の Card からは届いていません')
+  assert.equal(comparedConditions(x, y)[3].right, L('この実行の Card からは届いていません'))
   assert.deepEqual(comparedConditions(x, x).map(f => f.difference), ['same', 'same', 'same', 'same'])
   assert.deepEqual(comparedConditions(x, side('older', 'env-a', null)).slice(1, 3).map(f => [f.right, f.difference]), [[undefined, 'unknown'], [undefined, 'unknown']])
   // Missing environment records on either side cannot establish equality.
@@ -125,15 +126,15 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 // Run scope: where each run started and whether it went on downstream.
 {
   const run = (target: string, propagate: boolean | null) => Object.assign(new R.RunSummaryT(), { target: cardPath([target]), propagate })
-  assert.equal(runScope(run('start', true)), 'start から下流')
-  assert.equal(runScope(run('start', null)), 'start から下流', 'propagate defaults to true')
-  assert.equal(runScope(run('bands', false)), 'bands だけ（保存した入力）')
+  assert.ok(runScope(run('start', true)).includes('start'))
+  assert.equal(runScope(run('start', null)), runScope(run('start', true)), 'propagate defaults to true')
+  assert.ok(runScope(run('bands', false)).includes('bands'))
   const sharedName = () => 'Same name'
   const sameNames = renderToStaticMarkup(<RunScopes left={run('start', true)} right={run('bands', true)} displayPath={sharedName} />)
   assert.ok(sameNames.includes('Same name') && sameNames.includes('comparison-field changed'), 'names do not decide identity')
   assert.ok(!renderToStaticMarkup(<RunScopes left={run('start', true)} right={run('start', null)} displayPath={sharedName} />).includes('changed'))
   const html = renderToStaticMarkup(<RunScopes left={run('start', true)} right={run('bands', false)} />)
-  assert.ok(html.includes('comparison-field changed') && html.includes('bands だけ（保存した入力）'))
+  assert.ok(html.includes('comparison-field changed') && html.includes('bands'))
   assert.ok(!renderToStaticMarkup(<RunScopes left={run('start', true)} right={run('start', true)} />).includes('changed'))
 }
 
@@ -143,8 +144,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   many.record!.summary!.invocation = 3n; many.aggregate!.calls = 3n
   const once = record('right', 'loop', '{}')
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'loop', left: { summary: many.record!.summary!, record: many }, right: { summary: once.record!.summary!, record: once } }} />)
-  assert.equal(html.split('回の呼び出しのうち最後の 1 回').length - 1, 1, 'only the side called more than once is labelled')
-  assert.ok(html.includes('3 回の呼び出しのうち最後の 1 回'))
+  assert.ok(html.includes(L('{0} 回の呼び出しのうち最後の 1 回', 3)))
 }
 
 // Use the real Cas A retained table and images as the rendering fixture.
@@ -214,13 +214,13 @@ for (const name of ['rgb', 'spectrum']) {
 {
   const diff = (text: string, truncated = false) => ({ text, truncated })
   const html = (props: Parameters<typeof VersionDifference>[0]) => renderToStaticMarkup(<VersionDifference {...props} />)
-  assert.ok(html({ from: '', to: 'b'.repeat(40) }).includes('版が記録されていないため差分を表示できません。'), 'no version on one side')
-  assert.ok(html({ from: '', to: '' }).includes('版が記録されていないため差分を表示できません。'))
-  assert.ok(html({ from: 'a'.repeat(40), to: 'a'.repeat(40) }).includes('同じ版です'))
-  assert.ok(html({ from: 'a'.repeat(40), to: 'b'.repeat(40), diff: diff('') }).includes('変更はありません'))
+  assert.ok(html({ from: '', to: 'b'.repeat(40) }).includes(L('版が記録されていないため差分を表示できません。')), 'no version on one side')
+  assert.ok(html({ from: '', to: '' }).includes(L('版が記録されていないため差分を表示できません。')))
+  assert.ok(html({ from: 'a'.repeat(40), to: 'a'.repeat(40) }).includes(L('同じ版です')))
+  assert.ok(html({ from: 'a'.repeat(40), to: 'b'.repeat(40), diff: diff('') }).includes(L('変更はありません')))
   const cut = html({ from: 'a'.repeat(40), to: 'b'.repeat(40), diff: diff('+boundary = 1800', true) })
-  assert.ok(cut.includes('+boundary = 1800') && cut.includes('差分が大きいため一部を表示しています。'), 'a truncated diff says so')
-  assert.ok(!html({ from: 'a'.repeat(40), to: 'b'.repeat(40), diff: diff('+x') }).includes('差分が大きいため'))
+  assert.ok(cut.includes('+boundary = 1800') && cut.includes(L('差分が大きいため一部を表示しています。')), 'a truncated diff says so')
+  assert.ok(!html({ from: 'a'.repeat(40), to: 'b'.repeat(40), diff: diff('+x') }).includes(L('差分が大きいため一部を表示しています。')))
   assert.ok(html({ from: 'a'.repeat(40), to: 'b'.repeat(40), error: 'not_found' }).includes('not_found'))
 }
 

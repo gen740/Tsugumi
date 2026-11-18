@@ -1,13 +1,12 @@
 #include "host/comments.hh"
 
-#include <git2.h>
-
 #include <algorithm>
 #include <filesystem>
 #include <map>
 #include <set>
 
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/git.hh"
 #include "tsugumi/util/json.hh"
 
 namespace tsugumi::host::comments {
@@ -249,34 +248,22 @@ auto version(const std::filesystem::path& root, const std::string& id)
       id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
     throw std::runtime_error(
         "Use a Git version object ID or unambiguous abbreviation");
-  git_libgit2_init();
-  struct Repository {
-    git_repository* value = nullptr;
-    ~Repository() {
-      git_repository_free(value);
-      git_libgit2_shutdown();
-    }
-  } repo;
-  if (git_repository_open_ext(&repo.value, root.c_str(),
+  git::init_once();
+  git::Ptr<git_repository, git_repository_free> repo;
+  if (git_repository_open_ext(&repo.p, root.c_str(),
                               GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr))
     throw std::runtime_error("Project has no version repository");
   git_oid oid;
   git_oid_fromstrn(&oid, id.c_str(), id.size());
-  struct Commit {
-    git_commit* value = nullptr;
-    ~Commit() { git_commit_free(value); }
-  } commit, parent;
-  if (git_commit_lookup_prefix(&commit.value, repo.value, &oid, id.size()))
+  git::Ptr<git_commit, git_commit_free> commit, parent;
+  if (git_commit_lookup_prefix(&commit.p, repo.p, &oid, id.size()))
     throw std::runtime_error("Version not found");
-  struct Tree {
-    git_tree* value = nullptr;
-    ~Tree() { git_tree_free(value); }
-  } now, before;
-  if (git_commit_tree(&now.value, commit.value))
+  git::Ptr<git_tree, git_tree_free> now, before;
+  if (git_commit_tree(&now.p, commit.p))
     throw std::runtime_error("Cannot read version tree");
-  if (git_commit_parentcount(commit.value)) {
-    if (git_commit_parent(&parent.value, commit.value, 0) ||
-        git_commit_tree(&before.value, parent.value))
+  if (git_commit_parentcount(commit.p)) {
+    if (git_commit_parent(&parent.p, commit.p, 0) ||
+        git_commit_tree(&before.p, parent.p))
       throw std::runtime_error("Cannot read parent version tree");
   }
   auto read = [&](git_tree* tree) {
@@ -285,7 +272,7 @@ auto version(const std::filesystem::path& root, const std::string& id)
     struct Walk {
       git_repository* repo;
       Files* files;
-    } walk{repo.value, &files};
+    } walk{repo.p, &files};
     git_tree_walk(
         tree, GIT_TREEWALK_PRE,
         [](const char* prefix, const git_tree_entry* entry, void* payload) {
@@ -307,6 +294,6 @@ auto version(const std::filesystem::path& root, const std::string& id)
         &walk);
     return files;
   };
-  return changes(of(read(before.value)), of(read(now.value)));
+  return changes(of(read(before.p)), of(read(now.p)));
 }
 }  // namespace tsugumi::host::comments

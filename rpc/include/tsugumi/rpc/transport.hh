@@ -25,11 +25,6 @@ using ConnId = uint64_t;
 
 struct TransportLimits {
   uint32_t max_frame_bytes = 16u << 20;
-  uint32_t max_connections = 128;
-  uint32_t max_inflight = 64;
-  uint32_t outbox_messages = 256;
-  uint64_t outbox_bytes = 32ull << 20;
-  uint32_t hello_timeout_ms = 5000;
 };
 
 struct PendingMessage {
@@ -119,7 +114,6 @@ class TransportServer {
   void parse_ws(Conn& c);
   void enqueue_raw(Conn& c, std::string bytes, bool is_reply);
   void enqueue_note(Conn& c, const PendingMessage& n);
-  void enforce_outbox(Conn& c);
   bool fill_write(Conn& c);
   void drop(Conn& c, const char* why);
   void wake();

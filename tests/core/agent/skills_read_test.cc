@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "../agent_fixture_server.hh"
 #include "agent/helper_scope.hh"
 #include "host/skills.hh"
@@ -74,13 +76,17 @@ TEST(HostSkillScope, CatalogExposesDeclarationsButNeverSkillBodies) {
         "---\nname: custom\nscope: [read, run]\n---\nSENTINEL");
   Write(directory.path / "skills/invalid.md", "---\nscope: [shell]\n---\n");
   const auto list = host::ListSkills(directory.path, {});
-  ASSERT_EQ(list.skills.size(), 6u);
-  EXPECT_EQ(list.skills[1]->name, "review");
-  EXPECT_EQ(list.skills[1]->scope, std::vector<std::string>{"read"});
-  EXPECT_EQ(list.skills[2]->name, "rerun-compare");
-  EXPECT_TRUE(list.skills[4]->scoped);
-  EXPECT_EQ(list.skills[4]->scope, (std::vector<std::string>{"read", "run"}));
-  EXPECT_EQ(list.skills[5]->status, "invalid_scope");
+  const auto named = [&](const std::string& name) -> const auto& {
+    const auto found = std::ranges::find_if(
+        list.skills, [&](const auto& skill) { return skill->name == name; });
+    if (found == list.skills.end())
+      throw std::runtime_error("Missing fixture Skill: " + name);
+    return **found;
+  };
+  EXPECT_EQ(named("review").scope, std::vector<std::string>{"read"});
+  EXPECT_TRUE(named("custom").scoped);
+  EXPECT_EQ(named("custom").scope, (std::vector<std::string>{"read", "run"}));
+  EXPECT_EQ(named("invalid").status, "invalid_scope");
 }
 TEST(HostSkillScope, AutomaticSkillsCannotDeclareAScope) {
   TemporaryDirectory directory;

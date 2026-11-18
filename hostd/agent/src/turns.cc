@@ -5,11 +5,13 @@
 #include <algorithm>
 
 #include "agent/providers.hh"
+#include "agent/text.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
@@ -26,15 +28,8 @@ namespace A = Tsugumi::Agent;
 namespace S = Tsugumi::Service;
 using host::Failure;
 namespace {
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
-auto Human(bool human) -> void {
-  if (!human)
-    throw Failure("permission_denied",
-                  "This operation requires the authenticated user");
-}
-
+using host::Human;
+using host::Text;
 const char* kSystem =
     "You are Tsugumi, a scientific workflow assistant. Work "
     "through the core's public tools. "
@@ -78,19 +73,6 @@ auto Turns::System(bool guide) -> std::string {
                           : tsugumi_agent_system_prompt_size;
   return std::string(reinterpret_cast<const char*>(bytes), size) + "\n" +
          kSystem;
-}
-
-auto Turns::Excerpt(std::string_view text, size_t position, size_t limit)
-    -> std::string {
-  size_t begin = position > limit / 3 ? position - limit / 3 : 0;
-  while (begin && (static_cast<unsigned char>(text[begin]) & 0xc0) == 0x80)
-    --begin;
-  size_t end = std::min(text.size(), begin + limit);
-  while (end < text.size() && end > begin &&
-         (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80)
-    --end;
-  return (begin ? "…" : "") + std::string(text.substr(begin, end - begin)) +
-         (end < text.size() ? "…" : "");
 }
 
 Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
@@ -165,8 +147,8 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   const bool continuable =
       !busy && (resumable || state == "cancelled" || state == "failed");
   A::ConversationResultT result;
-  result.conversation = std::make_unique<A::ConversationT>(
-      wire::Conversation(conversations->ConversationJson(c)));
+  result.conversation =
+      std::make_unique<A::ConversationT>(conversations->ConversationData(c));
   result.busy = busy;
   result.resumable = resumable;
   result.continuable = continuable;
@@ -278,9 +260,6 @@ auto Turns::SkillContent(const std::string& id,
       bytes = host::ReadSkill(in_project ? path : skill->source_folder,
                               skill->path);
       lock.lock();
-      if (!access_service.HasGrant(resource, id, S::Access::Read))
-        throw Failure("permission_denied",
-                      "Skill access was revoked while reading");
       result.resource_ids.push_back(resource);
     }
     result.text += "\n[Skill " + skill->name + "]\n" + bytes;
@@ -751,22 +730,25 @@ auto Turns::Handle(const RequestIn& request, bool human,
       auto p = r->value_as_ConversationSummarizeRequest();
       const auto id = p->conversation_id()->str();
       auto c = conversations->GetConversation(id);
-      auto selection = p->provider()
-                           ? json::Object(wire::SelectionJson(*p->provider()))
-                           : json::Members{};
-      if (!p->provider()) {
-        selection = providers->Selection(id);
-      }
-      selection["purpose"] = json::Quote("summary");
-      auto config = host_settings->Resolve(selection);
-      auto messages = ParseMessages(c.messages);
       const auto thought = ThoughtsFor(id);
-      if (config.auth == ProviderAuth::None ||
-          !thought->Begin(running.contains(id)))
+      if (!thought->Begin(running.contains(id)))
         return SummaryReply(request.request_id, R"({"text":"","usage":{}})");
-      config.max_tokens = 120;
-      lock.unlock();
       try {
+        auto selection = p->provider()
+                             ? json::Object(wire::SelectionJson(*p->provider()))
+                             : json::Members{};
+        if (!p->provider()) {
+          selection = providers->Selection(id);
+        }
+        selection["purpose"] = json::Quote("summary");
+        auto config = host_settings->Resolve(selection);
+        auto messages = ParseMessages(c.messages);
+        if (config.auth == ProviderAuth::None) {
+          thought->End();
+          return SummaryReply(request.request_id, R"({"text":"","usage":{}})");
+        }
+        config.max_tokens = 120;
+        lock.unlock();
         auto result = Summarize(
             id, config,
             "Describe the current work in one short, concrete sentence. Do not "
@@ -776,7 +758,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
         thought->End();
         return SummaryReply(request.request_id, result);
       } catch (...) {
-        lock.lock();
+        if (!lock.owns_lock()) lock.lock();
         thought->End();
         throw;
       }

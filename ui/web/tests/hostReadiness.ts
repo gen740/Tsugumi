@@ -22,8 +22,8 @@ try {
     const host = new CoreHost(directory, directory, {} as Environments)
     await assert.rejects(host.ready(), (error: Error) => {
       assert.ok(error instanceof CoreHostError)
-      assert.equal(error.code, "state_format")
-      assert.equal(error.path, state)
+      assert.equal(error.code, "startup_exit")
+      assert.equal(error.path, path.join(state, 'host.log'))
       return true
     })
   }
@@ -31,7 +31,7 @@ try {
   // A missing state folder must be left for the service to create and number.
   process.env.TSUGUMI_HOST_STATE = path.join(directory, 'fresh')
   fs.writeFileSync(binary, '#!/bin/sh\nif [ -e "$2" ]; then exit 1; fi\nexit 5\n', { mode: 0o700 })
-  await assert.rejects(new CoreHost(directory, directory, {} as Environments).ready(), (error: CoreHostError) => error.code === 'state_format')
+  await assert.rejects(new CoreHost(directory, directory, {} as Environments).ready(), (error: CoreHostError) => error.code === 'startup_exit')
   assert.ok(!fs.existsSync(process.env.TSUGUMI_HOST_STATE))
   // Successful first startup also leaves the log at its persistent host path.
   fs.writeFileSync(binary, `#!${process.execPath}
@@ -39,16 +39,16 @@ const fs = require('node:fs'), path = require('node:path');
 const state = process.argv[process.argv.indexOf('--state-dir') + 1];
 if (fs.existsSync(state)) process.exit(1);
 fs.mkdirSync(state);
-fs.writeFileSync(path.join(state, 'format'), '1\\n');
 fs.writeSync(2, 'fresh host startup\\n');
-fs.writeFileSync(path.join(state, 'host.ready'), JSON.stringify({ protocol: 1, pid: process.pid,
-  unix_socket: 'fixture-agent', host_socket: 'fixture-host', user_token: 'fixture', external_token: 'fixture' }));
+const ready = JSON.stringify({ protocol: 1, pid: process.pid,
+  unix_socket: 'fixture-agent', host_socket: 'fixture-host', user_token: 'fixture', external_token: 'fixture' });
+fs.writeFileSync(path.join(state, 'host.ready'), ready);
+process.stdout.write(ready + '\\n');
 setTimeout(() => {}, 3000);
 `, { mode: 0o700 })
   const ready = await new CoreHost(directory, directory, {} as Environments).ready()
   try {
     assert.match(fs.readFileSync(path.join(process.env.TSUGUMI_HOST_STATE, 'host.log'), 'utf8'), /fresh host startup/)
-    assert.equal(fs.readFileSync(path.join(process.env.TSUGUMI_HOST_STATE, 'format'), 'utf8'), '1\n')
   } finally { process.kill(ready.pid, 'SIGTERM') }
   console.log('host startup refusal and localized recovery: passed')
 } finally {

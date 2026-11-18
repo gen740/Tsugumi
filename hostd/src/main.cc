@@ -5,10 +5,10 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <iostream>
 #include <thread>
 
 #include "host/service.hh"
-#include "host/state_format.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -43,13 +43,16 @@ auto RunHost(int argc, char** argv) -> int {
     listener.tcp_port = 0;
     listener.allow_missing_origin = true;
     std::filesystem::path broker_dir;
+    bool ensure = false;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       auto next = [&]() -> std::string {
         if (++i == argc) throw std::runtime_error(arg + " requires a value");
         return argv[i];
       };
-      if (arg == "--state-dir")
+      if (arg == "--ensure")
+        ensure = true;
+      else if (arg == "--state-dir")
         options.state_dir = next();
       else if (arg == "--unix")
         listener.unix_path = next();
@@ -95,9 +98,21 @@ auto RunHost(int argc, char** argv) -> int {
     }
     if (options.state_dir.empty())
       throw std::runtime_error("--state-dir is required");
-    PrepareStateDirectory(options.state_dir);
+    std::filesystem::create_directories(options.state_dir);
+    ::chmod(options.state_dir.c_str(), 0700);
     auto lock = fs::FileLock::try_acquire(options.state_dir / "host.lock");
-    if (!lock) return 4;
+    const auto ready_file = options.state_dir / "host.ready";
+    if (!lock) {
+      if (!ensure) return 4;
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::seconds(15);
+      while (!std::filesystem::exists(ready_file) &&
+             std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::cout << fs::read_file_or_throw(ready_file) << std::endl;
+      return 0;
+    }
+    fs::remove_file_durable(ready_file);
     if (listener.unix_path.empty())
       listener.unix_path = (options.state_dir / "agent.sock").string();
     options.user_token = crypto::random_token(32);
@@ -181,33 +196,16 @@ auto RunHost(int argc, char** argv) -> int {
             {"user_token", json::Quote(options.user_token)},
             {"external_token", json::Quote(options.external_token)},
             {"server_id", json::Quote(options.server_id)},
-            {"pid", std::to_string(::getpid())},
-            {"protocol", "1"}}),
+            {"pid", std::to_string(::getpid())}}),
         0600);
+    if (ensure) std::cout << fs::read_file_or_throw(ready_file) << std::endl;
     int signal = 0;
     sigwait(&signals, &signal);
-    // Keep the guest stop bounded even if draining a host request hangs.
-    // A second termination signal also ends hostd; vmhost observes Watch EOF
-    // and independently completes its bounded guest shutdown.
-    std::thread([signals]() mutable {
-      int again = 0;
-      sigwait(&signals, &again);
-      std::_Exit(128 + again);
-    }).detach();
-    std::jthread deadline([](std::stop_token stop) {
-      for (int i = 0; i < 450 && !stop.stop_requested(); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      if (!stop.stop_requested()) std::_Exit(1);
-    });
     fs::remove_file_durable(options.state_dir / "host.ready");
     host.Shutdown();
     server.stop();
     host_server.stop();
-    deadline.request_stop();
     return 0;
-  } catch (const StateFormatError& error) {
-    log::error(error.what());
-    return 5;
   } catch (const std::exception& error) {
     log::error(std::string("Host service: ") + error.what());
     return 1;

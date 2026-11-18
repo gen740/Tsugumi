@@ -1,7 +1,6 @@
+#include "tsugumi/workerd/nix_log.hh"
 // Built as C++23 (the Nix headers require it); the rest of the core is C++20
 // and never includes a Nix header.
-#include "nix_eval.hh"
-
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -37,50 +36,12 @@
 #include <sstream>
 #include <thread>
 
+#include "nix_eval.hh"
 #include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
 
 namespace {
-
-// Where Nix's messages go: the sink of the call in progress (calls run one
-// at a time on the evaluator's thread).
-class SinkLogger : public nix::Logger {
- public:
-  void set(std::function<void(const std::string&)> f) {
-    std::lock_guard<std::mutex> l(mu_);
-    sink_ = std::move(f);
-  }
-  void log(nix::Verbosity lvl, std::string_view s) override {
-    if (lvl <= nix::lvlInfo) emit(std::string(s));
-  }
-  void logEI(const nix::ErrorInfo& ei) override {
-    std::ostringstream os;
-    nix::showErrorInfo(os, ei, false);
-    emit(os.str());
-  }
-  void startActivity(nix::ActivityId, nix::Verbosity lvl, nix::ActivityType,
-                     const std::string& s, const Fields&,
-                     nix::ActivityId) override {
-    // "building '/nix/store/...drv'", "copying path ... from
-    // 'https://cache.nixos.org'"
-    if (lvl <= nix::lvlInfo && !s.empty()) emit(s);
-  }
-  void result(nix::ActivityId, nix::ResultType type,
-              const Fields& fields) override {
-    if ((type == nix::resBuildLogLine || type == nix::resPostBuildLogLine) &&
-        !fields.empty() && fields[0].type == Field::tString)
-      emit(fields[0].s);
-  }
-
- private:
-  void emit(const std::string& line) {
-    std::lock_guard<std::mutex> l(mu_);
-    if (sink_) sink_(nix::filterANSIEscapes(line, true) + "\n");
-  }
-  std::mutex mu_;
-  std::function<void(const std::string&)> sink_;
-};
 
 // Observe below Nix's allow-list, including negative lookups and directory
 // enumeration. Keep observations for the entire EvalState: cached imports and
@@ -244,7 +205,7 @@ class EvaluationReads : public nix::SourceAccessor {
   }
 };
 
-SinkLogger* g_logger = nullptr;
+NixLogSink* g_logger = nullptr;
 
 void on_usr1(int) {}  // interrupts a blocking read of the daemon connection
 
@@ -260,7 +221,7 @@ void NixEvaluator::init_process() {
   done = true;
   NixStore::init_process();  // nix.conf: substituters, the daemon socket, ...
   nix::initGC();
-  auto logger = std::make_unique<SinkLogger>();
+  auto logger = std::make_unique<NixLogSink>();
   g_logger = logger.get();
   nix::logger = std::move(logger);
   struct sigaction sa{};
@@ -758,8 +719,8 @@ struct NixEvaluator::Impl {
       r.closure.push_back(store->printStorePath(path));
     std::sort(r.closure.begin(), r.closure.end());
     if (!c.root_dir.empty()) {
-      r.root = c.root_dir / (c.root_prefix + std::string(out.to_string()));
-      add_root(r.derivation.output, r.root);
+      add_root(r.derivation.output,
+               c.root_dir / (c.root_prefix + std::string(out.to_string())));
     }
     std::ifstream f(r.derivation.output, std::ios::binary);
     std::stringstream ss;
@@ -898,18 +859,6 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
       }
     } done{impl_.get()};
     return impl_->realise_native(call, std::move(result));
-  });
-}
-
-bool NixEvaluator::valid(const std::string& store_path) {
-  return impl_->run([&]() -> bool {
-    try {
-      if (!impl_->store) impl_->open();
-      return impl_->store->isValidPath(
-          impl_->store->parseStorePath(store_path));
-    } catch (const nix::BaseError&) {
-      return false;
-    }
   });
 }
 

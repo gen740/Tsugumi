@@ -674,43 +674,6 @@ final class GuideController {
     tell(notes.map(\.prompt).joined(separator: "\n"), display: notes.last!.display, session: readSession)
   }
 
-  private func load(_ conv: Conversation) {
-    var out: [Item] = []
-    // The buttons of a guide_show go under the reply that follows it; only the newest stay.
-    var shown: [GuideAction] = []
-    var choices: [String] = []
-    for m in conv.fullHistory {
-      if m.role == "user" {
-        let isNote = m.content.contains { if case .text(let t) = $0 { return t.hasPrefix("[Tour]") || t.hasPrefix("[Event]") }; return false }
-        if let d = m.display {
-          if !shown.isEmpty || !choices.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown, choices: choices)) }
-          shown = []
-          choices = []
-          out.append(Item(role: isNote ? "note" : "user", text: d))
-        }
-        continue
-      }
-      for b in m.content {
-        switch b {
-        case .text(let t):
-          out.append(Item(role: "assistant", text: t, actions: shown, choices: choices))
-          shown = []
-          choices = []
-        case .toolUse(_, let n, let a) where n == "guide_show":
-          let g = GuideAction.parse(a)
-          shown = g.actions
-          choices = g.choices
-        default: break
-        }
-      }
-    }
-    if !shown.isEmpty || !choices.isEmpty { out.append(Item(role: "assistant", text: "", actions: shown, choices: choices)) }
-    if let newest = out.lastIndex(where: { !$0.actions.isEmpty || !$0.choices.isEmpty }) {
-      for i in out.indices where i != newest { out[i].actions = []; out[i].choices = [] }
-    }
-    items = out
-  }
-
   // MARK: - Without a model connection
 
   /// Presentation snapshots; no transition table or progress persistence lives here.

@@ -132,10 +132,8 @@ struct BatchOutputList {
 };
 
 struct CursorJson {
-  t::String<"d"> digest;
   t::Int64<"h"> hi;
   t::String<"a"> after;
-  t::Int64<"e"> expires;
 };
 
 struct RunJournalLine {

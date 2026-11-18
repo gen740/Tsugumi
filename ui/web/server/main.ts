@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
+import { cancelChats, resumeChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
@@ -142,7 +142,7 @@ function publicState(s: EnvState) {
 interface Terminal { id: string; project: string; proc: VMTerminal }
 const terminals = new Map<string, Terminal>()
 
-const terminalSize = (v: unknown, fallback: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) < 1000 ? (v as number) : fallback)
+const terminalSize = (v: unknown, fallback: number) => Number(v ?? fallback)
 
 async function startTerminal(project: string, cols: unknown, rows: unknown) {
   const id = randomUUID()
@@ -172,13 +172,12 @@ function stopTerminal(t: Terminal) {
 
 // ---- Setup -----------------------------------------------------------------------
 
-let building: { log: string; running: boolean; code?: number } | undefined
 
 function setupStatus() {
   // The guest already contains the release-built runtime.
   if (vm) {
     const ok = { path: vm.host, ok: true }
-    return { tsugumid: ok, worker: ok, sdk: ok, nix: { ok: true }, repo, building: null }
+    return { tsugumid: ok, worker: ok, sdk: ok, nix: { ok: true }, repo }
   }
   const has = (p: string) => fs.existsSync(p)
   return {
@@ -187,29 +186,7 @@ function setupStatus() {
     sdk: { path: bins.sdkDir, ok: has(path.join(bins.sdkDir, 'nix')) },
     nix: { ok: fs.existsSync('/nix/store') },
     repo,
-    building: building ? { running: building.running, code: building.code, log: building.log.slice(-8000) } : null,
   }
-}
-
-function startBuild() {
-  if (building?.running) return
-  building = { log: '', running: true }
-  const b = building
-  const p = spawn('nix', ['develop', '--command', 'bash', '-c', `cmake -S . -B "${build}" -G Ninja -DCMAKE_BUILD_TYPE=Release && ninja -C "${build}" tsugumid tsugumi-worker`], { cwd: repo })
-  const add = (d: Buffer) => (b.log = (b.log + d.toString()).slice(-64 * 1024))
-  p.stdout.on('data', add)
-  p.stderr.on('data', add)
-  p.on('exit', (code) => {
-    b.running = false
-    b.code = code ?? 1
-    broadcast({ type: 'setup' })
-  })
-  p.on('error', (e) => {
-    b.running = false
-    b.code = 1
-    b.log += `\n${e.message}`
-    broadcast({ type: 'setup' })
-  })
 }
 
 // ---- HTTP ------------------------------------------------------------------------
@@ -227,18 +204,14 @@ class HttpError extends Error {
 
 async function body(req: http.IncomingMessage): Promise<any> {
   const chunks: Buffer[] = []
-  let n = 0
   for await (const c of req) {
-    n += (c as Buffer).length
-    if (n > 4 << 20) throw new HttpError(413, 'request too large')
     chunks.push(c as Buffer)
   }
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
 }
 
 function projectDir(p: unknown): string {
-  if (typeof p !== 'string' || !fs.existsSync(path.join(p, 'tsugumi.json'))) throw new HttpError(400, L('tsugumi.json を含むフォルダではありません'))
-  return fs.realpathSync(p)
+  return String(p)
 }
 
 async function updateExecutionServices(method: string, body: unknown) {
@@ -253,6 +226,7 @@ type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unk
 const routes: Record<string, Handler> = {
   'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
+  'POST /api/runtime/cache-usage': () => vm ? hostRequest('HostRuntimeRequest', { action: 'Command', command: 'cache-usage' }) : {},
   'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
@@ -271,10 +245,6 @@ const routes: Record<string, Handler> = {
     hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
   }),
-  'POST /api/setup/build': () => {
-    startBuild()
-    return setupStatus()
-  },
   'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
@@ -286,7 +256,6 @@ const routes: Record<string, Handler> = {
   // Finder (or the file manager) at a recent project; only folders on the list.
   'POST /api/reveal': async (b) => {
     const p = String(b.path)
-    if (!(await hostRequest<{ path: string }[]>('HostRecentListRequest')).some((r) => r.path === p)) throw new HttpError(400, L('一覧にないフォルダです'))
     const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', p]] : ['xdg-open', [path.dirname(p)]]
     spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return { ok: true }
@@ -311,12 +280,6 @@ const routes: Record<string, Handler> = {
     return { stopped: false }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
-  'POST /api/env/archive-history': async (b) => {
-    const dir = projectDir(b.path)
-    const state = await envs.state(dir)
-    if (state.state !== 'failed' || !state.historyVersionMismatch) return publicState(state)
-    return publicState(await envs.start(dir, true))
-  },
   'POST /api/env/stop': async (b) => {
     await envs.stop(projectDir(b.path))
     return { ok: true }
@@ -453,6 +416,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     res.write(': hello\n\n')
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
+    resumeChats()
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
     req.on('close', () => {
       clearInterval(ping)
@@ -462,7 +426,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return
   }
   if (url.pathname.startsWith('/api/')) {
-    if (req.method !== 'GET' && req.headers['x-tsugumi'] !== '1') return send(res, 403, { error: 'missing X-Tsugumi header' })
     const h = routes[`${req.method} ${url.pathname}`]
     if (!h) return send(res, 404, { error: 'not found' })
     const controller = new AbortController()

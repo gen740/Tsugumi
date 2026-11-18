@@ -39,6 +39,7 @@
 #include "host/store.hh"
 #include "host/templates.hh"
 #include "host/versions.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/crypto.hh"
 
@@ -57,9 +58,6 @@ using agent::Tools;
 using agent::Turns;
 namespace {
 
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
 using host::Failure;
 auto Failed(uint64_t id, std::string_view code, std::string_view message,
             std::string_view request = {}) -> std::string {
@@ -97,10 +95,10 @@ struct Service::State {
         host_projects(options.state_dir, options.demos_dir, &db),
         demo_references(options.demos_dir),
         guide(options.state_dir, options.demos_dir),
-        requests(4, 128, std::chrono::seconds(30)),
-        tool_requests(4, 128, std::chrono::seconds(30)),
-        wait_requests(4, 128, std::chrono::seconds(30)),
-        terminal_requests(1, 128, std::chrono::seconds(30)) {
+        requests(4),
+        tool_requests(4),
+        wait_requests(4),
+        terminal_requests(1) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
         [this](const std::string& id, const json::Members& values) {
@@ -113,7 +111,7 @@ struct Service::State {
         nullptr, host::Settings::kKeyStorage,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](const std::string& profile) {
-          requests.submit([this, profile](bool) {
+          requests.submit([this, profile]() {
             std::lock_guard lock(mutex);
             H::ProviderChangedT event;
             event.profile = profile;
@@ -375,20 +373,9 @@ struct Service::State {
       events->Publish(wire::HostEvent(std::move(stopped)));
     }
   }
-  auto Human(bool human) -> void {
-    if (!human)
-      throw Failure("permission_denied",
-                    "This operation requires the authenticated user");
-  }
   auto Scrub(std::string raw) -> std::string {
     std::lock_guard guard(mutex);
-    std::vector<std::string> secrets{options.user_token,
-                                     options.external_token};
-    auto endpoints = db.prepare("SELECT token FROM projects");
-    while (endpoints.step()) secrets.push_back(endpoints.text(0));
-    const auto credential_secrets = credentials.Secrets();
-    secrets.insert(secrets.end(), credential_secrets.begin(),
-                   credential_secrets.end());
+    const auto secrets = credentials.Secrets();
     auto plain = [&](std::string text) {
       if (host_settings) text = host_settings->Redact(std::move(text));
       for (const auto& secret : secrets)
@@ -598,6 +585,20 @@ struct Service::State {
       return wire::HostReply(request.request_id, result);
     }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
+      if (environment->action() == H::EnvironmentAction::RemoveFolders &&
+          environment->folders()) {
+        for (const auto* folder : *environment->folders()) {
+          auto resource = db.prepare(
+              "SELECT f.id FROM folders f JOIN project_paths p ON "
+              "p.id=f.project WHERE p.path=? AND f.path=?");
+          resource
+              .bind(1, std::filesystem::canonical(environment->project()->str())
+                           .string())
+              .bind(2, folder->str());
+          if (resource.step())
+            access->Revoke(resource.text(0), S::Access::Read);
+        }
+      }
       auto input =
           std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());
       lock.unlock();
@@ -810,10 +811,6 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
   const bool external =
       !host &&
       crypto::equal_secret(p->token()->str(), state_->options.external_token);
-  if (p->protocol() != 1)
-    return {fail(request.request_id, "protocol_mismatch",
-                 "Service protocol 1 is required", {}),
-            false};
   if (!human && !external)
     return {
         fail(request.request_id, host ? "permission_denied" : "unauthenticated",
@@ -871,8 +868,7 @@ auto Service::dispatch(RequestIn request) -> void {
   }
   auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
-  auto task = [this, request, human, host, server, fail,
-               tool_stop](bool expired) {
+  auto task = [this, request, human, host, server, fail, tool_stop]() {
     std::stop_callback disconnected(request.connection_stop, [tool_stop] {
       if (tool_stop) tool_stop->request_stop();
     });
@@ -881,7 +877,6 @@ auto Service::dispatch(RequestIn request) -> void {
     std::string bytes;
     try {
       if (tool_stop && tool_stop->stop_requested()) throw Cancelled();
-      if (expired) throw Failure("timeout", "Service request queue timed out");
       bytes = host ? state_->HandleHost(invocation)
                    : state_->Handle(invocation, human);
     } catch (const Cancelled&) {

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -10,7 +11,6 @@
 
 #include "agent/wire.hh"
 #include "host/service.hh"
-#include "host/state_format.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/rpc/lanes.hh"
@@ -91,7 +91,8 @@ class VMLifetime : public ::testing::Test {
     config.state_dir = directory / "state";
     // Use the production preparation: the store and broker require a private,
     // versioned state directory, not an ordinary mkdir with the process umask.
-    host::PrepareStateDirectory(config.state_dir);
+    std::filesystem::create_directories(config.state_dir);
+    ::chmod(config.state_dir.c_str(), 0700);
     config.user_token = "user";
     config.external_token = "external";
     config.server_id = "fixture";
@@ -148,7 +149,6 @@ class VMLifetime : public ::testing::Test {
     S::HelloRequestT hello;
     hello.token = "user";
     hello.client_id = "vm-lifetime-test";
-    hello.protocol = 1;
     Call(*connection, hello);
     return connection;
   }
@@ -213,11 +213,11 @@ TEST_F(VMLifetime, RunningHostRequestCountsAfterItsQueueIsEmpty) {
   EXPECT_NO_THROW(pending.get());
 }
 TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
-  Lane lane(1, 4, 5s);
+  Lane lane(1);
   std::mutex mutex;
   std::condition_variable changed;
   bool started = false, release = false;
-  ASSERT_TRUE(lane.submit([&](bool) {
+  ASSERT_TRUE(lane.submit([&]() {
     std::unique_lock lock(mutex);
     started = true;
     changed.notify_all();
@@ -230,7 +230,7 @@ TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
   EXPECT_EQ(lane.queued(), 0);
   EXPECT_EQ(lane.pending(), 1);
   EXPECT_FALSE(lane.idle());
-  EXPECT_TRUE(lane.submit([](bool) {}));
+  EXPECT_TRUE(lane.submit([]() {}));
   EXPECT_EQ(lane.pending(), 2);
   {
     std::lock_guard lock(mutex);

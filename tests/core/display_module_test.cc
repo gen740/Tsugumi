@@ -66,6 +66,25 @@ TEST(DisplayModule,
     EXPECT_TRUE(wire::standalone_display(encoded));
   }
 }
+TEST(DisplayModule, WorkerOwnsUtf8ValidationBeforeClientUnpacking) {
+  for (const auto kind : {wire::D::DisplayValue::DisplayText,
+                          wire::D::DisplayValue::DisplayScalar}) {
+    flatbuffers::FlatBufferBuilder builder;
+    const auto invalid =
+        builder.CreateString(std::string(1, static_cast<char>(255)));
+    const auto value =
+        kind == wire::D::DisplayValue::DisplayText
+            ? wire::D::CreateDisplayText(builder, invalid).Union()
+            : wire::D::CreateDisplayScalar(builder, 1.0, invalid).Union();
+    builder.Finish(wire::D::CreateDisplay(
+        builder,
+        wire::D::CreateCardPath(builder, builder.CreateVectorOfStrings(
+                                             std::vector<std::string>{"card"})),
+        builder.CreateString("run"), 1, 0, kind, value));
+    EXPECT_TRUE(workerd::validate_display(
+        *flatbuffers::GetRoot<wire::D::Display>(builder.GetBufferPointer())));
+  }
+}
 }  // namespace
 }  // namespace tsugumi
 

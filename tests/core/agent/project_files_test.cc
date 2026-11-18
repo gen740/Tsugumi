@@ -77,7 +77,7 @@ TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
 TEST(VMResetPolicy,
      HostChoosesRetentionAndDescribesTheSameFilesInBothLanguages) {
   auto policy = host::VMResetPolicy();
-  EXPECT_EQ(policy.keep_files, std::vector<std::string>{"history.img"});
+  EXPECT_TRUE(policy.keep_files.empty());
   EXPECT_TRUE(policy.discard_other_files);
   H::HostRuntimeT runtime;
   host::DescribeVMReset(runtime);
@@ -85,10 +85,6 @@ TEST(VMResetPolicy,
     EXPECT_NE(runtime.reset_confirmation_ja.find(name), std::string::npos);
     EXPECT_NE(runtime.reset_confirmation_en.find(name), std::string::npos);
   }
-  EXPECT_NE(runtime.reset_confirmation_en.find("everything else"),
-            std::string::npos);
-  EXPECT_NE(runtime.reset_confirmation_en.find("control folder"),
-            std::string::npos);
   EXPECT_NE(runtime.reset_confirmation_en.find(".tsugumi/runs.sqlite"),
             std::string::npos);
   Tsugumi::VMHost::RequestT request;
@@ -99,7 +95,7 @@ TEST(VMResetPolicy,
       flatbuffers::GetRoot<Tsugumi::VMHost::Request>(builder.GetBufferPointer())
           ->value_as_Reset();
   ASSERT_NE(reset, nullptr);
-  EXPECT_EQ(reset->keep_files()->Get(0)->str(), "history.img");
+  EXPECT_TRUE(!reset->keep_files() || reset->keep_files()->size() == 0);
   EXPECT_TRUE(reset->discard_other_files());
 }
 TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {

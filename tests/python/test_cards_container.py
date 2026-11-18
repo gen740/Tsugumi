@@ -9,14 +9,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import time
-from pathlib import Path
 
 import pytest
 
 from conftest import real_environment
-from harness.real_cards import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, FLAG, NUM, PYTHON_NIX, PYTHON_OUTPUTS, TXT, bash, check_python_card_environment, log, nix_string, python_probe_project, shown_by_probe)
+from harness.real_cards import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, FLAG, NUM, PYTHON_NIX, TXT, bash, check_python_card_environment, log, python_probe_project, shown_by_probe)
 from projects import card, conn, put, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
@@ -38,7 +36,7 @@ def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
     root = tmp_path_factory.mktemp("cards") / "p"
     write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
-    e = real_environment(root, os.environ.get("TSUGUMI_TEST_CARDS_NAME", "tsugumi-test-cards"))
+    e = real_environment(root)
     yield e
     e.cleanup()
 

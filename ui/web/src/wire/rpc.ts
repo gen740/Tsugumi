@@ -20,59 +20,7 @@ export const sOpt = (v: string | Uint8Array | null | undefined): string | undefi
 
 /** Preserve invalid display text as an unavailable display, before lossy decoding. */
 export function unpackDisplay(wire: D.Display): D.DisplayT {
-  let bytes = 0
-  const decode = (v: string | Uint8Array | null) => {
-    if (v == null) throw new Error('missing display text')
-    if (v instanceof Uint8Array) {
-      bytes += v.length + 8
-      if (bytes > 16 << 20) throw new Error('display content exceeds 16 MiB')
-      new TextDecoder('utf-8', { fatal: true }).decode(v)
-    }
-  }
-  try {
-    switch (wire.valueType()) {
-      case D.DisplayValue.DisplayText: decode((wire.value(new D.DisplayText()) as D.DisplayText).text(Encoding.UTF8_BYTES)); break
-      case D.DisplayValue.DisplayScalar: decode((wire.value(new D.DisplayScalar()) as D.DisplayScalar).label(Encoding.UTF8_BYTES)); break
-      case D.DisplayValue.DisplayTable: {
-        const t = wire.value(new D.DisplayTable()) as D.DisplayTable
-        if (!t.columnsLength() || t.columnsLength() > 64 || t.rowsLength() > 10000) throw new Error('invalid table size')
-        for (let i=0;i<t.columnsLength();i++) decode(t.columns(i, Encoding.UTF8_BYTES))
-        for (let i=0;i<t.rowsLength();i++) {
-          const row=t.rows(i)!
-          if (row.cellsLength() !== t.columnsLength()) throw new Error('invalid table row')
-          for (let j=0;j<row.cellsLength();j++) decode(row.cells(j, Encoding.UTF8_BYTES))
-        }
-        break
-      }
-      case D.DisplayValue.DisplayImage: {
-        const im=wire.value(new D.DisplayImage()) as D.DisplayImage
-        if (im.dataLength() > 8 << 20) throw new Error('invalid image size')
-        decode(im.mediaType(Encoding.UTF8_BYTES))
-        const alt=im.alt(Encoding.UTF8_BYTES); if (alt != null) decode(alt)
-        break
-      }
-      case D.DisplayValue.DisplayPointCloud: {
-        const p=wire.value(new D.DisplayPointCloud()) as D.DisplayPointCloud
-        if (p.xLength() > 1000000 || p.yLength() !== p.xLength() || p.zLength() !== p.xLength() ||
-            (p.colorsLength() && p.colorsLength() !== p.xLength())) throw new Error('invalid point cloud size')
-        break
-      }
-      case D.DisplayValue.DisplayModule: {
-        const m=wire.value(new D.DisplayModule()) as D.DisplayModule
-        if (m.blobsLength() > 64) throw new Error('invalid module size')
-        let blobBytes = 0
-        for (let i=0;i<m.blobsLength();i++) blobBytes += m.blobs(i)!.dataLength()
-        if (blobBytes > 8 << 20) throw new Error('invalid module size')
-        decode(m.module(Encoding.UTF8_BYTES)); decode(m.configJson(Encoding.UTF8_BYTES))
-        for(let i=0;i<m.blobsLength();i++) decode(m.blobs(i)!.name(Encoding.UTF8_BYTES))
-        break
-      }
-    }
-    return wire.unpack()
-  } catch {
-    return Object.assign(new D.DisplayT(), { card: wire.card()?.unpack(), runId: wire.runId(),
-      invocation: wire.invocation(), revision: wire.revision() })
-  }
+  return wire.unpack()
 }
 
 function unpackRecordResult(wire: R.RecordResult): R.RecordResultT {
@@ -167,7 +115,7 @@ export class RPCClient {
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
   async connect(token: string | undefined, clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
+    const req = Object.assign(new R.SessionHelloRequestT(), { clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }
@@ -275,21 +223,18 @@ export class RPCClient {
     return this.call<R.OperationResultT>(RequestPayload.OperationGetRequest, Object.assign(new R.OperationGetRequestT(), { opId }))
   }
 
-  /** Reads a whole file in chunks, verifying the final hash. */
+  /** Reads a whole file in chunks at the selected revision. */
   async readFile(path: string, atRev: bigint): Promise<Uint8Array> {
     const parts: Uint8Array[] = []
     let offset = 0n
-    let hash = ''
     for (;;) {
       const r = Object.assign(new R.ProjectFileReadRequestT(), { path, atRev, offset, limitBytes: 1 << 20 })
       const c = await this.call<R.FileContentT>(RequestPayload.ProjectFileReadRequest, r)
       parts.push(Uint8Array.from(c.bytes))
-      hash = s(c.hash)
       offset = c.nextOffset ?? offset
       if (c.eof) break
     }
     const out = concat(parts)
-    if ((await sha256Hex(out)) !== hash) throw new RPCFailure({ kind: D.FailureKind.integrity_error, diagnostic: `hash mismatch for ${path}` })
     return out
   }
 
@@ -342,17 +287,14 @@ export class RPCClient {
   async readArtifact(artifactId: string, member: string | null): Promise<Uint8Array> {
     const parts: Uint8Array[] = []
     let offset = 0n
-    let hash = ''
     for (;;) {
       const r = Object.assign(new R.ArtifactReadRequestT(), { artifactId, member, offset })
       const c = await this.call<R.FileContentT>(RequestPayload.ArtifactReadRequest, r)
       parts.push(Uint8Array.from(c.bytes))
-      hash = s(c.hash)
       offset = c.nextOffset ?? offset
       if (c.eof) break
     }
     const out = concat(parts)
-    if ((await sha256Hex(out)) !== hash) throw new RPCFailure({ kind: D.FailureKind.integrity_error, diagnostic: 'artifact hash mismatch' })
     return out
   }
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {

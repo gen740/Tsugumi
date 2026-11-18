@@ -8,7 +8,6 @@ final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @un
   private let listener = VZVirtioSocketListener()
   private let lock = NSLock()
   private var endpoint: String?
-  private var active = 0
 
   init(support: URL) {
     super.init()
@@ -24,29 +23,16 @@ final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @un
 
   func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
                 from socketDevice: VZVirtioSocketDevice) -> Bool {
-    let path = lock.withLock { () -> String? in
-      guard active < 64, let endpoint else { return nil }
-      active += 1
-      return endpoint
-    }
-    guard let path else { return false }
+    guard let path = lock.withLock({ endpoint }) else { return false }
     let guest = Guest(connection)
     Thread.detachNewThread { [self, guest] in
-      var transferred = false
-      defer { if !transferred { lock.withLock { active -= 1 } } }
       do {
         let peer = try VMHostIPC.connect(path: path)
         // VZ owns its descriptor. The generic byte relay owns only this dup.
         let fd = dup(guest.connection.fileDescriptor)
         guard fd >= 0 else { Darwin.close(peer); return }
         noSigPipe(fd)
-        var timeout = timeval(tv_sec: 60, tv_usec: 0)
-        for socket in [fd, peer] {
-          setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-          setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        }
-        transferred = true
-        VMHostIPC.relay(fd, peer, retained: guest) { [self] in lock.withLock { active -= 1 } }
+        VMHostIPC.relay(fd, peer, retained: guest)
       } catch { Darwin.shutdown(guest.connection.fileDescriptor, SHUT_RDWR) }
     }
     return true

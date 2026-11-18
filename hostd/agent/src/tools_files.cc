@@ -232,28 +232,6 @@ auto Tools::FileOperation(const std::string& conversation,
     context.authorize = [&](auto& plan, const auto& base) {
       host::AgentExclude(root, json::Text(base.snapshot, "project_json"))
           .CheckSave(plan, base);
-      {
-        std::lock_guard lock(mutex);
-        const auto resource = boundary && !boundary->authorization().empty()
-                                  ? boundary->authorization()
-                                  : project;
-        for (const auto access :
-             {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-          if (!access_service.HasGrant(resource, conversation, access))
-            throw Failure("permission_denied",
-                          "Project access was revoked before saving");
-        if (attached_card || attached_project) {
-          auto folder =
-              db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
-          folder.bind(1, project).bind(2, json::Text(args, "folder"));
-          if (!folder.step() ||
-              !access_service.HasGrant(folder.text(0), conversation,
-                                       Tsugumi::Service::Access::Read))
-            throw Failure(
-                "permission_denied",
-                "Attached-folder Read grant was revoked before saving");
-        }
-      }
       if (args.contains("approved_permissions"))
         plan["approved_permissions"] = args.at("approved_permissions");
       if (boundary && boundary->scoped())
@@ -537,10 +515,6 @@ auto Tools::FileOperation(const std::string& conversation,
     {
       std::lock_guard lock(mutex);
       for (const auto& resource : folder_resources) {
-        if (!access_service.HasGrant(resource, conversation,
-                                     Tsugumi::Service::Access::Read))
-          throw Failure("permission_denied",
-                        "Attached folder grant was revoked during shell");
         conversations->RememberResource(conversation, resource);
       }
     }
@@ -593,40 +567,13 @@ auto Tools::FileOperation(const std::string& conversation,
       }
   }
   if (transfers.empty() && removals.empty()) return json::Encode(shell_result);
-  {
-    std::lock_guard lock(mutex);
-    const auto resource = boundary && !boundary->authorization().empty()
-                              ? boundary->authorization()
-                              : project;
-    for (const auto access :
-         {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-      if (!access_service.HasGrant(resource, conversation, access))
-        throw Failure("permission_denied",
-                      "Project access was revoked before saving");
-    if (name == "project_copy" && json::Text(args, "source") == "attached") {
-      auto folder =
-          db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
-      folder.bind(1, project).bind(2, json::Text(args, "folder"));
-      if (!folder.step() ||
-          !access_service.HasGrant(folder.text(0), conversation,
-                                   Tsugumi::Service::Access::Read))
-        throw Failure("permission_denied",
-                      "Attached-folder Read grant was revoked before saving");
-    }
-    if (name == "project_shell" &&
-        !access_service.HasGrant(project, conversation,
-                                 Tsugumi::Service::Access::Shell))
-      throw Failure("permission_denied",
-                    "Shell grant was revoked before saving");
-  }
   const bool scratch_copy =
       name == "project_copy" && json::Text(args, "source") == "scratch";
   args = {{"base_rev", revision},
           {"op_id", json::Quote(operation)},
           {"origin", json::Quote("agent")},
           {"changes", json::Encode(removals)},
-          {"transfers", json::Encode(transfers)},
-          {"check_permissions", "true"}};
+          {"transfers", json::Encode(transfers)}};
   if (stop.stop_requested()) throw Cancelled();
   auto saved = json::Object(SaveProject(project, args, stop));
   if (json::Text(saved, "reply") == "Failure") {

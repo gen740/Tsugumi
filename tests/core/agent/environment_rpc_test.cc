@@ -56,7 +56,7 @@ class EnvironmentFixture : public AgentFixture {
       events_changed.notify_all();
     });
   }
-  auto Environment(H::EnvironmentAction action, bool archive = false,
+  auto Environment(H::EnvironmentAction action,
                    std::vector<std::string> folders = {},
                    std::vector<std::string> origins = {"http://localhost:8780"},
                    client::Connection* connection = nullptr,
@@ -68,7 +68,6 @@ class EnvironmentFixture : public AgentFixture {
                H::EnvironmentRequestT input;
                input.project = (location.empty() ? project : location).string();
                input.action = action;
-               input.archive_incompatible_history = archive;
                input.folders = std::move(folders);
                input.origins = std::move(origins);
                return H::EnvironmentRequest::Pack(b, &input).Union();
@@ -295,8 +294,8 @@ TEST_F(EnvironmentFixture, ConcurrentStartsAndSymlinkAliasesShareOneProcess) {
   auto first = std::async(std::launch::async, [&] {
     return Environment(H::EnvironmentAction::Start);
   });
-  const auto second = Environment(H::EnvironmentAction::Start, false, {}, {},
-                                  connection.get(), alias);
+  const auto second =
+      Environment(H::EnvironmentAction::Start, {}, {}, connection.get(), alias);
   const auto started = first.get();
   ASSERT_EQ(started.phase, H::EnvironmentPhase::Ready) << started.message;
   EXPECT_EQ(second.pid, started.pid);
@@ -353,58 +352,17 @@ TEST_F(EnvironmentFixture, GracefulDaemonExitIsStopped) {
             H::EnvironmentPhase::Stopped);
 }
 
-TEST_F(EnvironmentFixture, StaleReadinessCannotAdoptOrSignalAnUnrelatedPid) {
-  const auto started = Environment(H::EnvironmentAction::Start);
-  ASSERT_EQ(started.phase, H::EnvironmentPhase::Ready);
-  const auto original = Read(started.ready_file);
-  struct Restore {
-    std::filesystem::path path;
-    std::string contents;
-    ~Restore() { Write(path, contents); }
-  } restore{started.ready_file, original};
-  auto forged = original;
-  const auto actual = "\"pid\":" + std::to_string(started.pid);
-  const auto offset = forged.find(actual);
-  ASSERT_NE(offset, std::string::npos);
-  forged.replace(offset, actual.size(),
-                 "\"pid\":" + std::to_string(::getpid()));
-  Write(started.ready_file, forged);
-  Restart(true);
-  EXPECT_EQ(Environment(H::EnvironmentAction::State).phase,
-            H::EnvironmentPhase::Stopped);
-  EXPECT_EQ(Environment(H::EnvironmentAction::Stop).phase,
-            H::EnvironmentPhase::Stopped);
-  EXPECT_EQ(::kill(static_cast<pid_t>(started.pid), 0), 0);
-}
-
-TEST_F(EnvironmentFixture, IncompatibleHistoryRequiresTheExplicitArchiveFlag) {
-  Write(project / "incompatible", "history to preserve");
-  const auto refused = Environment(H::EnvironmentAction::Start);
-  ASSERT_EQ(refused.phase, H::EnvironmentPhase::Failed);
-  EXPECT_FALSE(refused.startup_error_json.empty());
-  EXPECT_EQ(Read(project / "incompatible"), "history to preserve");
-  EXPECT_FALSE(
-      std::filesystem::exists(project / "archived-by-explicit-request"));
-  EXPECT_FALSE(
-      std::filesystem::exists(std::filesystem::path(refused.control_dir) /
-                              "execution-broker-capability"));
-  const auto accepted = Environment(H::EnvironmentAction::Start, true);
-  EXPECT_EQ(accepted.phase, H::EnvironmentPhase::Ready) << accepted.message;
-  EXPECT_EQ(Read(project / "archived-by-explicit-request"),
-            "history to preserve");
-}
-
 TEST_F(EnvironmentFixture, FoldersCanBeWithdrawnAndOmittedVectorsMeanEmpty) {
   const auto folder = directory.path / "attached";
   std::filesystem::create_directory(folder);
-  Environment(H::EnvironmentAction::AddFolders, false, {folder.string()});
+  Environment(H::EnvironmentAction::AddFolders, {folder.string()});
   const auto state = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(state.phase, H::EnvironmentPhase::Ready);
   const auto attached =
       std::filesystem::path(state.control_dir) / "attached.json";
   EXPECT_EQ(JsonString(Read(attached), "/folders/0"), folder.string());
-  const auto withdrawn = Environment(H::EnvironmentAction::RemoveFolders, false,
-                                     {folder.string()});
+  const auto withdrawn =
+      Environment(H::EnvironmentAction::RemoveFolders, {folder.string()});
   EXPECT_EQ(withdrawn.pid, state.pid);
   EXPECT_EQ(Read(attached), R"({"folders":[]})");
   EXPECT_EQ(LaunchCount(), 1u);

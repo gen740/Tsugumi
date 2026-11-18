@@ -5,6 +5,7 @@
 
 #include "tsugumi/protocol/agent_generated.h"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent::wire {
 
@@ -13,7 +14,7 @@ namespace tsugumi::agent::wire {
 auto ProviderJson(const Tsugumi::Host::ProviderInput& provider) -> std::string;
 auto SelectionJson(const Tsugumi::Service::ProviderSelection& provider)
     -> std::string;
-auto Conversation(std::string_view stored) -> Tsugumi::Agent::ConversationT;
+auto Conversation(const json::Members& stored) -> Tsugumi::Agent::ConversationT;
 auto Event(std::string_view stored) -> Tsugumi::Agent::EventT;
 auto Usage(std::string_view stored) -> Tsugumi::Service::UsageT;
 

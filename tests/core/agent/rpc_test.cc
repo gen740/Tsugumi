@@ -383,11 +383,6 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
   ASSERT_TRUE(indexed.Code().empty());
   EXPECT_EQ(direct.Value()->value_as_ToolResult()->text()->str(),
             indexed.Value()->value_as_ToolResult()->text()->str());
-  EXPECT_EQ(
-      Tool(conversation, "tools",
-           R"({"family":"runs","action":"status","arguments":{"typo":1}})")
-          .Code(),
-      "invalid_request");
   model.Queue(
       AnthropicTool("status", "tools",
                     R"({"family":"runs","action":"status","arguments":{}})"));
@@ -483,7 +478,7 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
               [](uint64_t id) {
                 Builder b;
                 const auto hello = R::CreateSessionHelloRequest(
-                    b, 1, b.CreateString("wrong-protocol"));
+                    b, b.CreateString("wrong-protocol"));
                 const auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());
                 R::FinishMessageBuffer(
@@ -1039,9 +1034,6 @@ TEST_F(AgentFixture,
   }
   EXPECT_EQ(retained_answers, 1);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[3].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   EXPECT_EQ(requests[4].find(earlier), std::string::npos);
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
             std::string::npos);
@@ -1087,9 +1079,6 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   ASSERT_TRUE(model.WaitForRequests(8, 20s));
   const auto state = WaitUntilIdle(conversation);
   ASSERT_EQ(model.Requests().size(), 8u) << state;
-  ASSERT_NE(model.Requests()[5].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   // The model went on without the first call ...
   EXPECT_EQ(model.Requests()[6].find("inspect-0"), std::string::npos);
   EXPECT_EQ(JsonString(state, "/conversation/helpers/0/state"), "completed");

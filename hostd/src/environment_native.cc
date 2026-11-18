@@ -144,44 +144,6 @@ class NativeProcess final : public EnvironmentProcess {
   }
   auto Verify(const Tsugumi::Host::EnvironmentStateT& ready) -> bool override {
     try {
-      // A stale readiness file must never make an unrelated reused PID ours.
-      struct stat metadata{};
-      if (::lstat(ready.unix_socket.c_str(), &metadata) ||
-          !S_ISSOCK(metadata.st_mode) || metadata.st_uid != ::getuid() ||
-          (metadata.st_mode & 0077))
-        return false;
-      sockaddr_un address{};
-      address.sun_family = AF_UNIX;
-      if (ready.unix_socket.size() >= sizeof(address.sun_path)) return false;
-      std::memcpy(address.sun_path, ready.unix_socket.c_str(),
-                  ready.unix_socket.size() + 1);
-      const auto fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-      if (fd < 0) return false;
-      struct Close {
-        int fd;
-        ~Close() { ::close(fd); }
-      } close{fd};
-      ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-      ::fcntl(fd, F_SETFL, O_NONBLOCK);
-      if (::connect(fd, reinterpret_cast<sockaddr*>(&address),
-                    sizeof(address)) &&
-          errno != EINPROGRESS)
-        return false;
-      pollfd poll{fd, POLLOUT, 0};
-      if (::poll(&poll, 1, 500) <= 0) return false;
-#if defined(__linux__)
-      ucred peer{};
-      socklen_t size = sizeof(peer);
-      if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &size) ||
-          peer.pid != ready.pid || peer.uid != ::getuid())
-        return false;
-#elif defined(LOCAL_PEERPID)
-      pid_t peer = -1;
-      socklen_t size = sizeof(peer);
-      if (::getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &peer, &size) ||
-          peer != ready.pid)
-        return false;
-#endif
       return VerifyEnvironmentEndpoint(ready);
     } catch (const std::exception&) {
       return false;
@@ -207,7 +169,7 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
               [&](uint64_t id) {
                 flatbuffers::FlatBufferBuilder b;
                 auto hello = R::CreateSessionHelloRequest(
-                    b, 1, b.CreateString(crypto::uuid4()),
+                    b, b.CreateString(crypto::uuid4()),
                     b.CreateString(ready.project_id),
                     b.CreateString(ready.token));
                 auto request = R::CreateRequest(
@@ -221,11 +183,6 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
               500ms)
           .get();
   if (response.error) throw std::runtime_error("Project handshake failed");
-  const auto* reply = R::GetMessage(response.bytes.data())->payload_as_Reply();
-  const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
-  if (!hello || hello->project_id()->str() != ready.project_id ||
-      hello->server_instance_id()->str() != ready.server_instance_id)
-    throw std::runtime_error("Project identity changed");
   return connection;
 }
 auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
@@ -296,7 +253,7 @@ auto EnvironmentProcess::Requirements(
 auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
     -> bool {
   try {
-    ReadProjectRequirements(ready);
+    ProjectConnection(ready);
     return true;
   } catch (...) {
     return false;

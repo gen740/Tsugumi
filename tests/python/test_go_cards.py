@@ -5,10 +5,11 @@ import shutil
 import subprocess
 
 import pytest
+from test_language_cards import project  # pytest fixture
 
 from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import project, write_project as write_language_project
+from test_language_cards import write_project as write_language_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
@@ -48,7 +49,7 @@ def succeeded(c):
 
 
 def test_scaffold_is_current_and_executes(project):
-    subprocess.run(['python3',str(ROOT/'sdk/codegen/scaffold_go.py'),'--check'],check=True)
+    subprocess.run(['python3',str(ROOT/'sdk/codegen/scaffold.py'),'go', '--check'],check=True)
     root,connect=project
     card=go((ROOT/'sdk/go/template/card.go').read_text())
     card['outputs']='namespace hello;table Text{value:string;}table Outputs{out:Text(required);}root_type Outputs;'

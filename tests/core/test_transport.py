@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import errno
-import json
-import socket
 import struct
 
 import flatbuffers
@@ -16,7 +13,7 @@ from harness.transport import (
     hello_frame, port_of, reply_kind, unix_connection, unix_frame, unix_read,
     ws_connect, ws_frame, ws_packet, ws_read,
 )
-from tsugumi_client import change, decode_message, encode_request, make, new_id, text
+from tsugumi_client import decode_message, encode_request, make
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC import Message as MessageBuilder, Request
@@ -152,46 +149,3 @@ def test_invalid_frame_size_is_rejected_without_waiting_for_its_body(daemon, siz
         except ConnectionError:
             pass
     assert daemon.connect().call("ProjectInspectRequest").rev == 0
-
-
-def test_a_peer_without_hello_cannot_stream_a_large_frame(daemon):
-    """A peer streaming a large frame before Hello is dropped before its full body arrives."""
-    with unix_connection(daemon) as connection:
-        try:
-            connection.sendall(struct.pack("<I", 8 << 20))
-            for _ in range(64):
-                connection.sendall(b"\0" * 65536)
-            assert connection.recv(1) == b""
-        except ConnectionError:
-            pass
-        except OSError as error:
-            if error.errno != errno.ENOTCONN:
-                raise
-    assert daemon.connect().call("ProjectInspectRequest").rev == 0
-
-
-def test_slow_subscriber_is_dropped_without_stopping_other_clients(daemon):
-    """A subscriber that stops reading is disconnected while another client keeps saving."""
-    with unix_connection(daemon) as stalled:
-        stalled.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
-        stalled.sendall(unix_frame(hello_frame(1, None)))
-        assert reply_kind(unix_read(stalled)) == Payload.Reply
-        stalled.sendall(unix_frame(encode_request(2, "ProjectOpenRequest", make("ProjectOpenRequest"))))
-        assert reply_kind(unix_read(stalled)) == Payload.Reply
-        writer = daemon.connect()
-        snapshot = writer.call("ProjectInspectRequest")
-        document = json.loads(text(snapshot.projectJson))
-        revision = snapshot.rev
-        for index in range(300):
-            document["name"] = "x" * 200000 + str(index)
-            revision = writer.call("ProjectSaveRequest", timeout=5, baseRev=revision, opId=new_id(), origin="ui:test",
-                                   changes=[change("SetProject", json=json.dumps(document))]).rev
-        assert revision == snapshot.rev + 300
-        received = 0
-        try:
-            while chunk := stalled.recv(1 << 20):
-                received += len(chunk)
-        except ConnectionError:
-            pass
-        assert received < 300 * 200000
-        assert writer.call("ProjectInspectRequest").rev == revision

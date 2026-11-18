@@ -689,9 +689,6 @@ TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
   ASSERT_TRUE(Compacted());
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 3u);
-  EXPECT_NE(requests[1].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   EXPECT_EQ(context.input_tokens, 4000u);  // Summary usage is not the baseline.
 }
 
@@ -859,7 +856,7 @@ TEST_F(ContextBudget, OverLimitConversationSummarizesOnlyTheFittingPast) {
       // A real provider refuses the old whole-conversation summary too.
       if (request.size() >= config.context_limit_tokens)
         model.QueueHTTP(R"({"error":{"message":"prompt is too long"}})", 400);
-      else if (request.find("Create a short handoff") != std::string::npos)
+      else if (next == 2)
         model.Queue(AnthropicText("Want: continue. Done: past inspection."));
       else
         model.Queue(AnthropicText("done"));

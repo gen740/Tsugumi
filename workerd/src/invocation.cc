@@ -133,8 +133,6 @@ auto run_worker(const W::WorkerCall& call,
                 type(data->schema_bfbs(), data->root_type()),
                 bytes(data->bytes()),
                 {}};
-    if (!types::verify(*value.type, value.bytes))
-      throw std::runtime_error("invalid remote input value");
     if (value.kind != PortKind::FlatBuffer) {
       const auto logical = path_value(value);
       if (!logical) throw std::runtime_error("remote input value lacks a path");
@@ -196,7 +194,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const std::set<std::string> accepted(job->input_blobs.begin(),
                                        job->input_blobs.end());
   const auto blob = [&](const std::string& digest) -> stdfs::path {
-    if (!crypto::is_sha256_hex(digest) || !accepted.contains(digest))
+    if (!accepted.contains(digest))
       throw std::runtime_error("remote input blob was not submitted");
     return blobs / digest;
   };
@@ -223,8 +221,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   for (const auto& file : *invocation.files) {
     const auto path = input / remote::relative_path(*file.path);
     const auto source = blob(*file.sha256);
-    if (stdfs::file_size(source) != *file.size)
-      throw std::runtime_error("remote input size mismatch");
     stdfs::create_directories(path.parent_path());
     uint64_t done = 0;
     progress(*file.path, 0, *file.size);
@@ -234,12 +230,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     });
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
-  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
-                                 frame.size());
-  if (!W::VerifyWorkerMessageBuffer(verifier))
-    throw std::runtime_error("invalid remote worker invocation");
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();
-  if (!call) throw std::runtime_error("remote invocation is not a worker call");
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);

@@ -24,31 +24,20 @@ CacheUsage::CacheUsage(stdfs::path roots, stdfs::path scratch,
       single_roots_(std::move(single_roots)),
       single_scratch_(std::move(single_scratch)),
       publish_(std::move(publish)),
-      single_id_(std::move(single_id)) {
-  result_.error = "Measuring cache usage";
-  thread_ = std::thread([this] { loop(); });
-}
-
-CacheUsage::~CacheUsage() {
-  {
-    std::lock_guard lock(mu_);
-    stopping_ = true;
-  }
-  cv_.notify_all();
-  thread_.join();
-}
+      single_id_(std::move(single_id)) {}
 
 auto CacheUsage::snapshot() -> R::ProjectCacheUsageResultT {
   std::lock_guard lock(mu_);
-  return result_;
-}
-
-auto CacheUsage::refresh() -> void {
-  {
-    std::lock_guard lock(mu_);
-    refresh_ = true;
+  auto result = measure();
+  if (!publish_.empty()) {
+    flatbuffers::FlatBufferBuilder builder;
+    builder.Finish(R::ProjectCacheUsageResult::Pack(builder, &result));
+    fs::write_atomic(publish_,
+                     {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                      builder.GetSize()},
+                     0444);
   }
-  cv_.notify_all();
+  return result;
 }
 
 auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
@@ -61,14 +50,12 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     for (const auto& base : {roots_, scratch_}) {
       if (!stdfs::exists(base)) continue;
       for (const auto& entry : stdfs::directory_iterator(base)) {
-        if (stopping_) return result;
         if (stdfs::is_directory(entry.symlink_status()))
           ids.insert(entry.path().filename().string());
       }
     }
   std::vector<std::vector<std::string>> roots;
   for (const auto& id : ids) {
-    if (stopping_) return result;
     const auto folder = single_id_.empty() ? roots_ / id : single_roots_;
     const auto scratch = single_id_.empty() ? scratch_ / id : single_scratch_;
     auto project = std::make_unique<R::ProjectCacheUsageT>();
@@ -102,8 +89,7 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
       uint64_t bytes = 0;
       bool known = true;
       std::string unknown;
-      for (const auto& entry :
-           measure_run_scratch(scratch, [this] { return stopping_.load(); })) {
+      for (const auto& entry : measure_run_scratch(scratch)) {
         auto item = std::make_unique<R::RunScratchUsageT>();
         item->path = entry.path;
         item->bytes = entry.bytes.value_or(0);
@@ -123,7 +109,6 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     }
     result.projects.push_back(std::move(project));
   }
-  if (stopping_) return result;
   try {
     const auto closures = NixStore::rooted_usage(roots);
     std::map<std::string, uint64_t> all;
@@ -145,55 +130,12 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
   if (!error) {
     result.store_capacity_bytes = disk.capacity;
     result.store_available_bytes = disk.available;
-    result.threshold_bytes = cache_notice_threshold(disk.capacity);
-    result.large = result.build_bytes &&
-                   cache_is_large(*result.build_bytes, disk.capacity);
   } else if (result.error.empty())
     result.error = "Store disk usage unavailable: " + error.message();
-  uint64_t scratch_bytes = 0;
-  for (const auto& project : result.projects)
-    scratch_bytes += project->scratch_bytes.value_or(0);
-  const auto scratch_disk =
-      stdfs::space(single_id_.empty() ? scratch_ : single_scratch_, error);
-  if (!error)
-    result.large =
-        result.large || cache_is_large(scratch_bytes, scratch_disk.capacity);
   result.measured_at = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
   return result;
-}
-
-auto CacheUsage::loop() -> void {
-  std::unique_lock lock(mu_);
-  while (!stopping_) {
-    refresh_ = false;
-    lock.unlock();
-    R::ProjectCacheUsageResultT next;
-    try {
-      next = measure();
-    } catch (const std::exception& e) {
-      next.error = e.what();
-    }
-    if (stopping_) return;  // An interrupted measurement is not a result.
-    if (!publish_.empty()) {
-      try {
-        flatbuffers::FlatBufferBuilder builder;
-        builder.Finish(R::ProjectCacheUsageResult::Pack(builder, &next));
-        fs::write_atomic(
-            publish_,
-            {reinterpret_cast<const char*>(builder.GetBufferPointer()),
-             builder.GetSize()},
-            0444);
-      } catch (const std::exception& e) {
-        log::warn(std::string("cache usage: ") + e.what());
-      }
-    }
-    lock.lock();
-    result_ = std::move(next);
-    cv_.wait_for(lock, std::chrono::seconds(60),
-                 [this] { return stopping_ || refresh_; });
-  }
 }
 
 }  // namespace tsugumi

@@ -26,8 +26,7 @@ auto stage_remote_invocation(
     const std::string& server_id, const std::string& instance,
     const std::string& job_id,
     const std::vector<std::filesystem::path>& file_roots,
-    const std::string& archive_digest, const ExecutionRequest& request,
-    uint32_t heartbeat_interval_seconds, uint32_t missed_heartbeats)
+    const std::string& archive_digest, const ExecutionRequest& request)
     -> std::string;
 auto import_remote_result(
     const RemoteJobClient& client, const std::string& service,

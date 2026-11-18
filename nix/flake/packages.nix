@@ -34,6 +34,16 @@ in
           libgit2-local
           web
           ;
+        # Current native sources plus the guest definition; no app/site assets.
+        guest-source = pkgs.runCommand "tsugumi-guest-source" { } ''
+          mkdir -p $out
+          cp -R ${core.src}/. $out/
+          chmod -R u+w $out
+          cp ${../../flake.nix} $out/flake.nix
+          cp ${../../flake.lock} $out/flake.lock
+          cp -R ${../.} $out/nix
+          cp -R ${../../vm/guest}/. $out/vm/guest/
+        '';
         site-player = web.sitePlayer;
         ci-python = pkgs.callPackage ../ci-python.nix { };
         default = core;

@@ -87,8 +87,7 @@ auto View(const flatbuffers::Vector<T>* values) -> std::string {
 }
 inline auto View(const Tsugumi::Service::HelloResult* value) -> std::string {
   if (!value) return "null";
-  return Object({{"protocol", View(value->protocol())},
-                 {"server_id", View(value->server_id())},
+  return Object({{"server_id", View(value->server_id())},
                  {"principal", View(value->principal())}});
 }
 inline auto View(const Tsugumi::Service::Failure* value) -> std::string {
@@ -100,8 +99,7 @@ inline auto View(const Tsugumi::Service::Failure* value) -> std::string {
 inline auto View(const Tsugumi::Service::Acknowledgement* value)
     -> std::string {
   if (!value) return "null";
-  return Object({{"accepted", View(value->accepted())},
-                 {"revoked", View(value->revoked())}});
+  return Object({{"accepted", View(value->accepted())}});
 }
 inline auto View(const A::ModelMessage* value) -> std::string {
   if (!value) return "null";
@@ -128,7 +126,6 @@ inline auto View(const A::ToolRecord* value) -> std::string {
   return Object({{"id", View(value->id())},
                  {"name", View(value->name())},
                  {"arguments", View(value->arguments_json())},
-                 {"opId", View(value->op_id())},
                  {"state", View(value->state())},
                  {"result", View(value->result_json())},
                  {"isError", View(value->is_error())}});
