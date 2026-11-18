@@ -43,7 +43,7 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
   public var recovery: String {
     switch self {
     case .imageMissing:
-      return String(localized: "vm/guest/build-image.sh で作り直すか、アプリを入れ直してください。", bundle: .main)
+      return String(localized: "nix run .#guest-image で用意し直すか、アプリを入れ直してください。", bundle: .main)
     case .startFailed:
       return String(localized: "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。", bundle: .main)
     case .incompatibleHistory:

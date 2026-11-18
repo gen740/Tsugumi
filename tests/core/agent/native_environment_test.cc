@@ -12,8 +12,7 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
   const std::vector<std::string> helper_names = {
       "TSUGUMI_VM_X86",    "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
       "TSUGUMID",          "TSUGUMI_WORKER",     "TSUGUMI_SDK_DIR",
-      "HOST_LOG",          "HOST_BUSY",          "HOST_PID",
-      "TSUGUMI_SOCKET_DIR"};
+      "HOST_LOG",          "HOST_BUSY",          "TSUGUMI_SOCKET_DIR"};
   const std::vector<std::string> storage_names = {
       "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"};
   std::vector<std::string> names = {"OPENAI_API_KEY",

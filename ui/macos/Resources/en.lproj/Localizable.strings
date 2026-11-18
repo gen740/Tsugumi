@@ -249,6 +249,7 @@
 "macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "marimo ノートブック" = "marimo notebook";
+"nix run .#guest-image で用意し直すか、アプリを入れ直してください。" = "Get it again with nix run .#guest-image, or reinstall the app.";
 "root の最終使用" = "Roots last used";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
@@ -266,7 +267,6 @@
 "tsugumi.json を含むフォルダを選んでください" = "Choose a folder that contains tsugumi.json";
 "tsugumid に再接続できませんでした" = "Could not reconnect to tsugumid";
 "tsugumid の応答を待っています" = "Waiting for tsugumid to answer";
-"vm/guest/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with vm/guest/build-image.sh, or reinstall the app.";
 "wire の再接続" = "Rebind wires";
 "worker の状態を残す" = "Keep the worker's state";
 "x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。" = "x is the worker grade. Examples: x > 1, x & 0x10 != 0. Leave empty to accept every value.";
@@ -422,7 +422,7 @@
 "アップデートを確認…" = "Check for Updates…";
 "アップデートを確認できませんでした" = "Could not check for updates";
 "アプリ" = "App";
-"アプリに VM イメージが含まれていません。開発中は vm/guest/build-image.sh --vm で作成してください。" = "The app has no VM image. During development, make one with vm/guest/build-image.sh --vm.";
+"アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。" = "The app has no VM image. During development, get one with nix run .#guest-image.";
 "インデントガイドを表示" = "Show indent guides";
 "インデント幅" = "Indent width";
 "エディター" = "Editor";

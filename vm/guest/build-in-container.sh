@@ -1,5 +1,6 @@
 #!/bin/sh
-# Invoked with the flake-pinned Nix/Python/tools on PATH by build-image.sh.
+# Run in the Apple container by `nix run .#guest-image -- --build` (nix/guest-image.nix),
+# with the flake-pinned Nix and Python on PATH.
 # Keep the bootstrap container store separate from the persistent build store.
 set -eu
 export NIX_REMOTE='local?root=/cache'

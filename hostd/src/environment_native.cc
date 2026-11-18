@@ -69,7 +69,7 @@ class NativeProcess final : public EnvironmentProcess {
       for (const auto* name :
            {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
             "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
-            "HOST_BUSY", "HOST_PID", "TSUGUMI_SOCKET_DIR"}) {
+            "HOST_BUSY", "TSUGUMI_SOCKET_DIR"}) {
         if (const auto* value = std::getenv(name))
           environment.push_back(std::string(name) + "=" + value);
       }
