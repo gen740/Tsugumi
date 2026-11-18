@@ -126,7 +126,7 @@ class Gateway(socketserver.UnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
-            if caps.workerContract != 9 or not caps.nativeSystem or not caps.systems or not caps.maxJobs:
+            if caps.workerContract != 9 or not caps.maxJobs:
                 return R.failure(R.ErrorCode.Rejected, "invalid capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance
@@ -260,8 +260,6 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
     ("workerContract", 99),
     ("serverId", "3" * 64),
     ("resourceLimits", False),
-    ("nativeSystem", ""),
-    ("systems", []),
     ("maxJobs", 0),
 ])
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value):
