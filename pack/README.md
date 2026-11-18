@@ -163,6 +163,11 @@ shared, so nothing was brought to the front).
 
 ## Not done yet
 
+- How a recipient gives inputs. `--set` and `--file` are provisional: they
+  exist to check that an exported app runs on new values. Which values an
+  app exposes (likely only input Cards), how folders and batches are passed,
+  and the recipient's form follow from how Tsugumi itself takes a Workflow's
+  inputs, which is still to be designed; they will be replaced then.
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
 - Directory inputs: an input Card reads one file; a recipient's folder
