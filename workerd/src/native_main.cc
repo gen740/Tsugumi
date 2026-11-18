@@ -184,7 +184,8 @@ Call* g_call = nullptr;
 
 int64_t remaining_ms_impl(void*) {
   if (!g_call || !g_call->has_deadline) return -1;
-  auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+  // Rounded up: 0 must mean the deadline has passed, as the worker sees it.
+  auto left = std::chrono::ceil<std::chrono::milliseconds>(
                   g_call->deadline - std::chrono::steady_clock::now())
                   .count();
   return left < 0 ? 0 : left;
