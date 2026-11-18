@@ -37,14 +37,17 @@ version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
 vm="$dist/tsugumi-vm"
-[ "$channel" != release ] || export TSUGUMI_VM_ARTIFACT_ONLY=1
-"$repo/vm/guest/build-image.sh" --vm
+# The guest image from its artifact (nix/guest-image.nix); a release takes
+# only the one built for HEAD.
+guest_args=()
+[ "$channel" != release ] || guest_args=(--release)
+(cd "$repo" && nix run .#guest-image -- ${guest_args[@]+"${guest_args[@]}"})
 
 # The native host service and RPC client are shared by both UI frontends.
 "$repo/hostd/tools/build-macos.sh"
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
-flatc_bin="$("$repo/ui/macos/tools/flatc-bin.sh")"
+flatc_bin="$(cd "$repo" && nix build --no-link --print-out-paths .#flatc)/bin"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
 # runner), for Apple silicon only (the shared VM is arm64): its Bundle.module finds the packages' resource bundles in

@@ -2,7 +2,7 @@
 # Build the Host RPC diagnostic client and its independently owned VM helper.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
-flatc_bin="$("$repo/ui/macos/tools/flatc-bin.sh")"
+flatc_bin="$(cd "$repo" && nix build --no-link --print-out-paths .#flatc)/bin"
 for package in cli/vmctl vm/macos/runtime; do
   product=tsugumi-vmctl
   [ "$package" != vm/macos/runtime ] || product=tsugumi-vmhost

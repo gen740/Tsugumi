@@ -28,11 +28,9 @@ def test_app_packaging_uses_the_version_resources_and_signing_policy(tmp_path, r
         if executable: file.chmod(0o755)
     write('VERSION', (ROOT / 'VERSION').read_text())
     write('ui/macos/build-app.sh', (ROOT / 'ui/macos/build-app.sh').read_text())
-    for name in ['vm/guest/build-image.sh', 'hostd/tools/build-macos.sh']:
-        write(name, '#!/bin/sh\nexit 0\n', True)
+    write('hostd/tools/build-macos.sh', '#!/bin/sh\nexit 0\n', True)
     (root / 'vm/macos/runtime').mkdir(parents=True)
     binaries = root / 'built'
-    write('ui/macos/tools/flatc-bin.sh', '#!/bin/sh\nprintf \"%s\\n\" \"' + str(root / 'tools') + '\"\n', True)
     for name in ['built/Tsugumi', 'built/tsugumi-vmhost', 'build-host/hostd/tsugumi-hostd',
                  'build-host/Frameworks/library.dylib', 'build-host/generated/bfbs/agent.bfbs', 'build-host/generated/bfbs/host.bfbs',
                  'build-host/Resources/formatters/formatter', 'ui/macos/Resources/AppIcon.icns',
@@ -54,15 +52,22 @@ function /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServ
 function strings() { :; }
 function env() { case "$*" in *--show-bin-path*) printf '%s\n' "$FIXTURE_BIN" ;; esac; }
 function codesign() { printf '%q ' "$@" >> "$SIGN_LOG"; printf '\n' >> "$SIGN_LOG"; }
+# The guest image (nix run .#guest-image) and flatc (nix build .#flatc) come from the flake.
+function nix() { printf '%s\n' "$*" >> "$NIX_LOG"; [ "$1" != build ] || printf '%s\n' "$FIXTURE_TOOLS"; }
 script=$1
 shift
 source "$script"
 '''
-    environment = dict(os.environ, TSUGUMI_CODESIGN_IDENTITY=identity, FIXTURE_BIN=str(binaries), SIGN_LOG=str(recording))
+    nix_log = tmp_path / 'nix'
+    environment = dict(os.environ, TSUGUMI_CODESIGN_IDENTITY=identity, FIXTURE_BIN=str(binaries), SIGN_LOG=str(recording),
+                       NIX_LOG=str(nix_log), FIXTURE_TOOLS=str(root / 'tools'))
     command = ['bash', '-c', shell, str(root / 'ui/macos/build-app.sh'), str(root / 'ui/macos/build-app.sh')]
     if release: command.append('--release')
     result = subprocess.run(command, env=environment, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+    # A release takes only the guest artifact of HEAD; neither builds the guest.
+    guest = [line for line in nix_log.read_text().splitlines() if line.startswith('run .#guest-image')]
+    assert guest == ['run .#guest-image -- --release' if release else 'run .#guest-image --']
     app = root / 'dist/Tsugumi.app'
     with (app / 'Contents/Info.plist').open('rb') as file: metadata = plistlib.load(file)
     assert metadata['CFBundleShortVersionString'] == (ROOT / 'VERSION').read_text().strip()

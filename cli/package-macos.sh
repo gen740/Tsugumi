@@ -17,7 +17,7 @@ tree="$dist/cli/tsugumi"
 source "$repo/cli/node-version.env"
 
 vm="$dist/tsugumi-vm"
-"$repo/vm/guest/build-image.sh" --vm
+(cd "$repo" && nix run .#guest-image)
 
 # The Web UI, built from the pinned packages.
 nix develop "$repo" -c bash -c "cd '$repo/ui/web' && npm ci --ignore-scripts && npm run gen && npm run build"
@@ -25,7 +25,7 @@ nix develop "$repo" -c bash -c "cd '$repo/ui/web' && npm ci --ignore-scripts && 
 "$repo/hostd/tools/build-macos.sh"
 
 # As for the app: Apple's toolchain in a clean environment, only flatc from Nix.
-flatc_bin="$("$repo/ui/macos/tools/flatc-bin.sh")"
+flatc_bin="$(cd "$repo" && nix build --no-link --print-out-paths .#flatc)/bin"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 build_opts=(-c release --build-system swiftbuild --arch arm64)
 (cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
