@@ -90,6 +90,10 @@ def test_guest_artifact_changes_select_the_image_and_its_consumers(path):
     assert result["aarch64-darwin"] >= {"native", "swift"}
 
 
+def test_pack_changes_build_only_the_pack_guest():
+    assert checks(["pack/guest/default.nix"]) == {"aarch64-linux": {"native", "vm"}}
+
+
 def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms():
     paths = list(selection.ADAPTER_TESTS) + [
         "README.md", "docs/CardGuide.md", "docs/site/src/content.config.ts",
@@ -97,7 +101,7 @@ def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms()
         "demos/en/index.json", "ui/shared/modules/viewer.js", "sdk/src/card_runtime.cc",
         "client/src/client.cc", "tsugumid/runtime/src/service.cc", "hostd/agent/Shared/agent.json",
         "cli/install.ps1", "plugins/tsugumi/bin/tsugumi-mcp", "tests/python/conftest.py",
-        "tests/remote/test_worker.py", "tests/prompt/inspect_probe.py", "new-path",
+        "tests/remote/test_worker.py", "tests/prompt/inspect_probe.py", "pack/build.sh", "new-path",
     ]
     for path in paths:
         for system, jobs in checks([path]).items():

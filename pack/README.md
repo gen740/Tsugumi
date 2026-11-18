@@ -132,7 +132,9 @@ dist/tsugumi-pack/bin/tsugumi-pack demos/en/cell-count --output CellCount.app
 The guest needs an aarch64-linux Nix builder (`TSUGUMI_PACK_LINUX` names a
 command that runs a Linux shell seeing this checkout at the same path, such
 as an OrbStack NixOS machine; otherwise `nix build` with a configured Linux
-builder). `TSUGUMI_PACK_GUEST=DIR` uses a guest built elsewhere.
+builder). `TSUGUMI_PACK_GUEST=DIR` uses a guest built elsewhere, such as
+CI's `pack-guest-<commit>` artifact (the aarch64-linux platform job builds
+it whenever `pack/` or the native runtime changes).
 
 ## First end-to-end check
 
