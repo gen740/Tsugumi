@@ -238,8 +238,8 @@ auto AgentExclude::Filter(const std::string& raw,
   }
   return j::Encode(object);
 }
-auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base) const
-    -> void {
+auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
+                             const SourcePatches& patches) const -> void {
   const auto hidden_tree = [&](const std::string& path) {
     const auto resolved = Resolve(root_ / path);
     return Contains(path) ||
@@ -366,22 +366,13 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base) const
                                     path.ends_with("/_link.json"))) {
         if (!base.files.contains(path))
           throw Failure("not_found", "Path not found");
-        const auto& original = base.files.at(path);
-        text::PatchApplier apply(original);
-        for (const auto& raw_patch : j::Array(j::Get(value, "patches", "[]"))) {
-          const auto patch = j::Object(raw_patch);
-          const auto offset = j::UInt(
-              j::String(j::Get(patch, "offset"), j::Get(patch, "offset")),
-              UINT64_MAX);
-          const auto remove = j::UInt(
-              j::String(j::Get(patch, "remove"), j::Get(patch, "remove")),
-              UINT64_MAX);
-          if (offset < apply.cursor() || offset > original.size() ||
-              remove > original.size() - offset)
-            throw Failure("invalid_range", "Invalid patch range");
-          apply.append(offset, remove, j::Text(patch, "text"));
+        try {
+          document(path,
+                   patches.Project(base.files.at(path),
+                                   j::Array(j::Get(value, "patches", "[]"))));
+        } catch (const text::PatchRangeError& error) {
+          throw Failure("invalid_range", error.what());
         }
-        document(path, std::move(apply).finish());
       }
     }
   }

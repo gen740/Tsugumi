@@ -223,10 +223,8 @@ class AgentFixture : public ::testing::Test {
     auto hello =
         Call(*connection, A::RequestPayload::HelloRequest, [&](Builder& b) {
           return Tsugumi::Service::CreateHelloRequest(
-                     b,
-                     b.CreateString(JsonString(
-                         ready, user ? "/user_token" : "/external_token")),
-                     b.CreateString("public-rpc-scenario"))
+                     b, b.CreateString(JsonString(
+                            ready, user ? "/user_token" : "/external_token")))
               .Union();
         });
     if (!hello.Value()->value_as_HelloResult())
@@ -247,10 +245,8 @@ class AgentFixture : public ::testing::Test {
     const auto hello =
         Call(*connection, H::RequestPayload::HelloRequest, [&](Builder& b) {
           return Tsugumi::Service::CreateHelloRequest(
-                     b,
-                     b.CreateString(JsonString(
-                         ready, user ? "/user_token" : "/external_token")),
-                     b.CreateString("host-test"))
+                     b, b.CreateString(JsonString(
+                            ready, user ? "/user_token" : "/external_token")))
               .Union();
         });
     if (accepted != (hello.HostValue()->value_as_HelloResult() != nullptr))

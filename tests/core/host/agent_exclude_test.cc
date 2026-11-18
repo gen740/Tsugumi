@@ -362,14 +362,13 @@ TEST_F(AgentExcludeTest,
                                  {"value", j::Encode(value)}}),
             {}};
   };
-  EXPECT_NO_THROW(ProjectOperations().Execute("p", operation, context, call));
+  EXPECT_NO_THROW(ProjectOperations().Execute(operation, context, call));
   EXPECT_NE(saved.find("externals/copied/definitions/leaf/src/main.py"),
             std::string::npos);
   EXPECT_NE(saved.find(crypto::base64("COMPLETE_SOURCE")), std::string::npos);
   EXPECT_NE(saved.find("copied"), std::string::npos);
   operation.body.AsProjectCopy()->items[0]->from = "";
-  EXPECT_THROW(ProjectOperations().Execute("p", operation, context, call),
-               Failure);
+  EXPECT_THROW(ProjectOperations().Execute(operation, context, call), Failure);
 }
 }  // namespace
 }  // namespace tsugumi::host

@@ -72,8 +72,6 @@ auto Prepare(
                     "Raw document revision changed; reload before applying");
     H::ProjectEditsT edits;
     for (const auto& document : replacement->documents) {
-      if (!document)
-        throw Failure("invalid_request", "empty replacement document");
       if (authorize) authorize(document->path);
       const auto old = base.files.contains(document->path)
                            ? std::optional(base.files.at(document->path))
@@ -499,7 +497,7 @@ auto Prepare(
     const auto state = document_state(base.files);
     std::map<std::string, std::string> copied_ids;
     for (const auto& item : copy->items) {
-      if (!item || !valid_id(item->id))
+      if (!valid_id(item->id))
         throw Failure("invalid_request", "invalid copy item");
       const auto to = prefix + "definitions/" + item->id + '/';
       empty(to);
@@ -887,15 +885,9 @@ auto Preserve(json::Members plan, const SaveBase& base) -> json::Members {
 }
 }  // namespace
 
-auto ProjectOperations::Execute(const std::string& project,
-                                const H::ProjectOperateRequestT& operation,
+auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                 const OperationContext& context,
                                 const OperationCall& call) -> OperationReply {
-  if (project != operation.project_id ||
-      !crypto::is_operation_id(operation.op_id))
-    throw Failure("internal_error",
-                  "Internal error: the host operation has a mismatched project "
-                  "or invalid operation id; retrying will not help.");
   if (const auto* reload = operation.body.AsProjectReload()) {
     if (context.origin != "ui")
       throw Failure("invalid_request", "External reload is a human action");
@@ -937,19 +929,20 @@ auto ProjectOperations::Execute(const std::string& project,
         }
         if (hash.empty()) return std::nullopt;
         std::string bytes;
+        uint64_t offset = 0;
         for (;;) {
           const auto page =
               Value(call("project_file_read",
                          {{"path", json::Quote(path)},
                           {"at_rev", json::Get(inspection.snapshot, "rev")},
                           {"if_hash", json::Quote(hash)},
-                          {"offset", std::to_string(bytes.size())},
+                          {"offset", std::to_string(offset)},
                           {"limit_bytes", "1048576"}}));
           const auto chunk = Bytes(json::Get(page, "bytes"));
           bytes += chunk;
           if (json::Bool(json::Get(page, "eof"))) break;
-          if (chunk.empty())
-            throw Failure("unavailable", "file read made no progress: " + path);
+          const auto next = json::Get(page, "next_offset");
+          offset = json::UInt(json::String(next, next));
         }
         return bytes;
       };

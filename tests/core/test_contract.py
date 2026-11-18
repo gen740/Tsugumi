@@ -100,7 +100,7 @@ def test_session_requires_hello_and_matching_project(daemon):
         with pytest.raises(RpcFailure) as error:
             client.hello()
         assert error.value.kind == "invalid_request"
-        negotiated = connect().call("SessionHelloRequest", clientId=new_id())
+        negotiated = connect().call("SessionHelloRequest")
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities

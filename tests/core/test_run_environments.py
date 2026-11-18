@@ -11,7 +11,7 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 11, 13])
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 11, 12])
 def test_incompatible_history_database_is_kept(core_factory, project, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = project / ".tsugumi"
@@ -312,7 +312,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
     assert wait_run(client, run_id).state == RunState.succeeded
     environment_id, _ = inventory(client, run_id)
     requests = [
-        ("SessionHelloRequest", {"client_id": new_id()}),
+        ("SessionHelloRequest", {}),
         ("RunEnvironmentsRequest", {"run_id": run_id}),
         ("RunEnvironmentPathsRequest", {"run_id": run_id, "environment_id": environment_id, "limit": 1}),
     ]

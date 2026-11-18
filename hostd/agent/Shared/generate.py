@@ -70,8 +70,7 @@ def swift() -> str:
 
 def mcp() -> str:
     shared = prompt()
-    assert shared.count("- Making a Draft (") == 1
-    rules = shared.split("- Making a Draft (", 1)[0]
+    rules = shared[:shared.index("<!-- End of shared MCP rules -->\n")]
     transport = (HERE / "mcp-transport.md").read_text()
     # Claude Code keeps only 4096 characters of initialize.instructions. The
     # first open carries the complete shared rules without that truncation.

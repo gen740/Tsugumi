@@ -126,7 +126,7 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 8 and worker.caps.maxJobs == 1
+    assert worker.caps.workerContract == 9 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):

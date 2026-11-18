@@ -46,6 +46,7 @@ the person's decision.
   and version changes wait for the person's approval of each call.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns the types a Card receives, rendered for its language.
+<!-- End of shared MCP rules -->
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"template": "draft"}
   and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
   person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on

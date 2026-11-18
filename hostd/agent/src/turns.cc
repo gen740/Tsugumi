@@ -318,7 +318,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     if (selected) {
       task = json::Encode(*selected);
       const auto reason =
-          "helper_scope\n" +
           json::Encode(json::Members{
               {"task", task}, {"turn", json::Quote(p->turn_id()->str())}});
       const auto request = access_service.RequestAccess(

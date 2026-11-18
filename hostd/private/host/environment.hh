@@ -96,8 +96,8 @@ struct EnvironmentOptions {
   std::filesystem::path worker;
   std::filesystem::path sdk;
   std::shared_ptr<EnvironmentProcess> process;
-  std::function<void(const std::filesystem::path&)> prepare_project_identity =
-      {};
+  std::function<std::function<void()>(const std::filesystem::path&)>
+      reserve_project_identity;
 };
 
 class Environments {

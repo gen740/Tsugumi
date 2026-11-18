@@ -176,7 +176,6 @@ actor Driver {
     defer { vm.stopObserving(token) }
     let size = request.resources
     let resources = VMResources(cpus: Int(size.cpus), memoryGiB: Int(size.memoryGib), storeGiB: Int(size.storeGib))
-    guard resources.cpus > 0, resources.memoryGiB > 0, resources.storeGiB > 0 else { throw LauncherError.notReady("the VM size is missing") }
     try await vm.start(image: image, resources: resources, cacheConfiguration: request.cacheConfiguration ?? "", cacheNetrc: request.cacheNetrc ?? "", cacheProblem: request.cacheProblem ?? "")
   }
   func shares(_ key: String, _ mounts: [Tsugumi_VMHost_MountT?]) async throws -> Int {
@@ -209,7 +208,7 @@ actor Driver {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(vm.resources?.cpus ?? 1)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    _ = try await vm.request("start \(request.key) \(vm.resources?.cpus ?? 1) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
     return try await process(request.key)
   }
   func stop(_ key: String) async throws {

@@ -8,14 +8,12 @@ import os
 import socket
 import struct
 
-from tsugumi_client import encode_request, make, new_id
+from tsugumi_client import encode_request, make
 from Tsugumi.RPC.Message import Message
 
 
-def hello_frame(request_id: int, token: str | None, *, client_id=None) -> bytes:
-    fields = {"clientId": client_id or new_id()}
-    if token is not None:
-        fields["token"] = token
+def hello_frame(request_id: int, token: str | None) -> bytes:
+    fields = {} if token is None else {"token": token}
     return encode_request(request_id, "SessionHelloRequest", make("SessionHelloRequest", **fields))
 
 

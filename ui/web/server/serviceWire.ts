@@ -149,7 +149,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'IdentifierReserveRequest': return new H.IdentifierReserveRequestT(v.project_id, v.kind, v.scope, v.occupied)
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
-    case 'HelloRequest': return new HHelloRequest(v.token, v.client_id)
+    case 'HelloRequest': return new HHelloRequest(v.token)
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
     case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
@@ -166,7 +166,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   else switch (method) {
     case 'CallIdRequest': return new CallIdRequestT(v.conversation_id)
     case 'ToolCatalogRequest': return new AToolCatalogRequest()
-    case 'HelloRequest': return new AHelloRequest(v.token, v.client_id)
+    case 'HelloRequest': return new AHelloRequest(v.token)
     case 'ConfigureRequest': return new AConfigureRequest(provider(v.provider), v.conversation_id)
     case 'ConversationCreateRequest': return new AConversationCreateRequest(v.conversation_id, v.project_id, v.role)
     case 'ConversationListRequest': return new AConversationListRequest(v.project_id)

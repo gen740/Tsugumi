@@ -17,9 +17,12 @@ ProjectRegistry::ProjectRegistry(StateGate& g, sql::Db& database,
     : gate(g), db(database), conversation_path(std::move(opened)) {}
 
 auto ProjectRegistry::ValidateLocation(const std::string& project,
-                                       const std::filesystem::path& folder)
+                                       const std::filesystem::path& path)
     -> void {
-  const auto path = std::filesystem::canonical(folder);
+  for (const auto& [id, location] : pending_)
+    if ((id == project) != (location.folder == path))
+      throw Failure("conflict",
+                    "This project identity or folder is being started");
   if (auto opened = conversation_path(project);
       opened && *opened != path / ".tsugumi")
     throw Failure(
@@ -32,8 +35,21 @@ auto ProjectRegistry::ValidateLocation(const std::string& project,
     throw Failure("conflict",
                   "This project identity is registered in another folder");
 }
-auto ProjectRegistry::Lookup(const std::string& id)
-    -> ProjectRegistry::Project {
+auto ProjectRegistry::ReserveLocation(const std::string& project,
+                                      const std::filesystem::path& folder)
+    -> std::function<void()> {
+  ValidateLocation(project, folder);
+  std::function<void()> release = [this, project] {
+    std::lock_guard lock(gate.mutex);
+    const auto found = pending_.find(project);
+    if (--found->second.starts == 0) pending_.erase(found);
+  };
+  auto& pending =
+      pending_.try_emplace(project, PendingLocation{folder}).first->second;
+  ++pending.starts;
+  return release;
+}
+auto ProjectRegistry::Lookup(std::string_view id) -> ProjectRegistry::Project {
   auto q = db.prepare("SELECT endpoint,token FROM projects WHERE id=?");
   q.bind(1, id);
   if (!q.step())
@@ -102,7 +118,8 @@ auto ProjectRegistry::RegisterProject(
       !endpoint.starts_with("wss://"))
     throw Failure("invalid_request", "Unsupported project transport");
   if (request.path() && !request.path()->str().empty())
-    ValidateLocation(request.project_id()->str(), request.path()->str());
+    ValidateLocation(request.project_id()->str(),
+                     std::filesystem::canonical(request.path()->str()));
   sql::Transaction transaction(db);
   auto managed = db.prepare("DELETE FROM environment_projects WHERE project=?");
   managed.bind(1, request.project_id()->str()).run();
@@ -121,24 +138,27 @@ auto ProjectRegistry::RegisterProject(
 }
 auto ProjectRegistry::RegisterFolder(
     const Tsugumi::Host::RegisterFolderRequest& request) -> void {
-  Lookup(request.project_id()->str());
   if (!request.resource_id()->str().starts_with("folder:") ||
       request.folder()->str().empty())
     throw Failure("invalid_request",
                   "A folder resource needs a folder: ID and a path");
+  AttachFolder(request.project_id()->string_view(),
+               request.resource_id()->string_view(),
+               request.folder()->string_view(), Text(request.title()));
+}
+auto ProjectRegistry::AttachFolder(std::string_view project,
+                                   std::string_view resource,
+                                   std::string_view folder,
+                                   std::string_view title) -> void {
+  Lookup(project);
   auto old = db.prepare("SELECT project,path FROM folders WHERE id=?");
-  old.bind(1, request.resource_id()->str());
-  if (old.step() && (old.text(0) != request.project_id()->str() ||
-                     old.text(1) != request.folder()->str()))
+  old.bind(1, resource);
+  if (old.step() && (old.text(0) != project || old.text(1) != folder))
     throw Failure(
         "conflict",
         "A granted folder identity cannot be rebound to another path");
   auto q = db.prepare("INSERT OR IGNORE INTO folders VALUES(?,?,?,?)");
-  q.bind(1, request.resource_id()->str())
-      .bind(2, request.project_id()->str())
-      .bind(3, request.folder()->str())
-      .bind(4, Text(request.title()))
-      .run();
+  q.bind(1, resource).bind(2, project).bind(3, folder).bind(4, title).run();
 }
 auto ProjectRegistry::AttachedRoot(const std::string& project,
                                    const std::string& folder) -> std::string {
@@ -161,7 +181,9 @@ auto ProjectRegistry::AttachedRoot(const std::string& project,
 }
 auto ProjectRegistry::RegisterReady(
     const Tsugumi::Host::EnvironmentStateT& state) -> void {
-  ValidateLocation(state.project_id, state.project);
+  const auto pending = pending_.find(state.project_id);
+  if (pending == pending_.end() || pending->second.folder != state.project)
+    ValidateLocation(state.project_id, state.project);
   sql::Transaction transaction(db);
   auto environment =
       db.prepare("INSERT OR REPLACE INTO environment_projects VALUES(?,?)");

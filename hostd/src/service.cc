@@ -253,20 +253,16 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
-    options.environment.prepare_project_identity =
+    options.environment.reserve_project_identity =
         [this](const std::filesystem::path& root) {
           std::lock_guard lock(mutex);
           const auto file = root / ".tsugumi/project-id";
-          if (const auto id = fs::read_file(file)) {
-            if (!crypto::is_short_id(*id))
-              throw Failure("invalid_project",
-                            "Recreate this development project for the new "
-                            "identifier format");
-            registry.ValidateLocation(*id, root);
+          if (const auto id = fs::read_file(file);
+              id && crypto::is_short_id(*id)) {
             db.prepare("INSERT OR IGNORE INTO identifiers VALUES('project',?)")
                 .bind(1, *id)
                 .run();
-            return;
+            return registry.ReserveLocation(*id, root);
           }
           std::string id;
           for (;;) {
@@ -275,7 +271,14 @@ struct Service::State {
             known.bind(1, id);
             if (!known.step()) break;
           }
-          fs::write_atomic(file, id, 0600);
+          auto release = registry.ReserveLocation(id, root);
+          try {
+            fs::write_atomic(file, id, 0600);
+          } catch (...) {
+            release();
+            throw;
+          }
+          return release;
         };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
@@ -571,18 +574,9 @@ struct Service::State {
               item->folder = folder;
               item->resource = "folder:" + ready.project_id + ":" +
                                crypto::sha256_hex(folder);
-              H::RegisterFolderRequestT registration;
-              registration.project_id = ready.project_id;
-              registration.resource_id = item->resource;
-              registration.folder = folder;
-              registration.title =
-                  std::filesystem::path(folder).filename().string();
-              flatbuffers::FlatBufferBuilder builder;
-              builder.Finish(
-                  H::RegisterFolderRequest::Pack(builder, &registration));
-              registry.RegisterFolder(
-                  *flatbuffers::GetRoot<H::RegisterFolderRequest>(
-                      builder.GetBufferPointer()));
+              registry.AttachFolder(
+                  ready.project_id, item->resource, folder,
+                  std::filesystem::path(folder).filename().string());
               result.folders.push_back(std::move(item));
             }
             transaction.commit();
@@ -658,10 +652,13 @@ struct Service::State {
       const auto support = options.vm.support.empty()
                                ? options.state_dir.parent_path()
                                : options.vm.support;
-      if (const auto* put = r->value_as_BinaryCachesPutRequest())
-        host::SaveBinaryCaches(support, put->caches_json()->string_view());
       H::BinaryCachesT result;
-      result.caches_json = host::LoadBinaryCaches(support);
+      if (const auto* put = r->value_as_BinaryCachesPutRequest()) {
+        result.caches_json = put->caches_json()->str();
+        host::SaveBinaryCaches(support, result.caches_json);
+      } else {
+        result.caches_json = host::LoadBinaryCaches(support);
+      }
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (r->value_type() == H::RequestPayload::ProjectPermissionsRequest ||
@@ -744,10 +741,9 @@ struct Service::State {
         Human(human);
         const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
             r->value_as_ProjectOperateRequest()->UnPack());
-        const auto project = operation->project_id;
         lock.unlock();
-        const auto reply = tools->OperateProject(
-            project, *operation, {"ui", {}, {}, {}}, shutdown.get_token());
+        const auto reply = tools->OperateProject(*operation, {"ui", {}, {}, {}},
+                                                 shutdown.get_token());
         if (reply.wire.empty())
           throw Failure("unavailable", "operation returned no typed outcome");
         H::ProjectOperationResultT result;

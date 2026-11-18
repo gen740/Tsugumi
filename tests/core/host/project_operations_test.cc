@@ -16,27 +16,23 @@ namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
-TEST(ProjectOperations,
-     MissingHostIdentityIsAnInternalFailureBeforeAnyReadOrWrite) {
-  for (const auto& invalid : {"project", "operation"}) {
-    H::ProjectOperateRequestT request;
-    request.project_id = std::string(invalid) == "project" ? "other" : "p";
-    request.op_id = std::string(invalid) == "operation"
-                        ? ""
-                        : "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
-    bool called = false;
-    try {
+TEST(ProjectOperations, CoreRejectsInvalidOperationIdentity) {
+  H::ProjectOperateRequestT request;
+  request.project_id = "p";
+  int calls = 0;
+  EXPECT_THROW(
       ProjectOperations().Execute(
-          "p", request, {}, [&](const auto&, const auto&) -> OperationReply {
-            called = true;
-            return {};
-          });
-      FAIL() << "invalid host identity must fail";
-    } catch (const Failure& failure) {
-      EXPECT_EQ(failure.code, "internal_error");
-    }
-    EXPECT_FALSE(called);
-  }
+          request, {},
+          [&](const auto& method, const auto& args) -> OperationReply {
+            ++calls;
+            EXPECT_EQ(method, "operation_get");
+            EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
+            return {
+                R"({"reply":"Failure","value":{"kind":"invalid_request","diagnostic":"invalid op_id"}})",
+                {}};
+          }),
+      Failure);
+  EXPECT_EQ(calls, 1);
 }
 TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
   H::ProjectTextEditT edit;
@@ -95,8 +91,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
         {}};
   };
   ProjectOperations operations;
-  const auto result =
-      operations.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto result = operations.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(result.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 2);
 }
@@ -244,8 +239,8 @@ TEST(ProjectOperations,
             {}};
   };
   ProjectOperations executor;
-  const auto first = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
-  const auto repeat = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto first = executor.Execute(request, {"ui", {}, {}, {}}, call);
+  const auto repeat = executor.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(first.json, repeat.json);
   EXPECT_EQ(reads, 1);
   EXPECT_EQ(applications, 1);
@@ -329,7 +324,7 @@ class TransformationProject {
     request.op_id = crypto::uuid4();
     request.body = std::move(body);
     return ProjectOperations().Execute(
-        "p", request, context, [&](const auto& method, const auto& args) {
+        request, context, [&](const auto& method, const auto& args) {
           return Call(method, args);
         });
   }

@@ -48,8 +48,8 @@ public actor EnvironmentManager {
     switch value["phase"] as? Tsugumi_Host_EnvironmentPhase ?? .stopped {
     case .ready:
       if let url = (value["endpoint"] as? String).flatMap(URL.init(string:)), let token = value["token"] as? String,
-         let id = value["project_id"] as? String, let instance = value["server_instance_id"] as? String {
-        state = .ready(Endpoint(url: url, token: token, projectId: id, serverInstanceId: instance))
+         let id = value["project_id"] as? String {
+        state = .ready(Endpoint(url: url, token: token, projectId: id))
       } else { state = .failed(message: "Invalid environment endpoint", recovery: "Retry", log: "") }
     case .starting: state = .starting(value["message"] as? String ?? "")
     case .failed:

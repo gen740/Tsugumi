@@ -234,7 +234,7 @@ public actor CoreHostClient {
         Task { await self?.closed(identity) }
       })
       try await transport.start()
-      _ = try await exchange("HelloRequest", ["token": token, "client_id": "macos-\(UUID().uuidString)"], host: host)
+      _ = try await exchange("HelloRequest", ["token": token], host: host)
     }
     for handler in hostObservers.values { handler(["type": "Connected"]) }
   }

@@ -120,7 +120,8 @@ struct Environments::Impl {
       }
     }
   }
-  auto EntryFor(const std::string& project) -> std::shared_ptr<Entry> {
+  auto EntryFor(const std::string& project)
+      -> std::pair<std::shared_ptr<Entry>, std::string> {
     const auto path = std::filesystem::canonical(project);
     struct stat st{};
     if (::stat(path.c_str(), &st) || !S_ISDIR(st.st_mode) ||
@@ -155,7 +156,7 @@ struct Environments::Impl {
       entry->state.folders = entry->folders;
       // A State query may rediscover a resident daemon after hostd restarts.
     }
-    return entry;
+    return {entry, path.string()};
   }
   auto Notify(Entry& entry) -> void {
     entry.state.attached_roots.clear();
@@ -203,7 +204,6 @@ struct Environments::Impl {
     entry.state.endpoint.clear();
     entry.state.token.clear();
     entry.state.project_id.clear();
-    entry.state.server_instance_id.clear();
     entry.state.unix_socket.clear();
     entry.state.pid = 0;
   }
@@ -230,9 +230,6 @@ struct Environments::Impl {
         fs::read_file(std::filesystem::path(entry.state.control_dir) /
                       "server.startup-error.json")
             .value_or("");
-    if (entry.state.log.find("already owns") != std::string::npos)
-      entry.state.recovery =
-          "Another tsugumid owns this project. Stop it and retry.";
     Notify(entry);
   }
   auto Alive(int64_t pid, bool child) -> bool {
@@ -252,8 +249,19 @@ struct Environments::Impl {
       entry.state.message.clear();
       Notify(entry);
     } else {
-      Failed(entry, "tsugumid exited. Retry to start it again.", nullptr,
-             H::EnvironmentFailureCode::ProcessExit);
+      // A native child reports the daemon's exit code. Guest status may
+      // establish that the process disappeared without reporting its exit code.
+      if (*status >= 0 && WIFEXITED(*status) && WEXITSTATUS(*status) == 4) {
+        const EnvironmentFailure conflict(
+            "tsugumid could not acquire the project lock.",
+            "Another tsugumid owns this project. Stop it and retry.",
+            LogTail(entry));
+        Failed(entry, conflict.what(), &conflict,
+               H::EnvironmentFailureCode::ProcessExit);
+      } else {
+        Failed(entry, "tsugumid exited. Retry to start it again.", nullptr,
+               H::EnvironmentFailureCode::ProcessExit);
+      }
     }
     entry.pid = 0;
     entry.child = false;
@@ -269,7 +277,6 @@ struct Environments::Impl {
       ready.endpoint = json::Text(object, "endpoint");
       ready.token = json::Text(object, "token");
       ready.project_id = json::Text(object, "project_id");
-      ready.server_instance_id = json::Text(object, "server_instance_id");
       ready.unix_socket = json::Text(object, "unix_socket");
       const auto handle = options.process->Inspect(ready);
       if (!handle) return false;
@@ -354,12 +361,14 @@ struct Environments::Impl {
                                      [&] { start_stop.request_stop(); });
     struct Finished {
       Entry& entry;
+      std::function<void()> release_identity;
       ~Finished() {
+        if (release_identity) release_identity();
         std::lock_guard lock(entry.start_mutex);
         entry.start_stop.reset();
         entry.starting = false;
       }
-    } finished{entry};
+    } finished{entry, {}};
     PrivateDirectory(
         std::filesystem::path(entry.state.control_dir).parent_path());
     PrivateDirectory(entry.state.control_dir);
@@ -381,7 +390,8 @@ struct Environments::Impl {
     if (ReadReady(entry)) {
       const auto previous =
           entry.mounted.empty() ? Plan(entry).mounts : entry.mounted;
-      entry.requirements = options.process->Requirements(entry.state);
+      if (options.process->Guest())
+        entry.requirements = options.process->Requirements(entry.state);
       const auto next = Plan(entry);
       // The guest keeps the folders of its start: replacing the shares of a
       // running project leaves it with files it can no longer reach, so a
@@ -401,8 +411,9 @@ struct Environments::Impl {
       throw std::runtime_error(
           "tsugumid is alive but its endpoint is "
           "unavailable; stop it before retrying");
-    if (options.prepare_project_identity)
-      options.prepare_project_identity(entry.state.project);
+    if (options.reserve_project_identity)
+      finished.release_identity =
+          options.reserve_project_identity(entry.state.project);
     options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
     entry.state.message = "Starting tsugumid";
@@ -484,14 +495,13 @@ struct Environments::Impl {
             entry.state.ready_file, entry.pid, start_stop.get_token(), [&] {
               if (CheckDeath(entry)) return ready = true;
               if (!ReadReady(entry)) return false;
-              auto accepted = options.process->Requirements(entry.state);
-              const auto& planned = launch.mounts;
-              entry.requirements = std::move(accepted);
-              const auto required = Plan(entry).mounts;
-              if (options.process->Guest() && planned != required)
-                throw std::runtime_error(
-                    "Host requirements changed during "
-                    "startup; retry the environment");
+              if (options.process->Guest()) {
+                entry.requirements = options.process->Requirements(entry.state);
+                if (launch.mounts != Plan(entry).mounts)
+                  throw std::runtime_error(
+                      "Host requirements changed during "
+                      "startup; retry the environment");
+              }
               Notify(entry);
               return ready = true;
             });
@@ -696,14 +706,14 @@ auto Environments::Attach(
       selected.push_back(folder);
   }
   if (selected.empty()) throw std::runtime_error("Select at least one folder");
-  auto entry = impl_->EntryFor(request.project);
+  auto [entry, project] = impl_->EntryFor(request.project);
   std::lock_guard lock(entry->mutex);
-  entry->state.project = std::filesystem::canonical(request.project).string();
+  entry->state.project = std::move(project);
   impl_->CheckDeath(*entry);
   if (!entry->pid) impl_->ReadReady(*entry);
   const auto original = entry->folders;
   const bool was_ready = entry->state.phase == H::EnvironmentPhase::Ready;
-  if (was_ready)
+  if (was_ready && impl_->options.process->Guest())
     entry->requirements = impl_->options.process->Requirements(entry->state);
   const auto previous_mounts =
       entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
@@ -752,7 +762,7 @@ auto Environments::Attach(
 auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (impl_->shutdown.stop_requested())
     throw std::runtime_error("Host service is stopping");
-  auto entry = impl_->EntryFor(request.project);
+  auto [entry, project] = impl_->EntryFor(request.project);
   const auto generation = entry->start_generation.load();
   const bool joining_start = entry->starting.load();
   if (request.action == H::EnvironmentAction::Stop) {
@@ -766,9 +776,8 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       (joining_start || entry->start_generation.load() != generation) &&
       entry->state.phase != H::EnvironmentPhase::Ready)
     return entry->state;
-  const bool renamed = entry->state.project !=
-                       std::filesystem::canonical(request.project).string();
-  entry->state.project = std::filesystem::canonical(request.project).string();
+  const bool renamed = entry->state.project != project;
+  entry->state.project = std::move(project);
   switch (request.action) {
     case H::EnvironmentAction::Start:
       if (entry->state.phase != H::EnvironmentPhase::Ready)
@@ -785,7 +794,8 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       PrivateDirectory(entry->state.control_dir);
       const auto previous =
           entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
-      if (entry->state.phase == H::EnvironmentPhase::Ready)
+      if (impl_->options.process->Guest() &&
+          entry->state.phase == H::EnvironmentPhase::Ready)
         entry->requirements =
             impl_->options.process->Requirements(entry->state);
       auto folders = entry->folders;
@@ -813,8 +823,9 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       if (!impl_->CheckDeath(*entry)) {
         if (!entry->pid) {
           if (impl_->ReadReady(*entry)) {
-            entry->requirements =
-                impl_->options.process->Requirements(entry->state);
+            if (impl_->options.process->Guest())
+              entry->requirements =
+                  impl_->options.process->Requirements(entry->state);
             impl_->Authorize(*entry);
             impl_->Notify(*entry);
           } else if (entry->state.phase == H::EnvironmentPhase::Stopped) {

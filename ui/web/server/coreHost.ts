@@ -97,8 +97,7 @@ class Connection {
       socket.once('error', reject)
       socket.once('close', () => reject(new Error('Service connection closed')))
     })
-    await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token,
-      client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}` })
+    await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token })
     if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
   }
 

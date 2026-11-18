@@ -33,7 +33,7 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60,
+auto spec(const std::string& digest, uint64_t build_timeout_ms = 60,
           uint64_t log_limit = 8u << 20) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
@@ -41,7 +41,7 @@ auto spec(const std::string& digest, uint32_t timeout = 60,
   s.output = "/nix/store/00000000000000000000000000000000-test";
   s.invocation_sha256 = digest;
   s.input_blobs = {digest};
-  s.timeout_seconds = timeout;
+  s.build_timeout_ms = build_timeout_ms;
   s.log_limit_bytes = log_limit;
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &s));
@@ -87,7 +87,6 @@ auto protocol_test() -> void {
           kInvocationLogLimitBytes,
       "remote worker refused the shared limit");
   R::RequestT q;
-  q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');
   auto c = chunk(std::string("binary\0payload", 14));
   q.body.Set(c);
@@ -102,7 +101,7 @@ auto protocol_test() -> void {
   auto restored = decode(bytes);
   const auto* request = restored->payload.AsRequest();
   expect(request && request->body.AsPutBlobRequest()->bytes == c.bytes &&
-             request->server_id == q.server_id,
+             request->project_scope == q.project_scope,
          "protocol roundtrip");
   for (const auto& data :
        {std::string{}, bytes.substr(0, 11), std::string(32, '\0')})
@@ -278,7 +277,6 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   auto bytes = spec(input.digest, 0);
   auto settings = parse_spec(bytes);
   settings->build_timeout_ms = 1;
-  settings->timeout_seconds = 2;
   flatbuffers::FlatBufferBuilder builder;
   builder.Finish(R::JobSpec::Pack(builder, settings.get()));
   bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
@@ -291,8 +289,7 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   expect(journal.claim(job, 1, 1, "boot"),
          "queue consumed a Card or build budget");
   auto decoded = parse_spec(bytes);
-  expect(decoded->build_timeout_ms == 1 && decoded->timeout_seconds == 2,
-         "build and call budgets were not kept separately");
+  expect(decoded->build_timeout_ms == 1, "build budget was not preserved");
 }
 }  // namespace
 }  // namespace tsugumi::workerd

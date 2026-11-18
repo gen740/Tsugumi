@@ -269,8 +269,7 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
               [&](uint64_t id) {
                 flatbuffers::FlatBufferBuilder b;
                 auto hello = R::CreateSessionHelloRequest(
-                    b, b.CreateString(crypto::uuid4()),
-                    b.CreateString(ready.project_id),
+                    b, b.CreateString(ready.project_id),
                     b.CreateString(ready.token));
                 auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());

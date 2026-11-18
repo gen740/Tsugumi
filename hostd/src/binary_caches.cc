@@ -164,17 +164,18 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
   }
   return caches;
 }
+auto ReadBinaryCaches(const std::filesystem::path& support) -> std::string {
+  return fs::read_file(support / "binary-caches.json").value_or("[]");
+}
 }  // namespace
-
-auto ValidateBinaryCaches(std::string_view json) -> void { Parse(json); }
 auto LoadBinaryCaches(const std::filesystem::path& support) -> std::string {
-  const auto raw = fs::read_file(support / "binary-caches.json").value_or("[]");
-  ValidateBinaryCaches(raw);
+  const auto raw = ReadBinaryCaches(support);
+  Parse(raw);
   return raw;
 }
 auto SaveBinaryCaches(const std::filesystem::path& support,
                       std::string_view json) -> void {
-  ValidateBinaryCaches(json);
+  Parse(json);
   std::filesystem::create_directories(support);
   ::chmod(support.c_str(), 0700);
   fs::write_atomic(support / "binary-caches.json", json, 0600);
@@ -184,7 +185,7 @@ auto PrepareBinaryCaches(const std::filesystem::path& support)
   BinaryCacheSnapshot result;
   std::vector<Cache> caches;
   try {
-    caches = Parse(LoadBinaryCaches(support));
+    caches = Parse(ReadBinaryCaches(support));
   } catch (const std::exception& error) {
     // Parsing/validation diagnostics never include the submitted credentials.
     result.problem =

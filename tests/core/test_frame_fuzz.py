@@ -13,16 +13,11 @@ import random
 import socket
 import struct
 import time
-import uuid
 
 from harness.transport import hello_frame, port_of, unix_connection, unix_frame, ws_connect, ws_frame
 from tsugumi_client import encode_request, make
 
 CASES = int(os.environ.get("TSUGUMI_FUZZ_CASES", "300"))
-
-
-def seeded_hello(rnd, token):
-    return hello_frame(1, token, client_id=str(uuid.UUID(int=rnd.getrandbits(128))))
 
 
 def requests(rnd):
@@ -135,9 +130,9 @@ def test_unix_frames_of_any_shape(daemon):
                     size = rnd.choice([0, 1, len(body) + 1, 0xFFFFFFFF, rnd.randrange(1 << 32)])
                     data = struct.pack("<I", size) + body
                 elif shape == 2:
-                    data = unix_frame(mutate(rnd, seeded_hello(rnd, None)))
+                    data = unix_frame(mutate(rnd, hello_frame(1, None)))
                 else:
-                    data = unix_frame(seeded_hello(rnd, None)) + b"".join(
+                    data = unix_frame(hello_frame(1, None)) + b"".join(
                         unix_frame(mutate(rnd, requests(rnd))) for _ in range(rnd.randint(1, 6))
                     )
                 send_in_pieces(connection, data, rnd)
@@ -167,10 +162,10 @@ def test_websocket_frames_of_any_shape(daemon):
                     data = rnd.randbytes(rnd.randint(1, 4096))
                 elif shape == 1:
                     data = b"".join(any_ws_frame(rnd, rnd.choice([
-                        seeded_hello(rnd, token), rnd.randbytes(rnd.randint(0, 300)),
+                        hello_frame(1, token), rnd.randbytes(rnd.randint(0, 300)),
                     ])) for _ in range(rnd.randint(1, 5)))
                 elif shape == 2:
-                    hello = seeded_hello(rnd, token)
+                    hello = hello_frame(1, token)
                     cut = rnd.randint(1, len(hello) - 1)
                     parts = [any_ws_frame(rnd, hello[:cut]),
                              any_ws_frame(rnd, rnd.randbytes(rnd.randint(0, 200))),
@@ -178,7 +173,7 @@ def test_websocket_frames_of_any_shape(daemon):
                     rnd.shuffle(parts)
                     data = b"".join(parts)
                 else:
-                    data = ws_frame(seeded_hello(rnd, token), mask=rnd.randbytes(4)) + b"".join(
+                    data = ws_frame(hello_frame(1, token), mask=rnd.randbytes(4)) + b"".join(
                         ws_frame(mutate(rnd, requests(rnd)), mask=rnd.randbytes(4))
                         for _ in range(rnd.randint(1, 6))
                     )

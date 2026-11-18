@@ -308,7 +308,6 @@ int run_daemon(int argc, char** argv) {
     *ready.token = so.token;
     *ready.protocol = 1;
     *ready.project_id = service.project_id();
-    *ready.server_instance_id = so.server_instance_id;
     *ready.unix_socket = opt.unix_socket;
     *ready.pid = ::getpid();
     stdfs::create_directories(opt.control_dir);

@@ -90,7 +90,8 @@ auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
 // Read the exact revision being saved; never clean up a newer client's layout.
 auto Tools::PrepareLayoutSave(const std::string& project,
                               const std::string& args, std::stop_token stop,
-                              const host::LayoutWrite& may_write)
+                              const host::LayoutWrite& may_write,
+                              const host::SourcePatches& patches)
     -> std::string {
   struct StaleRevision {};
   std::optional<json::Members> snapshot;
@@ -159,10 +160,7 @@ auto Tools::PrepareLayoutSave(const std::string& project,
       }
       if (json::Bool(json::Get(chunk, "eof"))) break;
       const auto next = json::Get(chunk, "next_offset");
-      const auto position = json::UInt(json::String(next, next));
-      if (position <= offset)
-        throw Failure("invalid_request", "Invalid layout source page");
-      offset = position;
+      offset = json::UInt(json::String(next, next));
     }
     return host::LayoutFile{std::move(text), hash};
   };
@@ -174,24 +172,24 @@ auto Tools::PrepareLayoutSave(const std::string& project,
       if (host::IsExternalDocument(path, "tsugumi.json"))
         documents.push_back(path);
     }
-    return host::PrepareLayoutSave(args, read, documents, may_write);
+    return host::PrepareLayoutSave(args, read, documents, may_write, patches);
   } catch (const StaleRevision&) {
     return args;
   }  // Let the core issue its normal CAS receipt.
 }
 
-auto Tools::OperateProject(const std::string& project,
-                           const H::ProjectOperateRequestT& operation,
+auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
                            const host::OperationContext& context,
                            std::stop_token stop) -> host::OperationReply {
   std::lock_guard saving(save_mutex);
+  const auto& project = operation.project_id;
   auto resolved_context = context;
   resolved_context.demo = [&](const auto& name) {
     const auto folder = demo_references.Project(name);
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
     return folder;
   };
-  return operations.Execute(project, operation, resolved_context,
+  return operations.Execute(operation, resolved_context,
                             [&](const auto& method, const auto& arguments) {
                               host::OperationReply reply;
                               reply.json = RawProjectCall(
@@ -224,18 +222,22 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
       return LayoutToolFailure("revision_conflict",
                                "The project changed; read the project again "
                                "and re-apply your input.");
-    Exclusions(project, stop).CheckSave(original, latest.base);
+    const host::SourcePatches patches;
+    Exclusions(project, stop).CheckSave(original, latest.base, patches);
     if (check) check(latest.base);
     original.erase("save_intent");
     auto prepared = PrepareAgentSave(
-        original, read, [&](const auto& card, const auto& occupied) {
+        original, read,
+        [&](const auto& card, const auto& occupied) {
           std::lock_guard lock(mutex);
           return host::ReserveOrdinal(
               db, "annotation:" + project + ":comment:" + card, "", occupied);
-        });
+        },
+        patches);
     prepared.arguments = json::Object(PrepareLayoutSave(
-        project, json::Encode(prepared.arguments), stop, may_write));
-    Exclusions(project, stop).CheckSave(prepared.arguments, latest.base);
+        project, json::Encode(prepared.arguments), stop, may_write, patches));
+    Exclusions(project, stop)
+        .CheckSave(prepared.arguments, latest.base, patches);
     host::RestrictAgentRequest("project_save", prepared.arguments);
     auto result = json::Object(RawProjectCall(
         project, "project_save", json::Encode(prepared.arguments), stop));
@@ -575,7 +577,7 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
           .Call([&](uint64_t id) {
             flatbuffers::FlatBufferBuilder b;
             auto h = R::CreateSessionHelloRequest(
-                b, b.CreateString(crypto::uuid4()), b.CreateString(project),
+                b, b.CreateString(project),
                 endpoint.token.empty() ? 0 : b.CreateString(endpoint.token));
             auto r = R::CreateRequest(b, R::RequestPayload::SessionHelloRequest,
                                       h.Union());

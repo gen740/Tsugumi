@@ -132,8 +132,7 @@ inline auto DescribeOperation(
             : "Commit the saved working project and keep the proposed named "
               "version.");
   }
-  const auto details = "operation_approval\n" + name + "\n" +
-                       json::Encode(targets) +
+  const auto details = name + "\n" + json::Encode(targets) +
                        "\nProposed arguments: " + json::Encode(args);
   return details;
 }

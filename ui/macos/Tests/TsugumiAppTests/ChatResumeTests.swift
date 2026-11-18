@@ -509,7 +509,7 @@ import TsugumiRPC
       #expect(identity.id != t.session.identity.id)
       let second = ProjectSession(identity: identity, environments: t.session.environments)
       let projectID = UUID().uuidString.lowercased()
-      second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
+      second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID)
       // A folder is registered under the identity it holds.
       try FileManager.default.createDirectory(at: copied.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
       try Data(projectID.utf8).write(to: copied.appendingPathComponent(".tsugumi/project-id"))

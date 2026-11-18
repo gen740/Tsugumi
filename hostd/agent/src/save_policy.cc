@@ -4,7 +4,6 @@
 
 #include "host/failure.hh"
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/util/text.hh"
 
 namespace tsugumi::agent {
 namespace {
@@ -46,8 +45,8 @@ auto Bytes(const std::string& raw) -> std::string {
 }  // namespace
 
 auto PrepareAgentSave(json::Members args, const ProjectRead& read,
-                      const host::comments::ReserveComment& reserve)
-    -> AgentSave {
+                      const host::comments::ReserveComment& reserve,
+                      const host::SourcePatches& patches) -> AgentSave {
   const auto snapshot = read("project_inspect", {});
   if (Integer(json::Get(snapshot, "rev")) !=
       Integer(json::Get(args, "base_rev")))
@@ -138,17 +137,8 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
                              {{"path", json::Quote(path)}, {"at_rev", rev}}),
                         "bytes"));
           before[path] = old;
-          text::PatchApplier apply(old);
-          for (const auto& patch : json::Array(json::Get(c, "patches", "[]"))) {
-            auto p = json::Object(patch);
-            const auto start = Integer(json::Get(p, "offset"));
-            const auto remove = Integer(json::Get(p, "remove"));
-            const auto end = start + remove;
-            if (start < apply.cursor() || end < start || end > old.size())
-              throw std::runtime_error("Invalid patch range");
-            apply.append(start, remove, json::Text(p, "text"));
-          }
-          value = std::move(apply).finish();
+          value =
+              patches.Project(old, json::Array(json::Get(c, "patches", "[]")));
         }
         after[path] = value;
       }

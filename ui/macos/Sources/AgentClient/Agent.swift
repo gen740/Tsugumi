@@ -288,9 +288,16 @@ public actor Agent {
     guard let approver else { throw CancellationError() }
     let answer = await approver(asked, groups)
     try Task.checkCancellation()
+    let selected = answer.compactMap { line -> Tsugumi_Service_Access? in
+      let prefix = "project_access "
+      guard line.hasPrefix(prefix),
+            let value = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(prefix.count).utf8)) as? [String: Any],
+            let access = value["access_id"] as? UInt8 else { return nil }
+      return Tsugumi_Service_Access(rawValue: access)
+    }
     var allowed = false
     do {
-      let result = try await self.request("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": Array(answer)])
+      let result = try await self.request("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": selected])
       allowed = result["accepted"] as? Bool ?? false
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
