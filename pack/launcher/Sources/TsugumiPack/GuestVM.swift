@@ -75,12 +75,33 @@ struct GuestBoot {
     vm.start { result in
       if case .failure(let e) = result { startError = e; watcher.done = true }
     }
+    // Ctrl-C or a terminate: stop the guest, then return so the callers'
+    // cleanup (temporary folders, scratch disk) runs.
+    var interrupted = false
+    let signals = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
+      signal(number, SIG_IGN)
+      let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+      source.setEventHandler { interrupted = true }
+      source.resume()
+      return source
+    }
+    defer {
+      for source in signals { source.cancel() }
+      signal(SIGINT, SIG_DFL)
+      signal(SIGTERM, SIG_DFL)
+    }
+    var stopping = false
     while !watcher.done {
       _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
       reader.poll()
+      if interrupted, !stopping, vm.canStop {
+        stopping = true
+        vm.stop { _ in watcher.done = true }
+      }
     }
     reader.poll()
     reader.finish()
+    if interrupted { throw PackError("interrupted; the guest was stopped") }
     if let startError { throw PackError("the VM did not start: \(startError.localizedDescription)") }
     if let e = watcher.error { throw PackError("the VM stopped with an error: \(e.localizedDescription)") }
   }

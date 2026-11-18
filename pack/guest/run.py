@@ -9,8 +9,13 @@ same RPC the apps use (tsugumi-rpc, one JSON request per line).
     python3 run.py PROJECT REQUEST RESULT
 
 PROJECT  writable copy of the exported Project
-REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": {"<name>": value}}}
+REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": {"<name>": value}},
+         "files": {"<input card>": "<file name in inputs/<card>/ beside request.json>"}}
 RESULT   folder for summary.json and cards/<card>/<invocation>/...
+
+The copy records every Code Card's inputs and outputs (recordIO), whatever the
+author chose: the recipient gets values back, not only displays. recordIO is
+a setting, so this changes no build.
 """
 
 import json
@@ -71,13 +76,30 @@ class Rpc:
         self.process.wait(timeout=10)
 
 
-def apply_request(project, request):
-    """Set the recipient's parameter values in the Cards' _card.json."""
+def definition_of(project, card):
+    path = project / "definitions" / card / "_card.json"
+    if not path.is_file():
+        raise SystemExit(f"no Card {card} in this Project")
+    return path, json.loads(path.read_text())
+
+
+def apply_request(project, request, inputs):
+    """Set the recipient's parameter values and files in the Cards' _card.json."""
+    for card, name in request.get("files", {}).items():
+        path, definition = definition_of(project, card)
+        values = [p for p in definition.get("params", []) if p["name"] == "value"]
+        if definition.get("template") != "input" or not values:
+            raise SystemExit(f"{card} is not an input Card with a file")
+        # An input Card's file is a source of its own folder: the core copies
+        # it into the run from there.
+        source = inputs / card / name
+        target = project / "definitions" / card / "recipient" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        values[0]["data"] = f"recipient/{name}"
+        path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
     for card, values in request.get("params", {}).items():
-        path = project / "definitions" / card / "_card.json"
-        if not path.is_file():
-            raise SystemExit(f"no Card {card} in this Project")
-        definition = json.loads(path.read_text())
+        path, definition = definition_of(project, card)
         if definition.get("template", "code") not in SETTABLE:
             raise SystemExit(f"{card} is a {definition['template']} Card: its parameters shape the Workflow")
         params = {p["name"]: p for p in definition.get("params", [])}
@@ -88,6 +110,21 @@ def apply_request(project, request):
                 raise SystemExit(f"{card}.{name} is fixed at export: it changes the Card's build")
             params[name]["data"] = value
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
+
+
+def record_all(project):
+    """recordIO on for every Code Card of the copy."""
+    for path in (project / "definitions").glob("*/_card.json"):
+        definition = json.loads(path.read_text())
+        if "template" not in definition and not definition.get("recordIO"):
+            definition["recordIO"] = True
+            path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
+
+
+def wired_outputs(project):
+    """(card, port) pairs that feed another Card: the rest are the Workflow's results."""
+    connections = json.loads((project / "tsugumi.json").read_text()).get("canvas", {}).get("connections", [])
+    return {(c["from"]["card"], c["from"]["port"]) for c in connections}
 
 
 def triggers(project):
@@ -129,6 +166,20 @@ def decode_value(value, folder):
         return None
     raw = folder / f"{name}.bin"
     raw.write_bytes(data)
+    entry = {"bytes": f"{name}.bin"}
+    if value.get("kind") in ("File", "Directory"):
+        # The content itself, from where the core keeps it.
+        kept = value.get("file_path")
+        if kept and os.path.exists(kept):
+            target = folder / name / os.path.basename(kept.rstrip("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if os.path.isdir(kept):
+                shutil.copytree(kept, target, symlinks=True)
+            else:
+                shutil.copyfile(kept, target)
+            entry["file"] = str(target.relative_to(folder))
+        else:
+            entry["file_missing"] = True
     schema = folder / f".{name}.bfbs"
     schema.write_bytes(bytes(value.get("schema_bfbs", [])))
     result = subprocess.run(
@@ -138,8 +189,16 @@ def decode_value(value, folder):
     schema.unlink()
     produced = folder / f"{name}.json"
     if result.returncode != 0 or not produced.exists():
-        return {"bytes": f"{name}.bin", "decode_error": result.stderr.strip()}
-    return {"json": f"{name}.json", "bytes": f"{name}.bin"}
+        entry["decode_error"] = result.stderr.strip()
+    else:
+        entry["json"] = f"{name}.json"
+        if "file" in entry:
+            # The path inside the guest means nothing outside it: name the copy.
+            decoded = json.loads(produced.read_text())
+            if isinstance(decoded, dict) and isinstance(decoded.get("value"), str):
+                decoded["value"] = entry["file"]
+                produced.write_text(json.dumps(decoded, indent=2, ensure_ascii=False) + "\n")
+    return entry
 
 
 def write_display(display, folder):
@@ -180,7 +239,7 @@ def read_log(rpc, run_id, card, invocation, stream):
         offset = following
 
 
-def collect(rpc, run_id, result):
+def collect(rpc, run_id, result, wired):
     page = rpc.call("RunLatestInvocationsRequest", {"run_id": run_id})
     cards = []
     for latest in page.get("records", []):
@@ -209,7 +268,10 @@ def collect(rpc, run_id, result):
             if record:
                 outputs = {}
                 for value in record.get("outputs", []):
-                    outputs[value["name"]] = decode_value(value, folder)
+                    decoded = decode_value(value, folder)
+                    if decoded is not None and (key, value["name"]) not in wired:
+                        decoded["result"] = True
+                    outputs[value["name"]] = decoded
                 if outputs:
                     entry["outputs"] = outputs
                 if record.get("display"):
@@ -226,7 +288,8 @@ def main():
     project, request_path, result = (Path(a) for a in sys.argv[1:4])
     work = Path(os.environ.get("PACK_WORK", "/work"))
     request = json.loads(request_path.read_text()) if request_path.is_file() else {}
-    apply_request(project, request)
+    apply_request(project, request, request_path.parent / "inputs")
+    record_all(project)
     found = triggers(project)
     start = request.get("start") or (found[0] if found else None)
     if start is None:
@@ -262,7 +325,11 @@ def main():
         if status.get("failure"):
             summary["failure"] = status["failure"]
         stage("results")
-        summary["cards"] = collect(rpc, run_id, result)
+        summary["cards"] = collect(rpc, run_id, result, wired_outputs(project))
+        summary["results"] = [{"card": c["card"], "invocation": c["invocation"], "port": port,
+                               **{k: f"{c['folder']}/{v}" for k, v in value.items() if k in ("json", "file")}}
+                              for c in summary["cards"] for port, value in c.get("outputs", {}).items()
+                              if value and value.get("result")]
     finally:
         rpc.close()
         core.terminate()

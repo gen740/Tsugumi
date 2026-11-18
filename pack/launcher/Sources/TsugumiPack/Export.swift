@@ -175,8 +175,15 @@ struct Export {
         if p["nix"] as? Bool == true || !["code", "input", "switch"].contains(template) { entry["fixed"] = true }
         return entry
       }
-      cards.append(["id": id, "template": definition["template"] ?? "code", "language": definition["language"] ?? "",
-                    "params": params])
+      var entry: [String: Any] = ["id": id, "template": definition["template"] ?? "code",
+                                  "language": definition["language"] ?? "", "params": params]
+      // An input Card whose output is a File: the recipient may give another file.
+      let outputs = (try? String(contentsOf: project.appendingPathComponent("definitions/\(id)/_outputs.fbs"), encoding: .utf8)) ?? ""
+      if definition["template"] as? String == "input",
+         outputs.range(of: #"tsugumi\s*:\s*"file""#, options: .regularExpression) != nil {
+        entry["file"] = true
+      }
+      cards.append(entry)
     }
     let manifest: [String: Any] = [
       "name": name, "project": document["name"] ?? name, "triggers": triggers, "cards": cards,

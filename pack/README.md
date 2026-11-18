@@ -3,7 +3,12 @@
 ```sh
 tsugumi-pack ./CellCount --output ./CellCount.app
 ./CellCount.app/Contents/MacOS/CellCount --set generate.seed=11 --output ./counts
+./WordCount.app/Contents/MacOS/WordCount --file text=./my-notes.txt
 ```
+
+`--help` on an app lists its parameters and file inputs. Opened from the
+Finder, an app runs with the exported values and shows its results folder
+(in Documents) when done.
 
 The exporter turns a Tsugumi Project into an app that the recipient runs
 offline on an Apple Silicon Mac, with no Tsugumi or Nix installed
@@ -35,11 +40,14 @@ come later.
 The app, when run, boots the same guest in *run* mode with **no network
 device**. The payload's store is laid over the image's (overlayfs, writes to
 a sparse scratch disk the app removes afterwards: tsugumid keeps run scratch
-on a disk), the recipient's parameter values are written into a copy of the
-Project, and `tsugumid` runs the Workflow from its trigger through the same
-RPC the apps use. Every Card's outputs (raw FlatBuffers bytes and JSON),
-display (PNG, text, table) and logs are written under the results folder,
-with `summary.json`. The guest then powers off.
+on a disk), the recipient's parameter values and files are written into a
+copy of the Project, and `tsugumid` runs the Workflow from its trigger
+through the same RPC the apps use. Every Card's outputs (raw FlatBuffers
+bytes, JSON, and the content of File and Directory values), display (PNG,
+text, table) and logs are written under the results folder. `summary.json`
+lists every invocation and, under `results`, the outputs no other Card
+consumes: the Workflow's results. The guest then powers off; Ctrl-C stops it
+and removes the run's temporary folder and scratch disk.
 
 ## Choices and why
 
@@ -76,10 +84,18 @@ with `summary.json`. The guest then powers off.
   `--params file.json`; `--help` lists them). Parameters marked `nix` change
   the Card's build, and a fork's or branch's change the graph, so they are
   fixed at export; the app refuses them rather than attempting a build offline.
-- **Size.** Most of the payload is the Cards' own closures (Python with
-  NumPy, SciPy, scikit-image, matplotlib). The nixpkgs sources and the
-  derivations are there only for the run's evaluation; removing that
-  evaluation (above) would remove them too.
+- **Files through the input Card.** `--file CARD=PATH` replaces the file of
+  an input Card whose output is a File. The core reads an input Card's file
+  only from the Card's own folder, so the app copies the recipient's file
+  into the copy of the Project there (`recipient/<name>`) and points the Card
+  at it. An input Card is not built, so this changes no build.
+- **Values are recorded in the app.** Record I/O is off by default, which
+  would leave the recipient with displays only. The app's copy turns it on
+  for every Code Card; it is a setting, outside what a build evaluates.
+- **Size.** The nixpkgs sources are 130 MiB of every payload (191 MiB
+  unpacked) and, with the derivations, are there only for the run's
+  evaluation: a one-Card Python Project's payload is 223 MiB, cell-count's
+  544 MiB. Removing that evaluation (above) would remove them.
 
 ## Layout
 
@@ -114,8 +130,8 @@ run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
 | App size | 728 MiB on disk: payload 544 MiB (4,804 store paths), guest image 170 MiB, kernel 14 MiB, launcher 0.25 MiB |
 | Download (`ditto -c -k` zip) | 466 MiB |
 | Boot to tsugumid ready | 1.9 s |
-| First Card result (`mitosis`) / first figure (`generate`) | 2.6 s / 3.6 s after launch |
-| Whole Workflow, results written | 24.8 s (the parameter sweep is 18 s of it) |
+| First Code Card result (`mitosis`) / first figure (`generate`) | 2.2–2.6 s / 3.6 s after launch |
+| Whole Workflow, results written | 23.8–24.8 s (the parameter sweep is 18 s of it) |
 
 **Offline.** The app's guest has no network device at all, so nothing in it
 can reach the network; the run still evaluated and started every Card, which
@@ -132,18 +148,27 @@ watershed) and are again byte-identical to the reference given the same
 values. Setting a `nix` parameter (`mitosis.hash`) or a fork's `branches` is
 refused with its reason.
 
+**A recipient's file.** A three-Card Project (trigger, an input Card with a
+text file, a Python Card that counts lines and words and writes the text
+upper-cased as a File) exported to a 407 MiB app. With `--file
+text=mine.txt` the app returned `counts.json` (3 lines, 6 words) and
+`upper/upper.txt` for the given file in 1.9 s, identical to the reference
+run given the same file (the File value's JSON names the copy, not the
+guest's path).
+
 Not checked here: a second Mac without Tsugumi or Nix (nothing on this Mac
 is used by the app, but its development signature would need Developer ID
-signing to open elsewhere), and Card output values (`outputs/`): this
-Project records none, since Record I/O is off by default.
+signing to open elsewhere), and opening an app from the Finder (this Mac is
+shared, so nothing was brought to the front).
 
 ## Not done yet
 
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
-- Recipient input files: the app passes parameters; File and Directory
-  inputs (an `input` Card's file) need a folder shared into the guest and a
-  path rewrite.
+- Directory inputs: an input Card reads one file; a recipient's folder
+  needs a Card that takes a Directory, which input Cards do not offer today.
+- Progress in the Finder: an app opened there shows nothing until its
+  results folder opens.
 - Distribution signing: an app signed with a development certificate runs on
   this Mac; another Mac needs Developer ID signing and notarization.
 - Cards built for x86_64-linux (Rosetta in the guest) and remote execution
