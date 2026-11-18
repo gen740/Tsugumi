@@ -30,6 +30,7 @@
         ./nix/flake/packages.nix
         ./nix/flake/checks.nix
         ./nix/flake/docs.nix
+        ./nix/flake/tools.nix
         ./nix/flake/dev-shell.nix
       ];
     };

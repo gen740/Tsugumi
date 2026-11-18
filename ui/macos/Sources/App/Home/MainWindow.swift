@@ -168,7 +168,7 @@ struct EnvironmentSetupView: View {
                  detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
             step(String(localized: "実行環境の VM イメージがある"), ok: image,
                  detail: image ? String(localized: "VM イメージ \(version ?? "")")
-                               : String(localized: "アプリに VM イメージが含まれていません。開発中は vm/guest/build-image.sh --vm で作成してください。")) {
+                               : String(localized: "アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。")) {
               EmptyView()
             }
           case nil:
