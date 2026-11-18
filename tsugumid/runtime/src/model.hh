@@ -76,6 +76,7 @@ struct InvocationSummaryData {
   std::optional<FailureData> failure;
   std::vector<WaitingInputData> waiting;
   std::optional<bool> build_cached;
+  std::optional<uint64_t> log_truncated_at_bytes;
   std::vector<StageTimeData> stages;
   std::optional<bool> worker_reused;
   std::vector<std::string> outputs_sent;

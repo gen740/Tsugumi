@@ -415,17 +415,23 @@ def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_fa
     definition.write_text(json.dumps(settings))
     source = project / "definitions/work/default.nix"
     source.write_text(source.read_text().replace("printf 'remote-card-stdout\\n'",
-        "head -c 9437184 /dev/zero | tr '\\000' x"))
+        "head -c 142606336 /dev/zero | tr '\\000' x"))
     client = core_factory().connect()
     run_id = start_run(client, "source")
     run = wait_run(client, run_id, timeout=480)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                          invocation=1, stream=LogStream.standard_output)
-    assert 0 < stdout.sizeBytes <= 8 << 20
+    limit = 128 << 20
+    assert 120 << 20 < stdout.sizeBytes <= limit
+    assert stdout.logTruncatedAtBytes == limit
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
+    assert record.record.summary.logTruncatedAtBytes == limit
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                           invocation=1, stream=LogStream.journal)
-    assert text(journal.text).count("[Log output truncated at the 8388608-byte limit.]") == 1
+    assert journal.logTruncatedAtBytes == limit
+    for line in text(journal.text).splitlines():
+        assert isinstance(json.loads(line), dict)
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):

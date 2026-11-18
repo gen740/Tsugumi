@@ -651,8 +651,11 @@
 "レポート（HTML・PDF 未対応）" = "Reports (HTML; PDF unsupported)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
+"ログの末尾を表示しています" = "Showing the end of the log";
 "ログの表示切替" = "Toggle Log";
+"ログはここで切り詰めました（上限 %llu MiB）" = "Log truncated here (%llu MiB limit)";
 "ログをコピー" = "Copy log";
+"ログを書き出す…" = "Export log…";
 "ログを確認" = "Read the log";
 "ログを表示" = "Show Log";
 "ログを読み込めませんでした" = "Could not read the log";

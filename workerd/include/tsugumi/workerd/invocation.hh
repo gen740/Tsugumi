@@ -32,6 +32,7 @@ struct EnvironmentJson {
   schema::t::Array<"paths", schema::v::String> paths;
   schema::t::Array<"directories", schema::v::String> directories;
   schema::t::Bool<"built"> built;
+  schema::t::Bool<"log_truncated"> log_truncated;
 };
 
 struct LogJson {

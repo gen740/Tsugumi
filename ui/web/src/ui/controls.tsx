@@ -467,8 +467,8 @@ export async function copyText(t: string) {
 }
 
 /** Saves bytes as a download (the core never receives a local path). */
-export function download(name: string, data: Uint8Array | string, type = 'application/octet-stream') {
-  const blob = new Blob([data as BlobPart], { type })
+export function download(name: string, data: Blob | Uint8Array | string, type = 'application/octet-stream') {
+  const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

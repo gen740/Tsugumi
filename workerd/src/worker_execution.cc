@@ -249,7 +249,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
       worker.terminate();
     else
       worker.set_logs(nullptr);
-    if (invocation.finish_logs) invocation.finish_logs();
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
     const std::atomic<bool> no_cancel{false};
     stage_outputs(
@@ -279,10 +278,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
   } catch (...) {
     try {
       if (lease.worker) release();
-    } catch (...) {
-    }
-    try {
-      if (invocation.finish_logs) invocation.finish_logs();
     } catch (...) {
     }
     throw;

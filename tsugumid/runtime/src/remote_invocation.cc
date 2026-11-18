@@ -11,7 +11,6 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/workerd/log_limits.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -307,7 +306,7 @@ auto import_remote_result(
       throw std::runtime_error("invalid remote result member");
     const auto max_size = base == "modules"     ? kModuleSourceLimit
                           : base == "files"     ? kMaxBlobBytes
-                          : rel == "logs.jsonl" ? remote::kMaxLogResultBytes
+                          : rel == "logs.jsonl" ? job->log_limit_bytes
                                                 : kMaxWorkerBytes;
     if (*size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
@@ -338,6 +337,7 @@ auto import_remote_result(
       !std::ranges::all_of(*environment.paths, remote::store_path))
     throw std::runtime_error("invalid remote build environment");
   result.built = *environment.built;
+  result.log_truncated = *environment.log_truncated;
   result.environment.paths = *environment.paths;
   std::optional<DisplayData> decoded_display;
   if (auto blob = fs::read_file(temp / "display.fb"))

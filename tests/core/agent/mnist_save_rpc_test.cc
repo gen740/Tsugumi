@@ -100,7 +100,7 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
     output_schema += " }\nroot_type Outputs;\n";
     change("PutSource",
            {{"path", Quote("definitions/" + id + "/src/main.py")},
-            {"bytes", Quote("def run(data, report):\n    return data\n")}});
+            {"bytes", Quote("def main(inputs, report):\n    return {}\n")}});
     change("PutSource", {{"path", Quote("definitions/" + id + "/_outputs.fbs")},
                          {"bytes", Quote(output_schema)}});
   }
