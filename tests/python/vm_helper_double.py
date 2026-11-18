@@ -42,11 +42,11 @@ listener = socket.socket(socket.AF_UNIX)
 listener.bind(str(endpoint))
 endpoint.chmod(0o600)
 listener.listen()
-Path(os.environ["HOST_PID"]).write_text(str(os.getpid()))
 broker_endpoint = ""
 processes = {}
 controls = {}
 mutex = threading.Lock()
+stopping = False
 # The host starts this helper with the system temporary folder, not the test run's.
 sockets = Path(tempfile.mkdtemp(prefix="vh-", dir=socket_root))
 
@@ -96,6 +96,8 @@ def serve(peer):
             request = message.payload.value
             kind = message.payload.valueType
             with mutex:
+                if stopping:
+                    return
                 value, tag = AcknowledgementT(), ReplyPayload.Acknowledgement
                 if kind == RequestPayload.Run:
                     key = text(request.key)
@@ -131,9 +133,13 @@ def serve(peer):
                 send(peer, message.requestId, value, tag)
 
 def finish(_sig, _frame):
-    for child in processes.values():
-        if child.poll() is None:
-            child.terminate()
+    global stopping
+    with mutex:
+        stopping = True
+        for child in processes.values():
+            if child.poll() is None:
+                child.terminate()
+            child.wait()
     endpoint.unlink(missing_ok=True)
     sys.exit(0)
 

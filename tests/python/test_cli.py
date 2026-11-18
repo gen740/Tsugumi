@@ -13,7 +13,6 @@ import os
 import re
 import shutil
 import shlex
-import signal
 import socket
 import stat
 import struct
@@ -427,7 +426,7 @@ def vm_server(tmp_path):
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
+               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
@@ -436,12 +435,7 @@ def vm_server(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
-        stop_resident_services(tmp_path)
-        if (tmp_path / "host.pid").exists():
-            try:
-                os.kill(int((tmp_path / "host.pid").read_text()), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        stop_resident_services(tmp_path, vm_helper=tmp_path / "host")
 
 
 def api(port: int, cookie: str, method: str, route: str, body=None, *, timeout=10):
