@@ -226,7 +226,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->diagnostic,
           j->transfer_name,
           j->transfer_done,
-          j->transfer_total};
+          j->transfer_total,
+          j->log_truncated};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())

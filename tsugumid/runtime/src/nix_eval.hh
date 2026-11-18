@@ -1,7 +1,9 @@
 // The Nix evaluator inside tsugumid (libnixexpr / libnixstore): one evaluator
 // and store connection per process, used from a single thread of its own, so
 // that nixpkgs is read once and evaluation state is reused between Cards and
-// runs. Builds go to the Nix daemon. No Nix CLI is involved.
+// runs. Builds and transfers run on the caller's thread, each build on a daemon
+// connection of its own: how many build at once is the Nix daemon's choice. No
+// Nix CLI is involved.
 #pragma once
 
 #include <atomic>
@@ -82,13 +84,12 @@ class NixEvaluator {
   auto evaluate(const NixCall& call) -> NixResult;
   // Validate observed evaluation inputs and hold both store paths before reuse.
   auto reuse(const NixCall& call, const NixResult& result) -> bool;
-  // Transfer on the Nix lane so cancellation, deadlines and logs cover export
-  // too.
+  // On the caller's thread; cancellation, deadlines and logs cover export too.
   auto make_available(const NixCall& call,
                       const DerivationClosureTransport& transport,
                       const WorkerDerivation& derivation) -> void;
   // Host-side native-worker preparation, through nix-daemon in the shared
-  // store.
+  // store, on the caller's thread.
   auto realise_native(const NixCall& call, NixResult result) -> NixResult;
 
   // A flake a project opted in to, evaluated apart from every Card: its own

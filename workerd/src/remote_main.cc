@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -261,6 +262,12 @@ class Daemon {
     if (q.body.type != R::RequestBody::CancelRequest &&
         q.body.type != R::RequestBody::ReleaseRequest)
       journal->require_owner(q.job_id, q.core_life_id);
+    const auto with_log_status = [&](R::JobStatusT status) {
+      std::error_code ec;
+      status.log_truncated = std::filesystem::is_regular_file(
+          journal->job_path(q.job_id) / "work/log-truncated", ec);
+      return status;
+    };
     switch (q.body.type) {
       case R::RequestBody::PutBlobRequest:
         journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
@@ -285,7 +292,7 @@ class Daemon {
         return reply(journal->submit(q.job_id, data, q.core_life_id).status());
       }
       case R::RequestBody::StatusRequest: {
-        auto status = journal->status(q.job_id).status();
+        auto status = with_log_status(journal->status(q.job_id).status());
         if (status.state == R::JobState::Running) {
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
@@ -299,9 +306,9 @@ class Daemon {
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest:
-        return reply(
+        return reply(with_log_status(
             journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint)
-                .status());
+                .status()));
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
         return reply(R::AckT{});

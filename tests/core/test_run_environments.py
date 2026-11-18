@@ -11,7 +11,7 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 12])
+@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 11, 13])
 def test_incompatible_history_database_is_kept(core_factory, project, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = project / ".tsugumi"

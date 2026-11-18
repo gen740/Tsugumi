@@ -26,6 +26,7 @@ struct InvocationResult {
   WorkerOutcome outcome;
   // A carrier may return logs with the result instead of streaming them.
   std::vector<std::pair<LogStream, std::string>> logs;
+  bool log_truncated = false;
   // Worker-visible out path and its caller-visible destination.
   std::optional<std::pair<std::string, std::string>> out_alias;
 };
@@ -66,7 +67,6 @@ struct Invocation {
   WorkerProc::DisplaySink display;
   std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
   std::function<InvocationParameters()> prepare_params;
-  std::function<void()> finish_logs;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(const InvocationResult&)> validate;
   fs::TransferProgress transfer = {};

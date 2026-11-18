@@ -23,6 +23,11 @@ def sdk_tree(tmp_path_factory):
     contract = {"inputs": [{"name": "number", "type": "inputs.number.sample.Number", "kind": "flatbuffer", "required": True}, {"name": "optional", "type": "inputs.number.sample.Number", "kind": "flatbuffer", "required": False}],
                 "outputs": [{"name": name, "type": "outputs.result.sample.Number", "kind": "flatbuffer", "required": name == "result"} for name in ("result", "next", "last")]}
     (tmp_path / "_contract.json").write_text(json.dumps(contract))
+    # The generated output schema below contains only tables.
+    (tmp_path / "_outputs.json").write_text(json.dumps({"objects": [
+        {"name": "outputs.Outputs", "is_struct": False},
+        {"name": "outputs.result.sample.Number", "is_struct": False},
+    ]}))
     for name, schema in {
         "inputs": "namespace inputs.number.sample; table Number { value:ulong; } namespace inputs; table Inputs { number:inputs.number.sample.Number (required); optional:inputs.number.sample.Number; } root_type Inputs;",
         "outputs": "namespace outputs.result.sample; table Number { value:ulong; } namespace outputs; table Outputs { result:outputs.result.sample.Number; next:outputs.result.sample.Number; last:outputs.result.sample.Number; } root_type Outputs;",

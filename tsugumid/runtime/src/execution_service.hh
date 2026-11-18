@@ -16,10 +16,10 @@
 #include <utility>
 #include <vector>
 
-#include "log_policy.hh"
 #include "model.hh"
 #include "nix.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -68,6 +68,8 @@ struct ExecutionRequest {
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
   std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)>
       transfer = {};
+  // First omission reported by a remote worker, before its logs are imported.
+  std::function<void()> log_truncated = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.

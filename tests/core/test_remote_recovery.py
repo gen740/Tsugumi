@@ -71,7 +71,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.stalled = threading.Event()
         self.resume = threading.Event()
 
-    def finish(self, job, *, result_fault=None, logs=None):
+    def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
         def blob(data):
             digest = hashlib.sha256(data).hexdigest()
             self.results[digest] = data
@@ -89,7 +89,10 @@ class Gateway(socketserver.UnixStreamServer):
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
         files = {
             "files/out/result.txt": b"retained after shutdown\n",
-            "environment.json": b'{"paths":["/nix/store/00000000000000000000000000000000-mock"],"directories":["out"],"built":true}',
+            "environment.json": json.dumps({
+                "paths": ["/nix/store/00000000000000000000000000000000-mock"],
+                "directories": ["out"], "built": True, "log_truncated": log_truncated,
+            }).encode(),
             "logs.jsonl": b'{"stream":1,"text":"one recovered message\\n"}\n',
         }
         if logs is not None:
@@ -98,7 +101,7 @@ class Gateway(socketserver.UnixStreamServer):
         if result_fault == "escape":
             entries[0]["path"] = "files/out/../../escape"
         if result_fault == "oversize":
-            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (16 << 20) + 129
+            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (128 << 20) + 1
         manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
             invocationResultSha256=blob(bytes(buffer.Output()))))
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
@@ -107,7 +110,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=7)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=8)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -170,7 +173,8 @@ class Gateway(socketserver.UnixStreamServer):
         state = self.receipts.get(job, {"state": "missing"})
         return R.reply(R.ReplyBody.JobStatus, R.JobStatusT(
             state=getattr(R.JobState, state["state"].capitalize()), fingerprint=state.get("fingerprint"),
-            resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic")))
+            resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic"),
+            logTruncated=state.get("log_truncated", False)))
 
 
 
@@ -506,18 +510,37 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
-def test_maximum_log_budget_including_truncation_notice_imports(running_job):
-    """The core accepts a full 16 MiB budget plus its out-of-budget notice."""
-    gateway, _, client, run_id, job_id = running_job
-    limit = 16 << 20
-    entry = b'{"stream":1,"text":"' + b'x' * (limit - 23) + b'"}\n'
-    assert len(entry) == limit
-    notice = json.dumps({"stream": 3, "text": f"\n[Log output truncated at the {limit}-byte limit.]\n"},
-                        separators=(",", ":")).encode() + b"\n"
-    gateway.finish(job_id, logs=entry + notice)
-    assert wait_run(client, run_id, timeout=30).state == RunState.succeeded
-    journal = text(client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal).text)
-    assert f"truncated at the {limit}-byte limit" in journal
+def test_maximum_log_budget_and_truncation_metadata_import(running_job):
+    gateway, daemon, client, run_id, job_id = running_job
+    limit = 128 << 20
+    entry = b'{"stream":1,"text":"' + b'x' * ((1 << 20) - 23) + b'"}\n'
+    logs = entry * 128
+    assert len(logs) == limit
+    gateway.receipts[job_id]["log_truncated"] = True
+    wait_for_state(client, run_id, RemoteExecutionState.running)
+    deadline = time.monotonic() + 10
+    while True:
+        live = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
+        if live.record.summary.logTruncatedAtBytes == limit:
+            assert live.record.summary.state == CardState.running
+            break
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    gateway.finish(job_id, logs=logs, log_truncated=True)
+    assert wait_run(client, run_id, timeout=120).state == RunState.succeeded
+    daemon.restart()
+    client = daemon.connect()
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
+    assert record.record.summary.logTruncatedAtBytes == limit
+    stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                         stream=LogStream.standard_output, tail=True)
+    assert stdout.sizeBytes > 126 << 20
+    assert stdout.logTruncatedAtBytes == limit
+    journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                          stream=LogStream.journal)
+    assert journal.logTruncatedAtBytes == limit
+    for line in text(journal.text).splitlines():
+        assert isinstance(json.loads(line), dict)
 
 
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):

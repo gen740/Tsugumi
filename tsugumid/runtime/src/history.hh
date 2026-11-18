@@ -66,7 +66,7 @@ struct LogEnd {
   std::optional<CardPath> card;
   std::optional<uint64_t> invocation;
   LogStream stream;
-  uint64_t end_offset;
+  std::optional<uint64_t> end_offset;
 };
 
 struct LogRead {
@@ -76,6 +76,7 @@ struct LogRead {
   uint64_t size = 0;
   bool exists = false;
   bool truncated = false;
+  std::optional<uint64_t> log_truncated_at_bytes;
 };
 
 class History {
@@ -127,6 +128,9 @@ class History {
   std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
                                  LogStream stream, const std::string& text);
+  static auto mark_log_truncated(sql::Db& db, const std::string& run_id,
+                                 const CardPath& card, uint64_t invocation,
+                                 uint64_t limit_bytes) -> void;
   // Run level journal lines (no card).
   std::vector<LogEnd> append_run_journal(sql::Db& db, const std::string& run_id,
                                          const std::string& text);

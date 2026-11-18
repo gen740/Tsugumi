@@ -126,7 +126,7 @@ Note log_note(const LogEnd& e) {
     if (e.card) lb.add_card(card);
     if (e.invocation) lb.add_invocation(*e.invocation);
     lb.add_stream(e.stream);
-    lb.add_end_offset(e.end_offset);
+    if (e.end_offset) lb.add_end_offset(*e.end_offset);
     return std::make_pair(R::NotificationPayload::LogAvailable,
                           lb.Finish().Union());
   });
@@ -173,8 +173,7 @@ const char* phase_name(Phase p) {
 // Opens stage `p` of an invocation, closing a still open previous stage as
 // done. A stage with another outcome (cached, reused) is closed at once.
 void stage_begin(InvocationSummaryData& s, Phase p,
-                 StageOutcome o = StageOutcome::running) {
-  int64_t t = now_ms();
+                 StageOutcome o = StageOutcome::running, int64_t t = now_ms()) {
   if (!s.stages.empty() && s.stages.back().outcome == StageOutcome::running) {
     s.stages.back().outcome = StageOutcome::done;
     s.stages.back().end = t;
@@ -260,6 +259,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       interrupted_ = interrupted;
       for (auto& node : nodes_)
         if (node.cancellation) node.cancellation->stop.store(true);
+      for (const auto& early : early_started_) early->cancel.store(true);
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
@@ -333,6 +333,48 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<DisplayData> display;
     std::optional<FailureData> preparation_failure;
   };
+  // A Card's evaluation and build, started with the run rather than with the
+  // Card's first activation (see start_early_builds). Until an activation
+  // takes it over, it keeps what Nix printed and the phases it entered.
+  struct EarlyBuild {
+    ExecutionTarget target;
+    std::atomic<bool> cancel{false};
+    std::mutex mu;
+    std::condition_variable cv;
+    bool done = false;
+    std::optional<CardBuildPlan> plan;
+    std::exception_ptr error;
+    std::vector<std::string> lines;
+    uint64_t line_bytes = 0;
+    std::vector<std::pair<Phase, int64_t>> phases;
+    std::function<void(const std::string&)> log;
+    std::function<void(Phase, int64_t)> on_phase;
+
+    auto print(const std::string& line) -> void {
+      std::lock_guard l(mu);
+      if (log) return log(line);
+      // The taking invocation's log budget keeps no more than this, and
+      // notes the omission once it has seen more.
+      if (line_bytes > kInvocationLogLimitBytes) return;
+      line_bytes += line.size();
+      lines.push_back(line);
+    }
+    auto enter(Phase phase) -> void {
+      std::lock_guard l(mu);
+      if (on_phase) return on_phase(phase, now_ms());
+      phases.emplace_back(phase, now_ms());
+    }
+    auto finish(std::optional<CardBuildPlan> result, std::exception_ptr e)
+        -> void {
+      {
+        std::lock_guard l(mu);
+        plan = std::move(result);
+        error = std::move(e);
+        done = true;
+      }
+      cv.notify_all();
+    }
+  };
 
   // ---- persistence helpers -------------------------------------------------
 
@@ -392,14 +434,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                const std::optional<CardPath>& card, std::optional<uint64_t> inv,
                const std::string& message) {
     std::string line = journal_line(phase, event, card, inv, message);
+    if (card) {
+      card_log(*card, *inv, LogStream::journal, line);
+      return;
+    }
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), line, card, inv, run, ends](sql::Db& db) {
-          if (card)
-            *ends =
-                h.append_log(db, run, *card, *inv, LogStream::journal, line);
-          *ends = card ? *ends : h.append_run_journal(db, run, line);
+        [&h = svc_.history(), line, run, ends](sql::Db& db) {
+          *ends = h.append_run_journal(db, run, line);
         },
         [self = shared_from_this(), ends](bool ok) {
           if (!ok) self->persistence_lost("journal");
@@ -425,24 +468,39 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         });
   }
 
+  auto log_budget(const CardPath& card, uint64_t inv)
+      -> workerd::InvocationLog& {
+    return log_budgets_
+        .try_emplace({path_key(card), inv}, kInvocationLogLimitBytes)
+        .first->second;
+  }
+
+  void mark_card_log_truncated(const CardPath& card, uint64_t inv) {
+    const auto run = run_id_;
+    svc_.history().submit(
+        [run, card, inv](sql::Db& db) {
+          History::mark_log_truncated(db, run, card, inv,
+                                      kInvocationLogLimitBytes);
+        },
+        [self = shared_from_this(), run, card, inv](bool ok) {
+          if (!ok) {
+            self->persistence_lost("log truncation");
+            return;
+          }
+          self->svc_.server()->broadcast(
+              log_note({run, card, inv, LogStream::unspecified, std::nullopt}));
+        });
+  }
+
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 const std::string& text) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
-    auto& budget = log_budgets_[{path_key(card), inv}];
-    if (!budget)
-      budget = std::make_unique<workerd::InvocationLog>(
-          [this, card, inv](uint64_t stream, const std::string& text) {
-            record_card_log(card, inv, static_cast<LogStream>(stream), text);
-          },
-          kInvocationLogLimitBytes);
-    // Backends use journal entries for their truncation notice. The core
-    // records one notice for its combined build and execution budget.
-    if (stream == LogStream::journal)
-      budget->truncate();
+    auto& budget = log_budget(card, inv);
+    if (budget.truncated()) return;
+    if (budget.append(static_cast<uint64_t>(stream), text))
+      record_card_log(card, inv, stream, text);
     else
-      budget->append(static_cast<uint64_t>(stream), text);
-    // Record the first omission immediately, including on interrupted runs.
-    budget->finish();
+      mark_card_log_truncated(card, inv);
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -644,6 +702,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     {
       std::lock_guard lock(mu_);
       prepare_graph();
+      start_early_builds();
     }
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
@@ -696,6 +755,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (auto& t : pool_) t.join();
     worker_cv_.notify_all();
     for (auto& t : workers_) t.join();
+    stop_early_builds();
     // Workers stay in the project's pool (resident across runs).
     finalize();
   }
@@ -767,6 +827,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
     std::vector<std::pair<LogStream, std::string>> remote_logs;
+    bool remote_log_truncated = false;
     bool detached = false;
     std::optional<InvocationSummaryData> unpublished;
   };
@@ -806,6 +867,63 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }));
   }
 
+  // A Card's build is fixed by its definition, not by its inputs, so every
+  // Card of the run is evaluated and built as the run starts: Nix evaluates
+  // them in turn on its one evaluator, and nix-daemon decides how many build
+  // at once. Only Cards whose preferred worker is the local one start here; a
+  // remote worker builds with the invocation it receives.
+  void start_early_builds() {
+    early_.resize(nodes_.size());
+    for (auto& rt : nodes_) {
+      const Node& node = *rt.node;
+      if (!rt.in_targets || rt.halted || node.is_virtual ||
+          node.kind != Template::Code)
+        continue;
+      BuildRequest request;
+      request.node = &node;
+      request.doc = doc_;
+      request.jobs = p_.nix_jobs;
+      request.cores = p_.nix_cores;
+      request.timeout_seconds = node.settings.build_timeout_seconds;
+      if (!svc_.prepare_early_build(node, request)) continue;
+      auto early = std::make_shared<EarlyBuild>();
+      early->target = request.target;
+      request.cancel = &early->cancel;
+      request.log = [e = early.get()](const std::string& line) {
+        e->print(line);
+      };
+      request.on_phase = [e = early.get()](Phase phase) { e->enter(phase); };
+      early_[rt.idx] = early;
+      early_started_.push_back(early);
+      early_threads_.emplace_back([this, early, request] {
+        try {
+          early->finish(svc_.nix().build(request), nullptr);
+        } catch (...) {
+          early->finish(std::nullopt, std::current_exception());
+        }
+      });
+    }
+  }
+
+  // The Card's early build, when it was made for the target this activation
+  // chose. An activation takes it once; later ones reuse the result as usual.
+  auto take_early_build(const NodeRt& rt, const ExecutionTarget& target)
+      -> std::shared_ptr<EarlyBuild> {
+    std::lock_guard lock(mu_);
+    if (rt.idx >= early_.size()) return nullptr;
+    auto& early = early_[rt.idx];
+    if (!early || early->target.kind != target.kind ||
+        early->target.system != target.system)
+      return nullptr;
+    return std::move(early);
+  }
+
+  // The run is over: builds nothing took over are not needed.
+  void stop_early_builds() {
+    for (const auto& early : early_started_) early->cancel.store(true);
+    for (auto& thread : early_threads_) thread.join();
+  }
+
   auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations,
                     uint32_t lane, std::unique_ptr<PreparedExecution>& prepared)
       -> const CardBuildPlan& {
@@ -835,20 +953,44 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       card_log(node.path, s.invocation, LogStream::build, line);
     };
     auto started = now_ms();
-    const auto trace_phase = [&] {
-      svc_.server()->broadcast(timeline_note(
-          run_id_, node.path, s.invocation, *s.phase, lane, started, now_ms()));
+    const auto trace_phase = [&](int64_t at) {
+      svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
+                                             *s.phase, lane, started, at));
     };
-    request.on_phase = [&](Phase phase) {
-      trace_phase();
-      started = now_ms();
-      stage_begin(s, phase);
+    // A phase entered at `at`, or when this invocation took the build over
+    // if that was earlier: its stages stay in order.
+    const auto enter = [&](Phase phase, int64_t at) {
+      at = std::max(at, s.stages.empty() ? at : s.stages.back().start);
+      trace_phase(at);
+      started = at;
+      stage_begin(s, phase, StageOutcome::running, at);
       card_status(s);
     };
+    request.on_phase = [&](Phase phase) { enter(phase, now_ms()); };
     set_state(RunState::preparing);
-    rt.build = svc_.nix().build(request);
+    if (auto early = take_early_build(rt, request.target)) {
+      std::unique_lock l(early->mu);
+      for (const auto& [phase, at] : early->phases) enter(phase, at);
+      for (const auto& line : early->lines) request.log(line);
+      early->phases.clear();
+      early->lines.clear();
+      early->log = request.log;
+      early->on_phase = enter;
+      // A stopped batch cancels the build as it would its own; the build
+      // then ends with that cancellation.
+      while (!early->done) {
+        if (work.cancellation->stop.load()) early->cancel.store(true);
+        early->cv.wait_for(l, std::chrono::milliseconds(100));
+      }
+      early->log = nullptr;
+      early->on_phase = nullptr;
+      if (early->error) std::rethrow_exception(early->error);
+      rt.build = std::move(early->plan);
+    } else {
+      rt.build = svc_.nix().build(request);
+    }
     rt.build_target = request.target;
-    trace_phase();
+    trace_phase(now_ms());
     if (reuses_builds) {
       journal("build", "output", node.path, s.invocation,
               rt.build->common.cached
@@ -1378,7 +1520,22 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           w.cancellation->failed.store(true);
           w.cancellation->stop.store(true);
         }
+        {
+          std::lock_guard<std::mutex> lock(log_policy_mu_);
+          auto& budget = log_budget(s.card, s.invocation);
+          std::erase_if(out.remote_logs, [&](const auto& entry) {
+            return !budget.append(static_cast<uint64_t>(entry.first),
+                                  entry.second);
+          });
+          if (out.remote_log_truncated) budget.truncate();
+          if (budget.truncated()) {
+            s.log_truncated_at_bytes = kInvocationLogLimitBytes;
+          }
+        }
         h.write_sync([&](sql::Db& db) {
+          if (s.log_truncated_at_bytes)
+            History::mark_log_truncated(db, s.run_id, s.card, s.invocation,
+                                        *s.log_truncated_at_bytes);
           if (remote_artifact && !out.failure)
             History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
@@ -1900,13 +2057,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            s.transfer_done = done;
            s.transfer_total = total;
            card_status(s);
-         }});
+         },
+         [&] { mark_card_log_truncated(node.path, inv); }});
     s.transfer_direction.clear();
     s.transfer_name.clear();
     w.out_alias = std::move(result.out_alias);
     Produced p;
     p.failure = result.outcome.failure;
     p.remote_logs = std::move(result.logs);
+    p.remote_log_truncated = result.log_truncated;
     if (!p.failure)
       for (auto& [name, bytes] : result.outcome.outputs)
         p.outputs.push_back(
@@ -2136,6 +2295,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
+  // By node index; an activation takes its Card's build. Under mu_.
+  std::vector<std::shared_ptr<EarlyBuild>> early_;
+  std::vector<std::shared_ptr<EarlyBuild>> early_started_;
+  std::vector<std::thread> early_threads_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> explicit_cancel_{false};
   std::atomic<bool> detaching_{false};
@@ -2146,8 +2309,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> start_failure_;
   std::optional<FailureData> stall_failure_;
   std::mutex log_policy_mu_;
-  std::map<std::pair<std::string, uint64_t>,
-           std::unique_ptr<workerd::InvocationLog>>
+  std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;

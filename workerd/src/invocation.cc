@@ -237,9 +237,18 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  InvocationLog invocation_log(logs, job->log_limit_bytes);
+  InvocationLog invocation_log(job->log_limit_bytes);
+  const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
-    invocation_log.append(static_cast<uint64_t>(stream), text);
+    if (invocation_log.truncated()) return;
+    if (auto entry =
+            invocation_log.append(static_cast<uint64_t>(stream), text)) {
+      logs << *entry << '\n';
+    } else {
+      const int fd = ::open(truncation_marker.c_str(),
+                            O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+      if (fd >= 0) ::close(fd);
+    }
   };
   std::string display;
   WorkerStoreResult environment;
@@ -292,10 +301,10 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
                                             : FailureKind::worker_failed,
                                         error.what());
   }
-  invocation_log.finish();
   remote::EnvironmentJson info;
   *info.paths = std::move(environment.closure);
   *info.built = environment.built;
+  *info.log_truncated = invocation_log.truncated();
   *info.directories = std::vector<std::string>{};
   const auto files = result_dir / "files";
   if (outcome.failure) stdfs::remove_all(files);

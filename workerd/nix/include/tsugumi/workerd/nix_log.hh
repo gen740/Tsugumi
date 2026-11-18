@@ -16,6 +16,11 @@ class NixLogSink final : public nix::Logger {
     std::lock_guard lock(mutex_);
     sink_ = std::move(sink);
   }
+  // The calling thread's own sink, ahead of the shared one: calls on several
+  // threads at once each log to their own Card. The caller keeps it alive.
+  auto set_thread(const std::function<void(const std::string&)>* sink) -> void {
+    thread_sink_ = sink;
+  }
   auto log(nix::Verbosity level, std::string_view text) -> void override {
     if (level <= nix::lvlInfo) emit(std::string(text));
   }
@@ -38,9 +43,15 @@ class NixLogSink final : public nix::Logger {
 
  private:
   auto emit(const std::string& text) -> void {
+    if (thread_sink_) {
+      (*thread_sink_)(nix::filterANSIEscapes(text, true) + "\n");
+      return;
+    }
     std::lock_guard lock(mutex_);
     if (sink_) sink_(nix::filterANSIEscapes(text, true) + "\n");
   }
+  static inline thread_local const std::function<void(const std::string&)>*
+      thread_sink_ = nullptr;
   std::mutex mutex_;
   std::function<void(const std::string&)> sink_;
 };
