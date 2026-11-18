@@ -264,10 +264,7 @@ private struct NixSourceSettings: View {
                          reload: { pending = nil; revisionEdit.reload(session.rev) })
       if let message { Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
     } header: {
-      Text("外部ソース")
-    } footer: {
-      Text("追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
-        .font(.caption).foregroundStyle(.secondary)
+      InfoHeader("外部ソース", info: "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
     }
   }
 }
@@ -291,7 +288,10 @@ private struct GeneralProjectSettings: View {
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
-        TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(AppModel.shared.nixpkgsPin ?? "tsugumi:default"))
+        HStack {
+          TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(AppModel.shared.nixpkgsPin ?? "tsugumi:default"))
+          InfoButton("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
+        }
         if pkgs.isEmpty || pkgs == "tsugumi:default" {
           Label("Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。", systemImage: "exclamationmark.triangle")
             .font(.caption).foregroundStyle(.orange)
@@ -300,28 +300,25 @@ private struct GeneralProjectSettings: View {
           Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? String(localized: "このアプリの Nixpkgs に固定")
                                                            : String(localized: "このアプリの Nixpkgs に更新")) { pkgs = pin }
         }
-        Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
-          .font(.caption).foregroundStyle(.secondary)
         Section {
-          LabeledContent("版に含める追加パス") {
+          LabeledContent {
             TextEditor(text: $versionPaths).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+          } label: {
+            InfoHeader("版に含める追加パス", info: "定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
           }
-          Text("定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
-            .font(.caption).foregroundStyle(.secondary)
         }
         Section {
-          LabeledContent("Agent から除外するパス") {
+          LabeledContent {
             TextEditor(text: $agentExclude).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+          } label: {
+            InfoHeader("Agent から除外するパス", info: "Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。")
           }
-          Text("Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。")
-            .font(.caption).foregroundStyle(.secondary)
         }
-        Toggle("このプロジェクトを信頼する", isOn: Binding(get: { session.projectTrust == 1 }, set: { trusted in
+        Toggle(isOn: Binding(get: { session.projectTrust == 1 }, set: { trusted in
           Task { await session.setProjectTrust(trusted) }
-        }))
+        })) { InfoHeader("このプロジェクトを信頼する", info: "信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。") }
         .disabled(!session.trustedFolder.isEmpty)
         TrustedFoldersSettings()
-        Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。").font(.caption).foregroundStyle(.secondary)
         LabeledContent("場所", value: session.identity.url.path)
         NixSourceSettings(session: session)
       }
@@ -402,14 +399,14 @@ private struct RunHistorySettings: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Form {
-        Section("削除") {
+        Section {
           Picker("対象", selection: $scope) {
             Text("指定した日時より前に終わった実行").tag(Scope.before)
             Text("すべての実行").tag(Scope.all)
           }
           if scope == .before { DatePicker("日時", selection: $before) }
-          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } header: {
+          InfoHeader("削除", info: "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
         }
       }
       .formStyle(.grouped)
@@ -476,10 +473,7 @@ private struct CacheSettings: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。")
-        .fixedSize(horizontal: false, vertical: true)
-      Text("実行中・SDK 準備中は削除できません。").font(.callout).foregroundStyle(.secondary)
-      GroupBox("キャッシュ使用量") {
+      GroupBox {
         ScrollView {
           VStack(alignment: .leading, spacing: 8) {
             LabeledContent("合計（共有パスは一度だけ計上）", value: bytes(session.cacheUsage?.buildBytes))
@@ -487,8 +481,6 @@ private struct CacheSettings: View {
               LabeledContent("store ディスクの空き", value: bytes(available))
             }
 
-            Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。")
-              .font(.caption).foregroundStyle(.secondary)
             if let measured = session.cacheUsage?.measuredAt {
               LabeledContent("計測日時", value: Date(timeIntervalSince1970: Double(measured) / 1000).formatted())
             }
@@ -511,10 +503,10 @@ private struct CacheSettings: View {
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
+      } label: {
+        InfoHeader("キャッシュ使用量", info: Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。"), Text("実行中・SDK 準備中は削除できません。"), Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。"))
       }
-      Text("過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。")
-        .font(.caption).foregroundStyle(.secondary)
-      GroupBox("このプロジェクトの過去の scratch") {
+      GroupBox {
         VStack(alignment: .leading, spacing: 4) {
           ForEach(scratchCandidates, id: \.path) { item in
             HStack {
@@ -538,6 +530,8 @@ private struct CacheSettings: View {
             }
           }
         }.frame(maxWidth: .infinity, alignment: .leading)
+      } label: {
+        InfoHeader("このプロジェクトの過去の scratch", info: "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。")
       }
       if let r = result {
         GroupBox("結果") {

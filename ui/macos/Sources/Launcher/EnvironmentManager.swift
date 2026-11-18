@@ -8,7 +8,6 @@ import TsugumiRPC
 public actor EnvironmentManager {
   public nonisolated let support: URL
   public nonisolated let vm: HostRuntimeSnapshot
-  public nonisolated let resources: VMResources
   private let client: CoreHostClient
   private let runtimeArguments: [String]
   private var token: UUID?
@@ -17,11 +16,11 @@ public actor EnvironmentManager {
   private var pipes: [UInt64: TerminalPipe] = [:]
   private var pendingOutput: [UInt64: [String: Any]] = [:]
 
-  public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
+  public init(support: URL? = nil, image: VMImage? = VMImage.find()) {
     let support = support ?? AppChannel.current.supportDirectory
-    self.support = support; self.resources = resources
+    self.support = support
     client = CoreHostClient(support: support)
-    runtimeArguments = HostRuntimeConfiguration.arguments(support: support, image: image, resources: resources)
+    runtimeArguments = HostRuntimeConfiguration.arguments(support: support, image: image)
     vm = HostRuntimeSnapshot(directory: support.appendingPathComponent("vm"))
   }
   public nonisolated func controlDir(_ project: ProjectIdentity) -> URL {
@@ -130,6 +129,21 @@ public actor EnvironmentManager {
   public func activityBeforeQuit() async throws -> Bool { try await client.activityBeforeQuit() }
   public func shutdownForQuit() async { await client.stopResident(waitForExit: false) }
   public func shutdownForUpdate() async { await client.stopResident() }
+  /// The shared VM's size: what its next start uses, the defaults and limits
+  /// of this Mac (hostd's), and the store disk file now (GiB).
+  public struct VMSize: Sendable, Equatable {
+    public var next: VMResources, defaults: VMResources, limits: VMResources
+    public var storeDiskGiB: Int
+  }
+  public func vmSize() async throws -> VMSize {
+    let reply = try await runtime()
+    func size(_ key: String) -> VMResources {
+      let v = reply[key] as? [String: Int] ?? [:]
+      return VMResources(cpus: v["cpus"] ?? 0, memoryGiB: v["memory_gib"] ?? 0, storeGiB: v["store_gib"] ?? 0)
+    }
+    return VMSize(next: size("vm_resources"), defaults: size("vm_default_resources"), limits: size("vm_limits"),
+                  storeDiskGiB: Int(reply["store_disk_gib"] as? UInt32 ?? 0))
+  }
   public func resetConfirmation(english: Bool) async throws -> String {
     let reply = try await runtime()
     return reply[english ? "reset_confirmation_en" : "reset_confirmation_ja"] as? String ?? ""

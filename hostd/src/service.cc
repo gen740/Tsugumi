@@ -226,6 +226,7 @@ struct Service::State {
           options.state_dir, options.broker_socket);
     if (!options.vm.binary.empty()) {
       options.vm.broker_endpoint = execution_broker->endpoint();
+      options.vm.resources = [this] { return host_settings->VMResources(); };
       options.vm.progress = [this](const Tsugumi::VMHost::ProgressT& value) {
         H::EnvironmentProgressT progress;
         progress.project = "";
@@ -617,7 +618,16 @@ struct Service::State {
         throw Failure("unavailable", "Environment service is not running");
       auto input = std::unique_ptr<H::HostRuntimeRequestT>(
           r->value_as_HostRuntimeRequest()->UnPack());
-      return wire::HostReply(request.request_id, environments->Runtime(*input));
+      auto result = environments->Runtime(*input);
+      if (!options.vm.binary.empty()) {
+        result.vm_resources =
+            std::make_unique<H::VMResourcesT>(host_settings->VMResources());
+        result.vm_default_resources =
+            std::make_unique<H::VMResourcesT>(host::VMDefaultResources());
+        result.vm_limits =
+            std::make_unique<H::VMResourcesT>(host::VMResourceLimits());
+      }
+      return wire::HostReply(request.request_id, std::move(result));
     }
     if (const auto* terminal = r->value_as_HostTerminalRequest()) {
       auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());

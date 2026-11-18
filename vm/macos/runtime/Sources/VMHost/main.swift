@@ -10,16 +10,12 @@ import Virtualization
 signal(SIGPIPE, SIG_IGN)
 _ = setsid()
 var support: URL?, imageDir: URL?
-var resources = VMResources.default
 var arguments = CommandLine.arguments.dropFirst()
 while let argument = arguments.popFirst() {
   guard let value = arguments.popFirst() else { exit(2) }
   switch argument {
   case "--support": support = URL(fileURLWithPath: value)
   case "--image": imageDir = URL(fileURLWithPath: value)
-  case "--cpus": if let n = Int(value), n > 0 { resources.cpus = n }
-  case "--memory": if let n = Int(value), n > 0 { resources.memoryGiB = n }
-  case "--store": if let n = Int(value), n > 0 { resources.storeGiB = n }
   default: exit(2)
   }
 }
@@ -107,6 +103,8 @@ let watchers = Watchers()
   }
   value.storePath = vm.directory.appendingPathComponent("store.img").path
   value.storeExists = FileManager.default.fileExists(atPath: value.storePath ?? "")
+  let size = (try? FileManager.default.attributesOfItem(atPath: value.storePath ?? "")[.size] as? UInt64) ?? 0
+  value.storeDiskGib = UInt32(size >> 30)
   value.virtualizationSupported = VZVirtualMachine.isSupported
   value.imageAvailable = image != nil
   value.imageVersion = image?.version
@@ -176,6 +174,9 @@ actor Driver {
       }
     }
     defer { vm.stopObserving(token) }
+    let size = request.resources
+    let resources = VMResources(cpus: Int(size.cpus), memoryGiB: Int(size.memoryGib), storeGiB: Int(size.storeGib))
+    guard resources.cpus > 0, resources.memoryGiB > 0, resources.storeGiB > 0 else { throw LauncherError.notReady("the VM size is missing") }
     try await vm.start(image: image, resources: resources, cacheConfiguration: request.cacheConfiguration ?? "", cacheNetrc: request.cacheNetrc ?? "", cacheProblem: request.cacheProblem ?? "")
   }
   func shares(_ key: String, _ mounts: [Tsugumi_VMHost_MountT?]) async throws -> Int {
@@ -208,7 +209,7 @@ actor Driver {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(resources.cpus)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    _ = try await vm.request("start \(request.key) \(request.cpus > 0 ? request.cpus : UInt32(vm.resources?.cpus ?? 1)) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
     return try await process(request.key)
   }
   func stop(_ key: String) async throws {
@@ -222,8 +223,10 @@ actor Driver {
     case .state: result.console = vm.console.snapshot.suffix(200).map { Optional($0) }
     case .shutdown: exitState.begin(); await vm.shutdown(exiting: true); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
     case .verifystore:
+      await vm.hold(); defer { vm.release() }
       result.message = try await vm.request("verify-store")
     case .cleanupstore:
+      await vm.hold(); defer { vm.release() }
       let fields = try await vm.request("gc").split(separator: " ")
       result.bytes = UInt64(fields.first ?? "") ?? 0; result.paths = UInt32(fields.dropFirst().first ?? "") ?? 0
     case .forgetproject:
@@ -235,7 +238,7 @@ actor Driver {
       result.message = try await vm.request(request.command ?? "")
     default: throw LauncherError.notReady("unsupported VM runtime operation")
     }
-    let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists
+    let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists; result.storeDiskGib = current.storeDiskGib
     return result
   }
   func reset(_ request: Tsugumi_VMHost_ResetT) async throws -> Tsugumi_Host_HostRuntimeT {

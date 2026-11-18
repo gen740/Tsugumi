@@ -62,12 +62,6 @@ auto RunHost(int argc, char** argv) -> int {
         options.vm.support = next();
       else if (arg == "--vm-image")
         options.vm.image = next();
-      else if (arg == "--vm-cpus")
-        options.vm.cpus = std::stoul(next());
-      else if (arg == "--vm-memory")
-        options.vm.memory = std::stoul(next());
-      else if (arg == "--vm-store")
-        options.vm.store = std::stoul(next());
       else if (arg == "--tsugumid")
         options.environment.tsugumid = next();
       else if (arg == "--worker")

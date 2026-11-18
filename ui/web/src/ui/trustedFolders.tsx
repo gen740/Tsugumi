@@ -30,7 +30,7 @@ export function TrustedFoldersSettings() {
       setSaving(false)
     }
   }
-  return <Section title={L('信頼するフォルダ')} footer={L('このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。')}>
+  return <Section title={L('信頼するフォルダ')} info={L('このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。')}>
     {settings?.trustedFolders.map(folder => <Row key={folder} label={folder}>
       <Button disabled={saving} onClick={() => void save(settings.trustedFolders.filter(f => f !== folder))}>{L('削除')}</Button>
     </Row>)}

@@ -19,7 +19,8 @@ case "${1:-}" in
 esac
 stage="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-src.XXXXXX")"
 out="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-image.XXXXXX")"
-trap 'rm -rf "$stage" "$out"' EXIT
+# The snapshot holds copies of read-only store files: make them removable.
+trap 'chmod -R u+w "$stage" "$out" 2>/dev/null; rm -rf "$stage" "$out"' EXIT
 # Snapshot current tracked and untracked intended inputs, including local edits.
 python3 "$repo/vm/guest/tools/vm-snapshot.py" "$repo" "$stage"
 revision="$(git -C "$repo" rev-parse HEAD)"

@@ -268,6 +268,9 @@ auto Defaults() -> j::Members {
           {"agent.skillFolders", "[]"},
           {"agent.trustedFolders", "[]"},
           {"versions.noteMode", j::Quote("mechanical")},
+          {"vm.cpus", "0"},
+          {"vm.memoryGiB", "0"},
+          {"vm.storeGiB", "0"},
           {"app.language", j::Quote("ja")}};
 }
 }  // namespace
@@ -765,8 +768,8 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               value = j::Encode(merged);
             }
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
-                !(key.starts_with("agent.") || key == "versions.noteMode" ||
-                  key == "app.language"))
+                !(key.starts_with("agent.") || key.starts_with("vm.") ||
+                  key == "versions.noteMode" || key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
             const auto defaults = Defaults();
@@ -807,6 +810,19 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   folders.push_back(encoded);
               }
               value = j::Encode(folders);
+            }
+            if (key.starts_with("vm.")) {
+              if (p.profile()->str() != "desktop")
+                throw std::runtime_error("The VM belongs to the host profile");
+              const auto limits = VMResourceLimits();
+              const auto [low, high] =
+                  key == "vm.cpus"        ? std::pair{1u, limits.cpus}
+                  : key == "vm.memoryGiB" ? std::pair{2u, limits.memory_gib}
+                                          : std::pair{16u, limits.store_gib};
+              const auto n = j::UInt(value, UINT64_MAX);
+              if (n != 0 && (n < low || n > high))
+                throw std::runtime_error("VM size out of range");
+              value = std::to_string(n);
             }
             if (key == "agent.skillFolders")
               for (const auto& folder : j::Array(value)) {
@@ -1033,6 +1049,45 @@ auto Settings::TrustedFolders() -> std::vector<std::string> {
   for (const auto& raw : j::Array(j::Get(values, "agent.trustedFolders", "[]")))
     folders.push_back(j::String(raw));
   return folders;
+}
+namespace {
+auto MemoryGiB() -> uint32_t {
+  const auto pages = ::sysconf(_SC_PHYS_PAGES);
+  const auto page = ::sysconf(_SC_PAGESIZE);
+  return pages > 0 && page > 0
+             ? static_cast<uint32_t>((uint64_t(pages) * uint64_t(page)) >> 30)
+             : 8;
+}
+auto Cores() -> uint32_t {
+  return std::max(1u, std::thread::hardware_concurrency());
+}
+}  // namespace
+auto VMDefaultResources() -> H::VMResourcesT {
+  H::VMResourcesT out;
+  out.cpus = std::clamp(Cores() > 2 ? Cores() - 2 : 0u, 2u, 8u);
+  out.memory_gib = std::clamp(MemoryGiB() / 2, 4u, 16u);
+  out.store_gib = 64;
+  return out;
+}
+auto VMResourceLimits() -> H::VMResourcesT {
+  H::VMResourcesT out;
+  out.cpus = Cores();
+  out.memory_gib = std::max(2u, MemoryGiB() > 2 ? MemoryGiB() - 2 : 0u);
+  out.store_gib = 2048;
+  return out;
+}
+auto Settings::VMResources() -> H::VMResourcesT {
+  std::lock_guard lock(state_->mutex);
+  const auto values = state_->Values("desktop").second;
+  auto out = VMDefaultResources();
+  const auto pick = [&](const char* key, uint32_t& field) {
+    if (const auto n = j::UInt(j::Get(values, key, "0")))
+      field = static_cast<uint32_t>(n);
+  };
+  pick("vm.cpus", out.cpus);
+  pick("vm.memoryGiB", out.memory_gib);
+  pick("vm.storeGiB", out.store_gib);
+  return out;
 }
 auto Settings::Language(const std::string& profile) -> std::string {
   std::lock_guard lock(state_->mutex);

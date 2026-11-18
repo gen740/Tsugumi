@@ -107,7 +107,14 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   reset_confirmation_ja:string; reset_confirmation_en:string;
   // Actual VM-directory entries kept and discarded by the helper.
   reset_kept_files:[string]; reset_discarded_files:[string];
+  // The shared VM's size: what its next start uses (Settings, else the
+  // defaults), the defaults and the largest values for this Mac. Set by hostd.
+  vm_resources:VMResources; vm_default_resources:VMResources; vm_limits:VMResources;
+  // The store disk file now, in GiB (0 before it exists). Set by the helper.
+  store_disk_gib:uint;
 }
+/// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
+table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }

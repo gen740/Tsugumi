@@ -146,14 +146,29 @@ export function Divider({ vertical }: { vertical?: boolean }) {
 export function Form({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <div className="form" style={style}>{children}</div>
 }
-export function Section({ title, children, footer }: { title?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+/** A section; `info` is its explanation, behind an (i) button beside the title. */
+export function Section({ title, children, footer, info }: { title?: ReactNode; children: ReactNode; footer?: ReactNode; info?: ReactNode }) {
   return (
     <section className="form-section">
-      {title && <div className="form-section-title">{title}</div>}
+      {(title || info) && <div className="form-section-title">{title}{info && <InfoButton>{info}</InfoButton>}</div>}
       <div className="form-box">{children}</div>
       {footer && <div className="form-footer">{footer}</div>}
     </section>
   )
+}
+
+/** A small (i) button showing an explanation in a popover when clicked. */
+export function InfoButton({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLButtonElement>(null)
+  return <>
+    <button ref={anchor} type="button" className="info-button" aria-label={L('説明')} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <Icon name="info.circle" />
+    </button>
+    <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} width={320}>
+      <div className="pad10 caption selectable info-text">{children}</div>
+    </Popover>
+  </>
 }
 export function Row({ label, children, help }: { label?: ReactNode; children?: ReactNode; help?: string }) {
   return (
