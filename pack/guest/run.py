@@ -302,7 +302,7 @@ def main():
     rpc = Rpc(f"unix:{socket}", os.environ["TSUGUMI_SCHEMA"])
     summary = {"start": start, "triggers": found, "params": request.get("params", {})}
     try:
-        rpc.call("SessionHelloRequest", {"client_id": str(uuid.uuid4()), "token": token})
+        rpc.call("SessionHelloRequest", {"token": token})
         snapshot = rpc.call("ProjectInspectRequest", {})
         stage("run")
         accepted = rpc.call("RunRequest", {"base_rev": snapshot["rev"], "op_id": str(uuid.uuid4()), "origin": "pack",

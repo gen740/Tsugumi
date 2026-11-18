@@ -307,7 +307,8 @@ jobs:
           cp build-pack-guest/{vmlinux,export.erofs,run.erofs,identity} dist/pack-guest/
       - uses: actions/upload-artifact@v4
         with:
-          name: pack-guest-${{ github.sha }}
+          # The branch's commit, not a pull request's merge commit.
+          name: pack-guest-${{ github.event.pull_request.head.sha || github.sha }}
           path: dist/pack-guest
           compression-level: 0
           retention-days: 7
