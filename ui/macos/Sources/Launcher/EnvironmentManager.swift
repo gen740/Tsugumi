@@ -105,7 +105,7 @@ public actor EnvironmentManager {
     guard let url = state.endpoint.flatMap(URL.init(string:)) else {
       throw LauncherError.notReady("Invalid environment endpoint")
     }
-    let endpoint = Endpoint(url: url, token: state.token ?? "", projectId: state.projectId ?? "", serverInstanceId: state.serverInstanceId ?? "")
+    let endpoint = Endpoint(url: url, token: state.token ?? "", projectId: state.projectId ?? "")
     set(state.key, .ready(endpoint))
     let folders = reply.folders.compactMap { $0.map { (folder: $0.folder, resource: $0.resource) } }
     return (endpoint, folders)
