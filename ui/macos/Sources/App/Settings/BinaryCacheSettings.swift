@@ -11,14 +11,7 @@ struct BinaryCacheSettings: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
-        Text("Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。")
-          .font(.callout).foregroundStyle(.secondary)
-        Text("登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。")
-          .font(.callout).foregroundStyle(.secondary)
-        Text("保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。")
-          .font(.callout).foregroundStyle(.secondary)
-        Text("既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoButton(Text("Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。"), Text("登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。"), Text("保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。"), Text("既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。"))
         ForEach($caches) { $cache in
           GroupBox {
             VStack(alignment: .leading, spacing: 8) {
@@ -33,8 +26,7 @@ struct BinaryCacheSettings: View {
                 VStack(spacing: 8) {
                   LabeledContent("ユーザー名") { TextField("", text: $cache.username) }
                   LabeledContent("パスワード・token") { SecureField("", text: $cache.password) }
-                  Text("認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。")
-                    .font(.caption).foregroundStyle(.secondary)
+                  HStack { Spacer(); InfoButton("認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。") }
                 }.padding(.top, 8)
               }
             }.padding(6)

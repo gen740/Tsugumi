@@ -149,17 +149,9 @@ class VMProcess final : public EnvironmentProcess {
   }
   auto Guest() const -> bool override { return true; }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    V::BootT boot;
-    boot.key = launch.key;
-    boot.broker_endpoint = options_.broker_endpoint;
-    const auto caches = PrepareBinaryCaches(options_.support);
-    boot.cache_configuration = caches.configuration;
-    boot.cache_netrc = caches.netrc;
-    boot.cache_problem = caches.problem;
-    Call(std::move(boot));
+    Call(Boot(launch.key));
     V::RunT run;
     run.key = launch.key;
-    run.cpus = options_.cpus;
     auto name = std::filesystem::path(launch.project).filename().string();
     for (auto& ch : name)
       if (!std::isalnum(static_cast<unsigned char>(ch)) ||
@@ -225,15 +217,8 @@ class VMProcess final : public EnvironmentProcess {
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
     if (request.action == H::RuntimeAction::CleanupStore ||
-        request.action == H::RuntimeAction::VerifyStore) {
-      V::BootT boot;
-      boot.broker_endpoint = options_.broker_endpoint;
-      const auto caches = PrepareBinaryCaches(options_.support);
-      boot.cache_configuration = caches.configuration;
-      boot.cache_netrc = caches.netrc;
-      boot.cache_problem = caches.problem;
-      Call(std::move(boot));
-    }
+        request.action == H::RuntimeAction::VerifyStore)
+      Call(Boot(""));
     auto reply = request.action == H::RuntimeAction::Reset
                      ? Call(VMResetPolicy())
                      : Call(request);
@@ -258,6 +243,18 @@ class VMProcess final : public EnvironmentProcess {
   int64_t helper_pid_ = 0;
   std::jthread watcher_;
   std::map<int64_t, std::string> keys_;
+  auto Boot(const std::string& key) -> V::BootT {
+    V::BootT boot;
+    boot.key = key;
+    boot.broker_endpoint = options_.broker_endpoint;
+    const auto caches = PrepareBinaryCaches(options_.support);
+    boot.cache_configuration = caches.configuration;
+    boot.cache_netrc = caches.netrc;
+    boot.cache_problem = caches.problem;
+    boot.resources =
+        std::make_unique<H::VMResourcesT>(options_.resources());
+    return boot;
+  }
   auto Remember(int64_t pid, const std::string& key) -> void {
     std::lock_guard lock(keys_mutex_);
     keys_[pid] = key;
@@ -307,12 +304,9 @@ class VMProcess final : public EnvironmentProcess {
     if (auto fd = TryConnect(); fd >= 0) return fd;
     EnvironmentLaunch launch;
     launch.vm_helper = true;
-    launch.arguments = {options_.binary.string(),        "--support",
-                        options_.support.string(),       "--image",
-                        options_.image.string(),         "--cpus",
-                        std::to_string(options_.cpus),   "--memory",
-                        std::to_string(options_.memory), "--store",
-                        std::to_string(options_.store)};
+    launch.arguments = {options_.binary.string(), "--support",
+                        options_.support.string(), "--image",
+                        options_.image.string()};
     launch.log = options_.support / "vmhost.log";
     auto native = NativeEnvironmentProcess();
     helper_pid_ = native->Launch(launch);

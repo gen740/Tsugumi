@@ -427,6 +427,9 @@ enum ServiceWire {
     return result
   }
 
+  private static func size(_ v: Tsugumi_Host_VMResourcesT?) -> [String: Int] {
+    ["cpus": Int(v?.cpus ?? 0), "memory_gib": Int(v?.memoryGib ?? 0), "store_gib": Int(v?.storeGib ?? 0)]
+  }
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
     case let v as Tsugumi_Host_IdentifierT: return ["id": v.id]
@@ -463,7 +466,9 @@ enum ServiceWire {
         "stage": v.stage ?? "", "message": v.message ?? "", "console": v.console.compactMap { $0 }, "bytes": v.bytes, "paths": v.paths,
         "environments": v.environments, "vm_removed": v.vmRemoved,
         "reset_confirmation_ja": v.resetConfirmationJa ?? "", "reset_confirmation_en": v.resetConfirmationEn ?? "",
-        "reset_kept_files": v.resetKeptFiles.compactMap { $0 }, "reset_discarded_files": v.resetDiscardedFiles.compactMap { $0 }] as [String: Any]
+        "reset_kept_files": v.resetKeptFiles.compactMap { $0 }, "reset_discarded_files": v.resetDiscardedFiles.compactMap { $0 },
+        "vm_resources": size(v.vmResources), "vm_default_resources": size(v.vmDefaultResources), "vm_limits": size(v.vmLimits),
+        "store_disk_gib": v.storeDiskGib] as [String: Any]
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]
     case let v as Tsugumi_Host_HostTerminalDataT: return ["session": v.session, "data": v.data, "closed": v.closed] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServicesT:

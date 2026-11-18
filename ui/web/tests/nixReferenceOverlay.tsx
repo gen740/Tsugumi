@@ -39,18 +39,18 @@ const shown = () => nixReferences(session).map(r => [r.source, r.target, r.expre
 inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }))
 assert.deepEqual(shown(), [])
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
-assert.deepEqual(shown(), [['analysis', 'source', 'inputs.source.export', true]])
+assert.deepEqual(shown(), [['analysis', 'source', 'inputs.source', true]])
 delta(all({
   analysis: [{ target: ['source'], name: 'source' }],
   report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing', valid: false }],
 }))
 assert.deepEqual(shown(), [
-  ['analysis', 'source', 'inputs.source.export', true],
-  ['report', 'analysis', 'inputs.analysis.export', true],
-  ['report', 'missing', 'inputs.missing.export', false],
+  ['analysis', 'source', 'inputs.source', true],
+  ['report', 'analysis', 'inputs.analysis', true],
+  ['report', 'missing', 'inputs.missing', false],
 ])
 delta(all({ report: [{ target: ['analysis'], name: 'analysis' }] }))
-assert.deepEqual(shown(), [['report', 'analysis', 'inputs.analysis.export', true]], 'a removed reference leaves with the delta that removed it')
+assert.deepEqual(shown(), [['report', 'analysis', 'inputs.analysis', true]], 'a removed reference leaves with the delta that removed it')
 
 // What the canvas draws, and the three interactions on it.
 delta(all({
@@ -97,7 +97,7 @@ rendered.unmount()
 // The toggle says what the layer is, pressed or not.
 tab.showNixList = false
 const on = renderToStaticMarkup(<NixReferenceControls session={session} tab={tab} />)
-assert.ok(on.includes(L('Nix 参照（記述どおり）')))
+assert.ok(on.includes(L('Nix 参照')))
 assert.ok(on.includes(L('保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。')))
 
 // Turning the layer off drops the hover with it.
@@ -111,6 +111,10 @@ assert.deepEqual(links(), [])
 // Inside a Card in Card only that level's Cards meet.
 const nested = new WorkflowTab(['child'])
 nested.toggleNixReferences()
+// Turned on where nothing is drawn, the bar says so (and how many the list has).
+const empty = renderToStaticMarkup(<NixReferenceControls session={session} tab={nested} />)
+assert.ok(empty.includes(L('この階層には参照がありません（一覧に {0} 件）', nixReferences(session).length)), 'an empty overlay says why')
+assert.ok(!on.includes(L('この階層には参照がありません（一覧に {0} 件）', nixReferences(session).length)), 'not while links are drawn')
 const inside = nixLinks([{ id: 'x', source: 'child/sink', target: 'child/inner/deep', expression: '', valid: true },
   { id: 'y', source: 'sink', target: 'child/inner', expression: '', valid: true }], nested.scope, new Set(['child/sink', 'child/inner']))
 assert.deepEqual(ends(inside), ['child/sink>child/inner'])

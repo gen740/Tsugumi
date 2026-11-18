@@ -908,6 +908,20 @@ void shutdown_vm() {
   ::reboot(RB_POWER_OFF);
 }
 
+// "ok <MemTotal> <MemAvailable> <Cached>" in KiB: the host's balloon follows
+// how much of its memory the guest has (MemTotal shrinks as it inflates).
+std::string memory() {
+  std::ifstream in("/proc/meminfo");
+  std::map<std::string, std::string> values;
+  std::string key, value, unit;
+  while (in >> key >> value) {
+    std::getline(in, unit);
+    values[key] = value;
+  }
+  return "ok " + values["MemTotal:"] + " " + values["MemAvailable:"] + " " +
+         values["Cached:"];
+}
+
 void control(int conn) {
   auto w = split(read_line(conn));
   std::unique_lock operation(lifecycle);
@@ -923,6 +937,8 @@ void control(int conn) {
     r = "ok";
   else if (w[0] == "status")
     r = status();
+  else if (w[0] == "memory")
+    r = memory();
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";

@@ -163,6 +163,10 @@ let
       mkfs.ext4 -q -F -L tsugumi-store /dev/vdb || fail "cannot format the store disk"
     fi
     mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
+    # A larger store size in Settings grows the disk file; the file system
+    # follows here, online (a no-op when it already fills the disk).
+    grown=$(resize2fs /dev/vdb 2>&1) || echo "cannot grow the store disk: $grown"
+    case "$grown" in *"is now"*) echo "grew the store disk to $(($(blockdev --getsize64 /dev/vdb) >> 30)) GiB" ;; esac
     # Mark the disk before any store writes, including image registration.
     check_reason=$(${storeHealth} begin /persist) || fail "cannot mark the store disk"
     ln -s ${storeHealth} /run/tsugumi/store-health

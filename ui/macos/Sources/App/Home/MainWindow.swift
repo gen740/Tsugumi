@@ -176,7 +176,7 @@ struct EnvironmentSetupView: View {
         }
         .padding(8)
       }
-      Text("初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（最大 \(model.environments.resources.storeGiB) GiB、使った分だけ）を作ります。")
+      Text("初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（設定のサイズまで、使った分だけ）を作ります。")
         .font(.callout).foregroundStyle(.secondary)
       HStack {
         Spacer()

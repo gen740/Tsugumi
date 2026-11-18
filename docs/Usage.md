@@ -47,7 +47,7 @@ Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires**
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references (as written)** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.data`, where `data` is the Card's input port name. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
+Use **Nix references** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.data`, where `data` is the Card's input port name. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
 
 ## Run from a Card
 
