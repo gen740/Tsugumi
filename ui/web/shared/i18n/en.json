@@ -650,6 +650,8 @@
  "停止": "Stop",
  "停止 終了": "stop end",
  "停止中": "Stopping",
+ "停止を要求中": "Stop requested",
+ "停止を要求できませんでした（{0}）": "Could not request Stop ({0})",
  "停止済み": "Stopped",
  "先に変更を保存してください": "Save your changes first",
  "先に変更を保存してください（配線と Draft の内容を確定してから生成します）": "Save your changes first (generation starts from the saved wiring and Draft content)",

@@ -397,8 +397,16 @@ final class ProjectSession {
   // Runs
   private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
   private var loadingProvenance: Set<String> = []
+  private var stopRunId: String?
+  var stopRequested: Bool { stopRunId != nil }
+  var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
-    didSet { if let status = runStatus, let id = status.runId { runProvenance[id] = status } }
+    didSet {
+      if let status = runStatus, let id = status.runId { runProvenance[id] = status }
+      if stopRunId != currentRunId || !runActive || runStatus?.state == .cancelling {
+        stopRunId = nil
+      }
+    }
   }
   func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
@@ -1335,8 +1343,25 @@ final class ProjectSession {
   }
 
   func cancelRun() async {
-    guard let client, let id = runStatus?.runId else { return }
-    if let s = try? await client.cancel(runId: id) { runStatus = s }
+    await cancelRun { [client] id in
+      guard let client else { throw RPCError.disconnected }
+      return try await client.cancel(runId: id)
+    }
+  }
+
+  func cancelRun(send: (String) async throws -> Tsugumi_RPC_RunStatusT) async {
+    guard canStopRun, let id = currentRunId else { return }
+    stopRunId = id
+    do {
+      let status = try await send(id)
+      guard stopRunId == id, status.runId == id else { return }
+      runStatus = status
+    } catch {
+      guard stopRunId == id else { return }
+      stopRunId = nil
+      let reason = (error as? RPCFailure)?.diagnostic ?? String(describing: error)
+      notice = String(localized: "停止を要求できませんでした（\(reason)）")
+    }
   }
 
   var rpc: RPCClient? { client }

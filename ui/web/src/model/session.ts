@@ -446,11 +446,18 @@ export class ProjectSession extends Observable {
   // Runs
   private runProvenance = new Map<string, R.RunStatusT>()
   private loadingProvenance = new Set<string>()
+  private stopRunId?: string
+  get stopRequested() { return this.stopRunId !== undefined }
+  get canStopRun() {
+    return this.runActive && !this.stopRequested && this.runStatus?.state !== D.RunState.cancelling
+  }
   private _runStatus?: R.RunStatusT
   get runStatus() { return this._runStatus }
   set runStatus(status: R.RunStatusT | undefined) {
     this._runStatus = status
     if (status?.runId) this.runProvenance.set(s(status.runId), status)
+    if (this.stopRunId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
+      this.stopRunId = undefined
   }
   markForRun(runId: string) { return runMark(this.runProvenance.get(runId)) }
   cardStates = new Map<CardKey, CardRunState>()
@@ -1288,11 +1295,20 @@ export class ProjectSession extends Observable {
 
   async cancelRun() {
     const id = this.currentRunId
-    if (!this.client || !id) return
+    if (!id || !this.canStopRun) return
+    this.stopRunId = id
+    this.changed()
     try {
-      this.runStatus = await this.client.cancel(id)
-      this.changed()
-    } catch {}
+      if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+      const status = await this.client.cancel(id)
+      if (this.stopRunId !== id || sOpt(status.runId) !== id) return
+      this.runStatus = status
+    } catch (error) {
+      if (this.stopRunId !== id) return
+      this.stopRunId = undefined
+      this.notice = L('停止を要求できませんでした（{0}）', errorText(error))
+    }
+    this.changed()
   }
 
   // ---- Document helpers ------------------------------------------------------------

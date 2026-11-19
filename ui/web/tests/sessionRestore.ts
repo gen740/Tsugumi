@@ -84,3 +84,41 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
 }
 
 console.log('session restore: passed')
+
+// Stop is shown during the request, clears on confirmation, and can be retried
+// after failure. A late reply cannot change a finished or replacement run.
+{
+  const { s } = session()
+  const status = (runId: string, state: D.RunState) =>
+    Object.assign(new R.RunStatusT(), { runId, state })
+  const rpc = {
+    async cancel(id: string): Promise<R.RunStatusT> {
+      assert.equal(id, 'stop')
+      assert.equal(s.stopRequested, true)
+      assert.equal(s.canStopRun, false)
+      throw Error('rejected')
+    },
+  }
+  Object.assign(s, { client: rpc })
+  s.runStatus = status('stop', D.RunState.preparing)
+  await s.cancelRun()
+  assert.ok(s.notice)
+  assert.equal(s.canStopRun, true)
+
+  rpc.cancel = async id => status(id, D.RunState.cancelling)
+  await s.cancelRun()
+  assert.equal(s.runStatus.state, D.RunState.cancelling)
+  assert.equal(s.stopRequested, false)
+  assert.equal(s.canStopRun, false)
+
+  for (const next of [status('finished', D.RunState.succeeded), status('other', D.RunState.preparing)]) {
+    s.runStatus = status('finished', D.RunState.running)
+    rpc.cancel = async id => {
+      s.runStatus = next
+      return status(id, D.RunState.cancelling)
+    }
+    await s.cancelRun()
+    assert.equal(s.runStatus, next)
+    assert.equal(s.stopRequested, false)
+  }
+}

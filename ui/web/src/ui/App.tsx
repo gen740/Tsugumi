@@ -225,7 +225,7 @@ export function App() {
       switch (action) {
         case 'find': canvasFor(s, tab).find(); break
         case 'run': if (s.connected && !s.runActive) runAll(s); break
-        case 'stop': if (s.runActive) void s.cancelRun(); break
+        case 'stop': if (s.canStopRun) void s.cancelRun(); break
         case 'addNote': if (s.isEditable) canvasFor(s, tab).addNote(); break
         case 'toggleChat': if (!detached) workspace.set('showChat', !workspace.showChat); break
         case 'toggleLog': workspace.togglePanel('log'); break

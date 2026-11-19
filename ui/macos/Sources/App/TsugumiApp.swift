@@ -354,7 +354,7 @@ struct WorkbenchCommands: Commands {
         .disabled(!(session?.connected ?? false) || (session?.runActive ?? true))
       Button("実行を停止") { if let s = session { Task { await s.cancelRun() } } }
         .shortcut(.stop)
-        .disabled(!(session?.runActive ?? false))
+        .disabled(!(session?.canStopRun ?? false))
       Button("版の履歴…") { if let s = session { openWindow(id: "versions", value: ProjectRef(path: s.identity.url.path)) } }
         .keyboardShortcut("y", modifiers: [.command, .option])
         .disabled(session == nil)

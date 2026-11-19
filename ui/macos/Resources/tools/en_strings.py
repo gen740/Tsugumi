@@ -968,6 +968,8 @@ EN = {
 "保持する出力": "Output to retain",
 "停止": "Stop",
 "停止中": "Stopping",
+"停止を要求中": "Stop requested",
+"停止を要求できませんでした（%@）": "Could not request Stop (%@)",
 "停止済み": "Stopped",
 "先に変更を保存してください（配線と Draft の内容を確定してから生成します）": "Save your changes first (generation starts from the saved wiring and Draft content)",
 "入出力": "Ports",
