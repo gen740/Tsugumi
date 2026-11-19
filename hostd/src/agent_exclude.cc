@@ -182,10 +182,10 @@ auto AgentExclude::FileText(const std::string& path,
   if (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json"))
     return ProjectText(raw, path.substr(0, path.size() - 12));
   if (path == "layout.json" || IsExternalDocument(path, "layout.json"))
-    return j::Text(j::Object(Filter(j::Encode(j::Members{
-                           {"layout_json", j::Quote(raw)}}),
-                       path.substr(0, path.size() - 11))),
-                   "layout_json");
+    return j::Text(
+        j::Object(Filter(j::Encode(j::Members{{"layout_json", j::Quote(raw)}}),
+                         path.substr(0, path.size() - 11))),
+        "layout_json");
   return raw;
 }
 
@@ -327,9 +327,8 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
       }
       return full;
     };
-    if (!DocumentsEqual(
-            difference(difference, before, FileText(path, before)),
-            difference(difference, bytes, FileText(path, bytes))))
+    if (!DocumentsEqual(difference(difference, before, FileText(path, before)),
+                        difference(difference, bytes, FileText(path, bytes))))
       throw Failure("not_found", "Card not found");
   };
   for (const auto& raw : j::Array(j::Get(plan, "changes", "[]"))) {

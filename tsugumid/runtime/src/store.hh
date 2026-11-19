@@ -128,7 +128,8 @@ class Store {
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 
-  // Document sources come from the revision. Other source bytes are verified against it.
+  // Document sources come from the revision. Other source bytes are verified
+  // against it.
   std::string read_source(const Document& doc, const std::string& rel) const;
 
   // Snapshot + view storage helpers.

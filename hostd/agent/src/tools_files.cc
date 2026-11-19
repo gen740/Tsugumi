@@ -43,13 +43,6 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
     return false;
   return !shell || !kProtected.contains(file);
 }
-auto Value(const std::string& result) -> json::Members {
-  const auto envelope = json::Object(result);
-  const auto value = json::Object(json::Get(envelope, "value", "{}"));
-  if (json::Text(envelope, "reply") == "Failure")
-    throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
-  return value;
-}
 }  // namespace
 
 // Shape only the provider view. The saved transcript keeps the original bytes.

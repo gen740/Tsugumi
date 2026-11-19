@@ -3,8 +3,10 @@
 namespace tsugumi {
 namespace R = Tsugumi::RPC;
 
-auto Server::notification(flatbuffers::FlatBufferBuilder& b, std::string_view subscription, uint64_t seq,
-                  R::NotificationPayload type, flatbuffers::Offset<void> value) -> std::string {
+auto Server::notification(flatbuffers::FlatBufferBuilder& b,
+                          std::string_view subscription, uint64_t seq,
+                          R::NotificationPayload type,
+                          flatbuffers::Offset<void> value) -> std::string {
   const auto id = b.CreateString(subscription.data(), subscription.size());
   const auto note = R::CreateNotification(b, id, seq, type, value);
   R::FinishMessageBuffer(

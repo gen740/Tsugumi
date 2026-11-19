@@ -410,9 +410,9 @@ std::string execution_fingerprint(const Document& doc) {
     h.update("\0src\0", 5);
     h.update(path);
     if (src.document_json)
-      h.update(execution_json(*src.document_json,
-                              relative == "tsugumi.json" ? "name"
-                                                         : "displayMode"));
+      h.update(execution_json(*src.document_json, relative == "tsugumi.json"
+                                                      ? "name"
+                                                      : "displayMode"));
     else
       h.update(src.hash);
   }

@@ -262,7 +262,8 @@ DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
 namespace {
 SourceReader source_reader(const stdfs::path& root, const Document& doc,
                            const std::vector<FileOp>* pending = nullptr) {
-  return [root, &doc, pending](const std::string& rel) -> std::optional<std::string> {
+  return [root, &doc,
+          pending](const std::string& rel) -> std::optional<std::string> {
     auto it = doc.sources.find(rel);
     if (it == doc.sources.end()) return std::nullopt;
     if (it->second.document_json) return *it->second.document_json;
