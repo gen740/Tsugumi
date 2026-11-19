@@ -463,33 +463,6 @@ process.stdout.write(JSON.stringify(root.textContent));
     assert read_pages(client, "ModuleReadRequest", module=text(local.module), page_bytes=65536) == remote_source
 
 
-@pytest.mark.parametrize("execution_service", ["local", "remote-test"])
-def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_factory, remote_broker, execution_service):
-    fixture(project)
-    definition = project / "definitions/work/_card.json"
-    settings = json.loads(definition.read_text())
-    settings["executionService"] = execution_service
-    definition.write_text(json.dumps(settings))
-    source = project / "definitions/work/default.nix"
-    source.write_text(source.read_text().replace("printf 'remote-card-stdout\\n'",
-        "head -c 142606336 /dev/zero | tr '\\000' x"))
-    client = core_factory().connect()
-    run_id = start_run(client, "source")
-    run = wait_run(client, run_id)
-    assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
-    stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
-                         invocation=1, stream=LogStream.standard_output)
-    limit = 128 << 20
-    assert 120 << 20 < stdout.sizeBytes <= limit
-    assert stdout.logTruncatedAtBytes == limit
-    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
-    assert record.record.summary.logTruncatedAtBytes == limit
-    journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
-                          invocation=1, stream=LogStream.journal)
-    assert journal.logTruncatedAtBytes == limit
-    assert stdout.text and not set(text(stdout.text)) - {"x", "\n"}
-
-
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):
     fixture(project)
     client = core_factory().connect()

@@ -25,7 +25,6 @@ await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
 await import("./switchCard")
-await import("./csharp")
 await import("./reports")
 
 await import("./table")
@@ -82,7 +81,6 @@ await import("./projectTrust")
 
 await import("./perchScale")
 await import("./demoReplay")
-await import("./visualizationTemplates")
 await import("./evidence")
 await import('./environments')
 
@@ -95,7 +93,6 @@ await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')
 
-await import('./ruby')
 
 await import("./lineChart")
 

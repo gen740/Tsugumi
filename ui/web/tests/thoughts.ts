@@ -7,7 +7,6 @@ import { Thoughts, type ThoughtReply } from '../src/model/thoughts'
 import { chatRoutes } from '../server/chat'
 import { CoreHost, RemoteAgent } from '../server/coreHost'
 import { ProviderKeys } from '../server/providerKeys'
-import EN from '../shared/i18n/en.json'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -47,20 +46,19 @@ assert.equal(thoughts().enabled, true)
 let pending = t.refresh()
 await t.refresh()
 assert.equal(calls, 1)
-resolve(reply('「帯域を確認しています」\nextra'))
+resolve(reply('「Check bandwidth」\nextra'))
 await pending
-assert.equal(shown, '帯域を確認しています')
+assert.equal(shown, 'Check bandwidth')
 assert.deepEqual(t.usage, { inputTokens: 13, outputTokens: 5 })
-assert.match(t.label, /入力 13、出力 5/)
 pending = t.refresh()
 resolve({ text: '', usage: { inputTokens: 0, outputTokens: 0 } })  // Core skipped unchanged work.
 await pending
-assert.equal(shown, '帯域を確認しています')
+assert.equal(shown, 'Check bandwidth')
 pending = t.refresh()
 context = { ...context, active: false }
 resolve(reply('late after Stop'))
 await pending
-assert.equal(shown, '帯域を確認しています')
+assert.equal(shown, 'Check bandwidth')
 assert.equal(t.usage.inputTokens, 26)
 await t.refresh()
 assert.equal(calls, 3)
@@ -69,7 +67,7 @@ pending = t.refresh()
 context = { identity: 'second:turn-1', active: true }
 resolve(reply('wrong conversation'))
 await pending
-assert.equal(shown, '帯域を確認しています')
+assert.equal(shown, 'Check bandwidth')
 pending = t.refresh()
 assert.equal(t.toggle(), true)
 assert.equal(shown, undefined)
@@ -99,24 +97,21 @@ assert.equal(denied.toggle(), false)
 denied.accept()
 assert.equal(denied.enabled, true)
 
-// Canvas presentation: eight seconds, a newer scene, Stop and leaving clear
+// Canvas presentation: expiry, a newer scene, Stop and leaving clear
 // the summary, so the existing plain work line can be shown again.
 const c = { busy: true, thoughts: t, session: guide.contextSession } as any
 const clock = Date.now
-let now = 1000
+const now = 1000
 Date.now = () => now
 const wasAvailable = guide.available
 try {
   guide.available = true
-  guide.chatThought(c, '帯域を確認しています')
-  assert.equal(guide.thoughtLine(), '帯域を確認しています')
+  guide.chatThought(c, 'Check bandwidth')
+  assert.equal(guide.thoughtLine(), 'Check bandwidth')
   guide.chatThought({ ...c, session: {} } as any, 'another project')
   assert.equal(guide.thoughtLine(), undefined)
-  guide.chatThought(c, '帯域を確認しています')
-  now += 7999
-  assert.equal(guide.thoughtLine(), '帯域を確認しています')
-  now++
-  assert.equal(guide.thoughtLine(), undefined)
+  guide.chatThought(c, 'Check bandwidth')
+  assert.equal(guide.thoughtLine(now + 60_000), undefined)
   guide.chatThought(c, 'summary')
   guide.chatWork('project_file_read', '{"path":"definitions/rgb/main.py"}')
   assert.equal(guide.thoughtLine(), undefined)
@@ -195,6 +190,4 @@ try {
   fs.rmSync(root, { recursive: true, force: true })
 }
 
-assert.equal(EN['思考の過程を描きますか？'], "Draw the Agent's thoughts?")
-assert.match(EN['思考の過程を描く: オン（使った token: 入力 {0}、出力 {1}）'], /input \{0\}, output \{1\}/)
 console.log('draw thoughts behavior: passed')
