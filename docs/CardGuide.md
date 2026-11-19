@@ -229,7 +229,7 @@ Python returns generated output `TableT` objects directly: `return {"result": re
 
 C++, Go and Rust return a generated `Output` object. Set a field for each produced port. Go waits for managed tasks to finish before packing the result.
 
-R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts the complete returned mapping to the Card's FlatBuffers type. C# returns an `Outputs` object with one generated property per port. The adapter packs it after awaiting `RunAsync`.
+R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts each returned port value from JSON to that port's FlatBuffer. R's `NULL` and Julia's `nothing` omit the port. C# returns an `Outputs` object with one generated property per port. The adapter packs each returned port after awaiting `RunAsync`.
 
 Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The worker uses `NaN`, `Infinity` and `-Infinity` in its JSON conversion. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
 
