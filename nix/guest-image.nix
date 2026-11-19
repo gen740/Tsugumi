@@ -52,8 +52,9 @@ writeShellApplication {
     done
     stage="$(mktemp -d "''${TMPDIR:-/tmp}/tsugumi-src.XXXXXX")"
     out="$(mktemp -d "''${TMPDIR:-/tmp}/tsugumi-image.XXXXXX")"
+    builder=""
     # The snapshot holds copies of read-only store files: make them removable.
-    trap 'chmod -R u+w "$stage" "$out" 2>/dev/null; rm -rf "$stage" "$out"' EXIT
+    trap '[ -z "$builder" ] || container stop "$builder" >/dev/null 2>&1 || true; chmod -R u+w "$stage" "$out" 2>/dev/null; rm -rf "$stage" "$out"' EXIT
     # Current tracked and untracked inputs of the guest, including local edits.
     python3 "$repo/vm/guest/tools/vm-snapshot.py" "$repo" "$stage"
     revision="$(git -C "$repo" rev-parse HEAD)"
@@ -119,8 +120,16 @@ writeShellApplication {
           touch /out/done
         ' >/dev/null
       echo "building $attr in $builder (progress: $out/log)"
-      while [ ! -e "$out/done" ] && [ ! -e "$out/failed" ]; do sleep 2; done
-      tail -10 "$out/log"
+      while [ ! -e "$out/done" ] && [ ! -e "$out/failed" ]; do
+        if ! container inspect "$builder" >/dev/null 2>&1; then
+          echo "guest image: builder container $builder exited unexpectedly" >&2
+          touch "$out/failed"
+          break
+        fi
+        sleep 2
+      done
+      builder=""
+      [ ! -f "$out/log" ] || tail -10 "$out/log"
       [ ! -e "$out/failed" ] || exit 1
       rm -f "$out/done" "$out/log"
     fi
