@@ -306,7 +306,11 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private func rosettaShare() throws -> VZVirtioFileSystemDeviceConfiguration {
     let fs = VZVirtioFileSystemDeviceConfiguration(tag: "rosetta")
     let share = try VZLinuxRosettaDirectoryShare()
-    try share.setCachingOptions(.unixSocket("/run/rosettad/rosetta.sock"))
+    do {
+      try share.setCachingOptions(.unixSocket("/run/rosettad/rosetta.sock"))
+    } catch {
+      console.note("Rosetta AOT: could not configure the cache (\(error)); translating without the cache")
+    }
     fs.share = share
     return fs
   }
