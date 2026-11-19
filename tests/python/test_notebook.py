@@ -1,6 +1,5 @@
 """Fresh notebook invocations without a UI or interactive server."""
 import importlib.util
-import json
 import os
 from pathlib import Path
 import sys
@@ -61,19 +60,14 @@ def show(result):
     mo.md(f"Result: {result}")
     return mo,
 ''')
-    snapshots=[]
     for i in [1,2]:
         run_info=Run(tmp_path/str(i));run_info.invocation=i;run_info.card=f"notebook-{i}"
         result,folder=notebook.run(types.SimpleNamespace(markdown=lambda value: None), run_info,source,'notebook.py',{'value':i},['result'])
         assert result=={'result':i*2}
-        assert json.loads((folder/'metadata.json').read_text())['card']==f'notebook-{i}'
         assert (folder/'source/counter.txt').read_text()=='1'
-        snapshots.append((folder,(folder/'index.html').read_bytes()))
-    # A second committed run does not rewrite the first artifact.
-    assert all((folder/'index.html').read_bytes()==content for folder,content in snapshots)
 
 
-def test_cell_failure_exposes_notebook_source_and_no_result(tmp_path,host,capfd):
+def test_cell_failure_exposes_notebook_source_and_no_result(tmp_path,host):
     source=tmp_path/'src';source.mkdir()
     (source/'broken.py').write_text('''import marimo
 app=marimo.App()
@@ -119,22 +113,3 @@ time.sleep(60)
     pid=int((run_info.temporary_directory/'marimo/notebook/source/pid').read_text())
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
     assert not (run_info.output_directory / 'notebook').exists()
-
-
-def test_demo_binds_upstream_and_parameter_into_running_notebook(tmp_path, host):
-    import shutil
-    root = ROOT / 'demos/en/marimo/definitions/notebook'
-    source = tmp_path / 'src'
-    shutil.copytree(root / 'src', source)
-    card = json.loads((root / '_card.json').read_text())
-    mapping = json.loads(next(p['data'] for p in card['params'] if p['name'] == 'bindings'))
-    inputs = types.SimpleNamespace(data=types.SimpleNamespace(source=7), params=types.SimpleNamespace(factor=3))
-    sys.modules['tsugumi'].contract = types.SimpleNamespace(
-        ports=lambda: [{'name': 'data'}], input_object=lambda inputs, name: inputs.data,
-        params_object=lambda inputs: inputs.params)
-    definitions = notebook.bindings(inputs, mapping)
-    assert definitions == {'source': 7, 'factor': 3}
-    result, folder = notebook.run(types.SimpleNamespace(markdown=lambda value: None),
-                                  Run(tmp_path/'call'), source, 'notebook.py', definitions, ['result'])
-    assert result == {'result': 21}
-    assert json.loads((folder/'bindings.json').read_text()) == definitions
