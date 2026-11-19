@@ -449,6 +449,7 @@ struct VMConsoleView: View {
     }
     .frame(minWidth: 520, minHeight: 300)
     .onAppear {
+      guard tokens == nil else { return }
       lines = vm.console.snapshot
       let a = vm.console.observe { l in Task { @MainActor in lines.append(l); if lines.count > 5000 { lines.removeFirst(lines.count - 5000) } } }
       let b = vm.observe { s in Task { @MainActor in state = s } }
@@ -458,6 +459,7 @@ struct VMConsoleView: View {
       if let (a, b) = tokens {
         vm.console.stopObserving(a)
         vm.stopObserving(b)
+        tokens = nil
       }
     }
   }
