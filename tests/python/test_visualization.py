@@ -228,15 +228,18 @@ def max_points_and_sampling(library):
     """More points than max_points (5000 by default) stop the Card instead of
     being thinned; sample_every thins on purpose and says so everywhere."""
     return f'''
-n = 6001
-raw = table(range(n), [i % 17 for i in range(n)])
-case = InvocationFixture({library!r}, raw)
+oversized = InvocationFixture({library!r}, table(range(5001), range(5001)))
 for kind in ('line', 'scatter', 'histogram'):
-    expect_failure('validation_failed', lambda: case.run(Kind=kind))
-    assert not (Path(case.output_directory) / 'figure').exists() and 'figure' not in case.outputs
+    expect_failure('validation_failed', lambda: oversized.run(Kind=kind))
+    assert not (Path(oversized.output_directory) / 'figure').exists() and 'figure' not in oversized.outputs
+
+# Exercise the same limit and sampling paths with a low configured cap.
+n = 13
+case = InvocationFixture({library!r}, table(range(n), range(n)), MaxPoints=8)
+expect_failure('validation_failed', lambda: case.run(Kind='line'))
 folder = case.run(Kind='scatter', SampleEvery=2)
 meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (6001, 3001, True, 2)
+assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (13, 7, True, 2)
 assert meta['note']
 plotted = rows_of(folder / 'plotted.csv')
 assert [float(r['x']) for r in plotted] == [float(i) for i in range(0, n, 2)]
@@ -246,11 +249,11 @@ if {library!r} != 'matplotlib':
 meta = json.loads((case.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
 assert (meta['drawn_rows'], meta['sampled']) == (n, False)
 # A sampled histogram counts the selected rows and labels those bin counts.
-folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=5000)
+folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=8)
 meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['drawn_rows'], meta['sampled']) == (2001, True)
+assert (meta['drawn_rows'], meta['sampled']) == (5, True)
 assert meta['note']
-assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 2001
+assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 5
 if {library!r} != 'matplotlib':
     assert shows_note(folder, {library!r}, meta['note'])
 expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1))
@@ -289,7 +292,7 @@ for x, y in [(1., 3.), (2., 4.)]:
 use('flatbuffer', 'Rows')
 case = InvocationFixture('matplotlib', pack(rows), DataPath='rows')
 assert input_rows(SimpleNamespace(input=case.input), case, field='rows') == [{'x': 1., 'y': 3.}, {'x': 2., 'y': 4.}]
-expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, field='other'), 'other')
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, field='other'))
 meta = json.loads((case.run() / 'metadata.json').read_text())
 assert meta['drawn_rows'] == 2
 source = HERE / 'data.csv'

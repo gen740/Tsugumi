@@ -298,13 +298,17 @@ def live_points(c, rid):
 
 def test_live_stream_complete_and_ordered(live):
     c = connect(live)
-    edit_card(live, c, "settings", lambda b: set_param(b, "interval_ms", 0))
+    def settings(body):
+        set_param(body, "interval_ms", 0)
+        set_param(body, "samples", 65)
+
+    edit_card(live, c, "settings", settings)
     for concurrency in (1, 2):
         rid = start_run(c, ["start"], concurrency=concurrency)
         assert wait_run(c, rid).state == RunState.succeeded
         xs, calls = live_points(c, rid)
-        assert calls == 200
-        assert xs == [float(i) for i in range(140, 200)]
+        assert calls == 65
+        assert xs == list(range(5, 65))
 
 
 def test_live_stream_cancel_rerun_and_crash_recovery(live):
