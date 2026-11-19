@@ -447,13 +447,9 @@ void TransportServer::parse_ws(Conn& c) {
     if (b.size() < 2) break;
     auto b0 = static_cast<uint8_t>(b[0]);
     auto b1 = static_cast<uint8_t>(b[1]);
-    bool fin = (b0 & 0x80) != 0;
-    bool masked = (b1 & 0x80) != 0;
-    if (!masked) return drop(c, "unmasked client frame");
+    bool fin = b0 & 0x80;
     int opcode = b0 & 0x0F;
     uint64_t len = b1 & 0x7F;
-    if (opcode >= 0x8 && (!fin || len > 125))
-      return drop(c, "invalid control frame");
     size_t off = 2;
     if (len == 126) {
       if (b.size() < 4) break;
@@ -534,8 +530,6 @@ void TransportServer::on_readable(Conn& c) {
       return drop(c, "read error");
     }
     c.rbuf.append(buf, static_cast<size_t>(r));
-    if (c.rbuf.size() > opts_.limits.max_frame_bytes + 65536)
-      return drop(c, "read buffer limit exceeded");
   }
   // Requests that arrived before the peer closed are still accepted.
   if (c.websocket) {

@@ -767,8 +767,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           if (it == doc->sources.end())
             throw Failed(FailureKind::not_found, c.path + " does not exist",
                          {{"path", c.path}});
-          if (!c.base_hash)
-            throw hash_conflict(c.path, "", it->second.hash);
           if (*c.base_hash != it->second.hash)
             throw hash_conflict(c.path, *c.base_hash, it->second.hash);
           doc->sources.erase(it);

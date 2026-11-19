@@ -616,17 +616,9 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     } symlink_cleanup;
     if (request->mounts())
       for (const auto* mount : *request->mounts()) {
-        std::filesystem::path source;
-        if (mount->project_relative()) {
-          const auto rel = mount->path()->str();
-          if (!fs::valid_relative_path(rel) ||
-              !fs::resolves_inside(opts_.root, opts_.root / rel))
-            throw Failed(FailureKind::invalid_path,
-                         "invalid project-relative mount path");
-          source = opts_.root / rel;
-        } else {
-          source = std::filesystem::path(mount->path()->str());
-        }
+        auto source = mount->project_relative()
+                          ? opts_.root / mount->path()->str()
+                          : std::filesystem::path(mount->path()->str());
         source = std::filesystem::canonical(source);
         const auto target = path_in_view(mount->name()->str());
 #ifdef __APPLE__

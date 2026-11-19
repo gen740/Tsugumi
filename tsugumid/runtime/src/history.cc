@@ -421,16 +421,9 @@ void History::release_reader(std::unique_ptr<sql::Db> db) {
 }
 
 void History::submit(Work work, std::function<void(bool)> done) {
-  {
-    std::unique_lock<std::mutex> l(wmu_);
-    wspace_.wait(l, [&] { return wq_.size() < 1024 || stopping_; });
-    if (stopping_) {
-      l.unlock();
-      if (done) done(false);
-      return;
-    }
-    wq_.emplace_back(std::move(work), std::move(done));
-  }
+  std::unique_lock<std::mutex> l(wmu_);
+  wspace_.wait(l, [&] { return wq_.size() < 1024 || stopping_; });
+  wq_.emplace_back(std::move(work), std::move(done));
   wcv_.notify_one();
 }
 

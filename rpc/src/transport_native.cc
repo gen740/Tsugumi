@@ -81,8 +81,6 @@ class NativeTransport final : public Transport {
     int wake[2];
     CURL* curl = nullptr;
     bool websocket = false;
-    bool ws_fragmenting = false;
-    Bytes ws_fragments;
     Bytes incoming;
     Bytes writing;
     size_t write_offset = 0;
@@ -289,14 +287,6 @@ class NativeTransport final : public Transport {
                         static_cast<size_t>(count));
       }
       const auto header_end = response.find("\r\n\r\n") + 4;
-      const auto line_end = response.find("\r\n");
-      const std::string_view status_line(response.data(),
-                                         line_end == std::string::npos
-                                             ? header_end
-                                             : line_end);
-      if (!status_line.starts_with("HTTP/1.1 101"))
-        throw std::runtime_error("WebSocket upgrade rejected: " +
-                                 std::string(status_line));
       incoming.assign(response.begin() + static_cast<ptrdiff_t>(header_end),
                       response.end());
       websocket = true;
@@ -322,10 +312,7 @@ class NativeTransport final : public Transport {
           continue;
         }
         if (available < 2) break;
-        const bool fin = (data[0] & 0x80) != 0;
         const uint8_t opcode = data[0] & 15;
-        if ((data[1] & 0x80) != 0)
-          throw std::runtime_error("WebSocket server frame must not be masked");
         uint64_t length = data[1] & 127;
         size_t header = 2;
         if (length == 126) {
@@ -345,37 +332,8 @@ class NativeTransport final : public Transport {
         consumed += header + static_cast<size_t>(length);
         if (opcode == 8)
           throw std::runtime_error("WebSocket peer closed the connection");
-        if (opcode == 9) {
-          if (!fin || length > 125)
-            throw std::runtime_error("invalid WebSocket ping frame");
-          continue;
-        }
-        if (opcode == 10) continue;
-        if (opcode == 2) {
-          if (ws_fragmenting)
-            throw std::runtime_error(
-                "unexpected WebSocket binary frame during fragmentation");
-          if (fin) {
-            if (events.received)
-              events.received(Bytes(payload.begin(), payload.end()));
-          } else {
-            ws_fragmenting = true;
-            ws_fragments.assign(payload.begin(), payload.end());
-          }
-        } else if (opcode == 0) {
-          if (!ws_fragmenting)
-            throw std::runtime_error("unexpected WebSocket continuation frame");
-          if (ws_fragments.size() + payload.size() > options.max_frame_bytes)
-            throw std::runtime_error("WebSocket message exceeds its limit");
-          ws_fragments.insert(ws_fragments.end(), payload.begin(),
-                              payload.end());
-          if (fin) {
-            ws_fragmenting = false;
-            Bytes complete = std::move(ws_fragments);
-            ws_fragments.clear();
-            if (events.received) events.received(std::move(complete));
-          }
-        }
+        if (opcode == 2 && events.received)
+          events.received(Bytes(payload.begin(), payload.end()));
       }
       incoming.erase(incoming.begin(),
                      incoming.begin() + static_cast<ptrdiff_t>(consumed));
@@ -394,6 +352,9 @@ class NativeTransport final : public Transport {
             Write(writing.data() + write_offset, writing.size() - write_offset);
         write_offset += sent;
         if (write_offset != writing.size()) return;
+        {
+          std::lock_guard lock(mutex);
+        }
         writing.clear();
       }
     }

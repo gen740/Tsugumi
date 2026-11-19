@@ -158,23 +158,15 @@ std::string pretty_text(std::string_view compact) {
     switch (c) {
       case '"': {
         size_t end = i + 1;
-        while (end < compact.size() && compact[end] != '"') {
-          if (compact[end] == '\\')
-            end += (end + 1 < compact.size()) ? 2 : 1;
-          else
-            ++end;
-        }
-        const size_t len =
-            end < compact.size() ? (end - i + 1) : (compact.size() - i);
-        out.append(compact, i, len);
-        i = end < compact.size() ? end : compact.size() - 1;
+        while (compact[end] != '"') end += compact[end] == '\\' ? 2 : 1;
+        out.append(compact, i, end - i + 1);
+        i = end;
         break;
       }
       case '{':
       case '[':
         out += c;
-        if (i + 1 < compact.size() &&
-            (compact[i + 1] == '}' || compact[i + 1] == ']')) {
+        if (compact[i + 1] == '}' || compact[i + 1] == ']') {
           out += compact[++i];
         } else {
           ++depth;
@@ -183,7 +175,7 @@ std::string pretty_text(std::string_view compact) {
         break;
       case '}':
       case ']':
-        if (depth > 0) --depth;
+        --depth;
         line();
         out += c;
         break;
