@@ -1,6 +1,6 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LOG_READ_BYTES } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'

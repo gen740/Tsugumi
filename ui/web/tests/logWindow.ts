@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { logLineNumber, LogHeights, LogReadFrames, LogSlice, LogWindow } from '../src/model/logWindow'
+import { logLineNumber, LogHeights, LogRead, LogReadFrames, LogSlice, LogWindow } from '../src/model/logWindow'
 
 function slice(offset: number, text: string, line: number, startsLine: boolean, size?: number): LogSlice {
   const end = offset + new TextEncoder().encode(text).length
@@ -58,6 +58,24 @@ longLine.apply(longLine.request('earlier')!, slice(0, a, 1, true, a.length + b.l
 const measured = new Map([[longLine.blocks[0], 900]])
 assert.equal(new LogHeights(longLine.blocks, measured, 20).position(oldAnchor), 913)
 assert.deepEqual(longLine.blocks.map((block) => block.first), [1, 1])
+
+// Exercise the request offsets as a user traverses a 128 MiB stream with
+// no line delimiters. Holding the stream itself in the test is unnecessary.
+const large = new LogWindow('terminal')
+const size = 128 << 20
+const bytes = 'z'.repeat(1 << 20)
+function load(read: LogRead) {
+  const offset = read.kind === 'tail' ? size - read.limit : read.kind === 'earlier' ? Math.max(0, read.offset - read.limit) : read.offset
+  const end = read.kind === 'earlier' ? read.offset : Math.min(size, offset + read.limit)
+  large.apply(read, { text: bytes.slice(0, end - offset), offset, end, size, line: 1, startsLine: offset === 0 })
+  assert.ok(large.end - large.start <= 2 << 20)
+}
+load(large.request('tail')!)
+large.follow(false)
+for (let request = large.request('earlier'); request; request = large.request('earlier')) load(request)
+assert.equal(large.start, 0)
+for (let request = large.request('later'); request; request = large.request('later')) load(request)
+assert.equal(large.end, size)
 
 const callbacks: (() => void)[] = []
 let reads = 0, applied = 0

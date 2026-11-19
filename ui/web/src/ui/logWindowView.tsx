@@ -138,7 +138,7 @@ const Rows = memo(function Rows({ block }: { block: View['blocks'][number] }) {
 
 /** Keep one native scrollbar for the resident window. Only nearby blocks
  *  mount, so the browser wraps and measures those rows as they are needed. */
-export function LogText({ log, placeholder }: { log: View; placeholder: string }) {
+export const LogText = memo(function LogText({ log, placeholder }: { log: View; placeholder: string }) {
   useObserve(prefs)
   const viewport = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ width: 0, height: 0 })
@@ -233,4 +233,4 @@ export function LogText({ log, placeholder }: { log: View; placeholder: string }
     </div>
     {log.waiting && <div className="log-waiting"><Button small onClick={log.jump}>{L('新しい出力 · 末尾へ')}</Button></div>}
   </div>
-}
+})

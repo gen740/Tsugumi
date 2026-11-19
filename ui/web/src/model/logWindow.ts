@@ -154,15 +154,15 @@ export class LogWindow {
     const finish = () => {
       const first = pieces[0], last = pieces.at(-1)
       if (first && (this.form === 'terminal' || (first.starts && last?.ends))) {
-        const raw = pieces.map((piece) => piece.text).join('')
         // Keep stable scroll anchors for the pieces of a very long plain
         // line. Carriage returns need the whole resident line for redraw.
-        if (this.form === 'terminal' && raw.length >= 64 * 1024 && !raw.includes('\r')) {
+        if (this.form === 'terminal' && pieces.reduce((length, piece) => length + piece.text.length, 0) >= 64 * 1024
+            && !pieces.some((piece) => piece.text.includes('\r'))) {
           for (const piece of pieces) {
             if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
           }
         } else {
-          add(`edge:${first.number}`, first.number, raw)
+          add(`edge:${first.number}`, first.number, pieces.map((piece) => piece.text).join(''))
         }
       }
       pieces = []
