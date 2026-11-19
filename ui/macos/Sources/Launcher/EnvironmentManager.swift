@@ -72,11 +72,7 @@ public actor EnvironmentManager {
         if let pipe = pipes[session] { pipe.receive(value) }
         else if openingTerminals > 0 {
           let previous = pendingOutput[session] ?? [:]
-          var bytes = previous["data"] as? [UInt8] ?? []
-          let maxBuffered = 1 << 20
-          if let incoming = value["data"] as? [UInt8], bytes.count < maxBuffered {
-            bytes.append(contentsOf: incoming.prefix(maxBuffered - bytes.count))
-          }
+          let bytes = (previous["data"] as? [UInt8] ?? []) + (value["data"] as? [UInt8] ?? [])
           pendingOutput[session] = ["data": bytes, "closed": (previous["closed"] as? Bool ?? false) || (value["closed"] as? Bool ?? false)]
         }
       }
