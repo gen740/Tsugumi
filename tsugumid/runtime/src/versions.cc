@@ -228,46 +228,6 @@ auto source_input(const std::string& path) -> bool {
          parts[i + 2] == "src";
 }
 
-// Compare JSON values without whitespace or object member ordering. Document
-// schemas have optional decode-only fields, so they are not serialization
-// types.
-auto canonical_value(const hosq::json::GenericDom<>& value) -> std::string {
-  const auto raw = schema::text(value);
-  const auto first = raw.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return "";
-  if (raw[first] == '{') {
-    schema::v::Mapping<schema::v::String, schema::Json> fields;
-    if (auto error = schema::decode(value, fields))
-      throw std::runtime_error(error->message);
-    std::map<std::string, std::string> sorted;
-    for (const auto& [key, item] : fields.value())
-      sorted[key] = canonical_value(item);
-    std::string out = "{";
-    for (const auto& [key, item] : sorted) {
-      schema::v::String name;
-      name.value() = key;
-      out += (out.size() > 1 ? "," : "") + schema::encode(name) + ":" + item;
-    }
-    return out + "}";
-  }
-  if (raw[first] == '[') {
-    schema::v::Array<schema::Json> items;
-    if (auto error = schema::decode(value, items))
-      throw std::runtime_error(error->message);
-    std::string out = "[";
-    for (const auto& item : items.value())
-      out += (out.size() > 1 ? "," : "") + canonical_value(item);
-    return out + "]";
-  }
-  if (raw[first] == '"') {
-    schema::v::String text;
-    if (auto error = schema::decode(value, text))
-      throw std::runtime_error(error->message);
-    return schema::encode(text);
-  }
-  return raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
-}
-
 auto document_fields(const std::optional<std::string>& text)
     -> std::map<std::string, std::string> {
   std::map<std::string, std::string> out;
@@ -276,7 +236,7 @@ auto document_fields(const std::optional<std::string>& text)
   if (auto error = schema::decode(*text, fields))
     throw std::runtime_error(error->message);
   for (const auto& [name, value] : fields.value())
-    out[name] = canonical_value(value);
+    out[name] = schema::canonical_text(value);
   return out;
 }
 
