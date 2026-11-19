@@ -239,17 +239,20 @@ sys.exit(1)
             assert response.status == 200
             return response
 
-        def event(response):
+        def wait_event(response, kind):
             for line in response:
                 if line.startswith(b"data: "):
-                    return json.loads(line.removeprefix(b"data: "))
-            pytest.fail("The browser event stream closed")
+                    event = json.loads(line.removeprefix(b"data: "))
+                    if event["type"] == kind:
+                        return event
+                    assert event["type"] != "projectClosed", event
+            pytest.fail(f"The browser event stream closed before {kind}")
 
         with ExitStack() as stack:
             def page_events(page):
                 connection = stack.enter_context(closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)))
                 response = open_events(connection, page)
-                assert event(response)["type"] == "eventsConnected"
+                wait_event(response, "eventsConnected")
                 post(port, cookie, "/api/page", {"page": page, "project": str(project)})
                 return response
 
@@ -258,19 +261,19 @@ sys.exit(1)
             pid = json.loads((tmp_path / "host-core/host.ready").read_text())["pid"]
             fail.touch()
             terminate_process(pid)
-            assert event(first)["type"] == "hostUnavailable"
-            assert event(second)["type"] == "hostUnavailable"
+            wait_event(first, "hostUnavailable")
+            wait_event(second, "hostUnavailable")
             post(port, cookie, "/api/project/close", {"page": "first", "path": str(project)})
             # The status retry reauthenticates and both browser streams survive.
             status, body = request(port, "GET", "/api/chatgpt?attemptId=old-host-attempt", {"Cookie": cookie})
             assert status.status == 200, body
-            assert event(first)["type"] == "reconnected"
-            assert event(second)["type"] == "reconnected"
+            wait_event(first, "reconnected")
+            wait_event(second, "reconnected")
             interrupted = json.loads(body)
             assert interrupted["signingIn"] is False
             assert interrupted["outcome"]["ok"] is False
             post(port, cookie, "/api/project/close", {"page": "second", "path": str(project)})
-            assert event(first) == {"type": "projectClosed", "project": str(project.resolve())}
+            assert wait_event(first, "projectClosed")["project"] == str(project.resolve())
 
 
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
