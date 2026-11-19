@@ -118,51 +118,50 @@ class ProjectFixture {
             {}};
   }
 };
+auto Execute(std::string_view raw) -> std::string {
+  const auto request = json::Object(raw);
+  ProjectFixture project;
+  project.saves = json::UInt(json::Get(request, "revision", "0"));
+  for (const auto& [path, encoded] :
+       json::Object(json::Get(request, "files", "{}"))) {
+    if (!tsugumi::crypto::base64_decode(json::String(encoded),
+                                        project.files[path]))
+      throw std::runtime_error("invalid fixture file");
+  }
+  std::string bytes;
+  if (!tsugumi::crypto::base64_decode(json::Text(request, "operation"), bytes))
+    throw std::runtime_error("invalid fixture operation");
+  namespace H = Tsugumi::Host;
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                 bytes.size());
+  if (!verifier.VerifyBuffer<H::ProjectOperateRequest>(nullptr))
+    throw std::runtime_error("invalid operation buffer");
+  const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
+      flatbuffers::GetRoot<H::ProjectOperateRequest>(bytes.data())->UnPack());
+  const auto result = tsugumi::host::ProjectOperations().Execute(
+      *operation, {"ui", {}, {}, {}},
+      [&](const auto& method, const auto& args) {
+        return project.Call(method, args);
+      });
+  json::Members files;
+  for (const auto& [path, content] : project.files)
+    files[path] = json::Quote(tsugumi::crypto::base64(content));
+  return json::Encode(json::Members{{"files", json::Encode(files)},
+                                    {"revision", std::to_string(project.saves)},
+                                    {"reply", result.json}});
+}
 }  // namespace
 
 auto main() -> int {
-  namespace json = tsugumi::json;
-  try {
-    std::string raw((std::istreambuf_iterator<char>(std::cin)), {});
-    const auto request = json::Object(raw);
-    if (request.contains("operation")) {
-      ProjectFixture project;
-      project.saves = json::UInt(json::Get(request, "revision", "0"));
-      for (const auto& [path, encoded] :
-           json::Object(json::Get(request, "files", "{}"))) {
-        if (!tsugumi::crypto::base64_decode(json::String(encoded),
-                                            project.files[path]))
-          throw std::runtime_error("invalid fixture file");
-      }
-      std::string bytes;
-      if (!tsugumi::crypto::base64_decode(json::Text(request, "operation"),
-                                          bytes))
-        throw std::runtime_error("invalid fixture operation");
-      namespace H = Tsugumi::Host;
-      flatbuffers::Verifier verifier(
-          reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
-      if (!verifier.VerifyBuffer<H::ProjectOperateRequest>(nullptr))
-        throw std::runtime_error("invalid operation buffer");
-      const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
-          flatbuffers::GetRoot<H::ProjectOperateRequest>(bytes.data())
-              ->UnPack());
-      const auto result = tsugumi::host::ProjectOperations().Execute(
-          *operation, {"ui", {}, {}, {}},
-          [&](const auto& method, const auto& args) {
-            return project.Call(method, args);
-          });
-      json::Members files;
-      for (const auto& [path, content] : project.files)
-        files[path] = json::Quote(tsugumi::crypto::base64(content));
+  for (std::string line; std::getline(std::cin, line);) {
+    try {
+      const auto result = Execute(line);
+      std::cout << json::Encode(json::Members{{"result", result}}) << std::endl;
+    } catch (const std::exception& error) {
       std::cout << json::Encode(
-          json::Members{{"files", json::Encode(files)},
-                        {"revision", std::to_string(project.saves)},
-                        {"reply", result.json}});
-      return 0;
+                       json::Members{{"error", json::Quote(error.what())}})
+                << std::endl;
     }
-    throw std::runtime_error("Missing project operation");
-  } catch (const std::exception& error) {
-    std::cerr << error.what() << '\n';
-    return 1;
   }
+  return 0;
 }

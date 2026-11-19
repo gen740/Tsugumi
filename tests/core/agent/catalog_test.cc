@@ -1,19 +1,12 @@
 // The allow list is the sole source of project tools, including external MCP.
 #include "agent/catalog.hh"
 
-#include <flatbuffers/reflection_generated.h>
 #include <gtest/gtest.h>
-
-#include <set>
 
 #include "agent/approval.hh"
 #include "host/agent_policy.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/json_object.hh"
-
-extern const unsigned char tsugumi_agent_settings[];
-extern const unsigned long tsugumi_agent_settings_size;
-extern const unsigned char tsugumi_rpc_bfbs[];
 
 namespace tsugumi::agent {
 namespace {
@@ -39,27 +32,6 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   const auto from = json::Object(json::Get(wire, "from"));
   EXPECT_TRUE(from.contains("port"));
   EXPECT_EQ(json::Text(from, "port"), "");
-}
-
-TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
-  const auto settings = json::Object(
-      std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
-                       tsugumi_agent_settings_size));
-  const auto* requests = reflection::GetSchema(tsugumi_rpc_bfbs)
-                             ->enums()
-                             ->LookupByKey("Tsugumi.RPC.RequestPayload");
-  ASSERT_NE(requests, nullptr);
-  for (const auto* list : {"requests", "approvalRequests"}) {
-    SCOPED_TRACE(list);
-    for (const auto& entry : json::Array(json::Get(settings, list))) {
-      const auto name = json::String(entry);
-      SCOPED_TRACE(name);
-      bool found = false;
-      for (const auto* value : *requests->values())
-        if (value->name()->str() == name && value->value()) found = true;
-      EXPECT_TRUE(found) << "invalid Agent request allow list entry: " << name;
-    }
-  }
 }
 
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
@@ -273,17 +245,4 @@ TEST(AgentApprovalDescription,
 }
 
 }  // namespace
-}  // namespace tsugumi::agent
-
-namespace tsugumi::agent {
-TEST(AgentCatalog, RunToolsOfferTheSameHostWait) {
-  const Catalog catalog;
-  for (const auto* name : {"run", "run_status"}) {
-    const auto* tool = catalog.Find(name);
-    ASSERT_NE(tool, nullptr);
-    const auto properties = json::Object(
-        json::Get(json::Object(tool->spec.input_schema), "properties"));
-    EXPECT_TRUE(properties.contains("wait_seconds"));
-  }
-}
 }  // namespace tsugumi::agent

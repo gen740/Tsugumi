@@ -15,9 +15,6 @@ if(TSUGUMI_INSTALLED_CORE)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../hostd/agent/Shared/guide-script.en.json
     DESTINATION share/tsugumi/guide-tests/hostd/agent/Shared
     COMPONENT guide-test-resources)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/service-contract.json
-    DESTINATION share/tsugumi/guide-tests/tests/fixtures
-    COMPONENT guide-test-resources)
   install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../demos
     DESTINATION share/tsugumi/guide-tests
     COMPONENT guide-test-resources)

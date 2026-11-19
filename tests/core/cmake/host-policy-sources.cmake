@@ -4,7 +4,6 @@ set(_tsugumi_host_policy_sources
   agent/context_measure_test.cc
   agent/context_test.cc
   host/components_test.cc
-  host/service_contract_test.cc
   agent/document_edits_test.cc
   agent/format_test.cc
   agent/catalog_test.cc

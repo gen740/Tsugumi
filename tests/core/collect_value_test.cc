@@ -129,14 +129,16 @@ class CollectFiles : public ::testing::Test {
     return {name, kind, false, std::move(type)};
   }
 
-  auto collect(PortKind kind, const std::vector<Value>& members) -> Value {
+  auto collect(PortKind kind, const std::vector<Value>& members,
+               CollectFileLimits limits = {}) -> Value {
     const auto source = port("in", kind, path_type());
     std::string error;
     const auto type = collect_output_type(source, error);
     EXPECT_TRUE(type) << error;
-    return collect_values(
-        source, port("out", PortKind::Directory, type), members,
-        std::vector{state / "runs", state / "inputs"}, output_dir, cancel);
+    return collect_values(source, port("out", PortKind::Directory, type),
+                          members,
+                          std::vector{state / "runs", state / "inputs"},
+                          output_dir, cancel, limits);
   }
 
   // Nothing but the original invocation folder content (no staging left over).
@@ -299,28 +301,29 @@ TEST(CollectValue, RejectsACollectedVectorLargerThan16MiB) {
   }
 }
 
-TEST_F(CollectFiles, RejectsMoreThanOneThousandFiles) {
+TEST_F(CollectFiles, RejectsFilesOverTheFileCountLimit) {
   const auto source = state / "runs" / "tree";
-  for (size_t index = 0; index <= 1000; ++index)
-    write_text(source / std::to_string(index), "");
+  write_text(source / "first", "content");
+  write_text(source / "second", "");
   const auto member = path_value_of(path_type(), PortKind::Directory, source);
   try {
-    (void)collect(PortKind::Directory, {member});
+    (void)collect(PortKind::Directory, {member}, {.files = 1});
     FAIL() << "the file count limit was ignored";
   } catch (const Failed& failure) {
     EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
   }
-  EXPECT_FALSE(stdfs::exists(output_dir));
+  EXPECT_TRUE(invocation_is_clean());
 }
 
 TEST_F(CollectFiles, CountsMembersAgainstTheFilesystemEntryLimit) {
   const auto source = state / "runs" / "tree";
-  stdfs::create_directories(source);
-  for (size_t index = 0; index < 10000; ++index)
-    stdfs::create_directory(source / std::to_string(index));
+  stdfs::create_directories(source / "first");
+  stdfs::create_directory(source / "second");
   const auto member = path_value_of(path_type(), PortKind::Directory, source);
-  EXPECT_THROW((void)collect(PortKind::Directory, {member}), Failed);
-  EXPECT_FALSE(stdfs::exists(output_dir));
+  EXPECT_THROW((void)collect(PortKind::Directory, {member}, {.entries = 2}),
+               Failed);
+  EXPECT_TRUE(invocation_is_clean());
+  EXPECT_NO_THROW((void)collect(PortKind::Directory, {member}, {.entries = 3}));
 }
 
 TEST_F(CollectFiles, SavedArtifactCopyKeepsItsHashAndDiscardsCancelledWrites) {

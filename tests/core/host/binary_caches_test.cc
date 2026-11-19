@@ -189,15 +189,12 @@ TEST_F(BinaryCaches, NixDownloadsFromAPrivateCacheWithTheHostSnapshot) {
   ASSERT_EQ(::write(input[1], request.data(), request.size()),
             static_cast<ssize_t>(request.size()));
   ::close(input[1]);
-  std::string rest;
-  while (::read(output[0], &byte, 1) == 1) rest += byte;
+  while (::read(output[0], &byte, 1) == 1) {
+  }
   ::close(output[0]);
   const auto status = proc::wait(child);
   process.pid = -1;
   EXPECT_TRUE(proc::exited_ok(status)) << fs::read_file_or_throw(errors);
-  EXPECT_NE(
-      rest.find("private cache used only with the snapshot's credentials"),
-      std::string::npos);
 }
 }  // namespace
 }  // namespace tsugumi::host

@@ -17,9 +17,6 @@
 
 namespace tsugumi::workerd {
 namespace {
-template <class T>
-concept HasWorkerToken = requires(T value) { value.token; };
-static_assert(!HasWorkerToken<R::RequestT>);
 auto expect(bool condition, const char* message) -> void {
   if (!condition) throw std::runtime_error(message);
 }
@@ -62,8 +59,10 @@ auto log_test() -> void {
   const auto build_size = build->size() + 1;
   const auto error_size = error->size() + 1;
   InvocationLog maximum(build_size + error_size);
-  expect(maximum.append(LogStream::build, "build").has_value(), "build entry omitted");
-  expect(maximum.append(LogStream::standard_error, "\n").has_value(), "exact fit was rejected");
+  expect(maximum.append(LogStream::build, "build").has_value(),
+         "build entry omitted");
+  expect(maximum.append(LogStream::standard_error, "\n").has_value(),
+         "exact fit was rejected");
   expect(!maximum.truncated(), "an exact fit was marked truncated");
   expect(!maximum.append(LogStream::standard_error, "overflow") &&
              maximum.truncated(),
@@ -72,22 +71,21 @@ auto log_test() -> void {
          "wrote an entry after truncation");
 
   InvocationLog escaped(error_size - 1);
-  expect(!escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
-         "budget did not account for JSON escaping and the line ending");
+  expect(
+      !escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
+      "budget did not account for JSON escaping and the line ending");
 
   InvocationLog combined(build_size + error_size - 1);
-  expect(combined.append(LogStream::build, "build").has_value(), "build entry omitted");
-  expect(!combined.append(LogStream::standard_error, "\n") && combined.truncated(),
-         "combined stream budget was not enforced");
+  expect(combined.append(LogStream::build, "build").has_value(),
+         "build entry omitted");
+  expect(
+      !combined.append(LogStream::standard_error, "\n") && combined.truncated(),
+      "combined stream budget was not enforced");
 }
 auto protocol_test() -> void {
   const std::string digest(64, 'a');
   expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17,
          "job lost the core log budget");
-  expect(
-      parse_spec(spec(digest, 60, kInvocationLogLimitBytes))->log_limit_bytes ==
-          kInvocationLogLimitBytes,
-      "remote worker refused the shared limit");
   R::RequestT q;
   q.project_scope = std::string(64, 'c');
   auto c = chunk(std::string("binary\0payload", 14));

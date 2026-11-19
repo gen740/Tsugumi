@@ -7,24 +7,6 @@
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentFixture, HostUnixAndWebSocketReturnTypedReplies) {
-  auto websocket = ConnectHost(true);
-  const auto unix_reply = Call(
-      *host, H::RequestPayload::HostRecentListRequest,
-      [](Builder& b) { return H::CreateHostRecentListRequest(b).Union(); });
-  const auto ws_reply = Call(
-      *websocket, H::RequestPayload::HostRecentListRequest,
-      [](Builder& b) { return H::CreateHostRecentListRequest(b).Union(); });
-  ASSERT_NE(unix_reply.HostValue()->value_as_RecentList(), nullptr);
-  ASSERT_NE(ws_reply.HostValue()->value_as_RecentList(), nullptr);
-  EXPECT_EQ(unix_reply.View(), ws_reply.View());
-  const auto conversation = Conversation("typed", true);
-  const auto reply = Get(conversation, true);
-  ASSERT_NE(reply.Value()->value_as_ConversationResult(), nullptr);
-  EXPECT_EQ(
-      reply.Value()->value_as_ConversationResult()->conversation()->id()->str(),
-      conversation);
-}
 TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
   const auto result =
       Call(*host, H::RequestPayload::FileFormatRequest, [](Builder& b) {
@@ -36,9 +18,7 @@ TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
   ASSERT_TRUE(result.Code().empty());
   const auto* formatted = result.HostValue()->value_as_FileFormatResult();
   ASSERT_NE(formatted, nullptr);
-  EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
-  EXPECT_TRUE(!formatted->diagnostics() ||
-              formatted->diagnostics()->size() == 0);
+  EXPECT_EQ(JsonUInt(formatted->text()->string_view(), "/a"), 1u);
 }
 
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {

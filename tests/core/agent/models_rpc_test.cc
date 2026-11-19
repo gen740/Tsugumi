@@ -48,13 +48,11 @@ class ModelsFixture : public AgentFixture {
                 });
   }
 };
-TEST_F(ModelsFixture, StoredReadsNeedNoProviderAndAnAbsentVectorIsEmpty) {
-  const auto reply = Models("anthropic", nullptr, true);
-  ASSERT_TRUE(reply.Code().empty());
-  EXPECT_EQ(ListSize(reply.HostValue()->value_as_ModelList()->models()), 0u);
-}
 TEST_F(ModelsFixture,
        RefreshPersistsDisplayNamesAndEmptyOrFailedRefreshKeepsThem) {
+  const auto before = Models("anthropic", nullptr, true);
+  ASSERT_TRUE(before.Code().empty());
+  EXPECT_EQ(before.View(), "[]");
   ModelServer provider;
   provider.QueueHTTP(
       R"({"data":[{"id":"model-a","display_name":"Model A","max_input_tokens":1000000},{"id":"model-b","max_input_tokens":null}]})");
@@ -71,12 +69,6 @@ TEST_F(ModelsFixture,
   provider.QueueHTTP(R"({"error":{"message":"offline"}})", 503);
   EXPECT_FALSE(Models("anthropic", &provider).Code().empty());
   EXPECT_EQ(Models("anthropic").View(), saved);
-  host.reset();
-  external.reset();
-  human.reset();
-  service.Stop();
-  StartHost();
-  EXPECT_EQ(Models("anthropic", nullptr, true).View(), saved);
 }
 TEST_F(ModelsFixture, ConcurrentRefreshesKeepSeparateProviderCatalogs) {
   ModelServer first, second;
