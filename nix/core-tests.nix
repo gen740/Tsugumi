@@ -20,9 +20,16 @@
   inputTypes,
   # The narrow consumers configure only the target they actually execute.
   target ? null,
+  nativeDarwin ? false,
 }:
 clangStdenv.mkDerivation {
-  pname = if target == null then "tsugumi-core-tests" else target;
+  pname =
+    if nativeDarwin then
+      "tsugumi-native-darwin-tests"
+    else if target == null then
+      "tsugumi-core-tests"
+    else
+      target;
   inherit (core) version;
   src = lib.fileset.toSource {
     root = ../.;
@@ -31,16 +38,18 @@ clangStdenv.mkDerivation {
     fileset = lib.fileset.unions (
       if target == null then
         [
+          ../hostd/tools/test-binary-cache.py
+          (lib.fileset.fileFilter (
+            file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
+          ) ../tests/core)
+        ]
+        ++ lib.optionals (!nativeDarwin) [
           ../hostd/agent/Shared/guide-script.json
           ../hostd/agent/Shared/guide-script.en.json
-          ../hostd/tools/test-binary-cache.py
           ../demos
           ../tests/fixtures/layout-invalid.json
           ../tests/fixtures/layout-scenes.json
           ../tests/fixtures/wire-routes.json
-          (lib.fileset.fileFilter (
-            file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
-          ) ../tests/core)
         ]
       else
         [
@@ -61,6 +70,17 @@ clangStdenv.mkDerivation {
           tsugumi_document_edit_driver = [
             ../tests/core/cmake/host-edit-driver.cmake
             ../tests/core/agent/document_edit_driver.cc
+          ];
+          tsugumi_arm_shell_tests = [
+            ../tests/core/cmake/host-rpc.cmake
+            ../tests/core/cmake/host-rpc-host-sources.cmake
+            ../tests/core/cmake/host-rpc-environment-sources.cmake
+            ../tests/core/cmake/host-rpc-settings-sources.cmake
+            ../tests/core/cmake/host-rpc-versions-sources.cmake
+            ../tests/core/agent/project_rpc_test.cc
+            (lib.fileset.fileFilter (file: file.hasExt "hh") ../tests/core/agent)
+            ../tests/core/agent_fixture_server.cc
+            ../tests/core/agent_fixture_server.hh
           ];
           tsugumi_vm_lifetime_tests = [
             ../tests/core/cmake/vm.cmake
@@ -96,6 +116,10 @@ clangStdenv.mkDerivation {
     "-DTSUGUMI_CORE_TEST_SUPPORT=${core.testSupport}"
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
   ]
+  ++ lib.optional nativeDarwin "-DTSUGUMI_NATIVE_DARWIN_TESTS=ON"
+  ++ lib.optional (
+    target == "tsugumi_arm_shell_tests"
+  ) "-DTSUGUMI_TEST_MOCK=${mock}/libexec/tsugumi-tests/tsugumid-mock"
   ++ (
     if target == null then
       [
@@ -118,10 +142,14 @@ clangStdenv.mkDerivation {
     ln -s ${runtime}/share/tsugumi/* "$out/share/tsugumi/"
     ln -s ${runtime}/{lib,include} "$out/"
     ln -s ${mock}/libexec/tsugumi-tests/tsugumid-mock "$out/libexec/tsugumi-tests/"
-    ln -s ${inputTypes}/libexec/tsugumi-tests/tsugumi_input_types_tests "$out/libexec/tsugumi-tests/"
+    ${lib.optionalString (!nativeDarwin) ''
+      ln -s ${inputTypes}/libexec/tsugumi-tests/tsugumi_input_types_tests "$out/libexec/tsugumi-tests/"
+    ''}
     makeWrapper ${runtime}/bin/tsugumi-test-env "$out/bin/tsugumi-test-env" \
       --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
-      --set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests"
+      ${lib.optionalString (
+        !nativeDarwin
+      ) ''--set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests"''}
   '';
   meta = {
     description = "Reusable public RPC test binaries and runner environment for Tsugumi";

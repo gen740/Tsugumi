@@ -1,26 +1,30 @@
 set(_tsugumi_host_policy_sources
-  agent/file_result_test.cc
   agent/store_test.cc
-  agent/context_measure_test.cc
-  agent/context_test.cc
-  host/components_test.cc
-  agent/document_edits_test.cc
   agent/format_test.cc
-  agent/catalog_test.cc
   agent/attached_folder_test.cc
-  agent/save_policy_test.cc
-  agent/skills_read_test.cc
-  agent/thought_schedule_test.cc
-  host/layout_test.cc
-  host/layout_service_test.cc
-  host/schema_encode_test.cc
   agent_fixture_server.cc
-  agent/helper_scope_test.cc
-  agent/tool_arguments_test.cc
-  agent/project_files_test.cc
-  host/agent_exclude_test.cc
-  host/save_inspection_test.cc
-  host/project_edit_test.cc
-  host/project_operations_test.cc
-  host/file_miss_test.cc
 )
+if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
+  list(APPEND _tsugumi_host_policy_sources
+    agent/file_result_test.cc
+    agent/context_measure_test.cc
+    agent/context_test.cc
+    host/components_test.cc
+    agent/document_edits_test.cc
+    agent/catalog_test.cc
+    agent/save_policy_test.cc
+    agent/skills_read_test.cc
+    agent/thought_schedule_test.cc
+    host/layout_test.cc
+    host/layout_service_test.cc
+    host/schema_encode_test.cc
+    agent/helper_scope_test.cc
+    agent/tool_arguments_test.cc
+    agent/project_files_test.cc
+    host/agent_exclude_test.cc
+    host/save_inspection_test.cc
+    host/project_edit_test.cc
+    host/project_operations_test.cc
+    host/file_miss_test.cc
+  )
+endif()
