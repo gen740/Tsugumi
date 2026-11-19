@@ -686,6 +686,7 @@ extension ProjectOperationTests {
     let (s, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
     s.cardIdProvider = { name, _ in name }
+    s.prepareLayout = { _, _, _ in #"{"cards":{"auto":{"x":50,"y":4000}}}"# }
     let here = CGPoint(x: 4000, y: 4000)
     var placements: [Bool] = []
     s.operateProject = { request in
@@ -693,13 +694,17 @@ extension ProjectOperationTests {
       #expect(add.x == here.x && add.y == here.y && add.template == "draft")
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
-      d.projectJson = nil
-      let x = add.automaticPlacement ? 50 : 4000
-      d.layoutJson = #"{"cards":{"\#(add.id)":{"x":\#(x),"y":4000}}}"#
+      let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#
+      d.projectJson = #"{"canvas":{"cards":[\#(cards)],"connections":[]}}"#
+      if !add.automaticPlacement {
+        d.layoutJson = #"{"cards":{"drop":{"x":4000,"y":4000}}}"#
+      }
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
     }
     let auto = try await s.addCard(template: .draft, in: [], at: here, name: "auto", automaticPlacement: true)
-    #expect(s.position(auto).x == 50)
+    await s.refreshDerivedLayout().value
+    #expect(s.layout["cards"]?["auto"] == nil)
+    #expect(s.position(auto) == CGPoint(x: 50, y: 4000))
     let dropped = try await s.addCard(template: .draft, in: [], at: here, name: "drop")
     #expect(s.position(dropped) == here)
     #expect(placements == [true, false])
