@@ -104,7 +104,9 @@ def test_reload_stops_at_the_document_budget_and_identifies_the_path(project, co
     daemon.stop()
     daemon.start(expect_exit=True)
     assert daemon.proc.returncode != 0
-    assert "externals/c/layout.json" in daemon.diagnostics()
+    startup = json.loads((daemon.control / "server.startup-error.json").read_text())
+    assert startup["kind"] == "resource_limit"
+    assert "externals/c/layout.json" in startup["message"]
 
 
 def digest(path):

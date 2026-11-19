@@ -30,6 +30,18 @@ constexpr uintmax_t kCompactBytes = 8u << 20;
 constexpr size_t kKeepReceipts = 2000;
 constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
+auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
+  try {
+    return load_from_disk(root);
+  } catch (const DocumentError& e) {
+    std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
+                                                          e.args.end());
+    throw Failed(
+        failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
+        e.what(), args);
+  }
+}
+
 std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 
 // What a save may write: the documents and the source areas, never
@@ -242,7 +254,7 @@ void Store::open() {
       exec_rev = doc_->execution_rev;
     }
   }
-  auto loaded = load_from_disk(opts_.root);
+  auto loaded = load_document(opts_.root);
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
   auto doc = finalize(loaded);
@@ -885,18 +897,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
 }
 
 namespace {
-auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
-  try {
-    return load_from_disk(root);
-  } catch (const DocumentError& e) {
-    std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
-                                                          e.args.end());
-    throw Failed(
-        failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
-        e.what(), args);
-  }
-}
-
 void check_ports(const Resolution& resolution) {
   // Endpoint validity is a document invariant, including when a Draft becomes
   // implemented. Never infer a port, even if there is only one candidate.
