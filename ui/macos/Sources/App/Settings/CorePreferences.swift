@@ -19,10 +19,9 @@ final class CorePreferences {
   init() {
     Task { [weak self] in
       _ = await CoreHostClient.shared.observeHost { [weak self] event in
-        guard event["profile"] as? String == "desktop" else { return }
         if event["type"] as? String == "SettingsChanged" {
           Task { @MainActor [weak self] in await self?.reload() }
-        } else if event["type"] as? String == "ProviderChanged" {
+        } else if event["type"] as? String == "ProviderChanged", event["profile"] as? String == "desktop" {
           Task { @MainActor [weak self] in
             await self?.refreshProviderAvailability()
             self?.summarySelection = try? await CoreHostClient.shared.modelSelection("summary")

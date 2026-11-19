@@ -804,10 +804,8 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
   return result;
 }
 
-auto Tools::RequireHelperPermission(const std::string& conversation,
-                                    const HelperScope& boundary) -> void {
-  if (!boundary.scoped() &&
-      !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
+auto Tools::RequireHelperPermission(const HelperScope& boundary) -> void {
+  if (!boundary.scoped() && !host_settings->AllowUnscopedHelpers())
     throw Failure("permission_denied",
                   "Unscoped helpers are disabled; ask the parent for "
                   "explicit read_cards, write_cards and run_cards");
@@ -962,11 +960,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   if (call.name == "delegate") {
     if (c.role == "guide") return {"Guide cannot delegate", true, {}, {}};
-    if (boundary) RequireHelperPermission(conversation, *boundary);
+    if (boundary) RequireHelperPermission(*boundary);
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
     if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
     const auto policy =
-        host_settings->AllowUnscopedHelpers(providers->Profile(conversation));
+        host_settings->AllowUnscopedHelpers();
     std::set<std::string> names;
     for (const auto& task : tasks) {
       const auto spec = json::Object(task);
@@ -1051,7 +1049,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
-    RequireHelperPermission(conversation, *boundary);
+    RequireHelperPermission(*boundary);
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
@@ -1109,7 +1107,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     throw Failure("permission_denied", "The guide cannot change projects");
   if (call.name == "project_shell") {
     const bool english =
-        host_settings->Language(providers->Profile(conversation)) == "en";
+        host_settings->Language() == "en";
     const std::string reason =
         english
             ? "Execute shell commands as the project user in its environment. "
@@ -1305,7 +1303,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (stop.stop_requested()) throw Cancelled();
     if (call.name == "version_graph")
       args["language"] = json::Quote(
-          host_settings->Language(providers->Profile(conversation)));
+          host_settings->Language());
     if (call.name == "project_copy" || call.name == "project_shell") {
       result = FileOperation(conversation, project, call.name, args, op_id,
                              boundary, stop, file_resources);
@@ -1600,7 +1598,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
         [this, id, boundary, reconcile](
             const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
-        RequireHelperPermission(id, *boundary);
+        RequireHelperPermission(*boundary);
         const auto call = ResolveCall(
             requested_call,
             boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);

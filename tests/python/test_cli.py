@@ -604,7 +604,7 @@ def core_settings(root: Path, changes: dict | None = None):
 
 @needs_server
 def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
-    root, _, prefs, port, cookie = vm_server
+    root, _, _, port, cookie = vm_server
     # Start hostd, then act as the app through Host RPC.
     api(port, cookie, "GET", "/api/settings")
     stream = http.client.HTTPConnection("127.0.0.1", port)
@@ -624,7 +624,7 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
         s = api(port, cookie, "GET", "/api/settings")
     finally:
         stream.close()
-    assert s["revision"]["desktop"] == revision
+    assert s["revision"] == revision
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)

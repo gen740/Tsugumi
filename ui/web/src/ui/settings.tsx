@@ -163,7 +163,7 @@ type VMKey = 'vmCpus' | 'vmMemoryGiB' | 'vmStoreGiB'
 /** The shared VM's size, kept by hostd and used from the VM's next start. */
 function VMResourceSettings() {
   const [runtime, setRuntime] = useState<VMRuntime>()
-  const [settings, setSettings] = useState<Record<VMKey, number> & { revision: Record<string, number> }>()
+  const [settings, setSettings] = useState<Record<VMKey, number> & { revision: number }>()
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
   const load = async () => {

@@ -108,8 +108,7 @@ struct Tools {
                     const std::string& scope = {}) -> std::string;
   auto Hooks(const std::string& id, bool helper = false,
              std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks;
-  auto RequireHelperPermission(const std::string& conversation,
-                               const HelperScope& boundary) -> void;
+  auto RequireHelperPermission(const HelperScope& boundary) -> void;
   auto Handle(const RequestIn& request, bool human,
               std::unique_lock<std::recursive_mutex>& lock) -> std::string;
 

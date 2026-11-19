@@ -27,7 +27,7 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
        {"projects", "folders", "access_requests", "grants", "providers",
         "access_prompt_items", "operation_approvals", "credentials",
         "environment_projects", "project_paths", "skill_catalogs",
-        "conversation_locations", "model_lists", "settings", "accounts",
+        "conversation_locations", "model_lists", "setting_values", "settings_revision", "accounts",
         "provider_connections", "oauth_hosts"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");

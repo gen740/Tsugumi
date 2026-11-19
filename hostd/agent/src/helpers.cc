@@ -82,7 +82,6 @@ auto Helpers::RunHelper(const std::string& conversation,
                         const std::string& parent_call, size_t index,
                         const std::string& task, std::stop_token stop,
                         const std::string& authorization) -> std::string {
-  const auto profile = providers->Profile(conversation);
   std::shared_ptr<std::mutex> gate;
   {
     std::lock_guard lock(mutex);
@@ -95,7 +94,7 @@ auto Helpers::RunHelper(const std::string& conversation,
   }
   std::lock_guard helper_lock(*gate);
   const auto spec = json::Object(task);
-  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers(profile));
+  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers());
   const auto name = json::Text(spec, "name");
   const auto digest = crypto::sha256_hex(task);
   const auto scope = parent_call + "." + std::to_string(index) + ".";

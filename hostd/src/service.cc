@@ -723,8 +723,6 @@ struct Service::State {
         lock.lock();
         if (snapshot) {
           H::SettingsChangedT changed;
-          changed.profile =
-              r->value_as_SettingsUpdateRequest()->profile()->str();
           changed.revision = snapshot->revision();
           events->Publish(wire::HostEvent(std::move(changed)));
         }

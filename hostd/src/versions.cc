@@ -85,7 +85,7 @@ auto Versions::Note(const RequestIn& request, bool human,
   const auto factual = host::ChangeText(*changes, english);
   const auto saved_summary = host::ReadSummary(root, commit, english);
   Tsugumi::Service::TextResultT result;
-  if (host_settings->VersionNoteMode(profile) == "mechanical") {
+  if (host_settings->VersionNoteMode() == "mechanical") {
     result.text = factual;
   } else if (!saved_summary.empty()) {
     result.text = saved_summary;

@@ -311,21 +311,23 @@ struct Settings::State {
     for (auto& [_, a] : attempts)
       if (a->worker.joinable()) a->worker.join();
   }
-  auto Values(const std::string& profile) -> std::pair<uint64_t, j::Members> {
-    auto values = Defaults();
-    uint64_t revision = 0;
-    auto q = db.prepare("SELECT revision,json FROM settings WHERE profile=?");
-    q.bind(1, profile);
-    if (q.step()) {
-      revision = q.u64(0);
-      for (const auto& [k, v] : j::Object(q.text(1))) values[k] = v;
-    }
-    return {revision, values};
+  auto Revision() -> uint64_t {
+    auto query = db.prepare("SELECT revision FROM settings_revision");
+    query.step();
+    return query.u64(0);
   }
-  auto Get(const std::string& profile) -> H::SettingsT {
-    const auto [rev, values] = Values(profile);
+  auto Values(const std::string& surface = {}) -> j::Members {
+    auto values = Defaults();
+    auto query = db.prepare(
+        "SELECT key,value FROM setting_values WHERE scope IN ('',?)");
+    query.bind(1, surface);
+    while (query.step()) values[query.text(0)] = query.text(1);
+    return values;
+  }
+  auto Get(const std::string& surface) -> H::SettingsT {
+    const auto values = Values(surface);
     H::SettingsT out;
-    out.revision = rev;
+    out.revision = Revision();
     for (const auto& [k, v] : values) {
       auto item = std::make_unique<H::SettingT>();
       item->key = k;
@@ -722,13 +724,15 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       case H::RequestPayload::SettingsUpdateRequest: {
         const auto& p = *request.value_as_SettingsUpdateRequest();
         sql::Transaction tx(s.db);
-        auto [revision, values] = s.Values(p.profile()->str());
-        if (revision != p.revision()) {
+        const auto surface = p.profile()->str();
+        if (surface.empty()) throw std::runtime_error("Missing settings surface");
+        if (s.Revision() != p.revision()) {
           S::FailureT f;
           f.code = "conflict";
           f.message = "Settings changed; read the latest revision";
           return agent::wire::HostReply(id, std::move(f));
         }
+        auto values = s.Values(surface);
         if (p.changes())
           for (const auto* item : *p.changes()) {
             const auto key = item->key()->str();
@@ -767,9 +771,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "en")
               throw std::runtime_error("Unknown language");
             if (key == "agent.trustedFolders") {
-              if (p.profile()->str() != "desktop")
-                throw std::runtime_error(
-                    "Trusted folders belong to the host profile");
               const auto previous = j::Array(j::Get(values, key, "[]"));
               std::vector<std::string> folders;
               for (const auto& raw : j::Array(value)) {
@@ -796,8 +797,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               value = j::Encode(folders);
             }
             if (key.starts_with("vm.")) {
-              if (p.profile()->str() != "desktop")
-                throw std::runtime_error("The VM belongs to the host profile");
               const auto limits = VMResourceLimits();
               const auto [low, high] =
                   key == "vm.cpus"        ? std::pair{1u, limits.cpus}
@@ -846,15 +845,17 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 key.find("credential") != key.npos ||
                 key.find("key") != key.npos)
               throw std::runtime_error("Secrets are not settings");
+            auto write = s.db.prepare(
+                "INSERT OR REPLACE INTO setting_values VALUES(?,?,?)");
+            write.bind(1, key == "agent.skillFolders" ? surface : "")
+                .bind(2, key)
+                .bind(3, value)
+                .run();
             values[key] = value;
           }
-        auto q = s.db.prepare("INSERT OR REPLACE INTO settings VALUES(?,?,?)");
-        q.bind(1, p.profile()->str())
-            .bind(2, revision + 1)
-            .bind(3, j::Encode(values))
-            .run();
+        s.db.exec("UPDATE settings_revision SET revision=revision+1");
         tx.commit();
-        return agent::wire::HostReply(id, s.Get(p.profile()->str()));
+        return agent::wire::HostReply(id, s.Get(surface));
       }
       case H::RequestPayload::ProviderSetRequest: {
         const auto& p = *request.value_as_ProviderSetRequest();
@@ -1024,15 +1025,15 @@ auto Settings::Redact(std::string text) -> std::string {
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
-auto Settings::AllowUnscopedHelpers(const std::string& profile) -> bool {
+auto Settings::AllowUnscopedHelpers() -> bool {
   std::lock_guard lock(state_->mutex);
-  const auto values = state_->Values(profile).second;
+  const auto values = state_->Values();
   return j::Bool(j::Get(values, "agent.allowUnscopedHelpers"));
 }
 
 auto Settings::TrustedFolders() -> std::vector<std::string> {
   std::lock_guard lock(state_->mutex);
-  const auto [revision, values] = state_->Values("desktop");
+  const auto values = state_->Values();
   std::vector<std::string> folders;
   for (const auto& raw : j::Array(j::Get(values, "agent.trustedFolders", "[]")))
     folders.push_back(j::String(raw));
@@ -1066,7 +1067,7 @@ auto VMResourceLimits() -> H::VMResourcesT {
 }
 auto Settings::VMResources() -> H::VMResourcesT {
   std::lock_guard lock(state_->mutex);
-  const auto values = state_->Values("desktop").second;
+  const auto values = state_->Values();
   auto out = VMDefaultResources();
   const auto pick = [&](const char* key, uint32_t& field) {
     if (const auto n = j::UInt(j::Get(values, key, "0")))
@@ -1077,14 +1078,14 @@ auto Settings::VMResources() -> H::VMResourcesT {
   pick("vm.storeGiB", out.store_gib);
   return out;
 }
-auto Settings::Language(const std::string& profile) -> std::string {
+auto Settings::Language() -> std::string {
   std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(profile).second, "app.language", "ja");
+  return j::Text(state_->Values(), "app.language", "ja");
 }
 
-auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
+auto Settings::VersionNoteMode() -> std::string {
   std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(profile).second, "versions.noteMode",
+  return j::Text(state_->Values(), "versions.noteMode",
                  "mechanical");
 }
 
@@ -1095,7 +1096,7 @@ auto Settings::ModelSelection(const std::string& profile,
     throw std::runtime_error("Unknown model purpose");
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
-  const auto values = s.Values(profile).second;
+  const auto values = s.Values();
   S::ProviderSelectionT out;
   out.profile = profile;
   out.purpose = purpose;
@@ -1177,7 +1178,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   std::lock_guard lock(s.mutex);
   auto profile = j::Text(selection, "profile");
   if (profile.empty()) profile = "desktop";
-  const auto values = s.Values(profile).second;
+  const auto values = s.Values();
   auto id = j::Text(selection, "provider_id");
   if (id.empty()) id = j::Text(values, "agent.provider", "anthropic");
   if (id != "anthropic" && id != "openai" && id != "chatgpt" && id != "fixture")

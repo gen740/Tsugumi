@@ -41,7 +41,7 @@ TEST_F(AgentFixture,
     return Call(c, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
       const auto entry =
           H::CreateSetting(b, b.CreateString(key), b.CreateString(value));
-      return H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"),
+      return H::CreateSettingsUpdateRequest(b, b.CreateString(key == "agent.model" ? "desktop" : "web:test"),
                                             revision,
                                             b.CreateVector(std::vector{entry}))
           .Union();
@@ -65,6 +65,27 @@ TEST_F(AgentFixture,
   const auto after = SettingsGet(*host);
   EXPECT_EQ(after.HostValue()->value_as_Settings()->revision(), revision + 2);
   EXPECT_NE(Bytes(after).find("retry after reading"), std::string::npos);
+}
+TEST_F(AgentFixture, MixedSettingsPatchSharesHostValuesAndIsolatesSkillFolders) {
+  constexpr auto folders = R"([{"path":"/skills","enabled":true}])";
+  const auto initial = SettingsGet(*host);
+  const auto patch = SettingsPatch(
+      *host, "web:test", {{"agent.skillFolders", folders},
+                           {"agent.allowUnscopedHelpers", "true"}});
+  ASSERT_TRUE(patch.Code().empty());
+  const auto before = initial.HostValue()->value_as_Settings()->revision();
+  const auto desktop = SettingsGet(*host);
+  const auto web = SettingsGet(*host, "web:test");
+  const auto value = [](const Reply& reply, const std::string& key) {
+    for (const auto* entry : *reply.HostValue()->value_as_Settings()->values())
+      if (entry->key()->str() == key) return entry->value_json()->str();
+    return std::string{};
+  };
+  EXPECT_EQ(desktop.HostValue()->value_as_Settings()->revision(), before + 1);
+  EXPECT_EQ(web.HostValue()->value_as_Settings()->revision(), before + 1);
+  EXPECT_EQ(value(desktop, "agent.allowUnscopedHelpers"), "true");
+  EXPECT_EQ(value(desktop, "agent.skillFolders"), "[]");
+  EXPECT_EQ(value(web, "agent.skillFolders"), folders);
 }
 TEST_F(AgentFixture, WebPermissionUpdatesKeepTheNativeNixPermission) {
   ASSERT_TRUE(

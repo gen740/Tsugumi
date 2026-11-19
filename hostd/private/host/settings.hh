@@ -45,13 +45,13 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
-  auto AllowUnscopedHelpers(const std::string& profile) -> bool;
+  auto AllowUnscopedHelpers() -> bool;
   auto TrustedFolders() -> std::vector<std::string>;
-  // vm.cpus, vm.memoryGiB and vm.storeGiB of the host profile; 0 (the default)
+  // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
   // takes VMDefaultResources' value.
   auto VMResources() -> Tsugumi::Host::VMResourcesT;
-  auto Language(const std::string& profile) -> std::string;
-  auto VersionNoteMode(const std::string& profile) -> std::string;
+  auto Language() -> std::string;
+  auto VersionNoteMode() -> std::string;
   auto VersionNoteProvider(const std::string& profile,
                            const std::string& anthropic_keys,
                            const std::string& openai_keys)

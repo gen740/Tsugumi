@@ -393,7 +393,7 @@ enum ServiceWire {
     case is Tsugumi_Host_HostRuntimeT: return ["type": "HostRuntime", "value": value]
     case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
-    case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
+    case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "revision": changed.revision]
     default: throw RPCError.disconnected
     }
   }

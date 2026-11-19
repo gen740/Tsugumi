@@ -64,11 +64,9 @@ try {
     listeners: () => 0, broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
-  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 2 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 2 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
-  host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
-  assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
   await call('search', { path: folders[1], text: 'Only A' })
   assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')
@@ -88,12 +86,12 @@ try {
   assert.equal(b.permission, null)
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
-  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 3 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 3 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, model)
   busy = true
   model = 'gpt-6.1-sol'
-  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 4 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 4 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)

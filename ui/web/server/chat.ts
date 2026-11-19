@@ -72,41 +72,38 @@ interface Settings {
 }
 
 // The host keeps presentation snapshots only; persistence and validation are RPC.
-const SHARED_KEYS: Record<string, string> = {
+const SETTINGS_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
+  trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB',
+  skillFolders: 'agent.skillFolders',
 }
-const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
-const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
-const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
-const revisions: Record<string, number> = {}
+const providerProfile = () => ctx.desktop ? 'desktop' : localProfile()
+type SettingsReply = { revision: number; values: { key: string; value_json: string }[] }
+let revision = 0
 let snapshot = {} as Settings
 const settings = (): Settings => snapshot
-async function loadSettings() {
-  await core.provisionEnvironment()
-  const next: any = {}
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
-    const reply = await core.getSettings(profile)
-    revisions[profile] = reply.revision
-    const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
-    for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) next[name] = values[key]
-  }
-  snapshot = next
+function applySettings(reply: SettingsReply) {
+  if (reply.revision < revision) return
+  const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
+  snapshot = Object.fromEntries(Object.entries(SETTINGS_KEYS).map(([name, key]) => [name, values[key]])) as unknown as Settings
+  revision = reply.revision
   setLanguage(snapshot.language)
 }
-async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
-  const patches = new Map<string, { key: string; value_json: string }[]>()
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
-    const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
-    if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
+async function loadSettings() {
+  await core.provisionEnvironment()
+  applySettings(await core.getSettings(localProfile()))
+}
+async function patchSettings(change: Partial<Settings>, expected = revision) {
+  const changes = Object.entries(SETTINGS_KEYS).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
+  if (changes.length) {
+    applySettings(await core.user.call<SettingsReply>('SettingsUpdateRequest', {
+      profile: localProfile(), revision: expected, changes, client: 'web',
+    }))
   }
-  for (const [profile, changes] of patches) {
-    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes, client: 'web' })
-  }
-  await loadSettings()
 }
 const PROVIDERS = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } } as const
 type KeyedProvider = keyof typeof PROVIDERS
@@ -115,16 +112,16 @@ function keyedProvider(id: unknown): KeyedProvider {
   throw ctx.httpError(400, 'Unknown provider')
 }
 async function keySource(p: KeyedProvider) {
-  return core.keys.source(p, settingsProfile())
+  return core.keys.source(p, providerProfile())
 }
 async function saveKey(p: KeyedProvider, key: string) {
-  const source = await core.keys.save(p, key, settingsProfile())
+  const source = await core.keys.save(p, key, providerProfile())
   return source === 'keychain'
     ? L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
     : L('hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
 }
 async function deleteKey(p: KeyedProvider) {
-  await core.keys.delete(p, settingsProfile())
+  await core.keys.delete(p, providerProfile())
   return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
 
@@ -150,7 +147,7 @@ async function chatProvider(): Promise<ProviderConfig> {
 
 /** Presentation labels and opaque service references for the chosen model. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
-  return { ...await providerDisplay(id), profile: settingsProfile(), accountProfile: localProfile() }
+  return { ...await providerDisplay(id), profile: providerProfile(), accountProfile: localProfile() }
 }
 
 async function providerDisplay(id: ProviderId): Promise<ProviderConfig> {
@@ -220,7 +217,7 @@ async function guide(): Promise<RemoteAgent> {
 
 /** The host chooses the guide/summary model from settings and its catalog. */
 async function purposeProvider(purpose: 'guide' | 'summary'): Promise<ProviderConfig> {
-  const value = await core.user.call<{ provider: { providerId: ProviderId; model: string } }>('ModelSelectionRequest', { profile: settingsProfile(), purpose })
+  const value = await core.user.call<{ provider: { providerId: ProviderId; model: string } }>('ModelSelectionRequest', { profile: providerProfile(), purpose })
   return { ...await providerFor(value.provider.providerId), model: value.provider.model, purpose }
 }
 
@@ -456,10 +453,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
+  revision = 0
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
-    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) {
+    if (event.type === 'SettingsChanged') {
       void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }))
     }
   })
@@ -477,14 +475,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'GET /api/settings': async () => ({
     ...settings(),
-    revision: { ...revisions },
+    revision,
     ...await modelCatalogs(),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
   'POST /api/settings': async (b) => {
-    await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
-    return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
+    await patchSettings(b ?? {}, b?.revision)
+    return { ...settings(), revision, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
   'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),
   'POST /api/versions/graph': async (b) => {
@@ -502,7 +500,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
     const [anthropic_key_profile, openai_key_profile] = await Promise.all([core.keys.provision('anthropic'), core.keys.provision('openai')])
-    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), profile: settingsProfile(), language: settings().language, anthropic_key_profile, openai_key_profile })
+    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), profile: providerProfile(), language: settings().language, anthropic_key_profile, openai_key_profile })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),

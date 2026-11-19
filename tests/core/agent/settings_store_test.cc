@@ -304,7 +304,8 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
   EXPECT_FALSE(update("desktop", "vm.memoryGiB", "1"));
   EXPECT_FALSE(update("desktop", "vm.storeGiB", "8"));
   EXPECT_FALSE(update("desktop", "vm.storeGiB", Quote("64")));
-  EXPECT_FALSE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_TRUE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_EQ(service.VMResources().cpus, 2u);
   EXPECT_FALSE(update("desktop", "vm.other", "2"));
   EXPECT_TRUE(update("desktop", "vm.cpus", "0"));
   EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
@@ -321,7 +322,7 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   host::Settings service(
       directory.path, credentials,
       std::move(memory), host::Settings::KeyStorage::Host);
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
+  EXPECT_EQ(service.VersionNoteMode(), "mechanical");
   const auto update = [&](const std::string& mode, uint64_t revision,
                           const std::string& key = "versions.noteMode") {
     flatbuffers::FlatBufferBuilder b;
@@ -345,12 +346,11 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   auto reply = update("\"agent\"", 0);
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "agent");
-  EXPECT_EQ(service.VersionNoteMode("web:other"), "mechanical");
+  EXPECT_EQ(service.VersionNoteMode(), "agent");
   reply = update("\"mechanical\"", 1);
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
+  EXPECT_EQ(service.VersionNoteMode(), "mechanical");
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential,
             "ANTHROPIC_NOTE_KEY");
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
@@ -1155,7 +1155,6 @@ TEST(HostSettingsStore,
   EXPECT_FALSE(update(R"(["relative"])"));
   EXPECT_FALSE(update("[" + Quote((directory.path / "absent").string()) + "]"));
   EXPECT_FALSE(update(R"([42])"));
-  EXPECT_FALSE(update("[]", "web:test"));
   EXPECT_EQ(service.TrustedFolders(), expected);
   std::filesystem::rename(folder, directory.path / "moved");
   EXPECT_TRUE(update("[" + Quote(expected.front()) + "," +

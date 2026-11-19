@@ -192,7 +192,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
       {
         std::lock_guard lock(mutex);
-        if (boundary) RequireHelperPermission(conversation, *boundary);
+        if (boundary) RequireHelperPermission(*boundary);
       }
       if (boundary && boundary->scoped()) {
         const auto read = HelperReader(

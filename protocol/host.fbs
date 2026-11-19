@@ -28,6 +28,8 @@ table ProjectPermissionList { projects:[ProjectPermissions]; }
 table ProviderChanged { profile:string (required); }
 
 table Setting { key:string (required); value_json:string (required, trace_secret); }
+// The profile identifies the presentation surface. hostd routes each key to
+// host-wide or surface storage and applies changes at one revision.
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
 table Settings { revision:ulong; values:[Setting]; }
@@ -115,7 +117,7 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
 }
 /// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
 table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
-table SettingsChanged { profile:string (required); revision:ulong; }
+table SettingsChanged { revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }

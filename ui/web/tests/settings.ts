@@ -2,58 +2,54 @@ import assert from 'node:assert/strict'
 import { chatRoutes, type ChatContext } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 
-// Exercise the browser -> Web host revision boundary without a listener.
-// Standalone Web uses one profile; desktop Web shares connection settings but
-// retains its own skill folders. Both must patch only what the screen edited.
+// The Web adapter forwards one patch for the current surface and consumes
+// the returned snapshot. Host RPC tests cover the ownership of each key.
 const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
-const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'agent.trustedFolders': [], 'app.language': 'ja', 'agent.allowUnscopedHelpers': false }
 try {
   for (const desktop of [false, true]) {
-    const profiles = new Map<string, { revision: number; values: Record<string, unknown> }>()
-    const writes: { profile: string; changes: { key: string; value_json: string }[] }[] = []
-    const state = (profile: string) => {
-      if (!profiles.has(profile)) profiles.set(profile, { revision: 0, values: { ...defaults } })
-      return profiles.get(profile)!
-    }
+    let reads = 0, current = 0
+    const writes: any[] = []
+    const values: Record<string, unknown> = { 'agent.model': 'old', 'app.language': 'ja' }
+    const snapshot = () => ({ revision: current, values: Object.entries(values).map(([key, v]) => ({ key, value_json: JSON.stringify(v) })) })
     CoreHost.prototype.provisionEnvironment = async () => {}
-    CoreHost.prototype.getSettings = async function (profile: string) {
+    CoreHost.prototype.getSettings = async function (surface: string) {
+      reads++
+      assert.equal(surface, 'web:/settings-test')
       this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
         if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as T
         if (method === 'ModelsListRequest') return [] as T
         assert.equal(method, 'SettingsUpdateRequest')
-        const current = state(fields.profile)
-        if (fields.revision !== current.revision) throw new Error('conflict')
+        if (fields.revision !== current) throw new Error('conflict')
         writes.push(fields)
-        for (const change of fields.changes) current.values[change.key] = JSON.parse(change.value_json)
-        current.revision++
-        return {} as T
+        for (const change of fields.changes) values[change.key] = JSON.parse(change.value_json)
+        current++
+        return snapshot() as T
       }
-      const current = state(profile)
-      return { revision: current.revision, values: Object.entries(current.values).map(([key, v]) => ({ key, value_json: JSON.stringify(v) })) }
+      return snapshot()
     }
     const routes = chatRoutes({ support: '/settings-test', here: '/fixture', desktop,
       envs: {} as never, projectDir: String, broadcast: () => {}, httpError: (_status, message) => new Error(message),
     } as ChatContext)
     const url = new URL('http://fixture')
-    const connection = desktop ? 'desktop' : 'web:/settings-test'
-    const revision = { [connection]: 0, 'web:/settings-test': 0, desktop: 0 }
-    const result: any = await routes['POST /api/settings']({ revision, model: 'new', allowUnscopedHelpers: true, skillFolders: [{ path: '/skills', enabled: true }], trustedFolders: ['/trials'] }, url)
-    assert.equal(writes.length, 2)
-    assert.deepEqual(state('desktop').values['agent.trustedFolders'], ['/trials'])
-    assert.deepEqual(result.trustedFolders, ['/trials'])
-    assert.equal(state(connection).values['agent.model'], 'new')
-    assert.equal(state(connection).values['agent.allowUnscopedHelpers'], true)
-    assert.deepEqual(state('web:/settings-test').values['agent.skillFolders'], [{ path: '/skills', enabled: true }])
-    if (desktop) assert.deepEqual(state('desktop').values['agent.skillFolders'], [])
-    assert.equal(result.revision[connection], 1)
-    await assert.rejects(routes['POST /api/settings']({ revision, model: 'stale' }, url) as Promise<unknown>, /conflict/)
-    assert.equal(state(connection).values['agent.model'], 'new')
+    const skillFolders = [{ path: '/skills', enabled: true }]
+    const result: any = await routes['POST /api/settings']({ revision: 0, model: 'new', skillFolders, vmCpus: 2 }, url)
+    assert.equal(reads, 1)
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0].profile, 'web:/settings-test')
+    assert.deepEqual(Object.fromEntries(writes[0].changes.map((s: any) => [s.key, JSON.parse(s.value_json)])),
+      { 'agent.model': 'new', 'agent.skillFolders': skillFolders, 'vm.cpus': 2 })
+    assert.equal(result.model, 'new')
+    assert.deepEqual(result.skillFolders, skillFolders)
+    assert.equal(result.vmCpus, 2)
+    assert.equal(result.revision, 1)
+    await assert.rejects(routes['POST /api/settings']({ revision: 0, model: 'stale' }, url) as Promise<unknown>, /conflict/)
+    assert.equal(values['agent.model'], 'new')
   }
 } finally {
   CoreHost.prototype.getSettings = original.settings
   CoreHost.prototype.provisionEnvironment = original.environment
 }
-console.log('Host settings: profile sharing, combined patches and stale revisions passed')
+console.log('Host settings: combined patches and stale revisions passed')
 
 // An editor may carry an older list than another settings panel. Preserve its
 // explicit revision so hostd can reject it instead of resurrecting removed roots.
@@ -61,14 +57,20 @@ console.log('Host settings: profile sharing, combined patches and stale revision
   const { api } = await import('../src/api')
   const originalFetch = globalThis.fetch
   const requests: any[] = []
-  globalThis.fetch = (async (_url, init) => {
+  let reads = 0
+  globalThis.fetch = (async (url, init) => {
+    if (url !== "/api/settings") return new Response("{}")
     if (init?.body) requests.push(JSON.parse(String(init.body)))
-    return new Response(JSON.stringify({ revision: { desktop: 9 } }))
+    else reads++
+    return new Response(JSON.stringify({ revision: reads - 1 }))
   }) as typeof fetch
   try {
     await api('/api/settings')
-    await api('/api/settings', { trustedFolders: ['/stale'], revision: { desktop: 3 } })
-    assert.deepEqual(requests[0].revision, { desktop: 3 })
+    await api('/api/settings', { model: 'from-revision-zero' })
+    await api('/api/settings', { trustedFolders: ['/stale'], revision: 3 })
+    assert.equal(reads, 1)
+    assert.equal(requests[0].revision, 0)
+    assert.equal(requests[1].revision, 3)
   } finally { globalThis.fetch = originalFetch }
 }
 

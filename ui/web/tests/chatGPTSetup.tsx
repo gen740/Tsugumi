@@ -215,7 +215,7 @@ for (const beginPending of [false, true]) {
   globalThis.fetch = (async (path: string, init: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}'))
     calls.push({ path, body })
-    const value = path === '/api/settings' ? { revision: { desktop: 1 } }
+    const value = path === '/api/settings' ? { revision: 1 }
       : path === '/api/guide/advance' ? { setupDone: true }
       : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
       : assert.fail(`Unexpected API ${path}`)
@@ -248,7 +248,7 @@ for (const beginPending of [false, true]) {
   globalThis.fetch = (async (path: string, init: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}'))
     calls.push({ path, body })
-    const value = path === '/api/settings' ? { revision: { desktop: 1 } }
+    const value = path === '/api/settings' ? { revision: 1 }
       : path === '/api/guide/advance' ? { setupDone: true }
       : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
       : assert.fail(`Unexpected API ${path}`)
