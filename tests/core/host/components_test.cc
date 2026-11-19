@@ -27,12 +27,11 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   ASSERT_TRUE(journal.step());
   EXPECT_EQ(journal.text(0), "wal");
   for (const auto* table :
-       {"projects", "folders", "workspace_requests", "workspace_grants",
-        "providers", "workspace_prompt_items", "approvals", "credentials",
-        "environment_projects", "project_paths", "skill_catalogs",
-        "conversation_locations", "model_lists", "setting_values",
-        "settings_revision", "accounts", "provider_connections",
-        "oauth_hosts"}) {
+       {"projects", "folders", "permission_requests", "workspace_grants",
+        "providers", "credentials", "environment_projects", "project_paths",
+        "skill_catalogs", "conversation_locations", "model_lists",
+        "setting_values", "settings_revision", "accounts",
+        "provider_connections", "oauth_hosts"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -87,12 +86,13 @@ TEST(HostComponents, PendingApprovalsStayVisibleWithWorkspaceHistory) {
   bool stopping = false;
   host::Access access(
       gate, store.db, registry, conversations, stopping,
-      {[](const auto&, const auto&) {}, [](const auto&, const auto&) {}});
+      {[](const auto&, const auto&) {}, [](const auto&) {}});
   std::lock_guard lock(gate.mutex);
   store.db.exec(
       "WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids "
-      "WHERE n<501) INSERT INTO workspace_requests "
-      "SELECT n,'project','conversation',0,'old request','denied' FROM ids");
+      "WHERE n<501) INSERT INTO "
+      "permission_requests(id,project,conversation,access,reason,state) "
+      "SELECT n,'project','conversation',0,'old request','pending' FROM ids");
   const auto approval =
       access.RequestApproval(host::ApprovalKind::Operation, "project",
                              "conversation", "call", "digest", "preview");
@@ -111,9 +111,11 @@ TEST(HostComponents, PendingApprovalsStayVisibleWithWorkspaceHistory) {
       A::GetMessage(reply.data())->payload_as_Reply()->value_as_AccessList();
   ASSERT_NE(listed, nullptr);
   ASSERT_NE(listed->requests(), nullptr);
-  EXPECT_TRUE(std::ranges::any_of(*listed->requests(), [&](const auto* item) {
-    return item->id()->str() == approval && item->state()->str() == "pending";
-  }));
+  ASSERT_EQ(listed->requests()->size(), 502u);
+  const auto* item = listed->requests()->Get(0);
+  EXPECT_EQ(item->id()->str(), approval.id);
+  EXPECT_EQ(item->call_id()->str(), "call");
+  EXPECT_EQ(item->state()->str(), "pending");
 }
 
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {

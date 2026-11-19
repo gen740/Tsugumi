@@ -489,14 +489,10 @@ auto SetTrustedFolders(sql::Db& db, const std::vector<std::string>& folders)
     const fs::path path(entry);
     if (!path.is_absolute())
       throw std::runtime_error("Choose an existing absolute folder");
-    if (saved.contains(entry)) {
-      selected.insert(entry);
-    } else {
-      const auto canonical = fs::canonical(path);
-      if (selected.insert(canonical.string()).second &&
-          !saved.contains(canonical.string()))
-        SaveTrust(db, canonical, true, H::ProjectTrustDecision::Trusted);
-    }
+    const auto canonical =
+        saved.contains(entry) ? entry : fs::canonical(path).string();
+    if (selected.insert(canonical).second && !saved.contains(canonical))
+      SaveTrust(db, canonical, true, H::ProjectTrustDecision::Trusted);
   }
   for (const auto& entry : saved) {
     if (selected.contains(entry)) continue;
@@ -512,35 +508,28 @@ auto ProjectTrust(sql::Db& db, const fs::path& path) -> H::ProjectTrustT {
   std::error_code error;
   const auto canonical = fs::canonical(path, error);
   if (error) return trust;
-  {
-    auto roots = db.prepare(
-        "SELECT path,device,inode FROM skill_trust WHERE recursive=1 ORDER BY "
-        "path");
-    while (roots.step()) {
-      const fs::path root(roots.text(0));
-      const auto match = std::mismatch(root.begin(), root.end(),
-                                       canonical.begin(), canonical.end());
-      if (match.first != root.end()) continue;
-      if (fs::canonical(root, error) != root || error ||
-          DirectoryIdentity(root) != std::pair{roots.u64(1), roots.u64(2)})
-        continue;
-      trust.trusted_folder = root.string();
-      trust.decision = H::ProjectTrustDecision::Trusted;
+  auto query = db.prepare(
+      "SELECT path,recursive,device,inode,decision FROM skill_trust "
+      "WHERE recursive=1 OR path=? ORDER BY recursive DESC,path");
+  query.bind(1, canonical.string());
+  while (query.step()) {
+    const fs::path root(query.text(0));
+    const bool recursive = query.i64(1) != 0;
+    const auto match = std::mismatch(root.begin(), root.end(),
+                                     canonical.begin(), canonical.end());
+    if (match.first != root.end()) continue;
+    if (fs::canonical(root, error) == root && !error &&
+        DirectoryIdentity(root) == std::pair{query.u64(2), query.u64(3)}) {
+      trust.decision = static_cast<H::ProjectTrustDecision>(query.i64(4));
+      if (recursive) trust.trusted_folder = root.string();
       return trust;
     }
-  }
-  auto query = db.prepare(
-      "SELECT device,inode,decision FROM skill_trust WHERE path=? AND "
-      "recursive=0");
-  query.bind(1, canonical.string());
-  if (!query.step()) return trust;
-  if (DirectoryIdentity(canonical) == std::pair{query.u64(0), query.u64(1)}) {
-    trust.decision = static_cast<H::ProjectTrustDecision>(query.i64(2));
-  } else {
-    // A different directory at this path invalidates the old decision.
-    auto forget =
-        db.prepare("DELETE FROM skill_trust WHERE path=? AND recursive=0");
-    forget.bind(1, canonical.string()).run();
+    if (!recursive) {
+      // Replacing the project directory invalidates its individual decision.
+      auto forget =
+          db.prepare("DELETE FROM skill_trust WHERE path=? AND recursive=0");
+      forget.bind(1, root.string()).run();
+    }
   }
   return trust;
 }

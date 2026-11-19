@@ -63,14 +63,13 @@ struct Turns {
                     std::stop_token stop,
                     std::string* trusted_project = nullptr) -> ContentBlock;
   auto RequireSkillTrust(const std::string& path) -> void;
-  auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* p,
-                   std::stop_token stop, std::string& task,
-                   std::optional<host::TurnAuthorization>& authorization)
-      -> ContentBlock;
+  auto ScopedSkillTask(const Tsugumi::Agent::ConversationSendRequest* request,
+                       const Conversation& conversation) -> std::string;
+  auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* request,
+                   std::stop_token stop) -> ContentBlock;
   auto Start(const std::string& id, const std::string& turn,
              const std::string& text,
              Tsugumi::Agent::Action action = Tsugumi::Agent::Action::Resume,
-             const std::vector<std::string>& resources = {},
              std::string pending_frame = {}, const std::string& display = {})
       -> void;
   auto SummaryReply(uint64_t id, std::string_view raw) -> std::string;

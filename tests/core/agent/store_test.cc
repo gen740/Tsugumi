@@ -12,8 +12,8 @@
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
-#include "host/credentials.hh"
 #include "host/access.hh"
+#include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
@@ -100,7 +100,7 @@ TEST_F(ConversationStoreTest,
   std::stop_source shutdown;
   host::Access access(
       gate, home.db, registry, *store, stopping,
-      {[](const auto&, const auto&) {}, [](const auto&, const auto&) {}});
+      {[](const auto&, const auto&) {}, [](const auto&) {}});
   agent::Turns::Dependencies turn_dependencies;
   turn_dependencies.scrub = [](std::string text) { return text; };
   turn_dependencies.event = [](const auto&, const auto&) {};
@@ -113,7 +113,6 @@ TEST_F(ConversationStoreTest,
   agent::Tools::Dependencies dependencies;
   dependencies.scrub = [](std::string text) { return text; };
   dependencies.event = [](const auto&, const auto&) {};
-  dependencies.helper_result = agent::Helpers::HelperResult;
   dependencies.run_helper = [&](const auto& conversation, const auto& call,
                                 size_t task, const auto& spec,
                                 std::stop_token stop,
@@ -218,7 +217,8 @@ TEST_F(ConversationStoreTest,
   EXPECT_FALSE(fs::FileLock::try_acquire(root / ".tsugumi/agent.lock"));
   for (auto* db : {&home.db, &project})
     db->exec(
-        "INSERT INTO turns VALUES('fixture','turn','digest','running',0,'{}')");
+        "INSERT INTO conversation_turns "
+        "VALUES('fixture','turn','digest','running',0,'{}',NULL,NULL)");
   store.reset();
   {
     auto released = fs::FileLock::try_acquire(root / ".tsugumi/agent.lock");
@@ -226,8 +226,8 @@ TEST_F(ConversationStoreTest,
   }
   Open();
   for (auto* db : {&home.db, &store->ConversationDatabase("local")}) {
-    auto turn =
-        db->prepare("SELECT state FROM turns WHERE conversation='fixture'");
+    auto turn = db->prepare(
+        "SELECT state FROM conversation_turns WHERE conversation='fixture'");
     ASSERT_TRUE(turn.step());
     EXPECT_EQ(turn.text(0), "interrupted");
   }
@@ -446,7 +446,8 @@ TEST_F(ConversationStoreTest,
   auto& broken = store->ConversationDatabase("foreign");
   broken.exec(
       "UPDATE conversations SET project='old-identity';"
-      "INSERT INTO turns VALUES('foreign','turn','digest','running',0,'{}')");
+      "INSERT INTO conversation_turns "
+      "VALUES('foreign','turn','digest','running',0,'{}',NULL,NULL)");
   store.reset();
   Open();
   // A scoped creation must not even try to open the broken database.
@@ -472,8 +473,8 @@ TEST_F(ConversationStoreTest,
     EXPECT_EQ(error.code, "conversation_identity_mismatch");
   }
   sql::Db untouched((directory.path / "broken/.tsugumi/agent.sqlite").string());
-  auto state =
-      untouched.prepare("SELECT state FROM turns WHERE conversation='foreign'");
+  auto state = untouched.prepare(
+      "SELECT state FROM conversation_turns WHERE conversation='foreign'");
   ASSERT_TRUE(state.step());
   EXPECT_EQ(state.text(0), "running");
 }

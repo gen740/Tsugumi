@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/text.hh"
 #include "agent/wire.hh"
@@ -119,7 +120,7 @@ auto Turns::RecordOperation(const std::string& id, const std::string& kind,
                             const std::string& arguments) -> void {
   std::lock_guard lock(mutex);
   auto q = conversations->ConversationDatabase(id).prepare(
-      "UPDATE turns SET operation=? WHERE conversation=? "
+      "UPDATE conversation_turns SET operation=? WHERE conversation=? "
       "AND state='running'");
   q.bind(1, dependencies.scrub(json::Encode(
                 json::Members{{"kind", json::Quote(kind)},
@@ -137,7 +138,7 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   seq.bind(1, c.id);
   seq.step();
   auto latest = conversations->ConversationDatabase(c.id).prepare(
-      "SELECT state,operation FROM turns WHERE conversation=? "
+      "SELECT state,operation FROM conversation_turns WHERE conversation=? "
       "ORDER BY rowid DESC LIMIT 1");
   latest.bind(1, c.id);
   const auto state = latest.step() ? latest.text(0) : "";
@@ -275,10 +276,38 @@ auto Turns::RequireSkillTrust(const std::string& path) -> void {
                   "Project Skill trust was revoked; start a new turn");
 }
 
+auto Turns::ScopedSkillTask(const A::ConversationSendRequest* p,
+                            const Conversation& c) -> std::string {
+  if ((!p->skill_names() || p->skill_names()->size() == 0) &&
+      Text(p->scoped_skill()).empty())
+    return {};
+  std::string project_path;
+  std::vector<std::string> folders;
+  {
+    auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
+    root.bind(1, c.project);
+    if (root.step()) project_path = root.text(0);
+    auto sources = db.prepare(
+        "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+    sources.bind(1, c.id).bind(2, project_path);
+    if (sources.step())
+      for (const auto& item : json::Array(sources.text(0)))
+        folders.push_back(json::String(item));
+  }
+  const auto skills = host::ListSkills(project_path, folders,
+                                       host::ProjectTrusted(db, project_path));
+  std::vector<std::string> names, cards;
+  if (p->skill_names())
+    for (const auto* name : *p->skill_names()) names.push_back(name->str());
+  if (p->selected_cards())
+    for (const auto* card : *p->selected_cards()) cards.push_back(card->str());
+  const auto selected = host::SelectScopedSkill(
+      skills, names, Text(p->scoped_skill()), cards, p->text()->str());
+  return selected ? json::Encode(*selected) : std::string{};
+}
+
 auto Turns::PrepareSend(const A::ConversationSendRequest* p,
-                        std::stop_token stop, std::string& task,
-                        std::optional<host::TurnAuthorization>& authorization)
-    -> ContentBlock {
+                        std::stop_token stop) -> ContentBlock {
   std::unique_lock lock(mutex);
   auto require = [&](const std::string& resource,
                      const std::string& conversation,
@@ -290,47 +319,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
   };
   const auto c = conversations->GetConversation(p->conversation_id()->str());
   std::vector<std::string> resources;
-  if ((p->skill_names() && p->skill_names()->size()) ||
-      !Text(p->scoped_skill()).empty()) {
-    std::string project_path;
-    std::vector<std::string> folders;
-    {
-      auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
-      root.bind(1, c.project);
-      if (root.step()) project_path = root.text(0);
-      auto sources = db.prepare(
-          "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
-      sources.bind(1, c.id).bind(2, project_path);
-      if (sources.step())
-        for (const auto& item : json::Array(sources.text(0)))
-          folders.push_back(json::String(item));
-    }
-    const auto skills = host::ListSkills(
-        project_path, folders, host::ProjectTrusted(db, project_path));
-    std::vector<std::string> names, cards;
-    if (p->skill_names())
-      for (const auto* name : *p->skill_names()) names.push_back(name->str());
-    if (p->selected_cards())
-      for (const auto* card : *p->selected_cards())
-        cards.push_back(card->str());
-    const auto selected = host::SelectScopedSkill(
-        skills, names, Text(p->scoped_skill()), cards, p->text()->str());
-    if (selected) {
-      task = json::Encode(*selected);
-      const auto reason =
-          json::Encode(json::Members{
-              {"task", task}, {"turn", json::Quote(p->turn_id()->str())}});
-      lock.unlock();
-      authorization = access_service.AuthorizeTurn(
-          c.project, c.id, p->turn_id()->str(), reason, stop);
-      ContentBlock block;
-      block.text = p->text()->str();
-      // The transcript, including the helper trace, belongs to the project.
-      // Only this helper gets the capability to access its approved Card scope.
-      block.resource_ids = {c.project};
-      return block;
-    }
-  }
   if ((p->selected_cards() && p->selected_cards()->size()) ||
       (p->selected_displays() && p->selected_displays()->size())) {
     require(c.project, c.id, Tsugumi::Service::Access::Read, true, stop,
@@ -388,7 +376,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
 
 auto Turns::Start(const std::string& id, const std::string& turn,
                   const std::string& text, A::Action action,
-                  const std::vector<std::string>& resources,
                   std::string pending_frame, const std::string& display)
     -> void {
   auto c = conversations->GetConversation(id);
@@ -399,7 +386,7 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       crypto::sha256_hex(digest_frame.empty() ? text : digest_frame);
   if (!turn.empty()) {
     auto old = conversations->ConversationDatabase(id).prepare(
-        "SELECT digest FROM turns WHERE conversation=? AND id=?");
+        "SELECT digest FROM conversation_turns WHERE conversation=? AND id=?");
     old.bind(1, id).bind(2, turn);
     if (old.step()) {
       if (old.text(0) != digest)
@@ -414,7 +401,6 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   if (!text.empty() || !pending_frame.empty()) {
     ContentBlock block;
     block.text = text;
-    block.resource_ids = resources;
     messages.push_back(
         {"user", {block}, display, {}, ProviderAPI::AnthropicMessages});
   }
@@ -424,8 +410,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   auto active_turn = turn;
   if (pending_frame.empty()) {
     auto pending = conversations->ConversationDatabase(id).prepare(
-        "SELECT turn,frame,message_index FROM "
-        "pending_sends WHERE conversation=?");
+        "SELECT id,frame,message_index FROM conversation_turns "
+        "WHERE conversation=? AND state='interrupted' AND frame IS NOT NULL");
     pending.bind(1, id);
     if (pending.step()) {
       if (action == A::Action::Compact)
@@ -436,13 +422,28 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       pending_index = pending.u64(2);
     }
   }
-  // A recovered message is prepared again, including any turn approval. The
-  // model hooks still check the complete context before an ordinary turn.
-  if (!turn.empty() || pending_frame.empty())
+  std::string task;
+  if (!pending_frame.empty()) {
+    if (!turn.empty()) pending_frame = ScrubSend(pending_frame);
+    flatbuffers::Verifier verifier(
+        reinterpret_cast<const uint8_t*>(pending_frame.data()),
+        pending_frame.size());
+    if (!A::VerifyMessageBuffer(verifier) || pending_index >= messages.size())
+      throw Failure("invalid_request", "The pending message is damaged");
+    const auto* request =
+        A::GetMessage(pending_frame.data())->payload_as_Request();
+    if (!request || !request->value_as_ConversationSendRequest())
+      throw Failure("invalid_request",
+                    "The pending message has an invalid operation");
+    task = ScopedSkillTask(request->value_as_ConversationSendRequest(), c);
+  }
+  if (task.empty())
     access_service.AuthorizeContext(messages);
+  else
+    messages[pending_index].content.front().resource_ids = {c.project};
   if (active_turn.empty() && action == A::Action::Resume) {
     auto previous = conversations->ConversationDatabase(id).prepare(
-        "SELECT id,state,action FROM turns WHERE "
+        "SELECT id,state,action FROM conversation_turns WHERE "
         "conversation=? ORDER BY rowid DESC LIMIT 1");
     previous.bind(1, id);
     if (previous.step() && previous.text(1) == "interrupted") {
@@ -450,7 +451,16 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       action = static_cast<A::Action>(previous.i64(2));
     }
   }
-  sql::Transaction tx(conversations->ConversationDatabase(id));
+  auto& store = conversations->ConversationDatabase(id);
+  if (!turn.empty()) {
+    auto pending = store.prepare(
+        "SELECT 1 FROM conversation_turns WHERE conversation=? AND frame IS "
+        "NOT NULL");
+    pending.bind(1, id);
+    if (pending.step())
+      throw Failure("busy", "Resume or cancel the pending message first");
+  }
+  sql::Transaction tx(store);
   auto binding = conversations->ConversationDatabase(id).prepare(
       "INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
   binding.bind(1, id)
@@ -463,40 +473,27 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       .bind(5, config.fast ? 1 : 0)
       .run();
   conversations->SaveMessages(id, messages);
-  if (!turn.empty()) {
-    auto q = conversations->ConversationDatabase(id).prepare(
-        "INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
-    q.bind(1, id)
-        .bind(2, turn)
-        .bind(3, digest)
-        .bind(4, static_cast<int>(action))
-        .run();
-    if (!pending_frame.empty()) {
-      auto pending = conversations->ConversationDatabase(id).prepare(
-          "INSERT OR REPLACE INTO pending_sends VALUES(?,?,?,?)");
-      pending.bind(1, id)
-          .bind(2, turn)
-          .bind_blob(3, ScrubSend(pending_frame))
-          .bind(4, static_cast<uint64_t>(pending_index))
-          .run();
+  if (turn.empty() && !active_turn.empty()) {
+    auto q = store.prepare(
+        "UPDATE conversation_turns SET state='running' "
+        "WHERE conversation=? AND id=?");
+    q.bind(1, id).bind(2, active_turn).run();
+  } else {
+    if (active_turn.empty()) {
+      auto counter = store.prepare(
+          "SELECT count(*) FROM conversation_turns WHERE conversation=?");
+      counter.bind(1, id).step();
+      active_turn = "action-" + std::to_string(counter.i64(0) + 1);
     }
-  } else if (active_turn.empty()) {
-    auto counter = conversations->ConversationDatabase(id).prepare(
-        "SELECT count(*) FROM turns WHERE conversation=?");
-    counter.bind(1, id);
-    counter.step();
-    active_turn = "action-" + std::to_string(counter.i64(0) + 1);
-    auto q = conversations->ConversationDatabase(id).prepare(
-        "INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
+    auto q = store.prepare(
+        "INSERT INTO conversation_turns VALUES(?,?,?,'running',?,'{}',?,?)");
     q.bind(1, id)
         .bind(2, active_turn)
         .bind(3, digest)
-        .bind(4, static_cast<int>(action))
-        .run();
-  } else {
-    auto q = conversations->ConversationDatabase(id).prepare(
-        "UPDATE turns SET state='running' WHERE conversation=? AND id=?");
-    q.bind(1, id).bind(2, active_turn).run();
+        .bind(4, static_cast<int>(action));
+    if (!pending_frame.empty())
+      q.bind_blob(5, pending_frame).bind(6, static_cast<uint64_t>(pending_index));
+    q.run();
   }
   RecordOperation(id, !pending_frame.empty()         ? "preparing"
                       : action == A::Action::Compact ? "compact"
@@ -515,6 +512,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   ThoughtsFor(id)->TurnStarted();
   jobs[id] = std::make_shared<std::jthread>([this, id, turn = active_turn,
                                              config, context, role = c.role,
+                                             project = c.project,
+                                             task = std::move(task),
                                              messages = std::move(messages),
                                              pending_frame =
                                                  std::move(pending_frame),
@@ -522,97 +521,76 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                                                 std::stop_token stop) mutable {
     std::string final_state = "finished";
     try {
-      std::string task;
-      std::optional<host::TurnAuthorization> authorization;
-      if (!pending_frame.empty()) {
-        flatbuffers::Verifier verifier(
-            reinterpret_cast<const uint8_t*>(pending_frame.data()),
-            pending_frame.size());
-        if (!A::VerifyMessageBuffer(verifier) ||
-            pending_index >= messages.size())
-          throw Failure("invalid_request", "The pending message is damaged");
-        const auto* request =
-            A::GetMessage(pending_frame.data())->payload_as_Request();
-        if (!request || !request->value_as_ConversationSendRequest())
-          throw Failure("invalid_request",
-                        "The pending message has an invalid operation");
-        auto block = PrepareSend(request->value_as_ConversationSendRequest(),
-                                 stop, task, authorization);
-        if (stop.stop_requested()) throw Cancelled();
-        messages[pending_index].content = {std::move(block)};
-        std::lock_guard lock(mutex);
-        sql::Transaction tx(conversations->ConversationDatabase(id));
-        conversations->SaveMessages(id, messages,
-                                    ConversationStore::SaveMode::PrepareSend);
-        auto pending = conversations->ConversationDatabase(id).prepare(
-            "DELETE FROM pending_sends WHERE conversation=?");
-        if (task.empty()) pending.bind(1, id).run();
-        tx.commit();
-      }
-      RecordOperation(id, action == A::Action::Compact ? "compact" : "model");
-      auto hooks = dependencies.hooks(id);
-      std::string trusted_project;
-      const auto automatic = SkillContent(id, {}, true, stop, &trusted_project);
-      const auto authorize = hooks.authorize_context;
-      hooks.authorize_context = [this, authorize, automatic,
-                                 trusted_project](const auto& context) {
-        RequireSkillTrust(trusted_project);
-        auto with_skills = context;
-        with_skills.push_back(
-            {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-        authorize(with_skills);
-      };
-      const auto system = System(role == "guide") + automatic.text;
       if (!task.empty()) {
+        const auto authorization =
+            access_service.AuthorizeTurn(project, id, turn, task, stop);
+        RecordOperation(id, "model");
         dependencies.event(
             id, json::Encode(json::Members{
                     {"kind", json::Quote("helperStarted")}, {"text", task}}));
-        dependencies.run_helper(id, turn, 0, task, stop, authorization);
-        {
-          std::lock_guard lock(mutex);
-          auto saved = conversations->ConversationDatabase(id).prepare(
-              "SELECT messages FROM helpers WHERE conversation=? AND "
-              "parent_call=? AND task=0");
-          saved.bind(1, id).bind(2, turn);
-          if (saved.step()) {
-            const auto trace = ParseMessages(saved.text(0));
-            for (auto it = trace.rbegin(); it != trace.rend(); ++it) {
-              if (it->role != "assistant") continue;
-              Message answer = *it;
-              answer.provider_content.clear();
-              std::erase_if(answer.content, [](const auto& block) {
-                return block.type != "text";
-              });
-              if (answer.content.empty()) continue;
-              const auto project = conversations->GetConversation(id).project;
-              for (auto& block : answer.content) block.resource_ids = {project};
-              messages.push_back(std::move(answer));
-              conversations->SaveMessages(id, messages);
-              break;
-            }
-          }
+        const auto result = json::Object(
+            dependencies.run_helper(id, turn, 0, task, stop, authorization));
+        if (stop.stop_requested()) throw Cancelled();
+        if (const auto error = json::Text(result, "error"); !error.empty())
+          throw Failure("helper_failed", error);
+        auto answer = Helpers::LastAnswer(
+            ParseMessages(json::Get(result, "messages", "[]")));
+        if (!answer.content.empty()) {
+          for (auto& block : answer.content) block.resource_ids = {project};
+          messages.push_back(std::move(answer));
         }
-        if (!stop.stop_requested()) {
-          std::lock_guard lock(mutex);
-          auto pending = conversations->ConversationDatabase(id).prepare(
-              "DELETE FROM pending_sends WHERE conversation=?");
-          pending.bind(1, id).run();
-        }
-      } else if (action == A::Action::Compact) {
-        Runtime().Compact(config, system, messages,
-                          dependencies.specs(role == "guide"), stop, hooks,
-                          context.get());
-        *context = {};
       } else {
-        const auto result = Runtime().Run(config, system, messages,
-                                          dependencies.specs(role == "guide"),
-                                          stop, hooks, context.get());
-        if (result.outcome == RunOutcome::Cancelled)
-          final_state = "cancelled";
-        else if (result.outcome == RunOutcome::Failed)
-          final_state = "failed";
-        AddUsage(id, result.usage);
+        if (!pending_frame.empty()) {
+          const auto* send = A::GetMessage(pending_frame.data())
+                                 ->payload_as_Request()
+                                 ->value_as_ConversationSendRequest();
+          auto block = PrepareSend(send, stop);
+          std::lock_guard lock(mutex);
+          if (stop.stop_requested()) throw Cancelled();
+          messages[pending_index].content = {std::move(block)};
+          auto& store = conversations->ConversationDatabase(id);
+          sql::Transaction tx(store);
+          conversations->SaveMessages(id, messages,
+                                      ConversationStore::SaveMode::PrepareSend);
+          auto pending = store.prepare(
+              "UPDATE conversation_turns SET frame=NULL,message_index=NULL "
+              "WHERE conversation=? AND id=?");
+          pending.bind(1, id).bind(2, turn).run();
+          tx.commit();
+        }
+        RecordOperation(id, action == A::Action::Compact ? "compact" : "model");
+        auto hooks = dependencies.hooks(id);
+        std::string trusted_project;
+        const auto automatic =
+            SkillContent(id, {}, true, stop, &trusted_project);
+        const auto authorize = hooks.authorize_context;
+        hooks.authorize_context = [this, authorize, automatic,
+                                   trusted_project](const auto& context) {
+          RequireSkillTrust(trusted_project);
+          auto with_skills = context;
+          with_skills.push_back(
+              {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+          authorize(with_skills);
+        };
+        const auto system = System(role == "guide") + automatic.text;
+        if (action == A::Action::Compact) {
+          Runtime().Compact(config, system, messages,
+                            dependencies.specs(role == "guide"), stop, hooks,
+                            context.get());
+          *context = {};
+        } else {
+          const auto result = Runtime().Run(config, system, messages,
+                                            dependencies.specs(role == "guide"),
+                                            stop, hooks, context.get());
+          if (result.outcome == RunOutcome::Cancelled)
+            final_state = "cancelled";
+          else if (result.outcome == RunOutcome::Failed)
+            final_state = "failed";
+          AddUsage(id, result.usage);
+        }
       }
+    } catch (const Cancelled&) {
+      final_state = "cancelled";
     } catch (const std::exception& error) {
       final_state = "failed";
       dependencies.event(id, json::Encode(json::Members{
@@ -623,18 +601,25 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     std::lock_guard lock(mutex);
     if (stop.stop_requested()) {
       auto previous = conversations->ConversationDatabase(id).prepare(
-          "SELECT state FROM turns WHERE conversation=? AND id=?");
+          "SELECT state FROM conversation_turns WHERE conversation=? AND id=?");
       previous.bind(1, id).bind(2, turn);
       const bool explicitly_cancelled =
           previous.step() && previous.text(0) == "cancelled";
       final_state =
           stopping && !explicitly_cancelled ? "interrupted" : "cancelled";
     }
-    if (!turn.empty()) {
-      auto q = conversations->ConversationDatabase(id).prepare(
-          "UPDATE turns SET state=? WHERE conversation=? AND id=?");
-      q.bind(1, final_state).bind(2, id).bind(3, turn).run();
-    }
+    auto& store = conversations->ConversationDatabase(id);
+    sql::Transaction tx(store);
+    if (!task.empty() && final_state == "finished")
+      conversations->SaveMessages(id, messages);
+    auto q = store.prepare(
+        "UPDATE conversation_turns SET state=?1,"
+        "frame=CASE ?1 WHEN 'interrupted' THEN frame END,"
+        "message_index=CASE ?1 WHEN 'interrupted' THEN message_index END "
+        "WHERE conversation=?2 AND id=?3");
+    q.bind(1, final_state).bind(2, id).bind(3, turn).run();
+    tx.commit();
+    if (final_state == "cancelled") access_service.CancelTurnApproval(id, turn);
     dependencies.event(id, R"({"kind":"finished"})");
     running.erase(id);
   });
@@ -680,7 +665,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
       conversations->OwnConversation(p->conversation_id()->str(), human);
       if (!human && p->scoped_skill()) Human(human);
       Start(p->conversation_id()->str(), p->turn_id()->str(), p->text()->str(),
-            A::Action::Resume, {}, *request.frame,
+            A::Action::Resume, *request.frame,
             p->display() ? p->display()->str() : p->text()->str());
       S::AcknowledgementT result;
       result.accepted = true;
@@ -697,11 +682,9 @@ auto Turns::Handle(const RequestIn& request, bool human,
         if (running.contains(id))
           throw Failure("busy", "Cancel before clearing the conversation");
         conversations->SaveMessages(id, {});
-        auto pending = conversations->ConversationDatabase(id).prepare(
-            "DELETE FROM pending_sends WHERE conversation=?");
-        pending.bind(1, id).run();
         auto turns = conversations->ConversationDatabase(id).prepare(
-            "UPDATE turns SET state='finished' WHERE conversation=?");
+            "UPDATE conversation_turns SET state='finished',frame=NULL,"
+            "message_index=NULL WHERE conversation=?");
         turns.bind(1, id).run();
       } else
         Start(id, {}, {}, p->action());
@@ -711,10 +694,17 @@ auto Turns::Handle(const RequestIn& request, bool human,
       const auto id =
           r->value_as_ConversationCancelRequest()->conversation_id()->str();
       conversations->OwnConversation(id, human);
-      auto cancelled = conversations->ConversationDatabase(id).prepare(
-          "UPDATE turns SET state='cancelled' WHERE "
-          "conversation=? AND state='running'");
-      cancelled.bind(1, id).run();
+      auto& store = conversations->ConversationDatabase(id);
+      auto cancelled = store.prepare(
+          "UPDATE conversation_turns SET "
+          "state='cancelled',frame=NULL,message_index=NULL "
+          "WHERE conversation=? AND state IN ('running','interrupted') "
+          "RETURNING id");
+      cancelled.bind(1, id);
+      std::vector<std::string> cancelled_turns;
+      while (cancelled.step()) cancelled_turns.push_back(cancelled.text(0));
+      for (const auto& turn : cancelled_turns)
+        access_service.CancelTurnApproval(id, turn);
       if (auto found = jobs.find(id); found != jobs.end())
         found->second->request_stop();
       dependencies.cancel_file_tools(id);

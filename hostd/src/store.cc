@@ -21,27 +21,17 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY, project TEXT "
       "NOT NULL, path TEXT NOT NULL, title TEXT NOT NULL, "
       "UNIQUE(project,path));"
-      "CREATE TABLE IF NOT EXISTS workspace_requests(id TEXT PRIMARY KEY, "
+      "CREATE TABLE IF NOT EXISTS permission_requests(id TEXT PRIMARY KEY, "
       "project TEXT NOT NULL, conversation TEXT NOT NULL, access INTEGER NOT "
-      "NULL, reason TEXT NOT NULL, state TEXT NOT "
-      "NULL);"
+      "NULL, reason TEXT NOT NULL, state TEXT NOT NULL, call TEXT, digest "
+      "TEXT, "
+      "offered INTEGER NOT NULL DEFAULT 0, UNIQUE(conversation,access,call));"
       "CREATE TABLE IF NOT EXISTS workspace_grants(id TEXT PRIMARY KEY, "
       "project TEXT "
       "NOT NULL, access INTEGER NOT NULL, active "
       "INTEGER NOT NULL);"
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");
-  db.exec(
-      "CREATE TABLE IF NOT EXISTS workspace_prompt_items(request TEXT NOT "
-      "NULL, "
-      "access INTEGER NOT NULL, "
-      "PRIMARY KEY(request,access))");
-  db.exec(
-      "CREATE TABLE IF NOT EXISTS approvals("
-      "id TEXT PRIMARY KEY, project TEXT NOT NULL, conversation TEXT NOT NULL, "
-      "kind TEXT NOT NULL, call TEXT NOT NULL, digest TEXT NOT NULL, "
-      "preview TEXT NOT NULL, state TEXT NOT NULL, "
-      "UNIQUE(conversation,kind,call))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS setting_values(scope TEXT NOT NULL, "
       "key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));"

@@ -280,10 +280,20 @@ async function modelCatalogs() {
 
 // ---- Agent hosting -------------------------------------------------------------
 
+interface PendingAccess {
+  id: string
+  conversation_id: string
+  project_id: string
+  state: string
+  asked: string[]
+  groups?: AccessGroup[]
+  call_id?: string
+}
+
 interface PermissionWait {
   project: string
   session: string
-  asked: string[]; groups?: AccessGroup[]
+  request: PendingAccess
   resolve: (allow: boolean) => void
 }
 const permissionWaits = new Map<string, PermissionWait>()
@@ -306,13 +316,11 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
     try { return await run() } catch (error) {
       if (!(error instanceof CoreHostError) || error.code !== 'grant_required' || !error.requestId) throw error
       const id = error.requestId
-      const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
-      const request = access.requests.find(r => r.id === id)
-      if (!request) throw error
+      const { requests: [request] } = await core.user.call<{ requests: PendingAccess[] }>('AccessListRequest', { request_id: id })
+      if (!request || request.state !== 'pending') throw error
       const allowed = new Promise<boolean>((resolve) => {
-        const asked = request.asked
-        permissionWaits.set(id, { project, session, asked, groups: request.groups, resolve })
-        ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, groups: request.groups, from } })
+        permissionWaits.set(id, { project, session, request, resolve })
+        ctx.broadcast({ type: 'chat', project, session, event: { ...request, kind: 'permission', from } })
       })
       if (!await allowed) throw new CoreHostError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
     }
@@ -414,15 +422,13 @@ export function resumeChats() {
 export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
-  const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; groups?: AccessGroup[]; state: string }[] }>('AccessListRequest')
-  const request = access.requests.find((r) => r.id === requestId && r.state === 'pending')
-  if (!request) return
+  const { requests: [request] } = await core.user.call<{ requests: PendingAccess[] }>('AccessListRequest', { request_id: requestId })
+  if (!request || request.state !== 'pending') return
   const project = core.projectFolder(request.project_id) ?? fallback
   if (!project) return
-  const asked = request.asked
-  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, groups: request.groups, resolve: () => {} })
+  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, request, resolve: () => {} })
   ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
-    event: { kind: 'permission', id: requestId, asked, groups: request.groups, from: 'Claude Code' } })
+    event: { ...request, kind: 'permission', from: 'Claude Code' } })
 }
 
 async function externalAPI(name: string, args: unknown, project?: string, signal?: AbortSignal) {
@@ -586,7 +592,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
-    const access = await core.user.call<{ requests: { id: string; state: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest', { conversation_id: a.id })
+    const access = await core.user.call<{ requests: PendingAccess[] }>('AccessListRequest', { conversation_id: a.id })
     const pending = access.requests.find((r) => r.state === 'pending')
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {
@@ -596,7 +602,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
         api: p.providerId === 'chatgpt' || p.providerId === 'openai' ? 'openAIResponses' : 'anthropicMessages' }
     }
     return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: info,
-      permission: pending ? { id: pending.id, asked: pending.asked, groups: pending.groups } : wait ? { id: wait[0], asked: wait[1].asked, groups: wait[1].groups } : null }
+      permission: pending ?? wait?.[1].request ?? null }
   },
   'POST /api/chat/send': async (b) => {
     const { host, a } = await turnAgent(b)

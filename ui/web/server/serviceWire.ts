@@ -183,7 +183,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
-    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
+    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id, v.request_id)
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)

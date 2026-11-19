@@ -126,9 +126,9 @@ export class ChatController extends Observable {
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
-  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }[] = []
+  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] = []
   get permission() { return this.permissions?.[0] }
-  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }) {
+  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }) {
     this.permissions ??= []
     if (!this.permissions.some(x => x.id === p.id)) this.permissions.push(p)
   }
@@ -235,7 +235,7 @@ export class ChatController extends Observable {
   private async reread(id: string) {
     const request = ++this.reload, turn = this.turn, revision = this.contentRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[]; groups?: AccessGroup[] } | null }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[]; groups?: AccessGroup[]; call_id?: string } | null }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
       // An observation received after the read began is newer than this snapshot.
@@ -628,7 +628,7 @@ export class ChatController extends Observable {
         void this.refreshProvider()
         break
       case 'permission':
-        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from })
+        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from, call_id: e.call_id })
         break
       case 'permissionAnswered':
         this.removePermission(e.id)

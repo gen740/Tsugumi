@@ -9,6 +9,7 @@ namespace tsugumi::host {
 // The helper's Card scope still limits which tools and paths it can use.
 class TurnAuthorization {
  public:
+  auto project() const -> const std::string& { return project_; }
   auto Matches(const std::string& project,
                const std::string& conversation) const -> bool {
     return project_ == project && conversation_ == conversation;

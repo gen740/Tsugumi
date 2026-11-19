@@ -46,7 +46,7 @@ table AccessRequest { project_id:string (required); conversation_id:string; acce
 // The host applies the selected offered permissions; omission uses the needed access.
 table AccessResolveRequest { request_id:string (required); allow:bool; selected:[Tsugumi.Service.Access]; }
 table AccessRevokeRequest { grant_id:string (required); }
-table AccessListRequest { conversation_id:string; }
+table AccessListRequest { conversation_id:string; request_id:string; }
 
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
@@ -92,7 +92,7 @@ table SearchResult { matches:[SearchMatch]; }
 table Event {
   kind:string (required); text:string; message:string; input_json:string;
   id:string; name:string; ok:bool = true; index:uint;
-  asked:[string]; groups:[AccessGroup]; event:Event; code:string;
+  asked:[string]; groups:[AccessGroup]; event:Event; code:string; call_id:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
 table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }
@@ -102,7 +102,7 @@ table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
 table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; reason:string; state:string; asked:[string]; groups:[AccessGroup]; }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; reason:string; state:string; asked:[string]; groups:[AccessGroup]; call_id:string; }
 table Grant { id:string; project_id:string; access:Tsugumi.Service.Access; active:bool; }
 table AccessList { requests:[AccessEntry]; grants:[Grant]; }
 union ReplyPayload {

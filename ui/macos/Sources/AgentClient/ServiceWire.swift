@@ -313,6 +313,7 @@ enum ServiceWire {
       case "AccessListRequest":
         let v = Tsugumi_Agent_AccessListRequestT()
         v.conversationId = fields["conversation_id"] as? String
+        v.requestId = fields["request_id"] as? String
         return (Tsugumi_Agent_RequestPayload.accesslistrequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
@@ -505,6 +506,7 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["code"] = v.code
       out["kind"] = v.kind
+      out["call_id"] = v.callId
       out["text"] = v.text ?? ""
       out["message"] = v.message
       out["input"] = v.inputJson
@@ -550,6 +552,7 @@ enum ServiceWire {
       out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
       out["reason"] = v.reason
       out["state"] = v.state
+      out["call_id"] = v.callId
       return out
     case let v as Tsugumi_Agent_GrantT:
       var out: [String: Any] = [:]

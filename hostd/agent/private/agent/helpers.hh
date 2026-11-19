@@ -34,6 +34,7 @@ struct Helpers {
   Helpers(host::StateGate& gate, ConversationStore& conversations,
           Providers& providers, host::Settings& settings, Tools& tools,
           Turns& turns, host::Access& access, Dependencies dependencies);
+  static auto LastAnswer(const std::vector<Message>& messages) -> Message;
   static auto HelperResult(const std::string& output,
                            const std::string& conversation,
                            const std::string& call, size_t task) -> std::string;

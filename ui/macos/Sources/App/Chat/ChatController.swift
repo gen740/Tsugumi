@@ -301,7 +301,7 @@ final class ChatController {
     self.agent = agent
     modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
-    let approver: Agent.Approver = { [weak self] asked, groups in await self?.approve(asked, groups: groups) ?? [] }
+    let approver: Agent.Approver = { [weak self] asked, groups, callId in await self?.approve(asked, groups: groups, callId: callId) ?? [] }
     opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
@@ -550,6 +550,7 @@ final class ChatController {
     let id = UUID()
     let raw: [String]
     var groups: [Tsugumi_Agent_AccessGroupT] = []
+    var callId: String?
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: String? {
       guard let request = raw.first(where: { $0.hasPrefix("project_access operation_approval\n") }),
@@ -589,9 +590,9 @@ final class ChatController {
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
-  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = []) async -> Set<String> {
+  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = [], callId: String? = nil) async -> Set<String> {
     return await withCheckedContinuation { continuation in
-      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups) { continuation.resume(returning: $0) })
+      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups, callId: callId) { continuation.resume(returning: $0) })
     }
   }
 

@@ -9,7 +9,6 @@
 #include <thread>
 #include <vector>
 
-#include "agent/approvals.hh"
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
@@ -50,7 +49,6 @@ namespace H = Tsugumi::Host;
 namespace S = Tsugumi::Service;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
-using agent::Approvals;
 using agent::Cancelled;
 using agent::ConversationStore;
 using agent::Helpers;
@@ -128,18 +126,13 @@ struct Service::State {
         host::Access::Dependencies{
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
-            .cancel =
-                [this](const auto& project, const auto& conversation) {
-                  for (const auto& [key, call] : tools->file_calls)
-                    if (call.project == project &&
-                        (conversation.empty() || key.first == conversation))
-                      call.stop->request_stop();
-                  // A model-issued shell uses its conversation's stop token.
-                  for (const auto& [id, job] : turns->jobs)
-                    if ((conversation.empty() || id == conversation) &&
-                        conversations->GetConversation(id).project == project)
-                      job->request_stop();
-                }});
+            .cancel = [this](const auto& project) {
+              for (const auto& [_, call] : tools->file_calls)
+                if (call.project == project) call.stop->request_stop();
+              for (const auto& [id, job] : turns->jobs)
+                if (conversations->GetConversation(id).project == project)
+                  job->request_stop();
+            }});
     turns = std::make_unique<Turns>(
         state_gate, db, *conversations, *providers, *host_settings, shutdown,
         stopping, *access,
@@ -172,26 +165,12 @@ struct Service::State {
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
-            .approve_operation =
-                [this](const auto& project, const auto& id, const auto& call,
-                       const auto& digest, const auto& args, bool wait,
-                       auto stop, const auto& permissions) {
-                  return approvals->ApproveOperation(
-                      project, id, call, digest, args, wait, stop, permissions);
-                },
             .run_helper =
                 [this](const auto& id, const auto& call, size_t index,
                        const auto& task, auto stop, const auto& authorization) {
                   return helpers->RunHelper(id, call, index, task, stop,
                                             authorization);
-                },
-            .helper_result =
-                [this](const auto& output, const auto& id, const auto& call,
-                       size_t index) {
-                  return helpers->HelperResult(output, id, call, index);
                 }});
-    approvals = std::make_unique<Approvals>(state_gate, db, *conversations,
-                                            *tools, *access);
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
         *access,
@@ -336,7 +315,6 @@ struct Service::State {
   std::unique_ptr<Providers> providers;
   std::unique_ptr<Turns> turns;
   std::unique_ptr<Tools> tools;
-  std::unique_ptr<Approvals> approvals;
   std::unique_ptr<Helpers> helpers;
   std::unique_ptr<host::Access> access;
   std::unique_ptr<host::SkillsService> skills_service;

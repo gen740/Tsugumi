@@ -157,7 +157,7 @@ export type AgentEvent =
   /** What a helper started by `delegate` does (its own events). */
   | { kind: 'helperStarted'; text: string }
   | { kind: 'helper'; name: string; event: AgentEvent }
-  | { kind: 'permission'; id: string; asked: string[]; groups?: AccessGroup[]; from?: string }
+  | { kind: 'permission'; id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }
   | { kind: 'permissionAnswered'; id: string }
 
 // ---- Provider ------------------------------------------------------------------

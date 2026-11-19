@@ -12,7 +12,6 @@ set(_tsugumi_host_agent_sources
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/presentation.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/save_policy.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/helpers.cc
-  ${PROJECT_SOURCE_DIR}/hostd/agent/src/approvals.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools_files.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools_edit.cc
