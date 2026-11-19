@@ -201,8 +201,8 @@ public actor EnvironmentManager {
     return (pipe.local, session)
   }
   private func removeTerminal(_ session: UInt64) { pipes[session] = nil }
-  public func resizeTerminal(session: UInt64, rows: Int, cols: Int) async {
-    _ = try? await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.resize, "session": session, "rows": rows, "cols": cols])
+  public func resizeTerminal(session: UInt64, rows: Int, cols: Int) async throws {
+    _ = try await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.resize, "session": session, "rows": rows, "cols": cols])
   }
 }
 
