@@ -199,11 +199,12 @@ final class ChatController {
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
   /// Reads a snapshot and attaches to work that is already running.
-  @ObservationIgnored private var opening: Task<Void, Never>?
+  @ObservationIgnored private(set) var opening: Task<Void, Never>?
   @ObservationIgnored private var stopping: Task<Void, Never>?
   @ObservationIgnored private let dir: URL
 
   @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
+  @ObservationIgnored private let makeAgent: (String, ProjectSession, ProviderConfig) -> Agent
   var provider: ProviderConfig { connection() }
   private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
   /// Idle controls describe the next turn; running controls describe the accepted turn.
@@ -231,9 +232,15 @@ final class ChatController {
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
-  init(session: ProjectSession, directory: URL? = nil, restoring previous: ChatController? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
+  init(session: ProjectSession, directory: URL? = nil, restoring previous: ChatController? = nil,
+       connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat,
+       loadOnInit: Bool = true,
+       makeAgent: @escaping (String, ProjectSession, ProviderConfig) -> Agent = {
+         Agent(id: $0, transport: RPCToolTransport(session: $1), provider: $2)
+       }) {
     self.session = session
     self.connection = connection
+    self.makeAgent = makeAgent
     thoughts = ThoughtSummarizer(presence: session.presence)
     dir = directory ?? AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
     if let previous {
@@ -243,8 +250,10 @@ final class ChatController {
       displayedId = previous.displayedId
       if !currentId.isEmpty { select(currentId) }
     }
-    refreshSessions()
-    reloadSkills()
+    if loadOnInit {
+      refreshSessions()
+      reloadSkills()
+    }
   }
 
   // MARK: - Sessions
@@ -288,7 +297,7 @@ final class ChatController {
     loading = true
     currentId = id
     thoughts.conversationID = id
-    let agent = Agent(id: id, transport: RPCToolTransport(session: session), provider: provider)
+    let agent = makeAgent(id, session, provider)
     self.agent = agent
     modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
