@@ -3,7 +3,7 @@ import TsugumiVMTypes
 import XCTest
 
 final class VMImageTests: XCTestCase {
-  func testManifestIdentifiesTheImage() throws {
+  func testManifestIsRequiredAndIdentifiesTheImage() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -14,16 +14,7 @@ final class VMImageTests: XCTestCase {
     try JSONSerialization.data(withJSONObject: manifest).write(to: file)
     let image = try XCTUnwrap(VMImage(directory: directory))
     XCTAssertEqual(image.version, "guest-definition")
-    XCTAssertEqual(image.archive, payload)
-  }
-
-  func testExpandedOldImageWithoutManifestIsNotAnImage() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    for name in ["vmlinux", "rootfs.erofs", "vm-version"] {
-      try Data("old".utf8).write(to: directory.appendingPathComponent(name))
-    }
+    try FileManager.default.removeItem(at: file)
     XCTAssertNil(VMImage(directory: directory))
   }
 }

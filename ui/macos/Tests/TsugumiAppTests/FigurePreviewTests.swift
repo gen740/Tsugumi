@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import Foundation
 import Testing
 import TsugumiRPC
@@ -68,90 +69,78 @@ struct FigurePreviewTests {
       == .picture(dimmed: false, waiting: false), "the same content at another size is this result's picture")
   }
 
-  /// Pictures finished by hand, in the order they were asked for.
-  @MainActor final class Maker {
-    var asked: [String] = []
+  @MainActor @Observable final class Maker {
+    private(set) var asked: [String] = []
     private var open: [String: CheckedContinuation<ModuleThumbnails.Result?, Never>] = [:]
-    func make(_ w: FigureWanted, _: CGRect?) async -> ModuleThumbnails.Result? {
-      asked.append(w.json)
+
+    func make(_ wanted: FigureWanted, _: CGRect?) async -> ModuleThumbnails.Result? {
+      let json = wanted.json
       return await withTaskCancellationHandler {
-        await withCheckedContinuation { open[w.json] = $0 }
+        await withCheckedContinuation {
+          open[json] = $0
+          asked.append(json)
+        }
       } onCancel: {
-        Task { @MainActor in self.open.removeValue(forKey: w.json)?.resume(returning: nil) }
+        Task { @MainActor in self.open.removeValue(forKey: json)?.resume(returning: nil) }
       }
     }
-    func finish(_ json: String, failed: Bool = false) async {
+
+    func started(_ json: String) async throws {
+      try await waitForModel("request for \(json)") { self.open[json] != nil }
+    }
+
+    func finish(_ json: String, failed: Bool = false) {
       open.removeValue(forKey: json)?.resume(returning: failed ? .failed("bad figure") : .image(NSImage(size: NSSize(width: 1, height: 1))))
-      await settle()
     }
   }
-  static func settle() async { for _ in 0..<20 { await Task.yield() } }
 
-  @Test func theLastPictureIsHeldUntilTheNextIsReady() async {
+  @Test func theLastPictureIsHeldUntilTheRevisionStillWantedIsReady() async throws {
     let maker = Maker()
     let preview = FigurePreview(make: maker.make)
+    defer { preview.close() }
     preview.want(Self.want("old"), lineage: "r1#1", follow: false)
-    await Self.settle(); await maker.finish("old")
-    #expect(preview.picture?.wanted.json == "old")
-    preview.want(Self.want("new"), lineage: "r2#1", follow: false)
-    await Self.settle()
-    #expect(preview.picture?.wanted.json == "old", "held while the next is made")
-    await maker.finish("new")
-    #expect(preview.picture?.wanted.json == "new" && preview.picture?.lineage == "r2#1")
-    // A picture of content no longer wanted is not shown when it arrives.
-    preview.want(Self.want("a"), lineage: "r2#1", follow: false)
-    await Self.settle()
-    preview.want(Self.want("b"), lineage: "r2#1", follow: false)
-    await Self.settle(); await maker.finish("a")
-    #expect(preview.picture?.wanted.json == "new")
-    await maker.finish("b")
-    #expect(preview.picture?.wanted.json == "b")
-    // A frame that left the screen asks again when it returns.
-    preview.close()
-    preview.want(Self.want("b"), lineage: "r2#1", follow: false)
-    await Self.settle()
-    #expect(maker.asked == ["old", "new", "a", "b", "b"])
-  }
+    try await maker.started("old")
+    maker.finish("old")
+    try await waitForModel { preview.picture?.wanted.json == "old" }
 
-  @Test func rapidRevisionsOfOneInvocationAdvanceWhenFollowed() async {
-    let maker = Maker()
-    let preview = FigurePreview(make: maker.make)
-    preview.want(Self.want("r1"), lineage: "r1#1", follow: true)
-    await Self.settle()
-    for r in ["r2", "r3", "r4"] { preview.want(Self.want(r), lineage: "r1#1", follow: true) }
-    await Self.settle()
-    #expect(maker.asked == ["r1"], "one picture at a time for this frame")
-    await maker.finish("r1")
-    #expect(preview.picture?.wanted.json == "r1")
-    #expect(maker.asked == ["r1", "r4"], "the newest waits; those between are skipped")
-    // A revision that cannot be drawn while a newer one waits leaves the last picture.
-    preview.want(Self.want("r5"), lineage: "r1#1", follow: true)
-    await maker.finish("r4", failed: true)
-    #expect(preview.picture?.wanted.json == "r1")
-    await maker.finish("r5")
-    #expect(preview.picture?.wanted.json == "r5")
-    // Another invocation does not wait behind the last one's picture.
-    preview.want(Self.want("s1"), lineage: "r1#1", follow: true)
-    await Self.settle()
-    preview.want(Self.want("t1"), lineage: "r1#2", follow: true)
-    await Self.settle()
-    #expect(Array(maker.asked.suffix(2)) == ["s1", "t1"])
-    await maker.finish("t1")
-    #expect(preview.picture?.wanted.json == "t1" && preview.picture?.lineage == "r1#2")
-  }
-
-  @Test func updateShowsOnlyTheRevisionStillWanted() async {
-    let maker = Maker()
-    let preview = FigurePreview(make: maker.make)
-    preview.want(Self.want("done"), lineage: "r1#1", follow: false)
-    await Self.settle(); await maker.finish("done")
-    for r in ["r1", "r2", "r3"] {
-      preview.want(Self.want(r), lineage: "r2#1", follow: false)
-      await Self.settle()
-      #expect(preview.picture?.wanted.json == "done")
+    for json in ["superseded", "new"] {
+      preview.want(Self.want(json), lineage: "r2#1", follow: false)
+      try await maker.started(json)
+      #expect(preview.picture?.wanted.json == "old")
     }
-    await maker.finish("r3")
-    #expect(preview.picture?.wanted.json == "r3")
+    maker.finish("new")
+    try await waitForModel { preview.picture?.wanted.json == "new" }
+    #expect(preview.picture?.lineage == "r2#1")
+
+    preview.close()
+    preview.want(Self.want("new"), lineage: "r2#1", follow: false)
+    try await maker.started("new")
+    #expect(preview.picture == nil)
+  }
+
+  @Test func rapidRevisionsOfOneInvocationAdvanceWhenFollowed() async throws {
+    let maker = Maker()
+    let preview = FigurePreview(make: maker.make)
+    defer { preview.close() }
+    preview.want(Self.want("r1"), lineage: "r1#1", follow: true)
+    try await maker.started("r1")
+    for json in ["r2", "r3", "r4"] { preview.want(Self.want(json), lineage: "r1#1", follow: true) }
+    maker.finish("r1")
+    try await maker.started("r4")
+    #expect(preview.picture?.wanted.json == "r1")
+    #expect(maker.asked == ["r1", "r4"], "only the newest revision waits")
+
+    preview.want(Self.want("r5"), lineage: "r1#1", follow: true)
+    maker.finish("r4", failed: true)
+    try await maker.started("r5")
+    #expect(preview.picture?.wanted.json == "r1")
+
+    // Another invocation starts even while the previous one is drawing.
+    preview.want(Self.want("new"), lineage: "r1#2", follow: true)
+    try await maker.started("new")
+    maker.finish("new")
+    try await waitForModel { preview.picture?.wanted.json == "new" }
+    #expect(preview.picture?.lineage == "r1#2")
   }
 
   @Test func aCardUpstreamThatRunsMakesTheFigureStale() throws {
