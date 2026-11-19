@@ -91,25 +91,26 @@ TEST_F(AgentProjectFixture,
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentProjectFixture, InspectionPreservesCoreFailureDiagnostics) {
+TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
   const auto nested = directory.path / "project/externals/storage";
   Write(nested / "tsugumi.json",
         R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");
   const auto definition = nested / "definitions/child/_card.json";
-  Write(definition, R"({"template":"draft"})");
+  const std::string accepted = R"({"template":"draft"})";
+  Write(definition, accepted);
   StartProject();
-  const auto conversation = Conversation("inspect-diagnostic");
+  const auto conversation = Conversation("read-confirmed-document");
   Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
-  // The confirmed snapshot still has the old hash. Reading its external
-  // definition must fail with the core's diagnostic, not an empty message.
   Write(definition, R"({"template":"draft","network":true})");
-  const auto refused = Inspect(conversation);
-  ASSERT_EQ(refused.Code(), "external_change");
-  ASSERT_NE(refused.Failure(), nullptr);
-  EXPECT_NE(refused.Failure()->message()->str().find(
-                "externals/storage/definitions/child/_card.json"),
-            std::string::npos);
+  ASSERT_TRUE(Inspect(conversation).Code().empty());
+  const auto reply =
+      Tool(conversation, "project_file_read",
+           R"({"path":"externals/storage/definitions/child/_card.json"})");
+  ASSERT_TRUE(reply.Code().empty()) << reply.View();
+  EXPECT_FALSE(JsonBool(reply.View(), "/isError")) << reply.View();
+  EXPECT_EQ(JsonString(JsonString(reply.View(), "/text"), "/value/bytes"),
+            accepted);
 }
 
 TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
