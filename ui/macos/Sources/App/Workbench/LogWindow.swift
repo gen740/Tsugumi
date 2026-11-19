@@ -169,15 +169,15 @@ struct LogWindow {
       defer { pieces.removeAll(keepingCapacity: true) }
       guard let first = pieces.first, let last = pieces.last,
             form == .terminal || (first.starts && last.ends) else { return }
-      let raw = pieces.map(\.text).joined()
       // A single very long plain line may span the entire window. Keep
       // page-relative anchors for its visible pieces so it can still be
       // browsed in both directions. A redraw needs the whole resident line.
-      if form == .terminal, raw.utf8.count >= 64 * 1024, !raw.utf8.contains(13) {
+      if form == .terminal, pieces.reduce(0, { $0 + $1.text.utf8.count }) >= 64 * 1024,
+         !pieces.contains(where: { $0.text.utf8.contains(13) }) {
         for piece in pieces where !piece.text.isEmpty {
           next.append(LogBlock(line: piece.line, text: "\(piece.line)\t\(piece.text)\n", fragmentOffset: piece.offset))
         }
-      } else if let text = LogPage.render(raw, number: first.line, form: form) {
+      } else if let text = LogPage.render(pieces.map(\.text).joined(), number: first.line, form: form) {
         next.append(LogBlock(line: first.line, text: last.ends ? text + "\n" : text))
       }
     }

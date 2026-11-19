@@ -22,7 +22,13 @@ import TsugumiRPC
   @ObservationIgnored private var source: Source?
   @ObservationIgnored private weak var session: ProjectSession?
   @ObservationIgnored private var unsubscribe: (() -> Void)?
-  @ObservationIgnored private var frames = LogReadFrames<() -> Void>()
+  private struct Completed {
+    let kind: LogWindow.Kind
+    let read: LogWindow.Read
+    let result: Result<LogPage, Error>
+  }
+
+  @ObservationIgnored private var frames = LogReadFrames<Completed>()
   @ObservationIgnored private var demand: LogWindow.Kind?
   @ObservationIgnored private var changed = false
   @ObservationIgnored private var generation = 0
@@ -120,7 +126,7 @@ import TsugumiRPC
   }
 
   func frame() {
-    frames.takeResult()?()
+    if let completed = frames.takeResult() { apply(completed) }
     guard frames.begin() else { return }
     let kind = demand ?? (changed ? .status : nil)
     demand = nil
@@ -132,7 +138,8 @@ import TsugumiRPC
     }
     let form = window.form
     let current = generation
-    Task {
+    Task { [weak self] in
+      let completed: Result<LogPage, Error>
       do {
         let before = read.kind == .earlier ? read.offset : nil
         let result = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
@@ -141,36 +148,38 @@ import TsugumiRPC
         let raw = result.text, offset = result.offset ?? 0, end = result.nextOffset ?? offset
         let size = result.sizeBytes ?? end, line = result.lineNumber, startsLine = result.startsLine
         let truncated = result.logTruncatedAtBytes
-        let slice = await Task.detached(priority: .userInitiated) {
+        completed = await .success(Task.detached(priority: .userInitiated) {
           LogPage(offset: offset, end: end, size: size, truncatedAt: truncated, line: line,
                   startsLine: startsLine, raw: raw, form: form)
-        }.value
-        guard generation == current else { return }
-        frames.finish { [weak self] in
-          guard let self else { return }
-          let paused = !window.following && (read.kind == .tail || read.kind == .append)
-          let previous = window.blocks
-          window.apply(read, slice, metadataOnly: paused)
-          if error != nil { error = nil }
-          if window.following && window.end < window.size { update() }
-          if (kind == .earlier || kind == .later), demand == nil, window.blocks == previous { page(kind) }
-          publish()
-        }
+        }.value)
       } catch {
-        guard generation == current else { return }
-        frames.finish { [weak self] in
-          guard let self else { return }
-          if let failure = error as? RPCFailure, failure.kind == .notFound, !window.loaded {
-            self.error = nil
-          } else {
-            self.error = "\(error)"
-          }
-          window.loaded = true
-          publish()
-        }
+        completed = .failure(error)
       }
+      guard let self, generation == current else { return }
+      frames.finish(Completed(kind: kind, read: read, result: completed))
       onFrameNeeded?()
     }
+  }
+
+  private func apply(_ completed: Completed) {
+    switch completed.result {
+    case .success(let slice):
+      let read = completed.read, kind = completed.kind
+      let paused = !window.following && (read.kind == .tail || read.kind == .append)
+      let previous = window.blocks
+      window.apply(read, slice, metadataOnly: paused)
+      if error != nil { error = nil }
+      if window.following && window.end < window.size { update() }
+      if (kind == .earlier || kind == .later), demand == nil, window.blocks == previous { page(kind) }
+    case .failure(let failure):
+      if let rpc = failure as? RPCFailure, rpc.kind == .notFound, !window.loaded {
+        error = nil
+      } else {
+        error = "\(failure)"
+      }
+      window.loaded = true
+    }
+    publish()
   }
 
   private func publish(draw: Bool = true) {
