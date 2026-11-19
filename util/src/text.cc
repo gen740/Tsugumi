@@ -64,4 +64,69 @@ bool valid_utf8(std::string_view s) {
   return true;
 }
 
+auto Utf8Decoder::feed(std::string_view bytes) -> std::string {
+  std::string in = pending_ + std::string(bytes);
+  pending_.clear();
+  std::string out;
+  out.reserve(in.size());
+  size_t i = 0;
+  while (i < in.size()) {
+    unsigned char c = in[i];
+    size_t n;
+    if (c < 0x80) {
+      out += static_cast<char>(c);
+      ++i;
+      continue;
+    }
+    if ((c & 0xE0) == 0xC0)
+      n = 2;
+    else if ((c & 0xF0) == 0xE0)
+      n = 3;
+    else if ((c & 0xF8) == 0xF0)
+      n = 4;
+    else {
+      out += "\xEF\xBF\xBD";
+      ++i;
+      continue;
+    }
+    if (i + n > in.size()) {
+      // Possibly an incomplete character at the chunk end: keep it if it could
+      // still be valid.
+      bool ok = true;
+      for (size_t k = 1; i + k < in.size(); ++k)
+        ok &= (static_cast<unsigned char>(in[i + k]) & 0xC0) == 0x80;
+      if (ok) {
+        pending_ = in.substr(i);
+        break;
+      }
+      out += "\xEF\xBF\xBD";
+      ++i;
+      continue;
+    }
+    std::string_view ch(in.data() + i, n);
+    if (valid_utf8(ch)) {
+      out += ch;
+      i += n;
+    } else {
+      out += "\xEF\xBF\xBD";
+      ++i;
+    }
+  }
+  return out;
+}
+
+auto Utf8Decoder::finish() -> std::string {
+  std::string out = pending_.empty() ? "" : "\xEF\xBF\xBD";
+  pending_.clear();
+  return out;
+}
+
+auto replace_invalid_utf8(std::string text) -> std::string {
+  if (valid_utf8(text)) return text;
+  Utf8Decoder decoder;
+  auto repaired = decoder.feed(text);
+  repaired += decoder.finish();
+  return repaired;
+}
+
 }  // namespace tsugumi::text

@@ -9,6 +9,8 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi {
 namespace {
@@ -78,6 +80,43 @@ class DefinitionEvaluation : public ::testing::Test {
   std::filesystem::path root;
   NixCall call;
 };
+
+TEST_F(DefinitionEvaluation, BuildOutputWithInvalidUtf8CanBeRecorded) {
+  for (const bool build_fails : {false, true}) {
+    SCOPED_TRACE(build_fails);
+    auto eval = evaluator(
+        R"(let
+          name = builtins.baseNameOf (builtins.dirOf (toString args.root));
+          probe = pkgs.runCommand name {} ''
+            printf 'before invalid bytes\n' >&2
+            printf 'builder byte: \377\n' >&2
+            printf 'after invalid bytes\n' >&2
+        )" + std::string(build_fails ? "exit 23" : "touch $out") +
+        R"(
+          '';
+        in "${probe}")");
+    workerd::InvocationLog budget(kInvocationLogLimitBytes);
+    std::string recorded;
+    call.log = [&](const std::string& line) {
+      if (budget.append(LogStream::build, line)) recorded += line;
+    };
+    auto plan = eval->evaluate(call);
+    if (build_fails) {
+      EXPECT_THROW(eval->realise_native(call, std::move(plan)),
+                   std::runtime_error);
+    } else {
+      EXPECT_TRUE(eval->realise_native(call, std::move(plan)).built);
+    }
+    size_t offset = 0;
+    for (const std::string_view line :
+         {"before invalid bytes", "builder byte: \xef\xbf\xbd",
+          "after invalid bytes"}) {
+      const auto next = recorded.find(line, offset);
+      ASSERT_NE(next, std::string::npos) << recorded;
+      offset = next + line.size();
+    }
+  }
+}
 
 TEST_F(DefinitionEvaluation,
        UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
