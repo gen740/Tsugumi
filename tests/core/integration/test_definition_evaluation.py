@@ -249,7 +249,7 @@ def test_project_flake_change_replaces_the_definition(core_factory, project, tmp
         client = core_factory().connect()
         before = completed_definition(client)
         assert before[0] == "original\n"
-            edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[changed]))
+        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[changed]))
         reload_project(client)
         after = completed_definition(client)
         assert after[0] == "second\n" and after[1] != before[1]
