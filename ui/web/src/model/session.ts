@@ -1553,8 +1553,12 @@ export class ProjectSession extends Observable {
 
   position(k: CardKey): { x: number; y: number } {
     const scope = path(k).slice(0, -1)
-    const p = get(this.layoutOf(scope), 'cards', this.layoutKey(k)) ?? get(this.derivedLayouts.get(this.projectPrefix(scope) ?? ''), 'cards', this.layoutKey(k))
-    return { x: dbl(get(p, 'x')) ?? 0, y: dbl(get(p, 'y')) ?? 0 }
+    const key = this.layoutKey(k)
+    const saved = get(this.layoutOf(scope), 'cards', key)
+    const x = dbl(get(saved, 'x')), y = dbl(get(saved, 'y'))
+    if (x !== undefined && y !== undefined) return { x, y }
+    const derived = get(this.derivedLayouts.get(this.projectPrefix(scope) ?? ''), 'cards', key)
+    return { x: dbl(get(derived, 'x')) ?? 0, y: dbl(get(derived, 'y')) ?? 0 }
   }
 
   /** Reads the externals' documents when their sources changed. */

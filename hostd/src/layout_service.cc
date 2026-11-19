@@ -124,8 +124,8 @@ auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
   auto l = decode_layout(text);
   if (const auto* cards = schema::get(l.cards))
     for (const auto& [key, pos] : cards->entries())
-      if (!pos.x->has_value() || !pos.y->has_value())
-        invalid_layout("layout.json: card " + key + " needs x and y");
+      if (pos.x->has_value() != pos.y->has_value())
+        invalid_layout("layout.json: card " + key + " needs both x and y");
   if (const auto* notes = schema::get(l.notes))
     for (const auto& n : *notes)
       if (!n.id->has_value() || !n.text->has_value() || !n.x->has_value() ||

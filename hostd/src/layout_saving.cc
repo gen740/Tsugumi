@@ -90,7 +90,8 @@ static auto TransformLayout(
   for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
     const auto id = json::Text(json::Object(raw), "id");
     const auto position = json::Object(json::Get(positions, id, "{}"));
-    if (!positions.contains(id)) missing.push_back(id);
+    if (!position.contains("x") || !position.contains("y"))
+      missing.push_back(id);
     // A host reservation is independent of a window's zoom and grid. Leave
     // room for the normal expanded Card; Arrange uses measured UI geometry.
     size_t params = 0, ports = 0;
@@ -187,9 +188,8 @@ static auto TransformLayout(
                            number(b, "y", 0), number(b, "width", 240),
                            number(b, "height", 160)});
   }
-  if (move) {
-    // A drag starts at the displayed positions, including derived positions
-    // that have never been saved. Use the same placement before measuring.
+  if (action == 1) {
+    // Moves and port sorting use the same positions as the displayed canvas.
     for (const auto& placed : layout::place_missing(scene, missing).cards)
       for (auto& card : scene.cards)
         if (card.id == placed.id) {

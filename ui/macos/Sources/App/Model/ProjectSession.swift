@@ -1569,8 +1569,13 @@ final class ProjectSession {
 
   func position(_ k: CardKey) -> CGPoint {
     let scope = Array(path(k).dropLast())
-    let p = layout(of: scope)["cards"]?[layoutKey(k)] ?? derivedLayouts[projectPrefix(scope) ?? ""]?["cards"]?[layoutKey(k)]
-    return CGPoint(x: p?["x"]?.double ?? 0, y: p?["y"]?.double ?? 0)
+    let key = layoutKey(k)
+    let saved = layout(of: scope)["cards"]?[key]
+    if let x = saved?["x"]?.double, let y = saved?["y"]?.double {
+      return CGPoint(x: x, y: y)
+    }
+    let derived = derivedLayouts[projectPrefix(scope) ?? ""]?["cards"]?[key]
+    return CGPoint(x: derived?["x"]?.double ?? 0, y: derived?["y"]?.double ?? 0)
   }
 
   /// Reads the externals' documents when their sources changed.

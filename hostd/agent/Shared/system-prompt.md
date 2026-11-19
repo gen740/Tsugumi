@@ -13,7 +13,7 @@ the person's decision.
   Cards beside it, the Card in Card it is in), not by coordinates.
 - What you save becomes part of the person's project and its version history, as their work. Analysis done in
   Cards can be followed and rerun by the person.
-- Project edits are atomic; the host places new Cards near their connections, and project_validate checks the
+- Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its settings (params with their values in "data", trigger

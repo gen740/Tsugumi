@@ -472,6 +472,67 @@ class TransformationProject {
             {}};
   }
 };
+TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
+  const std::string prefix = "externals/inner/";
+  for (const auto* action : {"move", "arrange", "duplicate", "subgraph"}) {
+    SCOPED_TRACE(action);
+    TransformationProject project;
+    project.files.erase(prefix + "layout.json");
+    auto positions = [&](const std::string& file) {
+      return json::Object(json::Object(project.files.at(file)).at("cards"));
+    };
+    const auto displayed = json::Object(
+        json::Object(
+            CompleteLayout(project.files.at(prefix + "tsugumi.json"), "{}"))
+            .at("cards"));
+    const auto before = json::Object(displayed.at("b"));
+    if (std::string_view(action) == "move") {
+      H::ProjectMoveT move;
+      move.project_path = "externals/inner";
+      move.cards = {"b"};
+      move.dx = 40;
+      project.Apply(std::move(move));
+      const auto moved =
+          json::Object(positions(prefix + "layout.json").at("b"));
+      EXPECT_DOUBLE_EQ(std::stod(moved.at("x")),
+                       std::stod(before.at("x")) + 40);
+      EXPECT_DOUBLE_EQ(std::stod(moved.at("y")), std::stod(before.at("y")));
+    } else if (std::string_view(action) == "arrange") {
+      H::ProjectLayoutT arrange;
+      arrange.project_path = "externals/inner";
+      arrange.action = H::ProjectLayoutAction::Arrange;
+      project.Apply(std::move(arrange));
+      EXPECT_TRUE(json::Object(positions(prefix + "layout.json").at("b"))
+                      .contains("x"));
+    } else if (std::string_view(action) == "duplicate") {
+      H::ProjectCopyT duplicate;
+      duplicate.project_path = "externals/inner";
+      duplicate.copy_connections = true;
+      auto item = std::make_unique<H::ProjectCopyItemT>();
+      item->from = prefix + "definitions/b/";
+      item->id = "duplicate";
+      duplicate.items.push_back(std::move(item));
+      project.Apply(std::move(duplicate));
+      const auto saved = positions(prefix + "layout.json");
+      EXPECT_FALSE(saved.contains("b"));
+      const auto copy = json::Object(saved.at("duplicate"));
+      EXPECT_DOUBLE_EQ(std::stod(copy.at("x")), std::stod(before.at("x")) + 30);
+      EXPECT_DOUBLE_EQ(std::stod(copy.at("y")), std::stod(before.at("y")) + 30);
+    } else {
+      H::ProjectMakeSubgraphT subgraph;
+      subgraph.project_path = "externals/inner";
+      subgraph.cards = {"b"};
+      subgraph.id = "subgraph";
+      project.Apply(std::move(subgraph));
+      const auto child = positions(prefix + "externals/subgraph/layout.json");
+      EXPECT_TRUE(child.contains("b"));
+      const auto outer =
+          json::Object(positions(prefix + "layout.json").at("subgraph"));
+      EXPECT_DOUBLE_EQ(std::stod(outer.at("x")), std::stod(before.at("x")));
+      EXPECT_DOUBLE_EQ(std::stod(outer.at("y")), std::stod(before.at("y")));
+    }
+  }
+}
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
   for (const auto* excluded :
@@ -697,6 +758,23 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   EXPECT_EQ(order(), R"(["p","q"])");
   project.Apply(undo_move);
   EXPECT_TRUE(DocumentsEqual(project.files.at("layout.json"), accepted));
+
+  const std::string unplaced =
+      R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0}}})";
+  project.files["layout.json"] = unplaced;
+  project.Apply(untangle);
+  const auto saved = project.files.at("layout.json");
+  EXPECT_EQ(order(), R"(["q","p"])");
+  const auto entry = [&](const std::string& layout) {
+    return json::Object(json::Object(json::Object(layout).at("cards")).at("d"));
+  };
+  EXPECT_FALSE(entry(saved).contains("x"));
+  EXPECT_FALSE(entry(saved).contains("y"));
+  const auto& document = project.files.at("tsugumi.json");
+  const auto before = entry(CompleteLayout(document, unplaced));
+  const auto after = entry(CompleteLayout(document, saved));
+  EXPECT_EQ(before.at("x"), after.at("x"));
+  EXPECT_EQ(before.at("y"), after.at("y"));
 }
 }  // namespace
 }  // namespace tsugumi::host
