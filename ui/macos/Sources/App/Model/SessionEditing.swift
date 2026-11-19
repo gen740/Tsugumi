@@ -134,7 +134,7 @@ extension ProjectSession {
   /// another project, or left over).
   var unplacedDefinitions: [String] {
     let used = Set(cards(in: []).compactMap { $0["id"]?.string })
-    return Set(definitions.keys).union(links.keys).subtracting(used).sorted()
+    return Set(definitions.keys).subtracting(used).sorted()
   }
 
   /// Places a definition folder no Card uses as its Card (the same name).
