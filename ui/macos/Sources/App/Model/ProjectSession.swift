@@ -398,11 +398,15 @@ final class ProjectSession {
   private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
   private var loadingProvenance: Set<String> = []
   private var stopRunId: String?
+  private(set) var stopError: String?
   var stopRequested: Bool { stopRunId != nil }
   var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
     didSet {
       if let status = runStatus, let id = status.runId { runProvenance[id] = status }
+      if oldValue?.runId != currentRunId || !runActive || runStatus?.state == .cancelling {
+        stopError = nil
+      }
       if stopRunId != currentRunId || !runActive || runStatus?.state == .cancelling {
         stopRunId = nil
       }
@@ -1352,6 +1356,7 @@ final class ProjectSession {
   func cancelRun(send: (String) async throws -> Tsugumi_RPC_RunStatusT) async {
     guard canStopRun, let id = currentRunId else { return }
     stopRunId = id
+    stopError = nil
     do {
       let status = try await send(id)
       guard stopRunId == id, status.runId == id else { return }
@@ -1360,7 +1365,7 @@ final class ProjectSession {
       guard stopRunId == id else { return }
       stopRunId = nil
       let reason = (error as? RPCFailure)?.diagnostic ?? String(describing: error)
-      notice = String(localized: "停止を要求できませんでした（\(reason)）")
+      stopError = String(localized: "停止を要求できませんでした（\(reason)）")
     }
   }
 

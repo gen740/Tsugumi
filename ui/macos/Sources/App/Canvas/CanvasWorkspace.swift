@@ -197,20 +197,29 @@ struct CanvasRunControl: View {
       .disabled(shownActive ? !session.canStopRun : !session.connected)
       .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
                         : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
-      // State and time on one line in a fixed width (what runs now is in the
-      // tooltip); the clock ticks in hundredths while the run is active.
-      HStack(spacing: 4) {
-        Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
-          .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
-        Text(label).lineLimit(1)
-        SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
-          Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+      if let error = session.stopError {
+        Label(error, systemImage: "exclamationmark.circle.fill")
+          .foregroundStyle(.red)
+          .lineLimit(2)
+          .frame(width: 172, alignment: .leading)
+          .help(error)
+          .accessibilityElement(children: .combine)
+      } else {
+        // State and time on one line in a fixed width (what runs now is in the
+        // tooltip); the clock ticks in hundredths while the run is active.
+        HStack(spacing: 4) {
+          Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
+            .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
+          Text(label).lineLimit(1)
+          SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
+            Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+          }
         }
+        .frame(width: 172, alignment: .leading)
+        .help(shownActive ? (session.stopRequested ? label : (activity ?? state.label)) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
+                          : String(localized: "Run の状態と経過時間"))
+        .accessibilityElement(children: .combine)
       }
-      .frame(width: 172, alignment: .leading)
-      .help(shownActive ? (session.stopRequested ? label : (activity ?? state.label)) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
-                        : String(localized: "Run の状態と経過時間"))
-      .accessibilityElement(children: .combine)
       Button { showIssues.toggle() } label: {
         HStack(spacing: 2) {
           Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")

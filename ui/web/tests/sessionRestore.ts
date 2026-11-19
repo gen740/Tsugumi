@@ -2,6 +2,9 @@
 // the last run when a project is opened, and a run while the tab is in the background.
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server.browser'
+import type { Workspace, WorkflowTab } from '../src/model/workspace'
 import { parse } from '../shared/json'
 import * as R from '../shared/gen/tsugumi/rpc'
 import * as D from '../shared/gen/tsugumi/data'
@@ -83,32 +86,43 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
   } finally { mock.timers.reset() }
 }
 
-console.log('session restore: passed')
-
 // Stop is shown during the request, clears on confirmation, and can be retried
 // after failure. A late reply cannot change a finished or replacement run.
 {
   const { s } = session()
   const status = (runId: string, state: D.RunState) =>
     Object.assign(new R.RunStatusT(), { runId, state })
+  const sent: string[] = []
+  let reject: (error: Error) => void = () => assert.fail('Stop was not sent')
   const rpc = {
-    async cancel(id: string): Promise<R.RunStatusT> {
-      assert.equal(id, 'stop')
-      assert.equal(s.stopRequested, true)
-      assert.equal(s.canStopRun, false)
-      throw Error('rejected')
+    cancel(id: string): Promise<R.RunStatusT> {
+      sent.push(id)
+      return new Promise((_, fail) => { reject = fail })
     },
   }
   Object.assign(s, { client: rpc })
   s.runStatus = status('stop', D.RunState.preparing)
+  const pending = s.cancelRun()
+  assert.deepEqual(sent, ['stop'])
+  assert.equal(s.stopRequested, true)
+  assert.equal(s.canStopRun, false)
   await s.cancelRun()
-  assert.ok(s.notice)
+  assert.deepEqual(sent, ['stop'])
+  reject(Error('worker refused Stop'))
+  await pending
+  assert.match(s.stopError ?? '', /worker refused Stop/)
   assert.equal(s.canStopRun, true)
+
+  const { CanvasRunControl } = await import('../src/ui/canvasWorkspace')
+  const narrow = renderToStaticMarkup(createElement('div', { style: { width: 320 } },
+    createElement(CanvasRunControl, { session: s, workspace: {} as Workspace, tab: { scope: [] } as WorkflowTab })))
+  assert.match(narrow, /role="alert"[^>]*>[^<]*worker refused Stop/)
 
   rpc.cancel = async id => status(id, D.RunState.cancelling)
   await s.cancelRun()
   assert.equal(s.runStatus.state, D.RunState.cancelling)
   assert.equal(s.stopRequested, false)
+  assert.equal(s.stopError, undefined)
   assert.equal(s.canStopRun, false)
 
   for (const next of [status('finished', D.RunState.succeeded), status('other', D.RunState.preparing)]) {
@@ -122,3 +136,5 @@ console.log('session restore: passed')
     assert.equal(s.stopRequested, false)
   }
 }
+
+console.log('session restore: passed')

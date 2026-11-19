@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import TsugumiApp
 @testable import TsugumiAgentClient
@@ -94,14 +96,26 @@ import TsugumiRPC
     }
 
     accept("failed-stop")
+    let workspace = Workspace(), tab = WorkflowTab(scope: [])
+    func toolbarHeight() -> CGFloat {
+      NSHostingView(rootView: CanvasRunControl(workspace: workspace, session: session, tab: tab)
+        .frame(width: 320)).fittingSize.height
+    }
+    let before = toolbarHeight()
+    struct Rejected: LocalizedError, CustomStringConvertible {
+      let description = "The execution service refused this Stop request."
+    }
     await session.cancelRun { id in
       #expect(id == "failed-stop")
       #expect(session.stopRequested && !session.canStopRun)
-      throw RPCError.disconnected
+      throw Rejected()
     }
-    #expect(session.notice != nil && session.canStopRun)
+    #expect(session.stopError?.contains(Rejected().description) == true && session.canStopRun)
+    // The error occupies a second line in the narrow toolbar itself.
+    #expect(toolbarHeight() > before)
     await session.cancelRun { id in status(id, .cancelling) }
     #expect(session.runStatus?.state == .cancelling && !session.stopRequested && !session.canStopRun)
+    #expect(session.stopError == nil)
 
     accept("finished")
     await session.cancelRun { id in

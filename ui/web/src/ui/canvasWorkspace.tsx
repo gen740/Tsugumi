@@ -161,13 +161,18 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
         onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>
         {shownActive ? L('停止') : L('実行')}
       </Button>
-      {/* State and time on one line in a fixed width (what runs now is in the tooltip). */}
-      <span className="cv-run-state"
-        title={shownActive ? (session.stopRequested ? label : (activity ?? runState(st).label)) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
-        <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
-        <span className="nowrap">{label}</span>
-        <span className="secondary mono-digits nowrap">{elapsed}</span>
-      </span>
+      {session.stopError ? (
+        <span className="cv-run-state cv-stop-error" role="alert" title={session.stopError}>
+          {session.stopError}
+        </span>
+      ) : (
+        <span className="cv-run-state"
+          title={shownActive ? (session.stopRequested ? label : (activity ?? runState(st).label)) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
+          <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
+          <span className="nowrap">{label}</span>
+          <span className="secondary mono-digits nowrap">{elapsed}</span>
+        </span>
+      )}
       <span ref={issues}>
         <Button kind="borderless" small icon={problems > 0 ? 'exclamationmark.triangle.fill' : 'checkmark.seal'}
           style={{ color: problems > 0 ? 'var(--orange)' : 'var(--secondary)' }}
