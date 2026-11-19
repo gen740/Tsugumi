@@ -250,10 +250,9 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
   host::StateGate gate;
-  host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      nullptr, host::Settings::KeyStorage::Host);
+  host::Credentials credentials{gate, store.db, {}};
+  host::Settings settings(directory.path, credentials, nullptr,
+                          host::Settings::KeyStorage::Host);
   agent::Providers providers(gate, store.db, settings);
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());
