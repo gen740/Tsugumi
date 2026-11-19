@@ -18,7 +18,8 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
   client/CMakeLists.txt client/cmake client/include client/src sdk workerd \
-  protocol/CMakeLists.txt 'protocol/*.fbs' nix/core.nix nix/cli.nix nix/web.nix nix/client-wasm.nix \
+  protocol/CMakeLists.txt protocol/include 'protocol/*.fbs' \
+  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix \
   third-party cli/third-party/node-linux \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
@@ -29,7 +30,7 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
 # Repository-only generators and their template inputs are already represented
 # by the generated host catalog. Lock helpers remain part of the authoring SDK.
 rm -rf "$stage/tsugumi/sdk/go/template" "$stage/tsugumi/sdk/rust/template"
-rm "$stage/tsugumi/sdk/codegen/"scaffold_*.py "$stage/tsugumi/sdk/rust/src/lib.rs" \
+rm "$stage/tsugumi/sdk/codegen/scaffold.py" \
   "$stage/tsugumi/hostd/agent/Shared/generate.py" "$stage/tsugumi/hostd/agent/Shared/mcp-transport.md"
 find "$stage" -type f -name README.md -delete
 # The source distribution builds the CLI only; repository checks, documentation

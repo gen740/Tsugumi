@@ -25,6 +25,7 @@ lib.fileset.toSource {
     (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
     # Documentation tooling does not affect the native runtime.
     ../protocol/CMakeLists.txt
+    ../protocol/include
     (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
     ../hostd/agent/Shared/system-prompt.md
     ../hostd/agent/Shared/guide-prompt.md

@@ -83,6 +83,8 @@ auto Report::points(const std::vector<float>& x, const std::vector<float>& y,
                     const std::vector<uint32_t>& colors) const -> void {
   if (x.size() != y.size() || x.size() != z.size())
     throw Failure("output_invalid", "x, y and z differ in length");
+  if (!colors.empty() && colors.size() != x.size())
+    throw Failure("output_invalid", "colors must be empty or match x length");
   check(current().effects->display_points(current().host, x.data(), y.data(), z.data(),
                                  colors.empty() ? nullptr : colors.data(),
                                  x.size()),

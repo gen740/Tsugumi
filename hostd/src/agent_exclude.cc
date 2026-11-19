@@ -361,9 +361,11 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
            IsExternalDocument(path, "layout.json") ||
            path.ends_with("/_link.json")))
         document(path, Bytes(j::Get(value, "bytes")));
-      if (type == "PatchSource" && (IsExternalDocument(path, "tsugumi.json") ||
-                                    IsExternalDocument(path, "layout.json") ||
-                                    path.ends_with("/_link.json"))) {
+      if (type == "PatchSource" &&
+          (path == "tsugumi.json" || path == "layout.json" ||
+           IsExternalDocument(path, "tsugumi.json") ||
+           IsExternalDocument(path, "layout.json") ||
+           path.ends_with("/_link.json"))) {
         if (!base.files.contains(path))
           throw Failure("not_found", "Path not found");
         try {

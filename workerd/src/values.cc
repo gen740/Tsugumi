@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cstring>
 
+#include "tsugumi/util/text.hh"
+
 namespace tsugumi {
 
 // Returns a copy of a File/Directory value whose `value` field is `p`.
@@ -68,7 +70,7 @@ FailureData FailureData::make(
     std::vector<std::pair<std::string, std::string>> args) {
   FailureData f;
   f.kind = k;
-  if (!diag.empty()) f.diagnostic = std::move(diag);
+  if (!diag.empty()) f.diagnostic = text::replace_invalid_utf8(std::move(diag));
   f.args = std::move(args);
   return f;
 }

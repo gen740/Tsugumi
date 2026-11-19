@@ -11,6 +11,7 @@
 #include "host/agent_policy.hh"
 #include "host/failure.hh"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/log_range.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
@@ -147,7 +148,14 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
     } else {
       auto schema = json::Object(
           TypeSchema(type.base_type(), type.element(), type.index(), depth));
-      const auto docs = Docs(field->documentation());
+      auto docs = Docs(field->documentation());
+      if (object.name()->string_view() == "Tsugumi.RPC.LogRangeRequest" &&
+          name == "limit_bytes") {
+        schema["minimum"] = std::to_string(protocol::kMinLogRangeBytes);
+        schema["maximum"] = std::to_string(protocol::kMaxLogRangeBytes);
+        docs += " Accepted range is " + schema.at("minimum") + " to " +
+                schema.at("maximum") + " bytes.";
+      }
       if (!docs.empty()) schema["description"] = json::Quote(docs);
       properties[name] = json::Encode(schema);
     }

@@ -370,5 +370,27 @@ TEST_F(AgentExcludeTest,
   operation.body.AsProjectCopy()->items[0]->from = "";
   EXPECT_THROW(ProjectOperations().Execute(operation, context, call), Failure);
 }
+TEST_F(AgentExcludeTest, PatchSourceOnRootDocumentsChecksExcludedRules) {
+  const std::string project =
+      R"({"agentExclude":["definitions/a/private.txt"],"canvas":{"cards":[{"id":"a"},{"id":"public"}],"connections":[]}})";
+  AgentExclude policy(root, project);
+  SaveBase base;
+  base.files["tsugumi.json"] = project;
+  const std::string dropped =
+      R"({"agentExclude":["definitions/a/private.txt"],"canvas":{"cards":[{"id":"public"}],"connections":[]}})";
+  const auto plan = j::Members{
+      {"changes",
+       j::Encode(std::vector<std::string>{j::Encode(j::Members{
+           {"value_type", j::Quote("PatchSource")},
+           {"value",
+            j::Encode(j::Members{
+                {"path", j::Quote("tsugumi.json")},
+                {"patches",
+                 j::Encode(std::vector<std::string>{j::Encode(j::Members{
+                     {"offset", j::Quote("0")},
+                     {"remove", j::Quote(std::to_string(project.size()))},
+                     {"text", j::Quote(dropped)}})})}})}})})}};
+  Refused([&] { policy.CheckSave(plan, base); });
+}
 }  // namespace
 }  // namespace tsugumi::host

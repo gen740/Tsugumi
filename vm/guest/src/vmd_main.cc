@@ -792,6 +792,19 @@ void shell(int conn, const std::string& id, int rows, int cols) {
   reply(conn, "ok " + std::to_string(sid));
   logf("terminal %llu for %s", static_cast<unsigned long long>(sid),
        id.c_str());
+  auto write_all = [](int fd, const char* data, size_t len) -> bool {
+    size_t off = 0;
+    while (off < len) {
+      ssize_t w = ::write(fd, data + off, len - off);
+      if (w < 0) {
+        if (errno == EINTR) continue;
+        return false;
+      }
+      if (w == 0) return false;
+      off += static_cast<size_t>(w);
+    }
+    return true;
+  };
   char buf[16384];
   pollfd fds[2] = {{conn, POLLIN, 0}, {master, POLLIN, 0}};
   for (;;) {
@@ -801,11 +814,13 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     }
     if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
       ssize_t n = ::read(conn, buf, sizeof buf);
-      if (n <= 0 || ::write(master, buf, n) != n) break;
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0 || !write_all(master, buf, static_cast<size_t>(n))) break;
     }
     if (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
       ssize_t n = ::read(master, buf, sizeof buf);
-      if (n <= 0 || ::write(conn, buf, n) != n) break;
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0 || !write_all(conn, buf, static_cast<size_t>(n))) break;
     }
   }
   ::kill(pid, SIGHUP);

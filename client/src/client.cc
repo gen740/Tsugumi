@@ -161,7 +161,8 @@ struct Connection::State {
       opened = false;
       failed.swap(pending);
       start = std::exchange(start_callback, {});
-      close = close_callback;
+      close = std::exchange(close_callback, {});
+      event_callback = {};
     }
     if (start) start(error);
     for (auto& [id, request] : failed) Invoke(request.callback, {{}, error});

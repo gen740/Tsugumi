@@ -169,7 +169,12 @@ static PyObject* host_display_table(PyObject* self, PyObject* args) {
   Py_ssize_t nc = PyList_Size(cols);
   Py_ssize_t nr = PyList_Size(rows);
   const char** c = calloc((size_t)nc + 1, sizeof(char*));
-  const char** cells = calloc((size_t)(nc * nr) + 1, sizeof(char*));
+  const char** cells = calloc((size_t)nc * (size_t)nr + 1, sizeof(char*));
+  if (!c || !cells) {
+    free(c);
+    free(cells);
+    return PyErr_NoMemory();
+  }
   int ok = 1;
   for (Py_ssize_t i = 0; i < nc && ok; ++i)
     ok = (c[i] = PyUnicode_AsUTF8(PyList_GetItem(cols, i))) != NULL;
@@ -223,8 +228,13 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
     PyErr_SetString(PyExc_ValueError, "colors must be None or one per point");
     return NULL;
   }
-  float* p = malloc(sizeof(float) * (size_t)(n * 3 + 1));
-  uint32_t* c = with_colors ? malloc(sizeof(uint32_t) * (size_t)(n + 1)) : NULL;
+  float* p = malloc(sizeof(float) * ((size_t)n * 3 + 1));
+  uint32_t* c = with_colors ? malloc(sizeof(uint32_t) * ((size_t)n + 1)) : NULL;
+  if (!p || (with_colors && !c)) {
+    free(p);
+    free(c);
+    return PyErr_NoMemory();
+  }
   for (Py_ssize_t i = 0; i < n; ++i) {
     PyObject* a = PySequence_GetItem(xs, i);
     PyObject* b = PySequence_GetItem(ys, i);

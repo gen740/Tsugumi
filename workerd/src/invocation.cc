@@ -258,7 +258,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     environment = RemoteWorkerStore::realise(
         ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
         WorkerDerivation{derivation, output, job->system},
-        [&](const std::string& line) { log(LogStream::build, line + "\n"); },
+        [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
     outcome = run_worker(
         *call, invocation, input, directory, store, environment, log,

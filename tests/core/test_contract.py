@@ -444,6 +444,40 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert isinstance(json.loads(line), dict)
 
 
+def test_card_log_ui_page_sizes(project, core_factory):
+    tail_limit = 1 << 20
+    forward_limit = 256 << 10
+    prefix, end = "日本", "\nend\n"
+    fill = tail_limit - len(prefix.encode())
+    expected = prefix.encode() + b"x" * fill + end.encode()
+    client = core_factory(mocked_builds=True).connect()
+    body = f"""
+        printf '%s' {shlex.quote(prefix)}
+        head -c {fill} /dev/zero | tr '\\000' x
+        printf '%s' {shlex.quote(end)}
+        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
+    """
+    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+                          manifest={"run": {"bash": body}}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+
+    tail = client.call("LogRangeRequest", **args, tail=True, limitBytes=tail_limit)
+    # The nominal tail offset lands inside the last character of the prefix.
+    assert tail.offset == len(prefix.encode())
+    assert tail.text == expected[tail.offset:]
+    assert tail.nextOffset == tail.sizeBytes == len(expected)
+    assert tail.truncated
+
+    offset = tail.nextOffset - forward_limit
+    forward = client.call("LogRangeRequest", **args, offset=offset, limitBytes=forward_limit)
+    assert forward.offset == offset
+    assert forward.text == expected[offset:]
+    assert forward.nextOffset == forward.sizeBytes == len(expected)
+    assert not forward.truncated
+
+
 def test_run_logs_and_display(project, tmp_path, core_factory):
     """A worker run publishes its display, paged UTF-8 log and completed history."""
     message = "日本語のログ" * 50

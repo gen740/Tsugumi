@@ -329,3 +329,15 @@ def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tm
     status, result = create("bad-flow", "sideways")
     assert status == 400 and result["code"] == "invalid_flow"
     assert not (tmp_path / "bad-flow").exists()
+
+
+def test_api_csrf_and_input_validation(web):
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    # POST without x-tsugumi header is rejected (blocks same-site cross-port CSRF).
+    r, _ = request(port, "POST", "/api/page", {"Cookie": cookie, "Content-Type": "application/json"}, "{}")
+    assert r.status == 403
+    # Malformed JSON returns 400 rather than 500.
+    r, _ = request(port, "POST", "/api/page",
+                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"}, "{not-json")
+    assert r.status == 400

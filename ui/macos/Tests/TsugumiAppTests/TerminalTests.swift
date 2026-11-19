@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftTerm
 import Testing
 import TsugumiLauncher
 import TsugumiTestSupport
@@ -256,4 +257,86 @@ private final class Shells {
   terminals.closeAll()
   #expect(terminals.tabs.isEmpty && terminals.selection == 0)
   for index in shells.remote.indices { #expect(shells.seen(index) == .closed) }
+}
+
+/// Stands in for the host's resize: records each request and, while `held`,
+/// keeps it waiting until `release()`; `failing` makes the next one throw.
+@MainActor
+private final class Resizes {
+  struct Failure: Error {}
+  private(set) var sent: [TerminalConnection.Size] = []
+  var held = false
+  var failing = false
+  private var waiting: [CheckedContinuation<Void, Never>] = []
+
+  func resize(_ rows: Int, _ cols: Int) async throws {
+    sent.append(TerminalConnection.Size(rows: rows, cols: cols))
+    if held { await withCheckedContinuation { waiting.append($0) } }
+    if failing { failing = false; throw Failure() }
+  }
+
+  func release() {
+    held = false
+    for continuation in waiting { continuation.resume() }
+    waiting = []
+  }
+}
+
+@MainActor private func viewSize(_ view: TerminalView) -> TerminalConnection.Size {
+  let dims = view.getTerminal().getDims()
+  return TerminalConnection.Size(rows: dims.rows, cols: dims.cols)
+}
+
+@MainActor @Test func aLayoutWhileTheShellOpensReachesThePTY() async throws {
+  let project = try temporaryProject()
+  defer { project.remove() }
+  var pair: [Int32] = [-1, -1]
+  #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+  defer { Darwin.close(pair[1]) }
+  var opened: TerminalConnection.Size?
+  var continuation: CheckedContinuation<(fd: Int32, session: UInt64), Never>?
+  let resizes = Resizes()
+  let connection = TerminalConnection(identity: project.identity, onEnd: { _ in },
+    openTerminal: { _, rows, cols in
+      opened = TerminalConnection.Size(rows: rows, cols: cols)
+      return await withCheckedContinuation { continuation = $0 }
+    },
+    resizeTerminal: { _, rows, cols in try await resizes.resize(rows, cols) })
+  defer { connection.close() }
+  // The tab opens before its view exists, as a connected tab does.
+  connection.open()
+  while continuation == nil { await Task.yield() }
+  #expect(opened == TerminalConnection.Size(rows: 24, cols: 80))
+  // The view is made and laid out while the open request is pending.
+  let view = TerminalView(frame: .zero)
+  connection.attach(view)
+  view.frame = NSRect(x: 0, y: 0, width: 900, height: 500)
+  let laidOut = viewSize(view)
+  #expect(laidOut != opened, "The test needs a layout that differs from the opening size")
+  #expect(resizes.sent.isEmpty, "No session exists yet to resize")
+  continuation!.resume(returning: (pair[0], 1))
+  await connection.opening?.value
+  await connection.resizing?.value
+  #expect(resizes.sent.last == laidOut, "Once open, the PTY takes the size laid out meanwhile, with no further resize")
+
+  // Quick changes while a resize is on its way end at the latest size.
+  resizes.held = true
+  view.frame = NSRect(x: 0, y: 0, width: 700, height: 300)
+  view.frame = NSRect(x: 0, y: 0, width: 1100, height: 600)
+  let latest = viewSize(view)
+  while resizes.sent.count < 2 { await Task.yield() }
+  resizes.release()
+  await connection.resizing?.value
+  #expect(resizes.sent.last == latest)
+  #expect(resizes.sent.count <= 3, "Sizes superseded while a resize waited are not all sent")
+
+  // A failed resize is kept, and the next size change tries again.
+  resizes.failing = true
+  view.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+  await connection.resizing?.value
+  #expect(connection.resizeFailure != nil, "A failed resize is reported, not dropped")
+  view.frame = NSRect(x: 0, y: 0, width: 820, height: 420)
+  await connection.resizing?.value
+  #expect(connection.resizeFailure == nil)
+  #expect(resizes.sent.last == viewSize(view))
 }

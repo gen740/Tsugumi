@@ -12,6 +12,19 @@ namespace tsugumi::text {
 // Returns true when `s` is valid UTF-8 (no surrogates, no overlongs).
 bool valid_utf8(std::string_view s);
 
+// Incremental UTF-8 decoder: emits complete characters only and replaces
+// invalid sequences with U+FFFD, so chunk boundaries never split or lose text.
+class Utf8Decoder {
+ public:
+  auto feed(std::string_view bytes) -> std::string;
+  auto finish() -> std::string;
+
+ private:
+  std::string pending_;
+};
+
+auto replace_invalid_utf8(std::string text) -> std::string;
+
 struct PatchRangeError : std::invalid_argument {
   using std::invalid_argument::invalid_argument;
 };

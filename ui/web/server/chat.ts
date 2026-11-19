@@ -622,7 +622,12 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   'POST /api/chat/permission': async (b) => {
-    await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined)
+    const allow = b.allow === true
+    if (allow && Array.isArray(b.always) && b.always.length > 0) {
+      const merged = [...new Set([...(settings().allowedPermissions ?? []), ...b.always.map(String)])]
+      await patchSettings({ allowedPermissions: merged })
+    }
+    await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
   },
   'POST /api/chat/cancel': async (b) => {

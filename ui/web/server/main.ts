@@ -207,7 +207,13 @@ async function body(req: http.IncomingMessage): Promise<any> {
   for await (const c of req) {
     chunks.push(c as Buffer)
   }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
+  if (!chunks.length) return {}
+  const json = Buffer.concat(chunks).toString('utf8')
+  try {
+    return JSON.parse(json)
+  } catch {
+    throw new HttpError(400, 'invalid JSON body')
+  }
 }
 
 function projectDir(p: unknown): string {
@@ -253,7 +259,7 @@ const routes: Record<string, Handler> = {
   'POST /api/project/create': (b) => hostRequest('HostProjectCreateRequest', { parent: b.parent, name: b.name, flow: b.flow }),
   'POST /api/project/duplicate': (b) => hostRequest('HostProjectDuplicateRequest', { path: b.path, parent: b.parent, name: b.name }),
   'POST /api/recents/forget': (b) => hostRequest('HostRecentForgetRequest', { paths: b.paths }),
-  // Finder (or the file manager) at a recent project; only folders on the list.
+  // Show the requested path in Finder or the file manager.
   'POST /api/reveal': async (b) => {
     const p = String(b.path)
     const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', p]] : ['xdg-open', [path.dirname(p)]]
@@ -408,8 +414,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     })
     return void res.end()
   }
-  if (url.pathname.startsWith('/api/') && !authorized(req) && !agentAuthorized(req, `${req.method} ${url.pathname}`)) {
+  const isAgent = agentAuthorized(req, `${req.method} ${url.pathname}`)
+  if (url.pathname.startsWith('/api/') && !authorized(req) && !isAgent) {
     return send(res, 401, { error: L('このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。') })
+  }
+  if (url.pathname.startsWith('/api/') && !isAgent &&
+      req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-tsugumi'] !== '1') {
+    return send(res, 403, { error: 'missing x-tsugumi header' })
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })

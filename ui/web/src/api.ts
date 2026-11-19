@@ -11,8 +11,8 @@ export async function api<T = any>(path: string, body?: unknown, signal?: AbortS
     body = { revision: settingsRevision, ...(body as object) }
   }
   const r = await fetch(path, body === undefined
-    ? { signal }
-    : { signal, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    ? { signal, headers: { 'x-tsugumi': '1' } }
+    : { signal, method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
