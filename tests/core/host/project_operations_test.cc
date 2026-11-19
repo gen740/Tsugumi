@@ -513,12 +513,23 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       item->from = prefix + "definitions/b/";
       item->id = "duplicate";
       duplicate.items.push_back(std::move(item));
-      project.Apply(std::move(duplicate));
-      const auto saved = positions(prefix + "layout.json");
-      EXPECT_FALSE(saved.contains("b"));
-      const auto copy = json::Object(saved.at("duplicate"));
+      const auto undo = project.Apply(std::move(duplicate));
+      const auto after = json::Object(json::Object(CompleteLayout(
+          project.files.at(prefix + "tsugumi.json"),
+          project.files.at(prefix + "layout.json"))).at("cards"));
+      EXPECT_EQ(json::Object(after.at("b")), before);
+      const auto copy = json::Object(after.at("duplicate"));
       EXPECT_DOUBLE_EQ(std::stod(copy.at("x")), std::stod(before.at("x")) + 30);
       EXPECT_DOUBLE_EQ(std::stod(copy.at("y")), std::stod(before.at("y")) + 30);
+      project.Apply(undo);
+      const auto layout = project.files.find(prefix + "layout.json");
+      const auto restored = CompleteLayout(
+          project.files.at(prefix + "tsugumi.json"),
+          layout == project.files.end() ? "{}" : layout->second);
+      EXPECT_EQ(json::Object(json::Object(restored).at("cards")), displayed);
+      if (layout != project.files.end())
+        EXPECT_FALSE(json::Object(json::Get(json::Object(layout->second),
+                                            "cards", "{}")).contains("b"));
     } else {
       H::ProjectMakeSubgraphT subgraph;
       subgraph.project_path = "externals/inner";
