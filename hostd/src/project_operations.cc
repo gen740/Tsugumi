@@ -165,6 +165,16 @@ auto Prepare(
         json::Get(json::Object(CompleteLayout(project, layout, read_geometry)),
                   "cards", "{}"));
   };
+  auto write_position = [&](const std::string& id, const std::string& x,
+                            const std::string& y, json::Members entry = {}) {
+    auto layout = json::Object(read_layout(), layout_path);
+    auto positions = json::Object(json::Get(layout, "cards", "{}"));
+    entry["x"] = x;
+    entry["y"] = y;
+    positions[id] = json::Encode(entry);
+    layout["cards"] = json::Encode(positions);
+    put(layout_path, json::Encode(layout));
+  };
   auto place = [&](const std::string& id, double x, double y,
                    bool automatic = false) {
     if (!valid_id(id))
@@ -194,16 +204,7 @@ auto Prepare(
       layout[field] = json::Encode(entries);
       put(prefix + "layout.json", json::Encode(layout));
     }
-    if (!automatic) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                                 prefix + "layout.json");
-      auto positions = json::Object(json::Get(layout, "cards", "{}"),
-                                    prefix + "layout.json.cards");
-      positions[id] = json::Encode(
-          json::Members{{"x", std::to_string(x)}, {"y", std::to_string(y)}});
-      layout["cards"] = json::Encode(positions);
-      put(prefix + "layout.json", json::Encode(layout));
-    }
+    if (!automatic) write_position(id, std::to_string(x), std::to_string(y));
   };
   auto definition = [&](const std::string& dir, const std::string& raw) {
     const auto parts = json::Object(raw);
@@ -508,9 +509,11 @@ auto Prepare(
     if (copy->items.empty())
       throw Failure("invalid_request", "choose Cards to copy");
     const auto state = document_state(base.files);
-    const auto positions = copy->copy_connections
-                               ? displayed_positions(read_layout())
-                               : json::Members{};
+    const auto layout = copy->copy_connections ? read_layout() : "{}";
+    const auto positions = copy->copy_connections ? displayed_positions(layout)
+                                                   : json::Members{};
+    const auto saved = json::Object(
+        json::Get(json::Object(layout), "cards", "{}"));
     std::map<std::string, std::string> copied_ids;
     for (const auto& item : copy->items) {
       if (!valid_id(item->id))
@@ -588,6 +591,9 @@ auto Prepare(
         if (!positions.contains(old))
           throw Failure("not_found", "Card is missing from the canvas: " + old);
         const auto position = json::Object(positions.at(old));
+        auto previous = json::Object(json::Get(saved, old, "{}"));
+        if (!previous.contains("x") || !previous.contains("y"))
+          write_position(old, position.at("x"), position.at("y"), std::move(previous));
         x = std::stod(position.at("x")) + 30;
         y = std::stod(position.at("y")) + 30;
       }
