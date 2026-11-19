@@ -98,9 +98,11 @@ def failing_cell():
 @pytest.mark.parametrize('kind',['cancelled','timeout'])
 def test_notebook_child_is_reaped_on_cancel_or_deadline(tmp_path,host,kind):
     source=tmp_path/'src';source.mkdir()
+    # Renamed into place: the PID file the test waits for is never seen empty.
     (source/'slow.py').write_text('''import os,time
 from pathlib import Path
-Path("pid").write_text(str(os.getpid()))
+Path("pid.tmp").write_text(str(os.getpid()))
+os.replace("pid.tmp", "pid")
 time.sleep(60)
 ''')
     run_info=Run(tmp_path/'call')
