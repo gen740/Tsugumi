@@ -48,7 +48,7 @@ final class CorePreferences {
     let generation = editGeneration
     do {
       let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
-      guard generation == editGeneration else { return }
+      guard generation == editGeneration else { return await loadSnapshot() }
       let firstSnapshot = revision == nil
       let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
       let nextRevision = (value["revision"] as? NSNumber)?.uint64Value ?? 0

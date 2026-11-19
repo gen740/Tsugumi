@@ -230,6 +230,34 @@ import TsugumiTestSupport
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
   }
 
+  @Test func hostPreferencesReloadAfterReconnectIncludingAFreshStore() async throws {
+    let shared = CoreHostClient.shared
+    let preferences = CorePreferences.shared
+    func setSearch(_ enabled: Bool, on client: CoreHostClient) async throws {
+      let before = try await client.call("SettingsGetRequest", ["profile": "desktop"])
+      let revision = try #require(before["revision"] as? NSNumber)
+      _ = try await client.call("SettingsUpdateRequest", [
+        "profile": "desktop", "revision": revision,
+        "changes": [["key": "agent.webSearch", "value_json": enabled ? "true" : "false"]],
+      ])
+    }
+    try await withFixture { _ in
+      try await setSearch(true, on: shared)
+      try await until("preferences display the edited setting") { preferences.bool(forKey: "agent.webSearch") }
+      await shared.disconnect()
+      let editor = CoreHostClient()
+      try await setSearch(false, on: editor)
+      await editor.disconnect()
+      _ = try await shared.call("SettingsGetRequest", ["profile": "desktop"])
+      try await until("preferences display the edit made while disconnected") { !preferences.bool(forKey: "agent.webSearch") }
+      try await setSearch(true, on: shared)
+      try await until("preferences display the previous host's final revision") { preferences.bool(forKey: "agent.webSearch") }
+      try await withFixture { _ in
+        try await until("preferences display the fresh host's lower revision") { !preferences.bool(forKey: "agent.webSearch") }
+      }
+    }
+  }
+
   @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
     try await withFixture { t in
       try t.holdStream()
