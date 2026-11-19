@@ -226,7 +226,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
         c = daemon.client()
         c.hello()
         run_id = start_run(c, ["start"], concurrency=4)
-        status = wait_run(c, run_id, timeout)
+        status = wait_run(c, run_id, timeout=timeout)
         state = RUN.get(status.state, str(status.state))
         cards = {}
         t0 = None
@@ -316,6 +316,8 @@ def main() -> int:
                 continue
         if result["run"]["state"] == "succeeded":  # a run that failed is no record to replay
             (OUT / f"{demo}.run.json").write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+        else:
+            code = 1
         print(f"{demo}: {result['run']['state']} in {result['run']['wallSeconds']} s, "
               f"{len(result['timeline'])} Cards, displays: {sorted(result['outputs'])}, failure: {result['run']['failure']}", flush=True)
     return code
