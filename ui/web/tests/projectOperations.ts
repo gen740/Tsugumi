@@ -169,6 +169,37 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   assert.equal(s.dirty, false)
 }
 
+// Reveal and open the inline editor only with the new Draft's placement.
+{
+  const { CanvasController } = await import('../src/model/canvas')
+  const { WorkflowTab } = await import('../src/model/workspace')
+  const s = new ProjectSession('/test', 'draft-placement', 'test')
+  const fake = s as any
+  s.projectId = 'p'; fake.client = {}; s.connected = true
+  fake.refreshExternals = () => {}
+  s.saveViewSoon = () => {}
+  fake.cardIdProvider = async () => 'draft'
+  const placement = deferred<string>()
+  s.layoutHost = { ...s.layoutHost, complete: () => placement.promise }
+  fake.operateProject = async (request: H.ProjectOperateRequestT) => {
+    const d = delta(0n, String(request.opId), 'draft')
+    d.projectJson = '{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}'
+    return result(d)
+  }
+  const canvas = new CanvasController(s, new WorkflowTab([]))
+  canvas.size = { width: 800, height: 600 }
+  const draft = await canvas.addDraft()
+  assert.ok(draft)
+  const writing = canvas.writeDraft(draft)
+  assert.equal(Boolean(s.inlineDraft), false)
+  placement.resolve('{"cards":{"draft":{"x":4000,"y":4000}}}')
+  await writing
+  const rect = canvas.scene().cardRect(draft)
+  const a = canvas.screen(rect), b = canvas.screen({ x: rect.x + rect.width, y: rect.y + rect.height })
+  assert.ok(a.x >= 0 && a.y >= 0 && b.x <= canvas.size.width && b.y <= canvas.size.height)
+  assert.equal(s.inlineDraft?.card, draft)
+}
+
 // Undo requested before an action's reply reverses that action once applied.
 {
   const s = new ProjectSession('/test', 'pending-undo', 'test') as any
