@@ -253,7 +253,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       interrupted_ = interrupted;
       for (auto& node : nodes_)
         if (node.cancellation) node.cancellation->stop.store(true);
-      for (const auto& early : early_started_) early->cancel.store(true);
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
