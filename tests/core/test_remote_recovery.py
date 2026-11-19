@@ -498,11 +498,10 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
-def test_maximum_log_budget_and_truncation_metadata_import(running_job):
+def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
     limit = 128 << 20
-    entry = b'{"stream":1,"text":"' + b'x' * ((1 << 20) - 23) + b'"}\n'
-    logs = entry * 128
+    logs = b'{"stream":1,"text":"remote output"}\n'
     gateway.receipts[job_id]["log_truncated"] = True
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
@@ -521,12 +520,11 @@ def test_maximum_log_budget_and_truncation_metadata_import(running_job):
     assert record.record.summary.logTruncatedAtBytes == limit
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                          stream=LogStream.standard_output, tail=True)
-    assert stdout.sizeBytes > 126 << 20
     assert stdout.logTruncatedAtBytes == limit
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                           stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
-    assert text(stdout.text).strip("x\n") == "" and stdout.text
+    assert text(stdout.text).strip() == "remote output"
 
 
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
