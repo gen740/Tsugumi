@@ -293,6 +293,12 @@ Helpers have separate scratch and command/output directories, including unscoped
 
 The host service keeps `host.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
 
+When updating from a version that used `host-settings.sqlite`, stop hostd
+and remove `host-settings.sqlite`, `host-settings.sqlite-wal`,
+`host-settings.sqlite-shm` and `host-settings.sqlite-journal` from its
+`host-core/` folder if present. Those files can contain old Linux API keys.
+Start the new host and enter the keys again in Settings.
+
 `tsugumi-hostd` writes project conversations through the registered host folder, including on macOS where `tsugumid` runs in the VM. It does not open this database through the VM's shared-folder mount. SQLite uses a rollback journal with full synchronization; a lifetime exclusive lock on `.tsugumi/agent.lock` refuses a second Agent host with `busy` until the first stops. Shared filesystems must honor file locks; independent filesystem copies have separate locks, and file synchronization does not coordinate writers. Registering a second existing folder with the same project identity on one host is refused. Stop the Agent service before copying the project so the database is complete.
 
 Copy the entire project folder, including `.tsugumi/`, to carry the Agent's words, tool outcomes and evidence links with its run records. The app, Web host and plugin use the same hostd store. Listing and search read Home and the available project folders registered with this host, including stopped project environments; they do not discover other folders. A conversation stays with its original project. A moved project needs fresh access grants, including for attached host folders. Permission events record that an approval existed, but access requests, usable approvals, grants, credentials, provider selections and Skill folder registrations stay with the host. Known provisioned credentials are redacted from stored conversation text, pending messages and tool results. Treat conversation contents as project data when sharing the folder; deleting a live conversation does not delete other copies or backups.

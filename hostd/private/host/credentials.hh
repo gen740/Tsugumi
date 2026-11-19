@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <mutex>
 #include <stop_token>
 #include <string>
@@ -16,7 +17,8 @@ struct Credentials {
   auto Get(const std::string& id) -> ::tsugumi::json::Members;
   auto Save(const std::string& id, const ::tsugumi::json::Members& value)
       -> void;
-  auto AccessToken(const std::string& id, std::string_view stale)
+  auto AccessToken(const std::string& id, std::string_view stale,
+                   const std::function<void(const std::string&)>& changed = {})
       -> std::string;
   // Caller serializes account changes with credential_mutex.
   auto Revoke(const std::string& id) -> bool;

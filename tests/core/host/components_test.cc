@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 
+#include <future>
+
 #include "../agent_fixture_server.hh"
 #include "agent/providers.hh"
 #include "host/credentials.hh"
@@ -195,6 +197,31 @@ TEST_F(CredentialRefreshTest,
     EXPECT_THROW(access_token(""), agent::ProviderError);
     EXPECT_EQ(endpoint.Requests().size(), requests);
   }
+}
+TEST_F(CredentialRefreshTest, RefreshFailureDoesNotOverwriteNewSignIn) {
+  auto refresh = std::async(std::launch::async, [&] {
+    EXPECT_THROW(access_token(""), agent::ProviderError);
+  });
+  EXPECT_TRUE(endpoint.WaitForRequests(1, std::chrono::seconds(10)));
+  auto sign_in = std::async(std::launch::async, [&] {
+    std::lock_guard operation(credentials.credential_mutex);
+    std::lock_guard lock(gate.mutex);
+    sql::Transaction tx(store.db);
+    EXPECT_FALSE(Status()->configured);
+    auto value = credentials.Get("account");
+    value["access_token"] = Quote("new-access");
+    value["refresh_token"] = Quote("new-refresh");
+    value["expires_at_ms"] = "9999999999999";
+    credentials.Save("account", value);
+    store.db.exec(
+        "UPDATE accounts SET json=json_set(json,'$.signed_in',json('true'))");
+    tx.commit();
+  });
+  endpoint.QueueHTTP(R"({"error":"invalid_grant"})", 400);
+  refresh.get();
+  sign_in.get();
+  EXPECT_TRUE(Status()->configured);
+  EXPECT_EQ(access_token(""), "new-access");
 }
 TEST_F(CredentialRefreshTest,
        TemporaryFailuresKeepCredentialsAndConfiguration) {

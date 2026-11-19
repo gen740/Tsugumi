@@ -629,6 +629,7 @@ struct Settings::State {
             (" " + scope + " ").find(" chatgpt.tokens.use.direct ") !=
             std::string::npos;
         j::Members credential = t;
+        credential["scope"] = j::Quote(scope);
         credential["token_endpoint"] =
             j::Quote(a->issuer + "/api/accounts/oauth/token");
         credential["revocation_endpoint"] =
@@ -1267,26 +1268,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     c.base_url = j::Text(s.Account(account_profile, client), "resource",
                          "https://api.openai.com/v1");
     c.access_token = [state = state_.get(), client](std::string_view stale) {
-      try {
-        return state->credentials.AccessToken(client, stale);
-      } catch (const agent::ProviderError& error) {
-        if (error.sign_in_required || error.code == "chatgpt_plan_disabled") {
-          std::lock_guard lock(state->mutex);
-          auto q =
-              state->db.prepare("SELECT profile,json FROM accounts WHERE id=?");
-          q.bind(1, client);
-          std::vector<std::pair<std::string, j::Members>> accounts;
-          while (q.step()) {
-            auto account = j::Object(q.text(1));
-            account[error.sign_in_required ? "signed_in" : "plan_enabled"] =
-                "false";
-            accounts.emplace_back(q.text(0), std::move(account));
-          }
-          for (const auto& [profile, account] : accounts)
-            state->SaveAccount(profile, client, account);
-        }
-        throw;
-      }
+      return state->credentials.AccessToken(client, stale, state->provider_changed);
     };
   }
   const auto window = host::Models::ContextWindowTokens(
