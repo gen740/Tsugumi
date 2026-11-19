@@ -88,7 +88,7 @@ final class ChatGPTSignInModel {
     let status = await load()
     accounts = status.accounts
     if let message = status.message { self.message = message }
-    if let result = status.result, result.account.signedIn, result.account.planEnabled, result.welcome {
+    if let result = status.result, result.account.active, result.account.signedIn, result.account.planEnabled, result.welcome {
       welcome = result.account.clientId
     }
   }
@@ -103,12 +103,12 @@ final class ChatGPTSignInModel {
       do {
         let r = try await authenticate(clientId, consent)
         try Task.checkCancellation()
-        message = r.account.planEnabled
+        message = r.planEnabled
           ? String(localized: "\(r.account.email ?? r.account.clientId) でサインインしました。")
           : String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。")
         await refresh()
         try Task.checkCancellation()
-        if r.account.planEnabled {
+        if r.planEnabled, let active, active.clientId == r.account.clientId, active.signedIn, active.planEnabled {
           if r.welcome {
             connected = onConnected
             welcome = r.account.clientId

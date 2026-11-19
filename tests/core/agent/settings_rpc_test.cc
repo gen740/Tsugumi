@@ -1,4 +1,7 @@
+#include <algorithm>
+
 #include "oauth_fixture.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -29,6 +32,27 @@ TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
   service.Stop();
   StartHost();
   EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "true");
+}
+
+TEST_F(AgentFixture, RetiredPermissionSettingCannotBeReadOrWritten) {
+  constexpr auto key = "agent.permissions.allowed";
+  {
+    sql::Db db((directory.path / "state/host-settings.sqlite").string());
+    db.exec(R"(INSERT INTO settings VALUES
+               ('desktop', 3, '{"agent.permissions.allowed":["network"]}'))");
+  }
+  const auto expect_absent = [&] {
+    const auto reply = SettingsGet(*host);
+    ASSERT_TRUE(reply.Code().empty());
+    const auto* settings = reply.HostValue()->value_as_Settings();
+    EXPECT_EQ(settings->revision(), 3u);
+    for (const auto* entry : *settings->values())
+      EXPECT_NE(entry->key()->str(), key);
+  };
+  expect_absent();
+  EXPECT_EQ(SettingsPatch(*host, "desktop", {{key, "[]"}}).Code(),
+            "invalid_request");
+  expect_absent();
 }
 
 TEST_F(AgentFixture,
@@ -283,6 +307,91 @@ TEST_F(AgentFixture, CancelledSignInDoesNotGrantOrExposeCredentials) {
             "cancelled");
   EXPECT_EQ(ListSize(cancel.HostValue()->value_as_SignInStatus()->accounts()),
             0u);
+}
+
+TEST_F(AgentFixture, ANewClientCanReplaceAnAbandonedSignIn) {
+  OAuthServer oauth;
+  const auto begin = oauth.Begin(*host);
+  ASSERT_TRUE(begin.Code().empty());
+  const auto original =
+      begin.HostValue()->value_as_SignInBegin()->attempt_id()->str();
+  host.reset();
+  host = ConnectHost();
+  EXPECT_EQ(oauth.Begin(*host).Code(), "invalid_request");
+  const auto replacement = oauth.Begin(*host, "desktop", true);
+  ASSERT_TRUE(replacement.Code().empty());
+  const auto next =
+      replacement.HostValue()->value_as_SignInBegin()->attempt_id()->str();
+  EXPECT_NE(next, original);
+  const auto cancelled = oauth.Status(*host, original);
+  EXPECT_EQ(cancelled.HostValue()->value_as_SignInStatus()->state()->str(),
+            "cancelled");
+  const auto pending = oauth.Status(*host, "");
+  EXPECT_EQ(pending.HostValue()->value_as_SignInStatus()->attempt_id()->str(),
+            next);
+  EXPECT_EQ(pending.HostValue()->value_as_SignInStatus()->state()->str(),
+            "pending");
+}
+
+TEST_F(AgentFixture, OAuthResultSurvivesAccountChangesAndGuardsSetup) {
+  OAuthServer oauth;
+  ModelServer model;
+  const std::string profile = "web:fixture";
+  const auto first = oauth.SignIn(*host, model.URL(), profile);
+  const auto* completed = first.HostValue()->value_as_SignInStatus();
+  ASSERT_EQ(completed->state()->str(), "complete");
+  const auto attempt = completed->attempt_id()->str();
+  const auto account = completed->client_id()->str();
+  const auto before = SettingsGet(*host);
+  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto select_provider = [&] {
+    return Call(*host, H::RequestPayload::SettingsUpdateRequest,
+                [&](Builder& b) {
+                  const auto guard = H::CreateExpectedAccount(
+                      b, b.CreateString(profile), b.CreateString(account));
+                  const auto change =
+                      H::CreateSetting(b, b.CreateString("agent.provider"),
+                                       b.CreateString(Quote("chatgpt")));
+                  return H::CreateSettingsUpdateRequest(
+                             b, b.CreateString("desktop"), revision,
+                             b.CreateVector(std::vector{change}), guard)
+                      .Union();
+                });
+  };
+  const auto second =
+      oauth.SignIn(*host, model.URL(), profile, 3600, "second-client", false);
+  const auto* no_plan = second.HostValue()->value_as_SignInStatus();
+  ASSERT_EQ(no_plan->state()->str(), "complete");
+  EXPECT_FALSE(no_plan->plan_enabled());
+  EXPECT_EQ(select_provider().Code(), "chatgpt_account_changed");
+  EXPECT_EQ(SettingsGet(*host).HostValue()->value_as_Settings()->revision(),
+            revision);
+
+  const auto action = [&](const char* name, const std::string& client) {
+    return Call(*host, H::RequestPayload::SignInActionRequest, [&](Builder& b) {
+      return H::CreateSignInActionRequest(b, b.CreateString(profile), 0,
+                                          b.CreateString(name),
+                                          b.CreateString(client))
+          .Union();
+    });
+  };
+  ASSERT_TRUE(action("select", account).Code().empty());
+  ASSERT_TRUE(select_provider().Code().empty());
+  ASSERT_TRUE(action("select", "second-client").Code().empty());
+  oauth.server.QueueHTTP("", 204);
+  ASSERT_TRUE(action("signout", account).Code().empty());
+  const auto result = oauth.Status(*host, attempt, profile);
+  const auto* status = result.HostValue()->value_as_SignInStatus();
+  EXPECT_EQ(status->state()->str(), "complete");
+  EXPECT_EQ(status->client_id()->str(), account);
+  EXPECT_TRUE(status->plan_enabled());
+  const auto& accounts = *status->accounts();
+  const auto original = std::find_if(
+      accounts.begin(), accounts.end(),
+      [&](const auto* row) { return row->client_id()->str() == account; });
+  ASSERT_NE(original, accounts.end());
+  EXPECT_FALSE((*original)->signed_in());
+  EXPECT_FALSE((*original)->active());
 }
 }  // namespace
 }  // namespace tsugumi::test

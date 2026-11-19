@@ -72,12 +72,13 @@ class OAuthServer {
     if (!key_) throw std::runtime_error("test RSA key generation failed");
   }
   ~OAuthServer() { EVP_PKEY_free(key_); }
-  auto Begin(client::Connection& host, const std::string& profile = "desktop")
-      -> Reply {
+  auto Begin(client::Connection& host, const std::string& profile = "desktop",
+             bool replace_pending = false) -> Reply {
     return Call(host, H::RequestPayload::SignInBeginRequest, [&](Builder& b) {
       return H::CreateSignInBeginRequest(b, b.CreateString(profile), 0, false,
                                          b.CreateString(server.URL()),
-                                         b.CreateString(resource))
+                                         b.CreateString(resource),
+                                         replace_pending)
           .Union();
     });
   }
@@ -90,8 +91,8 @@ class OAuthServer {
     });
   }
   auto SignIn(client::Connection& host, const std::string& endpoint,
-              const std::string& profile = "desktop", uint64_t expiry = 3600)
-      -> Reply {
+              const std::string& profile = "desktop", uint64_t expiry = 3600,
+              std::string client = {}, bool plan = true) -> Reply {
     resource = endpoint;
     struct Events {
       std::mutex mutex;
@@ -118,7 +119,7 @@ class OAuthServer {
         throw std::runtime_error("test sign-in begin event timed out");
     }
     const auto fields = URLFields(info->url()->str());
-    const auto client = "client-" + profile;
+    if (client.empty()) client = "client-" + profile;
     const auto expiration =
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch())
@@ -138,8 +139,8 @@ class OAuthServer {
         "{\"access_token\":\"ACCESS_SENTINEL\",\"refresh_token\":\"REFRESH_"
         "SENTINEL\",\"id_token\":" +
         Quote(token) +
-        ",\"scope\":\"chatgpt.tokens.use.direct\",\"expires_in\":" +
-        std::to_string(expiry) + "}");
+        ",\"scope\":" + Quote(plan ? "chatgpt.tokens.use.direct" : "") +
+        ",\"expires_in\":" + std::to_string(expiry) + "}");
     server.QueueHTTP(JWKS());
     auto* curl = curl_easy_init();
     const auto callback = fields.at("redirect_uri") +

@@ -88,6 +88,22 @@ public actor CoreHostClient {
   public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
     let token = UUID(); hostObservers[token] = handler; return token
   }
+  func signInChanges(profile: String) -> AsyncStream<Void> {
+    let (events, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let token = observeHost { event in
+      switch event["type"] as? String {
+      case "SignInChanged" where event["profile"] as? String == profile, "Disconnected":
+        continuation.yield(())
+      default: break
+      }
+    }
+    continuation.onTermination = { [weak self] _ in
+      Task { await self?.removeHostObserver(token) }
+    }
+    return events
+  }
+  private func removeHostObserver(_ token: UUID) { hostObservers.removeValue(forKey: token) }
+
   private func hostEvent(_ data: Data, identity: UUID) {
     guard connectionID == identity, let event = try? ServiceWire.decodeEvent(data) else { return }
     for handler in hostObservers.values { handler(event) }

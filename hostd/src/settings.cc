@@ -294,6 +294,7 @@ struct Settings::State {
     std::string id, profile, state = "pending", message, welcome, issuer,
                              resource, client, subject, nonce, verifier,
                              oauth_state, redirect;
+    bool plan_enabled = false;
     int socket = -1;
     std::jthread worker;
   };
@@ -457,7 +458,10 @@ struct Settings::State {
         out.state = a.state;
         out.message = a.message;
         out.welcome = a.welcome;
-        if (a.state == "complete") out.client_id = a.client;
+        if (a.state == "complete") {
+          out.client_id = a.client;
+          out.plan_enabled = a.plan_enabled;
+        }
       }
     }
     auto q = db.prepare(
@@ -471,11 +475,6 @@ struct Settings::State {
       a->signed_in = j::Bool(j::Get(v, "signed_in"));
       a->plan_enabled = j::Bool(j::Get(v, "plan_enabled"));
       a->active = j::Bool(j::Get(v, "active"));
-      if (!a->signed_in &&
-          ((a->active && out.state == "idle") || a->client_id == out.client_id)) {
-        out.state = "needs_sign_in";
-        out.message = "Sign in to ChatGPT again";
-      }
       out.accounts.push_back(std::move(a));
     }
     return out;
@@ -491,12 +490,19 @@ struct Settings::State {
     }
     for (const auto& [key, v] : rows) SaveAccount(profile, key, v);
   }
+  auto Cancel(Attempt& attempt) -> void {
+    if (attempt.state != "pending") return;
+    attempt.worker.request_stop();
+    attempt.state = "cancelled";
+  }
   auto Begin(const H::SignInBeginRequest& p) -> H::SignInBeginT {
     auto a = std::make_shared<Attempt>();
     a->profile = p.profile()->str();
+    std::shared_ptr<Attempt> previous_attempt;
     if (const auto current = latest.find(a->profile); current != latest.end()) {
-      const auto& state = attempts.at(current->second)->state;
-      if (state == "pending" || state == "committing")
+      previous_attempt = attempts.at(current->second);
+      const auto& state = previous_attempt->state;
+      if (state == "committing" || (state == "pending" && !p.replace_pending()))
         throw std::runtime_error("Sign-in is already in progress");
     }
     a->id = crypto::uuid4();
@@ -704,6 +710,7 @@ struct Settings::State {
                      {"welcomed", welcomed ? "true" : "false"}});
         Choose(a->profile, a->client);
         a->state = "complete";
+        a->plan_enabled = plan;
         if (plan && !welcomed) a->welcome = a->client;
       } catch (...) {
         if (a->socket >= 0) {
@@ -717,6 +724,7 @@ struct Settings::State {
       }
       Publish<H::SignInChangedT>(a->profile);
     });
+    if (previous_attempt) Cancel(*previous_attempt);
     Publish<H::SignInChangedT>(a->profile);
     H::SignInBeginT out;
     out.attempt_id = a->id;
@@ -772,6 +780,20 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           f.code = "conflict";
           f.message = "Settings changed; read the latest revision";
           return agent::wire::HostReply(id, std::move(f));
+        }
+        if (const auto* expected = p.chatgpt_account()) {
+          const auto account = s.Account(expected->profile()->str(),
+                                         expected->client_id()->str());
+          if (!j::Bool(j::Get(account, "active")) ||
+              !j::Bool(j::Get(account, "signed_in")) ||
+              !j::Bool(j::Get(account, "plan_enabled"))) {
+            S::FailureT f;
+            f.code = "chatgpt_account_changed";
+            f.message =
+                "The ChatGPT account has changed. Sign in again to finish "
+                "setup.";
+            return agent::wire::HostReply(id, std::move(f));
+          }
         }
         const auto defaults = Defaults();
         if (p.changes())
@@ -974,10 +996,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           auto it = s.attempts.find(attempt);
           if (it == s.attempts.end() || it->second->profile != profile)
             throw std::runtime_error("Unknown sign-in attempt");
-          if (it->second->state == "pending") {
-            it->second->worker.request_stop();
-            it->second->state = "cancelled";
-          }
+          s.Cancel(*it->second);
         } else {
           auto value = s.Account(profile, client);
           if (action == "select")
@@ -990,10 +1009,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 pending->welcome.clear();
           } else if (action == "signout") {
             for (auto& [_, pending] : s.attempts)
-              if (pending->profile == profile && pending->state == "pending") {
-                pending->worker.request_stop();
-                pending->state = "cancelled";
-              }
+              if (pending->profile == profile) s.Cancel(*pending);
             lock.unlock();
             std::lock_guard operation(s.account_operations);
             revoked = s.forget(client);

@@ -27,6 +27,7 @@ function fixture(local = true, welcomed = false) {
   const opened: string[] = []
   const tab = { opener: {}, location: { href: '' }, close() {} }
   let nextAttempt = 0
+  let sharedReadError: Error | undefined
   type Event = { type: string; message?: string }
   const listeners = new Set<(event: Event) => void>()
   const observe = (fn: (event: Event) => void) => {
@@ -37,7 +38,7 @@ function fixture(local = true, welcomed = false) {
     const ok = result === 'success' || result === 'no-plan'
     state = { ...state, signingIn: false,
       accounts: ok ? [{ ...account, planEnabled: result === 'success' }] : [],
-      outcome: { ok, clientId: ok ? account.clientId : undefined,
+      outcome: { ok, clientId: ok ? account.clientId : undefined, planEnabled: result === 'success',
         message: result, welcome: result === 'success' && !welcomed ? account.clientId : undefined } }
     attempts.set(state.attemptId!, state)
   }
@@ -65,7 +66,7 @@ function fixture(local = true, welcomed = false) {
         if (value.outcome?.welcome === body.clientId)
           attempts.set(id, { ...value, outcome: { ...value.outcome, welcome: undefined } })
       }
-      state = attempts.get(state.attemptId!)!
+      state = { ...state, outcome: attempts.get(state.attemptId!)?.outcome ?? null }
       return {}
     }
     if (path.startsWith('/api/chatgpt?')) {
@@ -74,10 +75,16 @@ function fixture(local = true, welcomed = false) {
       return { ...attempts.get(id), accounts: state.accounts }
     }
     assert.equal(path, '/api/chatgpt')
+    if (sharedReadError) {
+      const error = sharedReadError
+      sharedReadError = undefined
+      throw error
+    }
     return state
   }) as typeof api
   return { request, observe, calls, opened, finish, notify, setOutcome(v: typeof outcome) { outcome = v },
     setAccounts(accounts: ChatGPTState['accounts']) { state = { ...state, accounts } },
+    failNextSharedRead() { sharedReadError = new Error('Shared status unavailable') },
     failAttempt() {
       attempts.set(state.attemptId!, { ...state, signingIn: false, outcome: { ok: false, message: 'Interrupted' } })
       state = { ...state, signingIn: false, attemptId: undefined }
@@ -188,6 +195,31 @@ for (const type of ['chatgptChanged', 'reconnected', 'eventsConnected']) {
   assert.equal(model.state.signingIn, false)
   assert.equal(model.state.outcome?.welcome, account.clientId)
   model.dispose()
+}
+// A single completion event survives a failed shared read, and the retry
+// control clears the error without another notification or sign-in.
+{
+  const f = fixture(), model = f.model()
+  f.setOutcome('pending')
+  let ui!: ReturnType<typeof create>
+  act(() => {
+    ui = create(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  })
+  await model.statusRead()
+  model.signIn()
+  await model.settled()
+  f.failNextSharedRead()
+  f.completeAndNotify('chatgptChanged')
+  await model.statusRead()
+  assert.equal(model.state.signingIn, false)
+  assert.equal(model.state.outcome?.welcome, account.clientId)
+  assert.ok(model.connectionError)
+  const retry = ui.root.findByProps({ role: 'status' }).parent!.findByType('button')
+  retry.props.onClick()
+  await model.statusRead()
+  assert.equal(model.connectionError, undefined)
+  assert.equal(model.state.outcome?.welcome, account.clientId)
+  ui.unmount()
 }
 // Tab A keeps its outcome even after tab B starts the next sign-in.
 for (const welcomed of [true, false]) {
@@ -371,7 +403,7 @@ for (const beginPending of [false, true]) {
   }) as typeof fetch
   try {
     const guide = new GuideController()
-    reloaded.onConnected = () => guide.finishChatGPTSetup()
+    reloaded.onConnected = clientId => guide.finishChatGPTSetup(clientId)
     await reloaded.welcomed(false)
     await reloaded.welcomed(false)
     assert.equal(calls.filter(c => c.path === '/api/settings' && c.body.provider === 'chatgpt').length, 1)
@@ -388,14 +420,29 @@ for (const beginPending of [false, true]) {
   assert.equal(model.state?.signingIn, false)
   assert.match(model.message!, /fixture begin failure/)
 }
-// Exercise the real setup completion: select the provider, mark setup done,
-// refresh as connected. The API double rejects every unexpected operation.
-{
+// The setup request names the account that actually completed sign-in. A
+// second tab can change the current registration before the welcome is closed.
+for (const switched of [false, true]) {
+  const f = fixture(), model = f.model()
+  await model.mount()
+  model.signIn()
+  await model.settled()
+  const other = { ...account, clientId: 'other', planEnabled: false }
+  const accounts = switched ? [{ ...account, active: false }, other] : [account]
+  f.setAccounts(accounts)
+  f.notify('chatgptChanged')
+  await model.statusRead()
+  assert.equal(model.state.outcome?.welcome, account.clientId)
   const original = globalThis.fetch
   const calls: { path: string; body: any }[] = []
   globalThis.fetch = (async (path: string, init: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}'))
     calls.push({ path, body })
+    if (path === '/api/settings' && body.provider) {
+      assert.equal(body.chatGPTAccount, account.clientId)
+      if (!accounts.some(a => a.clientId === body.chatGPTAccount && a.active && a.signedIn && a.planEnabled))
+        return { ok: false, json: async () => ({ code: 'chatgpt_account_changed', error: 'Account changed' }) }
+    }
     const value = path === '/api/settings' ? { revision: { desktop: 1 } }
       : path === '/api/guide/advance' ? { setupDone: true }
       : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
@@ -404,12 +451,17 @@ for (const beginPending of [false, true]) {
   }) as typeof fetch
   try {
     const g = new GuideController()
-    await g.finishChatGPTSetup()
+    model.onConnected = clientId => g.finishChatGPTSetup(clientId)
+    await model.welcomed(false)
     assert.equal(calls.find(c => c.path === '/api/settings' && c.body.provider)?.body.provider, 'chatgpt')
-    assert.equal(calls.find(c => c.path === '/api/guide/advance')?.body.event.kind, 'setup')
-    assert.equal(g.setupDone, true)
-    assert.equal(g.connected, true)
-  } finally { globalThis.fetch = original }
+    assert.equal(calls.find(c => c.path === '/api/guide/advance')?.body.event.kind, switched ? undefined : 'setup')
+    assert.equal(!!g.setupDone, !switched)
+    assert.equal(!!g.connected, !switched)
+    if (switched) assert.ok(model.message)
+  } finally {
+    model.dispose()
+    globalThis.fetch = original
+  }
 }
 
 // An expired registration offers sign-in for that account.

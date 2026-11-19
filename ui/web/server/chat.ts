@@ -93,14 +93,16 @@ async function loadSettings() {
   snapshot = next
   setLanguage(snapshot.language)
 }
-async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
+async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }, chatGPTAccount?: string) {
   const patches = new Map<string, { key: string; value_json: string }[]>()
   for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
     const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
     if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
   }
   for (const [profile, changes] of patches) {
-    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes })
+    const chatgpt_account = chatGPTAccount && changes.some(change => change.key === SHARED_KEYS.provider)
+      ? { profile: localProfile(), client_id: chatGPTAccount } : undefined
+    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes, chatgpt_account })
   }
   await loadSettings()
 }
@@ -184,6 +186,7 @@ interface SignInStatus {
   attempt_id?: string
   client_id?: string
   state: string
+  planEnabled: boolean
   message?: string
   welcome?: string
   revoked: boolean
@@ -196,7 +199,7 @@ const signInAction = (action: string, fields: { client_id?: string; attempt_id?:
 function chatGPTState(status: SignInStatus) {
   const account = status.accounts.find(a => a.clientId === status.client_id)
   const outcome = status.state === 'complete' && account
-    ? { ok: true, clientId: account.clientId, welcome: status.welcome, message: account.planEnabled
+    ? { ok: true, clientId: account.clientId, planEnabled: status.planEnabled, welcome: status.welcome, message: status.planEnabled
       ? L('{0} でサインインしました。', account.email ?? account.clientId)
       : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
     : status.state === 'cancelled' ? { ok: false, message: L('サインインを中止しました。') }
@@ -503,7 +506,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
   'POST /api/settings': async (b) => {
-    await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
+    const account = b?.provider === 'chatgpt' && typeof b.chatGPTAccount === 'string' ? b.chatGPTAccount : undefined
+    await patchSettings(b ?? {}, b?.revision ?? { ...revisions }, account)
     return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
   'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),

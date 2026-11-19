@@ -29,7 +29,8 @@ table ProviderChanged { profile:string (required); }
 
 table Setting { key:string (required); value_json:string (required, trace_secret); }
 table SettingsGetRequest { profile:string (required); }
-table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; }
+table ExpectedAccount { profile:string (required); client_id:string (required); }
+table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; chatgpt_account:ExpectedAccount; }
 table Settings { revision:ulong; values:[Setting]; }
 // ephemeral source: env, keychain, or memory (omitted). The host selects env
 // before keychain before memory, then a stored key on Linux only. On macOS
@@ -43,12 +44,13 @@ table ModelSelectionRequest { profile:string (required); purpose:string (require
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
 table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; storage:string; message:string; code:string; }
-table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
+table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; replace_pending:bool; }
 table SignInBegin { attempt_id:string (required); url:string (required, trace_secret); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
 table SignInStatusRequest { profile:string (required); attempt_id:string; }
 table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
-table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; client_id:string; }
+// client_id and plan_enabled describe the completed attempt, separate from the current accounts.
+table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; client_id:string; plan_enabled:bool; }
 // Environments outlive clients and hostd restarts. Stop is explicit. Start
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }

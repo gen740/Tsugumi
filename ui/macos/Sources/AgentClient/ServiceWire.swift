@@ -97,6 +97,7 @@ enum ServiceWire {
         v.consent = fields["consent"] as? Bool ?? false
         v.issuer = fields["issuer"] as? String
         v.resource = fields["resource"] as? String
+        v.replacePending = fields["replace_pending"] as? Bool ?? false
         return (Tsugumi_Host_RequestPayload.signinbeginrequest.rawValue, v)
       case "SignInActionRequest":
         let v = Tsugumi_Host_SignInActionRequestT()
@@ -393,6 +394,7 @@ enum ServiceWire {
     case is Tsugumi_Host_HostRuntimeT: return ["type": "HostRuntime", "value": value]
     case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
+    case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
     default: throw RPCError.disconnected
     }
@@ -652,6 +654,8 @@ enum ServiceWire {
       out["message"] = v.message
       out["welcome"] = v.welcome
       out["revoked"] = v.revoked
+      out["client_id"] = v.clientId
+      out["plan_enabled"] = v.planEnabled
       out["accounts"] = try v.accounts.compactMap { try $0.map { try view($0) } }
       return out
     case let v as Tsugumi_Host_ProjectTrustT:

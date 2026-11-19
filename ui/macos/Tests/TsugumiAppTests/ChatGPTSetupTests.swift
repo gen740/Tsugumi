@@ -92,6 +92,37 @@ import Testing
   }
   @Observable final class Counter { var value = 0 }
 
+  @Test func aCompletedAttemptUsesItsAccountEvenAfterSelectionChanges() async throws {
+    let (changes, change) = AsyncStream<Void>.makeStream()
+    let (requests, requested) = AsyncStream<Void>.makeStream()
+    var reads = requests.makeAsyncIterator()
+    let statusReads = Counter()
+    let auth = ChatGPTAuth(endpoints: .openAI, profile: "fixture", call: { method, fields in
+      if method == "SignInBeginRequest" {
+        #expect(fields["replace_pending"] as? Bool == true)
+        return ["attempt_id": "first", "url": "https://fixture.invalid/authorize"]
+      }
+      #expect(method == "SignInStatusRequest" && fields["attempt_id"] as? String == "first")
+      statusReads.value += 1
+      if statusReads.value == 1 {
+        requested.yield(())
+        return ["state": "pending"]
+      }
+      let accounts: [[String: Any]] = [
+        ["clientId": "first", "signedIn": false, "active": false],
+        ["clientId": "second", "signedIn": true, "active": true],
+      ]
+      return ["state": "complete", "client_id": "first", "accounts": accounts, "plan_enabled": true]
+    }, changes: { _ in changes })
+    let signIn = Task { try await auth.signIn { _ in } }
+    _ = await reads.next()
+    change.yield(())
+    let result = try await signIn.value
+    #expect(result.account.clientId == "first")
+    #expect(!result.account.signedIn && !result.account.active)
+    #expect(result.planEnabled)
+  }
+
   @Test(arguments: [false, true]) func dismissingTheViewCancelsAtTheHost(beginPending: Bool) async throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let host = SignInHostDouble(delayBegin: beginPending)
@@ -207,7 +238,7 @@ import Testing
   func auth() -> ChatGPTAuth {
     ChatGPTAuth(endpoints: .openAI, profile: "fixture", call: { method, fields in
       await self.call(method, fields)
-    })
+    }, changes: { _ in AsyncStream<Void> { _ in } })
   }
   func openBrowser() { browserOpens += 1 }
   func finishBegin() { beginReply?.resume(); beginReply = nil }
