@@ -4,14 +4,17 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include <unistd.h>
 
 #include <atomic>
 #include <condition_variable>
-#include <deque>
 #include <fstream>
-#include <future>
+#include <list>
 #include <mutex>
 #include <nix/expr/eval-gc.hh>
 #include <nix/expr/eval-settings.hh>
@@ -30,6 +33,8 @@
 #include <nix/store/remote-store.hh>
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
+#include <nix/util/file-descriptor.hh>
+#include <nix/util/finally.hh>
 #include <nix/util/logging.hh>
 #include <nix/util/serialise.hh>
 #include <nix/util/signals.hh>
@@ -39,7 +44,10 @@
 #include <thread>
 
 #include "nix_eval.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/store.hh"
+
+extern char** environ;
 
 namespace tsugumi {
 
@@ -227,27 +235,40 @@ bool interrupted(const NixCall& c, bool* timed_out) {
 auto interruption(const NixCall& call) -> NixInterrupted {
   bool timed_out = false;
   interrupted(call, &timed_out);
-  return {timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds"
-                               : "Nix cancelled"};
+  return {timed_out,
+          timed_out ? "Nix exceeded buildTimeoutSeconds" : "Nix cancelled"};
 }
+
+class WakeOnStop {
+ public:
+  WakeOnStop(const NixCall& call, std::function<void()> wake)
+      : wake_(std::move(wake)), stop_(call.cancel, wake_) {
+    if (call.deadline) {
+      timer_ =
+          std::jthread([this, deadline = *call.deadline](std::stop_token stop) {
+            std::unique_lock lock(timer_mu_);
+            timer_cv_.wait_until(lock, stop, deadline, [] { return false; });
+            if (!stop.stop_requested()) wake_();
+          });
+    }
+  }
+
+ private:
+  std::function<void()> wake_;
+  std::stop_callback<std::function<void()>> stop_;
+  std::mutex timer_mu_;
+  std::condition_variable_any timer_cv_;
+  std::jthread timer_;
+};
 
 class CallScope {
  public:
-  explicit CallScope(const NixCall& call, nix::RemoteStore* build_store = nullptr)
-      : wake_([thread = pthread_self(), build_store] {
+  explicit CallScope(const NixCall& call,
+                     nix::RemoteStore* build_store = nullptr)
+      : wake_(call, [thread = pthread_self(), build_store] {
           if (build_store) build_store->shutdownConnections();
           pthread_kill(thread, SIGUSR1);
-        }),
-        stop_(call.cancel, wake_) {
-    if (call.deadline) {
-      timer_ = std::jthread([this, deadline = *call.deadline](std::stop_token stop) {
-        std::unique_lock lock(timer_mu_);
-        timer_cv_.wait_until(lock, stop, deadline, [] { return false; });
-        if (!stop.stop_requested()) wake_();
-      });
-    }
-    // libnix's hook is thread-local. A call may run on the evaluator
-    // thread or any of the threads realising and exporting derivations.
+        }) {
     nix::unix::interruptCheck = [&call] { return interrupted(call, nullptr); };
     g_logger->set_thread(call.log ? &call.log : nullptr);
   }
@@ -258,11 +279,7 @@ class CallScope {
   }
 
  private:
-  std::function<void()> wake_;
-  std::stop_callback<std::function<void()>> stop_;
-  std::mutex timer_mu_;
-  std::condition_variable_any timer_cv_;
-  std::jthread timer_;
+  WakeOnStop wake_;
 };
 
 // Nix's errors as NixEvaluator promises them.
@@ -287,6 +304,7 @@ void NixEvaluator::init_process() {
   done = true;
   NixStore::init_process();  // nix.conf: substituters, the daemon socket, ...
   nix::initGC();
+  ::signal(SIGPIPE, SIG_IGN);
   auto logger = std::make_unique<NixLogSink>();
   g_logger = logger.get();
   nix::logger = std::move(logger);
@@ -297,7 +315,9 @@ void NixEvaluator::init_process() {
   ::sigaction(SIGUSR1, &sa, nullptr);
 }
 
-struct NixEvaluator::Impl {
+namespace {
+
+struct EvaluationState {
   std::string entry_text;
   std::vector<std::string> allowed;
   // Settings must outlive the EvalState.
@@ -320,65 +340,6 @@ struct NixEvaluator::Impl {
   std::vector<std::unique_ptr<nix::PrimOp>> wrapped_ops;
   nix::RootValue entry;
   std::map<std::string, nix::RootValue> pkgs;  // per nixpkgs pin: read once
-
-  pthread_t thread{};
-  std::mutex mu;
-  std::condition_variable cv;
-  struct Evaluation {
-    const void* id;
-    std::function<void()> run;
-  };
-  std::deque<Evaluation> tasks;
-  bool stopping = false;
-
-  static void* main(void* self) {
-    auto* d = static_cast<Impl*>(self);
-    // Registered with Boehm GC by GC_pthread_create (gc.h redirects
-    // pthread_create in this file), so it is scanned while it evaluates.
-    while (true) {
-      std::function<void()> task;
-      {
-        std::unique_lock<std::mutex> l(d->mu);
-        d->cv.wait(l, [&] { return d->stopping || !d->tasks.empty(); });
-        if (d->tasks.empty()) break;
-        task = std::move(d->tasks.front().run);
-        d->tasks.pop_front();
-      }
-      task();
-    }
-    d->state.reset();
-    d->pkgs.clear();
-    d->entry.reset();
-    return nullptr;
-  }
-
-  // Cancellation and the evaluator compete to take the same queued task.
-  template <class F>
-  auto guarded(const NixCall& call, F f) -> decltype(f()) {
-    auto task = std::make_shared<std::packaged_task<decltype(f())(bool)>>(
-        [&](bool removed) {
-          if (removed) throw interruption(call);
-          CallScope scope(call);
-          return translated(call, f);
-        });
-    auto result = task->get_future();
-    {
-      std::lock_guard lock(mu);
-      tasks.push_back({task.get(), [task] { (*task)(false); }});
-    }
-    std::stop_callback stop(call.cancel, [&] {
-      size_t removed;
-      {
-        std::lock_guard lock(mu);
-        removed = std::erase_if(tasks, [&](const Evaluation& queued) {
-          return queued.id == task.get();
-        });
-      }
-      if (removed) (*task)(true);
-    });
-    cv.notify_one();
-    return result.get();
-  }
 
   auto install(nix::Value& value, nix::PrimOp operation) -> void {
     wrapped_ops.push_back(std::make_unique<nix::PrimOp>(std::move(operation)));
@@ -669,7 +630,6 @@ struct NixEvaluator::Impl {
   auto evaluate(const NixCall& c) -> NixResult {
     refresh();
     if (!state) open();
-    if (c.on_phase) c.on_phase(false);
     auto& vpkgs = pkgs_for(c);
     auto* vargs = state->allocValue();
     state->eval(state->parseExprFromString(
@@ -728,8 +688,8 @@ struct NixEvaluator::Impl {
     const auto drv_path = store->parseStorePath(r.derivation.path);
     const auto out = store->parseStorePath(r.derivation.output);
     // Held by this connection from here: a concurrent GC never removes it
-    // between the check, the build and the permanent root. The evaluator's
-    // connection holds the derivation.
+    // between the check, the build and the permanent root. The core's
+    // evaluation roots connection holds the derivation.
     store->addTempRoot(out);
     // The daemon connection is now established even if Stop raced its setup.
     nix::checkInterrupt();
@@ -780,66 +740,328 @@ struct NixEvaluator::Impl {
         ir->addIndirectRoot(link);
     }
   }
+  auto reuse(const NixResult& result) -> bool {
+    if (!state || !result.evaluation_epoch || result.evaluation_epoch != epoch)
+      return false;
+    if (!unchanged()) {
+      refresh();
+      return false;
+    }
+    auto drv = store->parseStorePath(result.derivation.path);
+    auto out = store->parseStorePath(result.derivation.output);
+    store->addTempRoot(drv);
+    store->addTempRoot(out);
+    if (store->isValidPath(drv) && store->isValidPath(out)) return true;
+    // Nix remembers derivations it may not write a second time after GC.
+    existence_checks.clear();
+    pkgs.clear();
+    entry.reset();
+    state.reset();
+    wrapped_ops.clear();
+    ++epoch;
+    return false;
+  }
 };
 
-FlakeInfo NixEvaluator::flake(const NixCall& call, const std::string& ref) {
-  return impl_->guarded(call, [&] { return impl_->flake(call, ref); });
+auto receive(nix::Source& source) -> nlohmann::json {
+  return nlohmann::json::parse(nix::readString(source));
+}
+
+auto send(nix::FdSink& sink, const nlohmann::json& message) -> void {
+  sink << message.dump();
+  sink.flush();
+}
+
+constexpr int kEvaluatorSocket = 3;
+constexpr int kCoreLifetime = 4;
+
+auto executable_path() -> std::filesystem::path {
+#ifdef __APPLE__
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::string path(size, '\0');
+  _NSGetExecutablePath(path.data(), &size);
+  return std::filesystem::canonical(path.c_str());
+#else
+  return std::filesystem::read_symlink("/proc/self/exe");
+#endif
+}
+
+auto evaluator_main() -> void {
+  nix::FdSource source(kEvaluatorSocket);
+  nix::FdSink sink(kEvaluatorSocket);
+  auto init = receive(source);
+  EvaluationState eval;
+  eval.entry_text = init.at("entry");
+  eval.allowed = init.at("allowed").get<std::vector<std::string>>();
+  eval.epoch = init.at("epoch");
+  auto loop = [&](const nlohmann::json& req) -> nlohmann::json {
+    NixCall call;
+    call.system = req.at("system");
+    call.log = [&](const std::string& log) { send(sink, {{"log", log}}); };
+    g_logger->set_thread(&call.log);
+    Finally reset_logger([] { g_logger->set_thread(nullptr); });
+    const auto& op = req.at("op");
+    if (op == "evaluate") {
+      call.pin_url = req.at("pin_url");
+      call.pin_hash = req.at("pin_hash");
+      call.args = req.at("args");
+      call.max_implementations = req.at("max_implementations");
+      const auto result = eval.evaluate(call);
+      return {{"drv", result.derivation.path},
+              {"out", result.derivation.output},
+              {"execution_list", result.execution_list},
+              {"implementation_count", result.implementation_count},
+              {"epoch", result.evaluation_epoch}};
+    }
+    if (op == "flake") {
+      call.source_overrides = req.at("overrides");
+      auto result = eval.flake(call, req.at("ref").get<std::string>());
+      return {{"ref", result.ref},
+              {"rev", result.rev},
+              {"nar_hash", result.nar_hash},
+              {"packages", result.packages},
+              {"json", result.json}};
+    }
+    if (op != "reuse") throw std::runtime_error("unknown evaluation operation");
+    NixResult result;
+    result.evaluation_epoch = req.at("epoch");
+    result.derivation.path = req.at("drv");
+    result.derivation.output = req.at("out");
+    return eval.reuse(result);
+  };
+  for (;;) {
+    nlohmann::json request;
+    try {
+      request = receive(source);
+    } catch (const nix::EndOfFile&) {
+      return;
+    }
+    nlohmann::json response;
+    try {
+      response = {{"result", loop(request)}};
+    } catch (const NixImplementationLimit& e) {
+      response = {{"limit", e.what()}};
+    } catch (const nix::BaseError& e) {
+      response = {{"error", message(e)}};
+    } catch (const std::exception& e) {
+      response = {{"error", e.what()}};
+    }
+    send(sink, response);
+  }
+}
+
+}  // namespace
+
+// One process keeps the evaluator and its cache warm. The front waiter owns
+// the connection. Cancelling a queued caller removes only that waiter.
+struct NixEvaluator::Impl {
+  std::string entry;
+  std::vector<std::string> allowed;
+  std::mutex mu;
+  std::condition_variable_any changed;
+  std::list<int> waiters;
+  nix::AutoCloseFD socket, lifetime;
+  pid_t pid = -1;
+  uint64_t last_epoch = 0;
+  // Evaluated derivations can still be in use when a later evaluation is
+  // stopped. The core holds their roots across evaluator process lifetimes.
+  std::shared_ptr<nix::Store> roots;
+
+  ~Impl() { close(); }
+
+  auto close() -> void {
+    if (pid < 0) return;
+    proc::kill_group(pid, SIGKILL);
+    proc::wait(pid);
+    pid = -1;
+    socket = nix::AutoCloseFD{};
+    lifetime = nix::AutoCloseFD{};
+  }
+
+  auto open() -> void {
+    int pair[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0)
+      throw std::runtime_error("cannot open Nix evaluator socket");
+    nix::AutoCloseFD parent(pair[0]), child(pair[1]);
+    nix::unix::closeOnExec(parent.get());
+    nix::unix::closeOnExec(child.get());
+    int pipe[2];
+    if (::pipe(pipe) != 0)
+      throw std::runtime_error("cannot watch the core's lifetime");
+    nix::AutoCloseFD reader(pipe[0]), writer(pipe[1]);
+    nix::unix::closeOnExec(reader.get());
+    nix::unix::closeOnExec(writer.get());
+
+    proc::Spec spec;
+    spec.argv = {executable_path(), "--nix-evaluator"};
+    for (auto e = environ; *e; ++e) spec.env.emplace_back(*e);
+    spec.stderr_fd = STDERR_FILENO;
+    spec.fds.emplace_back(kEvaluatorSocket, child.get());
+    spec.fds.emplace_back(kCoreLifetime, reader.get());
+    pid = proc::spawn(spec);
+    lifetime = std::move(writer);
+    socket = std::move(parent);
+  }
+
+  auto hold(std::string_view path) -> void {
+    if (!roots) roots = nix::openStore().get_ptr();
+    roots->addTempRoot(roots->parseStorePath(path));
+  }
+
+  template <class F>
+  auto exchange(const NixCall& call, nlohmann::json request, F result)
+      -> decltype(result(std::declval<const nlohmann::json&>())) {
+    std::unique_lock lock(mu);
+    const auto waiter = waiters.emplace(waiters.end());
+    Finally dequeue([&] {
+      if (!lock.owns_lock()) lock.lock();
+      waiters.erase(waiter);
+      changed.notify_all();
+    });
+    lock.unlock();
+    if (call.on_phase) call.on_phase(false);
+    lock.lock();
+    auto ready = [&] { return waiter == waiters.begin(); };
+    if (call.deadline)
+      changed.wait_until(lock, call.cancel, *call.deadline, ready);
+    else
+      changed.wait(lock, call.cancel, ready);
+    if (interrupted(call, nullptr)) throw interruption(call);
+    lock.unlock();
+
+    nlohmann::json reply;
+    try {
+      const bool start = pid < 0;
+      if (start) open();
+      WakeOnStop wake(call, [pid = pid] { proc::kill_group(pid, SIGKILL); });
+      if (interrupted(call, nullptr)) throw interruption(call);
+      nix::FdSink sink(socket.get());
+      nix::FdSource source(socket.get());
+      if (start)
+        send(sink, {{"entry", entry},
+                    {"allowed", allowed},
+                    {"epoch", last_epoch + 1}});
+      request["system"] = call.system;
+      send(sink, request);
+      for (;;) {
+        reply = receive(source);
+        if (!reply.contains("log")) break;
+        if (call.log) call.log(reply.at("log").get<std::string>());
+      }
+    } catch (const std::exception& e) {
+      close();
+      if (interrupted(call, nullptr)) throw interruption(call);
+      throw std::runtime_error("Nix evaluator connection failed: " +
+                               std::string(e.what()));
+    }
+    if (interrupted(call, nullptr)) {
+      close();
+      throw interruption(call);
+    }
+    if (reply.contains("limit"))
+      throw NixImplementationLimit(reply.at("limit").get<std::string>());
+    if (reply.contains("error"))
+      throw std::runtime_error(reply.at("error").get<std::string>());
+    CallScope scope(call);
+    return translated(call, [&] { return result(reply.at("result")); });
+  }
+};
+
+auto NixEvaluator::run_subprocess_if_requested(int argc, char** argv) -> void {
+  if (argc != 2 || std::string_view(argv[1]) != "--nix-evaluator") return;
+  nix::unix::closeOnExec(kEvaluatorSocket);
+  nix::unix::closeOnExec(kCoreLifetime);
+  init_process();
+  // The Nix headers register the thread with Boehm GC. Its larger stack
+  // accommodates deeply nested nixpkgs calls.
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 64u << 20);
+  pthread_t thread;
+  const int rc = pthread_create(
+      &thread, &attr,
+      [](void*) -> void* {
+        try {
+          evaluator_main();
+          std::_Exit(0);
+        } catch (const std::exception& e) {
+          std::fprintf(stderr, "Nix evaluator: %s\n", e.what());
+          std::_Exit(1);
+        }
+      },
+      nullptr);
+  pthread_attr_destroy(&attr);
+  if (rc != 0) throw std::runtime_error("cannot start the Nix evaluator");
+  // A core crash closes its end even while evaluation is blocked in libnix.
+  char unused;
+  while (::read(kCoreLifetime, &unused, sizeof(unused)) < 0 && errno == EINTR) {
+  }
+  proc::kill_group(::getpid(), SIGKILL);
+  std::_Exit(1);
 }
 
 NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed)
     : impl_(std::make_unique<Impl>()) {
-  impl_->entry_text = std::move(entry);
+  impl_->entry = std::move(entry);
   impl_->allowed = std::move(allowed);
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-  pthread_attr_setstacksize(
-      &attr,
-      64u << 20);  // deep evaluations (nixpkgs); max-call-depth bounds them
-  if (pthread_create(&impl_->thread, &attr, &Impl::main, impl_.get()) != 0)
-    throw std::runtime_error("cannot start the Nix evaluator thread");
-  pthread_attr_destroy(&attr);
 }
 
-NixEvaluator::~NixEvaluator() {
-  {
-    std::lock_guard<std::mutex> l(impl_->mu);
-    impl_->stopping = true;
-  }
-  impl_->cv.notify_all();
-  pthread_join(impl_->thread, nullptr);
-}
+NixEvaluator::~NixEvaluator() = default;
 
 auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (call.system.empty())
     throw std::runtime_error("execution target system is unknown");
-  return impl_->guarded(call, [&] { return impl_->evaluate(call); });
+  return impl_->exchange(
+      call,
+      {{"op", "evaluate"},
+       {"pin_url", call.pin_url},
+       {"pin_hash", call.pin_hash},
+       {"args", call.args},
+       {"max_implementations", call.max_implementations}},
+      [&](const auto& data) {
+        NixResult result;
+        result.derivation = {data.at("drv"), data.at("out"), call.system};
+        result.execution_list = data.at("execution_list");
+        result.implementation_count = data.at("implementation_count");
+        result.evaluation_epoch = data.at("epoch");
+        impl_->last_epoch =
+            std::max(impl_->last_epoch, result.evaluation_epoch);
+        impl_->hold(result.derivation.path);
+        return result;
+      });
 }
 
 auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
-  return impl_->guarded(call, [&] {
-    if (interrupted(call, nullptr)) return false;
-    if (!impl_->state || !result.evaluation_epoch ||
-        result.evaluation_epoch != impl_->epoch)
-      return false;
-    if (!impl_->unchanged()) {
-      impl_->refresh();
-      return false;
-    }
-    auto drv = impl_->store->parseStorePath(result.derivation.path);
-    auto out = impl_->store->parseStorePath(result.derivation.output);
-    impl_->store->addTempRoot(drv);
-    impl_->store->addTempRoot(out);
-    if (impl_->store->isValidPath(drv) && impl_->store->isValidPath(out))
-      return true;
-    // Nix remembers derivations it may not write a second time after GC.
-    impl_->existence_checks.clear();
-    impl_->pkgs.clear();
-    impl_->entry.reset();
-    impl_->state.reset();
-    impl_->wrapped_ops.clear();
-    ++impl_->epoch;
-    return false;
-  });
+  return impl_->exchange(call,
+                         {{"op", "reuse"},
+                          {"epoch", result.evaluation_epoch},
+                          {"drv", result.derivation.path},
+                          {"out", result.derivation.output}},
+                         [&](const nlohmann::json& data) {
+                           const bool reusable = data.get<bool>();
+                           if (reusable) {
+                             impl_->hold(result.derivation.path);
+                             impl_->hold(result.derivation.output);
+                           }
+                           return reusable;
+                         });
+}
+
+auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
+    -> FlakeInfo {
+  return impl_->exchange(
+      call,
+      {{"op", "flake"}, {"ref", ref}, {"overrides", call.source_overrides}},
+      [&](const nlohmann::json& data) {
+        FlakeInfo info{data.at("ref"), data.at("rev"), data.at("nar_hash"),
+                       data.at("packages").get<std::vector<std::string>>(),
+                       data.at("json")};
+        for (const auto& [attr, p] :
+             nlohmann::json::parse(info.json).at("packages").items())
+          impl_->hold(p.at("drv").get<std::string>());
+        return info;
+      });
 }
 
 auto NixEvaluator::make_available(const NixCall& call,
@@ -851,8 +1073,9 @@ auto NixEvaluator::make_available(const NixCall& call,
 
 auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
     -> NixResult {
-  return translated(
-      call, [&] { return Impl::realise_native(call, std::move(result)); });
+  return translated(call, [&] {
+    return EvaluationState::realise_native(call, std::move(result));
+  });
 }
 
 }  // namespace tsugumi
