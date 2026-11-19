@@ -77,6 +77,8 @@ struct LogRead {
   bool starts_line = true;
   bool exists = false;
   bool truncated = false;
+  std::optional<uint64_t> raw_size;
+  bool reset = false;
   std::optional<uint64_t> log_truncated_at_bytes;
 };
 
@@ -240,7 +242,8 @@ class History {
                    const std::optional<CardPath>& card,
                    std::optional<uint64_t> invocation, LogStream stream,
                    uint64_t offset, bool tail, uint64_t limit,
-                   std::optional<uint64_t> before);
+                   std::optional<uint64_t> before, bool terminal,
+                   std::optional<uint64_t> since);
 
   // Cursors carry a paging position.
   std::string make_cursor(int64_t hi, const std::string& after) const;

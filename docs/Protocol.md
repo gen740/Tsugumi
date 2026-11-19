@@ -383,6 +383,8 @@ No fields.
 | `tail` | `bool` |  |  |
 | `limit_bytes` | `uint32` |  | Maximum number of bytes to read. |
 | `before` | `uint64` |  | Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset. |
+| `terminal` | `bool` |  | Read the terminal display. Offsets and the size use four units per Unicode scalar. |
+| `terminal_since` | `uint64` |  | Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then. |
 
 ### RunEnvironments
 
