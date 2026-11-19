@@ -60,8 +60,7 @@ export class ChatGPTSignInModel extends Observable {
     if (this.beginning || (this.attempt && this.attempt.status?.signingIn !== false)) void this.cancel(this.attempt?.id)
   }
   private connectedAccount(st: ChatGPTState) {
-    const account = st.accounts.find(a => a.clientId === st.outcome?.clientId)
-    return st.outcome?.planEnabled && account?.signedIn && account.planEnabled ? account.clientId : undefined
+    return st.outcome?.planEnabled ? st.outcome.clientId : undefined
   }
   async reload() {
     const read = ++this.read
