@@ -199,7 +199,7 @@ for (const type of ['chatgptChanged', 'reconnected', 'eventsConnected']) {
 // A single completion event survives a failed shared read, and the retry
 // control clears the error without another notification or sign-in.
 {
-  const f = fixture(), model = f.model()
+  const f = fixture(true, true), model = f.model()
   f.setOutcome('pending')
   let ui!: ReturnType<typeof create>
   act(() => {
@@ -212,13 +212,13 @@ for (const type of ['chatgptChanged', 'reconnected', 'eventsConnected']) {
   f.completeAndNotify('chatgptChanged')
   await model.statusRead()
   assert.equal(model.state.signingIn, false)
-  assert.equal(model.state.outcome?.welcome, account.clientId)
+  assert.equal(model.state.outcome?.clientId, account.clientId)
   assert.ok(model.connectionError)
   const retry = ui.root.findByProps({ role: 'status' }).parent!.findByType('button')
-  retry.props.onClick()
+  retry.props.onClick({ stopPropagation() {} })
   await model.statusRead()
   assert.equal(model.connectionError, undefined)
-  assert.equal(model.state.outcome?.welcome, account.clientId)
+  assert.equal(model.state.outcome?.clientId, account.clientId)
   ui.unmount()
 }
 // Tab A keeps its outcome even after tab B starts the next sign-in.
@@ -451,13 +451,14 @@ for (const switched of [false, true]) {
   }) as typeof fetch
   try {
     const g = new GuideController()
+    g.setupDone = false
     model.onConnected = clientId => g.finishChatGPTSetup(clientId)
     await model.welcomed(false)
     assert.equal(calls.find(c => c.path === '/api/settings' && c.body.provider)?.body.provider, 'chatgpt')
     assert.equal(calls.find(c => c.path === '/api/guide/advance')?.body.event.kind, switched ? undefined : 'setup')
     assert.equal(!!g.setupDone, !switched)
     assert.equal(!!g.connected, !switched)
-    if (switched) assert.ok(model.message)
+    if (switched) assert.ok(model.message && model.message !== model.state.outcome?.message)
   } finally {
     model.dispose()
     globalThis.fetch = original
