@@ -63,11 +63,6 @@ auto local_document_path(std::string_view path) -> std::string_view {
 }
 }  // namespace
 
-auto Document::is_card_definition_file(const std::string& path) -> bool {
-  const auto rel = local_document_path(path);
-  return rel.ends_with("/_card.json") && is_document_file(std::string(rel));
-}
-
 auto Document::is_card_meta_file(const std::string& path) -> bool {
   const auto rel = local_document_path(path);
   return rel.ends_with("/_meta.json") && is_document_file(std::string(rel));
@@ -84,13 +79,8 @@ bool Document::is_document_file(const std::string& rel) {
 }
 
 auto Document::is_external_document_file(std::string_view path) -> bool {
-  if (!path.starts_with("externals/")) return false;
-  do {
-    auto slash = path.find('/', 10);
-    if (slash == std::string_view::npos) return false;
-    path.remove_prefix(slash + 1);
-  } while (path.starts_with("externals/"));
-  return is_document_file(std::string(path));
+  return path.starts_with("externals/") &&
+         is_document_file(std::string(local_document_path(path)));
 }
 
 auto external_document_source(const std::string& path, std::string bytes)
@@ -98,6 +88,10 @@ auto external_document_source(const std::string& path, std::string bytes)
   if (!text::valid_utf8(bytes))
     throw DocumentError("invalid_document", path + ": expected UTF-8 JSON text",
                         {{"path", path}});
+  const auto local = local_document_path(path);
+  if (local.ends_with("/_card.json"))
+    parse_card_json(stdfs::path(path).parent_path().filename().string(), bytes);
+  if (local.ends_with("/_meta.json")) check_meta_json(bytes);
   return {crypto::sha256_hex(bytes), bytes.size(),
           std::make_shared<const std::string>(std::move(bytes))};
 }
@@ -398,9 +392,7 @@ auto execution_json(const std::string& text, const char* omitted)
 }
 }  // namespace
 
-std::string execution_fingerprint(
-    const Document& doc,
-    const std::function<std::optional<std::string>(const std::string&)>& read) {
+std::string execution_fingerprint(const Document& doc) {
   crypto::Sha256 h;
   h.update(execution_json(doc.project_json, "name"));
   for (const auto& [id, def] : doc.definitions) {
@@ -413,27 +405,15 @@ std::string execution_fingerprint(
       continue;
     // External projects carry layout as a source file; it never identifies a
     // run.
-    auto relative = path;
-    while (relative.starts_with("externals/")) {
-      const auto slash = relative.find('/', 10);
-      if (slash == std::string::npos) break;
-      relative.erase(0, slash + 1);
-    }
+    const auto relative = local_document_path(path);
     if (relative == "layout.json") continue;
     h.update("\0src\0", 5);
     h.update(path);
-    const char* omitted = relative == "tsugumi.json" ? "name"
-                          : Document::is_document_file(relative) &&
-                                  relative.ends_with("/_card.json")
-                              ? "displayMode"
-                              : nullptr;
-    if (omitted) {
-      if (auto text = read(path))
-        h.update(execution_json(*text, omitted));
-      else
-        h.update(src.hash);  // Unavailable source: resolution reports it; never
-                             // substitute empty content.
-    } else
+    if (src.document_json)
+      h.update(execution_json(*src.document_json,
+                              relative == "tsugumi.json" ? "name"
+                                                         : "displayMode"));
+    else
       h.update(src.hash);
   }
   return h.finish_hex();
@@ -496,7 +476,6 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
         fs::stream_beneath(
             root, rel, kMaxDocumentJsonBytes,
             [&](std::string_view chunk) { bytes.append(chunk); });
-        if (Document::is_card_meta_file(rel)) check_meta_json(bytes);
         doc->sources.emplace(rel,
                              external_document_source(rel, std::move(bytes)));
         continue;
@@ -510,9 +489,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   }
   doc->check_document_size();
   check_structure(*doc);
-  doc->execution_fingerprint = execution_fingerprint(
-      *doc,
-      [&](const std::string& path) { return fs::read_file(root / path); });
+  doc->execution_fingerprint = execution_fingerprint(*doc);
   return doc;
 }
 

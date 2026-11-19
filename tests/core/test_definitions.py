@@ -253,6 +253,14 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     project = '{"canvas":{"cards":[{"id":"definitions"}],"connections":[]}}'
     draft = '{"template":"draft"}'
     metadata = '{"name":"Nested Card"}'
+    root_doc = json.loads((root / "tsugumi.json").read_text())
+    root_doc["canvas"]["cards"].append({"id": "outer"})
+    put(root / "tsugumi.json", json.dumps(root_doc))
+    put(root / "definitions/outer/_card.json", '{"external":"outer"}')
+    outer = "externals/outer/"
+    put(root / outer / "tsugumi.json",
+        '{"canvas":{"cards":[{"id":"inner"}],"connections":[]}}')
+    put(root / outer / "definitions/inner/_card.json", '{"external":"inner"}')
     for path, value in [(project_path, project), (card_path, draft),
                         (meta_path, metadata), (code_path, "# code")]:
         put(root / path, value)
@@ -274,12 +282,31 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert {text(s.path): text(s.documentJson) for s in saved.delta.sourcesUpsert} == {card_path: updated}
     assert [text(p) for p in saved.delta.sourcesRemoved] == [meta_path]
 
-    # Only a reload accepts an out-of-band change.
+    # Only a reload accepts an out-of-band change. A save that needs a new
+    # graph resolution still sees the document that was accepted.
+    nested_card = ["outer", "inner", "definitions"]
+    accepted = diagnostics(c, nested_card)
+    assert "invalid_document" not in accepted
     put(root / card_path, draft)
+    layout = c.call("ProjectSaveRequest", baseRev=saved.rev, opId=new_id(), origin="t",
+                    changes=[change("SetLayout", json='{"flow":"topToBottom"}')])
+    assert layout.executionRev == saved.executionRev
+    assert diagnostics(c, nested_card) == accepted
+    changed = c.call("ProjectSaveRequest", baseRev=layout.rev, opId=new_id(), origin="t",
+                     changes=[change("PutDefinition", id="unrelated",
+                                     cardJson='{"template":"draft"}')])
+    assert diagnostics(c, nested_card) == accepted
     inspected = c.call("ProjectInspectRequest")
-    assert inspected.rev == saved.rev
+    assert inspected.rev == changed.rev
     assert {text(s.path): text(s.documentJson) for s in inspected.sources}[card_path] == updated
-    reloaded = c.call("ProjectReloadRequest", baseRev=saved.rev, opId=new_id(), origin="t")
+    content = c.call("ProjectFileReadRequest", path=card_path, atRev=changed.rev)
+    assert bytes(content.bytes) == updated.encode()
+    with pytest.raises(RpcFailure) as error:
+        c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
+               changes=[change("PutSource", path=card_path, bytes=b'{"template":"fork"}')])
+    assert error.value.kind == "external_change"
+    reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
+    assert reloaded.executionRev > changed.executionRev
     assert {text(s.path): text(s.documentJson) for s in reloaded.delta.sourcesUpsert} == {card_path: draft}
 
 

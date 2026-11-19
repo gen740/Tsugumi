@@ -26,6 +26,30 @@ def save(client, transfers, **kwargs):
                        changes=[], transfers=transfers, checkPermissions=True, **kwargs)
 
 
+def test_oversized_save_reply_leaves_transferred_document_unwritten(project, core_factory, tmp_path):
+    client = core_factory().connect()
+    before = client.call("ProjectInspectRequest")
+    source = tmp_path / "layout.json"
+    source.write_text("{}" + " " * (7 << 20))
+    path = "externals/inner/layout.json"
+    item = transfer(source, path)
+    op_id = new_id()
+    # The transferred text isn't part of the incoming frame; the reply has
+    # both that text and the caller's undo data.
+    with pytest.raises(RpcFailure) as error:
+        client.call("ProjectSaveRequest", baseRev=before.rev, opId=op_id,
+                    origin="test", changes=[], transfers=[item],
+                    operationData=bytes(10 << 20))
+    assert error.value.kind == "resource_limit"
+    assert not (project / path).exists()
+    assert client.call("ProjectInspectRequest").rev == before.rev
+    receipt = client.call("OperationGetRequest", opId=op_id).receipt
+    assert receipt is not None
+    succeeded = save(client, [item])
+    assert succeeded.rev == before.rev + 1
+    assert (project / path).read_bytes() == source.read_bytes()
+
+
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()

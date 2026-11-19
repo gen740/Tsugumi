@@ -1,5 +1,19 @@
 #include "server.hh"
+
 namespace tsugumi {
+namespace R = Tsugumi::RPC;
+
+auto Server::notification(flatbuffers::FlatBufferBuilder& b, std::string_view subscription, uint64_t seq,
+                  R::NotificationPayload type, flatbuffers::Offset<void> value) -> std::string {
+  const auto id = b.CreateString(subscription.data(), subscription.size());
+  const auto note = R::CreateNotification(b, id, seq, type, value);
+  R::FinishMessageBuffer(
+      b, R::CreateMessage(b, flatbuffers::nullopt, R::Payload::Notification,
+                          note.Union()));
+  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                     b.GetSize());
+}
+
 struct Server::State : RequestSink {
   struct Subscription {
     std::string id;
@@ -26,16 +40,9 @@ struct Server::State : RequestSink {
     pending.group = sub->id;
     pending.approx_bytes = note.approx_bytes;
     pending.build = [sub, build = std::move(note.build)] {
-      namespace R = Tsugumi::RPC;
       flatbuffers::FlatBufferBuilder b;
       auto [type, value] = (*build)(b);
-      const auto id = b.CreateString(sub->id);
-      const auto n = R::CreateNotification(b, id, ++sub->seq, type, value);
-      R::FinishMessageBuffer(
-          b, R::CreateMessage(b, flatbuffers::nullopt, R::Payload::Notification,
-                              n.Union()));
-      return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
-                         b.GetSize());
+      return Server::notification(b, sub->id, ++sub->seq, type, value);
     };
     transport.send_note(conn, std::move(pending));
   }

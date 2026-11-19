@@ -72,7 +72,6 @@ struct Document {
   // equal resolutions (metadata and layout changes keep the previous one).
   std::string resolution_key;
 
-  static auto is_card_definition_file(const std::string& rel) -> bool;
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   static auto is_external_document_file(std::string_view path) -> bool;
@@ -119,9 +118,7 @@ void check_structure(const Document& doc);
 std::shared_ptr<Document> load_from_disk(const std::filesystem::path& root);
 
 // Fingerprint of everything that influences computation (not layout).
-std::string execution_fingerprint(
-    const Document& doc,
-    const std::function<std::optional<std::string>(const std::string&)>& read);
+std::string execution_fingerprint(const Document& doc);
 
 constexpr const char* kEmptyLayout = "{}";
 

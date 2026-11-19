@@ -149,9 +149,19 @@ class Service : public RequestSink {
   void save(RequestIn& req);
   auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
-  auto complete_reload(RequestIn& req, const std::string& op_id,
-                       const std::string& digest, const Document& base,
-                       Store::Staged& staged) -> void;
+  struct PreparedSaveReply {
+    std::string receipt;
+    size_t notification_bytes = 0;
+  };
+  auto prepare_save_reply(
+      Store::Staged& staged, const Document& base,
+      const flatbuffers::Vector<uint8_t>* operation_data = nullptr)
+      -> PreparedSaveReply;
+  void complete_save(RequestIn& req, const std::string& op_id,
+                     const std::string& kind, const std::string& digest,
+                     const Document& base, Store::Staged& staged,
+                     const PreparedSaveReply& response,
+                     const std::function<void()>& check_cancelled = [] {});
   auto version_operation(RequestIn& req,
                          const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
@@ -215,7 +225,7 @@ class Service : public RequestSink {
   flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
       flatbuffers::FlatBufferBuilder& b, const Document& doc,
       const std::optional<std::string>& view_id);
-  void publish_delta(const Delta& delta);
+  void publish_delta(const Delta& delta, size_t notification_bytes);
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
 
