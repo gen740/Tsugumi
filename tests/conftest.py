@@ -53,9 +53,9 @@ PACKAGE_SMOKES = {
     "test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy",
     "test_a_second_run_opens_a_page_on_the_running_server",
     # Native imports/rendering remain on the second SDK architecture.
-    "test_report_figure_sends_plotly", "test_report_figure_sends_altair",
+    "test_report_figure_sends_plotly",
     "test_the_backend_is_chosen_and_show_sends_one_image",
-    "test_demo_binds_upstream_and_parameter_into_running_notebook",
+    "test_notebook_passes_typed_result_and_keeps_snapshot",
     "test_notebook_child_is_reaped_on_cancel_or_deadline",
     "test_cell_failure_exposes_notebook_source_and_no_result",
 }
