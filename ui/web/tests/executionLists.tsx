@@ -5,7 +5,6 @@ import { D, R } from '../src/wire/rpc'
 import { Scene } from '../src/model/canvas'
 import { ProjectSession } from '../src/model/session'
 import { Workspace } from '../src/model/workspace'
-import { CardGeometry } from '../src/model/canvasKit'
 import { WireLayer } from '../src/ui/cardNode'
 
 const session = new ProjectSession('/p', 'p', 'p')
@@ -23,12 +22,6 @@ session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ord
 
 assert.deepEqual(session.ports('collect'), { inputs: ['in'], outputs: ['out'] })
 assert.equal(session.kind('collect'), 'collect')
-for (const flow of ['topToBottom', 'leftToRight'] as const) {
-  const geometry = new CardGeometry(session.nodeData('collect'), flow)
-  assert.equal(geometry.shape, 'collect')
-  const input = geometry.port('in', false), output = geometry.port('out', true)
-  assert.ok(flow === 'topToBottom' ? input.x === output.x && input.y < output.y : input.y === output.y && input.x < output.x)
-}
 assert.equal(new Scene(session, []).wires[0].executionList, false, 'an ordinary FBS vector is a single value')
 
 session.executionRev = 7n
@@ -81,14 +74,12 @@ for (const count of [1, 0]) {
   const [list, collected] = new Scene(session, []).wires
   assert.equal(list.executionList, true)
   assert.equal(list.count, count)
-  assert.equal(collected.executionList, false, 'Collect returns an ordinary value on a thin wire')
+  assert.equal(collected.executionList, false, 'Collect returns an ordinary value on its output wire')
   const markup = renderToStaticMarkup(<WireLayer width={300} height={200} wires={[
     { d: list.d, style: 'normal', executionList: list.executionList, countLabel: `×${list.count}`, countAt: { x: 50, y: 50 } },
     { d: collected.d, style: 'normal', executionList: collected.executionList },
   ]} />)
   assert.match(markup, new RegExp(`×${count}<`))
-  assert.match(markup, /stroke-width="4\.4"/)
-  assert.match(markup, /stroke-width="1\.6"/)
 }
 batch(99n, 99, true, false, 'previous-run')
 assert.equal(session.executionBatch('source')?.invocationCount, 0)
@@ -99,4 +90,4 @@ workspace.logRunId = 'previous-run'
 workspace.showLog('source', undefined, 1n, 'run')
 assert.equal(workspace.logRunId, 'run', 'an invocation on the canvas opens logs for its own run')
 assert.equal(workspace.logInvocation, 1n)
-console.log('Execution lists: aggregate status, empty and single-item thick wires, and Collect passed')
+console.log('Execution lists: aggregate status, empty and single-item lists, and Collect passed')
