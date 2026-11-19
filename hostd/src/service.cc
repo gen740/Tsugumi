@@ -104,14 +104,7 @@ struct Service::State {
         terminal_closes(1),
         environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
-        options.state_dir,
-        [this](const std::string& id, const json::Members& values) {
-          credentials.Import(id, values);
-        },
-        [this](const std::string& id, std::string_view stale) {
-          return credentials.AccessToken(id, stale);
-        },
-        [this](const std::string& id) { return credentials.Forget(id); },
+        options.state_dir, credentials,
         nullptr, host::Settings::kKeyStorage,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](const std::string& profile) {

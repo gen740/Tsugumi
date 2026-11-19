@@ -25,7 +25,8 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
        {"projects", "folders", "access_requests", "grants", "providers",
         "access_prompt_items", "operation_approvals", "credentials",
         "environment_projects", "project_paths", "skill_catalogs",
-        "conversation_locations", "model_lists"}) {
+        "conversation_locations", "model_lists", "settings", "accounts",
+        "provider_connections", "oauth_hosts"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -52,7 +53,7 @@ TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   std::stop_source shutdown;
   host::Credentials credentials(gate, store.db, shutdown.get_token());
   EXPECT_THROW(credentials.Get("absent"), host::Failure);
-  credentials.Import(
+  credentials.Save(
       "account",
       ::tsugumi::json::Object(
           R"({"access_token":"current","refresh_token":"refresh","id_token":"identity","expires_at_ms":9999999999999,"scope":"chatgpt.tokens.use.direct"})"));
@@ -78,31 +79,23 @@ class CredentialRefreshTest : public testing::Test {
   host::StateGate gate;
   ModelServer endpoint;
   host::Credentials credentials{gate, store.db, {}};
-  host::Settings settings{directory.path,
-                          [](const auto&, const auto&) {},
-                          [&](const auto& id, auto stale) {
-                            return credentials.AccessToken(id, stale);
-                          },
-                          [](const auto&) { return true; },
-                          nullptr,
+  host::Settings settings{directory.path, credentials, nullptr,
                           host::Settings::KeyStorage::Host};
-
   std::function<std::string(std::string_view)> access_token;
-  sql::Db settings_db{(directory.path / "host-settings.sqlite").string()};
 
   CredentialRefreshTest() {
     auto value = ::tsugumi::json::Object(
         R"({"access_token":"old-access","refresh_token":"old-refresh","id_token":"old-id","scope":"openid chatgpt.tokens.use.direct","expires_at_ms":0,"resource":"https://api.openai.com/v1"})");
     value["token_endpoint"] = Quote(endpoint.URL());
-    credentials.Import("account", value);
-    settings_db.exec(
+    credentials.Save("account", value);
+    store.db.exec(
         R"(INSERT INTO accounts VALUES('desktop','account','{"active":true,"signed_in":true,"plan_enabled":true}'))");
     access_token =
         settings.Resolve({{"provider_id", Quote("chatgpt")}}).access_token;
   }
   auto Account() -> ::tsugumi::json::Members {
     auto q =
-        settings_db.prepare("SELECT json FROM accounts WHERE id='account'");
+        store.db.prepare("SELECT json FROM accounts WHERE id='account'");
     if (!q.step()) throw std::runtime_error("missing test account");
     return ::tsugumi::json::Object(q.text(0));
   }
@@ -178,7 +171,7 @@ TEST_F(CredentialRefreshTest,
     SCOPED_TRACE(code);
     auto value = credentials.Get("account");
     value["refresh_token"] = Quote("old-refresh");
-    credentials.Import("account", value);
+    credentials.Save("account", value);
     endpoint.QueueHTTP("{\"error\":{\"code\":" + Quote(code) +
                            ",\"message\":\"old-refresh\"}}",
                        400);

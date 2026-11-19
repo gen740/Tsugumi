@@ -18,12 +18,6 @@ auto Now() -> int64_t {
 Credentials::Credentials(StateGate& g, sql::Db& database, std::stop_token token)
     : gate(g), db(database), stop(token) {}
 
-auto Credentials::Import(const std::string& id, const json::Members& value)
-    -> void {
-  std::lock_guard guard(credential_mutex);
-  Save(id, value);
-}
-
 auto Credentials::Get(const std::string& id) -> json::Members {
   std::lock_guard lock(gate.mutex);
   auto q = db.prepare("SELECT json FROM credentials WHERE id=?");
@@ -105,20 +99,19 @@ auto Credentials::AccessToken(const std::string& id, std::string_view stale)
         "chatgpt_plan_disabled");
   return refreshed.access_token;
 }
-auto Credentials::Forget(const std::string& id) -> bool {
-  std::lock_guard credential_lock(credential_mutex);
-  bool revoked = false;
+auto Credentials::Revoke(const std::string& id) -> bool {
   try {
     const auto value = Get(id);
-    agent::RevokeCredential(json::Text(value, "revocation_endpoint"), id,
-                            json::Text(value, "refresh_token"), stop);
-    revoked = true;
-  } catch (...) {
+    const auto endpoint = json::Text(value, "revocation_endpoint");
+    const auto token = json::Text(value, "refresh_token");
+    if (endpoint.empty() || token.empty()) return false;
+    agent::RevokeCredential(endpoint, id, token, stop);
+    return true;
+  } catch (const Failure&) {
+    return false;
+  } catch (const agent::ProviderError&) {
+    return false;
   }
-  std::lock_guard state_lock(gate.mutex);
-  auto q = db.prepare("DELETE FROM credentials WHERE id=?");
-  q.bind(1, id).run();
-  return revoked;
 }
 
 auto Credentials::Secrets() -> std::vector<std::string> {

@@ -39,6 +39,14 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "request TEXT NOT NULL UNIQUE, preview TEXT NOT NULL, "
       "PRIMARY KEY(conversation,call))");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS settings(profile TEXT PRIMARY KEY, "
+      "revision INTEGER NOT NULL,json TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS provider_connections(profile TEXT,id TEXT,"
+      "json TEXT NOT NULL,PRIMARY KEY(profile,id));"
+      "CREATE TABLE IF NOT EXISTS accounts(profile TEXT,id TEXT,json TEXT "
+      "NOT NULL,PRIMARY KEY(profile,id));"
+      "CREATE TABLE IF NOT EXISTS oauth_hosts(profile TEXT PRIMARY KEY,id "
+      "TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY, json "
       "TEXT NOT NULL)");
   db.exec(

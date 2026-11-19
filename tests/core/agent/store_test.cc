@@ -12,6 +12,7 @@
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
+#include "host/credentials.hh"
 #include "host/access.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
@@ -78,9 +79,9 @@ TEST_F(ConversationStoreTest,
   namespace H = Tsugumi::Host;
   Create("nested");
   ModelServer model;
+  host::Credentials credentials{gate, home.db, {}};
   host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       nullptr, host::Settings::KeyStorage::Host);
   H::ProviderSetRequestT provider;
   provider.profile = "desktop";

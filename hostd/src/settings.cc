@@ -8,7 +8,6 @@
 #include <openssl/param_build.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -18,6 +17,7 @@
 #include <thread>
 
 #include "agent/wire.hh"
+#include "host/credentials.hh"
 #include "host/models.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sqlite.hh"
@@ -276,15 +276,10 @@ auto Defaults() -> j::Members {
 }  // namespace
 struct Settings::State {
   std::filesystem::path directory;
-  sql::Db db;
+  Credentials& credentials;
+  sql::Db& db;
+  std::recursive_mutex& mutex;
   std::unique_ptr<SecretStore> secrets;
-  Import import;
-  Token token;
-  Forget forget;
-  std::recursive_mutex mutex;
-  // Import and sign-out serialize without holding the settings lock while
-  // entering the credential service (whose callbacks take the Agent lock).
-  std::mutex account_operations;
   std::map<std::string, std::string> ephemeral;
   struct Attempt {
     std::string id, profile, state = "pending", message, welcome, issuer,
@@ -298,29 +293,17 @@ struct Settings::State {
   KeyStorage storage;
   Models models;
   std::function<void(const std::string&)> provider_changed;
-  State(const std::filesystem::path& dir, Import i, Token t, Forget f,
+  State(const std::filesystem::path& dir, Credentials& credential_store,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
         Models model_list, std::function<void(const std::string&)> changed)
       : directory(dir),
-        db((dir / "host-settings.sqlite").string()),
+        credentials(credential_store),
+        db(credentials.db),
+        mutex(credentials.gate.mutex),
         secrets(std::move(store)),
-        import(std::move(i)),
-        token(std::move(t)),
-        forget(std::move(f)),
         storage(key_storage),
         models(std::move(model_list)),
         provider_changed(std::move(changed)) {
-    ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
-    db.exec(
-        "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
-        "TEXT PRIMARY KEY,revision INTEGER NOT NULL,json TEXT NOT NULL); "
-        "CREATE TABLE IF NOT EXISTS providers(profile TEXT,id TEXT,json TEXT "
-        "NOT NULL,PRIMARY KEY(profile,id)); CREATE TABLE IF NOT EXISTS "
-        "accounts(profile TEXT,id TEXT,json TEXT NOT NULL,PRIMARY "
-        "KEY(profile,id));");
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS oauth_hosts(profile TEXT PRIMARY KEY,id "
-        "TEXT NOT NULL)");
     if (!secrets) secrets = std::make_unique<SqlSecrets>(db);
   }
   ~State() {
@@ -655,17 +638,12 @@ struct Settings::State {
         // lifetime.
         credential["expires_at_ms"] = std::to_string(
             Now() + j::UInt(j::Get(t, "expires_in"), 3600) * 1000);
-        std::lock_guard operation(account_operations);
-        {
-          std::lock_guard guard(mutex);
-          if (stop.stop_requested())
-            throw std::runtime_error("Sign-in cancelled");
-          // Cancellation can win until credential commit begins. Afterwards
-          // the completed registration is what status and sign-out observe.
-          a->state = "committing";
-        }
-        import(a->client, credential);
+        std::lock_guard operation(credentials.credential_mutex);
         std::lock_guard guard(mutex);
+        if (stop.stop_requested())
+          throw std::runtime_error("Sign-in cancelled");
+        sql::Transaction tx(db);
+        credentials.Save(a->client, credential);
         bool welcomed = false;
         try {
           welcomed =
@@ -681,6 +659,7 @@ struct Settings::State {
                      {"plan_enabled", plan ? "true" : "false"},
                      {"welcomed", welcomed ? "true" : "false"}});
         Choose(a->profile, a->client);
+        tx.commit();
         a->state = "complete";
         if (plan && !welcomed) a->welcome = a->client;
       } catch (...) {
@@ -700,12 +679,12 @@ struct Settings::State {
     return out;
   }
 };
-Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
+Settings::Settings(const std::filesystem::path& d, Credentials& credentials,
                    std::unique_ptr<SecretStore> store, KeyStorage storage,
                    Models models,
                    std::function<void(const std::string&)> provider_changed)
     : state_(std::make_unique<State>(
-          d, std::move(i), std::move(t), std::move(f), std::move(store),
+          d, credentials, std::move(store),
           storage, std::move(models), std::move(provider_changed))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
@@ -919,7 +898,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
         if (p.remove()) {
           s.secrets->Erase(key);
           auto q =
-              s.db.prepare("DELETE FROM providers WHERE profile=? AND id=?");
+              s.db.prepare("DELETE FROM provider_connections WHERE profile=? AND id=?");
           q.bind(1, profile).bind(2, provider).run();
         } else if (p.provider()) {
           if (s.storage == KeyStorage::Keychain &&
@@ -931,7 +910,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           const auto endpoint = j::Text(value, "baseURL");
           if (endpoint.empty() && j::Text(value, "model").empty()) {
             auto old = s.db.prepare(
-                "SELECT json FROM providers WHERE profile=? AND id=?");
+                "SELECT json FROM provider_connections WHERE profile=? AND id=?");
             old.bind(1, profile).bind(2, provider);
             value = old.step() ? j::Object(old.text(0)) : j::Members{};
           }
@@ -943,7 +922,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           value.erase("apiKey");
           value.erase("credential_id");
           auto q =
-              s.db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?,?)");
+              s.db.prepare("INSERT OR REPLACE INTO provider_connections VALUES(?,?,?)");
           q.bind(1, profile).bind(2, provider).bind(3, j::Encode(value)).run();
         }
         const auto after = s.ProviderStatus(profile, provider);
@@ -998,13 +977,17 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 pending->state = "cancelled";
               }
             lock.unlock();
-            std::lock_guard operation(s.account_operations);
-            revoked = s.forget(client);
+            std::lock_guard operation(s.credentials.credential_mutex);
+            revoked = s.credentials.Revoke(client);
             lock.lock();
             // A registration commit may have completed while we waited.
             value = s.Account(profile, client);
+            sql::Transaction tx(s.db);
+            auto remove = s.db.prepare("DELETE FROM credentials WHERE id=?");
+            remove.bind(1, client).run();
             value["signed_in"] = "false";
             s.SaveAccount(profile, client, value);
+            tx.commit();
           } else
             throw std::runtime_error("Unknown sign-in action");
         }
@@ -1035,7 +1018,7 @@ auto Settings::Redact(std::string text) -> std::string {
         i += 10;
       }
   };
-  auto rows = s.db.prepare("SELECT profile,id FROM providers");
+  auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
@@ -1222,7 +1205,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
         std::to_string(j::UInt(j::Get(values, "agent.fixturePort"), 8765));
     c.model = "fixture";
   }
-  auto q = s.db.prepare("SELECT json FROM providers WHERE profile=? AND id=?");
+  auto q = s.db.prepare("SELECT json FROM provider_connections WHERE profile=? AND id=?");
   q.bind(1, profile).bind(2, id);
   if (q.step()) {
     const auto v = j::Object(q.text(0));
@@ -1285,11 +1268,9 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
                          "https://api.openai.com/v1");
     c.access_token = [state = state_.get(), client](std::string_view stale) {
       try {
-        return state->token(client, stale);
+        return state->credentials.AccessToken(client, stale);
       } catch (const agent::ProviderError& error) {
         if (error.sign_in_required || error.code == "chatgpt_plan_disabled") {
-          // Credentials have already been persisted and its refresh lock has
-          // been released. Account presentation belongs to the settings DB.
           std::lock_guard lock(state->mutex);
           auto q =
               state->db.prepare("SELECT profile,json FROM accounts WHERE id=?");

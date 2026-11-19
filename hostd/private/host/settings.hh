@@ -12,6 +12,7 @@
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
+struct Credentials;
 // API-key storage has a narrow interface, independent of platform UI and OAuth.
 class SecretStore {
  public:
@@ -28,11 +29,6 @@ auto VMDefaultResources() -> Tsugumi::Host::VMResourcesT;
 auto VMResourceLimits() -> Tsugumi::Host::VMResourcesT;
 class Settings {
  public:
-  using Import =
-      std::function<void(const std::string&, const ::tsugumi::json::Members&)>;
-  using Token =
-      std::function<std::string(const std::string&, std::string_view)>;
-  using Forget = std::function<bool(const std::string&)>;
   using Models = std::function<std::vector<std::string>()>;
   enum class KeyStorage { Host, Keychain };
 #ifdef __APPLE__
@@ -40,8 +36,8 @@ class Settings {
 #else
   static constexpr auto kKeyStorage = KeyStorage::Host;
 #endif
-  Settings(const std::filesystem::path& directory, Import import, Token token,
-           Forget forget, std::unique_ptr<SecretStore> secrets = {},
+  Settings(const std::filesystem::path& directory, Credentials& credentials,
+           std::unique_ptr<SecretStore> secrets = {},
            KeyStorage storage = kKeyStorage, Models models = {},
            std::function<void(const std::string&)> provider_changed = {});
   ~Settings();

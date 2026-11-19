@@ -420,7 +420,7 @@ def vm_server(tmp_path):
     support = tmp_path / "support"
     support.mkdir()
     state = tmp_path / "host-core"
-    prefs = state / "host-settings.sqlite"
+    prefs = state / "host.sqlite"
     project = tmp_path / "project"
     write_project(project)
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()

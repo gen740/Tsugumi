@@ -8,6 +8,7 @@
 
 #include "../agent_fixture_server.hh"
 #include "agent/runtime.hh"
+#include "host/credentials.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
 #include "host/store.hh"
@@ -30,10 +31,12 @@ class MemorySecrets final : public host::SecretStore {
 TEST(HostSettingsStore,
      ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   std::vector<std::string> changed;
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>(), host::Settings::KeyStorage::Host, {},
       [&](const auto& profile) { changed.push_back(profile); });
   const auto put = [&](bool remove) {
@@ -60,10 +63,12 @@ TEST(HostSettingsStore,
 }
 TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const auto make = [&] {
     return std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         std::make_unique<MemorySecrets>());
   };
   auto service = make();
@@ -122,11 +127,13 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
 TEST(HostSettingsStore,
      ProviderInputsStayInTheSecretStoreAndFailuresAreSanitized) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   auto memory = std::make_unique<MemorySecrets>();
   auto* observed = memory.get();
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(memory), host::Settings::KeyStorage::Host);
   const auto put = [&](const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
@@ -197,11 +204,13 @@ TEST(HostSettingsStore,
 TEST(HostSettingsStore,
      KeychainProvisioningNeverWritesTheKeyToDiskOrFallsBack) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const std::string key = "KEYCHAIN_ONLY_SENTINEL";
   const auto make = [&] {
     return std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         nullptr, host::Settings::KeyStorage::Keychain);
   };
   auto service = make();
@@ -242,9 +251,11 @@ TEST(HostSettingsStore,
 namespace tsugumi::test {
 TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>());
   const auto update = [&](const std::string& profile, const std::string& key,
                           const std::string& raw) {
@@ -300,13 +311,15 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
 }
 TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   auto memory = std::make_unique<MemorySecrets>();
   auto* secrets = memory.get();
   secrets->values["desktop:anthropic"] = "ANTHROPIC_NOTE_KEY";
   secrets->values["desktop:openai"] = "OPENAI_NOTE_KEY";
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(memory), host::Settings::KeyStorage::Host);
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
   const auto update = [&](const std::string& mode, uint64_t revision,
@@ -364,6 +377,9 @@ namespace {
 class HostPolicyTest : public ::testing::Test {
  protected:
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   std::unique_ptr<host::Settings> service;
   MemorySecrets* secrets = nullptr;
   std::vector<std::string> models;
@@ -372,8 +388,7 @@ class HostPolicyTest : public ::testing::Test {
     auto store = std::make_unique<MemorySecrets>();
     secrets = store.get();
     service = std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         std::move(store), storage, [this] { return models; });
   }
   template <typename T>
@@ -1012,6 +1027,8 @@ TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
 TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   TemporaryDirectory directory;
   host::HostStore home(directory.path);
+  host::StateGate settings_gate;
+  host::Credentials credentials{settings_gate, home.db, {}};
   auto& db = home.db;
   auto insert = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
   insert.bind(1, "fixture")
@@ -1022,8 +1039,7 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   secrets->values["desktop:anthropic"] = "TEST_KEY";
   secrets->values["desktop:openai"] = "TEST_KEY";
   host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(secrets), host::Settings::KeyStorage::Host);
   const auto fallback = settings.Resolve({}).context_limit_tokens;
   auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
@@ -1044,11 +1060,12 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
 TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
   TemporaryDirectory directory;
   host::HostStore home(directory.path);
+  host::StateGate settings_gate;
+  host::Credentials credentials{settings_gate, home.db, {}};
   auto secrets = std::make_unique<MemorySecrets>();
   secrets->values["desktop:anthropic"] = "TEST_KEY";
   host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(secrets), host::Settings::KeyStorage::Host);
   for (const auto* provider : {"anthropic", "chatgpt"})
     for (const auto* profile : {"desktop", "web"})
@@ -1094,12 +1111,14 @@ namespace tsugumi::test {
 TEST(HostSettingsStore,
      TrustedFoldersAreCanonicalAndRejectInvalidRegistrationAtomically) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const auto folder = directory.path / "trusted";
   std::filesystem::create_directory(folder);
   std::filesystem::create_directory_symlink(folder, directory.path / "link");
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>());
   uint64_t revision = 0;
   auto update = [&](const std::string& raw,
