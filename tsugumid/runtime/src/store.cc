@@ -273,7 +273,10 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
 }
 
 auto Store::recover_pending() -> void {
-  db_ = std::make_unique<sql::Db>((state_dir() / "document.sqlite").string());
+  const auto path = state_dir() / "document.sqlite";
+  // Saved bytes and receipts can contain private project data.
+  if (!stdfs::exists(path)) fs::write_atomic(path, "", 0600);
+  db_ = std::make_unique<sql::Db>(path.string());
   // Sync the parent directory when deleting SQLite's rollback journal too.
   db_->exec("PRAGMA synchronous=EXTRA");
   db_->exec(R"sql(
