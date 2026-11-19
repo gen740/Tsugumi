@@ -1,11 +1,7 @@
-"""Plotly figures and Altair charts in the Card's display (tsugumi.plots),
-against a stand-in for the worker's host module: fig.show() and chart.show()
-as written anywhere send module displays, the size limit fails the call with
-a reason, and nothing needs IPython or a browser."""
+"""Python SDK Plotly and Altair displays against the worker host interface."""
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -33,86 +29,51 @@ def remaining_ms(): return 60000
 '''
 
 
-def run(tmp_path, body: str) -> dict:
+def test_report_figure_sends_plotly(tmp_path):
     (tmp_path / "_tsugumi_host.py").write_text(HOST)
     script = tmp_path / "case.py"
-    script.write_text('''import json
-import _tsugumi_host as h
-import tsugumi
-''' + textwrap.dedent(body))
+    script.write_text(textwrap.dedent('''
+        import json
+        import _tsugumi_host as h
+        import tsugumi
+        import altair as alt
+        import plotly.graph_objects as go
+        import plotly.io
+
+        assert not h.modules
+        report = tsugumi.Report()
+        plot = go.Figure(go.Scatter(x=[1, 2], y=[3, 4], mode="markers"), layout_title_text="xy")
+        chart = alt.Chart(alt.Data(values=[{"x": 1, "y": 2}, {"x": 2, "y": 5}])).mark_line().encode(x="x:Q", y="y:Q")
+
+        assert tsugumi._guard(lambda: report.figure(plot))
+        name, data = h.modules.pop()
+        figure = json.loads(data)
+        assert name == "plotly" and figure["data"][0]["type"] == "scatter"
+        assert figure["layout"]["title"]["text"] == "xy"
+
+        assert tsugumi._guard(lambda: report.figure(chart.properties(title="line")))
+        name, data = h.modules.pop()
+        spec = json.loads(data)
+        assert name == "vega-lite" and "/vega-lite/v" in spec["$schema"] and spec["title"] == "line"
+        assert spec.get("datasets") or spec.get("data", {}).get("values")
+
+        assert not tsugumi._guard(lambda: report.figure(plot, plot))
+        assert h.failures.pop()[0] == "output_invalid" and not h.modules
+
+        xs = list(range(150000))
+        assert not tsugumi._guard(lambda: report.figure(go.Figure(go.Scatter(x=xs, y=xs))))
+        assert h.failures.pop()[0] == "output_invalid" and not h.modules
+
+        import matplotlib.pyplot as plt
+        def leave_figure_open():
+            plt.plot([1, 2])
+            report.figure(plot)
+
+        assert tsugumi._guard(leave_figure_open)
+        assert [name for name, _ in h.modules] == ["plotly"] and not plt.get_fignums()
+    '''))
     env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{ROOT / 'sdk' / 'python'}",
            "MPLCONFIGDIR": str(tmp_path / "mpl"), "HOME": str(tmp_path)}
-    out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=300)
-    assert out.returncode == 0, out.stderr
-    return json.loads(out.stdout.strip().splitlines()[-1])
-
-
-def test_report_figure_sends_plotly(tmp_path):
-    r = run(tmp_path, '''
-        import plotly.graph_objects as go
-        ok = tsugumi._guard(lambda: tsugumi.Report().figure(go.Figure(go.Scatter(x=[1, 2], y=[3, 4]), layout_title_text="xy")))
-        name, data = h.modules[0]
-        fig = json.loads(data)
-        print(json.dumps({"ok": ok, "n": len(h.modules), "name": name, "type": fig["data"][0]["type"],
-                          "title": fig["layout"]["title"]["text"]}))
-    ''')
-    assert r == {"ok": True, "n": 1, "name": "plotly", "type": "scatter", "title": "xy"}
-
-
-def test_importing_plot_libraries_does_not_publish(tmp_path):
-    r = run(tmp_path, '''
-        import plotly.io as pio
-        import altair
-        print(json.dumps({"n": len(h.modules)}))
-    ''')
-    assert r == {"n": 0}
-
-
-def test_report_figure_sends_altair(tmp_path):
-    r = run(tmp_path, '''
-        import altair as alt
-        chart = alt.Chart(alt.Data(values=[{"x": 1, "y": 2}, {"x": 2, "y": 5}])).mark_line().encode(x="x:Q", y="y:Q")
-        ok = tsugumi._guard(lambda: tsugumi.Report().figure(chart.properties(title="line")))
-        name, data = h.modules[0]
-        spec = json.loads(data)
-        print(json.dumps({"ok": ok, "name": name, "schema": spec["$schema"], "title": spec["title"],
-                          "inline": bool(spec.get("datasets") or spec.get("data", {}).get("values"))}))
-    ''')
-    assert r["ok"] and r["name"] == "vega-lite" and "/vega-lite/v" in r["schema"] and r["title"] == "line" and r["inline"]
-
-
-def test_figure_takes_plotly_and_altair(tmp_path):
-    r = run(tmp_path, '''
-        import altair as alt, plotly.graph_objects as go
-        report = tsugumi.Report.__new__(tsugumi.Report)
-        tsugumi._guard(lambda: report.figure(go.Figure(go.Bar(y=[1, 2]))))
-        tsugumi._guard(lambda: report.figure(alt.Chart(alt.Data(values=[{"a": 1}])).mark_bar().encode(y="a:Q")))
-        two = tsugumi._guard(lambda: report.figure(go.Figure(), go.Figure()))
-        print(json.dumps({"names": [n for n, _ in h.modules], "two": two, "failures": h.failures}))
-    ''')
-    assert r["names"] == ["plotly", "vega-lite"] and r["two"] is False
-    assert r["failures"][0][0] == "output_invalid"
-
-
-def test_a_figure_over_the_limit_fails_with_a_reason(tmp_path):
-    r = run(tmp_path, '''
-        import plotly.graph_objects as go
-        xs = list(range(150000))
-        ok = tsugumi._guard(lambda: tsugumi.Report().figure(go.Figure(go.Scatter(x=xs, y=xs))))
-        print(json.dumps({"ok": ok, "n": len(h.modules), "failures": h.failures}))
-    ''')
-    assert not r["ok"] and r["n"] == 0
-    kind, message = r["failures"][0]
-    assert kind == "output_invalid"
-
-
-def test_a_plot_is_not_replaced_by_a_matplotlib_figure_left_open(tmp_path):
-    r = run(tmp_path, '''
-        import matplotlib.pyplot as plt, plotly.graph_objects as go
-        def body():
-            plt.plot([1, 2])
-            tsugumi.Report().figure(go.Figure(go.Bar(y=[1])))
-        ok = tsugumi._guard(body)
-        print(json.dumps({"ok": ok, "names": [n for n, _ in h.modules], "open": plt.get_fignums()}))
-    ''')
-    assert r == {"ok": True, "names": ["plotly"], "open": []}
+    env.pop("MPLBACKEND", None)
+    result = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stdout + result.stderr

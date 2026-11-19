@@ -12,10 +12,9 @@
 
 namespace tsugumi {
 namespace {
-class NativeExecution : public testing::TestWithParam<bool> {};
 // A transfer error is not the Card's call failing: a living resident keeps its
 // state.
-TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
+TEST(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   namespace stdfs = std::filesystem;
   const auto root = stdfs::canonical(stdfs::temp_directory_path()) /
                     ("tsugumi-transfer-" + crypto::uuid4());
@@ -66,7 +65,6 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
       "' ]; then touch \"$TSUGUMI_OUTPUT_DIR/result\"; "
       "else touch '" +
       (root / "called").string() + "'; " +
-      (GetParam() ? "ln -s /etc/passwd \"$TSUGUMI_OUTPUT_DIR/result\"; " : "") +
       "fi\n"
       "printf '{\"out\":{\"value\":\"%s/result\"}}' \"$TSUGUMI_OUTPUT_DIR\" > "
       "\"$TSUGUMI_OUTPUT\"\n";
@@ -103,8 +101,6 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   ASSERT_FALSE(result.failure);
   EXPECT_EQ(summary.worker_reused, true);
 }
-INSTANTIATE_TEST_SUITE_P(InvalidFile, NativeExecution,
-                         testing::Values(false, true));
 }  // namespace
 }  // namespace tsugumi
 

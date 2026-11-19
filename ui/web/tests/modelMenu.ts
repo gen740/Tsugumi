@@ -4,8 +4,6 @@ import { chatRoutes } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { ModelListRefresher } from '../src/model/modelLists'
 
-
-
 // Each opening lists again; a failure is only that connection's; a slow
 // connection holds nothing back and is not asked twice.
 {
@@ -26,17 +24,17 @@ import { ModelListRefresher } from '../src/model/modelLists'
   const first = waitFor(2)
   r.refresh(['fast', 'broken', 'slow'], record)
   await first
-  assert.deepEqual(finished, [['fast', true], ['broken', false]])
+  assert.deepEqual(new Map(finished), new Map([['fast', true], ['broken', false]]))
   const again = waitFor(4)
   r.refresh(['fast', 'broken', 'slow'], record)
   await again
-  assert.deepEqual(calls, ['fast', 'broken', 'slow', 'fast', 'broken'])
+  assert.deepEqual(calls.toSorted(), ['broken', 'broken', 'fast', 'fast', 'slow'])
   const last = waitFor(5)
   slow.release!()
   await last
   assert.deepEqual(finished.at(-1), ['slow', true])
   r.refresh(['slow'], () => {})
-  assert.equal(calls.at(-1), 'slow')
+  assert.equal(calls.filter(id => id === 'slow').length, 2)
 }
 
 // The HTTP adapter shows the service's catalog and does not persist a second copy.

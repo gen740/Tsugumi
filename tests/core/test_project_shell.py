@@ -28,20 +28,13 @@ def shell_daemon(core_factory):
     return core_factory(args=["--project-shell"])
 
 
-def test_shell_uses_project_user_and_cwd_and_returns_both_streams(shell_daemon, project):
-    """A command returns its separate stdout, stderr and exit status in the project environment."""
-    result = shell(shell_daemon.connect(), "pwd; id -u; printf diagnostic >&2; exit 7")
-    assert bytes(result.stdoutBytes).decode().splitlines() == [str(project.resolve()), str(os.geteuid())]
-    assert bytes(result.stderrBytes) == b"diagnostic"
-    assert result.exitCode == 7
-    assert result.signal == 0 and not result.cancelled and not result.timedOut
-
-
-def test_binary_output_is_preserved(shell_daemon):
-    """Shell output is returned as bytes, including NUL and non-UTF-8 data."""
-    result = shell(shell_daemon.connect(), "printf '\\000\\377'; printf '\\376' >&2")
-    assert bytes(result.stdoutBytes) == b"\0\xff"
+def test_shell_uses_project_user_and_cwd_and_preserves_binary_output(shell_daemon, project):
+    """The shell runs as the project user and returns separate unmodified streams."""
+    result = shell(shell_daemon.connect(), r"pwd; id -u; printf '\000\377'; printf '\376' >&2; exit 7")
+    expected = f"{project.resolve()}\n{os.geteuid()}\n".encode()
+    assert bytes(result.stdoutBytes) == expected + b"\0\xff"
     assert bytes(result.stderrBytes) == b"\xfe"
+    assert result.exitCode == 7
 
 
 @pytest.mark.parametrize("command", ["exec 1>&- 2>&-; sleep 20", "trap '' TERM; while :; do :; done"])

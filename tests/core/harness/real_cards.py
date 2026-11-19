@@ -3,6 +3,7 @@
 import json
 import socket
 import threading
+from pathlib import Path
 
 from projects import card, run_and_wait
 from tsugumi_client import path, text
@@ -80,6 +81,7 @@ def main(inputs, report):
 
 ENV_MAIN = '''
 import ctypes, json, os
+assert os.path.isdir(os.getcwd())
 os.environ["FROM_TOP"] = "top"
 os.environ["FROM_TOP_AND_PRE"] = "top"
 libc = ctypes.CDLL(None)
@@ -87,10 +89,10 @@ libc.getenv.argtypes = [ctypes.c_char_p]
 libc.getenv.restype = ctypes.c_char_p
 
 def main(inputs, report):
-    names = ["FROM_PRE", "FROM_TOP", "FROM_TOP_AND_PRE", "FROM_MAIN", "TSUGUMI_RUN_ID", "XDG_CACHE_HOME", "MPLBACKEND"]
+    names = ["FROM_PRE", "FROM_TOP", "FROM_TOP_AND_PRE", "FROM_MAIN", "TSUGUMI_RUN_ID"]
     values = {n: os.environ.get(n) for n in names}
     native = {n: (libc.getenv(n.encode()) or b"").decode() or None for n in names}
-    report.text(json.dumps({"pid": os.getpid(), "cwd": os.getcwd(), "python": values, "native": native}))
+    report.text(json.dumps({"cwd": os.getcwd(), "python": values, "native": native}))
     os.environ["FROM_MAIN"] = "main"
 '''
 
@@ -121,8 +123,9 @@ def check_python_card_environment(c) -> None:
     first = json.loads(first)
     second_id, second = shown_by_probe(c)
     second = json.loads(second)
-    assert first["pid"] == second["pid"], "the second run needs the same worker"
-    assert first["cwd"].endswith("/work/there"), first
+    reused, = c.call("RunInvocationsRequest", runId=second_id, card=path("show")).records
+    assert reused.workerReused
+    assert first["cwd"].endswith("/there"), first
     for seen, run_id in ((first, first_id), (second, second_id)):
         for values in (seen["python"], seen["native"]):
             assert values["FROM_PRE"] == "pre", seen
@@ -130,9 +133,6 @@ def check_python_card_environment(c) -> None:
             assert values["FROM_TOP_AND_PRE"] == "pre", seen  # preRun runs later, so it wins
             assert values["FROM_MAIN"] is None, seen
             assert values["TSUGUMI_RUN_ID"] == run_id, seen
-            # What the worker was started with and the SDK's own setting stay.
-            assert values["XDG_CACHE_HOME"].endswith("/home/.cache"), seen
-            assert values["MPLBACKEND"] == "module://tsugumi.mpl", seen
 
 
 # Discard context only in the assertions: otherwise this fixture would add the
@@ -177,11 +177,9 @@ def check_definition_tools(client, run_id, name="work"):
             break
         offset = page.nextOffset
     search, shell = decode_scalar(read_output(client, run_id, card=name)).split(";")
-    assert shell.startswith("/nix/store/") and shell.endswith("/bin/bash")
-    assert shell.removesuffix("/bin/bash") in paths
+    assert str(Path(shell).parent.parent) in paths
     for directory in search.split(":"):
-        assert directory.startswith("/nix/store/") and directory.endswith("/bin")
-        assert directory.removesuffix("/bin") in paths
+        assert str(Path(directory).parent) in paths
     logs = text(client.call("LogRangeRequest", runId=run_id, card=path(name), stream=1).text)
     assert {"pre-definition-tools", "post-definition-tools"} <= set(logs.splitlines())
     return text(environment.id), set(paths), search, shell

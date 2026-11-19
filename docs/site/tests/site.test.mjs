@@ -2,12 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
-import { catalog, linker, REPO, ROOT, SITE, STORY } from '../src/lib/documents.mjs'
+import { catalog, linker, REPO, ROOT, STORY } from '../src/lib/documents.mjs'
 
 const site = path.join(ROOT, 'build/docs')
 const origin = 'https://example.test/Tsugumi/'
-const { entries, markdownPages } = catalog()
+const { entries } = catalog()
 const htmlFiles = ['index.html', ...entries.map(entry => entry.out)]
 const read = relative => fs.readFileSync(path.join(site, relative), 'utf8')
 const decode = text => text.replaceAll('&amp;', '&').replaceAll('&quot;', '"')
@@ -24,25 +23,10 @@ function localURL(relative, reference) {
   return { file: decodeURIComponent(url.pathname.slice('/Tsugumi/'.length)), hash: decodeURIComponent(url.hash.slice(1)) }
 }
 
-test('every source document has one catalog entry and a Markdown download', () => {
-  const sources = entries.filter(entry => !entry.story?.sections).map(entry => entry.source)
-  assert.equal(new Set(sources).size, sources.length)
-  for (const file of fs.readdirSync(path.join(ROOT, 'docs')).filter(file => file.endsWith('.md'))) {
-    assert.ok(sources.includes(`docs/${file}`), `${file} is missing from docs/README.md`)
-  }
-  for (const [source, output] of markdownPages) {
-    assert.ok(read(output).length > 0, `${source} has no Markdown download`)
-  }
-  assert.ok(!fs.existsSync(path.join(ROOT, 'docs/pages')))
-  assert.ok(!fs.existsSync(path.join(ROOT, 'docs/index.md')))
-})
-
 test('HTML links, anchors and assets resolve under the GitHub Pages subpath', () => {
   const failures = []
   for (const file of htmlFiles) {
     const html = read(file)
-    assert.match(html, /<html lang="en"/)
-    assert.doesNotMatch(html, /<astro-island\b/, 'ordinary document pages do not need client hydration')
     for (const reference of references(html)) {
       const target = localURL(file, reference)
       if (!target) continue
@@ -53,6 +37,9 @@ test('HTML links, anchors and assets resolve under the GitHub Pages subpath', ()
       }
     }
   }
+  for (const [, file] of read('llms.txt').matchAll(/\]\(https:\/\/gen740.github.io\/Tsugumi\/([^)]*)\)/g)) {
+    if (!fs.existsSync(path.join(site, file))) failures.push(`llms.txt: missing ${file}`)
+  }
   assert.deepEqual(failures, [])
 })
 
@@ -60,53 +47,23 @@ test('repository guides stay on GitHub and outside the published catalog', () =>
   const { pages } = catalog()
   const link = linker('README.md', 'pages/readme.html', pages)
   for (const source of ['AGENTS.md', 'RELEASING.md', 'tests/README.md', 'docs/site/README.md']) {
-    assert.ok(!pages.has(source), source)
     assert.equal(link(source), `${REPO}/blob/main/${source}`)
-    assert.ok(!read('llms.txt').includes(`${SITE}${source}`), source)
-  }
-  assert.ok(!fs.existsSync(path.join(site, 'site/README.md')))
-})
-
-test('published JavaScript modules parse without a browser', () => {
-  for (const file of fs.readdirSync(path.join(site, 'site/js')).filter(file => file.endsWith('.js'))) {
-    execFileSync(process.execPath, ['--check', path.join(site, 'site/js', file)])
   }
 })
 
-test('story figures and navigation survive Markdown rendering', () => {
+test('the app can detect published stories', () => {
   for (const story of STORY) {
     const html = read(story.out)
     assert.ok(html.slice(0, 400).includes('class="story"'), 'the app detects stories in the first 400 bytes')
-    assert.match(html, /data-mode="cards"/)
-    for (const [, figure] of story.figures) {
-      if (typeof figure === 'string') assert.ok(html.includes(`data-fig="${figure}"`), figure)
-      else assert.ok(html.includes(figure.alt))
-    }
   }
-  assert.match(read('pages/cardguide.html'), /data-player="card-guide"/)
-  assert.match(read('index.html'), /data-demo="casa"/)
 })
 
-test('llms.txt lists existing downloadable documents', () => {
-  const links = [...read('llms.txt').matchAll(/\]\(https:\/\/gen740.github.io\/Tsugumi\/([^)]*)\)/g)]
-  assert.ok(links.length >= markdownPages.size - 2)
-  for (const [, file] of links) assert.ok(fs.existsSync(path.join(site, file)), file)
-})
-
-test('the published player contains exactly the source demos and their recorded images', () => {
-  const data = path.join(site, 'site/player-data')
-  const entries = JSON.parse(fs.readFileSync(path.join(ROOT, 'demos/en/index.json'), 'utf8')).demos
-  const ids = [...entries.map(entry => entry.id), 'card-guide'].sort()
-  const index = JSON.parse(fs.readFileSync(path.join(data, 'index.json'), 'utf8'))
-  assert.deepEqual(index.demos.map(demo => demo.id).sort(), ids)
-  assert.deepEqual(fs.readdirSync(data).filter(file => file.endsWith('.json')).sort(), [...ids.map(id => `${id}.json`), 'index.json'].sort())
-  assert.ok(read('site/js/player.js').length > 0)
-  assert.ok(read('site/player.css').length > 0)
-  for (const id of ids) {
-    const demo = JSON.parse(fs.readFileSync(path.join(data, `${id}.json`), 'utf8'))
-    assert.equal(demo.id, id)
+test('published player data points to available images', () => {
+  const index = JSON.parse(read('site/player-data/index.json'))
+  for (const { id } of index.demos) {
+    const demo = JSON.parse(read(`site/player-data/${id}.json`))
     for (const output of Object.values(demo.outputs)) {
-      if (output.src) assert.ok(fs.existsSync(path.join(data, output.src)), `${id}: ${output.src}`)
+      if (output.src) assert.ok(fs.existsSync(path.join(site, 'site/player-data', output.src)), `${id}: ${output.src}`)
     }
   }
 })

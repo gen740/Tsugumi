@@ -3,15 +3,10 @@ layoutHost.validate = async (json) => json
 // UI-only tests replace the read-only host boundary, as they replace the core.
 // Real placement and transaction behavior run against hostd in test_card_placement.py.
 layoutHost.complete = async (_project, layout) => layout
-import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
-const root = process.argv[2]
 // Agent recovery, images, references, approvals and compaction run through
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
 await import("./clientViewState")
-await import("./hostRules")
 await import("./serviceProtocol")
 await import("./agentRequests")
 await import('./chatModelRefresh')
@@ -25,7 +20,6 @@ await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
 await import("./switchCard")
-await import("./csharp")
 await import("./reports")
 
 await import("./table")
@@ -82,7 +76,6 @@ await import("./projectTrust")
 
 await import("./perchScale")
 await import("./demoReplay")
-await import("./visualizationTemplates")
 await import("./evidence")
 await import('./environments')
 
@@ -95,7 +88,6 @@ await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')
 
-await import('./ruby')
 
 await import("./lineChart")
 

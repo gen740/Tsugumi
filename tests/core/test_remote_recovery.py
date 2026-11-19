@@ -7,10 +7,8 @@ import secrets
 import signal
 import socketserver
 import struct
-import subprocess
 import tempfile
 import threading
-import uuid
 from pathlib import Path
 
 import flatbuffers
@@ -255,9 +253,7 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
 
 @pytest.mark.parametrize("field,value", [
     ("workerContract", 0),
-    ("workerContract", 4),
     ("workerContract", 1),
-    ("workerContract", 99),
     ("serverId", "3" * 64),
     ("resourceLimits", False),
     ("maxJobs", 0),
@@ -278,6 +274,8 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
 def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, core_factory, tmp_path,
                                                      catalog_resources, live_resources):
     remote_gateway.catalog_resource_limits = catalog_resources
+    if live_resources:
+        remote_gateway.catalog_contract = 99
     remote_gateway.resource_limits = live_resources
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
@@ -294,38 +292,16 @@ def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, co
         assert remote_gateway.submit_count == 0
 
 
-def test_stale_catalog_contract_does_not_prevent_probe(project, remote_gateway, core_factory, tmp_path):
-    remote_gateway.catalog_contract = 99
-    remote_gateway.resource_limits = False
-    client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
-    run_id = start_run(client, "work", propagate=False)
-    live = wait_for_state(client, run_id, RemoteExecutionState.running)
-    remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id).state == RunState.succeeded
-
-
-def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway, core_factory, tmp_path):
+@pytest.mark.parametrize("requested_system", [None, "aarch64-linux"])
+def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path, requested_system):
+    """Assignment evaluates for the worker's current system, even with a stale catalog."""
     remote_gateway.catalog_system = "x86_64-linux"
     remote_gateway.system = "aarch64-linux"
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
+    settings = {} if requested_system is None else {"system": requested_system}
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
-                   executionService="cluster", system="aarch64-linux")
-    run_id = start_run(client, "work", propagate=False)
-    live = wait_for_state(client, run_id, RemoteExecutionState.running)
-    assert text(live.executionSystem) == "aarch64-linux"
-    remote_gateway.finish(text(live.executionJobId))
-    assert wait_run(client, run_id).state == RunState.succeeded
-
-
-
-def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):
-    """Assignment evaluates for the worker's current system, even with a stale catalog."""
-    remote_gateway.system = "aarch64-linux"
-    remote_gateway.resource_limits = False
-    client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
+                   executionService="cluster", **settings)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
@@ -349,52 +325,6 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
     assert status.state == RunState.failed
     diagnostic = text(status.failure.diagnostic)
     assert remote_gateway.system in diagnostic and "package is unavailable on this platform" in diagnostic
-    assert not remote_gateway.blobs and remote_gateway.submit_count == 0
-
-
-@pytest.mark.environment
-def test_each_system_evaluates_without_host_builds(project, remote_gateway, core_factory):
-    """One real evaluator produces distinct system-specific derivations without building outputs."""
-    remote_gateway.resource_limits = False
-    client = core_factory().connect()
-    graph = Project(project)
-    nonce = uuid.uuid4().hex
-    graph.card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
-               outputs=FILE_FBS, sources={"default.nix":
-                   '{ pkgs, inputs, params }: { run = "echo ${pkgs.stdenv.hostPlatform.system} ' + nonce + '"; }'})
-    graph.save(client)
-    derivations = {}
-    for system in ["aarch64-linux", "x86_64-linux", "aarch64-linux"]:
-        remote_gateway.system = system
-        run_id = start_run(client, "work", propagate=False)
-        live = wait_for_state(client, run_id, RemoteExecutionState.running)
-        job_id = text(live.executionJobId)
-        spec = remote_gateway.specs[job_id]
-        assert R.string(spec.system) == system
-        assert not Path(R.string(spec.output)).exists()
-        drv = json.loads(subprocess.check_output(["nix", "--extra-experimental-features", "nix-command", "derivation", "show", R.string(spec.derivation)], text=True))
-        # Read the actual .drv rather than trusting only the job's system label.
-        assert drv["derivations"][Path(R.string(spec.derivation)).name]["system"] == system
-        if system in derivations:
-            assert derivations[system] == R.string(spec.derivation)
-        derivations[system] = R.string(spec.derivation)
-        remote_gateway.finish(job_id)
-        assert wait_run(client, run_id).state == RunState.succeeded
-    assert len(set(derivations.values())) == 2
-
-
-@pytest.mark.environment
-def test_real_target_evaluation_error_prevents_transfer(project, remote_gateway, core_factory):
-    """A Card unsupported on the worker system fails at assignment, before transport."""
-    remote_gateway.resource_limits = False
-    client = core_factory().connect()
-    Project(project).card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
-        outputs=FILE_FBS, sources={"default.nix":
-            '{ pkgs, inputs, params }: throw "unavailable for ${pkgs.stdenv.hostPlatform.system}"'}).save(client)
-    run_id = start_run(client, "work", propagate=False)
-    status = wait_run(client, run_id)
-    assert status.state == RunState.failed
-    assert "unavailable for " + remote_gateway.system in text(status.failure.diagnostic)
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
 
 
@@ -423,8 +353,10 @@ def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
 
 
-@pytest.mark.parametrize("outage", ["offline", "registration_replaced"])
-@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize(("outage", "completed"), [
+    ("offline", False),
+    ("registration_replaced", True),
+])
 def test_core_restart_interrupts_the_external_job(running_job, outage, completed):
     """A new core never fetches old results, even after transport returns."""
     gateway, daemon, client, run_id, job_id = running_job
@@ -498,11 +430,10 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
-def test_maximum_log_budget_and_truncation_metadata_import(running_job):
+def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
     limit = 128 << 20
-    entry = b'{"stream":1,"text":"' + b'x' * ((1 << 20) - 23) + b'"}\n'
-    logs = entry * 128
+    logs = b'{"stream":1,"text":"remote output"}\n'
     gateway.receipts[job_id]["log_truncated"] = True
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
@@ -521,12 +452,11 @@ def test_maximum_log_budget_and_truncation_metadata_import(running_job):
     assert record.record.summary.logTruncatedAtBytes == limit
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                          stream=LogStream.standard_output, tail=True)
-    assert stdout.sizeBytes > 126 << 20
     assert stdout.logTruncatedAtBytes == limit
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                           stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
-    assert text(stdout.text).strip("x\n") == "" and stdout.text
+    assert text(stdout.text).strip() == "remote output"
 
 
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):

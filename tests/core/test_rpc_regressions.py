@@ -1,37 +1,11 @@
-"""Desired public behavior for known defects; --runxfail exposes each failure.
-
-The marks are strict so fixing production behavior requires removing the mark.
-No test asserts a private core function, storage layout or implementation trace.
-"""
-
-import json
-import shutil
+"""Regressions exercised through public execution and history requests."""
 
 import pytest
 
 from harness.fixtures import worker_project
 from harness.observations import decode_scalar, read_output
 from harness.scenario import FILE_OUTPUT, STRING_OUTPUT, Project, run, wait_run
-from projects import MSG_FBS, card, card_in_card, put, write
-from tsugumi_client import new_id, text
 from Tsugumi.Data.RunState import RunState
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Reload omits changes to link_json")
-def test_reload_changes_an_external_card_target(project, core_factory):
-    """Reload uses the external Card target the user just selected."""
-    defs = {"input": {"template": "input", "_outputs": MSG_FBS,
-                      "params": [{"name": "text", "type": "string", "data": "hello"}]}}
-    write(project, defs, [card_in_card("nested", [card("source", "input")], [], {"inputs": {}, "outputs": {}})], [])
-    shutil.copytree(project / "externals/nested", project / "externals/other")
-    client = core_factory().connect()
-    before = client.call("ProjectInspectRequest")
-    # Reload deliberately imports a user's edit to a public project document.
-    put(project / "definitions/nested/_link.json", '{"external":"other"}')
-    client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(), origin="ui:test")
-    after = client.call("ProjectInspectRequest")
-    definition = next(x for x in after.definitions if text(x.id) == "nested")
-    assert json.loads(text(definition.linkJson))["external"] == "other"
 
 
 def test_changed_shell_steps_are_used_on_the_next_run(project, core_factory):

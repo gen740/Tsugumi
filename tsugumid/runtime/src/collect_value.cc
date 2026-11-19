@@ -18,10 +18,7 @@ namespace {
 namespace stdfs = std::filesystem;
 
 constexpr size_t kMaxMessageBytes = size_t{16} << 20;
-constexpr size_t kMaxFiles = 1000;
 constexpr uint64_t kMaxFileBytes = uint64_t{64} << 30;
-constexpr size_t kMaxEntries =
-    10000;  // files, directories and members together
 
 auto check_cancel(const std::atomic<bool>& cancel) -> void {
   if (cancel.load()) throw Failed(FailureKind::cancelled, "collect cancelled");
@@ -120,9 +117,9 @@ struct Entry {
 };
 
 struct Budget {
-  size_t files = 0;
+  size_t files;
+  size_t entries;
   uint64_t bytes = 0;
-  size_t entries = kMaxEntries;
 };
 
 auto member_source(const Value& member, std::span<const stdfs::path> file_roots,
@@ -184,9 +181,9 @@ auto copy_file(const stdfs::path& root, const stdfs::path& rel,
                const stdfs::path& destination, Budget& budget,
                const std::atomic<bool>& cancel) -> void {
   check_cancel(cancel);
-  if (budget.files >= kMaxFiles)
+  if (budget.files == 0)
     throw Failed(FailureKind::output_invalid, "collected files exceed 1,000");
-  ++budget.files;
+  --budget.files;
   std::ofstream out(destination, std::ios::binary | std::ios::trunc);
   if (!out)
     throw Failed(FailureKind::internal_error,
@@ -264,8 +261,9 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
                    std::span<const Value> members,
                    std::span<const stdfs::path> file_roots,
                    const stdfs::path& output_dir,
-                   const std::atomic<bool>& cancel) -> std::string {
-  if (members.size() > kMaxEntries)
+                   const std::atomic<bool>& cancel, CollectFileLimits limits)
+    -> std::string {
+  if (members.size() > limits.entries)
     throw Failed(FailureKind::output_invalid, "too many collected elements");
   std::error_code ec;
   if (stdfs::symlink_status(output_dir, ec).type() !=
@@ -284,8 +282,7 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
 
   try {
     Staging staging(output_dir);
-    Budget budget;
-    budget.entries -= members.size();
+    Budget budget{limits.files, limits.entries - members.size()};
     std::vector<Entry> entries;
     entries.reserve(sources.size());
     for (size_t i = 0; i < sources.size(); ++i) {
@@ -326,7 +323,8 @@ auto collect_values(const types::PortType& source,
                     std::span<const Value> members,
                     std::span<const std::filesystem::path> file_roots,
                     const std::filesystem::path& output_dir,
-                    const std::atomic<bool>& cancel) -> Value {
+                    const std::atomic<bool>& cancel, CollectFileLimits limits)
+    -> Value {
   if (!source.type)
     throw Failed(FailureKind::internal_error,
                  "collect input " + source.name + " has no type");
@@ -338,8 +336,8 @@ auto collect_values(const types::PortType& source,
   if (source.kind == PortKind::FlatBuffer) {
     result.bytes = collect_messages(source, output, members, cancel);
   } else {
-    result.bytes =
-        collect_files(source, output, members, file_roots, output_dir, cancel);
+    result.bytes = collect_files(source, output, members, file_roots,
+                                 output_dir, cancel, limits);
   }
   return result;
 }

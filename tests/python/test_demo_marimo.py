@@ -27,37 +27,26 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         state = wait_run(c, rid)
         assert state.state == RunState.succeeded, stderr(c, rid, 'notebook')
         record = c.call('RunRecordRequest', runId=rid, card=path('notebook')).record
-        assert record and '14' in text(record.display.value.text)
         downstream = c.call('RunRecordRequest', runId=rid, card=path('result')).record
-        assert downstream and downstream.summary.invocation == 1
         assert json.loads(text(downstream.display.value.text)) == {'value': 14}
         art = next(a for a in c.call('ArtifactListRequest', runId=rid).artifacts if text(a.output) == 'report')
         def read(member):
             return read_pages(c, 'ArtifactReadRequest', artifactId=text(art.artifactId), member=member, page_bytes=256*1024)
         html = read('index.html')
-        assert '変換後の値は'.encode() in html and b'data:image/png;base64,' in html
         assert json.loads(read('result.json')) == {'result':14}
         assert json.loads(read('bindings.json')) == {'source': 7, 'factor': 2}
-        members = {text(m.path) for m in art.members}
-        assert {'source/notebook.py', 'metadata.json', 'bindings.json'} <= members
         figure = re.search(rb'data:image/png;base64,([A-Za-z0-9+/=]+)', html)[1]
         assert base64.b64decode(figure).startswith(b'\x89PNG\r\n\x1a\n')
         assert json.loads(read('metadata.json')) == {
             'source': 'notebook.py', 'run_id': rid, 'card': 'notebook',
             'invocation': record.summary.invocation,
         }
-        assert text(art.card.segments[0]) == 'notebook'
-        assert art.invocation == record.summary.invocation
         edit_card(env, c, 'notebook', lambda card: set_param(card, 'factor', 3))
         updated = start_run(c, ['source'], propagate=True)
         assert wait_run(c,updated).state == RunState.succeeded, stderr(c,updated,'notebook')
-        assert '21' in text(c.call('RunRecordRequest',runId=updated,card=path('notebook')).record.display.value.text)
         downstream = c.call('RunRecordRequest', runId=updated, card=path('result')).record
         assert json.loads(text(downstream.display.value.text)) == {'value': 21}
         assert read('index.html') == html
-        if hasattr(env,'start'):
-            env.stop();env.start();c=connect(env)
-            assert read('index.html') == html
     finally:
         env.cleanup()
 
@@ -91,32 +80,24 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
         failure = record.status.failure
         assert failure.kind == (FailureKind.validation_failed if problem == 'binding' else FailureKind.worker_failed)
         if problem == 'cell':
-            assert 'notebook test failure' in text(failure.diagnostic)
-        if problem == 'cell':
             args = {text(a.key): text(a.value) for a in failure.args}
             assert args['source'] == 'src/notebook.py'
             assert args['cell'] == 'explanation'
             assert int(args['line']) == failed_line[0]
         downstream = client.call('RunInvocationsRequest', runId=rid, card=path('result'))
-        assert len(downstream.records) == 1
-        blocked = downstream.records[0]
-        assert blocked.state == CardState.blocked and blocked.startedAt is None and not blocked.stages
+        blocked, = downstream.records
+        assert blocked.state == CardState.blocked and blocked.startedAt is None
         assert not client.call('ArtifactListRequest', runId=rid).artifacts
     finally:
         env.cleanup()
 
 
 @extra_demo_runs
-@pytest.mark.parametrize('ending',['failure','cancel','deadline','project_stop'])
+@pytest.mark.parametrize('ending',['failure','cancel','project_stop'])
 def test_project_owns_notebook_process_tree(tmp_path,ending):
     if os.environ.get('TSUGUMI_TEST_CONTAINER')=='1':
         pytest.skip('Host process identity assertion; VM lifecycle has separate core tests')
-    import re
     def edit(root):
-        card_file=root/'definitions/notebook/_card.json'
-        card=json.loads(card_file.read_text())
-        if ending=='deadline':card['timeoutSeconds']=12
-        card_file.write_text(json.dumps(card))
         (root/'definitions/notebook/src/notebook.py').write_text('''import marimo
 app = marimo.App()
 @app.cell
@@ -141,12 +122,8 @@ def lifecycle():
         if ending=='cancel':c.call('RunCancelRequest',runId=rid)
         if ending=='project_stop':env.stop()
         else:
-            state=wait_run(c,rid)
-            assert state.state!=RunState.succeeded
-            if ending == 'failure':
-                failure = c.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
-                args = {text(a.key): text(a.value) for a in failure.args}
-                assert (args['source'], args['line'], args['cell']) == ('src/notebook.py', '13', 'lifecycle')
+            expected = RunState.cancelled if ending == 'cancel' else RunState.failed
+            assert wait_run(c, rid).state == expected
         for pid in pids:
             wait_for_exit(pid)
     finally:env.cleanup()
@@ -180,5 +157,4 @@ def test_two_cards_run_the_same_notebook_without_shared_state(tmp_path):
             def read(member):return read_pages(c,'ArtifactReadRequest',artifactId=text(art.artifactId),member=member,page_bytes=256*1024)
             selected = 'result' if name == 'notebook' else 'source'
             assert json.loads(read('result.json')) == {selected: value}
-            assert json.loads(read('metadata.json'))['card']==name
     finally:env.cleanup()

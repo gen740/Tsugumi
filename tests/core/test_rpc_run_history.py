@@ -81,8 +81,13 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     prepare_history(client, project, tmp_path)
     runs = [successful_run(client) for _ in range(3)]
     run_ids = [run_id for run_id, _ in runs]
-    artifact_ids = [text(client.call("ArtifactListRequest", runId=run_id).artifacts[0].artifactId)
-                    for run_id in run_ids]
+    artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
+    artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
+    assert artifact_ids == [f"{run_id}/work/1/doc" for run_id in run_ids]
+    assert all(text(artifact.name) == "report.txt" for artifact in artifacts)
+
+    environment, = client.call("RunEnvironmentsRequest", runId=run_ids[0]).environments
+    environment_id = text(environment.id)
 
     operation = new_id()
     cutoff = runs[1][1].endedAt + 1
@@ -108,7 +113,11 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project)
-    assert listed(restored.connect()) == []
+    client = restored.connect()
+    assert listed(client) == []
+    with pytest.raises(RpcFailure) as failure:
+        client.call("RunEnvironmentPathsRequest", runId=run_ids[0], environmentId=environment_id)
+    assert failure.value.kind == "not_found"
 
 
 def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory, project, tmp_path):

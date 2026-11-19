@@ -1,9 +1,11 @@
-"""Module retrieval is an immutable, bounded RPC read, never a UI store read."""
+"""Module retrieval is an immutable, bounded RPC read."""
+
 import pytest
+
 from tsugumi_client import RpcFailure
 
 
-@pytest.mark.parametrize("identity", ["/etc", "/nix/store", "/nix/store/../etc", "/nix/store/a/b", "plotly"])
-def test_module_fetch_rejects_non_store_directories(client, identity):
-    with pytest.raises(RpcFailure):
-        client.call("ModuleReadRequest", module=identity)
+def test_module_fetch_rejects_non_store_directories(client):
+    for identity in ("/etc", "/nix/store", "/nix/store/../etc", "/nix/store/a/b", "plotly"):
+        with pytest.raises(RpcFailure):
+            client.call("ModuleReadRequest", module=identity)

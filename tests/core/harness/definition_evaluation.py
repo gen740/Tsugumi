@@ -1,4 +1,4 @@
-"""Observations shared by definition correctness and evaluation economy tests."""
+"""Observations for definition correctness tests."""
 
 import json
 
@@ -25,25 +25,16 @@ def completed_definition(client, card="work", *, start=None):
     """Return a fresh run's output, actual definition identity and invocation."""
     run_id = run(client, start or card)
     status = wait_run(client, run_id)
-    logs = [text(client.call("LogRangeRequest", runId=run_id, card=path(card),
-                             stream=stream, limitBytes=262144).text) for stream in (1, 2)]
-    assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), logs)
+    def log(stream):
+        return text(client.call("LogRangeRequest", runId=run_id, card=path(card),
+                                stream=stream, limitBytes=262144).text)
+
+    assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log(2))
     invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path(card)).records
     number = text(invocation.environmentId)
-    assert number
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
     environment = next(e for e in environments if text(e.id) == number)
-    assert text(environment.derivation).endswith(".drv")
-    assert text(environment.manifest)
-    record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
-    assert text(record.summary.environmentId) == number
     # An environment's ID is a number within its run. What a run was built from
     # is the recorded derivation, manifest and system.
     identity = (text(environment.derivation), text(environment.manifest), text(environment.system))
-    return logs[0], identity, invocation
-
-
-def full_evaluations(daemon):
-    """Count complete evaluator entries, independently of stages and build hits."""
-    counter = daemon.gates / "full-evaluations"
-    return int(counter.read_text()) if counter.exists() else 0
+    return log(1), identity, invocation

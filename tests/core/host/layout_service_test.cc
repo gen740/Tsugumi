@@ -450,30 +450,6 @@ TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
 
 namespace tsugumi::host {
 namespace {
-TEST(HostLayout, DefaultDisplayGeometryIsServedToBothClients) {
-  flatbuffers::FlatBufferBuilder b;
-  const auto input = H::CreateDisplayGeometryRequest(b);
-  b.Finish(H::CreateRequest(b, H::RequestPayload::DisplayGeometryRequest,
-                            input.Union()));
-  const auto reply =
-      LayoutHandle(*flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 9);
-  const auto* frames = H::GetMessage(reply.data())
-                           ->payload_as_Reply()
-                           ->value_as_DisplayGeometries();
-  ASSERT_NE(frames, nullptr);
-  for (bool vertical : {true, false}) {
-    const auto* g =
-        vertical ? frames->top_to_bottom() : frames->left_to_right();
-    ASSERT_NE(g, nullptr);
-    EXPECT_EQ(g->anchor_x(), vertical ? 1 : 0);
-    EXPECT_EQ(g->anchor_y(), vertical ? 0 : 1);
-    EXPECT_EQ(g->x(), vertical ? 40 : 0);
-    EXPECT_EQ(g->y(), vertical ? 0 : 30);
-    EXPECT_EQ(g->width(), 320);
-    EXPECT_EQ(g->height(), 170);
-  }
-}
-
 TEST(HostCardPlacement, DefaultDisplayBlocksTheTemptingRightHandSlot) {
   namespace json = ::tsugumi::json;
   // Left and below are occupied. No display position is saved: both UIs

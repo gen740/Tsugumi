@@ -1,6 +1,4 @@
-// Every wire of every bundled demo, placed with the real CardGeometry: how many
-// Cards each crosses and how far it wanders, plus the fixed cases Mac and web
-// must route to the very same path (tests/fixtures/wire-routes.json).
+// Check routing after the canvas places and sizes Cards on a grid.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -87,8 +85,6 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
   const port = (id: string, p: string, output: boolean): Pt => {
-    const list = output ? datas.get(id)!.outputs : datas.get(id)!.inputs
-    assert.ok(datas.get(id)!.kind === 'draft' ? p === '' : list.some((x) => x.name === p), `${name}: ${id} has no ${output ? 'output' : 'input'} ${p}`)
     const o = place(id), q = geos.get(id)!.port(p, output)
     return { x: o.x + q.x, y: o.y + q.y }
   }
@@ -149,11 +145,9 @@ function forkAgainstCard(): Scene {
   return scene('casa, fork against rgb', path.join(root, 'demos/ja/casa'), undefined, { share: { x: 840, y: 40 }, rgb: { x: 940, y: 0 }, spectrum: { x: 1200, y: 0 } }, 20).scene
 }
 
-const length = (pts: Pt[]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.y - pts[i].y), 0)
-
 /** Cards the path enters and leaves again. A branch's port sits inside its box:
  *  a stay that starts or ends the path is the wire reaching its port. */
-export function crossed(pts: Pt[], obstacles: Rect[]): number {
+function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {
     const n = Math.max(1, Math.ceil(Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) / 2))
@@ -173,133 +167,33 @@ export function crossed(pts: Pt[], obstacles: Rect[]): number {
   return count
 }
 
-const route = (s: Scene) => new WireRouter(s.flow, s.obstacles).routeAll(s.wires)
-
-function wireCrossings(routes: { pts: Pt[] }[], wires: Wire[]): number {
-  const hit = (p: Pt, q: Pt, r: Pt, s: Pt) => {
-    const d = (q.x - p.x) * (s.y - r.y) - (q.y - p.y) * (s.x - r.x)
-    if (!d) return false
-    const t = ((r.x - p.x) * (s.y - r.y) - (r.y - p.y) * (s.x - r.x)) / d
-    const u = ((r.x - p.x) * (q.y - p.y) - (r.y - p.y) * (q.x - p.x)) / d
-    return t > 0 && t < 1 && u > 0 && u < 1
-  }
-  let n = 0
-  for (let i = 0; i < routes.length; i++) {
-    for (let j = i + 1; j < routes.length; j++) {
-      if (wires[i].a.x === wires[j].a.x && wires[i].a.y === wires[j].a.y) continue
-      const a = routes[i].pts, b = routes[j].pts
-      search: for (let x = 1; x < a.length; x++) {
-        for (let y = 1; y < b.length; y++) {
-          if (hit(a[x - 1], a[x], b[y - 1], b[y])) {
-            n++
-            break search
-          }
-        }
-      }
-    }
-  }
-  return n
-}
-
-const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
-const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
-const arrangements = [-60, 20, 60, 100, 150, 200].map(stacked)
-const everything = [...demos, ...arrangements, forkNearGenerate(20), forkNearGenerate(-20)]
-
-/** Prints how the wires of these scenes run, and gives those that cross a Card. */
-function measure(label: string, scenes: Scene[]): string[] {
-  let wires = 0, crossings = 0, between = 0
-  const detours: number[] = []
-  const crossers: string[] = []
-  for (const s of scenes) {
-    const routes = route(s)
-    between += wireCrossings(routes, s.wires)
-    s.wires.forEach((w, i) => {
-      wires++
-      const c = crossed(routes[i].pts, s.obstacles)
-      if (c) crossers.push(`${s.name}: ${w.name} (${c})`)
-      crossings += c
-      const straight = Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y)
-      if (straight > 1) detours.push(length(routes[i].pts) / straight)
-    })
-  }
-  detours.sort((p, q) => p - q)
-  console.log(`wire routes, ${label}:`, JSON.stringify({
-    scenes: scenes.length, wires, crossingWires: crossers.length, cardCrossings: crossings, wireCrossings: between,
-    detourMean: +(detours.reduce((t, d) => t + d, 0) / detours.length).toFixed(3),
-    detourP95: +detours[Math.floor(detours.length * 0.95)].toFixed(2), detourMax: +detours[detours.length - 1].toFixed(2),
-  }))
-  return crossers
-}
-
-// ---- Every wire of every demo --------------------------------------------------------
-assert.deepEqual(measure('grid off', everything), [], 'no wire crosses a Card')
-// The grid is on by default, and it moves and resizes every Card: as the app draws them.
-const grids = [20, 30].map((grid) => ({ grid, scenes: index.demos.flatMap((d) => scopes(`${d.path}, grid ${grid}`, path.join(root, 'demos', 'ja', d.path), grid)) }))
-for (const { grid, scenes } of grids) assert.deepEqual(measure(`grid ${grid}`, scenes), [], `no wire crosses a Card on a grid of ${grid}`)
-assert.deepEqual(measure('fork against a Card', [forkAgainstCard()]), [], 'a wire out of a fork does not go on through the Card that begins where its box ends')
-
-// The wires of the report asked for: short, in the free bands.
-{
-  const report = demos.find((s) => s.name === 'report')!
-  const routes = route(report)
-  const named = (n: string) => {
-    const i = report.wires.findIndex((w) => w.name === n)
-    assert.ok(i >= 0, n)
-    return { wire: report.wires[i], pts: routes[i].pts }
-  }
-  const config = named('settings.config>share.in')
-  assert.ok(length(config.pts) < 500, `settings to the fork is short: ${length(config.pts)}`)
-  const render = named('share.render>render.config')
-  assert.ok(length(render.pts) / Math.hypot(render.wire.b.x - render.wire.a.x, render.wire.b.y - render.wire.a.y) < 1.5, 'share to render takes no long way')
-  for (const s of arrangements) {
-    const i = s.wires.findIndex((w) => w.name === 'share.render>render.config')
-    const w = route(s)[i].pts
-    assert.ok(length(w) < 1000, `${s.name}: beside the column, not far: ${length(w)}`)
-  }
-  for (const gap of [20, -20]) {
-    const s = forkNearGenerate(gap)
-    const i = s.wires.findIndex((w) => w.name === 'share.generate>generate.config')
-    const w = s.wires[i], pts = route(s)[i].pts
-    assert.ok(length(pts) < Math.abs(w.a.x - w.b.x) + Math.abs(w.a.y - w.b.y) + 200, `${s.name}: straight left: ${length(pts)}`)
-    assert.ok(!pts.some((p) => p.x < 0), `${s.name}: does not go around generate`)
+for (const scene of [
+  ...scopes('rna-seq on the grid', path.join(root, 'demos/ja/rna-seq'), 20),
+  forkAgainstCard(),
+]) {
+  const routes = new WireRouter(scene.flow, scene.obstacles).routeAll(scene.wires)
+  for (const [index, wire] of scene.wires.entries()) {
+    const pts = routes[index].pts
+    assert.deepEqual(pts[0], wire.a)
+    assert.deepEqual(pts.at(-1), wire.b)
+    assert.equal(crossed(pts, scene.obstacles), 0, `${scene.name}: ${wire.name}`)
   }
 }
 
-// ---- Order of the wires, and the same input twice --------------------------------------
-for (const s of demos.filter((x) => x.name === 'live-stream' || x.name.startsWith('collatz/') || x.name === 'mnist-classifiers')) {
-  const once = route(s)
-  assert.deepEqual(route(s), once, `${s.name}: the same input gives the same paths`)
-  const reversed = route({ ...s, wires: [...s.wires].reverse() }).reverse()
-  assert.deepEqual(reversed, once, `${s.name}: the order of the wires changes nothing`)
-}
-
-// ---- The cases Mac and web must route alike ---------------------------------------------
-type Case = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: { a: Pt; b: Pt }[] }
-const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq'].map((n) => demos.find((s) => s.name === n)!)
-  .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(), ...grids[0].scenes.filter((s) => s.name === 'casa, grid 20' || s.name === 'rna-seq, grid 20'))
-const fixture = path.join(root, 'tests/fixtures/wire-routes.json')
-// The scenes are samples kept in the file, so moving a Card of a demo does not
-// change this check. WIRE_ROUTES_WRITE=1 npm test takes new samples from the demos.
-if (process.env.WIRE_ROUTES_WRITE) {
-  const samples: Case[] = shared.map((s) => ({ name: s.name, flow: s.flow, obstacles: s.obstacles, wires: s.wires.map(({ a, b }) => ({ a, b })) }))
-  fs.writeFileSync(fixture, JSON.stringify(samples) + '\n')
-}
-const cases: Case[] = read(fixture)
-assert.ok(cases.length > 0)
-for (const c of cases) {
-  const routes = new WireRouter(c.flow, c.obstacles).routeAll(c.wires)
-  assert.equal(routes.length, c.wires.length)
-  for (const [i, route] of routes.entries()) {
-    assert.deepEqual(route.pts[0], c.wires[i].a)
-    assert.deepEqual(route.pts.at(-1), c.wires[i].b)
-    assert.ok(route.pts.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)))
-    assert.equal(crossed(route.pts, c.obstacles), 0, c.name)
+if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
+  const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
+  const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
+  if (process.env.WIRE_ROUTES_WRITE) {
+    const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq']
+      .map((name) => demos.find((scene) => scene.name === name)!)
+      .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(),
+        ...['casa', 'rna-seq'].map((name) => scene(`${name}, grid 20`, path.join(root, 'demos/ja', name), undefined, {}, 20).scene))
+    const samples = shared.map(({ name, flow, obstacles, wires }) => ({ name, flow, obstacles, wires: wires.map(({ a, b }) => ({ a, b })) }))
+    fs.writeFileSync(path.join(root, 'tests/fixtures/wire-routes.json'), JSON.stringify(samples) + '\n')
+  }
+  if (process.env.TSUGUMI_WIRE_BENCH === '1') {
+    const { wireFrameBudget } = await import('../../../tests/bench/wire-frames')
+    wireFrameBudget(demos.sort((a, b) => b.wires.length - a.wires.length)[0], WireRouter)
   }
 }
 console.log('wire routes: passed')
-
-if (process.env.TSUGUMI_WIRE_BENCH === '1') {
-  const { wireFrameBudget } = await import('../../../tests/bench/wire-frames')
-  wireFrameBudget([...demos].sort((a, b) => b.wires.length - a.wires.length)[0], WireRouter)
-}

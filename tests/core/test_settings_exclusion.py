@@ -53,17 +53,17 @@ def test_stale_settings_apply_and_explicit_overwrite(daemon, target, writer, sta
     assert saved_value(first.call("ProjectInspectRequest"), target) == "mine"
 
 
-@pytest.mark.parametrize("path", ["tsugumi.json", "definitions/settings/_card.json", "definitions/settings/_meta.json"])
-def test_settings_have_no_source_write_bypass(client, path):
+def test_settings_have_no_source_write_bypass(client):
     """Source RPC changes cannot provide a second settings writer."""
     before = client.call("ProjectInspectRequest")
-    for operation, fields in [
-        ("PutSource", {"bytes": list(b"{}")}),
-        ("PatchSource", {"baseHash": "0" * 64, "patches": []}),
-        ("RemoveSource", {"baseHash": "0" * 64}),
-    ]:
-        with pytest.raises(RpcFailure) as failure:
-            client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:json",
-                        changes=[change(operation, path=path, **fields)])
-        assert failure.value.kind == "permission_denied"
-        assert client.call("ProjectInspectRequest").rev == before.rev
+    for target in ("tsugumi.json", "definitions/settings/_card.json", "definitions/settings/_meta.json"):
+        for operation, fields in (
+            ("PutSource", {"bytes": list(b"{}")}),
+            ("PatchSource", {"baseHash": "0" * 64, "patches": []}),
+            ("RemoveSource", {"baseHash": "0" * 64}),
+        ):
+            with pytest.raises(RpcFailure) as failure:
+                client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:json",
+                            changes=[change(operation, path=target, **fields)])
+            assert failure.value.kind == "permission_denied"
+    assert client.call("ProjectInspectRequest").rev == before.rev

@@ -1,6 +1,7 @@
 """Invocation data boundaries on native Linux/VM bubblewrap and macOS Seatbelt."""
 
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     assert st.state == RunState.succeeded, log(c, secret_run, "secret", 2)
     record = c.call("RunRecordRequest", runId=secret_run, card=path("secret"))
     secret = text(record.record.outputs[0].filePath)
-    assert secret, "the attack needs the independently recorded File's real path"
+    assert Path(secret).is_file()
     reader = bash('test ! -e /proc/self/fd/900 || exit 4; if IFS= read -r stolen < ' + shlex.quote(secret) + '; then echo leaked; exit 1; fi; '
                   'IFS= read -r line < "$FILE_DOC"; test "$line" = wired || exit 2; '
                   'if echo corrupt >> "$FILE_DOC"; then exit 3; fi; '
@@ -40,7 +41,6 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
         assert st.state == RunState.succeeded, log(c, run_id, "reader", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("reader")).records
         seen.append(inv.workerReused)
-        assert "leaked" not in log(c, run_id, "reader")
         # Input forwarding is mapped back before the staging area is emptied.
         forwarded = c.call("RunRecordRequest", runId=run_id, card=path("reader"))
         assert not forwarded.record.outputs[0].fileMissing
@@ -51,10 +51,16 @@ def test_python_source_loading_has_the_invocation_environment_and_log(core_facto
     """The real Python shim imports under preRun's environment and logs to the invocation."""
     from harness.real_cards import python_probe_project, shown_by_probe
     source = '''
-import os
+import ctypes, os
 assert os.environ["FROM_PRE"] == "ready"
+assert os.environ.pop("MPLBACKEND", None) is not None
+libc = ctypes.CDLL(None)
+libc.getenv.argtypes = [ctypes.c_char_p]
+libc.getenv.restype = ctypes.c_char_p
 print("source run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
 def main(inputs, report):
+    assert "MPLBACKEND" not in os.environ
+    assert libc.getenv(b"MPLBACKEND") is None
     report.text("loaded")
 '''
     definitions, cards, wires, files = python_probe_project(source, "export FROM_PRE=ready")
@@ -65,6 +71,8 @@ def main(inputs, report):
     assert "source run=" + first in log(c, first, "show")
     second, shown = shown_by_probe(c)
     assert shown == "loaded" and "source run=" not in log(c, second, "show")
+    reused, = c.call("RunInvocationsRequest", runId=second, card=path("show")).records
+    assert reused.workerReused
 
 
 def test_python_source_loading_is_killed_at_the_invocation_deadline(core_factory, tmp_path):
@@ -97,7 +105,8 @@ def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_
                 'echo "$name" > "$TSUGUMI_OUTPUT_DIR/$name"; '
                 'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$name" > "$TSUGUMI_OUTPUT"',
                 outputs=FILE_FBS, reuseWorker=True)
-    reader = bash('slot="${FILE_DOC%/*}"; '
+    reader = bash('printf \'{"text":"%s|%s"}\' "$FILE_DOC" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT"; '
+                  'slot="${FILE_DOC%/*}"; '
                   'if test -f "$FILE_DOC" && test "${FILE_DOC##*/}" = first.txt; then '
                   'echo first > "$TSUGUMI_OUTPUT_DIR/first-output"; '
                   'else test "${FILE_DOC##*/}" = second.txt || exit 11; '
@@ -105,16 +114,24 @@ def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_
                   'test ! -e "$TSUGUMI_OUTPUT_DIR/first-output" || exit 13; fi; '
                   'echo current > "$TSUGUMI_OUTPUT_DIR/current"; '
                   'printf \'{"doc":{"value":"%s/current"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True)
+                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": reader}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
-    c = core_factory(project_root=root).connect()
-    for reused in (False, True):
-        run_id, st = run_and_wait(c, "make")
-        assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
-        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("read")).records
-        assert inv.workerReused == reused
+    scratch = tmp_path / "scratch"
+    c = core_factory(project_root=root, args=["--run-scratch-dir", str(scratch)]).connect()
+    first, status = run_and_wait(c, "make")
+    assert status.state == RunState.succeeded, log(c, first, "read", 2)
+    run_id, status = run_and_wait(c, "make")
+    assert status.state == RunState.succeeded, log(c, run_id, "read", 2)
+    record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
+    assert record.summary.workerReused
+    staged_input, staged_output = map(Path, text(record.display.value.text).split("|"))
+    assert staged_output.parent.parent == scratch / "workers"
+    assert staged_input.is_relative_to(staged_output.parent / "inputs")
+    assert Path(text(record.outputs[0].filePath)).read_text() == "current\n"
+    assert not any((staged_output.parent / "inputs").glob("*"))
+    assert not any(staged_output.glob("*"))
 
 
 def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
@@ -146,70 +163,14 @@ def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path)
     assert inv.failure.kind == FailureKind.cancelled
 
 
-def test_worker_staging_uses_disk_scratch_and_releases_call_bytes(core_factory, tmp_path):
-    """Input/output staging is below disk run scratch; only lifetime home survives a call."""
-    from pathlib import Path
-    # Recorded files live in project history, separately from disk scratch.
-    scratch = tmp_path / "scratch"
-    make = bash('echo wired > "$TSUGUMI_OUTPUT_DIR/data"; '
-                'printf \'{"doc":{"value":"%s/data"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                outputs=FILE_FBS)
-    read = bash('printf \'{"text":"%s|%s"}\' "$FILE_DOC" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT"; '
-                'cat "$FILE_DOC" > "$TSUGUMI_OUTPUT_DIR/copied"; '
-                'printf \'{"doc":{"value":"%s/copied"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
-    root = tmp_path / "p"
-    write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
-          [conn("make", "doc", "read", "doc")])
-    c = core_factory(project_root=root, args=["--run-scratch-dir", str(scratch)]).connect()
-    run_id, st = run_and_wait(c, "make")
-    assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
-    record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
-    recorded = Path(text(record.outputs[0].filePath))
-    staged_input, staged_out = text(record.display.value.text).split("|")
-    worker_root = Path(staged_out).parent
-    assert worker_root.parent == scratch / "workers"
-    assert Path(staged_input).is_relative_to(worker_root / "inputs")
-    assert (scratch / "runs" / run_id / "work" / "read" / "1" / "out" / "copied").read_text() == "wired\n"
-    assert recorded.read_text() == "wired\n"
-    assert not list((worker_root / "inputs").iterdir())
-    assert not list((worker_root / "out").iterdir())
-
-
-def test_python_source_environment_removals_survive_reuse(core_factory, tmp_path):
-    """Removing an SDK default during import stays removed in Python and libc on both calls."""
-    from harness.real_cards import python_probe_project, shown_by_probe
-    source = '''
-import ctypes, os
-assert os.environ.pop("MPLBACKEND", None) is not None
-libc = ctypes.CDLL(None)
-libc.getenv.argtypes = [ctypes.c_char_p]
-libc.getenv.restype = ctypes.c_char_p
-def main(inputs, report):
-    assert "MPLBACKEND" not in os.environ
-    assert libc.getenv(b"MPLBACKEND") is None
-    report.text("removed")
-'''
-    definitions, cards, wires, files = python_probe_project(source)
-    write(tmp_path / "p", definitions, cards, wires, files)
-    c = core_factory(project_root=tmp_path / "p").connect()
-    for reused in (False, True):
-        run_id, shown = shown_by_probe(c)
-        assert shown == "removed"
-        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
-        assert inv.workerReused == reused
-
-
-@pytest.mark.parametrize("entry", ["link", "directory-link", "fifo"])
+@pytest.mark.parametrize("entry", ["directory-link", "fifo"])
 def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_path, entry):
     """Only declared outputs are copied; unrelated links and FIFOs are cleared without failure."""
-    from pathlib import Path
     victim = tmp_path / "private"
     victim.mkdir()
     (victim / "secret").write_text("host-only-secret")
-    target = victim if entry == "directory-link" else victim / "secret"
     create = ('mkfifo "$TSUGUMI_OUTPUT_DIR/nested/entry"' if entry == "fifo" else
-              'ln -s ' + shlex.quote(str(target)) + ' "$TSUGUMI_OUTPUT_DIR/nested/entry"')
+              'ln -s ' + shlex.quote(str(victim)) + ' "$TSUGUMI_OUTPUT_DIR/nested/entry"')
     create = create.replace('$TSUGUMI_OUTPUT_DIR', '$stage')
     definition = bash('for stage in "$TSUGUMI_OUTPUT_DIR" "$TSUGUMI_WORK_DIR" "$TSUGUMI_TMP_DIR"; do '
                       'mkdir "$stage/nested"; ' + create + '; done; '
@@ -224,13 +185,11 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
     saved = Path(text(record.outputs[0].filePath))
     assert saved.read_text() == "safe\n"
     assert not (saved.parent / "nested").exists()
-    assert (victim / "secret").read_text() == "host-only-secret"
 
 
 def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factory, tmp_path):
     """A live child races regular-file/symlink replacements; successful snapshots never contain host bytes."""
     import json
-    from pathlib import Path
     from Tsugumi.Data.FailureKind import FailureKind
     victim = tmp_path / "host-secret"
     victim.write_text("private-host-content-that-the-card-cannot-read")

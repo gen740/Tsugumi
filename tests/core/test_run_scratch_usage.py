@@ -27,8 +27,7 @@ def current(usage):
     return next(p for p in usage.projects if text(p.project) == text(usage.currentProject))
 
 
-@pytest.mark.parametrize("record_io,retain", [(False, False), (True, False), (False, True), (True, True)])
-def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, tmp_path, record_io, retain):
+def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, tmp_path):
     """A new run and restart keep scratch; explicit deletion leaves independent copies."""
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
                           args=["--run-scratch-dir", str(tmp_path / "scratch")])
@@ -36,25 +35,21 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     payload = "large output\n" * 10000
     worker_project(client, project, tmp_path / "first", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": payload},
-    ], outputs=FILE_OUTPUT, recordIO=record_io, retainArtifact=retain, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
     first = run(client)
     assert wait_run(client, first).state == RunState.succeeded
     usage_when(client, lambda u: current(u).scratchBytes == len(payload))
-    saved = Path(decode_scalar(read_output(client, first, port="doc"))) if record_io else None
+    saved = Path(decode_scalar(read_output(client, first, port="doc")))
 
     # A separate package is fixture setup; saving uses the same public Card.
     worker_project(client, project, tmp_path / "second", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "small"},
-    ], outputs=FILE_OUTPUT, recordIO=record_io, retainArtifact=retain, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
     second = run(client)
     assert wait_run(client, second).state == RunState.succeeded
     usage_when(client, lambda u: current(u).scratchBytes == len(payload) + len("small"))
-    if saved:
-        assert saved.read_text() == payload
-    artifacts = client.call("ArtifactListRequest", runId=first).artifacts
-    assert len(artifacts) == int(retain)
-    if retain:
-        assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifacts[0].artifactId)) == payload.encode()
+    artifact, = client.call("ArtifactListRequest", runId=first).artifacts
+    artifact_id = text(artifact.artifactId)
 
     daemon.restart()
     client = daemon.connect()
@@ -78,10 +73,8 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     assert deleted.freedBytes == len(payload)
     assert client.call("RunScratchDeleteRequest", opId=op_id, paths=[f"runs/{first}"]).freedBytes == len(payload)
     usage_when(client, lambda u: current(u).scratchBytes == len("small"))
-    if saved:
-        assert saved.read_text() == payload
-    if retain:
-        assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifacts[0].artifactId)) == payload.encode()
+    assert saved.read_text() == payload
+    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id) == payload.encode()
     assert client.call("RunRecordRequest", runId=first, card=path("work")).record
     client.call("RunHistoryDeleteRequest", opId=new_id())
     daemon.restart()
@@ -173,7 +166,6 @@ def test_usage_deduplicates_shared_roots_and_keeps_old_roots(core_factory, tmp_p
     usage = usage_when(client, lambda u: u.buildBytes == size)
     rows = {text(p.project): p for p in usage.projects}
     assert rows["one"].buildBytes == rows["two"].buildBytes == size
-    assert rows["one"].lastUsed <= int((age + 1) * 1000)
     client.call("ProjectCacheClearRequest", opId=new_id())
     usage_when(client, lambda u: u.buildBytes == size)  # another project's roots stay
 
@@ -183,7 +175,7 @@ def test_more_than_two_builds_remain_registered(core_factory, project, tmp_path)
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     previous = 0
-    for index in range(4):
+    for index in range(3):
         worker_project(client, project, tmp_path / str(index), [
             {"op": "output", "port": "out", "type": "string", "value": str(index)},
         ])

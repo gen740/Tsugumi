@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from projects import card, conn, run_and_wait, write
-from harness.real_cards import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, TXT, accept_in_background, bash,
-                                check_python_card_environment, nix_string, python_probe_project, shown_by_probe)
+from harness.real_cards import (ENV_MAIN, ENV_PRE_RUN, TXT, accept_in_background, bash,
+                                check_python_card_environment, nix_string, python_probe_project)
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -168,16 +168,9 @@ def python_probe_client(core_factory, root: Path, main: str, pre: str | None = N
     return d, c
 
 
-def test_a_python_card_can_ask_for_its_directory_while_it_loads(core_factory, tmp_path):
-    """A sandboxed Python card can query its working directory during module loading."""
-    d, c = python_probe_client(core_factory, tmp_path / "p", CWD_AT_LOAD_MAIN)
-    _, shown = shown_by_probe(c)
-    assert shown.endswith("/work"), shown
-
-
 def test_a_python_card_gets_its_environment(core_factory, tmp_path):
     """A Python card receives preRun exports and resets per-call environment changes."""
-    d, c = python_probe_client(core_factory, tmp_path / "p", ENV_MAIN, ENV_PRE_RUN)
+    _, c = python_probe_client(core_factory, tmp_path / "p", ENV_MAIN, ENV_PRE_RUN)
     check_python_card_environment(c)
 
 

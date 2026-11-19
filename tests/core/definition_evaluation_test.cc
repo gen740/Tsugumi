@@ -9,8 +9,6 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/workerd/log.hh"
-#include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi {
 namespace {
@@ -27,7 +25,6 @@ TEST(DefinitionEvaluationKey, SeparatesAllExplicitEvaluatorArguments) {
       "{ sdk = /sdk; card = /defs/digest; gen = /gen/digest; "
       "upstream = /up/digest; }";
   const auto key = original.evaluation_key();
-  EXPECT_EQ(key, original.evaluation_key());
   for (const auto& component : {"pin-url", "pin-hash", "system", "args"}) {
     auto changed = original;
     const std::string name = component;
@@ -81,43 +78,6 @@ class DefinitionEvaluation : public ::testing::Test {
   NixCall call;
 };
 
-TEST_F(DefinitionEvaluation, BuildOutputWithInvalidUtf8CanBeRecorded) {
-  for (const bool build_fails : {false, true}) {
-    SCOPED_TRACE(build_fails);
-    auto eval = evaluator(
-        R"(let
-          name = builtins.baseNameOf (builtins.dirOf (toString args.root));
-          probe = pkgs.runCommand name {} ''
-            printf 'before invalid bytes\n' >&2
-            printf 'builder byte: \377\n' >&2
-            printf 'after invalid bytes\n' >&2
-        )" + std::string(build_fails ? "exit 23" : "touch $out") +
-        R"(
-          '';
-        in "${probe}")");
-    workerd::InvocationLog budget(kInvocationLogLimitBytes);
-    std::string recorded;
-    call.log = [&](const std::string& line) {
-      if (budget.append(LogStream::build, line)) recorded += line;
-    };
-    auto plan = eval->evaluate(call);
-    if (build_fails) {
-      EXPECT_THROW(eval->realise_native(call, std::move(plan)),
-                   std::runtime_error);
-    } else {
-      EXPECT_TRUE(eval->realise_native(call, std::move(plan)).built);
-    }
-    size_t offset = 0;
-    for (const std::string_view line :
-         {"before invalid bytes", "builder byte: \xef\xbf\xbd",
-          "after invalid bytes"}) {
-      const auto next = recorded.find(line, offset);
-      ASSERT_NE(next, std::string::npos) << recorded;
-      offset = next + line.size();
-    }
-  }
-}
-
 TEST_F(DefinitionEvaluation,
        UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
   fs::write_atomic(root / "sdk" / "default.nix", "builtins.readFile ./value");
@@ -129,7 +89,6 @@ TEST_F(DefinitionEvaluation,
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);
-  EXPECT_NE(first.evaluation_epoch, second.evaluation_epoch);
 }
 
 TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {

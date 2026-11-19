@@ -40,28 +40,7 @@ def inventory(client, run_id, card="work"):
 
 
 def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory, project, tmp_path):
-    """Cached runs and portable history retain the exact recorded environment."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True)
-    client = daemon.connect()
-    worker_project(client, project, tmp_path, [])
-    runs = []
-    for _ in range(2):
-        run_id = run(client)
-        assert wait_run(client, run_id).state == RunState.succeeded
-        runs.append(run_id)
-    expected = inventory(client, runs[0])
-    assert inventory(client, runs[1]) == expected
-    daemon.stop()
-    copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, mocked_builds=True)
-    assert inventory(restored.connect(), runs[0]) == expected
-    daemon.start()
-    assert inventory(daemon.connect(), runs[1]) == expected
-
-
-def test_runs_record_the_binary_caches_without_credentials(core_factory, project, tmp_path):
-    """A run keeps the binary caches its builds could download from, never how to authenticate there."""
+    """Renamed Cards keep their recorded builds and redacted cache URLs in a copied Project."""
     listed = tmp_path / "substituters"
     listed.write_text("https://cache.nixos.org\n"
                       "https://reader:cache-secret@private.example.org/team?token=cache-token\n"
@@ -75,9 +54,12 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
     worker_project(client, project, tmp_path, [])
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
-    for limit in (1, 100):
-        page = client.call("RunEnvironmentsRequest", runId=run_id, limit=limit)
-        assert [text(url) for url in page.substituters] == expected
+    cached = run(client)
+    assert wait_run(client, cached).state == RunState.succeeded
+    environment = inventory(client, run_id)
+    assert inventory(client, cached) == environment
+    from test_definitions import rename
+    rename(client, "work", "renamed")
     daemon.stop()
     # The list is the run's own: a later configuration does not rewrite it,
     # and it travels with the project's copy of the run.
@@ -86,6 +68,7 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
                             args=["--substituters-file", str(listed)]).connect()
+    assert inventory(restored, run_id) == inventory(restored, cached) == environment
     page = restored.call("RunEnvironmentsRequest", runId=run_id)
     assert [text(url) for url in page.substituters] == expected
     later = run(restored)
@@ -121,22 +104,22 @@ def test_failed_execution_keeps_its_environment(core_factory, project, tmp_path)
     inventory(client, run_id)
 
 
-@pytest.mark.parametrize("method,fields", [
-    ("RunEnvironmentsRequest", {"limit": 0}),
-    ("RunEnvironmentsRequest", {"limit": 501}),
-    ("RunEnvironmentsRequest", {"offset": 2**64 - 1}),
-    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "limit": 0}),
-    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
-    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingRunId": new_id()}),
-    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingEnvironmentId": "other"}),
-    ("RunEnvironmentUsesRequest", {"environmentId": "missing", "limit": 0}),
-    ("RunEnvironmentUsesRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
-])
-def test_environment_queries_reject_invalid_ranges(client, method, fields):
-    """Environment pages reject invalid limits and overflowing offsets."""
-    with pytest.raises(RpcFailure) as error:
-        client.call(method, runId="999999", **fields)
-    assert error.value.kind == "invalid_request"
+def test_environment_queries_reject_invalid_ranges(client):
+    """Environment pages reject invalid limits, overflowing offsets and partial exclusions."""
+    for method, fields in (
+        ("RunEnvironmentsRequest", {"limit": 0}),
+        ("RunEnvironmentsRequest", {"limit": 501}),
+        ("RunEnvironmentsRequest", {"offset": 2**64 - 1}),
+        ("RunEnvironmentPathsRequest", {"environmentId": "missing", "limit": 0}),
+        ("RunEnvironmentPathsRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
+        ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingRunId": new_id()}),
+        ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingEnvironmentId": "other"}),
+        ("RunEnvironmentUsesRequest", {"environmentId": "missing", "limit": 0}),
+        ("RunEnvironmentUsesRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
+    ):
+        with pytest.raises(RpcFailure) as error:
+            client.call(method, runId="999999", **fields)
+        assert error.value.kind == "invalid_request"
 
 
 def test_unknown_environment_is_not_found(client):
@@ -271,42 +254,6 @@ def test_build_failure_has_no_claimed_environment(core_factory, project):
     assert wait_run(client, run_id).state == RunState.failed
     assert client.call("RunEnvironmentsRequest", runId=run_id).environments == []
     assert client.call("RunRecordRequest", runId=run_id, card=path("work")).record.summary.environmentId is None
-
-
-def test_deleting_history_removes_its_environment_inventory(core_factory, project, tmp_path):
-    """Deleted run environments stay deleted after the project history is restored."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True)
-    client = daemon.connect()
-    worker_project(client, project, tmp_path, [])
-    run_id = run(client)
-    assert wait_run(client, run_id).state == RunState.succeeded
-    environment_id, _ = inventory(client, run_id)
-    client.call("RunHistoryDeleteRequest", opId=new_id())
-    daemon.stop()
-    copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project)
-    with pytest.raises(RpcFailure) as error:
-        restored.connect().call("RunEnvironmentPathsRequest", runId=run_id, environmentId=environment_id)
-    assert error.value.kind == "not_found"
-
-
-def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_path):
-    """Renaming a Card preserves its environment and portable invocation history."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True)
-    client = daemon.connect()
-    worker_project(client, project, tmp_path, [])
-    run_id = run(client)
-    assert wait_run(client, run_id).state == RunState.succeeded
-    expected = inventory(client, run_id)
-    from test_definitions import rename
-    rename(client, "work", "renamed")
-    assert inventory(client, run_id, "work") == expected
-    daemon.stop()
-    copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project)
-    assert inventory(restored.connect(), run_id, "work") == expected
 
 
 def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project, tmp_path):

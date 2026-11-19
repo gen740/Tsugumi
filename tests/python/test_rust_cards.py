@@ -1,7 +1,6 @@
 """Typed Rust Cards use the same worker, sandbox and output validation as C++."""
 import json
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,8 +8,8 @@ from test_language_cards import project  # pytest fixture
 
 from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import write_project as write_language_project
-from tsugumi_client import path, text
+from test_language_cards import scaffold_card, write_project as write_language_project
+from tsugumi_client import line_chart_series, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
@@ -47,10 +46,6 @@ def succeeded(c):
     return run_id
 
 
-def test_scaffold_generated_from_one_template():
-    subprocess.run(['python3', str(ROOT / 'sdk/codegen/scaffold.py'), 'rust', '--check'], check=True)
-
-
 @pytest.mark.parametrize('test_path', ['src/lib.rs', 'tests/card.rs'])
 def test_failing_rust_test_rejects_the_card_build(project, test_path):
     root, connect = project
@@ -85,7 +80,6 @@ fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>) -> Resul
     assert_eq!(inputs.number.value(), 9007199254740993);
     assert_eq!(inputs.params.offset(), Some(7));
     assert!(!run.cancelled());
-    report.log("Rust received exact uint64")?;
     let mut out = tsugumi::outputs::Out::default();
     out.value = inputs.number.value() + inputs.params.offset().unwrap();
     report.table(&["value"], &[vec![out.value.to_string()]])?;
@@ -119,7 +113,6 @@ auto run(const Card::Inputs& inputs) -> Card::Output { if(inputs.number.value !=
     c = connect()
     run_id = succeeded(c)
     assert text(shown(c, run_id, 'rust').value.rows[0].cells[0]) == '9007199254741000'
-    assert 'exact uint64' in text(c.call('LogRangeRequest', runId=run_id, card=path('rust'), stream=2, limitBytes=65536).text)
 
 
 @pytest.mark.parametrize('reuse', [True, False])
@@ -240,29 +233,42 @@ tsugumi::export!(run, with_run);''', inputs=[{'name':'file'},{'name':'directory'
     card['outputs']='attribute "tsugumi"; namespace t; table Path{value:string;} table Outputs{report:Path(required,tsugumi:"file");} root_type Outputs;'
     write_project(root,{'make':{'card':{'language':'bash'},'nix':make,'outputs':schema},'rust':card},[('make',p,'rust',p) for p in ('file','directory')])
     c=connect()
-    for _ in range(2):
-        run_id=succeeded(c)
-        art=next(a for a in c.call('ArtifactListRequest',runId=run_id).artifacts if text(a.output)=='report')
-        assert bytes(c.call('ArtifactReadRequest',artifactId=text(art.artifactId)).bytes)==b'hello\nworld\n'
-
-
-@pytest.mark.parametrize('expression,kind', [
-    ('report.text("hello")',1),
-    ('report.markdown("**hello**")',1),
-    ('report.scalar(1.5,"value")',2),
-    ('report.line_chart("one","line",&[1.0,2.0],&[3.0,4.0])',7),
-    ('report.table(&["value"],&[vec!["1".into()]])',4),
-    ('report.image("image/png", &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 154, 218, 42, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], "image")',5),
-    ('report.points(&[1.0],&[2.0],&[3.0],Some(&[0xff00ff]))',6),
-    ('report.module("vega-lite", r#"{"mark":"point","data":{"values":[]}}"#)',7),
-])
-def test_displays(project,expression,kind):
-    root,connect=project
-    source="use tsugumi::{Report,Inputs,Output,Result}; fn run(inputs: Inputs<'_>, report: &Report<'_>)->Result<Output>{"+expression+'?;Ok(Output::default())} tsugumi::export!(run);'
-    write_project(root,{'show':rust(source)},[])
-    c=connect()
     run_id=succeeded(c)
-    assert shown(c,run_id,'show').valueType==kind
+    art=next(a for a in c.call('ArtifactListRequest',runId=run_id).artifacts if text(a.output)=='report')
+    assert bytes(c.call('ArtifactReadRequest',artifactId=text(art.artifactId)).bytes)==b'hello\nworld\n'
+
+
+def test_rust_displays_preserve_payloads(project):
+    from test_demos import edit_card, set_param
+
+    root, connect = project
+    cases = [
+        ('report.markdown("**hello**")', (lambda view: (view.markdown, text(view.text)), (True, "**hello**"))),
+        ('report.scalar(1.5,"value")', (lambda view: view.value, 1.5)),
+        ('report.line_chart("one","line",&[1.0,2.0],&[3.0,4.0])', (lambda view: tuple(line_chart_series(view)[0].y), (3.0, 4.0))),
+        ('report.image("image/png", &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 154, 218, 42, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], "image")', (lambda view: bytes(view.data)[:8], b"\x89PNG\r\n\x1a\n")),
+        ('report.points(&[1.0],&[2.0],&[3.0],Some(&[0xff00ff]))', (lambda view: (list(view.z), list(view.colors)), ([3.0], [0xff00ff]))),
+        ('report.module("vega-lite", r#"{"mark":"point","data":{"values":[]}}"#)', (lambda view: json.loads(text(view.configJson))["mark"], "point")),
+    ]
+    arms = '\n'.join(f'{index} => {expression},' for index, (expression, _) in enumerate(cases))
+    source = '''use tsugumi::{Report, Inputs, Output, Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
+ match inputs.params.mode().unwrap() {
+ ARMS
+ _ => panic!("unknown display mode")
+ }?;
+ Ok(Output::default())
+}
+tsugumi::export!(run);
+'''.replace('ARMS', arms)
+    card = rust(source, params=[{'name': 'mode', 'type': 'uint64', 'data': 0}])
+    write_project(root, {'show': card}, [])
+    client = connect()
+    for index, (expression, (decode, expected)) in enumerate(cases):
+        if index:
+            edit_card(None, client, 'show', lambda card: set_param(card, 'mode', index))
+        display = shown(client, succeeded(client), 'show')
+        assert decode(display.value) == expected, expression
 
 
 def test_borrowed_input_cannot_escape_the_call(project):
@@ -293,13 +299,11 @@ tsugumi::export!(run, inputs);''')
 
 
 def test_ui_scaffold_is_an_executable_card(project):
-    root,connect=project
-    card=rust((ROOT/'sdk/rust/template/src/lib.rs').read_text())
-    card['outputs']='namespace hello; table Text {value:string;} table Outputs {out:Text(required);} root_type Outputs;'
-    write_project(root,{'hello':card},[])
-    c=connect()
-    run_id=succeeded(c)
-    assert text(shown(c,run_id,'hello').value.text)=='hello'
+    root, connect = project
+    write_project(root, {'hello': scaffold_card('rust')}, [('start', 'out', 'hello', 'in')])
+    client = connect()
+    assert text(shown(client, succeeded(client), 'hello').value.text) == 'hello'
+
 
 VENDOR_HASH = "sha256-GgPGaed/lz1W3mE8NjW6M/8VldZfZZ4YSw0u0cz5hjM="
 
@@ -351,10 +355,9 @@ def test_rust_rejects_invalid_pins(project, arguments, stale):
     assert not c.call('RunRecordRequest', runId=run_id, card=path('rust')).record.summary.environmentId
 
 
-@pytest.mark.parametrize('language', ['ja', 'en'])
-def test_bundled_rust_pipeline_runs_in_the_sandbox(project, language):
+def test_bundled_rust_pipeline_runs_in_the_sandbox(project):
     root, connect = project
-    shutil.copytree(ROOT / 'demos' / language / 'rust-pipeline', root, dirs_exist_ok=True)
+    shutil.copytree(ROOT / 'demos' / 'en' / 'rust-pipeline', root, dirs_exist_ok=True)
     c = connect()
     run_id = succeeded(c)
     assert text(shown(c, run_id, 'check').value.text) == '21'

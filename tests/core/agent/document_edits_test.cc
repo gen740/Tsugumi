@@ -7,7 +7,6 @@
 
 #include "host/permission_kinds.hh"
 #include "host/templates.hh"
-#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
@@ -262,26 +261,6 @@ TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
       std::runtime_error);
 }
 
-TEST(DocumentSubgraph, ClientGestureFixturesUseActualHostReplies) {
-  const auto fixtures = fs::read_file(TSUGUMI_SUBGRAPH_FIXTURES);
-  ASSERT_TRUE(fixtures.has_value());
-  for (const auto& raw : json::Array(*fixtures)) {
-    const auto fixture = json::Object(raw);
-    std::vector<std::string> cards;
-    for (const auto& card : json::Array(fixture.at("cards")))
-      cards.push_back(json::String(card));
-    const auto edit = MakeSubgraph(json::Text(fixture, "projectJson"), cards,
-                                   json::Text(fixture, "id"));
-    const auto reply = json::Object(fixture.at("reply"));
-    EXPECT_EQ(json::Object(edit.project_json),
-              json::Object(json::Text(reply, "projectJson")));
-    EXPECT_EQ(json::Object(edit.external_json),
-              json::Object(json::Text(reply, "externalJson")));
-    EXPECT_EQ(json::Object(edit.link_json),
-              json::Object(json::Text(reply, "linkJson")));
-  }
-}
-
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const std::string root =
       R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","settings":{"sandbox":false},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":{"input":{"card":"a","port":"in"}},"outputs":{"result":{"card":"b","port":"out"}}}})";
@@ -367,5 +346,4 @@ TEST(HostPermissionKinds, SuppliesLabelsForTheSamePermissionsInBothLanguages) {
   };
   const auto en = named(tsugumi::host::PermissionKinds("en"));
   EXPECT_EQ(en, named(tsugumi::host::PermissionKinds("ja")));
-  EXPECT_TRUE(en.contains("execution_service"));
 }

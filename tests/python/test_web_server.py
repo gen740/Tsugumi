@@ -55,6 +55,12 @@ def web(tmp_path):
         yield server
 
 
+@pytest.fixture(scope="module")
+def http_server(tmp_path_factory):
+    with web_server(tmp_path_factory.mktemp("web-http")) as server:
+        yield server
+
+
 def request(port: int, method: str, path: str, headers=None, body=None):
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     c.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
@@ -79,8 +85,8 @@ class Scripts(HTMLParser):
             self.sources.append(dict(attrs).get("src"))
 
 
-def test_only_the_page_with_the_key_reaches_the_api(web):
-    p, port, key = web
+def test_only_the_page_with_the_key_reaches_the_api(http_server):
+    p, port, key = http_server
     r, _ = request(port, "GET", "/api/env/list")
     assert r.status == 401
     r, _ = request(port, "GET", "/api/events")
@@ -133,8 +139,8 @@ signal.sigwait(signals)
         assert select.select([exited], [], [], 0)[0], "hostd survived Web fixture teardown"
 
 
-def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(web):
-    p, port, key = web
+def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(http_server):
+    p, port, key = http_server
     for bad in ("/%E0", "/api/%E0"):
         r, _ = request(port, "GET", bad)
         assert r.status in (400, 401), bad
@@ -155,8 +161,8 @@ def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(
     assert home.getheader("x-content-type-options") == "nosniff"
 
 
-def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(web):
-    process, port, _ = web
+def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(http_server):
+    process, port, _ = http_server
     response, _ = request(port, "GET", "/")
     scripts = policy(response)["script-src"]
     assert "'wasm-unsafe-eval'" in scripts and "'unsafe-eval'" not in scripts
@@ -170,12 +176,12 @@ def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(web):
     assert response.getheader("content-type").split(";")[0] in {"text/javascript", "application/javascript"}
 
 
-def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
+def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(http_server):
     """/modules/ (a Card's Plotly figure or Vega-Lite chart) may be framed by the
     page alone, always runs sandboxed (an opaque origin: no cookie, no /api/),
     loads nothing (its script is inline; the page sends it the libraries) and
     connects nowhere; every other answer still forbids framing."""
-    p, port, key = web
+    p, port, key = http_server
     r, data = request(port, "GET", "/modules/viewer.html")
     assert r.status == 200
     scripts = Scripts()
@@ -253,8 +259,8 @@ def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(we
     assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
 
 
-def test_the_page_is_told_whether_host_folders_can_be_used(web):
-    _, port, key = web
+def test_the_page_is_told_whether_host_folders_can_be_used(http_server):
+    _, port, key = http_server
     r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
     assert r.status == 200
     assert json.loads(data)["hostFolders"] is (sys.platform != "darwin")
@@ -331,8 +337,8 @@ def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tm
     assert not (tmp_path / "bad-flow").exists()
 
 
-def test_api_csrf_and_input_validation(web):
-    _, port, key = web
+def test_api_csrf_and_input_validation(http_server):
+    _, port, key = http_server
     cookie = page_cookie(port, key)
     # POST without x-tsugumi header is rejected (blocks same-site cross-port CSRF).
     r, _ = request(port, "POST", "/api/page", {"Cookie": cookie, "Content-Type": "application/json"}, "{}")

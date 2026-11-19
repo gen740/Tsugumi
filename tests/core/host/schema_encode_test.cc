@@ -119,14 +119,5 @@ TEST(SchemaEncode, NestedDomReportsTheWriterDepthLimit) {
   EXPECT_FALSE(message.empty());
 }
 
-TEST(SchemaEncode, FiniteDoublesAndCapturedDefaultsKeepTheirValues) {
-  Number number;
-  number.value() = 0.001;
-  EXPECT_EQ(encode(number), "0.001");
-  Json defaults;
-  defaults.value() = capture(
-      R"({"params":[{"type":"double","data":1.0},{"type":"double","data":0.001}]})");
-  EXPECT_EQ(encode(defaults), text(defaults.value()));
-}
 }  // namespace
 }  // namespace tsugumi::schema

@@ -49,55 +49,21 @@ TEST_F(AgentProjectFixture,
   }
 }
 
-TEST_F(AgentProjectFixture, EditDecodeErrorsIdentifyTheFieldAndExpectedType) {
-  Write(directory.path / "project/definitions/data/_card.json",
-        R"({"template":"draft"})");
-  Write(
-      directory.path / "project/definitions/data/_meta.json",
-      R"({"description":"Decoding fixture","context":"Check edit field paths"})");
-  StartProject(
-      false,
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"data"}],"connections":[]}})");
+TEST_F(AgentProjectFixture, MalformedEditReportsTheFieldWithoutWriting) {
+  StartProject();
   const auto conversation = Conversation("edit-decode");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
-  struct Case {
-    std::string args, field, type;
-  };
-  int id = 0;
-  for (
-      const auto& test : std::vector<Case>{
-          {R"({"edits":{}})", "edits", "array"},
-          {R"({"edits":[null]})", "edits[0]", "object"},
-          {R"({"edits":[{"file_path":"tsugumi.json","selector":{}}]})",
-           "edits[0].selector", "array"},
-          {R"({"edits":[{"file_path":"tsugumi.json","selector":[null]}]})",
-           "edits[0].selector[0]", "object"},
-          {R"({"edits":[{"file_path":"tsugumi.json","selector":[{"match":[]}],"old_value":{"present":false},"new_value":{"present":false}}]})",
-           "tsugumi.json.selector[0].match", "object"},
-          {R"({"edits":[{"file_path":"tsugumi.json","selector":[],"old_value":[]}]})",
-           "edits[0].old_value", "object"},
-          {R"({"edits":[{"file_path":"tsugumi.json","selector":[],"old_value":{"present":false},"new_value":[]}]})",
-           "edits[0].new_value", "object"},
-          {R"({"edits":[{"file_path":"definitions/data/_card.json","old_string":"\"draft\"","new_string":"\"fork\""},{"file_path":"definitions/data/_card.json","old_string":"\"fork\"","new_string":"\"draft\""},{"file_path":"definitions/data/_card.json","old_string":"{\"template\":\"draft\"}","new_string":"{\"inputs\":[null]}"}]})",
-           "definitions/data/_card.json.inputs[0]", "object"},
-          {R"({"edits":[{"file_path":"definitions/data/_card.json","old_string":"{\"template\":\"draft\"}","new_string":"{\"params\":{}}"}]})",
-           "definitions/data/_card.json.params", "array"},
-          {R"({"edits":[{"file_path":"tsugumi.json","old_string":"{\"id\":\"data\"}","new_string":"null"}]})",
-           "tsugumi.json.canvas.cards[0]", "object"},
-          {R"({"edits":[{"file_path":"layout.json","old_string":"{}","new_string":"{\"cards\":[]}"}]})",
-           "cards", "object"}}) {
-    const auto reply = Tool(conversation, "project_edit", test.args,
-                            "decode-" + std::to_string(id++));
-    ASSERT_TRUE(reply.Code().empty()) << reply.Code();
-    EXPECT_TRUE(JsonBool(reply.View(), "/isError"));
-    const auto failure = JsonString(reply.View(), "/text");
-    // Field identity and expected type are the recovery data, not prose.
-    EXPECT_NE(failure.find(test.field), std::string::npos) << failure;
-    EXPECT_NE(failure.find(test.type), std::string::npos) << failure;
-    EXPECT_EQ(Read(directory.path / "project/definitions/data/_card.json"),
-              R"({"template":"draft"})");
-  }
+  const auto project = directory.path / "project/tsugumi.json";
+  const auto before = Read(project);
+  const auto reply =
+      Tool(conversation, "project_edit",
+           R"({"edits":[{"file_path":"tsugumi.json","selector":[null]}]})");
+  ASSERT_TRUE(reply.Code().empty());
+  EXPECT_TRUE(JsonBool(reply.View(), "/isError"));
+  const auto failure = JsonString(reply.View(), "/text");
+  EXPECT_NE(failure.find("edits[0].selector[0]"), std::string::npos) << failure;
+  EXPECT_EQ(Read(project), before);
 }
 
 TEST_F(AgentProjectFixture,

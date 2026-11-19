@@ -1,40 +1,31 @@
 import assert from 'node:assert/strict'
 import { AgentAppearance } from '../src/model/agentAppearance'
 
-const calls: unknown[] = []
-let stored = true
-const setting = new AgentAppearance(async (body) => {
-  calls.push(body)
-  if (body) stored = body.animateWork
-  return { animateWork: stored }
+const started = Promise.withResolvers<void>()
+const reply = Promise.withResolvers<{ animateWork: boolean }>()
+const requests: unknown[] = []
+let saveReplied = false
+const appearance = new AgentAppearance(async (body) => {
+  requests.push(body)
+  if (body) {
+    started.resolve()
+    const settings = await reply.promise
+    saveReplied = true
+    return settings
+  }
+  assert.ok(saveReplied, 'a focus refresh waits for the save reply')
+  return { animateWork: false }
 })
-assert.equal(setting.animateWork, true)
-await setting.setAnimateWork(false)
-assert.deepEqual(calls, [{ animateWork: false }])
-assert.equal(setting.animateWork, false)
-const other = new AgentAppearance(async () => ({ animateWork: stored }))
-await other.reload()
-assert.equal(other.animateWork, false, 'another UI reads the host value')
+const edit = appearance.setAnimateWork(false)
+await started.promise
+const refresh = appearance.reload()
+reply.resolve({ animateWork: false })
+await Promise.all([edit, refresh])
+assert.deepEqual(requests, [{ animateWork: false }, undefined])
+assert.equal(appearance.animateWork, false)
+assert.equal(appearance.error, undefined)
+
 const failed = new AgentAppearance(async () => { throw new Error('conflict') })
 await failed.setAnimateWork(false)
-assert.equal(failed.animateWork, true, 'failed save does not pretend to persist')
-assert.equal(failed.error, 'conflict')
-console.log('Agent appearance: passed')
-
-// A focus refresh waits for an in-flight edit, then reads the stored value.
-let finish: (() => void) | undefined
-let value = true
-const delayed = new AgentAppearance(async (body) => {
-  if (body) {
-    await new Promise<void>((done) => { finish = done })
-    value = body.animateWork
-  }
-  return { animateWork: value }
-})
-const edit = delayed.setAnimateWork(false)
-await Promise.resolve()
-const reload = delayed.reload()
-assert.ok(finish)
-finish()
-await Promise.all([edit, reload])
-assert.equal(delayed.animateWork, false)
+assert.equal(failed.animateWork, true, 'a rejected save leaves the current setting in place')
+assert.ok(failed.error)

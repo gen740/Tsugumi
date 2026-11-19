@@ -13,9 +13,14 @@ import TsugumiTestSupport
     let reply: CheckedContinuation<Tsugumi_RPC_SaveResultT, Error>
   }
 
-  private func session() throws -> (ProjectSession, URL) {
+  private func directory() throws -> URL {
     let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+  }
+
+  private func session() throws -> (ProjectSession, URL) {
+    let dir = try directory()
     try Data("{}".utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     session.prepareLayout = { _, layout, _ in layout }
@@ -44,6 +49,10 @@ import TsugumiTestSupport
     edit.newValue = Tsugumi_Host_ProjectValueT(); edit.newValue.present = true; edit.newValue.json = #""old""#
     let entry = Tsugumi_Host_ProjectEditT(); entry.value = Tsugumi_Host_ProjectEditValueUnion(edit, type: .projectfieldedit)
     inverse.edits = [entry]
+    return result(delta, inverse: inverse)
+  }
+
+  private func result(_ delta: Tsugumi_RPC_DocumentDeltaT, inverse: Tsugumi_Host_ProjectEditsT) -> Tsugumi_RPC_SaveResultT {
     var builder = FlatBufferBuilder(initialSize: 256)
     var object: Tsugumi_Host_ProjectEditsT? = inverse
     let offset = Tsugumi_Host_ProjectEdits.pack(&builder, obj: &object)
@@ -508,5 +517,231 @@ extension ProjectOperationTests {
       #expect(guards.last == "4")
       #expect(draft ? s.cardMeta("a")?["content"]?.string == "mine" : s.cardDefinition("a")?["params"]?.array?.first?["data"] == .number("3"))
     }
+  }
+}
+
+extension ProjectOperationTests {
+  @Test func aMarqueeMovesCardsNotesAndFramesInOneUndoStep() async throws {
+    let dir = try directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let initial = """
+      {"cards":{"a":{"x":0,"y":0},"b":{"x":3000,"y":0},"c":{"x":500,"y":2000}},
+       "notes":[{"id":"note","x":100,"y":300},{"id":"other","x":3000,"y":300}],
+       "displays":{"b":{"x":400,"y":400,"width":300,"height":200},"c":{"x":400,"y":400,"width":300,"height":200,"hidden":true}}}
+      """
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"template":"draft"}"#) }, layout: initial)
+    let marquee = CGRect(x: -100, y: -100, width: 1000, height: 1000)
+    let items = s.marqueeItems(marquee, in: [])
+    #expect(items.cards == ["a"] && items.notes == ["note"] && items.frames == ["b"])
+    let inverse = Tsugumi_Host_ProjectEditsT()
+    let old = try JSONValue.parse(initial)
+    var moved = old
+    moved["cards"]?["a"]?["x"] = .number("30")
+    var notes = try #require(moved["notes"]?.array)
+    notes[0]["x"] = .number("130")
+    moved["notes"] = .array(notes)
+    moved["displays"]?["b"]?["x"] = .number("430")
+    inverse.edits = [s.jsonEdit("layout.json", old: moved, new: old)]
+    s.operateProject = { request in
+      let reply = self.delta(s.rev, request.opId, "unused")
+      reply.projectJson = nil
+      if let move = request.body?.value as? Tsugumi_Host_ProjectMoveT {
+        #expect(move.cards == ["a"] && move.notes == ["note"] && move.frames == ["b"])
+        #expect(move.dx == 30 && move.dy == 0)
+        reply.layoutJson = moved.serialized()
+        return self.result(reply, inverse: inverse)
+      }
+      let undo = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+      let change = try #require(undo.edits.first??.value?.value as? Tsugumi_Host_ProjectJSONEditT)
+      #expect(change.filePath == "layout.json" && change.newValue.json == old.serialized())
+      reply.layoutJson = initial
+      return self.result(reply, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    await s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 0), snap: nil).value
+    #expect(s.position("a").x == 30 && s.displayRect("b").minX == 430)
+    #expect(s.note("note")?["x"]?.double == 130 && s.position("b").x == 3000)
+    #expect(s.undoStack.count == 1)
+    await s.undo()
+    #expect(s.layout == old && s.undoStack.isEmpty)
+
+    s.operateProject = { request in
+      let delete = try #require(request.body?.value as? Tsugumi_Host_ProjectSelectionT)
+      #expect(delete.action == .delete)
+      #expect(delete.cards == ["a"] && delete.notes == ["note"] && delete.frames == ["b"])
+      let d = self.delta(s.rev, request.opId, "unused")
+      d.projectJson = #"{"canvas":{"cards":[{"id":"b"},{"id":"c"}],"connections":[]}}"#
+      d.layoutJson = #"{"cards":{"b":{"x":3000,"y":0}},"displays":{"b":{"x":400,"y":400,"width":300,"height":200,"hidden":true}}}"#
+      d.definitionsRemoved = ["a"]
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    s.deleteSelection(cards: items.cards, notes: items.notes, frames: items.frames, in: [])
+    await s.save()
+    #expect(s.instance("a") == nil && s.note("note") == nil)
+    #expect(s.instance("b") != nil && s.displayFrame("b")?["hidden"]?.bool == true)
+
+    let tab = WorkflowTab(scope: [])
+    tab.selection = items.cards
+    tab.selectedNotes = items.notes
+    tab.selectedFrames = items.frames
+    tab.selection = ["b"]
+    #expect(tab.selectedNotes.isEmpty && tab.selectedFrames.isEmpty)
+    tab.selectedNotes = ["note"]
+    tab.enter(["another"])
+    #expect(!tab.hasSelection)
+  }
+
+  @Test func anAgentRenameKeepsTheCardResultFrameAndGroup() throws {
+    let dir = try directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let layout = #"{"cards":{"a":{"x":700,"y":500}},"displays":{"a":{"x":400,"y":300,"width":300,"height":200}},"groups":[{"id":"group","cards":["a","b"]}]}"#
+    let s = try offlineSession(dir, cards: [("a", #"{"language":"bash"}"#), ("b", #"{"template":"draft"}"#)], layout: layout)
+    let display = Tsugumi_Data_DisplayT()
+    display.card = cardPath(["a"])
+    display.runId = "run-a"; display.invocation = 1
+    let value = Tsugumi_Data_DisplayTextT(); value.text = "output"
+    display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytext)
+    s.applyDisplay(display)
+    let before = try #require(s.displays["a"]?.identity)
+    let renamed = delta(0, "rename", "unused")
+    renamed.projectJson = nil; renamed.origin = "agent"
+    let definition = Tsugumi_RPC_DefinitionT()
+    definition.id = "a"; definition.cardJson = #"{"language":"bash"}"#; definition.metaJson = #"{"name":"same name"}"#
+    let other = Tsugumi_RPC_DefinitionT()
+    other.id = "b"; other.cardJson = #"{"template":"draft"}"#; other.metaJson = definition.metaJson
+    renamed.definitionsUpsert = [definition, other]
+    let resolved = Tsugumi_RPC_ResolvedCardT()
+    resolved.card = cardPath(["a"])
+    renamed.resolution = [resolved]
+    s.applyDelta(renamed)
+    #expect(s.nodeData("a").title == s.nodeData("b").title)
+    #expect(s.displays["a"]?.identity == before && s.displays["b"] == nil)
+    #expect(s.displayFrame("a") != nil && s.displayFrame("b") == nil)
+    #expect(s.position("a") == CGPoint(x: 700, y: 500))
+    #expect(Set(s.groups(in: []).first?["cards"]?.array?.compactMap(\.string) ?? []) == ["a", "b"])
+  }
+
+  @Test func helpersSavesAreDrawnByTheirOwnBirds() throws {
+    let dir = try directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"language":"bash"}"#) })
+    s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
+    let saved = delta(0, "helper save", "unused")
+    saved.origin = "agent"; saved.projectJson = nil
+    saved.definitionsUpsert = ["b", "c"].map { id in
+      let definition = Tsugumi_RPC_DefinitionT()
+      definition.id = id; definition.cardJson = #"{"language":"bash","maxRuns":3}"#
+      return definition
+    }
+    s.applyDelta(saved)
+    let helper = try #require(s.helperPresences.first { $0.label == "second" })
+    let helperSave = AgentPresence.Beat.save([.init(card: "b", reveal: false)], [])
+    let mainSave = AgentPresence.Beat.save([.init(card: "c", reveal: false)], [])
+    #expect(helper.beats.contains { $0.beat == helperSave })
+    #expect(s.presence.beats.contains { $0.beat == mainSave })
+    #expect(!s.presence.beats.contains { $0.beat == helperSave })
+  }
+
+  @Test func commentEditsStayOnTheirCardAndReopeningClearsTheResolution() async throws {
+    let dir = try directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = try offlineSession(dir, cards: [("plan", #"{"template":"draft"}"#)])
+    s.referenceIdProvider = { _, _, _ in "comment" }
+    s.operateProject = { request in
+      let edits = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+      let edit = try #require(edits.edits.first??.value?.value as? Tsugumi_Host_ProjectJSONEditT)
+      #expect(edit.filePath == "definitions/plan/_meta.json")
+      let definition = Tsugumi_RPC_DefinitionT()
+      definition.id = "plan"; definition.cardJson = #"{"template":"draft"}"#; definition.metaJson = edit.newValue.json
+      let d = self.delta(s.rev, request.opId, "unused")
+      d.projectJson = nil; d.definitionsUpsert = [definition]
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    try await s.addComment("plan", "  \n ")
+    #expect(s.rev == 0)
+    try await s.addComment("plan", "  Check units  ")
+    #expect(s.cardsWithOpenComments(in: []) == ["plan"])
+    let comment = try #require(s.comments("plan").first)
+    #expect(comment.text == "Check units" && comment.author == "user")
+
+    let resolved = delta(s.rev, "agent", "unused")
+    resolved.projectJson = nil; resolved.origin = "agent"
+    let definition = Tsugumi_RPC_DefinitionT()
+    definition.id = "plan"; definition.cardJson = #"{"template":"draft"}"#
+    definition.metaJson = #"{"comments":[{"id":"comment","author":"user","text":"Check units","resolved":true,"stateBy":"agent","resolution":"Checked","cards":["a"]}]}"#
+    resolved.definitionsUpsert = [definition]
+    s.applyDelta(resolved)
+    #expect(s.openComments("plan").isEmpty)
+    s.edit { $0.setCommentText("plan", id: comment.id, text: "Check the axes") }
+    s.setCommentResolved("plan", id: comment.id, false)
+    await s.save()
+    let reopened = try #require(s.openComments("plan").first)
+    #expect(reopened.text == "Check the axes" && reopened.editedBy == "user" && reopened.stateBy == "user")
+    #expect(reopened.resolution == nil && reopened.cards.isEmpty)
+    s.removeComment("plan", id: comment.id)
+    await s.save()
+    #expect(s.comments("plan").isEmpty)
+  }
+
+  @Test func automaticAndExplicitCardPlacementReachTheHost() async throws {
+    let (s, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    s.cardIdProvider = { name, _ in name }
+    let here = CGPoint(x: 4000, y: 4000)
+    var placements: [Bool] = []
+    s.operateProject = { request in
+      let add = try #require(request.body?.value as? Tsugumi_Host_ProjectCreateCardT)
+      #expect(add.x == here.x && add.y == here.y && add.template == "draft")
+      placements.append(add.automaticPlacement)
+      let d = self.delta(s.rev, request.opId, "unused")
+      d.projectJson = nil
+      let x = add.automaticPlacement ? 50 : 4000
+      d.layoutJson = #"{"cards":{"\#(add.id)":{"x":\#(x),"y":4000}}}"#
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    let auto = try await s.addCard(template: .draft, in: [], at: here, name: "auto", automaticPlacement: true)
+    #expect(s.position(auto).x == 50)
+    let dropped = try await s.addCard(template: .draft, in: [], at: here, name: "drop")
+    #expect(s.position(dropped) == here)
+    #expect(placements == [true, false])
+  }
+}
+
+extension ProjectOperationTests {
+  @Test func deletingAWireEndWhileAllocatingAForkLeavesTheDeletionInPlace() async throws {
+    let dir = try directory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = try offlineSession(dir, cards: [
+      ("start", #"{"template":"trigger"}"#), ("a", #"{"language":"bash"}"#), ("b", #"{"language":"bash"}"#),
+    ])
+    let allocating = AsyncStream<Void>.makeStream()
+    let allocated = AsyncStream<String>.makeStream()
+    defer { allocating.continuation.finish(); allocated.continuation.finish() }
+    s.cardIdProvider = { _, _ in
+      allocating.continuation.yield(())
+      var ids = allocated.stream.makeAsyncIterator()
+      return try #require(await ids.next())
+    }
+    s.operateProject = { request in
+      if let connect = request.body?.value as? Tsugumi_Host_ProjectConnectT {
+        #expect(connect.toCard == "b" && connect.forkId == "fork-delayed")
+        #expect(s.instance("b") == nil)
+        throw RPCFailure(kind: .notFound, diagnostic: "")
+      }
+      let delete = try #require(request.body?.value as? Tsugumi_Host_ProjectSelectionT)
+      #expect(delete.action == .delete && delete.cards == ["b"])
+      let d = self.delta(s.rev, request.opId, "unused")
+      d.projectJson = #"{"canvas":{"cards":[{"id":"start"},{"id":"a"}],"connections":[]}}"#
+      d.definitionsRemoved = ["b"]
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    let connect = Task { try await s.connect(from: ("start", "out"), to: ("b", "in"), in: []) }
+    var starts = allocating.stream.makeAsyncIterator()
+    _ = await starts.next()
+    s.deleteCards(["b"], in: [])
+    await s.save()
+    allocated.continuation.yield("fork-delayed")
+    await #expect(throws: RPCFailure.self) { try await connect.value }
+    #expect(s.instance("b") == nil && s.instance("fork-delayed") == nil)
+    #expect(s.connections(in: []).isEmpty)
   }
 }

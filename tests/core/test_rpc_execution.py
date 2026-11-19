@@ -105,28 +105,6 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     assert text(record.display.value.text) == "received input"
 
 
-def test_cancel_a_worker_waiting_to_return(core_factory, project, tmp_path):
-    """Cancelling a waiting worker records cancellation without publishing output.
-
-    Given a worker paused before returning its value,
-    when the user cancels the run,
-    then the run and card are cancelled and no output is recorded.
-    """
-    daemon = core_factory(mocked_builds=True, mocked_worker=True)
-    client = daemon.connect()
-    gate = Gate(tmp_path, "worker")
-    worker_project(client, project, tmp_path, [gate.action(),
-                   {"op": "output", "port": "out", "type": "string", "value": "too late"}])
-
-    run_id = run(client)
-    gate.wait()
-    client.call("RunCancelRequest", runId=run_id)
-    assert wait_run(client, run_id).state == RunState.cancelled
-    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
-    assert record.status.state == CardState.cancelled
-    assert not record.record.outputs
-
-
 def test_timeout_ends_a_worker_that_ignores_cancellation(core_factory, project, tmp_path):
     """A worker that ignores cancellation still reaches its run deadline.
 

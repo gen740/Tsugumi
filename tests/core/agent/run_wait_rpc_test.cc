@@ -95,8 +95,8 @@ class AgentRunWaitFixture : public AgentProjectFixture {
   }
   auto Entered() -> void {
     const auto path = directory.path / "mock/run-wait.started";
-    if (!WaitForPath(path, [&] { return std::filesystem::exists(path); },
-                     project.Pid()))
+    if (!WaitForPath(
+            path, [&] { return std::filesystem::exists(path); }, project.Pid()))
       throw std::runtime_error("Project service exited: " +
                                Read(directory.path / "project.log"));
   }
@@ -104,10 +104,23 @@ class AgentRunWaitFixture : public AgentProjectFixture {
     Write(directory.path / "mock/run-wait.release", "ready");
   }
   auto ToolStarted(const std::string& conversation,
-                   const std::string& tool = "run_status") -> void {
-    // Agent tool history is queried via EventsRequest without a push event.
+                   std::string_view selector = "run_status",
+                   size_t required = 1) -> void {
+    // External tool starts are available through the event history.
     const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (Events(conversation).View().find(tool) == std::string::npos) {
+    while (true) {
+      const auto reply = Events(conversation);
+      const auto* events = reply.Value()->value_as_EventsPage()->events();
+      size_t started = 0;
+      if (events)
+        for (const auto* item : *events) {
+          const auto* event = item->event();
+          if (event->kind()->string_view() == "toolStarted" &&
+              ((event->name() && event->name()->string_view() == selector) ||
+               (event->id() && event->id()->string_view() == selector)))
+            ++started;
+        }
+      if (started >= required) return;
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("Wait tool did not start");
       std::this_thread::sleep_for(10ms);
@@ -180,26 +193,8 @@ TEST_F(AgentRunWaitFixture, ConcurrentWaitsLeaveNormalToolsAvailable) {
     waits.push_back(PendingStatus(conversation, run,
                                   "parallel-wait-" + std::to_string(i), id));
   }
-  // Wait until all four dedicated wait slots are occupied. The other two
-  // calls are queued, without consuming ordinary tool slots.
-  // Agent tool history is queried via EventsRequest without a push event.
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
-  while (true) {
-    const auto events = Events(conversation).View();
-    size_t count = 0, offset = 0;
-    while ((offset = events.find("toolStarted", offset)) != std::string::npos) {
-      ++count;
-      ++offset;
-    }
-    // The fixture itself also issued saves, inspect and run; only run_status
-    // external calls have these registered tool events besides run.
-    if (count >= 5) break;
-    if (std::chrono::steady_clock::now() >= deadline) {
-      Release();
-      FAIL() << "Concurrent waits did not start";
-    }
-    std::this_thread::sleep_for(10ms);
-  }
+  // Occupy the dedicated wait slots before invoking an ordinary tool.
+  ToolStarted(conversation, "run_status", 4);
   const auto other = Conversation("while-waiting");
   Grant(other);
   // Inspect replies through the normal RPC path while wait slots are occupied.
@@ -276,64 +271,39 @@ TEST_F(AgentRunWaitFixture, DisconnectingStopsAndUnregistersTheExternalWait) {
             "ended");
 }
 
-TEST_F(AgentRunWaitFixture, StatusReturnsEarlyWhenTheRunEnds) {
-  const auto conversation = Prepare();
-  const auto run = RunId(StartRun(conversation));
-  Entered();
-  auto pending = std::async(std::launch::async, [&] {
-    return Tool(conversation, "run_status", WaitArguments(run, 300));
-  });
-  ToolStarted(conversation);
-  Release();
-
-  const auto reply = pending.get();
-  ASSERT_TRUE(reply.Code().empty()) << reply.View();
-  const auto text = JsonString(reply.View(), "/text");
-  EXPECT_EQ(JsonString(text, "/value/state"), "failed");
-  EXPECT_FALSE(JsonBool(text, "/still_running"));
-  EXPECT_EQ(JsonString(text, "/wait_reason"), "ended");
-}
-
 TEST_F(AgentRunWaitFixture,
-       TimeoutReturnsCurrentStateAndZeroReturnsImmediately) {
-  const auto conversation = Prepare();
-  const auto run = RunId(StartRun(conversation));
-  Entered();
-  for (int seconds : {0, 1}) {
-    const auto reply =
-        Tool(conversation, "run_status", WaitArguments(run, seconds));
-    ASSERT_TRUE(reply.Code().empty()) << reply.View();
-    const auto text = JsonString(reply.View(), "/text");
-    EXPECT_EQ(JsonString(text, "/value/state"), "preparing");
-    if (seconds) {
-      EXPECT_TRUE(JsonBool(text, "/still_running"));
-      EXPECT_EQ(JsonString(text, "/wait_reason"), "timeout");
-    } else {
-      EXPECT_FALSE(::tsugumi::json::Object(text).contains("wait_reason"));
-    }
-  }
-  Release();
-}
-
-TEST_F(AgentRunWaitFixture, RunStartUsesTheSameWaitAndStopDoesNotCancelTheRun) {
+       StopInterruptsStartAndStatusWithoutCancellingTheRun) {
   const auto conversation = Prepare();
   auto pending = std::async(std::launch::async, [&] {
     return StartRun(conversation, 300, "start-wait");
   });
   Entered();
+  const auto current = Tool(conversation, "run_status", "{}", "get-active-run");
+  const auto status = JsonString(current.View(), "/text");
+  EXPECT_EQ(JsonString(status, "/value/state"), "preparing");
+  EXPECT_FALSE(::tsugumi::json::Object(status).contains("wait_reason"));
+  const auto run = JsonString(status, "/value/run_id");
+  auto status_wait = std::async(std::launch::async, [&] {
+    return Tool(conversation, "run_status", WaitArguments(run, 300),
+                "status-wait");
+  });
+  ToolStarted(conversation, "status-wait");
   ASSERT_TRUE(Stop(conversation).Code().empty());
 
   EXPECT_EQ(pending.get().Code(), "cancelled");
-  const auto current = Tool(conversation, "run_status", "{}");
-  EXPECT_EQ(JsonString(JsonString(current.View(), "/text"), "/value/state"),
-            "preparing");
+  EXPECT_EQ(status_wait.get().Code(), "cancelled");
+  const auto after_stop =
+      Tool(conversation, "run_status", WaitArguments(run, 0));
+  const auto status_after_stop = JsonString(after_stop.View(), "/text");
+  EXPECT_EQ(JsonString(status_after_stop, "/value/state"), "preparing");
+  EXPECT_FALSE(
+      ::tsugumi::json::Object(status_after_stop).contains("wait_reason"));
   Release();
   const auto recovered = StartRun(conversation, 300, "start-wait");
   ASSERT_TRUE(recovered.Code().empty()) << recovered.View();
   const auto recovered_text = JsonString(recovered.View(), "/text");
   EXPECT_EQ(JsonString(recovered_text, "/wait_reason"), "ended");
-  EXPECT_EQ(RunId(recovered),
-            JsonString(JsonString(current.View(), "/text"), "/value/run_id"));
+  EXPECT_EQ(RunId(recovered), run);
 }
 
 TEST_F(AgentRunWaitFixture,
@@ -345,25 +315,19 @@ TEST_F(AgentRunWaitFixture,
   EXPECT_TRUE(JsonBool(text, "/still_running"));
   EXPECT_EQ(JsonString(text, "/wait_reason"), "timeout");
   const auto run = RunId(started);
-  Release();
-  const auto ended = Tool(conversation, "run_status", WaitArguments(run, 300));
-  ASSERT_TRUE(ended.Code().empty()) << ended.View();
-  EXPECT_EQ(JsonString(JsonString(ended.View(), "/text"), "/wait_reason"),
-            "ended");
-}
-
-TEST_F(AgentRunWaitFixture, StoppingTheConversationInterruptsAStatusWait) {
-  const auto conversation = Prepare();
-  const auto run = RunId(StartRun(conversation));
   Entered();
   auto pending = std::async(std::launch::async, [&] {
-    return Tool(conversation, "run_status", WaitArguments(run, 300));
+    return Tool(conversation, "run_status", WaitArguments(run, 300),
+                "finish-wait");
   });
-  ToolStarted(conversation);
-  ASSERT_TRUE(Stop(conversation).Code().empty());
-
-  EXPECT_EQ(pending.get().Code(), "cancelled");
+  ToolStarted(conversation, "finish-wait");
   Release();
+  const auto ended = pending.get();
+  ASSERT_TRUE(ended.Code().empty()) << ended.View();
+  const auto final_status = JsonString(ended.View(), "/text");
+  EXPECT_EQ(JsonString(final_status, "/value/state"), "failed");
+  EXPECT_FALSE(JsonBool(final_status, "/still_running"));
+  EXPECT_EQ(JsonString(final_status, "/wait_reason"), "ended");
 }
 
 TEST_F(AgentRunWaitFixture, CoreExitEndsTheWaitWithAClearFailure) {
@@ -373,6 +337,7 @@ TEST_F(AgentRunWaitFixture, CoreExitEndsTheWaitWithAClearFailure) {
   auto pending = std::async(std::launch::async, [&] {
     return Tool(conversation, "run_status", WaitArguments(run, 300));
   });
+  ToolStarted(conversation);
   project.Stop(true);
 
   const auto reply = pending.get();

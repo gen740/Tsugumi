@@ -104,7 +104,7 @@ import TsugumiRPC
 }
 
 /// Failed status reads are retried once and preserve the last known connection.
-@MainActor @Test(.hostService) func guideAvailabilityRecoversWithoutPolling() async {
+@MainActor @Test func guideAvailabilityRecoversWithoutPolling() async {
   var reads = 0
   var failures = 1
   let guide = GuideController(availability: {
