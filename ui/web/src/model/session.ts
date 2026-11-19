@@ -2604,7 +2604,7 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'draft' | 'trigger' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'input_bool' | 'draft' | 'trigger' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
@@ -2613,13 +2613,13 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   ...visualizationTemplates,
   { id: 'marimo', label: L('marimo ノートブック') },
   { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') }, { id: 'input_bool', label: L('真偽値の入力') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : t === 'input_bool' ? KIND_ICON.input : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** The human name used when creating a Card; the core generates its identifier. */
-export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : t === 'input_bool' ? 'condition' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

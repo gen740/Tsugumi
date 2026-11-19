@@ -40,6 +40,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
+  case booleanInput = "input_bool"
   case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, merge, collect
   case report_rmarkdown, report_quarto
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
@@ -67,19 +68,24 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .csharp: return String(localized: "C# の処理")
     case .rust: return String(localized: "Rust の処理")
     case .input: return String(localized: "入力値")
+    case .booleanInput: return String(localized: "真偽値の入力")
     case .trigger: return String(localized: "開始")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
+  var symbol: String {
+    if self == .booleanInput { return CardKind.input.symbol }
+    return isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol
+  }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
     case .matplotlib, .plotly, .altair: return "visualization"
     case .python, .cpp, .go, .rust, .ruby, .csharp: return "card"
     case .trigger: return "start"
+    case .booleanInput: return "condition"
     default: return rawValue
     }
   }

@@ -1334,6 +1334,7 @@
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "相違あり" = "Changed";
 "省略可" = "Optional";
+"真偽値の入力" = "Boolean Input";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
 "破棄して再読込" = "Discard and Reload";
 "確定 revision" = "Confirmed revision";

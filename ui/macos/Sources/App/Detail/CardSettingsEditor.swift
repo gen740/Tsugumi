@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import InputTemplates
 import TsugumiAgentClient
 import TsugumiRPC
 
@@ -85,16 +86,29 @@ final class CardEditorModel {
     return ends
   }
 
+  var implementation: String {
+    let template = definition?["template"]?.string
+    if template == "input", definition?["params"]?.array?.first?["type"]?.string == "bool" {
+      return DefinitionTemplate.booleanInput.rawValue
+    }
+    return template ?? definition?["language"]?.string ?? "draft"
+  }
+
   func implementAs(_ value: String) {
-    if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
+    if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
+      do {
+        guard let files = try InputTemplates.load()[value],
+              let card = files["_card.json"], let outputs = files["_outputs.fbs"] else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        definition = try JSONValue.parse(card)
+        createFile("_outputs.fbs", text: outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card"))
+      } catch {
+        message = error.localizedDescription
+      }
+    } else if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
       definition = .object([("language", .string(value))])
     } else { definition = .object([("template", .string(value))]) }
-    if value == "input" {
-      definition?["params"] = .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])
-      if let outputsPath, !files.contains(outputsPath) {
-        createFile("_outputs.fbs", text: "namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-      }
-    }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
   }
 
@@ -620,8 +634,11 @@ private struct GeneralCategory: View {
       }
       if model.session.kind(model.cardKey) == .draft {
         Section {
-          Picker("種類", selection: Binding(get: { model.definition?["template"]?.string ?? model.definition?["language"]?.string ?? "draft" }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "trigger", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
+          Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
+            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input",
+                     DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "merge", "collect"], id: \.self) { value in
+              Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+            }
           }
         } header: { Text("Draft を手動で実装") }
           footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }

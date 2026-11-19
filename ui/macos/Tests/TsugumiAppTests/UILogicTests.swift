@@ -668,7 +668,7 @@ private final class CountingRuler: LineNumberRuler {
     return nil
   }
 
-  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair]
+  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair, .booleanInput]
   for template in templates {
     let (parent, index) = try #require(find(template.label, in: menu))
     parent.performActionForItem(at: index)
@@ -702,6 +702,15 @@ private final class CountingRuler: LineNumberRuler {
   #expect(editor.rebindings[output.id] == nil, "The output still needs an explicit choice")
   #expect(session.kind("plan") == .draft)
   #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
+
+  editor.implementAs(DefinitionTemplate.booleanInput.rawValue)
+  #expect(editor.kind == .input)
+  #expect(editor.implementation == DefinitionTemplate.booleanInput.rawValue)
+  let flag = try #require(editor.definition?["params"]?.array?.first)
+  #expect(flag["type"]?.string == "bool")
+  #expect(flag["data"]?.bool == false)
+  let schema = try #require(editor.texts["definitions/plan/_outputs.fbs"])
+  #expect(schema.contains("value:bool"))
 }
 
 

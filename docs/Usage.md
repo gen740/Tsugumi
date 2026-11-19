@@ -41,7 +41,7 @@ Choose **New Project** on Home and select a destination. A new folder is created
 
 ## Canvas tools
 
-Right-click the Canvas to add a Code Card, an Input, a Branch, a Merge or a Collect Card. A Boolean Input can feed the Branch’s `condition` port. Connect a value to the other input and use the Input’s toggle to try both paths. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
+Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its `value` output to a Branch’s `condition` input. Connect the value to route to the Branch’s other input and run with the toggle both ways. The timeline shows which branch ran. The same preset is available when implementing a Draft. [Card types and execution](features.md#2-cards-and-workflows)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 

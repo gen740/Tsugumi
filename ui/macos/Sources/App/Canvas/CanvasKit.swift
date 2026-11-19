@@ -1490,7 +1490,7 @@ struct ParamFieldView: View {
     HStack(spacing: 6 * z) {
       Text(param.name).font(.system(size: max(6, 10 * z))).foregroundStyle(.secondary).lineLimit(1)
       if param.type == "bool" {
-        Toggle("", isOn: Binding(get: { param.value == "true" }, set: { value in
+        Toggle(param.name, isOn: Binding(get: { param.value == "true" }, set: { value in
           edit.begin(param.value, rev: revision?(edit) ?? 0)
           text = value ? "true" : "false"
           editing = true

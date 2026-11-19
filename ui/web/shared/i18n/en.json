@@ -666,6 +666,7 @@
  "入力ポート": "Input ports",
  "入力ポートの名前": "Input port name",
  "入力値": "Input value",
+ "真偽値の入力": "Boolean Input",
  "入力待ち": "Waiting",
  "全 {0} 行のうち先頭 {1} 行": "The first {1} of {0} rows",
  "全 {0} 行・先頭 {1} 行のプレビュー（拡大して全行表示）": "A preview of the first {1} of {0} rows (enlarge to see them all)",

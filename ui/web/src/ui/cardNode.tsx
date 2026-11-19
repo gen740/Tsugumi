@@ -453,7 +453,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
       {param.type === 'bool' ? (
         <label className="cv-param-bool" title={editable ? undefined : L('実行中は変更できません')}
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
+          <input type="checkbox" aria-label={param.name} checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
             const value = e.target.checked ? 'true' : 'false'
             edit.begin(param.value, revision?.(edit) ?? 0n); setText(value); setEditing(true)
             void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })

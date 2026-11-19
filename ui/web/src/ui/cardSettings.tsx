@@ -3,6 +3,7 @@
 // "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
+import inputTemplates from '../../../shared/templates/input/Sources/InputTemplates/inputs.json'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
@@ -13,7 +14,7 @@ import { prefs } from '../model/prefs'
 import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str } from '../../shared/json'
 import { D, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -109,15 +110,20 @@ export class CardEditorModel extends Observable {
     return ends
   }
 
+  get implementation() {
+    const template = str(get(this.definition, 'template'))
+    if (template === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
+    return template ?? str(get(this.definition, 'language')) ?? 'draft'
+  }
+
   implementAs(value: string) {
-    if (value === 'draft') this.definition = obj([['template', 'draft']])
+    if (value === 'input' || value === 'input_bool') {
+      const files = inputTemplates[value]
+      this.definition = parse(files['_card.json'])
+      this.createFile('_outputs.fbs', files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card'))
+    } else if (value === 'draft') this.definition = obj([['template', 'draft']])
     else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
     else this.definition = obj([['template', value]])
-    if (value === 'input') {
-      this.setSetting('params', [obj([['name', 'value'], ['type', 'double'], ['data', new JNum('0')]])])
-      if (this.outputsPath && !this.files.includes(this.outputsPath))
-        this.createFile('_outputs.fbs', 'namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n')
-    }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
   }
@@ -724,8 +730,9 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
-        <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'trigger', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+        <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
         } /></Row>
       </Section>}
       {params.length > 0 && (

@@ -1,12 +1,12 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import TestRenderer from 'react-test-renderer'
-import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { L } from '../src/i18n'
 import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
 import { get, parse, serialize } from '../shared/json'
-import { CardNodeView } from '../src/ui/cardNode'
+import { CardNodeView, ParamFieldView } from '../src/ui/cardNode'
+import { CardEditorModel } from '../src/ui/cardSettings'
 
 const session = cardIds(new ProjectSession('/input-test', 'input-test', 'input-test'))
 session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections":[]}}')
@@ -14,20 +14,38 @@ session.layout = parse('{}')
 let operations = 0
 const operate = session.operateProject
 session.operateProject = async request => { operations++; return operate(request) }
-const card = await session.addCard('input', [], { x: 0, y: 0 }, 'calibrate')
-assert.ok(TEMPLATES.some(t => t.id === 'input'))
+const preset = TEMPLATES.find(t => t.id === 'input_bool')
+assert.ok(preset)
+const card = await session.addCard(preset.id, [], { x: 0, y: 0 }, 'calibrate')
+const branch = await session.addCard('branch', [], { x: 0, y: 100 })
 assert.equal(definitionKind(session.cardDefinition(card)), 'input')
-// A Boolean Input uses the same parameter and save flow as other Inputs.
-session.updateCard(card, c => {
-  c.set('params', parse('[{"name":"value","type":"bool","data":false}]'))
-})
-await session.save()
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
+await session.connect([card, 'value'], [branch, 'condition'], [])
+assert.ok(session.connections([]).some(wire =>
+  get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
+  get(wire, 'to', 'card') === branch && get(wire, 'to', 'port') === 'condition'))
 
 const before = operations
-await session.applyMutation(x => x.updateParam(card, 'value', true))
-await session.save()
-assert.equal(session.inlineParams(card)[0].value, 'true')
+let pending: Promise<void> | undefined
+const render = (editable: boolean) => <ParamFieldView param={session.inlineParams(card)[0]} editable={editable}
+  commit={value => {
+    pending = (async () => {
+      await session.applyMutation(x => x.updateParam(card, 'value', value === 'true'))
+      await session.save()
+    })()
+    return pending
+  }} />
+const view = TestRenderer.create(render(true))
+const checkbox = () => view.root.findByProps({ type: 'checkbox', 'aria-label': 'value' })
+assert.equal(checkbox().props.checked, false)
+checkbox().props.onChange({ target: { checked: true } })
+assert.ok(pending)
+await pending
+view.update(render(true))
+assert.equal(checkbox().props.checked, true)
+view.update(render(false))
+assert.equal(checkbox().props.disabled, true)
+view.unmount()
 assert.equal(operations, before + 1, 'Toggling submits one operation')
 const saved = parse(serialize(session.cardDefinition(card)!))
 assert.equal(get((get(saved, 'params') as any[])[0], 'data'), true, 'The saved value is a boolean')
@@ -36,11 +54,15 @@ assert.equal(session.inlineParams(card)[0].value, 'false')
 await session.redo()
 assert.equal(session.inlineParams(card)[0].value, 'true')
 
-const data = session.nodeData(card)
-const editable = renderToStaticMarkup(<CardNodeView data={data} flow="topToBottom" paramsEditable onParamCommit={() => {}} />)
-assert.match(editable, /type="checkbox"[^>]*checked=""/)
-const locked = renderToStaticMarkup(<CardNodeView data={data} flow="topToBottom" paramsEditable={false} onParamCommit={() => {}} />)
-assert.match(locked, /type="checkbox"[^>]*disabled=""/)
+const draft = await session.addCard('draft', [], { x: 100, y: 0 })
+const draftEditor = new CardEditorModel(session, draft)
+draftEditor.implementAs(preset.id)
+assert.equal(draftEditor.implementation, preset.id)
+assert.equal(await draftEditor.apply(), true)
+assert.deepEqual(session.inlineParams(draft), [{ name: 'value', type: 'bool', value: 'false' }])
+const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
+  .replace(/^namespace .*;\n/, ''))
+assert.equal(await outputSchema(draft), await outputSchema(card))
 
 // Routing ports shrink with the body. At 20%, the old 16px target covered the
 // start's title and the branch's centre, stealing a body drag to start a wire.
