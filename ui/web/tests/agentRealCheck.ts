@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
+import { CoreHost, RemoteAgent } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
 import { projectAccessNeededNow } from '../shared/agentShared'
 import { create } from 'react-test-renderer'
@@ -22,6 +22,7 @@ const original = { settings: CoreHost.prototype.getSettings, environment: CoreHo
   project: CoreHost.prototype.project, folder: CoreHost.prototype.projectFolder }
 let model = 'gpt-6.1-sol'
 let busy = false
+let scopedEvent = false
 const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
 const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', needed_now: false })
 const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', needed_now: false })
@@ -52,8 +53,18 @@ try {
         return snapshots(fields.conversation_id) as T
       }
       if (method === 'ConversationGetRequest') return snapshots(fields.conversation_id) as T
-      if (method === 'EventsRequest') return { events: [], next_seq: 0n, busy } as T
+      if (method === 'EventsRequest') {
+        if (scopedEvent) {
+          scopedEvent = false
+          return { events: [{ event: { kind: 'permission', id: 'scoped-id', asked: [] } }], next_seq: 1n, busy } as T
+        }
+        return { events: [], next_seq: 0n, busy } as T
+      }
       if (method === 'AccessListRequest') {
+        if (fields.request_id === 'scoped-id') {
+          assert.equal(fields.conversation_id, 'a')
+          return { requests: [{ state: 'pending', asked: ['scoped preview'] }] } as T
+        }
         assert.equal(fields.pending_only, true)
         if (fields.project_id) {
           if (fields.project_id === 'project-a' && fields.cursor === '0') {
@@ -87,6 +98,15 @@ try {
   assert.deepEqual(a.permission.asked, [asked, write, run])
   assert.ok(events.some(e => e.project === folders[0] && e.session === 'external' && e.event?.id === 'external-a'))
   assert.ok(!events.some(e => e.event?.id === 'unavailable-a'))
+  const remote = await new RemoteAgent(host!, 'a', folders[0]).open()
+  scopedEvent = true
+  try {
+    const permission = await new Promise((resolve, reject) => remote.observe(event => {
+      if (event.kind === 'error') reject(new Error(event.message))
+      else if (event.kind === 'permission') resolve(event)
+    }))
+    assert.deepEqual(permission, { kind: 'permission', id: 'scoped-id', state: 'pending', asked: ['scoped preview'] })
+  } finally { remote.close() }
   assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
   await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,

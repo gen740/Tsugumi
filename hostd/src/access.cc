@@ -505,9 +505,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
             "FROM permission_requests WHERE (?1='' OR conversation=?1) "
             "AND (?2='' OR id=?2) "
             "AND (?3='' OR project=?3 OR project IN (SELECT id FROM folders "
-            "WHERE project=?3) "
-            "OR conversation IN (SELECT conversation FROM "
-            "conversation_locations WHERE project=?3)) "
+            "WHERE project=?3)) "
             "AND (NOT ?4 OR state='pending') AND (?5=0 OR rowid<=?5) "
             "AND (?6 OR access<>?7) ORDER BY rowid DESC");
         q.bind(1, id)
