@@ -756,6 +756,8 @@ final class ProjectSession {
     externalDocuments = [:]
     externals = [:]
     derivedLayouts = [:]
+    for task in layoutTasks.values { task.cancel() }
+    layoutTasks = [:]
     applySources(s.sources.compactMap { $0 }, removed: [])
     refreshDerivedLayout()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
@@ -1559,17 +1561,12 @@ final class ProjectSession {
   func waitForPlacement(_ k: CardKey) async -> Bool {
     let scope = Array(path(k).dropLast())
     while true {
-      let externals = externalsTask
-      if !scope.isEmpty {
-        await externals?.value
-        if externals != externalsTask { continue }
-      }
       guard let prefix = projectPrefix(scope), instance(k) != nil else { return false }
       let saved = layout(of: scope)["cards"]?[layoutKey(k)]
       if saved?["x"]?.double != nil, saved?["y"]?.double != nil { return true }
       let layout = layoutTasks[prefix]
       await layout?.value
-      if layout != layoutTasks[prefix] || (!scope.isEmpty && externals != externalsTask) { continue }
+      if layout != layoutTasks[prefix] { continue }
       return projectPrefix(scope) == prefix && instance(k) != nil &&
         derivedLayouts[prefix]?["cards"]?[layoutKey(k)] != nil
     }
@@ -1622,7 +1619,10 @@ final class ProjectSession {
     }
     let previous = externals
     externals = found
-    for prefix in previous.keys where found[prefix] == nil { derivedLayouts[prefix] = nil }
+    for prefix in previous.keys where found[prefix] == nil {
+      derivedLayouts[prefix] = nil
+      layoutTasks.removeValue(forKey: prefix)?.cancel()
+    }
     for (prefix, next) in found where previous[prefix] != next {
       refreshDerivedLayout(prefix: prefix)
     }

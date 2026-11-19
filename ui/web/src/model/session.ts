@@ -858,6 +858,7 @@ export class ProjectSession extends Observable {
     this.externalDocuments.clear()
     this.externals.clear()
     this.derivedLayouts.clear()
+    this.layoutTasks.clear()
     this.applySources(snap.sources, [])
     this.refreshDerivedLayout()
     this.applyResolution(snap.resolution, snap.diagnostics)
@@ -1536,18 +1537,13 @@ export class ProjectSession extends Observable {
   async waitForPlacement(k: CardKey): Promise<boolean> {
     const scope = path(k).slice(0, -1)
     while (true) {
-      const externals = this.externalsTask
-      if (scope.length) {
-        await externals
-        if (externals !== this.externalsTask) continue
-      }
       const prefix = this.projectPrefix(scope)
       if (prefix === undefined || !this.instance(k)) return false
       const saved = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
       if (dbl(get(saved, 'x')) !== undefined && dbl(get(saved, 'y')) !== undefined) return true
       const layout = this.layoutTasks.get(prefix)
       await layout
-      if (layout !== this.layoutTasks.get(prefix) || (scope.length && externals !== this.externalsTask)) continue
+      if (layout !== this.layoutTasks.get(prefix)) continue
       return this.projectPrefix(scope) === prefix && this.instance(k) !== undefined &&
         get(this.derivedLayouts.get(prefix), 'cards', this.layoutKey(k)) !== undefined
     }
@@ -1603,7 +1599,10 @@ export class ProjectSession extends Observable {
     }
     const previous = this.externals
     this.externals = found
-    for (const prefix of previous.keys()) if (!found.has(prefix)) this.derivedLayouts.delete(prefix)
+    for (const prefix of previous.keys()) if (!found.has(prefix)) {
+      this.derivedLayouts.delete(prefix)
+      this.layoutTasks.delete(prefix)
+    }
     for (const [prefix, next] of found) {
       const old = previous.get(prefix)
       if (!old || !jeq(old.project, next.project) || !jeq(old.layout, next.layout) ||
