@@ -694,6 +694,9 @@ table LogRangeRequest {
   tail:bool = null (id: 5);
   /// Maximum number of bytes to read.
   limit_bytes:uint32 = null (id: 6);
+  /// Read up to limit_bytes immediately before this exclusive byte offset.
+  /// Cannot be combined with tail or a nonzero offset.
+  before:uint64 = null (id: 7);
 }
 
 /// -> Ack. Replaces the subscription's Display targets. enabled = true.
@@ -1093,6 +1096,10 @@ table LogSlice {
   truncated:bool = null (id: 5);
   /// The invocation omitted log output at this combined limit, in bytes.
   log_truncated_at_bytes:uint64 = null (id: 6);
+  /// One plus the number of LF bytes before offset in this stream.
+  line_number:uint64 = 1 (id: 7);
+  /// Offset is zero or the previous byte is LF.
+  starts_line:bool = true (id: 8);
 }
 
 table ViewSaveResult {

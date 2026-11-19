@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <functional>
@@ -306,7 +307,9 @@ CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
-  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL, data BLOB NOT NULL);
+  run_off INTEGER NOT NULL, card_off INTEGER NOT NULL, inv_off INTEGER NOT NULL,
+  run_lf INTEGER NOT NULL, card_lf INTEGER NOT NULL, inv_lf INTEGER NOT NULL,
+  lf_count INTEGER NOT NULL, data BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS )SQL" +
          p + R"SQL(logs_run ON logs(run_id, stream, run_off);
 CREATE INDEX IF NOT EXISTS )SQL" +
@@ -326,9 +329,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-// Includes partial-run provenance, portable run commits and File content
-// digests.
-constexpr int kHistoryVersion = 13;
+constexpr int kHistoryVersion = 14;
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string fault)
@@ -901,40 +902,55 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
     if (with_card) st.bind(i++, ck);
     if (with_inv) st.bind(i++, invocation);
     st.bind(i++, s);
-    uint64_t v = st.step() && !st.is_null(0) ? st.u64(0) : 0;
-    log_ends_[k] = v;
-    return v;
+    return st.step() ? LogPosition{st.u64(0), st.u64(1)} : LogPosition{};
   };
-  uint64_t r0 = load(rk,
-                     "SELECT MAX(run_off + length(data)) FROM logs WHERE "
-                     "run_id=? AND stream=?",
-                     false, false);
-  uint64_t c0 = load(kk,
-                     "SELECT MAX(card_off + length(data)) FROM logs WHERE "
-                     "run_id=? AND card=? AND stream=?",
-                     true, false);
-  uint64_t i0 = load(ik,
-                     "SELECT MAX(inv_off + length(data)) FROM logs WHERE "
-                     "run_id=? AND card=? AND invocation=? AND stream=?",
-                     true, true);
+  auto r0 = load(rk,
+                 "SELECT run_off + length(data), run_lf + lf_count FROM logs "
+                 "WHERE run_id=? AND stream=? ORDER BY run_off DESC LIMIT 1",
+                 false, false);
+  LogPosition c0, i0;
+  if (!card.empty()) {
+    c0 = load(kk,
+              "SELECT card_off + length(data), card_lf + lf_count FROM logs "
+              "WHERE run_id=? AND card=? AND stream=? "
+              "ORDER BY card_off DESC LIMIT 1",
+              true, false);
+    i0 = load(ik,
+              "SELECT inv_off + length(data), inv_lf + lf_count FROM logs "
+              "WHERE run_id=? AND card=? AND invocation=? AND stream=? "
+              "ORDER BY inv_off DESC LIMIT 1",
+              true, true);
+  }
+  const auto lf_count =
+      static_cast<uint64_t>(std::count(text.begin(), text.end(), '\n'));
   db.prepare(
         "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
-        "card_off, inv_off, data) "
-        "VALUES(?,?,?,?,?,?,?,?)")
+        "card_off, inv_off, run_lf, card_lf, inv_lf, lf_count, data) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
       .bind(1, run_id)
       .bind(2, ck)
       .bind(3, invocation)
       .bind(4, s)
-      .bind(5, r0)
-      .bind(6, c0)
-      .bind(7, i0)
-      .bind_blob(8, text)
+      .bind(5, r0.offset)
+      .bind(6, c0.offset)
+      .bind(7, i0.offset)
+      .bind(8, r0.newlines)
+      .bind(9, c0.newlines)
+      .bind(10, i0.newlines)
+      .bind(11, lf_count)
+      .bind_blob(12, text)
       .run();
-  log_ends_[rk] = r0 + text.size();
-  log_ends_[kk] = c0 + text.size();
-  log_ends_[ik] = i0 + text.size();
-  return {{run_id, std::nullopt, std::nullopt, stream, r0 + text.size()},
-          {run_id, card, invocation, stream, i0 + text.size()}};
+  auto advance = [&](const std::string& k, LogPosition start) {
+    log_ends_[k] = {start.offset + text.size(), start.newlines + lf_count};
+    return start.offset + text.size();
+  };
+  std::vector<LogEnd> ends{
+      {run_id, std::nullopt, std::nullopt, stream, advance(rk, r0)}};
+  if (!card.empty()) {
+    advance(kk, c0);
+    ends.push_back({run_id, card, invocation, stream, advance(ik, i0)});
+  }
+  return ends;
 }
 
 auto History::mark_log_truncated(sql::Db& db, const std::string& run_id,
@@ -948,38 +964,6 @@ auto History::mark_log_truncated(sql::Db& db, const std::string& run_id,
       .bind(3, invocation)
       .bind(4, limit_bytes)
       .run();
-}
-
-std::vector<LogEnd> History::append_run_journal(sql::Db& db,
-                                                const std::string& run_id,
-                                                const std::string& text) {
-  int s = static_cast<int>(LogStream::journal);
-  std::string rk = "R|" + run_id + "|" + std::to_string(s);
-  auto it = log_ends_.find(rk);
-  uint64_t r0;
-  if (it != log_ends_.end()) {
-    r0 = it->second;
-  } else {
-    auto st = db.prepare(
-        "SELECT MAX(run_off + length(data)) FROM logs WHERE "
-        "run_id=? AND stream=?");
-    st.bind(1, run_id).bind(2, s);
-    r0 = st.step() && !st.is_null(0) ? st.u64(0) : 0;
-  }
-  db.prepare(
-        "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
-        "card_off, inv_off, data) "
-        "VALUES(?,?,?,?,?,0,0,?)")
-      .bind(1, run_id)
-      .bind(2, "")
-      .bind(3, 0)
-      .bind(4, s)
-      .bind(5, r0)
-      .bind_blob(6, text)
-      .run();
-  log_ends_[rk] = r0 + text.size();
-  return {{run_id, std::nullopt, std::nullopt, LogStream::journal,
-           r0 + text.size()}};
 }
 
 std::optional<RunSummaryData> History::run(sql::Db& db,
@@ -1476,9 +1460,11 @@ std::vector<std::string> History::unfinished_runs(sql::Db& db) {
 LogRead History::read_log(sql::Db& db, const std::string& run_id,
                           const std::optional<CardPath>& card,
                           std::optional<uint64_t> invocation, LogStream stream,
-                          uint64_t offset, bool tail, uint64_t limit) {
+                          uint64_t offset, bool tail, uint64_t limit,
+                          std::optional<uint64_t> before) {
   int s = static_cast<int>(stream);
   const char* col = !card ? "run_off" : (invocation ? "inv_off" : "card_off");
+  const char* lf_col = !card ? "run_lf" : (invocation ? "inv_lf" : "card_lf");
   std::string where = "run_id=?1 AND stream=?2";
   if (card) where += " AND card=?3";
   if (card && invocation) where += " AND invocation=?4";
@@ -1499,29 +1485,34 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     out.exists = st.step();
     if (out.exists) out.size = st.u64(0);
   }
-  if (tail)
-    offset = out.size > limit ? out.size - limit : 0;
-  else if (offset > out.size)
+  const uint64_t edge = tail ? out.size : before.value_or(offset);
+  if (edge > out.size)
     throw Failed(FailureKind::invalid_range,
                  "offset is past the end of the log");
-  uint64_t end = std::min(
-      out.size, offset + limit + 4);  // a few extra bytes to find boundaries
+  if (tail || before) offset = edge > limit ? edge - limit : 0;
+  const uint64_t stop_at =
+      (tail || before) ? edge : std::min(out.size, offset + limit);
+  // Include the preceding byte to identify line starts, and the next byte
+  // to check the exclusive end's UTF-8 boundary.
+  const uint64_t scan_from = offset == 0 ? 0 : offset - 1;
+  const uint64_t scan_end = std::min(out.size, stop_at + 1);
   std::string buf;
   uint64_t buf_start = offset;
   {
-    auto st = db.prepare(std::string("SELECT ") + col +
-                         ", data FROM logs WHERE " + where + " AND " + col +
+    auto st = db.prepare(std::string("SELECT ") + col + ", data, " + lf_col +
+                         " FROM logs WHERE " + where + " AND " + col +
                          " >= (SELECT " + col + " FROM logs WHERE " + where +
                          " AND " + col + " <= ?5 ORDER BY " + col +
                          " DESC LIMIT 1) AND " + col + " < ?6 ORDER BY " + col);
     bind(st);
-    st.bind(5, offset).bind(6, end);
+    st.bind(5, scan_from).bind(6, scan_end);
     bool first = true;
     while (st.step()) {
       uint64_t o = st.u64(0);
       std::string d = st.blob(1);
       if (first) {
         buf_start = o;
+        out.line_number += st.u64(2);
         first = false;
       }
       buf += d;
@@ -1531,24 +1522,29 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     if (pos < buf_start || pos - buf_start >= buf.size()) return -1;
     return static_cast<unsigned char>(buf[pos - buf_start]);
   };
-  if (tail) {
-    while (offset < out.size && at(offset) >= 0 &&
-           !char_start(static_cast<unsigned char>(at(offset))))
-      ++offset;
-  } else if (offset < out.size && at(offset) >= 0 &&
-             !char_start(static_cast<unsigned char>(at(offset)))) {
-    throw Failed(FailureKind::invalid_range,
-                 "offset is not on a UTF-8 character boundary");
+  auto inside_character = [&](uint64_t pos) {
+    const auto byte = at(pos);
+    return byte >= 0 && !char_start(static_cast<unsigned char>(byte));
+  };
+  uint64_t stop = stop_at;
+  if (tail || before) {
+    while (offset < stop && inside_character(offset)) ++offset;
+    if (before && inside_character(stop))
+      throw Failed(FailureKind::invalid_range,
+                   "before is not on a UTF-8 character boundary");
+  } else {
+    if (inside_character(offset))
+      throw Failed(FailureKind::invalid_range,
+                   "offset is not on a UTF-8 character boundary");
+    while (stop > offset && inside_character(stop)) --stop;
   }
-  uint64_t stop = std::min(out.size, offset + limit);
-  while (stop > offset && stop < out.size && at(stop) >= 0 &&
-         !char_start(static_cast<unsigned char>(at(stop))))
-    --stop;
-  if (offset >= buf_start && stop >= offset && buf.size() >= stop - buf_start)
-    out.text = buf.substr(offset - buf_start, stop - offset);
+  const auto prefix = offset - buf_start;
+  out.line_number += std::count(buf.begin(), buf.begin() + prefix, '\n');
+  out.starts_line = offset == 0 || at(offset - 1) == '\n';
+  out.text = buf.substr(prefix, stop - offset);
   out.offset = offset;
-  out.next_offset = offset + out.text.size();
-  out.truncated = (tail && offset > 0) || out.next_offset < out.size;
+  out.next_offset = stop;
+  out.truncated = ((tail || before) && offset > 0) || stop < out.size;
   return out;
 }
 

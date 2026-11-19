@@ -435,7 +435,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::string run = run_id_;
     svc_.history().submit(
         [&h = svc_.history(), line, run, ends](sql::Db& db) {
-          *ends = h.append_run_journal(db, run, line);
+          *ends = h.append_log(db, run, {}, 0, LogStream::journal, line);
         },
         [self = shared_from_this(), ends](bool ok) {
           if (!ok) self->persistence_lost("journal");

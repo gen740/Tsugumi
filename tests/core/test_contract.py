@@ -447,8 +447,8 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
 def test_card_log_ui_page_sizes(project, core_factory):
     tail_limit = 1 << 20
     forward_limit = 256 << 10
-    prefix, end = "日本", "\nend\n"
-    fill = tail_limit - len(prefix.encode())
+    prefix, end = "first\n日本", "\nend\n"
+    fill = tail_limit - len("日本".encode())
     expected = prefix.encode() + b"x" * fill + end.encode()
     client = core_factory(mocked_builds=True).connect()
     body = f"""
@@ -469,6 +469,7 @@ def test_card_log_ui_page_sizes(project, core_factory):
     assert tail.text == expected[tail.offset:]
     assert tail.nextOffset == tail.sizeBytes == len(expected)
     assert tail.truncated
+    assert tail.lineNumber == 2 and not tail.startsLine
 
     offset = tail.nextOffset - forward_limit
     forward = client.call("LogRangeRequest", **args, offset=offset, limitBytes=forward_limit)
@@ -476,6 +477,28 @@ def test_card_log_ui_page_sizes(project, core_factory):
     assert forward.text == expected[offset:]
     assert forward.nextOffset == forward.sizeBytes == len(expected)
     assert not forward.truncated
+    assert forward.lineNumber == 2 and not forward.startsLine
+
+    # Rebuild the tail in reverse pages. A nominal start inside 日 must
+    # leave that character in the preceding page without duplicating bytes.
+    before = tail.offset
+    reverse = client.call("LogRangeRequest", **args, before=before, limitBytes=5)
+    assert reverse.text == "本".encode()
+    assert reverse.nextOffset == before
+    assert reverse.lineNumber == 2 and not reverse.startsLine
+    start = client.call("LogRangeRequest", **args, before=reverse.offset, limitBytes=16)
+    assert start.offset == 0 and start.nextOffset == reverse.offset
+    assert start.lineNumber == 1 and start.startsLine
+    assert start.text + reverse.text + tail.text == expected
+
+    for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
+        last = client.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output,
+                           offset=len(expected) - len(b"end\n"), **scope)
+        assert last.lineNumber == 3 and last.startsLine and last.text == b"end\n"
+
+    with pytest.raises(RpcFailure) as e:
+        client.call("LogRangeRequest", **args, before=reverse.offset - 1, limitBytes=16)
+    assert e.value.kind == "invalid_range"
 
 
 def test_run_logs_and_display(project, tmp_path, core_factory):

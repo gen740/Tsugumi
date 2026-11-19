@@ -1015,6 +1015,10 @@ void Service::log_range(RequestIn& req) {
         "stream must be standard_output, standard_error, build or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);
+  const auto before = r->before();
+  if (before && (tail || offset != 0))
+    throw Failed(FailureKind::invalid_request,
+                 "before cannot be combined with tail or offset");
   if (tail && offset != 0)
     throw Failed(FailureKind::invalid_request,
                  "tail and offset cannot be combined");
@@ -1029,7 +1033,7 @@ void Service::log_range(RequestIn& req) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     return history_->read_log(db, run_id, card, inv, stream, offset, tail,
-                              limit);
+                              limit, before);
   });
   FBB b(slice.text.size() + 512);
   auto t = b.CreateString(slice.text);
@@ -1038,6 +1042,8 @@ void Service::log_range(RequestIn& req) {
   lb.add_offset(slice.offset);
   lb.add_next_offset(slice.next_offset);
   lb.add_size_bytes(slice.size);
+  lb.add_line_number(slice.line_number);
+  lb.add_starts_line(slice.starts_line);
   lb.add_exists(slice.exists);
   lb.add_truncated(slice.truncated);
   if (slice.log_truncated_at_bytes)
