@@ -219,20 +219,22 @@ class Service : public RequestSink {
   void store_failure_receipt(const std::string& op_id, const std::string& kind,
                              const std::string& digest, const FailureData& f);
 
-  std::string snapshot_reply(uint64_t request_id, const Document& doc,
-                             const std::optional<std::string>& view_id,
-                             bool open, const std::string& sub_id);
-  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
-      flatbuffers::FlatBufferBuilder& b, const Document& doc,
-      const std::optional<std::string>& view_id);
-  void publish_delta(const Delta& delta, size_t notification_bytes);
-  void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
-  RunStatusData current_run_status();
-
   struct ViewRecord {
     uint64_t rev = 0;
     std::string view;
   };
+  std::string snapshot_reply(uint64_t request_id, const Document& doc,
+                             const std::optional<std::string>& view_id,
+                             bool open, const std::string& sub_id,
+                             const ViewRecord* view = nullptr);
+  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
+      flatbuffers::FlatBufferBuilder& b, const Document& doc,
+      const std::optional<std::string>& view_id, const ViewRecord* view);
+  void check_snapshot(const Document& doc);
+  void publish_delta(const Delta& delta, size_t notification_bytes);
+  void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
+  RunStatusData current_run_status();
+
   std::optional<ViewRecord> load_view(const std::string& view_id);
 
   ServiceOptions opts_;

@@ -40,6 +40,9 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr size_t kMaxViewBytes = 1u << 20;
+const std::string kExampleId = "00000000-0000-0000-0000-000000000000";
+
 const std::map<std::string, std::string>& digest_defaults() {
   static const std::map<std::string, std::string> d = {
       {"Tsugumi.RPC.ProjectValidateRequest.mode", "2"},
@@ -273,6 +276,7 @@ void Service::open() {
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
+  check_snapshot(*store_->current());
   const auto roots = opts_.gcroots_dir.empty()
                          ? store_->state_dir() / "cache" / "gcroots"
                          : opts_.gcroots_dir;
@@ -1104,7 +1108,8 @@ RunStatusData Service::current_run_status() {
 }
 
 flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
-    FBB& b, const Document& doc, const std::optional<std::string>& view_id) {
+    FBB& b, const Document& doc, const std::optional<std::string>& view_id,
+    const ViewRecord* record) {
   std::vector<flatbuffers::Offset<R::Definition>> defs;
   for (const auto& [id, d] : doc.definitions)
     defs.push_back(wire::definition(b, id, d));
@@ -1138,9 +1143,9 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   std::optional<uint64_t> vrev;
   if (view_id) {
     vid = b.CreateString(*view_id);
-    if (auto rec = load_view(*view_id)) {
-      view = b.CreateString(rec->view);
-      vrev = rec->rev;
+    if (record) {
+      view = b.CreateString(record->view);
+      vrev = record->rev;
     } else {
       vrev = 0;
     }
@@ -1167,9 +1172,10 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
 
 std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
                                     const std::optional<std::string>& view_id,
-                                    bool open, const std::string& sub_id) {
+                                    bool open, const std::string& sub_id,
+                                    const ViewRecord* view) {
   FBB b(1 << 16);
-  auto snap = snapshot(b, doc, view_id);
+  auto snap = snapshot(b, doc, view_id, view);
   std::string out;
   if (open) {
     auto r = R::CreateOpenResult(b, snap, b.CreateString(sub_id), uint64_t(1));
@@ -1180,6 +1186,13 @@ std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
   }
   check_frame(out.size(), "the snapshot");
   return out;
+}
+
+void Service::check_snapshot(const Document& doc) {
+  // The open envelope is larger than inspect and a view can grow independently
+  // of the document. Reserve the full view payload allowed by ViewSave.
+  static const ViewRecord largest_view{1, std::string(kMaxViewBytes, ' ')};
+  snapshot_reply(1, doc, kExampleId, true, kExampleId, &largest_view);
 }
 
 namespace {
@@ -1272,12 +1285,12 @@ auto Service::prepare_save_reply(
   check_frame(operation_reply(1, &receipt, false).size(), "the save receipt");
   size_t notification_bytes = 0;
   if (delta) {
+    check_snapshot(*delta->doc);
     // Match ProjectOpen's subscription id width and the notification encoder.
-    const std::string subscription = "00000000-0000-0000-0000-000000000000";
     FBB note;
     auto [type, value] = doc_notification(note, *delta);
     notification_bytes =
-        Server::notification(note, subscription, 2, type, value).size();
+        Server::notification(note, kExampleId, 2, type, value).size();
     check_frame(notification_bytes, "the document notification");
   }
   return {std::move(receipt), notification_bytes};
@@ -1320,7 +1333,9 @@ void Service::open_project(RequestIn& req) {
   // the subscription becoming active, and the reply is queued before any later
   // notification.
   auto doc = store_->current();
-  std::string bytes = snapshot_reply(req.request_id, *doc, view_id, true, sub);
+  const auto view = view_id ? load_view(*view_id) : std::nullopt;
+  std::string bytes = snapshot_reply(req.request_id, *doc, view_id, true, sub,
+                                     view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
     subscriptions_[req.conn] = sub;
@@ -2355,7 +2370,7 @@ void Service::view_save(RequestIn& req) {
   if (!r->base_view_rev())
     throw Failed(FailureKind::invalid_request, "base_view_rev is required");
   const auto view = r->view_json()->str();
-  if (view.size() > 1024 * 1024)
+  if (view.size() > kMaxViewBytes)
     throw Failed(FailureKind::resource_limit, "view exceeds 1 MiB");
   // Validate JSON syntax only; scope, selection and camera belong to clients.
   schema::Json opaque;

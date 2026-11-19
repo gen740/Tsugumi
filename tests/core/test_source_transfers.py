@@ -50,6 +50,63 @@ def test_oversized_save_reply_leaves_transferred_document_unwritten(project, cor
     assert (project / path).read_bytes() == source.read_bytes()
 
 
+def test_accumulating_saves_leave_the_snapshot_openable(project, core_factory):
+    setup(project)
+    # Long paths consume frame space without counting towards the JSON budget.
+    folder = project / "definitions/data"
+    for _ in range(7):
+        folder /= "d" * 100
+    folder.mkdir(parents=True)
+    for i in range(9400):
+        (folder / (f"{i:04}" + "f" * 96)).touch()
+    daemon = core_factory()
+    client = daemon.connect()
+    before = client.call("ProjectInspectRequest")
+    view_id = new_id()
+    view = "{}" + " " * ((1 << 20) - 2)
+    client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=view)
+    rev = before.rev
+    for i in range(2):
+        saved = client.call(
+            "ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test",
+            changes=[change("PutSource", path=f"externals/{i}/layout.json",
+                            bytes=b"{}" + b" " * ((3 << 20) - 2))])
+        rev = saved.rev
+    path = "externals/last/layout.json"
+    with pytest.raises(RpcFailure) as error:
+        client.call(
+            "ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test",
+            changes=[change("PutSource", path=path,
+                            bytes=b"{}" + b" " * ((7 << 18) - 2))])
+    assert error.value.kind == "resource_limit"
+    assert not (project / path).exists()
+    daemon.restart()
+    reopened = daemon.connect()
+    assert reopened.call("ProjectInspectRequest").rev == rev
+    snapshot = reopened.call("ProjectOpenRequest", viewId=view_id).snapshot
+    assert snapshot.rev == rev and text(snapshot.viewJson) == view
+
+
+def test_reload_stops_at_the_document_budget_and_identifies_the_path(project, core_factory):
+    daemon = core_factory()
+    client = daemon.connect()
+    before = client.call("ProjectInspectRequest")
+    for name in ("a", "b", "c"):
+        path = project / f"externals/{name}/layout.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}" + " " * ((3 << 20) - 2))
+    with pytest.raises(RpcFailure) as error:
+        client.call("ProjectReloadRequest", baseRev=before.rev,
+                    opId=new_id(), origin="test")
+    assert error.value.kind == "resource_limit"
+    assert "externals/c/layout.json" in str(error.value)
+    assert client.call("ProjectInspectRequest").rev == before.rev
+    daemon.stop()
+    daemon.start(expect_exit=True)
+    assert daemon.proc.returncode != 0
+    assert "externals/c/layout.json" in daemon.diagnostics()
+
+
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()

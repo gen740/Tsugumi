@@ -421,15 +421,26 @@ std::string execution_fingerprint(const Document& doc) {
 
 std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   auto doc = std::make_shared<Document>();
+  size_t remaining = kMaxDocumentJsonBytes;
+  const auto consume = [&](const std::string& path, size_t bytes) {
+    if (bytes > remaining)
+      throw DocumentError(
+          "resource_limit",
+          path + " exceeds the remaining 8 MiB document JSON budget",
+          {{"path", path}});
+    remaining -= bytes;
+  };
   auto project_text = fs::read_file(root / "tsugumi.json");
   if (!project_text)
     throw DocumentError("invalid_document", "tsugumi.json is missing");
+  consume("tsugumi.json", project_text->size());
   doc->project = parse_project_json(*project_text);
   doc->project_json = *project_text;
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
 
   auto layout_text = fs::read_file(root / "layout.json");
   doc->layout_json = layout_text ? *layout_text : kEmptyLayout;
+  consume("layout.json", doc->layout_json.size());
   if (layout_text)
     doc->disk_hashes["layout.json"] = crypto::sha256_hex(*layout_text);
 
@@ -446,16 +457,17 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       if (!card_text)
         throw DocumentError("invalid_document",
                             "definitions/" + id + " needs _card.json");
+      const auto prefix = "definitions/" + id + '/';
+      consume(prefix + "_card.json", card_text->size());
       DefinitionDoc d;
       d.card = parse_card_json(id, *card_text);
       d.card_json = *card_text;
-      doc->disk_hashes["definitions/" + id + "/_card.json"] =
-          crypto::sha256_hex(*card_text);
+      doc->disk_hashes[prefix + "_card.json"] = crypto::sha256_hex(*card_text);
       if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
+        consume(prefix + "_meta.json", meta->size());
         check_meta_json(*meta);
         d.meta_json = *meta;
-        doc->disk_hashes["definitions/" + id + "/_meta.json"] =
-            crypto::sha256_hex(*meta);
+        doc->disk_hashes[prefix + "_meta.json"] = crypto::sha256_hex(*meta);
       }
       doc->definitions.emplace(id, std::move(d));
     }
@@ -473,9 +485,10 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       if (!Document::is_source_area(rel)) continue;
       if (Document::is_external_document_file(rel)) {
         std::string bytes;
-        fs::stream_beneath(
-            root, rel, kMaxDocumentJsonBytes,
-            [&](std::string_view chunk) { bytes.append(chunk); });
+        fs::stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) {
+          consume(rel, chunk.size());
+          bytes.append(chunk);
+        });
         doc->sources.emplace(rel,
                              external_document_source(rel, std::move(bytes)));
         continue;
@@ -487,7 +500,6 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       doc->sources[rel] = SourceEntry{hash.finish_hex(), size};
     }
   }
-  doc->check_document_size();
   check_structure(*doc);
   doc->execution_fingerprint = execution_fingerprint(*doc);
   return doc;
