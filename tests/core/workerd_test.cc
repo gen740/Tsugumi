@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <thread>
 
@@ -248,22 +249,34 @@ auto journal_test(const stdfs::path& root) -> void {
   j.release(result_job, fingerprint);
   expect(!stdfs::exists(j.job_path(result_job) / "work"),
          "release retained result workspace");
-  // A crash after fsync of the last chunk but before publication must be
-  // repairable by retransmitting that same chunk.
+  // An acknowledged prefix can be replayed after reopening. A crash after
+  // writing the tail but before syncing or publishing it must leave the blob
+  // invisible until the tail is replayed and the whole blob verified.
   const std::string interrupted_upload(64, '8');
   auto partial = chunk("prefixsuffix");
   auto prefix = partial;
   prefix.bytes.resize(6);
   j.put(interrupted_upload, prefix, core);
-  fs::write_atomic(j.job_path(interrupted_upload) / "parts" / partial.digest,
-                   "prefixsuffix", 0600);
+  reopened.put(interrupted_upload, prefix, core);
+  {
+    std::ofstream tail(j.job_path(interrupted_upload) / "parts" / partial.digest,
+                       std::ios::app);
+    tail << "suffix";
+  }
   auto suffix = partial;
   suffix.offset = 6;
   suffix.bytes.erase(suffix.bytes.begin(), suffix.bytes.begin() + 6);
-  j.put(interrupted_upload, suffix, core);
   R::GetBlobRequestT repaired;
   repaired.digest = partial.digest;
-  expect(j.get(interrupted_upload, repaired, core).bytes == partial.bytes,
+  rejected([&] { reopened.get(interrupted_upload, repaired, core); });
+  const auto interrupted_spec = spec(partial.digest);
+  rejected([&] {
+    reopened.submit(interrupted_upload, interrupted_spec,
+                    *parse_spec(interrupted_spec), core);
+  });
+  reopened.put(interrupted_upload, suffix, core);
+  expect(Journal(root / "a").get(interrupted_upload, repaired, core).bytes ==
+             partial.bytes,
          "last-chunk retry did not publish the blob");
   // A crashed release leaves the tombstone before payload deletion; recovery
   // completes it. No run data are promoted into the persistent store.

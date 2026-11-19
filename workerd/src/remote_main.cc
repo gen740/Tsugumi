@@ -317,8 +317,8 @@ class Daemon {
       auto* q = m->payload.AsRequest();
       if (!q) throw Error(R::ErrorCode::Invalid, "expected a request");
       auto response = encode(handle(*q));
-      stream.Write(length_prefix(static_cast<uint32_t>(response.size())));
-      stream.Write(response);
+      stream.Write(length_prefix(static_cast<uint32_t>(response.size())) +
+                   response);
     } catch (const Error& e) {
       auto bytes = encode(failure(e.code, e.what()));
       stream.Write(length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
