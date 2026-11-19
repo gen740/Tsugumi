@@ -58,9 +58,17 @@ longLine.apply(longLine.request('tail')!, slice(a.length * 4, b, 1, false))
 const oldAnchor = new LogHeights(longLine.blocks, new Map(), 20).anchor(13)!
 longLine.follow(false)
 longLine.apply(longLine.request('earlier')!, slice(0, a, 1, true, (a.length + b.length) * 4))
-const measured = new Map([[longLine.blocks[0], 900]])
-assert.equal(new LogHeights(longLine.blocks, measured, 20).position(oldAnchor), 913)
-assert.deepEqual(longLine.blocks.map((block) => block.first), [1, 1])
+const earlierRows = longLine.blocks.filter((block) => block.lines[0].startsWith('a'))
+const measured = new Map(earlierRows.map((block) => [block, 900]))
+assert.equal(new LogHeights(longLine.blocks, measured, 20).position(oldAnchor), 900 * earlierRows.length + 13)
+assert.ok(longLine.blocks.every((block) => block.first === 1))
+
+// Crossing the same terminal cells with a differently sized page preserves
+// the fragment containing an absolute position.
+const overlap = new LogWindow('terminal')
+overlap.apply(overlap.request('tail')!, slice((a.length + 3000) * 4, b.slice(3000), 1, false))
+const stable = overlap.blocks[1]
+assert.deepEqual(stable, longLine.blocks.find((block) => block.key === stable.key))
 
 // Exercise the request offsets as a user traverses a 128 MiB stream with
 // no line delimiters. Holding the stream itself in the test is unnecessary.
