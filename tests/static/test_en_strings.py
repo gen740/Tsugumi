@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "ui/shared/i18n/strings.py"
 GENERATOR = runpy.run_path(str(TOOL))
 ARGUMENT = GENERATOR["ARGUMENT"]
-SPEC = re.compile(r"%%|%(?:(\d+)\$)?((?:ll|l|h)?[@dDuUxXoOfeEgGcCsSpaA])")
+SPEC = re.compile(r"%(?:(\d+)\$)?((?:ll|l|h)?[@dDuUxXoOfeEgGcCsSpaA])")
+MAC_TOKEN = re.compile(rf"%%|{SPEC.pattern}")
 
 
 def unique_keys(pairs):
@@ -18,7 +19,7 @@ def unique_keys(pairs):
 
 
 def specifiers(text):
-    arguments = (match.groups() for match in SPEC.finditer(text) if match[2])
+    arguments = (match.groups() for match in MAC_TOKEN.finditer(text) if match[2])
     return {
         (int(position) if position else index, kind)
         for index, (position, kind) in enumerate(arguments, 1)
