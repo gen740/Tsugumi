@@ -22,11 +22,9 @@ def test_app_packaging_selects_the_prebuilt_guest(tmp_path, flags):
     (tmp_path / "VERSION").write_bytes((ROOT / "VERSION").read_bytes())
     shell = r"""
         nix() { printf '%s\n' "$@"; exit 42; }
-        script=$1
-        shift
-        source "$script"
+        source "$0"
     """
-    result = subprocess.run(["bash", "-c", shell, "fixture", str(script), *flags],
+    result = subprocess.run(["bash", "-c", shell, str(script), *flags],
                             cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 42, result.stderr
     assert result.stdout.splitlines() == ["run", ".#guest-image", "--", *flags]
@@ -72,10 +70,6 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
 def test_the_core_test_package_gets_every_fixture_its_build_installs():
     """The core test manifests install fixtures from tests/fixtures; one that
     nix/core-tests.nix does not list fails only in the Nix build."""
-    import re
-import subprocess
-
-import pytest
     manifests = [ROOT / "tests/core/CMakeLists.txt", *sorted((ROOT / "tests/core/cmake").rglob("*.cmake"))]
     wanted = set(re.findall(r"fixtures/([A-Za-z0-9_.-]+\.json)", "\n".join(path.read_text() for path in manifests)))
     listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
