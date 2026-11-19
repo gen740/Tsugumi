@@ -1548,22 +1548,51 @@ final class ProjectSession {
   func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   private(set) var derivedLayouts: [String: JSONValue] = [:]
+  @ObservationIgnored private var layoutTasks: [String: Task<Void, Never>] = [:]
 
   @discardableResult
   func refreshDerivedLayout(prefix: String = "") -> Task<Void, Never> {
     let graph = prefix.isEmpty ? confirmedProject : externals[prefix]?.project ?? .object([])
     let saved = prefix.isEmpty ? confirmedLayout : externals[prefix]?.layout ?? .object([])
     let definitions = prefix.isEmpty ? confirmedDefinitionDrafts : externals[prefix]?.definitions ?? [:]
-    return Task {
+    layoutTasks[prefix]?.cancel()
+    let task = Task {
       do {
         let text = try await prepareLayout(graph.serialized(), saved.serialized(),
           definitions.filter { $0.value.link == nil }.mapValues { $0.card.serialized() })
         let currentGraph = prefix.isEmpty ? confirmedProject : externals[prefix]?.project ?? .object([])
         let currentLayout = prefix.isEmpty ? confirmedLayout : externals[prefix]?.layout ?? .object([])
         let currentDefinitions = prefix.isEmpty ? confirmedDefinitionDrafts : externals[prefix]?.definitions ?? [:]
-        guard graph == currentGraph, saved == currentLayout, definitions == currentDefinitions else { return }
+        guard !Task.isCancelled, graph == currentGraph, saved == currentLayout,
+          definitions == currentDefinitions else { return }
         derivedLayouts[prefix] = try JSONValue.parse(text)
-      } catch { notice = String(describing: error) }
+      } catch {
+        guard !Task.isCancelled else { return }
+        derivedLayouts[prefix] = nil
+        notice = String(describing: error)
+      }
+    }
+    layoutTasks[prefix] = task
+    return task
+  }
+
+  /// Waits for the placement inputs currently shown in this scope.
+  func waitForPlacement(_ k: CardKey) async -> Bool {
+    let scope = Array(path(k).dropLast())
+    while true {
+      let externals = externalsTask
+      if !scope.isEmpty {
+        await externals?.value
+        if externals != externalsTask { continue }
+      }
+      guard let prefix = projectPrefix(scope), instance(k) != nil else { return false }
+      let saved = layout(of: scope)["cards"]?[layoutKey(k)]
+      if saved?["x"]?.double != nil, saved?["y"]?.double != nil { return true }
+      let layout = layoutTasks[prefix]
+      await layout?.value
+      if layout != layoutTasks[prefix] || (!scope.isEmpty && externals != externalsTask) { continue }
+      return projectPrefix(scope) == prefix && instance(k) != nil &&
+        derivedLayouts[prefix]?["cards"]?[layoutKey(k)] != nil
     }
   }
 

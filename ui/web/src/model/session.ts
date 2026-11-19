@@ -1534,21 +1534,50 @@ export class ProjectSession extends Observable {
   }
 
   derivedLayouts = new Map<string, J>()
+  private layoutTasks = new Map<string, Promise<void>>()
 
   refreshDerivedLayout(prefix = '') {
     const graph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
     const saved = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
     const definitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
-    return this.layoutHost.complete(serialize(graph), serialize(saved),
+    const task = this.layoutHost.complete(serialize(graph), serialize(saved),
       Object.fromEntries([...definitions].filter(([, d]) => d.link === undefined).map(([id, d]) => [id, serialize(d.card)])))
       .then(text => {
         const currentGraph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
         const currentLayout = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
         const currentDefinitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
-        if (!jeq(graph, currentGraph) || !jeq(saved, currentLayout) || !mapEq(definitions, currentDefinitions, defEq)) return
+        if (this.layoutTasks.get(prefix) !== task || !jeq(graph, currentGraph) || !jeq(saved, currentLayout) || !mapEq(definitions, currentDefinitions, defEq)) return
         this.derivedLayouts.set(prefix, parse(text))
         this.changed()
-      }).catch(error => { this.notice = errorText(error); this.changed() })
+      }).catch(error => {
+        if (this.layoutTasks.get(prefix) !== task) return
+        this.derivedLayouts.delete(prefix)
+        this.notice = errorText(error)
+        this.changed()
+      })
+    this.layoutTasks.set(prefix, task)
+    return task
+  }
+
+  /** Waits for the placement inputs currently shown in this scope. */
+  async waitForPlacement(k: CardKey): Promise<boolean> {
+    const scope = path(k).slice(0, -1)
+    while (true) {
+      const externals = this.externalsTask
+      if (scope.length) {
+        await externals
+        if (externals !== this.externalsTask) continue
+      }
+      const prefix = this.projectPrefix(scope)
+      if (prefix === undefined || !this.instance(k)) return false
+      const saved = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
+      if (dbl(get(saved, 'x')) !== undefined && dbl(get(saved, 'y')) !== undefined) return true
+      const layout = this.layoutTasks.get(prefix)
+      await layout
+      if (layout !== this.layoutTasks.get(prefix) || (scope.length && externals !== this.externalsTask)) continue
+      return this.projectPrefix(scope) === prefix && this.instance(k) !== undefined &&
+        get(this.derivedLayouts.get(prefix), 'cards', this.layoutKey(k)) !== undefined
+    }
   }
 
   position(k: CardKey): { x: number; y: number } {
