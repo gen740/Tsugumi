@@ -528,6 +528,7 @@ int run_shell(const std::string& bash, const std::vector<std::string>& args,
   for (const auto& a : args) argv.push_back(a.c_str());
   argv.push_back(nullptr);
   pid_t pid = ::fork();
+  if (pid < 0) return -1;
   if (pid == 0) {
     ::setpgid(0, 0);
     ::signal(SIGPIPE, SIG_DFL);

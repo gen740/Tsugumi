@@ -232,7 +232,15 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     });
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
+  flatbuffers::Verifier call_verifier(
+      reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
+  if (!W::VerifyWorkerMessageBuffer(call_verifier))
+    throw std::runtime_error("invalid WorkerCall frame");
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();
+  if (!call || !call->card() || !call->card()->segments() || !call->inputs() ||
+      !call->outputs() || !call->run_id() || !call->params() ||
+      !call->params()->schema_bfbs() || !call->environment())
+    throw std::runtime_error("incomplete WorkerCall message");
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
