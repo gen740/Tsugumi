@@ -29,7 +29,7 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
 # Repository-only generators and their template inputs are already represented
 # by the generated host catalog. Lock helpers remain part of the authoring SDK.
 rm -rf "$stage/tsugumi/sdk/go/template" "$stage/tsugumi/sdk/rust/template"
-rm "$stage/tsugumi/sdk/codegen/"scaffold_*.py "$stage/tsugumi/sdk/rust/src/lib.rs" \
+rm "$stage/tsugumi/sdk/codegen/scaffold.py" \
   "$stage/tsugumi/hostd/agent/Shared/generate.py" "$stage/tsugumi/hostd/agent/Shared/mcp-transport.md"
 find "$stage" -type f -name README.md -delete
 # The source distribution builds the CLI only; repository checks, documentation

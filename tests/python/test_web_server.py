@@ -329,3 +329,28 @@ def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tm
     status, result = create("bad-flow", "sideways")
     assert status == 400 and result["code"] == "invalid_flow"
     assert not (tmp_path / "bad-flow").exists()
+
+
+def test_api_csrf_and_input_validation(web, tmp_path):
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    # POST without x-tsugumi header is rejected (blocks same-site cross-port CSRF).
+    r, _ = request(port, "POST", "/api/page", {"Cookie": cookie, "Content-Type": "application/json"}, "{}")
+    assert r.status == 403
+    # Cross-origin Origin header is rejected even with cookie + x-tsugumi.
+    r, _ = request(port, "POST", "/api/page",
+                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json", "Origin": "http://127.0.0.1:9999"}, "{}")
+    assert r.status == 403
+    # Non-JSON Content-Type is rejected.
+    r, _ = request(port, "POST", "/api/page",
+                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "text/plain"}, "{}")
+    assert r.status == 415
+    # Malformed JSON returns 400 rather than 500.
+    r, _ = request(port, "POST", "/api/page",
+                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"}, "{not-json")
+    assert r.status == 400
+    # /api/reveal rejects paths not in recent projects.
+    r, _ = request(port, "POST", "/api/reveal",
+                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"},
+                   json.dumps({"path": str(tmp_path)}))
+    assert r.status == 403

@@ -29,8 +29,16 @@ class BrowserClient {
     connection_.Start([callback](Error error) { callback(ErrorValue(error)); });
   }
   auto Call(val bytes, unsigned timeout_ms, val callback) -> void {
+    const auto length = bytes["byteLength"].isUndefined()
+                            ? bytes["length"].as<size_t>()
+                            : bytes["byteLength"].as<size_t>();
+    Bytes buffer(length);
+    if (length > 0) {
+      val heap = val(emscripten::typed_memory_view(length, buffer.data()));
+      heap.call<void>("set", bytes);
+    }
     connection_.CallFrame(
-        emscripten::convertJSArrayToNumberVector<uint8_t>(bytes),
+        std::move(buffer),
         [callback](Result result) {
           callback(ErrorValue(result.error), CopyBytes(result.bytes));
         },
