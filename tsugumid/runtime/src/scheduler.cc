@@ -831,21 +831,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Resolve worker kind and system before any Card or source evaluation.
     prepared = svc_.prepare_execution(
         node, invocation_dir(node, work.invocation), request);
-    const auto check_reused_plan = [&](const CardBuildPlan& plan) {
-      try {
-        enforce_implementation_limit(plan.implementations.size(),
-                                     max_implementations);
-      } catch (const NixImplementationLimit& error) {
-        throw batch_limit(node, error.what());
-      }
-    };
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
         rt.build_target->system == request.target.system) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
-      check_reused_plan(*rt.build);
+      try {
+        enforce_implementation_limit(rt.build->implementations.size(),
+                                     max_implementations);
+      } catch (const NixImplementationLimit& error) {
+        throw batch_limit(node, error.what());
+      }
       if (!rt.build->implementations.empty()) {
         card_status(s, true);
         journal("prepare", "started", node.path, s.invocation,
@@ -858,20 +855,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     workerd::InvocationLog pending_budget(kInvocationLogLimitBytes);
     std::vector<std::string> pending_logs;
     bool published = false;
-    const auto publish = [&] {
-      published = true;
-      card_status(s, true);
-      {
-        std::lock_guard lock(log_policy_mu_);
-        log_budget(node.path, s.invocation) = std::move(pending_budget);
-        for (const auto& line : pending_logs)
-          record_card_log(node.path, s.invocation, LogStream::build, line);
-        if (log_budget(node.path, s.invocation).truncated())
-          mark_card_log_truncated(node.path, s.invocation);
-      }
+    const auto flush_evaluation_log = [&] {
+      std::lock_guard lock(log_policy_mu_);
+      auto& budget = log_budget(node.path, s.invocation);
+      budget = std::move(pending_budget);
+      for (const auto& line : pending_logs)
+        record_card_log(node.path, s.invocation, LogStream::build, line);
+      if (budget.truncated()) mark_card_log_truncated(node.path, s.invocation);
       pending_logs.clear();
-      journal("prepare", "started", node.path, s.invocation,
-              "invocation started");
     };
     const auto trace_phase = [&](const StageTimeData& stage, int64_t end) {
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
@@ -891,17 +882,20 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (published) card_status(s);
     };
     request.on_plan = [&](uint32_t implementations) {
-      if (implementations != 0) {
-        publish();
-        for (const auto& stage : s.stages)
-          if (stage.end) trace_phase(stage, *stage.end);
-      }
+      if (implementations == 0) return;
+      published = true;
+      card_status(s, true);
+      flush_evaluation_log();
+      journal("prepare", "started", node.path, s.invocation,
+              "invocation started");
+      for (const auto& stage : s.stages)
+        if (stage.end) trace_phase(stage, *stage.end);
     };
     set_state(RunState::preparing);
     try {
       rt.build = svc_.nix().build(request);
     } catch (...) {
-      if (!published) publish();
+      if (!published) flush_evaluation_log();
       throw;
     }
     rt.build_target = request.target;
