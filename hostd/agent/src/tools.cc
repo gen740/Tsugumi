@@ -701,9 +701,38 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   return json::Encode(envelope);
 }
 
-auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
-                         const std::string& revision,
-                         const std::string& authorization)
+// The helper can carry data from its own narrowed projection through the
+// current context. Other resources keep their ordinary grant checks.
+auto Tools::ToolResources(const std::string& conversation,
+                          const HelperScope* boundary)
+    -> std::vector<std::string> {
+  auto resources = conversations->Resources(conversation);
+  if (boundary && boundary->authorization()) {
+    std::erase_if(resources, [&](const auto& resource) {
+      return boundary->authorization()->Matches(resource, conversation);
+    });
+  }
+  return resources;
+}
+
+auto Tools::RequireProjectAccess(
+    const std::string& project, const std::string& conversation,
+    Tsugumi::Service::Access access, bool wait, std::stop_token stop,
+    const std::string& reason,
+    const std::optional<host::TurnAuthorization>& authorization) -> void {
+  if (!authorization) {
+    access_service.Require(project, conversation, access, wait, stop, reason);
+  } else if (access > Tsugumi::Service::Access::Run ||
+             !authorization->Matches(project, conversation)) {
+    throw Failure("permission_denied",
+                  "The turn does not authorize this project access");
+  }
+}
+
+auto Tools::HelperReader(
+    const std::string& conversation, std::stop_token stop,
+    const std::string& revision,
+    const std::optional<host::TurnAuthorization>& authorization)
     -> HelperScope::Reader {
   std::string project;
   {
@@ -713,9 +742,8 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   auto cache = std::make_shared<std::map<std::string, std::string>>();
   return [this, project, conversation, stop, revision, authorization,
           cache](const std::string& path) {
-    access_service.Require(project, conversation,
-                           Tsugumi::Service::Access::Read, true, stop,
-                           "Read helper Card context", authorization);
+    RequireProjectAccess(project, conversation, Tsugumi::Service::Access::Read,
+                         true, stop, "Read helper Card context", authorization);
     if (const auto found = cache->find(path); found != cache->end())
       return found->second;
     json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"}};
@@ -879,7 +907,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     for (const auto& message : saved) {
       for (const auto& block : message.content) {
         if (block.type != "tool_result" || block.id != wanted) continue;
-        access_service.AuthorizeContext(conversation, {message});
+        access_service.AuthorizeContext({message});
         const auto offset = json::UInt(json::Get(args, "offset"),
                                        json::UInt(json::Text(args, "offset")));
         if (offset > block.text.size())
@@ -963,8 +991,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (boundary) RequireHelperPermission(*boundary);
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
     if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
-    const auto policy =
-        host_settings->AllowUnscopedHelpers();
+    const auto policy = host_settings->AllowUnscopedHelpers();
     std::set<std::string> names;
     for (const auto& task : tasks) {
       const auto spec = json::Object(task);
@@ -1026,7 +1053,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
           std::launch::async,
           [this, conversation, id = call.id, i, task = tasks[i], stop,
            authorization =
-               boundary ? boundary->authorization() : std::string{}] {
+               boundary ? boundary->authorization() : std::nullopt] {
             return dependencies.run_helper(conversation, id, i, task, stop,
                                            authorization);
           }));
@@ -1037,7 +1064,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     return {json::Encode(results),
             false,
             {},
-            conversations->Resources(conversation)};
+            ToolResources(conversation, boundary)};
   }
   const auto* spec = catalog.Find(call.name);
   if (!spec) throw Failure("not_found", "Unknown tool");
@@ -1045,9 +1072,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
     throw Failure("invalid_request",
                   "Select a project before using project tools");
   const auto authorization =
-      boundary ? boundary->authorization() : std::string{};
-  access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
-                         wait, stop, "Read project content", authorization);
+      boundary ? boundary->authorization() : std::nullopt;
+  RequireProjectAccess(project, conversation, Tsugumi::Service::Access::Read,
+                       wait, stop, "Read project content", authorization);
   if (boundary) {
     RequireHelperPermission(*boundary);
     std::string revision = json::Get(args, "base_rev", "");
@@ -1096,13 +1123,12 @@ auto Tools::ExecuteTool(const std::string& conversation,
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
   if (changes_project || call.name == "project_shell")
-    access_service.Require(project, conversation,
-                           Tsugumi::Service::Access::Write, wait, stop,
-                           "Change project content", authorization);
+    RequireProjectAccess(project, conversation, Tsugumi::Service::Access::Write,
+                         wait, stop, "Change project content", authorization);
   if (execution)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Run,
-                           wait, stop, "Execute or cancel project work",
-                           authorization);
+    RequireProjectAccess(project, conversation, Tsugumi::Service::Access::Run,
+                         wait, stop, "Execute or cancel project work",
+                         authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
   if (call.name == "project_shell") {
@@ -1121,7 +1147,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
               "添付フォルダと構造文書は読み取り専用です。コマンド: ";
     access_service.Require(project, conversation,
                            Tsugumi::Service::Access::Shell, wait, stop,
-                           reason + json::Text(args, "command"), {});
+                           reason + json::Text(args, "command"));
   }
   std::string folder_resource;
   if (call.name == "attached_folder_read" ||
@@ -1140,7 +1166,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     }
     access_service.Require(folder_resource, conversation,
                            Tsugumi::Service::Access::Read, wait, stop,
-                           "Read the user-selected attached folder", {});
+                           "Read the user-selected attached folder");
   }
   host::StripOwnedFields(call.name, spec->mutating, args);
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
@@ -1164,14 +1190,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
                       "The operation ID was reused for different arguments");
       if (old.text(1) == "completed")
         return ToolOutput(old.text(2), old.i64(3) != 0,
-                          conversations->Resources(conversation));
+                          ToolResources(conversation, boundary));
       op_id = old.text(4);
       interrupted = true;
       if (!spec->approval_required) {
         auto approval = db.prepare(
-            "SELECT a.state,o.request,o.preview FROM operation_approvals o "
-            "JOIN access_requests a ON a.id=o.request "
-            "WHERE o.conversation=? AND o.call=?");
+            "SELECT state,id,preview FROM approvals "
+            "WHERE conversation=? AND call=? AND kind='operation'");
         approval.bind(1, conversation).bind(2, call.id);
         if (approval.step()) {
           const auto state = approval.text(0);
@@ -1345,7 +1370,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (error) {
     auto failure = json::Object(json::Get(envelope, "value", "{}"));
     if (json::Text(failure, "kind") == "approval_required") {
-      if (!authorization.empty())
+      if (authorization)
         throw Failure(
             "permission_denied",
             "A scoped Skill cannot widen Card permissions at runtime");
@@ -1432,8 +1457,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   {
     std::lock_guard lock(mutex);
-    conversations->RememberResource(
-        conversation, authorization.empty() ? project : authorization);
+    if (!authorization) conversations->RememberResource(conversation, project);
     if (!folder_resource.empty()) {
       conversations->RememberResource(conversation, folder_resource);
     }
@@ -1454,8 +1478,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
                                          {"name", json::Quote(call.name)},
                                          {"text", json::Quote(result)},
                                          {"ok", error ? "false" : "true"}}));
-  std::vector<std::string> resources{authorization.empty() ? project
-                                                           : authorization};
+  std::vector<std::string> resources;
+  if (!authorization) resources.push_back(project);
   if (!folder_resource.empty()) resources.push_back(folder_resource);
   resources.insert(resources.end(), file_resources.begin(),
                    file_resources.end());
@@ -1482,8 +1506,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
   hooks.allocate_call = [this, id, boundary] {
     return AllocateCall(id, boundary ? boundary->identity : "");
   };
-  hooks.authorize_context = [this, id](const auto& messages) {
-    access_service.AuthorizeContext(id, messages);
+  hooks.authorize_context = [this](const auto& messages) {
+    access_service.AuthorizeContext(messages);
   };
   hooks.checkpoint = [this, id](const auto& messages) {
     std::lock_guard lock(mutex);
@@ -1546,7 +1570,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                                        : ModelRole::Main;
     const auto call = ResolveCall(requested_call, role);
     if (call.name == "delegate") {
-      conversations->AuthorizeHistory(id);
+      if (!boundary || !boundary->authorization())
+        conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
           "SELECT result,state,task FROM helpers WHERE conversation=? "
           "AND parent_call=? ORDER BY task");
@@ -1563,8 +1588,10 @@ auto Tools::Hooks(const std::string& id, bool helper,
           json::Array(json::Get(json::Object(call.arguments), "tasks", "[]"));
       incomplete |= results.size() != tasks.size();
       if (!incomplete)
-        return ToolResult{
-            json::Encode(results), false, {}, conversations->Resources(id)};
+        return ToolResult{json::Encode(results),
+                          false,
+                          {},
+                          ToolResources(id, boundary.get())};
       return ToolResult{
           "Helpers were interrupted. Their saved messages and operation "
           "receipts remain in the conversation; inspect them before "
@@ -1572,7 +1599,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
               json::Encode(results),
           true,
           {},
-          conversations->Resources(id)};
+          ToolResources(id, boundary.get())};
     }
     auto q = conversations->ConversationDatabase(id).prepare(
         "SELECT state,result,error,project,operation FROM "
@@ -1580,11 +1607,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
     q.bind(1, id).bind(2, call.id);
     if (!q.step()) return std::nullopt;
     if (q.text(0) == "completed")
-      return ToolOutput(
-          q.text(1), q.i64(2) != 0,
-          boundary && !boundary->authorization().empty()
-              ? std::vector<std::string>{boundary->authorization()}
-              : conversations->Resources(id));
+      return ToolOutput(q.text(1), q.i64(2) != 0,
+                        ToolResources(id, boundary.get()));
     return ToolResult{
         "Operation outcome is unknown. Query operation_get with op_id=" +
             q.text(4) + " before continuing.",
@@ -1677,9 +1701,8 @@ auto Tools::Handle(const RequestIn& request, bool human,
           receipts.bind(1, conversation).bind(2, digest);
           while (receipts.step()) {
             auto approval = db.prepare(
-                "SELECT 1 FROM operation_approvals o JOIN access_requests a ON "
-                "a.id=o.request WHERE o.conversation=? AND o.call=? AND "
-                "a.state "
+                "SELECT 1 FROM approvals WHERE conversation=? AND call=? "
+                "AND kind='operation' AND state "
                 "IN ('pending','allowed')");
             approval.bind(1, conversation).bind(2, receipts.text(0));
             if (approval.step()) {

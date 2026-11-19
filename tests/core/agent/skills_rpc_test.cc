@@ -644,7 +644,8 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
                   .empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
-  const auto snapshot = Get(conversation);
+  EXPECT_EQ(Get(conversation).Code(), "permission_denied");
+  const auto snapshot = Get(conversation, true);
   const auto* helpers = snapshot.Value()
                             ->value_as_ConversationResult()
                             ->conversation()

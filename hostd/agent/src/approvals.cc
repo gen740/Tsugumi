@@ -12,14 +12,11 @@ namespace A = Tsugumi::Agent;
 using host::Failure;
 Approvals::Approvals(host::StateGate& gate, sql::Db& db,
                      ConversationStore& conversations, Tools& tools,
-                     bool& stopping, std::condition_variable_any& changed,
                      host::Access& access)
     : mutex(gate.mutex),
       db(db),
       conversations(&conversations),
       tools(&tools),
-      stopping(stopping),
-      changed(changed),
       access_service(access) {}
 
 auto Approvals::ApproveOperation(
@@ -53,72 +50,36 @@ auto Approvals::ApproveOperation(
         &run_ids);
   };
   std::unique_lock lock(mutex);
-  auto old = db.prepare(
-      "SELECT digest,request,preview FROM operation_approvals WHERE "
-      "conversation=? AND call=?");
-  old.bind(1, conversation).bind(2, call.id);
-  std::string request, preview;
-  if (old.step()) {
-    if (old.text(0) != binding)
-      throw Failure("conflict",
-                    "An approval cannot be used with different arguments");
-    request = old.text(1);
-    preview = old.text(2);
-  } else {
+  std::string preview;
+  {
+    auto old = db.prepare(
+        "SELECT preview FROM approvals WHERE conversation=? AND "
+        "kind='operation' AND call=?");
+    old.bind(1, conversation).bind(2, call.id);
+    if (old.step()) preview = old.text(0);
+  }
+  if (preview.empty()) {
     lock.unlock();
     preview = describe();
     lock.lock();
-    conversations->RememberResource(conversation, project);
-    // Another connection can submit the same call while targets are read.
-    auto raced = db.prepare(
-        "SELECT digest,request,preview FROM operation_approvals WHERE "
-        "conversation=? AND call=?");
-    raced.bind(1, conversation).bind(2, call.id);
-    if (raced.step()) {
-      if (raced.text(0) != binding)
-        throw Failure("conflict",
-                      "An approval cannot be used with different arguments");
-      request = raced.text(1);
-      preview = raced.text(2);
-    } else {
-      // Reuse AccessRequest/AccessResolveRequest; this request creates no
-      // grant. The call ID prevents coalescing identical but independent acts.
-      request = access_service.RequestAccess(
-          project, conversation, Tsugumi::Service::Access::CardPermissions,
-          preview + "\nCall: " + json::Quote(call.id), true);
-      auto put =
-          db.prepare("INSERT INTO operation_approvals VALUES(?,?,?,?,?)");
-      put.bind(1, conversation)
-          .bind(2, call.id)
-          .bind(3, binding)
-          .bind(4, request)
-          .bind(5, preview)
-          .run();
-    }
   }
-  changed.wait(lock, stop, [&] {
-    auto state = db.prepare("SELECT state FROM access_requests WHERE id=?");
-    state.bind(1, request);
-    if (!state.step() || state.text(0) == "denied")
-      throw Failure("permission_denied",
-                    "The user declined this operation. Nothing was changed; "
-                    "continue without retrying it.");
-    if (state.text(0) == "allowed") return true;
-    if (state.text(0) != "pending")
-      throw Failure(
-          "outcome_unknown",
-          "This approval was already consumed; consult the recorded outcome");
-    if (!wait) throw Failure("grant_required", preview, request);
-    if (stop.stop_requested() || stopping) throw Cancelled();
-    return false;
-  });
-  if (stop.stop_requested()) throw Cancelled();
+  conversations->RememberResource(conversation, project);
+  const auto request =
+      access_service.RequestApproval(host::ApprovalKind::Operation, project,
+                                     conversation, call.id, binding, preview);
+  {
+    auto stored = db.prepare("SELECT preview FROM approvals WHERE id=?");
+    stored.bind(1, request);
+    stored.step();
+    preview = stored.text(0);
+  }
+  access_service.WaitApproval(lock, request, wait, stop);
   lock.unlock();
   const auto current = describe();
   lock.lock();
   if (current != preview) {
     auto stale = db.prepare(
-        "UPDATE access_requests SET state='stale' WHERE id=? AND "
+        "UPDATE approvals SET state='stale' WHERE id=? AND "
         "state='allowed'");
     stale.bind(1, request).run();
     throw Failure("conflict",
@@ -126,7 +87,7 @@ auto Approvals::ApproveOperation(
                   "new call for approval.");
   }
   auto consume = db.prepare(
-      "UPDATE access_requests SET state='consumed' WHERE id=? AND "
+      "UPDATE approvals SET state='consumed' WHERE id=? AND "
       "state='allowed'");
   consume.bind(1, request).run();
   if (!db.changes())

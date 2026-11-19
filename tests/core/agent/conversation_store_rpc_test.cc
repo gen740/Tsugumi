@@ -113,8 +113,8 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(
       Scalar(local,
              "SELECT count(*) FROM sqlite_master WHERE name IN "
-             "('credentials','providers','grants','access_requests','operation_"
-             "approvals','projects','folders','skill_catalogs')"),
+             "('credentials','providers','workspace_grants','workspace_"
+             "requests','approvals','projects','folders','skill_catalogs')"),
       0);
   EXPECT_EQ(Scalar(host_db,
                    "SELECT count(*) FROM conversations WHERE "
@@ -138,7 +138,7 @@ TEST_F(ConversationStoreFixture,
         "pending_sends"})
     EXPECT_EQ(Scalar(local, "SELECT count(*) FROM " + std::string(table)), 0)
         << table;
-  EXPECT_EQ(Scalar(host_db, "SELECT count(*) FROM access_prompt_items"), 0);
+  EXPECT_EQ(Scalar(host_db, "SELECT count(*) FROM workspace_prompt_items"), 0);
   EXPECT_NE(Get(home).View().find("HOME_RECORD"), std::string::npos);
   EXPECT_EQ(Conversation("project-record"), conversation);
   EXPECT_TRUE(Inspect(conversation).Code().empty());

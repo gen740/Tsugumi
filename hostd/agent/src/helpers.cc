@@ -78,10 +78,11 @@ auto Helpers::Displaced(const std::vector<Message>& previous,
   return displaced;
 }
 
-auto Helpers::RunHelper(const std::string& conversation,
-                        const std::string& parent_call, size_t index,
-                        const std::string& task, std::stop_token stop,
-                        const std::string& authorization) -> std::string {
+auto Helpers::RunHelper(
+    const std::string& conversation, const std::string& parent_call,
+    size_t index, const std::string& task, std::stop_token stop,
+    const std::optional<host::TurnAuthorization>& authorization)
+    -> std::string {
   std::shared_ptr<std::mutex> gate;
   {
     std::lock_guard lock(mutex);
@@ -114,7 +115,7 @@ auto Helpers::RunHelper(const std::string& conversation,
         throw Failure("conflict",
                       "A helper ID was reused for different instructions");
       messages = ParseMessages(old.text(1));
-      access_service.AuthorizeContext(conversation, messages);
+      access_service.AuthorizeContext(messages);
       if (old.text(3) == "completed")
         return HelperResult(old.text(2), conversation, parent_call, index);
     } else {
@@ -129,9 +130,8 @@ auto Helpers::RunHelper(const std::string& conversation,
           json::Get(spec, "depth", "0") +
           "; count=" + json::Get(spec, "count", "0") +
           " children over your lifetime. The host enforces this capability.";
-      instruction.resource_ids = authorization.empty()
-                                     ? conversations->Resources(conversation)
-                                     : std::vector<std::string>{authorization};
+      if (!authorization)
+        instruction.resource_ids = conversations->Resources(conversation);
       messages.push_back(
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
       auto insert = conversations->ConversationDatabase(conversation)

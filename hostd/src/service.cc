@@ -119,9 +119,8 @@ struct Service::State {
     conversations = std::make_unique<ConversationStore>(
         state_gate, db, registry,
         [this](std::string raw) { return Scrub(std::move(raw)); },
-        [this](const std::string& resource, const std::string& id,
-               Tsugumi::Service::Access access) {
-          return this->access->HasGrant(resource, id, access);
+        [this](const std::string& resource, Tsugumi::Service::Access access) {
+          return this->access->HasGrant(resource, access);
         },
         [this](const std::string& id) { return turns->running.contains(id); });
     access = std::make_unique<host::Access>(
@@ -191,9 +190,8 @@ struct Service::State {
                        size_t index) {
                   return helpers->HelperResult(output, id, call, index);
                 }});
-    approvals =
-        std::make_unique<Approvals>(state_gate, db, *conversations, *tools,
-                                    stopping, access->changed, *access);
+    approvals = std::make_unique<Approvals>(state_gate, db, *conversations,
+                                            *tools, *access);
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
         *access,

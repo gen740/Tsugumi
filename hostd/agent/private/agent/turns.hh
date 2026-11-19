@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stop_token>
 #include <string>
@@ -15,6 +16,7 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "agent/thought_schedule.hh"
+#include "host/authorization.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/rpc/transport.hh"
 
@@ -35,7 +37,7 @@ struct Turns {
     std::function<std::vector<ToolSpec>(bool)> specs;
     std::function<std::string(const std::string&, const std::string&, size_t,
                               const std::string&, std::stop_token,
-                              const std::string&)>
+                              const std::optional<host::TurnAuthorization>&)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
     std::function<bool(const std::string&, const std::string&, std::stop_token)>
@@ -55,9 +57,8 @@ struct Turns {
                        const std::string& arguments = {}) -> void;
   auto ConversationResult(uint64_t request_id, const Conversation& c)
       -> std::string;
-  auto Summarize(const std::string& id, const ProviderConfig& config,
-                 const std::string& instruction, std::vector<Message> messages)
-      -> std::string;
+  auto Summarize(const ProviderConfig& config, const std::string& instruction,
+                 std::vector<Message> messages) -> std::string;
   auto SkillContent(const std::string& id,
                     const std::vector<std::string>& names, bool automatic,
                     std::stop_token stop,
@@ -65,7 +66,8 @@ struct Turns {
   auto RequireSkillTrust(const std::string& path) -> void;
   auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* p,
                    std::stop_token stop, std::string& task,
-                   std::string& authorization) -> ContentBlock;
+                   std::optional<host::TurnAuthorization>& authorization)
+      -> ContentBlock;
   auto Start(const std::string& id, const std::string& turn,
              const std::string& text,
              Tsugumi::Agent::Action action = Tsugumi::Agent::Action::Resume,

@@ -50,7 +50,7 @@ struct ConversationStoreTest : testing::Test {
   auto Open() -> void {
     store = std::make_unique<agent::ConversationStore>(
         gate, home.db, registry, [](std::string text) { return text; },
-        [this](const auto&, const auto&, auto) { return allowed; },
+        [this](const auto&, auto) { return allowed; },
         [this](const auto&) { return busy; });
   }
   auto Register(const std::string& project) -> std::filesystem::path {
@@ -517,7 +517,7 @@ TEST_F(ConversationStoreTest,
   Register("project");
   Create("conversation", "project");
   home.db.exec(
-      "INSERT INTO grants VALUES('grant','project',0,1);"
+      "INSERT INTO workspace_grants VALUES('grant','project',0,1);"
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
@@ -525,7 +525,8 @@ TEST_F(ConversationStoreTest,
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
   EXPECT_THROW(store->Delete("conversation"), sql::Error);
-  auto grant = home.db.prepare("SELECT 1 FROM grants WHERE project='project'");
+  auto grant =
+      home.db.prepare("SELECT 1 FROM workspace_grants WHERE project='project'");
   EXPECT_TRUE(grant.step());
   auto provider = home.db.prepare(
       "SELECT 1 FROM providers WHERE conversation='conversation'");

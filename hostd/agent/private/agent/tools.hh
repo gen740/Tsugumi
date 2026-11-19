@@ -44,7 +44,7 @@ struct Tools {
         approve_operation;
     std::function<std::string(const std::string&, const std::string&, size_t,
                               const std::string&, std::stop_token,
-                              const std::string&)>
+                              const std::optional<host::TurnAuthorization>&)>
         run_helper;
     std::function<std::string(const std::string&, const std::string&,
                               const std::string&, size_t)>
@@ -94,9 +94,17 @@ struct Tools {
   auto RawProjectCall(const std::string& project, const std::string& name,
                       const std::string& arguments, std::stop_token stop = {},
                       std::string* raw = nullptr) -> std::string;
-  auto HelperReader(const std::string& conversation, std::stop_token stop,
-                    const std::string& revision = {},
-                    const std::string& authorization = {})
+  auto ToolResources(const std::string& conversation,
+                     const HelperScope* boundary) -> std::vector<std::string>;
+  auto RequireProjectAccess(
+      const std::string& project, const std::string& conversation,
+      Tsugumi::Service::Access access, bool wait, std::stop_token stop,
+      const std::string& reason,
+      const std::optional<host::TurnAuthorization>& authorization) -> void;
+  auto HelperReader(
+      const std::string& conversation, std::stop_token stop,
+      const std::string& revision = {},
+      const std::optional<host::TurnAuthorization>& authorization = {})
       -> HelperScope::Reader;
   auto ScopedResult(HelperScope& scope, const ToolCall& call, ToolResult result,
                     const HelperScope::Reader& read) -> ToolResult;

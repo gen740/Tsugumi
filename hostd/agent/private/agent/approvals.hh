@@ -1,6 +1,5 @@
 #pragma once
 
-#include <condition_variable>
 #include <functional>
 #include <stop_token>
 #include <string>
@@ -21,8 +20,8 @@ struct ConversationStore;
 struct Tools;
 struct Approvals {
   Approvals(host::StateGate& gate, sql::Db& db,
-            ConversationStore& conversations, Tools& tools, bool& stopping,
-            std::condition_variable_any& changed, host::Access& access);
+            ConversationStore& conversations, Tools& tools,
+            host::Access& access);
   auto ApproveOperation(const std::string& project,
                         const std::string& conversation, const ToolCall& call,
                         const std::string& digest, const json::Members& args,
@@ -34,8 +33,6 @@ struct Approvals {
   sql::Db& db;
   ConversationStore* conversations;
   Tools* tools;
-  bool& stopping;
-  std::condition_variable_any& changed;
   host::Access& access_service;
 };
 }  // namespace tsugumi::agent

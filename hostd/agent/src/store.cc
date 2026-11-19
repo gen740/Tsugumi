@@ -305,7 +305,7 @@ auto ConversationStore::RememberResource(const std::string& id,
 
 auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
   for (const auto& resource : Resources(id))
-    if (!has_grant(resource, id, Tsugumi::Service::Access::Read))
+    if (!has_grant(resource, Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Historical content belongs to a resource whose "
                     "permission was revoked");
@@ -421,9 +421,8 @@ auto ConversationStore::ConversationData(const Conversation& c)
                                    {"isError", q.i64(2) ? "true" : "false"},
                                    {"state", json::Quote(q.text(3))}}));
   auto approvals = db.prepare(
-      "SELECT o.call,o.preview,a.state FROM operation_approvals o "
-      "JOIN access_requests a ON a.id=o.request WHERE o.conversation=? ORDER "
-      "BY o.rowid");
+      "SELECT call,preview,state FROM approvals WHERE conversation=? "
+      "AND kind='operation' ORDER BY rowid");
   approvals.bind(1, c.id);
   while (approvals.step()) {
     auto receipt = ConversationDatabase(c.id).prepare(
@@ -555,11 +554,11 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   {
     sql::Transaction tx(db);
     auto prompts = db.prepare(
-        "DELETE FROM access_prompt_items WHERE request IN "
-        "(SELECT id FROM access_requests WHERE conversation=?)");
+        "DELETE FROM workspace_prompt_items WHERE request IN "
+        "(SELECT id FROM workspace_requests WHERE conversation=?)");
     prompts.bind(1, id).run();
-    for (const auto* table : {"providers", "skill_catalogs",
-                              "operation_approvals", "access_requests"}) {
+    for (const auto* table :
+         {"providers", "skill_catalogs", "approvals", "workspace_requests"}) {
       auto q = db.prepare(std::string("DELETE FROM ") + table +
                           " WHERE conversation=?");
       q.bind(1, id).run();

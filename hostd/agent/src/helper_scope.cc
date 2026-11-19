@@ -95,7 +95,8 @@ auto Set(const json::Members& task, const std::string& field)
 }
 }  // namespace
 
-HelperScope::HelperScope(const json::Members& task, std::string authorization,
+HelperScope::HelperScope(const json::Members& task,
+                         std::optional<host::TurnAuthorization> authorization,
                          std::string scratch_identity)
     : depth_(json::UInt(json::Get(task, "depth", "0"))),
       count_(json::UInt(json::Get(task, "count", "0"))),

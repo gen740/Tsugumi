@@ -158,7 +158,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
       request.body.Set(std::move(value));
     }
     const auto authorization =
-        boundary ? boundary->authorization() : std::string{};
+        boundary ? boundary->authorization() : std::nullopt;
     host::OperationContext context;
     context.origin = "agent";
     context.authorize_file = [&](const std::string& path,

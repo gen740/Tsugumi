@@ -242,8 +242,9 @@ auto Tools::FileOperation(const std::string& conversation,
     };
     return OperateProject(request, context, stop).json;
   }
-  const auto read_scope = HelperReader(
-      conversation, stop, revision, boundary ? boundary->authorization() : "");
+  const auto read_scope =
+      HelperReader(conversation, stop, revision,
+                   boundary ? boundary->authorization() : std::nullopt);
   auto check = [&](const std::string& path, bool writing) {
     policy.Check(path);
     if (!boundary || !boundary->scoped()) return;
@@ -444,7 +445,7 @@ auto Tools::FileOperation(const std::string& conversation,
           "SELECT id,path FROM folders WHERE project=? ORDER BY path");
       folders.bind(1, project);
       while (folders.step()) {
-        if (!access_service.HasGrant(folders.text(0), conversation,
+        if (!access_service.HasGrant(folders.text(0),
                                      Tsugumi::Service::Access::Read))
           continue;
         const auto folder = folders.text(1);

@@ -109,7 +109,7 @@ auto Versions::Note(const RequestIn& request, bool human,
       ContentBlock block;
       block.text = json::Encode(body);
       const auto raw = turns->Summarize(
-          "", config,
+          config,
           std::string(
               "Summarize this version's changes briefly and concretely in ") +
               (english ? "English" : "Japanese") +
