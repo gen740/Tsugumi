@@ -276,7 +276,6 @@ void Service::open() {
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
-  check_snapshot(*store_->current());
   const auto roots = opts_.gcroots_dir.empty()
                          ? store_->state_dir() / "cache" / "gcroots"
                          : opts_.gcroots_dir;
