@@ -109,11 +109,7 @@ export class EnvironmentManager implements Environments {
         if (value.closed) { terminal.exit({ exitCode: 0 }); this.terminals.delete(value.session) }
       } else if (this.openingTerminals > 0) {
         const pending = this.terminalOutput.get(value.session) ?? { data: [], closed: false }
-        const maxBuffered = 1024 * 1024
-        if (value.data?.length && pending.data.length < maxBuffered) {
-          const room = maxBuffered - pending.data.length
-          pending.data.push(...value.data.slice(0, room))
-        }
+        pending.data.push(...(value.data ?? []))
         pending.closed ||= !!value.closed
         this.terminalOutput.set(value.session, pending)
       }

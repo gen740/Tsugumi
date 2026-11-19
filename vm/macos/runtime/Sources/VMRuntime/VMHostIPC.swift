@@ -86,10 +86,6 @@ public enum VMHostIPC {
     }
     guard let prefix = try exact(4) else { return nil }
     let size = prefix.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
-    let maxFrameBytes: UInt32 = 64 * 1024 * 1024
-    guard size <= maxFrameBytes else {
-      throw LauncherError.notReady("VM host frame exceeds size limit (\(size) bytes)")
-    }
     guard let data = try exact(Int(size)) else { throw LauncherError.notReady("Truncated VM host frame") }
     return data
   }

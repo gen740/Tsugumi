@@ -168,10 +168,6 @@ static PyObject* host_display_table(PyObject* self, PyObject* args) {
     return NULL;
   Py_ssize_t nc = PyList_Size(cols);
   Py_ssize_t nr = PyList_Size(rows);
-  if (nc < 0 || nr < 0 || (nc > 0 && (size_t)nr > (SIZE_MAX / sizeof(char*) - 1) / (size_t)nc)) {
-    PyErr_NoMemory();
-    return NULL;
-  }
   const char** c = calloc((size_t)nc + 1, sizeof(char*));
   const char** cells = calloc((size_t)nc * (size_t)nr + 1, sizeof(char*));
   if (!c || !cells) {
@@ -232,7 +228,6 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
     PyErr_SetString(PyExc_ValueError, "colors must be None or one per point");
     return NULL;
   }
-  if ((size_t)n > (SIZE_MAX / sizeof(float) - 1) / 3) return PyErr_NoMemory();
   float* p = malloc(sizeof(float) * ((size_t)n * 3 + 1));
   uint32_t* c = with_colors ? malloc(sizeof(uint32_t) * ((size_t)n + 1)) : NULL;
   if (!p || (with_colors && !c)) {
