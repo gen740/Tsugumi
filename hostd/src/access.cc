@@ -10,6 +10,7 @@
 #include "host/failure.hh"
 #include "host/projects.hh"
 #include "host/wire_helpers.hh"
+#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -21,6 +22,17 @@ namespace wire = agent::wire;
 using agent::Cancelled;
 using agent::Message;
 namespace {
+// Reserve room for the reply envelope and vector headers. Each independent
+// packing below also budgets the vector offset and worst-case alignment.
+constexpr auto kAccessPageBytes = TransportLimits{}.max_frame_bytes - 1024;
+template <typename Table, typename Entry>
+auto AccessEntryBytes(flatbuffers::FlatBufferBuilder& builder,
+                      const Entry& entry) -> size_t {
+  builder.Clear();
+  Table::Pack(builder, &entry);
+  return builder.GetSize() + sizeof(flatbuffers::uoffset_t) + alignof(uint64_t);
+}
+
 constexpr std::array kResidentAccess{S::Access::Read, S::Access::Write,
                                      S::Access::Run, S::Access::Shell};
 auto ResidentAccess(S::Access access) -> bool {
@@ -478,49 +490,109 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         if (!human) conversations->AuthorizeHistory(id);
       }
       A::AccessListT result;
-      auto q = db.prepare(
-          "SELECT id,project,conversation,access,reason,state,call,offered,digest "
-          "FROM permission_requests WHERE (?1='' OR conversation=?1) "
-          "AND (?2='' OR id=?2) ORDER BY state='pending' DESC,rowid DESC");
-      q.bind(1, id).bind(2, request_id);
-      while (q.step()) {
-        auto entry = std::make_unique<A::AccessEntryT>();
-        entry->id = q.text(0);
-        entry->project_id = q.text(1);
-        entry->conversation_id = q.text(2);
-        entry->access = static_cast<S::Access>(q.i64(3));
-        entry->reason = q.text(4);
-        entry->state = q.text(5);
-        if (ResidentAccess(entry->access)) {
-          entry->asked = AccessDescriptions(entry->project_id, entry->access,
-                                            entry->reason, q.i64(7));
-        } else {
-          const auto kind = static_cast<ApprovalKind>(entry->access);
-          if (!human && kind == ApprovalKind::Turn) continue;
-          if (kind == ApprovalKind::Operation) entry->call_id = q.text(6);
-          if (kind == ApprovalKind::Turn && entry->state == "pending" &&
-              !TurnPending(entry->conversation_id, q.text(6), q.text(8)))
-            continue;
-          entry->asked = {ApprovalDescription(kind, entry->reason)};
+      const auto project = Text(filter->project_id());
+      const auto cursor = filter->cursor();
+      const bool pending_only = filter->pending_only();
+      size_t remaining = kAccessPageBytes;
+      flatbuffers::FlatBufferBuilder measure;
+      // Positive cursors continue access requests; negative ones continue
+      // grants. Both name the first row not yet returned.
+      if (cursor >= 0) {
+        auto q = db.prepare(
+            "SELECT "
+            "rowid,id,project,conversation,access,reason,state,call,offered,"
+            "digest "
+            "FROM permission_requests WHERE (?1='' OR conversation=?1) "
+            "AND (?2='' OR id=?2) "
+            "AND (?3='' OR project=?3 OR project IN (SELECT id FROM folders "
+            "WHERE project=?3) "
+            "OR conversation IN (SELECT conversation FROM "
+            "conversation_locations WHERE project=?3)) "
+            "AND (NOT ?4 OR state='pending') AND (?5=0 OR rowid<=?5) "
+            "AND (?6 OR access<>?7) ORDER BY rowid DESC");
+        q.bind(1, id)
+            .bind(2, request_id)
+            .bind(3, project)
+            .bind(4, pending_only)
+            .bind(5, cursor)
+            .bind(6, human)
+            .bind(7, static_cast<int>(ApprovalKind::Turn));
+        while (q.step()) {
+          auto entry = std::make_unique<A::AccessEntryT>();
+          entry->id = q.text(1);
+          entry->project_id = q.text(2);
+          entry->conversation_id = q.text(3);
+          entry->access = static_cast<S::Access>(q.i64(4));
+          entry->state = q.text(6);
+          if (ResidentAccess(entry->access)) {
+            entry->asked = AccessDescriptions(entry->project_id, entry->access,
+                                              q.text(5), q.i64(8));
+          } else {
+            const auto kind = static_cast<ApprovalKind>(entry->access);
+            if (kind == ApprovalKind::Operation) entry->call_id = q.text(7);
+            if (kind == ApprovalKind::Turn && entry->state == "pending") {
+              try {
+                if (!TurnPending(entry->conversation_id, q.text(7), q.text(9)))
+                  continue;
+              } catch (const std::exception& error) {
+                // Other projects remain listable when this conversation is
+                // unavailable. Resolving its approval still checks the turn.
+                entry->state = "unavailable";
+                entry->unavailable_reason = error.what();
+              }
+            }
+            if (entry->state != "unavailable")
+              entry->asked = {ApprovalDescription(kind, q.text(5))};
+          }
+          entry->groups = agent::AccessGroups(entry->asked);
+          auto bytes = AccessEntryBytes<A::AccessEntry>(measure, *entry);
+          if (bytes > kAccessPageBytes) {
+            entry->state = "unavailable";
+            entry->unavailable_reason =
+                "The approval exceeds the RPC frame size";
+            entry->asked.clear();
+            entry->groups.clear();
+            bytes = AccessEntryBytes<A::AccessEntry>(measure, *entry);
+            if (bytes > kAccessPageBytes)
+              throw Failure(
+                  "resource_exhausted",
+                  "Access request metadata exceeds the RPC frame size");
+          }
+          if (bytes > remaining) {
+            result.next_cursor = q.i64(0);
+            break;
+          }
+          remaining -= bytes;
+          result.requests.push_back(std::move(entry));
         }
-        entry->groups = agent::AccessGroups(entry->asked);
-        result.requests.push_back(std::move(entry));
       }
-      if (!request_id.empty())
+      if (!request_id.empty() || pending_only || result.next_cursor)
         return wire::AgentReply(request.request_id, std::move(result));
       auto g = db.prepare(
-          "SELECT id,project,access,active FROM workspace_grants "
-          "WHERE (?='' OR project=(SELECT project FROM conversation_locations "
-          "WHERE conversation=?) OR project IN (SELECT id FROM folders WHERE "
+          "SELECT rowid,id,project,access,active FROM workspace_grants "
+          "WHERE (?1='' OR project=(SELECT project FROM conversation_locations "
+          "WHERE conversation=?1) OR project IN (SELECT id FROM folders WHERE "
           "project=(SELECT project FROM conversation_locations WHERE "
-          "conversation=?)))");
-      g.bind(1, id).bind(2, id).bind(3, id);
+          "conversation=?1))) "
+          "AND (?2='' OR project=?2 OR project IN (SELECT id FROM folders "
+          "WHERE project=?2)) "
+          "AND (?3>=0 OR -rowid>=?3) ORDER BY rowid DESC");
+      g.bind(1, id).bind(2, project).bind(3, cursor);
       while (g.step()) {
         auto grant = std::make_unique<A::GrantT>();
-        grant->id = g.text(0);
-        grant->project_id = g.text(1);
-        grant->access = static_cast<Tsugumi::Service::Access>(g.i64(2));
-        grant->active = g.i64(3) != 0;
+        grant->id = g.text(1);
+        grant->project_id = g.text(2);
+        grant->access = static_cast<S::Access>(g.i64(3));
+        grant->active = g.i64(4) != 0;
+        const auto bytes = AccessEntryBytes<A::Grant>(measure, *grant);
+        if (bytes > kAccessPageBytes)
+          throw Failure("resource_exhausted",
+                        "Workspace grant exceeds the RPC frame size");
+        if (bytes > remaining) {
+          result.next_cursor = -g.i64(0);
+          break;
+        }
+        remaining -= bytes;
         result.grants.push_back(std::move(grant));
       }
       return wire::AgentReply(request.request_id, std::move(result));

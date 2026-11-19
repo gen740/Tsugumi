@@ -53,7 +53,20 @@ try {
       }
       if (method === 'ConversationGetRequest') return snapshots(fields.conversation_id) as T
       if (method === 'EventsRequest') return { events: [], next_seq: 0n, busy } as T
-      if (method === 'AccessListRequest') return { requests: (!fields.conversation_id || fields.conversation_id === 'a') ? [{ id: 'pending-a', state: 'pending', asked: pendingAsked }] : [] } as T
+      if (method === 'AccessListRequest') {
+        assert.equal(fields.pending_only, true)
+        if (fields.project_id) {
+          if (fields.project_id === 'project-a' && fields.cursor === '0') {
+            return { requests: [{ id: 'unavailable-a', state: 'unavailable' }], next_cursor: '13' } as T
+          }
+          if (fields.project_id === 'project-a' && fields.cursor === '13') {
+            return { requests: [{ id: 'external-a', conversation_id: 'external', project_id: 'project-a', state: 'pending', asked: pendingAsked }], next_cursor: '0' } as T
+          }
+          return { requests: [], next_cursor: '0' } as T
+        }
+        assert.ok(fields.conversation_id, 'Approval restoration must be scoped')
+        return { requests: fields.conversation_id === 'a' ? [{ id: 'pending-a', state: 'pending', asked: pendingAsked }] : [], next_cursor: '0' } as T
+      }
       throw new Error(`Unexpected call: ${method}`)
     }
     return { revision: 'host:1', values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
@@ -72,6 +85,8 @@ try {
   assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')
   const a = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(a.permission.asked, [asked, write, run])
+  assert.ok(events.some(e => e.project === folders[0] && e.session === 'external' && e.event?.id === 'external-a'))
+  assert.ok(!events.some(e => e.event?.id === 'unavailable-a'))
   assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
   await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,

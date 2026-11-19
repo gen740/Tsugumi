@@ -299,6 +299,17 @@ interface PermissionWait {
 const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
+async function* pendingAccess(filter: { conversation_id: string } | { project_id: string }) {
+  let cursor = '0'
+  do {
+    const page = await core.user.call<{ requests: PendingAccess[]; next_cursor: string }>(
+      'AccessListRequest', { ...filter, cursor, pending_only: true },
+    )
+    for (const request of page.requests) if (request.state === 'pending') yield request
+    cursor = page.next_cursor
+  } while (cursor && cursor !== '0')
+}
+
 async function answerPermission(id: string, allow: boolean, selected?: Access[]) {
   const result = await core.user.call<{ accepted: boolean }>('AccessResolveRequest', { request_id: id, allow, selected })
   const waiting = permissionWaits.get(id)
@@ -335,13 +346,10 @@ class ChatHost {
     let a = this.conversations.get(id)
     if (!a) {
       a = await new RemoteAgent(core, id, this.project).open()
-      this.conversations.set(id, a)
-      const access = await core.user.call<{ requests: { id: string; conversation_id: string; project_id: string; state: string }[] }>('AccessListRequest')
-      for (const request of access.requests) {
-        if (request.state === 'pending' && request.conversation_id !== id && core.projectFolder(request.project_id) === this.project) {
-          await showExternalAccess(request.id, this.project)
-        }
+      if (a.projectId) for await (const request of pendingAccess({ project_id: a.projectId })) {
+        if (request.conversation_id !== id) showExternalRequest(request, this.project)
       }
+      this.conversations.set(id, a)
     }
     a.observe(this.events(id), () => ctx.listeners() > 0)
     await a.refresh()
@@ -423,10 +431,13 @@ export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detac
 
 async function showExternalAccess(requestId: string, fallback?: string) {
   const { requests: [request] } = await core.user.call<{ requests: PendingAccess[] }>('AccessListRequest', { request_id: requestId })
-  if (!request || request.state !== 'pending') return
+  if (request?.state === 'pending') showExternalRequest(request, fallback)
+}
+
+function showExternalRequest(request: PendingAccess, fallback?: string) {
   const project = core.projectFolder(request.project_id) ?? fallback
   if (!project) return
-  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, request, resolve: () => {} })
+  permissionWaits.set(request.id, { project, session: EXTERNAL_SESSION, request, resolve: () => {} })
   ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
     event: { ...request, kind: 'permission', from: 'Claude Code' } })
 }
@@ -592,8 +603,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
-    const access = await core.user.call<{ requests: PendingAccess[] }>('AccessListRequest', { conversation_id: a.id })
-    const pending = access.requests.find((r) => r.state === 'pending')
+    let pending: PendingAccess | undefined
+    for await (const request of pendingAccess({ conversation_id: a.id })) {
+      pending = request
+      break
+    }
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {
       const p = a.modelBinding
@@ -689,7 +703,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments, signal),
   'POST /api/project-permissions': () => core.user.call('ProjectPermissionsRequest'),
   'POST /api/project-permissions/set': (b) => core.user.call('ProjectPermissionSetRequest', { project_id: String(b.project_id), resource_id: String(b.resource_id), access: b.access, allow: b.allow === true }),
-  'POST /api/agent/access': () => core.user.call('AccessListRequest'),
+  'POST /api/agent/access': (b) => core.user.call('AccessListRequest', { cursor: b?.cursor }),
   'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
   'POST /api/guide': async () => {

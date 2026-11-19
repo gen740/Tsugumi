@@ -314,6 +314,9 @@ enum ServiceWire {
         let v = Tsugumi_Agent_AccessListRequestT()
         v.conversationId = fields["conversation_id"] as? String
         v.requestId = fields["request_id"] as? String
+        v.projectId = fields["project_id"] as? String
+        v.pendingOnly = fields["pending_only"] as? Bool ?? false
+        v.cursor = (fields["cursor"] as? NSNumber)?.int64Value ?? 0
         return (Tsugumi_Agent_RequestPayload.accesslistrequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
@@ -550,7 +553,7 @@ enum ServiceWire {
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
       out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
-      out["reason"] = v.reason
+      out["unavailable_reason"] = v.unavailableReason
       out["state"] = v.state
       out["call_id"] = v.callId
       return out
@@ -564,6 +567,7 @@ enum ServiceWire {
     case let v as Tsugumi_Agent_AccessListT:
       var out: [String: Any] = [:]
       out["requests"] = try v.requests.compactMap { try $0.map { try view($0) } }
+      out["next_cursor"] = v.nextCursor
       out["grants"] = try v.grants.compactMap { try $0.map { try view($0) } }
       return out
     case let v as Tsugumi_Host_DemoPathsT:

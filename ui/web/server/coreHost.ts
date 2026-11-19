@@ -290,6 +290,7 @@ export class RemoteAgent {
   resumable = false
   interruptedOperation?: InterruptedOperation
   modelBinding?: ModelBinding
+  projectId?: string
   private seq = 0n
   private observing = false
   private observationID = 0
@@ -302,9 +303,9 @@ export class RemoteAgent {
   }
 
   async open() {
-    const project = this.project ? await this.host.project(this.project) : undefined
+    this.projectId = this.project ? await this.host.project(this.project) : undefined
     const result = await this.host.user.call<RemoteConversation>('ConversationCreateRequest', {
-      conversation_id: this.id, project_id: project, role: this.role,
+      conversation_id: this.id, project_id: this.projectId, role: this.role,
     })
     this.adopt(result)
     this.seq = result.event_seq ?? 0n

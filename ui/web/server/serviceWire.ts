@@ -183,7 +183,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
-    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id, v.request_id)
+    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id, v.request_id, v.project_id, v.pending_only ?? false, BigInt(v.cursor ?? 0))
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)
@@ -221,11 +221,12 @@ function view(value: any): any {
   for (const [key, v] of Object.entries(value)) {
     const name = key === 'clientId' && 'signedIn' in value ? 'clientId' : names[key] ?? key
     if (v === null || v === undefined) {
-      if (['title', 'text', 'projectId', 'conversationId', 'reason', 'state'].includes(key)) out[name] = ''
+      if (['title', 'text', 'projectId', 'conversationId', 'state'].includes(key)) out[name] = ''
       if (key === 'summary' || key === 'resultJson' && 'callId' in value) out[name] = null
       continue
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
+    if (key === 'nextCursor') { out.next_cursor = String(v); continue }
     if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)

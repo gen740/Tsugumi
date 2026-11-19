@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <future>
+#include <set>
 
 #include "../agent_fixture_server.hh"
 #include "agent/providers.hh"
@@ -15,6 +16,7 @@
 #include "host/settings.hh"
 #include "host/state_gate.hh"
 #include "host/store.hh"
+#include "tsugumi/rpc/transport.hh"
 
 namespace tsugumi::test {
 TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
@@ -72,7 +74,7 @@ TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
   store.db.exec("INSERT INTO secrets VALUES('desktop:anthropic','new-key')");
   EXPECT_EQ(resolve().credential, "new-key");
 }
-TEST(HostComponents, PendingApprovalsStayVisibleWithWorkspaceHistory) {
+TEST(HostComponents, LargeApprovalListsPageWithinTheRpcFrame) {
   namespace A = Tsugumi::Agent;
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
@@ -92,30 +94,82 @@ TEST(HostComponents, PendingApprovalsStayVisibleWithWorkspaceHistory) {
       "WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids "
       "WHERE n<501) INSERT INTO "
       "permission_requests(id,project,conversation,access,reason,state) "
-      "SELECT n,'project','conversation',0,'old request','pending' FROM ids");
-  const auto approval =
-      access.RequestApproval(host::ApprovalKind::Operation, "project",
-                             "conversation", "call", "digest", "preview");
-  flatbuffers::FlatBufferBuilder b;
-  const auto value = A::CreateAccessListRequest(b);
-  const auto request =
-      A::CreateRequest(b, A::RequestPayload::AccessListRequest, value.Union());
-  A::FinishMessageBuffer(
-      b, A::CreateMessage(b, 1, A::Payload::Request, request.Union()));
-  RequestIn in;
-  in.request_id = 1;
-  in.frame = std::make_shared<const std::string>(
-      reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-  const auto reply = access.Handle(in, true);
-  const auto* listed =
-      A::GetMessage(reply.data())->payload_as_Reply()->value_as_AccessList();
-  ASSERT_NE(listed, nullptr);
-  ASSERT_NE(listed->requests(), nullptr);
-  ASSERT_EQ(listed->requests()->size(), 502u);
-  const auto* item = listed->requests()->Get(0);
-  EXPECT_EQ(item->id()->str(), approval.id);
-  EXPECT_EQ(item->call_id()->str(), "call");
-  EXPECT_EQ(item->state()->str(), "pending");
+      "SELECT n,'project','conversation',0,'old request','allowed' FROM ids;"
+      "INSERT INTO conversation_locations VALUES('missing','other');");
+  const auto missing_approval =
+      access.RequestApproval(host::ApprovalKind::Turn, "other", "missing",
+                             "turn", "digest", "secret scope");
+  const std::string preview(480 * 1024, 'p');
+  for (int i = 0; i < 40; ++i) {
+    const auto approval = access.RequestApproval(
+        host::ApprovalKind::Operation, "project", "conversation",
+        "large-call-" + std::to_string(i), "digest", preview);
+    if (i == 0) {
+      auto answer = store.db.prepare(
+          "UPDATE permission_requests SET state='allowed' WHERE id=?");
+      answer.bind(1, approval.id).run();
+    }
+  }
+  const auto recent = access.RequestApproval(
+      host::ApprovalKind::Operation, "project", "conversation",
+      "operation-call", "digest", "preview");
+  const auto list = [&](A::AccessListRequestT value) {
+    flatbuffers::FlatBufferBuilder b;
+    const auto request =
+        A::CreateRequest(b, A::RequestPayload::AccessListRequest,
+                         A::AccessListRequest::Pack(b, &value).Union());
+    A::FinishMessageBuffer(
+        b, A::CreateMessage(b, 1, A::Payload::Request, request.Union()));
+    RequestIn in;
+    in.request_id = 1;
+    in.frame = std::make_shared<const std::string>(
+        reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+    return access.Handle(in, true);
+  };
+  const auto parse = [](const std::string& reply) {
+    return A::GetMessage(reply.data())
+        ->payload_as_Reply()
+        ->value_as_AccessList();
+  };
+  for (const bool pending_only : {false, true}) {
+    A::AccessListRequestT filter;
+    filter.project_id = "project";
+    filter.pending_only = pending_only;
+    std::set<std::string> ids;
+    size_t pages = 0;
+    do {
+      const auto reply = list(filter);
+      EXPECT_LE(reply.size(), TransportLimits{}.max_frame_bytes);
+      const auto* page = parse(reply);
+      ASSERT_NE(page, nullptr);
+      ASSERT_NE(page->requests(), nullptr);
+      for (const auto* entry : *page->requests()) {
+        EXPECT_TRUE(ids.insert(entry->id()->str()).second);
+        EXPECT_EQ(entry->project_id()->str(), "project");
+        if (pending_only) EXPECT_EQ(entry->state()->str(), "pending");
+      }
+      filter.cursor = page->next_cursor();
+      ++pages;
+    } while (filter.cursor);
+    EXPECT_GT(pages, 1u);
+    EXPECT_EQ(ids.size(), pending_only ? 40u : 542u);
+    EXPECT_TRUE(ids.contains(recent.id));
+  }
+  A::AccessListRequestT filter;
+  filter.request_id = recent.id;
+  const auto exact = list(filter);
+  const auto* listed = parse(exact);
+  ASSERT_EQ(listed->requests()->size(), 1u);
+  EXPECT_EQ(listed->requests()->Get(0)->call_id()->str(), "operation-call");
+
+  const auto global = list({});
+  EXPECT_NE(parse(global)->next_cursor(), 0);
+  filter.request_id = missing_approval.id;
+  const auto missing = list(filter);
+  ASSERT_EQ(parse(missing)->requests()->size(), 1u);
+  const auto* unavailable = parse(missing)->requests()->Get(0);
+  EXPECT_EQ(unavailable->state()->str(), "unavailable");
+  EXPECT_GT(unavailable->unavailable_reason()->size(), 0u);
 }
 
 TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {

@@ -185,10 +185,14 @@ final class ChatController {
     Task {
       do {
         if let resource {
-          let access = try await CoreHostClient.shared.call("AccessListRequest")
-          for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
-            if let id = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
-          }
+          var cursor: Int64 = 0
+          repeat {
+            let access = try await CoreHostClient.shared.call("AccessListRequest", ["project_id": session.projectId ?? "", "cursor": cursor])
+            for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
+              if let grantID = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": grantID]) }
+            }
+            cursor = access["next_cursor"] as? Int64 ?? 0
+          } while cursor != 0
         }
         try await session.environments.removeFolders(session.identity, [path])
       } catch { status = String(describing: error) }

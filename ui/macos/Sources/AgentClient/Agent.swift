@@ -235,12 +235,18 @@ public actor Agent {
         try await AgentObservation.read { try await self.refresh() }
         try Task.checkCancellation()
         events(.modelAccepted)
-        let access = try await AgentObservation.read { try await self.view("AccessListRequest", ["conversation_id": self.id]) }
-        try Task.checkCancellation()
-        for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
-          guard let requestID = request["id"] as? String else { continue }
-          _ = try await answerAccess(requestID)
-        }
+        var cursor: Int64 = 0
+        repeat {
+          let access = try await AgentObservation.read {
+            try await self.view("AccessListRequest", ["conversation_id": self.id, "pending_only": true, "cursor": cursor])
+          }
+          try Task.checkCancellation()
+          for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
+            guard let requestID = request["id"] as? String else { continue }
+            _ = try await answerAccess(requestID)
+          }
+          cursor = access["next_cursor"] as? Int64 ?? 0
+        } while cursor != 0
         while !Task.isCancelled {
           let result: Tsugumi_Agent_EventsPageT = try await AgentObservation.read { try await self.reply("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
           try Task.checkCancellation()
@@ -285,6 +291,7 @@ public actor Agent {
     let access = try await self.view("AccessListRequest", ["conversation_id": id, "request_id": request])
     guard let entry = (access["requests"] as? [[String: Any]])?.first,
           let state = entry["state"] as? String else { return false }
+    if state == "unavailable" { return false }
     if state != "pending" {
       answeredAccess[request] = state == "allowed"
       return state == "allowed"

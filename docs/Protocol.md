@@ -537,10 +537,16 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
 | `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [Tsugumi.Service.Access]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
-| `AccessListRequest` | `conversation_id: string` |
+| `AccessListRequest` | `conversation_id: string`, `request_id: string`, `project_id: string`, `pending_only: bool`, `cursor: long` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
+
+For access restoration, use `pending_only` with a conversation or project filter.
+Pass `AccessList.next_cursor` with the same filters until it is zero. Normal
+history pages include grants after the requests. An exact `request_id` lookup
+returns just that request. A pending Skill approval whose conversation cannot
+be opened is reported with state `unavailable` and an `unavailable_reason`.
 
 Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`.
 
