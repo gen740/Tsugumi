@@ -1,4 +1,5 @@
 """Exercise interpreter role dispatch and one returned result without sockets."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -22,7 +23,7 @@ def test_r_roles_hook_and_result(tmp_path):
         pytest.skip("R jsonlite is not available")
     script = tmp_path / "roles.R"
     script.write_text(r'''
-events <- list()
+outputs <- list()
 .Call <- function(name, ...) {
   args <- list(...)
   switch(name,
@@ -33,7 +34,10 @@ events <- list()
     tsugumi_cancelled = FALSE,
     tsugumi_remaining = -1,
     tsugumi_display = TRUE,
-    tsugumi_output = identical(args[[1]], "result") && jsonlite::fromJSON(args[[2]])$value == 42,
+    tsugumi_output = {
+      outputs[[length(outputs) + 1L]] <<- list(port = args[[1]], value = jsonlite::fromJSON(args[[2]]))
+      TRUE
+    },
     tsugumi_log = NULL,
     tsugumi_fail = stop(args[[1]]),
     stop("unexpected host call: ", name))
@@ -53,11 +57,12 @@ main <- function(inputs, report, run) {
   }
   saved_run <<- run
   report$text("ready")
-  list(result = list(value = 42))
+  list(result = list(value = 42), skipped = NULL)
 }
 stopifnot(.tsugumi_invoke(TRUE), .tsugumi_invoke(FALSE))
 stopifnot(inherits(try(saved_run$cancelled(), silent=TRUE), "try-error"))
 stopifnot(.tsugumi_invoke(FALSE))
+stopifnot(identical(outputs, rep(list(list(port = "result", value = list(value = 42L))), 2)))
 ''')
     subprocess.run([rscript, "--vanilla", str(script), str(ROOT / "sdk/r/tsugumi.R")], check=True)
 
@@ -66,12 +71,15 @@ def test_ruby_roles_result_and_callback_lifetime(tmp_path):
     script = tmp_path / "roles.rb"
     script.write_text(r'''
 module TsugumiHost
-  @events = []
+  @outputs = []
   class << self
-    attr_reader :events
+    attr_reader :outputs
     def inputs = '{"number":{"value":21}}'
     def input_kind(port) = 3
-    def output(port, text) = port == 'result' && JSON.parse(text) == {'value'=>42}
+    def output(port, text)
+      outputs << [port, JSON.parse(text)]
+      true
+    end
     def params = '{"factor":2}'
     def info = {'run_id'=>'test', 'card'=>'step', 'invocation'=>7,
                 'working_directory'=>'.', 'temporary_directory'=>'.', 'output_directory'=>'.'}
@@ -102,6 +110,7 @@ class Tsugumi::Card
 end
 Tsugumi.instance_variable_set(:@card, Tsugumi::Card.new)
 raise unless Tsugumi._run_start && Tsugumi._invoke
+raise unless TsugumiHost.outputs == [['result', {'value'=>42}]]
 begin
   $saved_report.log('late')
   raise 'callback outlived invocation'
@@ -155,14 +164,14 @@ def test_julia_roles_hook_and_result(tmp_path):
     source.write_text(r'''
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 const char* tsugumi_native_params(void) { return "{\"factor\":2}"; }
 const char* tsugumi_native_inputs(void) { return "{\"number\":{\"value\":21}}"; }
 const char* tsugumi_native_info(int field) { (void)field; return "."; }
 uint64_t tsugumi_native_invocation(void) { return 7; }
 int tsugumi_native_display(const char* json) { (void)json; return 0; }
 int tsugumi_native_output(const char* port, const char* json) {
-  return strcmp(port, "result") || strcmp(json, "{\"value\":42}");
+  printf("%s\t%s\n", port, json);
+  return 0;
 }
 void tsugumi_native_log(const char* text) { (void)text; }
 int tsugumi_native_cancelled(void) { return 0; }
@@ -195,7 +204,7 @@ function main(inputs, report, run)
     end
     global saved_run = run
     report.text("ready")
-    Dict("result" => Dict("value" => 42))
+    Dict("result" => Dict("value" => 42), "skipped" => nothing)
 end
 @assert Tsugumi.invoke(true)
 @assert Tsugumi.invoke(false)
@@ -205,6 +214,11 @@ for method in (cancelled, remaining_ms)
 end
 @assert Tsugumi.invoke(false)
 ''')
-    subprocess.run([executable("JULIA"), "--startup-file=no", "--history-file=no", str(script), str(ROOT / "sdk/julia/tsugumi.jl"), str(library)],
-                            env={**os.environ, "JULIA_DEPOT_PATH": str(tmp_path / "depot")},
-                            text=True, capture_output=True, check=True)
+    result = subprocess.run(
+        [executable("JULIA"), "--startup-file=no", "--history-file=no", str(script),
+         str(ROOT / "sdk/julia/tsugumi.jl"), str(library)],
+        env={**os.environ, "JULIA_DEPOT_PATH": str(tmp_path / "depot")},
+        text=True, capture_output=True, check=True,
+    )
+    outputs = [line.split("\t", 1) for line in result.stdout.splitlines()]
+    assert [(port, json.loads(payload)) for port, payload in outputs] == [("result", {"value": 42})] * 2

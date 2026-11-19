@@ -252,6 +252,7 @@ function invoke(hook::Bool)
         result === nothing && return true
         result isa AbstractDict || error("return a Dict by output port")
         for (port, value) in result
+            value === nothing && continue
             ccall(HOST.output, Cint, (Cstring, Cstring), string(port), json_text(value)) == 0 || return false
         end
         return true

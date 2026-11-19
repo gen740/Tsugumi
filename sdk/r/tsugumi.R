@@ -122,6 +122,7 @@
     if (hook || is.null(result) || (is.list(result) && !length(result))) return(TRUE)
     if (!is.list(result) || is.null(names(result))) stop("return a named list of output ports")
     for (index in seq_along(result)) {
+      if (is.null(result[[index]])) next
       json <- as.character(arguments$to_json(result[[index]]))
       if (!.Call("tsugumi_output", names(result)[[index]], json)) return(FALSE)
     }

@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flatbuffer_schema.hh"
 
 namespace tsugumi::types {
 
@@ -770,23 +771,7 @@ std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
     *error = "unknown root type " + t.root_type;
     return nullptr;
   }
-  // Reflection stores integer defaults as signed bits. Restore unsigned text
-  // and deprecated flags before using the deserialized schema to render values.
-  for (auto* object : p->structs_.vec) {
-    const auto name =
-        object->defined_namespace->GetFullyQualifiedName(object->name);
-    const auto* reflected = t.schema()->objects()->LookupByKey(name.c_str());
-    if (!reflected) continue;
-    for (auto* field : object->fields.vec) {
-      const auto* source =
-          reflected->fields()->LookupByKey(field->name.c_str());
-      if (!source) continue;
-      field->deprecated = source->deprecated();
-      if (!source->optional() && source->type()->base_type() == BaseType::ULong)
-        field->value.constant =
-            std::to_string(static_cast<uint64_t>(source->default_integer()));
-    }
-  }
+  flatbuffer_schema::restore_reflection_defaults(*p, *t.schema());
   return p;
 }
 

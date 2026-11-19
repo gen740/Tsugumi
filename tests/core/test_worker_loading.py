@@ -17,8 +17,10 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.FlatBufferData import FlatBufferDataT
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
+from Tsugumi.Worker.WorkerInput import WorkerInputT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
+from harness.values import encode_message
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", ROOT / "build/workerd/tsugumi-worker"))
@@ -60,13 +62,13 @@ def worker(package, *, stderr=None):
                 print("worker exit", p.returncode, out, err)
 
 
-def send_call(data, tmp_path, call_id=1, deadline=None):
+def send_call(data, tmp_path, call_id=1, deadline=None, inputs=()):
     call = WorkerCallT()
     call.runId = "recorded-run"
     call.card = CardPathT()
     call.card.segments = ["card"]
     call.invocation = call_id
-    call.inputs = []
+    call.inputs = list(inputs)
     call.outputs = []
     call.params = FlatBufferDataT()
     call.params.schemaBfbs = []
@@ -102,6 +104,34 @@ def receive(data):
         return out
     size, = struct.unpack("<I", full(4))
     return WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(full(size)))
+
+
+def test_worker_rejects_incomplete_input_before_loading_card(tmp_path):
+    schema = "table Reading { label:string (required); } root_type Reading;"
+    payload = encode_message(tmp_path, schema, {"label": "sample"}, root_type="Reading")
+    subprocess.run(["flatc", "--binary", "--schema", "-o", str(tmp_path),
+                    str(tmp_path / "message.fbs")], check=True)
+    value = FlatBufferDataT()
+    value.schemaBfbs = (tmp_path / "message.bfbs").read_bytes()
+    value.rootType = "Reading"
+    value.bytes = payload[:4]
+    port = WorkerInputT()
+    port.name, port.value = "reading", value
+    library(tmp_path, r'''
+#include <tsugumi/sdk/abi.h>
+int tsugumi_main(const tsugumi_call* c) {
+  return c->phase == TSUGUMI_LOAD ? tsugumi_display_text(c, "loaded", 0) : 0;
+}
+''')
+    with worker(tmp_path) as (_, data, _):
+        send_call(data, tmp_path, inputs=[port])
+        failure = receive(data)
+        assert failure.valueType == WorkerPayload.WorkerFailure
+        assert failure.value.failure.kind == FailureKind.type_mismatch
+        value.bytes = payload
+        send_call(data, tmp_path, 2, inputs=[port])
+        assert receive(data).valueType == WorkerPayload.WorkerDisplay
+        assert receive(data).valueType == WorkerPayload.WorkerResult
 
 
 def test_card_constructors_wait_for_the_invocation(tmp_path):

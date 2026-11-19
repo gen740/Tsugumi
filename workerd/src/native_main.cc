@@ -53,6 +53,7 @@
 #include "tsugumi/message_json.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
+#include "tsugumi/util/flatbuffer_schema.hh"
 #include "tsugumi/util/json.hh"
 #include "tsugumi/workerd/display.hh"
 #include "tsugumi/workerd/frame.hh"
@@ -605,6 +606,8 @@ flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs,
   if (!p->Deserialize(bfbs->data(), bfbs->size()) ||
       !p->SetRootType(root.c_str()))
     return nullptr;
+  tsugumi::flatbuffer_schema::restore_reflection_defaults(
+      *p, *reflection::GetSchema(bfbs->data()));
   return (cache[key] = std::move(p)).get();
 }
 
@@ -1087,6 +1090,24 @@ auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
 void execute(const Options& opt, Call& call,
              flatbuffers::FlatBufferBuilder& result) {
   const auto* m = call.msg;
+  // The outer WorkerMessage verifier only sees the message as bytes.
+  for (const auto* input : *m->inputs()) {
+    const auto* value = input->value();
+    const auto* bfbs = value->schema_bfbs();
+    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
+    if (reflection::VerifySchemaBuffer(verifier)) {
+      const auto& schema = *reflection::GetSchema(bfbs->data());
+      const auto* root =
+          schema.objects()->LookupByKey(value->root_type()->c_str());
+      const auto* bytes = value->bytes();
+      if (root && !root->is_struct() &&
+          flatbuffers::Verify(schema, *root, bytes->data(), bytes->size()))
+        continue;
+    }
+    record_failure(D::FailureKind::type_mismatch,
+                   "input " + input->name()->str() + " does not match its type");
+    return;
+  }
   std::string work = m->working_directory()->str();
   std::string tmp = m->temporary_directory()->str();
   std::string out_dir =
