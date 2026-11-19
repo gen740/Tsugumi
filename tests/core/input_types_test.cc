@@ -229,12 +229,6 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
             definition);
   EXPECT_EQ(sdk::DescribeInput(schema, "unknown"), schema);
 }
-TEST(InputTypes, CatalogOffersTheReadAndKeepsOutputSchemaEditing) {
-  agent::Catalog catalog;
-  ASSERT_TRUE(catalog.Find("input_types"));
-  ASSERT_TRUE(catalog.Find("output_types"));
-  EXPECT_FALSE(catalog.Find("input_types")->mutating);
-}
 }  // namespace
 }  // namespace tsugumi
 

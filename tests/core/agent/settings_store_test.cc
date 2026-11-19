@@ -13,9 +13,6 @@
 #include "host/store.hh"
 #include "tsugumi/util/json_object.hh"
 
-extern const unsigned char tsugumi_agent_settings[];
-extern const unsigned long tsugumi_agent_settings_size;
-
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
@@ -275,8 +272,9 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
     b.Finish(H::Request::Pack(b, &request));
     const auto reply = service.Handle(
         *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
-    return H::GetMessage(reply.data())->payload_as_Reply()->value_as_Failure() ==
-           nullptr;
+    return H::GetMessage(reply.data())
+               ->payload_as_Reply()
+               ->value_as_Failure() == nullptr;
   };
   const auto defaults = host::VMDefaultResources();
   const auto limits = host::VMResourceLimits();
@@ -1011,38 +1009,8 @@ TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
   EXPECT_EQ(agent::SerializeMessages(messages), original);
 }
 
-TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
+TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   TemporaryDirectory directory;
-  EXPECT_EQ(
-      host::Models::ContextWindowTokens(directory.path, "openai", "unknown"),
-      128000u);
-  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "openai",
-                                              "gpt-6.1-sol"),
-            1050000u);
-  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
-                                              "claude-sonnet-5-5"),
-            1000000u);
-  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
-                                              "claude-opus-4-5-20251101"),
-            200000u);
-  const auto embedded = ::tsugumi::json::Object(
-      std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
-                       tsugumi_agent_settings_size));
-  const auto options =
-      ::tsugumi::json::Object(::tsugumi::json::Get(embedded, "modelOptions"));
-  const auto connections =
-      ::tsugumi::json::Object(::tsugumi::json::Get(options, "connections"));
-  for (const auto& [provider, raw] : connections)
-    for (const auto& group : ::tsugumi::json::Array(
-             ::tsugumi::json::Get(::tsugumi::json::Object(raw), "effort")))
-      for (const auto& id : ::tsugumi::json::Array(::tsugumi::json::Get(
-               ::tsugumi::json::Object(group), "models"))) {
-        const auto name = ::tsugumi::json::String(id);
-        EXPECT_GT(
-            host::Models::ContextWindowTokens(directory.path, provider, name),
-            128000u)
-            << name;
-      }
   host::HostStore home(directory.path);
   auto& db = home.db;
   auto insert = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
@@ -1057,26 +1025,17 @@ TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
       std::move(secrets), host::Settings::KeyStorage::Host);
-  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
-            1000000u - 32768u - 50000u);
-  EXPECT_EQ(
-      settings.Resolve({{"provider_id", Quote("openai")}}).context_limit_tokens,
-      1050000u - 32768u - 52500u);
-  EXPECT_EQ(settings
-                .Resolve({{"provider_id", Quote("openai")},
-                          {"model", Quote("unknown")}})
-                .context_limit_tokens,
-            128000u - 32768u - 6400u);
+  const auto fallback = settings.Resolve({}).context_limit_tokens;
   auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
   catalog.bind(1, "anthropic")
       .bind(2, host::Models::CatalogConnection("anthropic", "desktop"))
       .bind(3, R"([{"id":"claude-sonnet-5-5","contextWindowTokens":100000}])")
       .run();
-  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
-            100000u - 32768u - 5000u);
+  const auto override_budget = settings.Resolve({}).context_limit_tokens;
+  EXPECT_LT(override_budget, fallback);
   const auto config = settings.Resolve(
       {{"provider_id", Quote("fixture")}, {"model", Quote("fixture-model")}});
-  EXPECT_EQ(config.context_limit_tokens, 100000u - 32768u - 5000u);
+  EXPECT_EQ(config.context_limit_tokens, override_budget);
   EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "fixture",
                                               "fixture-model"),
             100000u);

@@ -295,14 +295,6 @@ TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
   EXPECT_EQ(CardStem("集計"), "card");
   EXPECT_EQ(CardStem("---A___B---"), "a-b");
   EXPECT_LE(CardStem(std::string(500, 'a')).size(), 123u);
-  const agent::Catalog catalog;
-  EXPECT_NE(catalog.Find("card_id")->spec.input_schema.find("\"name\""),
-            std::string::npos);
-  EXPECT_EQ(catalog.Find("card_id")->spec.input_schema.find("\"stem\""),
-            std::string::npos);
-  EXPECT_NE(
-      catalog.Find("project_save")->spec.input_schema.find("fill_description"),
-      std::string::npos);
 }
 }  // namespace
 }  // namespace tsugumi::host

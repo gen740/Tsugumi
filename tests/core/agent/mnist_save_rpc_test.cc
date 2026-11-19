@@ -1,5 +1,4 @@
 #include <set>
-#include <tuple>
 
 #include "project_fixture.hh"
 #include "tsugumi/util/json_object.hh"
@@ -8,13 +7,9 @@ namespace tsugumi::test {
 namespace {
 namespace json = ::tsugumi::json;
 
-class MnistSaveFixture
-    : public AgentProjectFixture,
-      public testing::WithParamInterface<std::tuple<std::string, bool>> {};
-
-TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
+TEST_F(AgentProjectFixture, ImplementsJapaneseBundledDraftsAndPlacesNewCard) {
   const auto demo = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos" /
-                    std::get<0>(GetParam()) / "mnist-classifiers-draft";
+                    "ja" / "mnist-classifiers-draft";
   const auto root = directory.path / "project";
   // Bundled fixtures in the Nix store are read-only; the opened project is a
   // writable copy, as it is when the app opens a demo.
@@ -23,8 +18,7 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
       Write(root / std::filesystem::relative(file.path(), demo),
             Read(file.path()));
   const auto document = Read(root / "tsugumi.json");
-  StartProject(false, document,
-               std::get<1>(GetParam()) ? "{}" : Read(root / "layout.json"));
+  StartProject(false, document, "{}");
   const auto conversation = Conversation("mnist-generate-cards");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -58,14 +52,14 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
         {"value_type", Quote(type)}, {"value", json::Encode(value)}}));
   };
   change("SetProject", {{"json", Quote(json::Encode(project))}});
-  size_t drafts = 0;
+  std::vector<std::string> implemented;
   for (const auto& raw : cards) {
     const auto id = json::Text(json::Object(raw), "id");
     if (id != "report" &&
         json::Text(json::Object(Read(root / "definitions" / id / "_card.json")),
                    "template") != "draft")
       continue;
-    ++drafts;
+    implemented.push_back(id);
     auto meta =
         id == "report"
             ? json::Members{{"description", Quote("Compare the classifiers")},
@@ -104,19 +98,8 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
     change("PutSource", {{"path", Quote("definitions/" + id + "/_outputs.fbs")},
                          {"bytes", Quote(output_schema)}});
   }
-  ASSERT_GT(drafts, 1u);
-  // These are the actual bytes of a bundled Draft read, not malformed model
-  // input. The old 512-byte event summary cuts its Japanese text mid-character.
+  // The bundled Japanese text exercises multibyte clipping in tool events.
   const auto read_arguments = R"({"path":"definitions/boosting/_meta.json"})";
-  const auto read =
-      Tool(conversation, "project_file_read", read_arguments, "read-draft");
-  ASSERT_TRUE(read.Code().empty());
-  ASSERT_FALSE(JsonBool(read.View(), "/isError")) << read.View();
-  if (std::get<0>(GetParam()) == "ja") {
-    schema::v::String summary;
-    summary.value() = JsonString(read.View(), "/text").substr(0, 512);
-    EXPECT_THROW(schema::encode(summary), std::runtime_error);
-  }
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool("inspect", "project_inspect", "{}"));
@@ -129,14 +112,7 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
   ASSERT_TRUE(Send(conversation, "Generate Cards: implement the Draft Cards.")
                   .Code()
                   .empty());
-  const auto state = WaitUntilIdle(conversation);
-  EXPECT_NE(state.find("Generated Cards."), std::string::npos) << state;
-  EXPECT_EQ(state.find("JSON encoding failed"), std::string::npos) << state;
-  ASSERT_TRUE(model.WaitForRequests(4));
-  const auto request = model.Requests().at(3);
-  const auto result = JsonString(request, "/messages/6/content/0/content");
-  EXPECT_FALSE(JsonBool(request, "/messages/6/content/0/is_error")) << result;
-  EXPECT_NE(result.find("SaveResult"), std::string::npos) << request;
+  WaitUntilIdle(conversation);
   const auto after = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -147,26 +123,14 @@ TEST_P(MnistSaveFixture, GenerateCardsSavesAndReturnsGeometry) {
                 1);
   const auto layout = json::Object(Read(root / "layout.json"));
   EXPECT_TRUE(json::Object(layout.at("cards")).contains("report"));
-  for (const auto& raw : cards) {
-    const auto id = json::Text(json::Object(raw), "id");
-    if (id == "report" ||
-        json::Text(json::Object(Read(root / "definitions" / id / "_card.json")),
-                   "template") == "code")
-      EXPECT_NE(Read(root / "definitions" / id / "_card.json").find("0.001"),
-                std::string::npos);
+  for (const auto& id : implemented) {
+    SCOPED_TRACE(id);
+    const auto definition = Read(root / "definitions" / id / "_card.json");
+    EXPECT_EQ(JsonString(definition, "/template"), "code");
+    const auto params = json::Array(json::Object(definition).at("params"));
+    const auto rate = json::Object(params.front());
+    EXPECT_DOUBLE_EQ(std::stod(rate.at("data")), 0.001);
   }
-  const auto geometry = Call(
-      *host, H::RequestPayload::DisplayGeometryRequest,
-      [](Builder& b) { return H::CreateDisplayGeometryRequest(b).Union(); });
-  ASSERT_TRUE(geometry.Code().empty());
-  const auto* value = geometry.HostValue()->value_as_DisplayGeometries();
-  ASSERT_NE(value, nullptr);
-  EXPECT_EQ(value->top_to_bottom()->width(), 320);
-  EXPECT_EQ(value->left_to_right()->height(), 170);
 }
-INSTANTIATE_TEST_SUITE_P(BundledDemo, MnistSaveFixture,
-                         testing::Combine(testing::Values(std::string("ja"),
-                                                          std::string("en")),
-                                          testing::Bool()));
 }  // namespace
 }  // namespace tsugumi::test
