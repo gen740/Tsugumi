@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from harness.real_cards import log
+from harness.real_cards import bash, log
 from projects import MSG_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
@@ -81,8 +81,12 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path, 
             # from the blocked probe. No activation will take over its build.
             defs["early"]["inputs"] = [{"name": "in"}]
             edges.append(conn("probe", "msg", "early", "in"))
-        write(root, defs, [card(name, name) for name in names], edges)
+        defs["warm"] = bash("true", outputs="table Outputs {} root_type Outputs;")
+        write(root, defs, [card(name, name) for name in defs], edges)
         client = core_factory(project_root=root).connect()
+        # Exercise a build on a later Run, using the existing evaluator.
+        _, warm = run_and_wait(client, "warm", propagate=False)
+        assert warm.state == RunState.succeeded
         run_id = start_run(client, "probe", propagate=early_card)
 
         builders = {}
