@@ -697,6 +697,10 @@ table LogRangeRequest {
   /// Read up to limit_bytes immediately before this exclusive byte offset.
   /// Cannot be combined with tail or a nonzero offset.
   before:uint64 = null (id: 7);
+  /// Read the terminal display. Offsets and the size use four units per Unicode scalar.
+  terminal:bool = false (id: 8);
+  /// Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then.
+  terminal_since:uint64 = null (id: 9);
 }
 
 /// -> Ack. Replaces the subscription's Display targets. enabled = true.
@@ -1100,6 +1104,10 @@ table LogSlice {
   line_number:uint64 = 1 (id: 7);
   /// Offset is zero or the previous byte is LF.
   starts_line:bool = true (id: 8);
+  /// Original log size for a terminal read. Export uses raw offsets and bytes.
+  raw_size_bytes:uint64 = null (id: 9);
+  /// The terminal redrew cells and this slice replaces the previous window.
+  reset:bool = false (id: 10);
 }
 
 table ViewSaveResult {

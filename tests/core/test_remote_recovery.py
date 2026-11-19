@@ -410,6 +410,38 @@ def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
     assert error.value.kind == "persistence_failed"
 
 
+def test_long_terminal_redraw_is_consistent_in_forward_and_reverse_pages(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    raw = "first\na" + "x" * (3 << 20) + "\r雪\nend\n"
+    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
+                                            "text": raw}, ensure_ascii=False) + "\n").encode())
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
+    expected = "first\n雪" + "x" * (3 << 20) + "\nend\n"
+    reads = dict(args, terminal=True, limitBytes=1 << 20)
+    page = client.call("LogRangeRequest", **reads, tail=True)
+    end = page.nextOffset
+    assert page.lineNumber == 2 and not page.startsLine
+    assert page.rawSizeBytes == len(raw.encode())
+    assert end == page.sizeBytes == len(expected) * 4
+    while page.offset:
+        previous = client.call("LogRangeRequest", **reads, before=page.offset)
+        assert previous.nextOffset == page.offset
+        assert text(previous.text) == expected[previous.offset // 4:previous.nextOffset // 4]
+        page = previous
+    while page.nextOffset < end:
+        page = client.call("LogRangeRequest", **reads, offset=page.nextOffset)
+        assert text(page.text) == expected[page.offset // 4:page.nextOffset // 4]
+
+    offset = 0
+    while offset < len(raw.encode()):
+        original = client.call("LogRangeRequest", **args, offset=offset, limitBytes=1 << 20)
+        assert original.text == raw.encode()[offset:original.nextOffset]
+        assert original.nextOffset > offset
+        offset = original.nextOffset
+
+
 @pytest.mark.parametrize(("outage", "completed"), [
     ("offline", False),
     ("registration_replaced", True),
