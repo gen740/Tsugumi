@@ -680,7 +680,7 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
         if (type == "PutSource" && path.ends_with("/tsugumi.json")) continue;
         File(path, true, read);
         if (type != "RemoveSource" && path.ends_with("/_card.json") &&
-            host::comments::is_meta(path.substr(0, path.size() - 10) +
+            comments::is_meta(path.substr(0, path.size() - 10) +
                                     "_meta.json")) {
           const host::SourcePatches patches;
           const auto card =

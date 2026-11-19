@@ -1,33 +1,16 @@
 #include "host/comments.hh"
 
-#include <algorithm>
-#include <filesystem>
-#include <map>
 #include <set>
 
-#include "tsugumi/util/crypto.hh"
-#include "tsugumi/util/git.hh"
 #include "tsugumi/util/json.hh"
+#include "tsugumi/util/json_object.hh"
 
-namespace tsugumi::host::comments {
+namespace tsugumi::comments {
 
 namespace {
 
 using Object = schema::v::Mapping<schema::v::String, schema::Json>;
 constexpr const char* kAgent = "agent";
-
-// By id, the Card's own first: a copied Card in Card has comments with the same
-// ids.
-const Comment* find(const std::vector<Comment>& list, const std::string& card,
-                    const std::string& id) {
-  const Comment* other = nullptr;
-  for (const auto& c : list) {
-    if (c.id != id) continue;
-    if (c.card == card) return &c;
-    if (!other) other = &c;
-  }
-  return other;
-}
 
 void set_field(auto& comment, const std::string& name,
                const std::optional<hosq::json::GenericDom<>>& value) {
@@ -108,124 +91,6 @@ std::string stamped(const std::string& text, const std::string& card,
   return any ? schema::pretty_text(schema::encode(root)) : text;
 }
 
-std::vector<Comment> parse(const std::string& card,
-                           const std::string& meta_json) {
-  std::vector<Comment> out;
-  try {
-    auto root = json::Object(meta_json);
-    for (const auto& raw : json::Array(json::Get(root, "comments", "[]"))) {
-      const auto c = json::Object(raw);
-      Comment o;
-      o.card = card;
-      o.id = json::Text(c, "id");
-      o.text = json::Text(c, "text");
-      o.resolved = json::Bool(json::Get(c, "resolved"));
-      o.resolution = json::Text(c, "resolution");
-      o.author = json::Text(c, "author");
-      o.edited_by = json::Text(c, "editedBy");
-      o.state_by = json::Text(c, "stateBy");
-      for (const auto& k : json::Array(json::Get(c, "cards", "[]")))
-        o.cards.push_back(json::String(k));
-      out.push_back(std::move(o));
-    }
-  } catch (const std::exception&) {
-    return {};
-  }
-  return out;
-}
-
-auto of(const Files& files) -> std::vector<Comment> {
-  std::vector<Comment> out;
-  for (const auto& [path, text] : files) {
-    if (!is_meta(path)) continue;
-    if (auto card = card_of(path, files)) {
-      auto list = parse(*card, text);
-      out.insert(out.end(), list.begin(), list.end());
-    }
-  }
-  return out;
-}
-
-std::vector<Change> changes(const std::vector<Comment>& before,
-                            const std::vector<Comment>& after) {
-  std::vector<Change> out;
-  for (const auto& c : after) {
-    const Comment* was = find(before, c.card, c.id);
-    if (!was) {
-      if (c.resolved)
-        out.push_back(
-            {c.card, c.text, "resolved", c.state_by, c.resolution, c.cards});
-      else
-        out.push_back({c.card, c.text, "added", c.author, "", {}});
-    } else if (was->resolved != c.resolved) {
-      if (c.resolved)
-        out.push_back(
-            {c.card, c.text, "resolved", c.state_by, c.resolution, c.cards});
-      else
-        out.push_back({c.card, c.text, "reopened", c.state_by, "", {}});
-    } else if (was->text != c.text) {
-      out.push_back({c.card,
-                     c.text,
-                     "edited",
-                     c.edited_by,
-                     c.resolved ? c.resolution : "",
-                     {}});
-    }
-  }
-  for (const auto& c : before)
-    if (!find(after, c.card, c.id))
-      out.push_back({c.card, c.text, "removed", "", "", {}});
-  std::stable_sort(
-      out.begin(), out.end(),
-      [](const Change& a, const Change& b) { return a.card < b.card; });
-  return out;
-}
-
-auto is_meta(const std::string& path) -> bool {
-  auto rel = path;
-  while (rel.starts_with("externals/")) {
-    const auto slash = rel.find('/', 10);
-    if (slash == std::string::npos) return false;
-    rel.erase(0, slash + 1);
-  }
-  if (!rel.starts_with("definitions/")) return false;
-  const auto slash = rel.find('/', 12);
-  return slash != std::string::npos && rel.substr(slash + 1) == "_meta.json";
-}
-
-auto card_of(const std::string& path, const Files& files)
-    -> std::optional<std::string> {
-  std::string rest = path, prefix, directory;
-  while (rest.starts_with("externals/")) {
-    auto slash = rest.find('/', 10);
-    if (slash == std::string::npos) return std::nullopt;
-    const auto external = rest.substr(10, slash - 10);
-    auto id = external;
-    for (const auto& [link, text] : files) {
-      if (!link.starts_with(directory + "definitions/") ||
-          !link.ends_with("/_card.json"))
-        continue;
-      auto local = link.substr(directory.size());
-      if (local.find('/', 12) != local.size() - 11) continue;
-      try {
-        if (::tsugumi::json::Text(::tsugumi::json::Object(text), "external") ==
-            external) {
-          id = local.substr(12, local.size() - 23);
-          break;
-        }
-      } catch (const std::exception&) {
-      }
-    }
-    prefix += id + "/";
-    directory += "externals/" + external + "/";
-    rest.erase(0, slash + 1);
-  }
-  if (!rest.starts_with("definitions/")) return std::nullopt;
-  const auto slash = rest.find('/', 12);
-  if (slash == std::string::npos) return std::nullopt;
-  return prefix + rest.substr(12, slash - 12);
-}
-
 auto record_json(const std::vector<Change>& changes) -> std::string {
   std::vector<std::string> out;
   for (const auto& c : changes) {
@@ -242,58 +107,4 @@ auto record_json(const std::vector<Change>& changes) -> std::string {
   return json::Encode(out);
 }
 
-auto version(const std::filesystem::path& root, const std::string& id)
-    -> std::vector<Change> {
-  if (id.size() < 7 || id.size() > 40 ||
-      id.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-    throw std::runtime_error(
-        "Use a Git version object ID or unambiguous abbreviation");
-  git::init_once();
-  git::Ptr<git_repository, git_repository_free> repo;
-  if (git_repository_open_ext(&repo.p, root.c_str(),
-                              GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr))
-    throw std::runtime_error("Project has no version repository");
-  git_oid oid;
-  git_oid_fromstrn(&oid, id.c_str(), id.size());
-  git::Ptr<git_commit, git_commit_free> commit, parent;
-  if (git_commit_lookup_prefix(&commit.p, repo.p, &oid, id.size()))
-    throw std::runtime_error("Version not found");
-  git::Ptr<git_tree, git_tree_free> now, before;
-  if (git_commit_tree(&now.p, commit.p))
-    throw std::runtime_error("Cannot read version tree");
-  if (git_commit_parentcount(commit.p)) {
-    if (git_commit_parent(&parent.p, commit.p, 0) ||
-        git_commit_tree(&before.p, parent.p))
-      throw std::runtime_error("Cannot read parent version tree");
-  }
-  auto read = [&](git_tree* tree) {
-    Files files;
-    if (!tree) return files;
-    struct Walk {
-      git_repository* repo;
-      Files* files;
-    } walk{repo.p, &files};
-    git_tree_walk(
-        tree, GIT_TREEWALK_PRE,
-        [](const char* prefix, const git_tree_entry* entry, void* payload) {
-          auto& w = *static_cast<Walk*>(payload);
-          std::string path = std::string(prefix) + git_tree_entry_name(entry);
-          if ((!path.ends_with("/_meta.json") &&
-               !path.ends_with("/_card.json")) ||
-              !card_of(path) || git_tree_entry_type(entry) != GIT_OBJECT_BLOB)
-            return 0;
-          git_blob* blob = nullptr;
-          if (!git_blob_lookup(&blob, w.repo, git_tree_entry_id(entry))) {
-            (*w.files)[path] =
-                std::string(static_cast<const char*>(git_blob_rawcontent(blob)),
-                            git_blob_rawsize(blob));
-            git_blob_free(blob);
-          }
-          return 0;
-        },
-        &walk);
-    return files;
-  };
-  return changes(of(read(before.p)), of(read(now.p)));
-}
-}  // namespace tsugumi::host::comments
+}  // namespace tsugumi::comments

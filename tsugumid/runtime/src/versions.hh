@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "tsugumi/document/comments.hh"
+
 namespace tsugumi {
 
 struct Document;
@@ -40,6 +42,7 @@ struct VersionCommit {
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
   std::vector<std::string> changed;
+  std::vector<comments::Change> comments;
 };
 
 // A version's own Cards and how they connect, for a minimap.
@@ -55,7 +58,13 @@ struct VersionCanvasData {
 };
 
 struct VersionNoteData {
+  std::string commit;
   std::string record_json;
+};
+
+struct VersionDiffData {
+  std::string text;
+  bool truncated = false;
 };
 
 struct VersionGraphData {
@@ -92,11 +101,18 @@ class Versions {
   void checkout(
       const std::string& commit,
       const std::function<void(const std::filesystem::path&)>& validate);
-  VersionGraphData graph(size_t limit);
+  VersionGraphData graph(size_t limit, bool include_comments = false);
   // Raw layout and definition data of `commit`, without presentation logic.
   VersionCanvasData canvas(const std::string& commit);
   // Neutral factual changes, cached in refs/notes/tsugumi-record.
   auto note(const std::string& commit) -> VersionNoteData;
+
+  auto diff(const std::string& commit, const std::string& from = "")
+      -> VersionDiffData;
+  auto comment_changes(const std::string& commit)
+      -> std::vector<comments::Change>;
+  auto summary(const std::string& commit, bool english,
+               const std::optional<std::string>& text = {}) -> std::string;
 
   static std::string format_note(const VersionRunNote& r);
   static std::string iso_utc(int64_t ms);

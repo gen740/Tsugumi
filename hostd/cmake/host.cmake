@@ -65,7 +65,7 @@ endif()
 target_include_directories(tsugumi_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private ${CMAKE_CURRENT_SOURCE_DIR}/agent/private)
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_link_libraries(tsugumi_host_core PUBLIC tsugumi_trace_codec tsugumi_rpc_schema tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
+  Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
 target_link_libraries(tsugumi_host_core PRIVATE native_sqlite)
 if(NOT APPLE)
   target_link_libraries(tsugumi_host_core PRIVATE PkgConfig::CRYPTO)

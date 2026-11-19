@@ -400,7 +400,7 @@ public actor CoreHostClient {
     return try await hostCall(.hostversiongraphrequest, request)
   }
 
-  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_RPC_VersionDiffT {
     let request = Tsugumi_Host_HostVersionDiffRequestT(); request.project = project; request.commit = commit; request.fromCommit = from
     return try await hostCall(.hostversiondiffrequest, request)
   }
@@ -429,9 +429,9 @@ public actor CoreHostClient {
     return (reply.configured, reply.code)
   }
 
-  public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
+  public func versionComments(project: String, commit: String) async throws -> [Tsugumi_RPC_VersionCommentT] {
     let request = Tsugumi_Host_VersionCommentsRequestT(); request.project = project; request.commit = commit
-    let result: Tsugumi_Host_VersionCommentsT = try await hostCall(.versioncommentsrequest, request)
+    let result: Tsugumi_RPC_VersionCommentsT = try await hostCall(.versioncommentsrequest, request)
     return result.comments.compactMap { $0 }
   }
 

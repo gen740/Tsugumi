@@ -442,7 +442,10 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
                       {"diagnostics", json::Encode(diagnostics)}})}});
   }
   const bool english = json::Text(args, "language") == "en";
-  if (name == "version_graph") args.erase("language");
+  if (name == "version_graph") {
+    args.erase("language");
+    args["include_comments"] = "true";
+  }
   if (name == "card_id") {
     args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
     args.erase("name");
@@ -493,14 +496,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
   if (name == "version_graph") {
     auto envelope = json::Object(result);
     if (json::Text(envelope, "reply") == "VersionGraph") {
-      std::string root;
-      {
-        std::lock_guard lock(mutex);
-        auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
-        path.bind(1, project);
-        if (path.step()) root = path.text(0);
-      }
-      namespace R = Tsugumi::RPC;
       const auto* reply = R::GetMessage(raw_reply.data())->payload_as_Reply();
       auto typed = std::unique_ptr<R::VersionGraphT>(
           reply->value_as_VersionGraph()->UnPack());
@@ -512,22 +507,9 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
       R::FinishMessageBuffer(
           builder,
           R::CreateMessage(builder, 1, R::Payload::Reply, response.Union()));
-      auto presented = json::Object(catalog.Reply(
+      result = catalog.Reply(
           {reinterpret_cast<const char*>(builder.GetBufferPointer()),
-           builder.GetSize()}));
-      auto graph = json::Object(json::Get(presented, "value", "{}"));
-      if (!root.empty()) {
-        auto commits = json::Array(json::Get(graph, "commits", "[]"));
-        for (auto& raw : commits) {
-          auto commit = json::Object(raw);
-          commit["comments"] = host::comments::record_json(
-              host::comments::version(root, json::Text(commit, "id")));
-          raw = json::Encode(commit);
-        }
-        graph["commits"] = json::Encode(commits);
-      }
-      envelope["value"] = json::Encode(graph);
-      result = json::Encode(envelope);
+           builder.GetSize()});
     }
   }
   return result;
