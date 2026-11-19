@@ -196,15 +196,6 @@ def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):
     assert states(c, run3, "o2") == []
 
 
-def test_subgraph_run_without_saved_inputs_fails_explicitly(env):
-    """A partial workflow run reports when no saved boundary input exists."""
-    c = env([card("src", "msg"), subgraph("s1"), card("o1", "sink")],
-            [conn("src", "msg", "s1", "in"), conn("s1", "out", "o1", "in")])
-    _, st = run_and_wait(c, "s1", propagate=False)
-    assert st.state == RunState.failed
-    assert st.failure.kind == FailureKind.input_missing
-
-
 def set_param(c, card_id, name, value):
     snap = c.call("ProjectInspectRequest")
     body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == card_id)

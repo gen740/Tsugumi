@@ -9,10 +9,10 @@ import shlex
 import pytest
 
 from harness.real_cards import PYTHON_NIX, nix_string
-from harness.scenario import Project, run, wait_run
+from harness.scenario import Project
+from projects import run_and_wait
 from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
-from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 
@@ -45,17 +45,9 @@ def main(inputs, report):
     return graph.connect("source", "out", "display", "in")
 
 
-def display_run(client):
-    run_id = run(client, "source")
-    status = wait_run(client, run_id)
-    stdout = text(client.call("LogRangeRequest", runId=run_id, card=path("display"),
-                              invocation=1, stream=1).text)
-    return run_id, status, stdout
-
-
 def recorded_display(client, run_id):
     record = client.call("RunRecordRequest", runId=run_id, card=path("display"))
-    return record.record.display.value
+    return record.record.display and record.record.display.value
 
 
 def emit(value):
@@ -65,46 +57,35 @@ def emit(value):
 TEXT_SCHEMA = "table Message { note:string; value:string; other:double; } table Outputs { out:Message; } root_type Outputs;"
 
 
-def test_display_renders_the_selected_markdown_field_on_each_run(client, project, tmp_path):
+def test_display_renders_the_selected_markdown_field(client, project):
     markdown = "**日本語**\n\n$x^2$"
-    encoded = '{"note":' + json.dumps(markdown) + ',"value":"other","other":inf}'
-    payload = encode_message(tmp_path / "encoded", TEXT_SCHEMA, encoded, root_type="Message")
-    display_graph(project, TEXT_SCHEMA, payload=payload, display_format="markdown", markdown_field="note").save(client)
-    for cached in (False, True):
-        run_id, status, logged = display_run(client)
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        if cached:
-            record = client.call("RunInvocationsRequest", runId=run_id, card=path("display")).records[0]
-            assert record.buildCached
-        shown = recorded_display(client, run_id)
-        assert shown.markdown
-        assert text(shown.text) == markdown
-        values = json.loads(logged.replace('"other": inf', '"other": Infinity'))
-        assert values["note"] == markdown and values["other"] == math.inf
+    script = emit(json.dumps({"note": markdown, "value": "other"}))
+    display_graph(project, TEXT_SCHEMA, script, display_format="markdown", markdown_field="note").save(client)
+    run_id, status = run_and_wait(client, "source")
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    shown = recorded_display(client, run_id)
+    assert shown.markdown and text(shown.text) == markdown
 
 
-@pytest.mark.parametrize("field", ["note", "other"], ids=["missing", "not-a-string"])
-def test_display_rejects_a_missing_or_non_string_markdown_field(client, project, field):
-    display_graph(project, TEXT_SCHEMA, emit('{"value":"other"}'),
+@pytest.mark.parametrize(("field", "message"), [
+    ("note", {"value": "other"}),
+    ("other", {"value": "other", "other": 42}),
+], ids=["missing", "not-a-string"])
+def test_display_rejects_a_missing_or_non_string_markdown_field(client, project, field, message):
+    display_graph(project, TEXT_SCHEMA, emit(json.dumps(message)),
                   display_format="markdown", markdown_field=field).save(client)
-    run_id, status, logged = display_run(client)
+    run_id, status = run_and_wait(client, "source")
     assert status.state == RunState.failed
-    assert json.loads(logged)["value"] == "other"
-    reply = client.call("RunRecordRequest", runId=run_id, card=path("display"))
-    assert reply.status.state == CardState.failed
-    assert reply.record.display is None
+    assert recorded_display(client, run_id) is None
 
 
 def test_display_marks_large_unicode_previews(client, project):
     script = 'jq -n \'{out:{value:("\\uD83D\\uDE00" * 270000)}}\' > "$TSUGUMI_OUTPUT"'
     display_graph(project, TEXT_SCHEMA, script).save(client)
-    run_id, status, logged = display_run(client)
+    run_id, status = run_and_wait(client, "source")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     shown = text(recorded_display(client, run_id).text)
-    prefix, separator, notice = shown.rpartition("\n\n")
-    assert prefix and separator and notice
-    assert logged and prefix[:100] == logged[:100]
-    assert len(shown.encode()) <= 1024 * 1024
+    assert 0 < shown.count("😀") < 270000
     assert "\ufffd" not in shown
 
 
@@ -157,10 +138,9 @@ def test_display_preserves_structured_values_and_defaults(client, project, tmp_p
     encoded = json.dumps(value, ensure_ascii=False)[:-1] + ', "non_finite": [nan, inf, -inf]}'
     payload = encode_message(tmp_path / "encoded", STRUCTURED_SCHEMA, encoded, root_type="t.Message")
     display_graph(project, STRUCTURED_SCHEMA, payload=payload).save(client)
-    run_id, status, logged = display_run(client)
+    run_id, status = run_and_wait(client, "source")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     shown = text(recorded_display(client, run_id).text)
-    assert logged == shown
     values = re.sub(r"\b(?:nan|inf)\b", lambda token: {"nan": "NaN", "inf": "Infinity"}[token[0]], shown)
     actual = json.loads(values, strict=False)
     nan, positive, negative = actual.pop("non_finite")

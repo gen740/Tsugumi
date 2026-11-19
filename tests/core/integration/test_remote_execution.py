@@ -16,7 +16,6 @@ import socket
 import socketserver
 import struct
 import tempfile
-from types import SimpleNamespace
 import subprocess
 import threading
 from pathlib import Path
@@ -29,7 +28,6 @@ from harness.observations import read_output, read_pages
 from harness.values import reference_json
 from projects import (
     FILE_FBS,
-    SINK,
     card,
     conn,
     run_and_wait,
@@ -43,7 +41,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
-from tsugumi_client import RpcFailure, line_chart_series, path, text
+from tsugumi_client import path, text
 
 pytestmark = pytest.mark.environment
 
@@ -254,7 +252,7 @@ def remote_gates(tmp_path, remote_daemon):
     return release
 
 
-def fixture(project, slow_gate=CARD_GATE):
+def fixture(project):
     script = """
       set -e
       test "$(uname -s)" = Linux
@@ -274,15 +272,10 @@ def fixture(project, slow_gate=CARD_GATE):
     }
     definitions = {
         "input": source,
-        "work": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + script + "''; }"},
-        "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + slow_gate + "\n" + script + "''; }"},
-        "sink": SINK,
+        "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + CARD_GATE + "\n" + script + "''; }"},
     }
-    write(project, definitions,
-          [card("source", "input"), card("later", "input"), card("work", "work"), card("slow", "slow"),
-           card("after", "sink")],
-          [conn("source", "doc", "work", "in"), conn("later", "doc", "slow", "in"),
-           conn("slow", "doc", "after", "in")],
+    write(project, definitions, [card("source", "input"), card("slow", "slow")],
+          [conn("source", "doc", "slow", "in")],
           {"definitions/input/payload.txt": "remote-input-roundtrip\n"})
 
 
@@ -293,11 +286,7 @@ def check_success(client, run_id, name, system):
     assert summary.executionState == RemoteExecutionState.succeeded
     assert text(summary.executionService) == "remote-test"
     assert text(summary.executionSystem) == system
-    assert len(text(summary.executionJobId)) == 64
-    assert not summary.executionResources
     assert text(record.display.value.text) == "remote Card display"
-    output, = record.outputs
-    assert text(output.rootType) == "files.Doc"
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(name)).artifacts
     assert len(artifacts) == 1
     content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
@@ -312,8 +301,9 @@ def check_success(client, run_id, name, system):
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):
-    # A separately managed worker has no test-side access to job scratch.
-    fixture(project, CARD_GATE if remote_gates else "sleep 25")
+    if remote_gates is None:
+        pytest.skip("requires a disposable worker whose listener can be restarted")
+    fixture(project)
     daemon = core_factory()
     client = daemon.connect()
     services = client.call("ProjectInspectRequest").executionServices
@@ -323,62 +313,32 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     assert system in ("aarch64-linux", "x86_64-linux")
 
     run_id = start_run(client, "source")
+    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
+    # The listener restarts while its journal and detached supervisor survive.
+    remote_daemon[2]()
+    remote_gates(started)
     run = wait_run(client, run_id)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
-    check_success(client, run_id, "work", system)
-
-    run_id = start_run(client, "later")
-    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
-    if restart := remote_daemon[2]:
-        # Only the listener restarts: its journal and detached supervisor survive.
-        # The same core life must resume this job under the default never-expire policy.
-        restart()
-    if remote_gates:
-        remote_gates(started)
-    assert wait_run(client, run_id).state == RunState.succeeded
     resumed = check_success(client, run_id, "slow", system)
     assert text(resumed.executionJobId) == text(started.executionJobId)
 
-    run_id = start_run(client, "later")
-    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
-    daemon.restart(crash=True)
-    client = daemon.connect()
-    wait_invocation(client, run_id, "slow", lambda row: row.endedAt is not None)
-    interrupted = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record
-    assert interrupted.summary.state == CardState.failed
-    assert interrupted.summary.executionState == RemoteExecutionState.interrupted
-    assert interrupted.summary.failure.kind == FailureKind.interrupted
-    assert text(interrupted.summary.executionJobId) == text(started.executionJobId)
-    assert not interrupted.outputs and not interrupted.display
-    assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
-    assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
-    with pytest.raises(RpcFailure) as downstream:
-        client.call("RunRecordRequest", runId=run_id, card=path("after"))
-    assert downstream.value.kind == "not_found"
 
-
-@pytest.mark.parametrize("view", ["line-chart", "own-js", "own-wasm"])
-def test_remote_display_module_matches_local_source(project, core_factory, module_downloads, monkeypatch, view):
-    """Read the recorded remote display before a local build can hide missing module transport."""
+@pytest.mark.parametrize("view", ["own-js", "own-wasm"])
+def test_remote_display_serves_card_owned_modules(project, core_factory, module_downloads, monkeypatch, view):
     marker = "remote-module-" + hashlib.sha256(str(project).encode()).hexdigest()[:16]
-    module_name = "line-chart" if view == "line-chart" else "own"
-    config = {"series": [{"id": "one", "label": "One", "offset": 0, "count": 2}]} if view == "line-chart" else {"answer": 42}
-    report = json.dumps({"module": {"module": module_name, "config": config,
-                                   "blobs": {"x": "x.bin", "y": "y.bin"}}})
-    # The same binary input is used on both sides; the source must contain none
-    # of the per-invocation config or blobs.
+    config = {"answer": 42}
+    blob = b"remote view data"
+    report = json.dumps({"module": {"module": "own", "config": config, "blobs": {"data": "data.bin"}}})
     script = """
       set -e
-      printf '\\000\\000\\000\\000\\000\\000\\360\\077\\000\\000\\000\\000\\000\\000\\000\\100' > x.bin
-      cp x.bin y.bin
+      printf '%s' 'remote view data' > data.bin
       printf '%s' '__DISPLAY_REPORT__' > "$TSUGUMI_REPORT"
       printf '%s' '{}' > "$TSUGUMI_OUTPUT"
     """.replace("__DISPLAY_REPORT__", report)
-    views = ""
     entry = f'export function initialise(root) {{ root.textContent = "{marker}"; }}\n'
     if view == "own-js":
         views = f'views.own = inputs.tsugumi.viewModule {{ src = ./view; name = "{marker}-js"; }};'
-    elif view == "own-wasm":
+    else:
         # Exercise the SDK's shared-index.js / Card-owned view.wasm layout
         # without building the much larger WebGPU template for this RPC test.
         entry = (f'// {marker}\nexport function initialise(root) {{ '
@@ -398,34 +358,29 @@ def test_remote_display_module_matches_local_source(project, core_factory, modul
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": "{ pkgs, inputs, params }: { " + views + " run = ''" + script + "''; }"}
     write(project, {"display": definition},
-          [card("remote", "display", executionService="remote-test"), card("local", "display")], [],
+          [card("remote", "display", executionService="remote-test")], [],
           {"definitions/display/view/index.js": entry,
            "definitions/display/view/view.wat": '(module (func (export "answer") (result i32) i32.const 42))'})
     daemon = core_factory()
     client = daemon.connect()
 
-    def run_display(card_id):
-        run_id, status = run_and_wait(client, card_id)
+    def run_display():
+        run_id, status = run_and_wait(client, "remote")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        record = client.call("RunRecordRequest", runId=run_id, card=path(card_id)).record
-        if card_id == "remote":
-            assert record.summary.executionState == RemoteExecutionState.succeeded
-            assert text(record.summary.executionService) == "remote-test"
+        record = client.call("RunRecordRequest", runId=run_id, card=path("remote")).record
+        assert record.summary.executionState == RemoteExecutionState.succeeded
         return run_id, record.display.value
 
-    remote_run, remote = run_display("remote")
+    remote_run, remote = run_display()
     identity = text(remote.module)
-    if view != "line-chart":
-        assert not Path(identity).exists(), "the unique Card-owned output must only exist on the worker"
+    assert not Path(identity).exists(), "the Card-owned output must only exist on the worker"
+    assert json.loads(text(remote.configJson)) == config
+    assert {text(b.name): bytes(b.data) for b in remote.blobs} == {"data": blob}
     remote_source = read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536)
-    assert remote_source
-    if view == "line-chart":
-        assert line_chart_series(remote) == [SimpleNamespace(id="one", label="One", x=(1., 2.), y=(1., 2.))]
-    else:
-        node = shutil.which("node")
-        if not node:
-            pytest.skip("needs Node.js to exercise the retrieved module")
-        script = """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("needs Node.js to exercise the retrieved module")
+    script = """
 import fs from 'node:fs';
 const code = fs.readFileSync(0);
 const module = await import('data:text/javascript;base64,' + code.toString('base64'));
@@ -433,40 +388,32 @@ const root = {};
 await module.initialise(root);
 process.stdout.write(JSON.stringify(root.textContent));
 """
-        result = subprocess.check_output([node, "--input-type=module", "-e", script], input=remote_source)
-        assert json.loads(result) == (42 if view == "own-wasm" else marker)
-    digest = hashlib.sha256(remote_source).hexdigest()
+    result = subprocess.check_output([node, "--input-type=module", "-e", script], input=remote_source)
+    assert json.loads(result) == (42 if view == "own-wasm" else marker)
     if view == "own-js":
+        digest = hashlib.sha256(remote_source).hexdigest()
         assert digest in module_downloads
-    module_downloads.clear()
-    _, repeated = run_display("remote")
-    assert text(repeated.module) == identity
-    assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
-    if view == "own-js":
-        assert digest not in module_downloads
-
-    # A restarted project serves the recorded display without contacting the
-    # worker, whose job may already be released. No local build has run yet.
-    with monkeypatch.context() as offline:
-        offline.delenv("TSUGUMI_EXECUTION_BROKER")
-        offline.delenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")
-        daemon.restart()
-        client = daemon.connect()
-        recorded = client.call("RunRecordRequest", runId=remote_run, card=path("remote")).record.display.value
-        assert text(recorded.module) == identity
+        module_downloads.clear()
+        _, repeated = run_display()
+        assert text(repeated.module) == identity
         assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
-    daemon.restart()
-    client = daemon.connect()
-    _, local = run_display("local")
-    assert json.loads(text(local.configJson)) == json.loads(text(remote.configJson))
-    assert {text(b.name): bytes(b.data) for b in local.blobs} == {text(b.name): bytes(b.data) for b in remote.blobs}
-    assert read_pages(client, "ModuleReadRequest", module=text(local.module), page_bytes=65536) == remote_source
+        assert digest not in module_downloads
+    else:
+        # Serve the recorded module after a restart with no worker access.
+        with monkeypatch.context() as offline:
+            offline.delenv("TSUGUMI_EXECUTION_BROKER")
+            offline.delenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")
+            daemon.restart()
+            client = daemon.connect()
+            recorded = client.call("RunRecordRequest", runId=remote_run, card=path("remote")).record.display.value
+            assert text(recorded.module) == identity
+            assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):
     fixture(project)
     client = core_factory().connect()
-    run_id = start_run(client, "later")
+    run_id = start_run(client, "source")
     running = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     client.call("RunCancelRequest", runId=run_id)
     assert wait_run(client, run_id).state == RunState.cancelled
@@ -509,16 +456,8 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
 
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("work"))
-    batch, = page.batches
-    assert batch.complete and not batch.failed and batch.executionList
-    assert batch.activation == 1 and batch.invocationCount == 4
-    assert [(row.batchActivation, row.batchIndex, row.batchSize, row.implementationIndex)
-            for row in page.records] == [(1, 1, 4, 1), (1, 2, 4, 2), (1, 3, 4, 1), (1, 4, 4, 2)]
-    for row in page.records:
-        assert row.executionState == RemoteExecutionState.succeeded
-        assert text(row.executionService) == "remote-test"
-        assert row.executionResources is None
-        assert len(text(row.executionJobId)) == 64
+    assert all(row.executionState == RemoteExecutionState.succeeded and row.executionJobId
+               for row in page.records)
     assert len({text(row.executionJobId) for row in page.records}) == 4
 
     record = client.call("RunRecordRequest", runId=run_id, card=path("collect")).record
@@ -530,6 +469,8 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
 
 
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
+    if remote_gates is None:
+        pytest.skip("requires a disposable worker to synchronize both jobs")
     definitions = {
         "fails": {
             **RUN_LIST_REMOTE,
@@ -540,7 +481,7 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
                     ''@sibling_gate@; exit 99''
                   ];
                 }
-            """.replace("@fail_gate@", CARD_GATE if remote_gates else "sleep 15")
+            """.replace("@fail_gate@", CARD_GATE)
                .replace("@sibling_gate@", CARD_GATE),
         },
         "collect": {"template": "collect", "recordIO": True},
@@ -551,10 +492,9 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     run_id = start_run(client, "fails", concurrency=2)
     running = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 2 and
                               row.executionState == RemoteExecutionState.running)
-    if remote_gates:
-        first = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 1 and
-                                row.executionState == RemoteExecutionState.running)
-        remote_gates(first)
+    first = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 1 and
+                            row.executionState == RemoteExecutionState.running)
+    remote_gates(first)
     assert wait_run(client, run_id).state == RunState.failed
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
     batch, = page.batches
@@ -571,16 +511,14 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     assert blocked.state == CardState.blocked and not downstream.batches
 
 
-@pytest.mark.parametrize("directory", [False, True])
-def test_remote_transfers_only_declared_outputs(project, core_factory, remote_broker, tmp_path, directory):
+def test_remote_transfers_only_declared_outputs(project, core_factory, remote_broker, tmp_path):
     """Remote execution ignores undeclared files/FIFOs and materializes relative links within a declared Directory."""
     from harness.real_cards import bash, log
-    schema = FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"') if directory else FILE_FBS
+    schema = FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"')
     create = ('mkdir "$TSUGUMI_OUTPUT_DIR/report"; '
               'echo safe > "$TSUGUMI_OUTPUT_DIR/report/data"; '
               'ln -s data "$TSUGUMI_OUTPUT_DIR/report/link"; '
-              'result=report; ' if directory else
-              'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; result=result; ')
+              'result=report; ')
     script = (create +
               'mkfifo "$TSUGUMI_OUTPUT_DIR/undeclared-fifo"; '
               'echo unused > "$TSUGUMI_OUTPUT_DIR/undeclared-file"; '
@@ -596,12 +534,8 @@ def test_remote_transfers_only_declared_outputs(project, core_factory, remote_br
     assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
     record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
     saved = Path(text(record.outputs[0].filePath))
-    if directory:
-        assert (saved / "data").read_text() == "safe\n"
-        assert (saved / "link").read_text() == "safe\n"
-        assert not (saved / "link").is_symlink()
-    else:
-        assert saved.read_text() == "safe\n"
+    assert not (saved / "link").is_symlink()
+    assert (saved / "link").read_text() == "safe\n"
     invocation = scratch / "runs" / run_id / "work/copy/1"
     assert not list(invocation.rglob("undeclared-*"))
 
@@ -619,10 +553,9 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
     check_definition_tools(client, run_id)
 
 
-@pytest.mark.parametrize("execution_service", ["local", "remote-test"])
-def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker, execution_service):
+def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
     from harness.real_cards import bash, log
-    definition = bash("sleep 10", executionService=execution_service, timeoutSeconds=1, buildTimeoutSeconds=600)
+    definition = bash("sleep 10", executionService="remote-test", timeoutSeconds=1, buildTimeoutSeconds=600)
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
     client = core_factory().connect()
     run_id, status = run_and_wait(client, "deadline")

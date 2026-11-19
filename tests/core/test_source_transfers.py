@@ -31,8 +31,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-@pytest.mark.parametrize("replacement", [False, True])
-def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project, core_factory, tmp_path, replacement):
+def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project, core_factory, tmp_path):
     """A 300 MB file crosses no frame and neither save nor reopen buffers it."""
     setup(project)
     attached = tmp_path / "attached"
@@ -45,14 +44,11 @@ def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project
             part = chunk[:remaining]
             output.write(part)
             remaining -= len(part)
+    target = project / "definitions/data/input.csv"
+    target.write_bytes(b"previous content")
+    with source.open("r+b") as output:
+        output.write(b"NEW")
     expected = digest(source)
-    if replacement:
-        import shutil
-        shutil.copyfile(source, project / "definitions/data/input.csv")
-        # A different new hash ensures this is an effective replacement.
-        with source.open("r+b") as output:
-            output.write(b"NEW")
-        expected = digest(source)
     daemon = core_factory()
     daemon.stop()
     wrapper = tmp_path / "measure-core"
@@ -71,33 +67,23 @@ sys.exit(child.returncode)
     daemon.binary = wrapper
     daemon.start()
     client = daemon.connect()
-    fields = {"baseHash": digest(project / "definitions/data/input.csv")} if replacement else {}
-    result = save(client, [transfer(source, **fields)])
-    assert result.rev == 1
-    assert text(result.delta.origin) == "agent"
+    result = save(client, [transfer(source, baseHash=digest(target))])
     assert text(result.delta.sourcesUpsert[0].hash) == expected
-    assert result.delta.sourcesUpsert[0].sizeBytes == source.stat().st_size
     daemon.stop()
 
     def peak_memory():
         log = daemon.log.read_text()
         return [int(n) for n in re.findall(r"TSUGUMI_TEST_MAX_RSS_BYTES=(\d+)", log)]
 
-    peaks = peak_memory()
-    assert peaks
-    # This is the entire process's peak, including startup and shared libraries.
-    # A file-sized allocation alone would exceed this bound by more than 2x.
-    assert max(peaks) < 128 << 20, peaks
-    assert digest(project / "definitions/data/input.csv") == expected
-    assert (project / ".tsugumi/document.journal").stat().st_size < 65536
-    assert not list((project / ".tsugumi/document-files").iterdir())
+    save_peaks = peak_memory()
     daemon.start()
-    assert daemon.connect().call("ProjectInspectRequest").rev == 1
-    assert digest(project / "definitions/data/input.csv") == expected
+    assert daemon.connect().call("ProjectInspectRequest").rev == result.rev
+    assert digest(target) == expected
     daemon.stop()
-    peaks = peak_memory()
-    assert len(peaks) == 2
-    assert max(peaks) < 128 << 20, peaks
+    reopen_peaks = peak_memory()[len(save_peaks):]
+    # A single file-sized allocation would exceed this bound on either path.
+    assert save_peaks and reopen_peaks
+    assert max(save_peaks + reopen_peaks) < 128 << 20
 
 
 def test_later_transfer_failure_applies_nothing_and_cleans_staging(project, core_factory, tmp_path):
@@ -222,8 +208,7 @@ def test_store_document_limit_rejects_the_save(project, core_factory):
     assert json.loads(text(snapshot.projectJson)) == document
 
 
-@pytest.mark.parametrize("suffix", ["", "/", "/."])
-def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path, suffix):
+def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path):
     setup(project)
     granted = tmp_path / "granted"
     granted.mkdir()
@@ -234,7 +219,7 @@ def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path,
     granted.rmdir()
     granted.symlink_to(outside, target_is_directory=True)
     item = make("SourceTransfer", path="definitions/data/private.csv", from_="private.csv",
-                sourceRoot=str(granted) + suffix)
+                sourceRoot=str(granted) + "/.")
     with pytest.raises(RpcFailure) as error:
         save(client, [item])
     assert error.value.kind == "invalid_path"

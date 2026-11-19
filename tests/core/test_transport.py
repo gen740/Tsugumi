@@ -13,9 +13,10 @@ from harness.transport import (
     hello_frame, port_of, reply_kind, unix_connection, unix_frame, unix_read,
     ws_connect, ws_frame, ws_packet, ws_read,
 )
-from tsugumi_client import decode_message, encode_request, make
+from tsugumi_client import path, decode_message, encode_request, make
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.RPC import Message as MessageBuilder, Request
 from Tsugumi.RPC.Message import Message
 from Tsugumi.RPC.Payload import Payload
@@ -111,6 +112,10 @@ def test_another_client_can_follow_and_cancel_a_disconnected_run(project, core_f
     else:
         gate.release()
     assert wait_run(observer, run_id).state == (RunState.cancelled if cancel else RunState.succeeded)
+    if cancel:
+        result = observer.call("RunRecordRequest", runId=run_id, card=path("work"))
+        assert result.status.state == CardState.cancelled
+        assert not result.record.outputs
 
 
 def test_unknown_request_union_closes_only_the_offending_connection(daemon):
