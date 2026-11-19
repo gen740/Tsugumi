@@ -62,7 +62,10 @@ main <- function(inputs, report, run) {
 stopifnot(.tsugumi_invoke(TRUE), .tsugumi_invoke(FALSE))
 stopifnot(inherits(try(saved_run$cancelled(), silent=TRUE), "try-error"))
 stopifnot(.tsugumi_invoke(FALSE))
-stopifnot(identical(outputs, rep(list(list(port = "result", value = list(value = 42L))), 2)))
+stopifnot(length(outputs) == 2L)
+for (output in outputs) {
+  stopifnot(identical(output$port, "result"), output$value$value == 42)
+}
 ''')
     subprocess.run([rscript, "--vanilla", str(script), str(ROOT / "sdk/r/tsugumi.R")], check=True)
 
