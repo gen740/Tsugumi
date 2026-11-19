@@ -771,7 +771,8 @@ std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
     *error = "unknown root type " + t.root_type;
     return nullptr;
   }
-  flatbuffer_schema::restore_reflection_defaults(*p, *t.schema());
+  flatbuffer_schema::restore_reflection_fields(*p, *t.schema(),
+                                               /*restore_deprecated=*/true);
   return p;
 }
 

@@ -8,11 +8,11 @@
 
 namespace tsugumi::flatbuffer_schema {
 
-// BFBS stores integer defaults in signed slots. Restore the unsigned text
-// and the deprecated flags that FlatBuffers' parser drops on deserialization.
-inline auto restore_reflection_defaults(flatbuffers::Parser& parser,
-                                        const reflection::Schema& schema)
-    -> void {
+// BFBS stores integer defaults in signed slots. Restore the unsigned text.
+// The document parser also needs the original field deprecation flags.
+inline auto restore_reflection_fields(flatbuffers::Parser& parser,
+                                       const reflection::Schema& schema,
+                                       bool restore_deprecated) -> void {
   for (auto* object : parser.structs_.vec) {
     const auto name =
         object->defined_namespace->GetFullyQualifiedName(object->name);
@@ -22,7 +22,7 @@ inline auto restore_reflection_defaults(flatbuffers::Parser& parser,
       const auto* source =
           reflected->fields()->LookupByKey(field->name.c_str());
       if (!source) continue;
-      field->deprecated = source->deprecated();
+      if (restore_deprecated) field->deprecated = source->deprecated();
       if (!source->optional() &&
           source->type()->base_type() == reflection::BaseType::ULong)
         field->value.constant =

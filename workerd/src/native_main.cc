@@ -606,8 +606,8 @@ flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs,
   if (!p->Deserialize(bfbs->data(), bfbs->size()) ||
       !p->SetRootType(root.c_str()))
     return nullptr;
-  tsugumi::flatbuffer_schema::restore_reflection_defaults(
-      *p, *reflection::GetSchema(bfbs->data()));
+  tsugumi::flatbuffer_schema::restore_reflection_fields(
+      *p, *reflection::GetSchema(bfbs->data()), /*restore_deprecated=*/false);
   return (cache[key] = std::move(p)).get();
 }
 
