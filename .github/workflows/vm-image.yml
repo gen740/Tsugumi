@@ -5,10 +5,6 @@ on:
       revision:
         required: true
         type: string
-      use-native-artifact:
-        required: false
-        type: boolean
-        default: false
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
@@ -45,7 +41,7 @@ jobs:
           package: ci-core
           system: aarch64-linux
           artifact-name: native-aarch64-linux
-          artifact-fallback: ${{ inputs.use-native-artifact && secrets.CACHIX_AUTH_TOKEN == '' }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
       - name: Build the guest image from the production archives
         run: |
