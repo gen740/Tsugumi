@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { L } from '../i18n'
-import { logLineNumber, LogAnchor, LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind } from '../model/logWindow'
+import { decodeLog, logLineNumber, LogAnchor, LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind, VisibleLines } from '../model/logWindow'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
@@ -11,18 +11,20 @@ export interface LogSource { runId: string; card: string[] | null; invocation: b
 
 const EMPTY = new LogWindow('terminal')
 type View = Pick<LogWindow, 'blocks' | 'loaded' | 'size' | 'start' | 'end' | 'waiting' | 'following' | 'truncatedAt'> & {
+  rawSize: number
   error?: string
   follow: (value: boolean) => void
   page: (kind: 'earlier' | 'later') => void
+  visible: (range: VisibleLines | undefined) => void
   jump: () => void
   id: string
 }
 
-export function useLogStream(session: ProjectSession, source: LogSource | undefined, form: LogForm): View {
+export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLogs'>, source: LogSource | undefined, form: LogForm): View {
   const id = source ? JSON.stringify([source.runId, source.card, String(source.invocation), source.stream, form]) : ''
   const empty: View = {
-    id, blocks: EMPTY.blocks, loaded: false, size: 0, start: 0, end: 0, waiting: false, following: true,
-    follow: () => {}, page: () => {}, jump: () => {},
+    id, blocks: EMPTY.blocks, loaded: false, size: 0, start: 0, end: 0, rawSize: 0, waiting: false, following: true,
+    follow: () => {}, page: () => {}, visible: () => {}, jump: () => {},
   }
   const [snapshot, setSnapshot] = useState<View>(empty)
   const rpc = session.rpc
@@ -35,15 +37,16 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
     let error: string | undefined
     const publish = () => setSnapshot({
       id, blocks: window.blocks, loaded: window.loaded, start: window.start, end: window.end,
-      size: window.size, waiting: window.waiting, following: window.following, truncatedAt: window.truncatedAt,
-      error, follow, page, jump,
+      size: window.size, rawSize: window.rawSize, waiting: window.waiting, following: window.following, truncatedAt: window.truncatedAt,
+      error, follow, page, visible, jump,
     })
     const follow = (value: boolean) => {
       if (window.following === value) return
       window.follow(value)
-      if (value && window.end < window.size) wake()
+      if (value && (window.end < window.size || window.hasUnread)) wake()
       publish()
     }
+    const visible = (range: VisibleLines | undefined) => { window.visible = range }
     const page = (kind: 'earlier' | 'later') => {
       if (demand === 'tail') return
       demand = kind
@@ -51,6 +54,7 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
     }
     const jump = () => {
       window.follow(true)
+      publish()
       demand = 'tail'
       frames.wake()
     }
@@ -72,12 +76,14 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
       const before = request.kind === 'earlier' ? BigInt(request.offset) : null
       try {
         const result = await rpc.logRange(source.runId, source.card, source.invocation, source.stream,
-          before === null ? BigInt(request.offset) : 0n, request.kind === 'tail', request.limit, before)
+          before === null ? BigInt(request.offset) : 0n, request.kind === 'tail', request.limit, before, form === 'terminal',
+          request.since === undefined ? null : BigInt(request.since))
         return () => {
           const slice = {
-            text: s(result.text), offset: Number(result.offset), end: Number(result.nextOffset),
+            text: decodeLog(result.text), offset: Number(result.offset), end: Number(result.nextOffset),
             size: Number(result.sizeBytes), line: Number(result.lineNumber), startsLine: result.startsLine,
             truncatedAt: result.logTruncatedAtBytes ?? undefined,
+            rawSize: Number(result.rawSizeBytes ?? result.sizeBytes), reset: result.reset,
           }
           const pausedDuringRead = !window.following && (request.kind === 'append' || request.kind === 'tail')
           const superseded = (kind === 'earlier' && (window.following || demand === 'later' || demand === 'tail'))
@@ -85,7 +91,7 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
           const previous = window.blocks
           window.apply(pausedDuringRead || superseded ? { ...request, kind: 'status' } : request, slice)
           error = undefined
-          if (window.following && window.end < window.size) wake()
+          if (window.following && (window.end < window.size || window.hasUnread)) wake()
           if (!superseded && (kind === 'earlier' || kind === 'later') && !demand
               && previous.length === window.blocks.length && previous.every((b, i) => b === window.blocks[i])
               && window.request(kind)) page(kind)
@@ -106,8 +112,8 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
             || (notice.endOffset !== null && notice.stream !== source.stream)) return
         if (notice.endOffset !== null && source.invocation === notice.invocation) {
           const size = Number(notice.endOffset)
-          if (size <= window.size) return
-          window.size = size
+          if (size <= window.rawSize) return
+          window.rawSize = size
           if (!window.following) {
             sizeDirty = true
             frames.wake()
@@ -159,9 +165,9 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
 
   useLayoutEffect(() => {
     const element = viewport.current!
-    const block = anchor && Array.from(element.querySelectorAll<HTMLElement>('[data-log-block]'))
-      .find((item) => layout.blocks[Number(item.dataset.logBlock)].key === anchor.key)
-    element.scrollTop = log.following ? element.scrollHeight : block && anchor ? block.offsetTop + anchor.inset : target
+    const row = anchor && Array.from(element.querySelectorAll<HTMLElement>(`[data-line="${anchor.line}"]`))
+      .find((item) => !anchor.key.startsWith('fragment:') || item.parentElement?.dataset.logKey === anchor.key)
+    element.scrollTop = log.following ? element.scrollHeight : row && anchor ? row.offsetTop + anchor.inset : target
     lastScroll.current = element.scrollTop
   }, [layout, target, log.id, log.following, anchor])
 
@@ -195,6 +201,14 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
   }, [layout.blocks, from, to, heights, lineHeight])
 
   const atEdge = (element: HTMLElement, direction: number) => {
+    const first = element.scrollTop
+    const last = first + element.clientHeight
+    const rows = Array.from(element.querySelectorAll<HTMLElement>('[data-line]')).filter((row) =>
+      row.offsetTop + row.offsetHeight > first && row.offsetTop < last)
+    log.visible(rows.length ? {
+      first: Number(rows[0].dataset.line), last: Number(rows.at(-1)!.dataset.line),
+      fragments: new Set(rows.map((row) => row.parentElement!.dataset.logKey!).filter((key) => key.startsWith('fragment:'))),
+    } : undefined)
     if (direction < 0 && element.scrollTop <= EDGE && log.start > 0) {
       log.follow(false)
       log.page('earlier')
@@ -211,11 +225,10 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
         const movement = next - lastScroll.current
         if (movement === 0) return
         lastScroll.current = next
-        const block = Array.from(el.querySelectorAll<HTMLElement>('[data-log-block]'))
+        const row = Array.from(el.querySelectorAll<HTMLElement>('[data-line]'))
           .find((item) => item.offsetTop <= next && item.offsetTop + item.offsetHeight > next)
-        const visible = block && layout.blocks[Number(block.dataset.logBlock)]
-        setCursor({ id: log.id, anchor: visible && block
-          ? { key: visible.key, line: visible.first, inset: next - block.offsetTop }
+        setCursor({ id: log.id, anchor: row
+          ? { key: row.parentElement!.dataset.logKey!, line: Number(row.dataset.line), inset: next - row.offsetTop }
           : layout.anchor(next) })
         if (movement < 0) log.follow(false)
         atEdge(el, movement)
@@ -228,7 +241,7 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
       {layout.blocks.length === 0 ? <div className="secondary log-placeholder">{placeholder}</div> : <>
         <div style={{ height: layout.top[from] }} />
         {layout.blocks.slice(from, to).map((block, i) => (
-          <div key={block.key} data-log-block={from + i}><Rows block={block} /></div>
+          <div key={block.key} data-log-block={from + i} data-log-key={block.key}><Rows block={block} /></div>
         ))}
         <div style={{ height: layout.total - layout.top[to] }} />
       </>}

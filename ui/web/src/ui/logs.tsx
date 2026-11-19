@@ -1,7 +1,7 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
 import { useEffect, useRef, useState } from 'react'
-import { LOG_READ_BYTES } from '../model/logWindow'
+import { LOG_READ_BYTES, readLogFile } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
@@ -130,16 +130,9 @@ function truncationNotice(limit: bigint) {
 async function exportLog(session: ProjectSession, source: LogSource, size: number) {
   const rpc = session.rpc
   if (!rpc) throw new Error(L('実行環境に接続していません'))
-  const chunks: string[] = []
-  let offset = 0n
-  while (offset < size) {
-    const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES)
-    const next = slice.nextOffset ?? offset
-    if (next <= offset) throw new Error(L('ログを読み込めませんでした'))
-    chunks.push(s(slice.text))
-    offset = next
-  }
-  download(`${source.runId}-${D.LogStream[source.stream]}.log`, new Blob(chunks).slice(0, Number(size), 'text/plain'))
+  const file = await readLogFile(size, (offset) =>
+    rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES))
+  download(`${source.runId}-${D.LogStream[source.stream]}.log`, file)
 }
 
 /** Log text of a run (or one Card / invocation of it), read incrementally
@@ -195,7 +188,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
           options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
         <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
-        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.size).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
+        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.rawSize).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
       </div>
       <LogText log={log} placeholder={emptyReason} />
       {log.truncatedAt !== undefined && <div className="caption headline" style={{ padding: '0 6px' }}>{truncationNotice(log.truncatedAt)}</div>}
@@ -361,10 +354,10 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           {session.displayName(k)} · {L('{0} 回目', String(shownInvocation ?? 0n))}{state !== undefined ? ` · ${cardState(state).label}` : ''}
         </span>
         <span className="spacer" />
-        {source && !!log.size && <Button small disabled={exporting} onClick={() => {
+        {source && !!log.rawSize && <Button small disabled={exporting} onClick={() => {
           setExporting(true)
           setExportError(undefined)
-          void exportLog(session, source, log.size).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
+          void exportLog(session, source, log.rawSize).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
         }}>{L('ログを書き出す…')}</Button>}
       </div>
       <div className="row gap6 stage-chips">

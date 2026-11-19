@@ -1,3 +1,4 @@
+import { decodeLog } from '../model/logWindow'
 import { runMark } from '../model/runMark'
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react'
 import { L } from '../i18n'
@@ -88,7 +89,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       }
       if (t.kind === 'log') {
         const log = await rpc.logRange(t.run!, t.card ?? null, t.invocation ?? null, streamOf(t), t.offset)
-        return <><p>{t.stream} · {L('位置')} {String(log.offset ?? 0n)}</p><pre className="selectable wrap-pre">{s(log.text)}</pre></>
+        return <><p>{t.stream} · {L('位置')} {String(log.offset ?? 0n)}</p><pre className="selectable wrap-pre">{decodeLog(log.text)}</pre></>
       }
       if (t.kind === 'artifact') {
         const a = (await rpc.artifacts(t.run!)).find(a => s(a.artifactId) === t.artifact)!

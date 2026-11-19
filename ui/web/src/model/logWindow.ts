@@ -1,9 +1,29 @@
-import { terminalText } from './terminalText'
+import type { LogSliceT } from '../../shared/gen/tsugumi/rpc/log-slice'
 
 export const LOG_READ_BYTES = 1 << 20
 const HISTORY_BYTES = LOG_READ_BYTES >> 2
 const WINDOW_BYTES = 2 * LOG_READ_BYTES
 const BLOCK_LINES = 128
+
+// LogRange returns the original UTF-8 bytes. A BOM inside the stream is
+// content even if the first byte of a page happens to be its start.
+const decoder = new TextDecoder('utf-8', { ignoreBOM: true })
+export const decodeLog = (text: LogSliceT['text']) =>
+  typeof text === 'string' ? text : decoder.decode(text ?? undefined)
+
+export async function readLogFile(size: number, read: (offset: bigint) => Promise<LogSliceT>): Promise<Blob> {
+  const chunks: Uint8Array<ArrayBuffer>[] = []
+  let offset = 0n
+  while (offset < size) {
+    const slice = await read(offset)
+    const next = slice.nextOffset ?? offset
+    if (slice.offset !== offset || !(slice.text instanceof Uint8Array) || next - offset !== BigInt(slice.text.length) || next <= offset)
+      throw new Error('Invalid log range while exporting')
+    chunks.push(slice.text.slice())
+    offset = next
+  }
+  return new Blob(chunks).slice(0, size, 'text/plain')
+}
 
 export type LogForm = 'terminal' | 'journal'
 export interface LogSlice {
@@ -14,6 +34,8 @@ export interface LogSlice {
   line: number
   startsLine: boolean
   truncatedAt?: bigint
+  rawSize?: number
+  reset?: boolean
 }
 
 type Block = { key: string; first: number; lines: string[]; numbers?: number[] }
@@ -49,7 +71,7 @@ function page(slice: LogSlice, form: LogForm): Page {
   let lf = slice.text.indexOf('\n', start)
   while (lf >= 0) {
     const raw = slice.text.slice(start, lf)
-    const line = form === 'terminal' ? terminalText(raw) : journalLine(raw)
+    const line = form === 'terminal' ? raw : journalLine(raw)
     if (line !== undefined) {
       if (!block || block.lines.length === BLOCK_LINES || (line.length > 4096 && block.lines.length > 0)) {
         block = { first: number, key: `lines:${number}`, lines: [], numbers: form === 'journal' ? [] : undefined }
@@ -66,14 +88,17 @@ function page(slice: LogSlice, form: LogForm): Page {
   let tail: Fragment | undefined
   if (start < slice.text.length) {
     const text = slice.text.slice(start)
-    const length = new TextEncoder().encode(text).length
+    const length = form === 'terminal'
+      ? 4 * (text.length - (text.match(/[\uDC00-\uDFFF]/g)?.length ?? 0))
+      : new TextEncoder().encode(text).length
     tail = { number, offset: slice.end - length, text, starts: true, ends: false }
   }
   return { slice, head, body, tail }
 }
 
 export type ReadKind = 'tail' | 'earlier' | 'later' | 'append' | 'status'
-export type LogRead = { kind: ReadKind; offset: number; limit: number }
+export type LogRead = { kind: ReadKind; offset: number; limit: number; since?: number }
+export type VisibleLines = { first: number; last: number; fragments: ReadonlySet<string> }
 
 /** The same ordered byte window is viewed from either edge. The RPC supplies
  *  the starting line of each page, so discarded bytes need not be counted. */
@@ -85,16 +110,20 @@ export class LogWindow {
   following = true
   size = 0
   truncatedAt?: bigint
+  rawSize = 0
+  private displayedRawSize = 0
   private seenEnd = 0
+  visible?: VisibleLines
 
   constructor(readonly form: LogForm) {}
 
   get start() { return this.pages[0]?.slice.offset ?? 0 }
   get end() { return this.pages.at(-1)?.slice.end ?? 0 }
-  get waiting() { return !this.following && this.size > this.seenEnd }
+  get hasUnread() { return this.rawSize > this.displayedRawSize }
+  get waiting() { return !this.following && this.rawSize > this.seenEnd }
 
   follow(value: boolean) {
-    if (this.following && !value) this.seenEnd = this.end
+    if (this.following && !value) this.seenEnd = this.displayedRawSize
     this.following = value
   }
 
@@ -108,16 +137,20 @@ export class LogWindow {
         return this.request(this.loaded ? 'append' : 'tail')
       case 'append':
         if (this.size - this.end > LOG_READ_BYTES) return this.request('tail')
-        return { kind, offset: this.end, limit: LOG_READ_BYTES }
+        return { kind, offset: this.end, limit: LOG_READ_BYTES, since: this.form === 'terminal' ? this.displayedRawSize : undefined }
     }
   }
 
   apply(read: LogRead, slice: LogSlice) {
     this.loaded = true
-    this.size = Math.max(this.size, slice.size)
+    this.size = slice.size
+    const rawSize = slice.rawSize ?? slice.size
+    this.rawSize = Math.max(this.rawSize, rawSize)
     this.truncatedAt = slice.truncatedAt ?? this.truncatedAt
     if (read.kind === 'status') return
-    if (read.kind === 'tail') this.pages = []
+    if (read.kind === 'tail' || read.kind === 'append') this.displayedRawSize = rawSize
+    const visible = read.kind === 'tail' || slice.reset ? undefined : this.visible
+    if (read.kind === 'tail' || slice.reset) this.pages = []
     if (slice.end > slice.offset) {
       if (read.kind === 'earlier') this.pages.unshift(page(slice, this.form))
       else {
@@ -135,17 +168,17 @@ export class LogWindow {
         else this.pages.shift()
       }
     }
-    this.assemble()
+    this.assemble(visible)
   }
 
-  private assemble() {
+  private assemble(visible?: VisibleLines) {
     const blocks: Block[] = []
     const boundary = new Map<string, { raw: string; block: Block }>()
     let pieces: Fragment[] = []
     const add = (key: string, number: number, raw: string) => {
       const previous = this.boundaryBlocks.get(key)
       const text = previous?.raw === raw ? previous.block.lines[0]
-        : this.form === 'terminal' ? terminalText(raw) : journalLine(raw)
+        : this.form === 'terminal' ? raw : journalLine(raw)
       if (text === undefined) return
       const block = previous?.raw === raw ? previous.block : { key, first: number, lines: [text] }
       blocks.push(block)
@@ -158,10 +191,10 @@ export class LogWindow {
       if (!first || (this.form === 'journal' && (!first.starts || !last?.ends))) return
       const long = line.reduce((length, piece) => length + piece.text.length, 0) >= 64 * 1024
       // Hold a short incomplete leading line until its start is loaded.
-      // Long plain lines can outgrow the window. Keep page-relative anchors
-      // for those pieces, and join a redraw across the resident pages.
+      // Terminal slices already contain the final cells for each position.
+      // Long lines keep their page-relative fragments.
       if (!first.starts && !long) return
-      if (this.form === 'terminal' && long && !line.some((piece) => piece.text.includes('\r'))) {
+      if (this.form === 'terminal' && long) {
         for (const piece of line) {
           if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
         }
@@ -180,6 +213,33 @@ export class LogWindow {
     }
     finish()
     this.boundaryBlocks = boundary
+    if (visible) {
+      const rowKey = (block: Block, number: number) =>
+        block.key.startsWith('fragment:') ? block.key : number
+      const inView = (block: Block, number: number) =>
+        block.key.startsWith('fragment:') ? visible.fragments.has(block.key)
+          : number >= visible.first && number <= visible.last
+      const intersect = (block: Block) =>
+        block.first <= visible.last && logLineNumber(block, block.lines.length - 1) >= visible.first
+      const rendered = new Set<number | string>()
+      for (const block of blocks.filter(intersect)) {
+        for (let i = 0; i < block.lines.length; i++) {
+          const number = logLineNumber(block, i)
+          if (inView(block, number)) rendered.add(rowKey(block, number))
+        }
+      }
+      for (const block of this.blocks.filter(intersect)) {
+        for (let i = 0; i < block.lines.length; i++) {
+          const number = logLineNumber(block, i)
+          if (inView(block, number) && !rendered.has(rowKey(block, number))) {
+            const key = rowKey(block, number)
+            blocks.push({ key: typeof key === 'string' ? key : `visible:${number}`, first: number, lines: [block.lines[i]] })
+          }
+        }
+      }
+      // At most one end was trimmed. The retained rows belong next to it.
+      blocks.sort((a, b) => a.first - b.first || Number(a.key.split(':')[1]) - Number(b.key.split(':')[1]))
+    }
     this.blocks = blocks
   }
 }
