@@ -53,8 +53,22 @@ RUN_LIST_REMOTE = {
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
 
+@pytest.fixture(scope="session")
+def remote_store_seed(tmp_path_factory):
+    manifest = os.environ.get("TSUGUMI_REMOTE_TEST_SEED_MANIFEST")
+    if not manifest or not os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON"):
+        return None
+    seed = tmp_path_factory.mktemp("remote-store-seed")
+    subprocess.run(
+        ["nix", "copy", "--no-check-sigs", "--option", "build-users-group", "",
+         "--to", f"local?root={seed}", str(Path(manifest).resolve())],
+        check=True,
+    )
+    return seed
+
+
 @pytest.fixture
-def remote_daemon(tmp_path, request):
+def remote_daemon(tmp_path, request, remote_store_seed):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         if getattr(request, "param", None):
@@ -69,6 +83,14 @@ def remote_daemon(tmp_path, request):
     port = 0
     state = tmp_path / "daemon-state"
     state.mkdir(mode=0o700)
+    if remote_store_seed is not None:
+        store = state / "store"
+        store.mkdir(mode=0o700)
+        (store / "nix").mkdir()
+        # Reuse immutable payloads. Each daemon gets independent Nix metadata,
+        # job state and authorization, and builds its own Card-specific paths.
+        subprocess.run(["cp", "-al", remote_store_seed / "nix/store", store / "nix/store"], check=True)
+        shutil.copytree(remote_store_seed / "nix/var", store / "nix/var", symlinks=True)
     env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
     # The listener's private socket defaults to a path inside its state folder,
     # which under pytest's temporary folder can exceed the socket path limit.
@@ -555,7 +577,7 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
 
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
     from harness.real_cards import bash, log
-    definition = bash("sleep 10", executionService="remote-test", timeoutSeconds=1, buildTimeoutSeconds=600)
+    definition = bash(CARD_GATE, executionService="remote-test", timeoutSeconds=1, buildTimeoutSeconds=600)
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
     client = core_factory().connect()
     run_id, status = run_and_wait(client, "deadline")
