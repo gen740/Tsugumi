@@ -142,7 +142,7 @@ struct Service::State {
                 }});
     turns = std::make_unique<Turns>(
         state_gate, db, *conversations, *providers, *host_settings, shutdown,
-        stopping, access->changed, *access,
+        stopping, *access,
         Turns::Dependencies{
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,

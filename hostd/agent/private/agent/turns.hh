@@ -1,6 +1,5 @@
 #pragma once
 
-#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
@@ -46,7 +45,7 @@ struct Turns {
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
         std::stop_source& shutdown, bool& stopping,
-        std::condition_variable_any& changed, host::Access& access,
+        host::Access& access,
         Dependencies dependencies);
   static auto System(bool guide = false) -> std::string;
   auto ThoughtsFor(const std::string& id) -> std::shared_ptr<ThoughtSchedule>;
@@ -86,7 +85,6 @@ struct Turns {
   host::Settings* host_settings;
   std::stop_source& shutdown;
   bool& stopping;
-  std::condition_variable_any& changed;
   host::Access& access_service;
   Dependencies dependencies;
   std::map<std::string, std::shared_ptr<std::jthread>> jobs;

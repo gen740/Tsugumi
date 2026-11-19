@@ -98,7 +98,6 @@ TEST_F(ConversationStoreTest,
       R"({"profile":"desktop","provider_id":"fixture","model":"fixture"})");
   bool stopping = false;
   std::stop_source shutdown;
-  std::condition_variable_any changed;
   host::Access access(
       gate, home.db, registry, *store, stopping,
       {[](const auto&, const auto&) {}, [](const auto&, const auto&) {}});
@@ -106,7 +105,7 @@ TEST_F(ConversationStoreTest,
   turn_dependencies.scrub = [](std::string text) { return text; };
   turn_dependencies.event = [](const auto&, const auto&) {};
   agent::Turns turns(gate, home.db, *store, providers, settings, shutdown,
-                     stopping, changed, access, std::move(turn_dependencies));
+                     stopping, access, std::move(turn_dependencies));
   host::DemoReferences demos(directory.path / "demos");
   std::unique_ptr<agent::Helpers> helpers;
   bool interrupt = true;

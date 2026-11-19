@@ -78,7 +78,7 @@ auto Turns::System(bool guide) -> std::string {
 Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
              Providers& selections, host::Settings& settings,
              std::stop_source& stop, bool& stopping,
-             std::condition_variable_any& changed, host::Access& access,
+             host::Access& access,
              Dependencies dependencies)
     : mutex(gate.mutex),
       db(database),
@@ -87,7 +87,6 @@ Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       host_settings(&settings),
       shutdown(stop),
       stopping(stopping),
-      changed(changed),
       access_service(access),
       dependencies(std::move(dependencies)) {}
 
@@ -719,7 +718,6 @@ auto Turns::Handle(const RequestIn& request, bool human,
       if (auto found = jobs.find(id); found != jobs.end())
         found->second->request_stop();
       dependencies.cancel_file_tools(id);
-      changed.notify_all();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
     case A::RequestPayload::ConversationSummarizeRequest: {
