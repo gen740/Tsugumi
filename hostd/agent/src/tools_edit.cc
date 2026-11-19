@@ -158,20 +158,13 @@ auto Tools::EditProjectTool(const std::string& conversation,
     }
     const auto authorization =
         boundary ? boundary->authorization() : std::string{};
-    std::string revision;
     std::optional<host::AgentExclude> policy;
     HelperScope::Reader read;
-    std::optional<host::SaveBase> scoped_base;
     auto use_inspection = [&](const host::SaveBase& base) {
-      const auto current = json::Get(base.snapshot, "rev");
-      if (policy && current == revision) return;
-      revision = current;
+      if (policy) return;
       policy = ExclusionsFor(project, base);
-      if (boundary && boundary->scoped()) {
-        scoped_base = base;
-        read = HelperReader(conversation, stop, revision, authorization,
-                            &*scoped_base);
-      }
+      if (boundary && boundary->scoped())
+        read = HelperReader(conversation, stop, {}, authorization, &base);
     };
     host::OperationContext context;
     context.origin = "agent";
