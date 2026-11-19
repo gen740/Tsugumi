@@ -54,13 +54,13 @@ const session = () => {
 {
   // A Card in Card has no _card.json; Card settings saves its summary all the same.
   const s = session()
-  s.confirmedLinks.set('nested', parse('{"external":"nested"}'))
+  s.confirmedDefinitions.set('nested', parse('{"external":"nested"}'))
   s.project = parse('{"name":"t","canvas":{"cards":[{"id":"nested"}],"connections":[]}}')
   const editor = new CardEditorModel(s, 'nested')
   editor.meta = parse('{"description":"the imported graph"}')
   assert.ok(await editor.apply())
   assert.equal(str(get(s.cardMeta('nested'), 'description')), 'the imported graph')
   assert.equal(s.cardDescription('nested'), 'the imported graph')
-  assert.ok(s.cardDefinitionDraft('nested')?.link !== undefined, 'it stays a link')
+  assert.ok(get(s.cardDefinitionDraft('nested')?.card, 'external') !== undefined, 'it stays a link')
 }
 console.log('summary behavior: passed')

@@ -67,7 +67,7 @@ bool Document::is_document_file(const std::string& rel) {
   auto slash = rest.find('/');
   if (slash == std::string::npos) return false;
   auto file = rest.substr(slash + 1);
-  return file == "_card.json" || file == "_meta.json" || file == "_link.json";
+  return file == "_card.json" || file == "_meta.json";
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -242,21 +242,15 @@ schema::Project parse_external_project(const std::string& rel,
   return p;
 }
 
-schema::CardLink parse_link_json(const std::string& id,
-                                 const std::string& text) {
-  std::string rel = "definitions/" + id + "/_link.json";
-  auto l = decode_doc<schema::CardLink>(rel, text);
-  const auto* ext = schema::get(l.external);
-  if (!ext || !valid_id(*ext))
-    invalid(rel + ": \"external\" must name a folder of externals/",
-            {{"path", rel}});
-  return l;
-}
-
 schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text) {
-  return decode_doc<schema::CardDefinition>("definitions/" + id + "/_card.json",
-                                            text);
+  const auto rel = "definitions/" + id + "/_card.json";
+  auto card = decode_doc<schema::CardDefinition>(rel, text);
+  if (const auto* external = schema::get(card.external);
+      external && !valid_id(*external))
+    invalid(rel + ": \"external\" must name a folder of externals/",
+            {{"path", rel}});
+  return card;
 }
 
 void check_meta_json(const std::string& text) {
@@ -357,9 +351,7 @@ std::string execution_fingerprint(
   for (const auto& [id, def] : doc.definitions) {
     h.update("\0def\0", 5);
     h.update(id);
-    if (!def.card_json.empty())
-      h.update(execution_json(def.card_json, "displayMode"));
-    if (def.link_json) h.update(*def.link_json);
+    h.update(execution_json(def.card_json, "displayMode"));
   }
   for (const auto& [path, src] : doc.sources) {
     if (path.starts_with("skills/") || Document::is_card_meta_file(path))
@@ -375,12 +367,11 @@ std::string execution_fingerprint(
     if (relative == "layout.json") continue;
     h.update("\0src\0", 5);
     h.update(path);
-    const char* omitted =
-        relative == "tsugumi.json" ? "name"
-        : Document::is_document_file(relative) &&
-                relative.ends_with("/_card.json")
-            ? "displayMode"
-            : nullptr;
+    const char* omitted = relative == "tsugumi.json" ? "name"
+                          : Document::is_document_file(relative) &&
+                                  relative.ends_with("/_card.json")
+                              ? "displayMode"
+                              : nullptr;
     if (omitted) {
       if (auto text = read(path))
         h.update(execution_json(*text, omitted));
@@ -417,24 +408,14 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       if (!valid_id(id))
         throw DocumentError("invalid_document", "invalid definition id " + id);
       auto card_text = fs::read_file(entry.path() / "_card.json");
-      auto link_text = fs::read_file(entry.path() / "_link.json");
-      if (card_text.has_value() == link_text.has_value())
-        throw DocumentError(
-            "invalid_document",
-            "definitions/" + id +
-                " needs _card.json or _link.json (one of them)");
+      if (!card_text)
+        throw DocumentError("invalid_document",
+                            "definitions/" + id + " needs _card.json");
       DefinitionDoc d;
-      if (card_text) {
-        d.card = parse_card_json(id, *card_text);
-        d.card_json = *card_text;
-        doc->disk_hashes["definitions/" + id + "/_card.json"] =
-            crypto::sha256_hex(*card_text);
-      } else {
-        d.link = parse_link_json(id, *link_text).external->value();
-        d.link_json = *link_text;
-        doc->disk_hashes["definitions/" + id + "/_link.json"] =
-            crypto::sha256_hex(*link_text);
-      }
+      d.card = parse_card_json(id, *card_text);
+      d.card_json = *card_text;
+      doc->disk_hashes["definitions/" + id + "/_card.json"] =
+          crypto::sha256_hex(*card_text);
       if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
         check_meta_json(*meta);
         d.meta_json = *meta;

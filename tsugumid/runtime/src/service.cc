@@ -1305,8 +1305,6 @@ std::vector<ChangeIn> decode_changes(
         // the user's intent, and leaving a field blank must not remove that.
         if (p->meta_json() && p->meta_json()->size() > 0)
           ch.meta_json = p->meta_json()->str();
-        if (p->link_json() && p->link_json()->size() > 0)
-          ch.link_json = p->link_json()->str();
         ch.keep_meta =
             p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
         break;
@@ -2085,8 +2083,7 @@ void Service::file_list(RequestIn& req) {
   files.insert("tsugumi.json");
   files.insert("layout.json");
   for (const auto& [id, d] : doc->definitions) {
-    files.insert("definitions/" + id +
-                 (d.link_json ? "/_link.json" : "/_card.json"));
+    files.insert("definitions/" + id + "/_card.json");
     if (d.meta_json) files.insert("definitions/" + id + "/_meta.json");
   }
   std::string prefix = path == "." ? "" : path + "/";
@@ -2140,9 +2137,8 @@ void Service::file_list(RequestIn& req) {
       } else {
         auto id = p.substr(12, p.find('/', 12) - 12);
         const auto& d = doc->definitions.at(id);
-        const std::string& text = p.ends_with("_card.json")   ? d.card_json
-                                  : p.ends_with("_link.json") ? *d.link_json
-                                                              : *d.meta_json;
+        const auto& text =
+            p.ends_with("_card.json") ? d.card_json : *d.meta_json;
         hash = crypto::sha256_hex(text);
         size = text.size();
       }
@@ -2177,10 +2173,7 @@ std::optional<std::string> confirmed_bytes(const Document& doc,
     auto id = p.substr(12, p.find('/', 12) - 12);
     auto it = doc.definitions.find(id);
     if (it == doc.definitions.end()) return std::nullopt;
-    if (p.ends_with("_card.json"))
-      return it->second.link_json ? std::nullopt
-                                  : std::optional(it->second.card_json);
-    if (p.ends_with("_link.json")) return it->second.link_json;
+    if (p.ends_with("_card.json")) return it->second.card_json;
     return it->second.meta_json;
   }
   if (!doc.sources.count(p)) return std::nullopt;

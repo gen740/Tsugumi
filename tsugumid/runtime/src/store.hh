@@ -35,8 +35,7 @@ struct ChangeIn {
     RemoveSource
   };
   Kind kind;
-  std::string id;  // definitions
-  std::optional<std::string> link_json;
+  std::string id;    // definitions
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   bool keep_meta =

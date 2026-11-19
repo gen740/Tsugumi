@@ -207,12 +207,9 @@ auto Prepare(
   };
   auto definition = [&](const std::string& dir, const std::string& raw) {
     const auto parts = json::Object(raw);
-    for (const auto& [key, name] : {std::pair{"card", "_card.json"},
-                                    {"meta", "_meta.json"},
-                                    {"link", "_link.json"}})
-      if (parts.contains(key) &&
-          !(key == std::string("card") && parts.contains("link")))
-        put(dir + name, parts.at(key));
+    for (const auto& [key, name] :
+         {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
+      if (parts.contains(key)) put(dir + name, parts.at(key));
   };
   auto external = [&](const std::string& to, const std::string& raw) {
     const auto state = json::Object(raw);
@@ -225,7 +222,7 @@ auto Prepare(
   auto link = [&](const std::string& id, const std::string& name) {
     definition(prefix + "definitions/" + id + '/',
                json::Encode(json::Members{
-                   {"link",
+                   {"card",
                     json::Encode(json::Members{{"external", json::Quote(id)}})},
                    {"meta", json::Encode(
                                 json::Members{{"name", json::Quote(name)}})}}));
@@ -247,7 +244,6 @@ auto Prepare(
         const auto file = rest.substr(slash + 1), id = rest.substr(0, slash);
         std::string key = file == "_card.json"   ? "card"
                           : file == "_meta.json" ? "meta"
-                          : file == "_link.json" ? "link"
                                                  : "";
         if (key.empty()) continue;
         auto d = json::Object(json::Get(definitions, id, "{}"));
@@ -272,8 +268,7 @@ auto Prepare(
   if (const auto* selection = body.AsProjectSelection()) {
     if (selection->action == H::ProjectSelectionAction::Place) {
       for (const auto& id : selection->cards) {
-        if (!get(prefix + "definitions/" + id + "/_card.json") &&
-            !get(prefix + "definitions/" + id + "/_link.json"))
+        if (!get(prefix + "definitions/" + id + "/_card.json"))
           throw Failure("target_missing", "Definition: " + id);
         place(id, selection->x, selection->y);
       }
@@ -302,10 +297,9 @@ auto Prepare(
         for (const auto& id : ids) {
           const auto dir = prefix + "definitions/" + id + '/';
           std::vector<std::string> roots{dir};
-          const auto link_bytes = get(dir + "_link.json");
-          if (link_bytes) {
-            const auto external_id = json::Text(
-                json::Object(*link_bytes, dir + "_link.json"), "external");
+          const auto external_id = json::Text(
+              json::Object(get(dir + "_card.json").value_or("{}")), "external");
+          if (!external_id.empty()) {
             if (!valid_id(external_id))
               throw Failure("invalid_path", external_id);
             roots.push_back(prefix + "externals/" + external_id + '/');
@@ -453,9 +447,8 @@ auto Prepare(
                        "cards", "[]"))) {
       const auto id = json::Text(json::Object(raw), "id");
       json::Members parts;
-      for (const auto& [part, name] : {std::pair{"card", "_card.json"},
-                                       {"meta", "_meta.json"},
-                                       {"link", "_link.json"}}) {
+      for (const auto& [part, name] :
+           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}}) {
         const auto path = prefix + "definitions/" + id + '/' + name;
         // Only definitions that influence this connection need a helper read
         // grant.
@@ -475,9 +468,8 @@ auto Prepare(
     put(prefix + "tsugumi.json", state.at("project"));
     for (const auto& [id, raw] : json::Object(state.at("definitions"))) {
       const auto parts = json::Object(raw);
-      for (const auto& [part, name] : {std::pair{"card", "_card.json"},
-                                       {"meta", "_meta.json"},
-                                       {"link", "_link.json"}})
+      for (const auto& [part, name] :
+           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
         if (parts.contains(part) && (!definitions.contains(id) ||
                                      json::Get(json::Object(definitions.at(id)),
                                                part) != parts.at(part)))
@@ -546,17 +538,15 @@ auto Prepare(
         from = "definitions/" + item->from + '/';
       }
       const auto& source_files = imported ? imported_files : base.files;
-      if (!source_files.contains(from + "_card.json") &&
-          !source_files.contains(from + "_link.json") && !is_external)
+      if (!source_files.contains(from + "_card.json") && !is_external)
         throw Failure("not_found", "Card not found");
       std::vector<std::string> closure{from};
-      if (source_files.contains(from + "_link.json")) {
-        const auto at = from.substr(0, from.rfind("definitions/"));
-        closure.push_back(
-            at + "externals/" +
-            json::Text(json::Object(source_files.at(from + "_link.json")),
-                       "external") +
-            '/');
+      if (!is_external) {
+        const auto external_id = json::Text(
+            json::Object(source_files.at(from + "_card.json")), "external");
+        if (!external_id.empty())
+          closure.push_back(from.substr(0, from.rfind("definitions/")) +
+                            "externals/" + external_id + '/');
       }
       for (const auto& path : source_paths)
         for (const auto& dir : closure)
@@ -621,32 +611,30 @@ auto Prepare(
     const auto nested = MakeSubgraph(project, subgraph->cards, subgraph->id);
     const auto destination = prefix + "externals/" + subgraph->id + '/';
     if (get(destination + "tsugumi.json") ||
-        get(prefix + "definitions/" + subgraph->id + "/_card.json") ||
-        get(prefix + "definitions/" + subgraph->id + "/_link.json"))
+        get(prefix + "definitions/" + subgraph->id + "/_card.json"))
       throw Failure("value_conflict", "subgraph destination already exists");
     put(prefix + "tsugumi.json", nested.project_json);
     put(destination + "tsugumi.json",
         PreserveProjectBytes(project, nested.external_json));
-    put(prefix + "definitions/" + subgraph->id + "/_link.json",
-        nested.link_json);
+    put(prefix + "definitions/" + subgraph->id + "/_card.json",
+        nested.card_json);
     auto outer_layout = json::Object(read_layout(), layout_path);
     const auto positions = displayed_positions(json::Encode(outer_layout));
     json::Members inner_positions;
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
       const auto definition = prefix + "definitions/" + id + '/';
-      const auto link = get(definition + "_link.json");
-      const auto external =
-          link ? prefix + "externals/" +
-                     json::Text(json::Object(*link, definition + "_link.json"),
-                                "external") +
-                     '/'
-               : std::string{};
+      const auto external_id = json::Text(
+          json::Object(get(definition + "_card.json").value_or("{}")),
+          "external");
+      const auto external = external_id.empty()
+                                ? std::string{}
+                                : prefix + "externals/" + external_id + '/';
       bool shared_external = false;
       if (!external.empty()) {
         for (const auto& [path, bytes] : base.files) {
           if (!path.starts_with(prefix + "definitions/") ||
-              !path.ends_with("/_link.json"))
+              !path.ends_with("/_card.json"))
             continue;
           const auto local = path.substr(prefix.size() + 12);
           const auto other = local.substr(0, local.find('/'));
@@ -747,11 +735,10 @@ auto Prepare(
                              layout->scene.get()));
   }
   // Deleting a root definition is a guarded folder replacement; independent
-  // _card/_link removals remain invalid in the public edit vocabulary.
+  // _card.json removals remain invalid in the public edit vocabulary.
   std::set<std::string> removed;
   for (const auto& [path, value] : staged) {
-    if (!value &&
-        (path.ends_with("/_card.json") || path.ends_with("/_link.json"))) {
+    if (!value && path.ends_with("/_card.json")) {
       const auto dir = path.substr(0, path.size() - 10);
       if (removed.contains(dir)) continue;
       H::ProjectTreeEditT tree;
@@ -827,9 +814,8 @@ auto Authored(const json::Members& plan, SaveBase base) -> SaveBase {
           json::Text(value, "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
+      for (const auto& [key, file] :
+           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
         if (value.contains(key)) {
           const auto text = json::Text(value, key);
           if (text.empty())
@@ -863,9 +849,8 @@ auto Preserve(json::Members plan, const SaveBase& base) -> json::Members {
       preserve("layout.json", "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
+      for (const auto& [key, name] :
+           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
         preserve(dir + name, key);
     } else if (type == "PutSource" &&
                base.files.contains(json::Text(value, "path"))) {

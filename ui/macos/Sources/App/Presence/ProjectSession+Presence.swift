@@ -10,7 +10,7 @@ extension ProjectSession {
   }
 
   func presenceSnapshot() -> PresenceSnapshot {
-    PresenceSnapshot(existing: Set(confirmedDefinitions.keys).union(confirmedLinks.keys),
+    PresenceSnapshot(existing: Set(confirmedDefinitions.keys),
                      templates: confirmedDefinitions.compactMapValues { $0["template"]?.string },
                      connections: topConnections(confirmedProject))
   }

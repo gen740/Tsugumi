@@ -88,7 +88,7 @@ for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
   const card = (value: number) => `{"template":"input","params":[{"name":"value","type":"int","data":${value}}]}`
-  s.confirmedLinks.set('sub', parse('{"external":"sub"}'))
+  s.confirmedDefinitions.set('sub', parse('{"external":"sub"}'))
   s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
   s.externals.set(prefix, { project: parse('{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'), layout: parse('{}'),
     definitions: new Map([['a', { card: parse(card(1)) }]]) })

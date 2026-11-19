@@ -14,7 +14,7 @@ TEST_F(AgentProjectFixture,
         "table Value { value:double; } table Outputs { out:Value (required); } "
         "root_type Outputs;");
   Write(root / "definitions/knn/_card.json", R"({"template":"fork"})");
-  Write(root / "definitions/nested/_link.json", R"({"external":"nested"})");
+  Write(root / "definitions/nested/_card.json", R"({"external":"nested"})");
   Write(root / "externals/nested/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner_load"}],"connections":[]}})");
   Write(root / "externals/nested/definitions/inner_load/_card.json",

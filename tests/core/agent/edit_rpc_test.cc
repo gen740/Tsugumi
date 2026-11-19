@@ -306,7 +306,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture,
        SubgraphKeepsAnExternalStillUsedByAnUnselectedAlias) {
   for (const auto* id : {"mine", "alias"})
-    Write(directory.path / "project/definitions" / id / "_link.json",
+    Write(directory.path / "project/definitions" / id / "_card.json",
           R"({"external":"shared"})");
   const auto child = directory.path / "project/externals/shared";
   Write(

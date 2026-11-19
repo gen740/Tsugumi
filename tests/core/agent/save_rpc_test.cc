@@ -151,7 +151,7 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
 
 TEST_F(AgentProjectFixture,
        HelperRechecksAliasesAddedWhilePermissionIsPending) {
-  Write(directory.path / "project/definitions/outer/_link.json",
+  Write(directory.path / "project/definitions/outer/_card.json",
         R"({"external":"storage"})");
   Write(directory.path / "project/definitions/writer/_card.json",
         R"({"template":"draft"})");
@@ -259,7 +259,7 @@ TEST_F(AgentProjectFixture,
           {"base_rev", json::Get(snapshot, "rev")},
           {"changes",
            json::Encode(std::vector<std::string>{
-               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"","link_json":"{\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
       "add-alias");
   EXPECT_FALSE(JsonBool(alias.View(), "/isError")) << alias.View();
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
@@ -329,7 +329,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
                    {"value_type", json::Quote("SetProject")},
                    {"value",
                     json::Encode(json::Members{{"json", json::Quote(root)}})}}),
-               R"({"value_type":"PutDefinition","value":{"id":"outer","card_json":"","link_json":"{\"external\":\"storage\"}"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"outer","card_json":"{\"external\":\"storage\"}"}})"})}}),
       "seed");
   ASSERT_FALSE(JsonBool(seeded.View(), "/isError")) << seeded.View();
   const auto snapshot = json::Object(
@@ -425,7 +425,7 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
       Write(root / prefix / "layout.json", "{}");
     }
   }
-  Write(root / "definitions/outer/_link.json", R"({"external":"assigned"})");
+  Write(root / "definitions/outer/_card.json", R"({"external":"assigned"})");
   StartProject(
       false,
       R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");

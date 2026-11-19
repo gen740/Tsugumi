@@ -25,16 +25,6 @@ auto Resolve(const std::filesystem::path& path) -> std::filesystem::path {
   if (error) throw Failure("not_found", "Path not found");
   return result;
 }
-auto Bytes(const std::string& raw) -> std::string {
-  if (raw.starts_with('"')) return j::String(raw);
-  std::string bytes;
-  if (raw.starts_with('{')) {
-    if (!crypto::base64_decode(j::Text(j::Object(raw), "base64"), bytes))
-      throw Failure("invalid_request", "Invalid file bytes");
-  } else
-    for (const auto& n : j::Array(raw)) bytes += static_cast<char>(j::UInt(n));
-  return bytes;
-}
 }  // namespace
 
 auto AgentExclude::Defaults() -> std::vector<std::string> {
@@ -77,15 +67,14 @@ auto AgentExclude::Card(const std::string& id, const std::string& prefix) const
   const auto first = id.substr(0, slash);
   const auto definition = prefix + "definitions/" + first;
   if (Contains(definition)) return false;
-  for (const auto* file : {"_card.json", "_link.json"})
-    if (Contains(definition + '/' + file)) return false;
+  if (Contains(definition + "/_card.json")) return false;
   if (slash == std::string::npos) return true;
   // A Card's id and its linked external folder need not have the same name.
   // Follow the actual definition, as the resolver and the helper boundary do.
   std::string external;
   try {
     external =
-        j::Text(j::Object(fs::read_beneath(root_, definition + "/_link.json")),
+        j::Text(j::Object(fs::read_beneath(root_, definition + "/_card.json")),
                 "external");
   } catch (const std::exception&) {
     return false;
@@ -232,7 +221,7 @@ auto AgentExclude::Filter(const std::string& raw,
         }
       value = j::Quote(j::Encode(layout));
     } else if (key != "bytes" && key != "text" && key != "record_json" &&
-               key != "card_json" && key != "meta_json" && key != "link_json" &&
+               key != "card_json" && key != "meta_json" &&
                key != "stdout_bytes" && key != "stderr_bytes")
       value = Filter(value, prefix);
   }
@@ -249,16 +238,20 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
   };
   const auto hidden_definition = [&](const std::string& dir) {
     if (hidden_tree(dir)) return true;
-    const auto link = base.files.find(dir + "/_link.json");
+    const auto link = base.files.find(dir + "/_card.json");
     if (link == base.files.end()) return false;
+    const auto external = j::Text(j::Object(link->second), "external");
     const auto prefix = dir.substr(0, dir.rfind("definitions/"));
-    return hidden_tree(prefix + "externals/" +
-                       j::Text(j::Object(link->second), "external"));
+    return !external.empty() && hidden_tree(prefix + "externals/" + external);
+  };
+  const auto card_document = [](const std::string& path) {
+    return path.ends_with("/_card.json") &&
+           comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
   };
   auto document = [&](const std::string& path, const std::string& bytes) {
     Check(path);
     const auto before = base.files.contains(path) ? base.files.at(path) : "{}";
-    if (path.ends_with("/_link.json")) {
+    if (card_document(path)) {
       const auto old = j::Object(before), after = j::Object(bytes);
       const auto external = j::Text(old, "external");
       const auto prefix = path.substr(0, path.rfind("definitions/"));
@@ -346,26 +339,23 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
       Check(dir);
       if (type == "RemoveDefinition" && hidden_definition(dir))
         throw Failure("not_found", "Card not found");
-      for (const auto* file : {"_card.json", "_meta.json", "_link.json"})
+      for (const auto* file : {"_card.json", "_meta.json"})
         Check(dir + '/' + file);
       if (type == "PutDefinition")
-        document(dir + "/_link.json", j::Text(value, "link_json", "{}"));
+        document(dir + "/_card.json", j::Text(value, "card_json", "{}"));
     } else if (value.contains("path")) {
       const auto path = j::Text(value, "path");
       Check(path);
-      if (type == "RemoveSource" && path.ends_with("/_link.json"))
-        document(path, "{}");
+      if (type == "RemoveSource" && card_document(path)) document(path, "{}");
       if (type == "PutSource" &&
           (path == "tsugumi.json" || path == "layout.json" ||
            IsExternalDocument(path, "tsugumi.json") ||
-           IsExternalDocument(path, "layout.json") ||
-           path.ends_with("/_link.json")))
-        document(path, Bytes(j::Get(value, "bytes")));
+           IsExternalDocument(path, "layout.json") || card_document(path)))
+        document(path, DecodeSourceBytes(j::Get(value, "bytes")));
       if (type == "PatchSource" &&
           (path == "tsugumi.json" || path == "layout.json" ||
            IsExternalDocument(path, "tsugumi.json") ||
-           IsExternalDocument(path, "layout.json") ||
-           path.ends_with("/_link.json"))) {
+           IsExternalDocument(path, "layout.json") || card_document(path))) {
         if (!base.files.contains(path))
           throw Failure("not_found", "Path not found");
         try {

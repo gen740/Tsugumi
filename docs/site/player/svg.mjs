@@ -937,7 +937,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
  *  part of the demo's recorded run (the timeline's `<card>/<inner>` entries). */
 function innerDemo(demo, card) {
   const root = path.join(ROOT, 'demos', 'en', demo)
-  const ext = readJson(path.join(root, 'definitions', card, '_link.json')).external
+  const ext = readJson(path.join(root, 'definitions', card, '_card.json')).external
   const inner = path.join(root, 'externals', ext)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)

@@ -285,12 +285,10 @@ auto document_fields(const std::optional<std::string>& text)
 void read_definition(git_repository* r, git_tree* tree,
                      VersionCanvasData::Card& card) {
   const std::string dir = "definitions/" + card.id + "/";
-  const auto link = file_at(r, tree, (dir + "_link.json").c_str());
   const auto text = file_at(r, tree, (dir + "_card.json").c_str());
   DefinitionDoc def;
-  if (link) def.link = *link;
   if (text && schema::decode(*text, def.card)) def.card = {};
-  const Template kind = template_of(link || text ? &def : nullptr);
+  const Template kind = template_of(text ? &def : nullptr);
   card.kind = kind == Template::Code ? "code" : template_name(kind);
   if (kind == Template::Fork) {
     card.fan = 2;
@@ -823,8 +821,7 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
     // Other files are opaque to the run definition (including _meta.json).
     const auto filename = stdfs::path(path).filename().string();
     if (!source && filename != "tsugumi.json" && filename != "_card.json" &&
-        filename != "_link.json" && filename != "_outputs.fbs" &&
-        filename != "default.nix")
+        filename != "_outputs.fbs" && filename != "default.nix")
       continue;
     auto card = card_of(path);
     if (!card) continue;

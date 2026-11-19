@@ -27,13 +27,11 @@ table SourceInfo {
   size_bytes:uint64 = null (id: 4);
 }
 
-/// definitions/<id>/: card_json (_card.json), or for a Card in Card
-/// link_json (_link.json) with an empty card_json.
+/// definitions/<id>/_card.json. An external field names a Card in Card.
 table Definition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
   meta_json:string (id: 2);
-  link_json:string (id: 3);
 }
 
 /// A static Card reference in default.nix. Target paths are absolute in the
@@ -136,13 +134,11 @@ table SetProject { json:string (id: 0, required); }
 table SetLayout { json:string (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
-  card_json:string (id: 1, required);  // empty with link_json
+  card_json:string (id: 1, required);
   /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
   meta_json:string (id: 2);
-  /// A Card in Card: _link.json instead of _card.json. Empty: none.
-  link_json:string (id: 3);
   /// Preserve existing _meta.json when meta_json is omitted.
-  keep_meta:bool = false (id: 4);
+  keep_meta:bool = false (id: 3);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 table PutSource {

@@ -651,17 +651,8 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                        "invalid definition id " + c.id);
         DefinitionDoc d;
         wrap([&] {
-          if (c.link_json) {
-            if (!c.json.empty())
-              throw DocumentError(
-                  "invalid_document",
-                  "a definition has card_json or link_json, not both");
-            d.link = parse_link_json(c.id, *c.link_json).external->value();
-            d.link_json = *c.link_json;
-          } else {
-            d.card = parse_card_json(c.id, c.json);
-            d.card_json = c.json;
-          }
+          d.card = parse_card_json(c.id, c.json);
+          d.card_json = c.json;
           if (c.meta_json) {
             check_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
@@ -816,19 +807,9 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
     bool fresh = old == base->definitions.end();
-    bool card_changed = fresh || old->second.card_json != d.card_json ||
-                        old->second.link_json != d.link_json;
+    bool card_changed = fresh || old->second.card_json != d.card_json;
     bool meta_changed = fresh || old->second.meta_json != d.meta_json;
-    if (card_changed) {
-      if (d.link_json)
-        files[def_dir(id) + "_link.json"] = *d.link_json;
-      else
-        files[def_dir(id) + "_card.json"] = d.card_json;
-      if (!fresh && d.link_json && !old->second.link_json)
-        files[def_dir(id) + "_card.json"] = std::nullopt;
-      if (!fresh && !d.link_json && old->second.link_json)
-        files[def_dir(id) + "_link.json"] = std::nullopt;
-    }
+    if (card_changed) files[def_dir(id) + "_card.json"] = d.card_json;
     if (meta_changed) {
       if (d.meta_json)
         files[def_dir(id) + "_meta.json"] = *d.meta_json;
@@ -840,8 +821,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : base->definitions) {
     if (doc->definitions.count(id)) continue;
     st.delta.definitions_removed.push_back(id);
-    files[def_dir(id) + (d.link_json ? "_link.json" : "_card.json")] =
-        std::nullopt;
+    files[def_dir(id) + "_card.json"] = std::nullopt;
     if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {

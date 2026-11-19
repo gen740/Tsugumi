@@ -39,14 +39,11 @@ struct SourceEntry {
   uint64_t size = 0;
 };
 
-// definitions/<id>/: the settings of one Card (_card.json), or, for a Card in
-// Card, the link to its external project (_link.json); never both.
+// definitions/<id>/_card.json and optional _meta.json.
 struct DefinitionDoc {
   schema::CardDefinition card;
-  std::string card_json;  // empty for a link
+  std::string card_json;
   std::optional<std::string> meta_json;
-  std::optional<std::string> link;  // externals/<link>/
-  std::optional<std::string> link_json;
 };
 
 struct Resolution;  // graph.hh
@@ -99,8 +96,6 @@ schema::Project parse_project_json(const std::string& text);
 schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text);
 void check_meta_json(const std::string& text);
-schema::CardLink parse_link_json(const std::string& id,
-                                 const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
 schema::Project parse_external_project(const std::string& rel,
                                        const std::string& text);

@@ -25,9 +25,8 @@ auto CardStem(const std::string& name) -> std::string {
   return stem.empty() ? "card" : stem;
 }
 
-namespace {
 namespace json = ::tsugumi::json;
-auto Content(const std::string& raw) -> std::string {
+auto DecodeSourceBytes(const std::string& raw) -> std::string {
   if (raw.starts_with('"')) return json::String(raw);
   if (raw.starts_with('{')) {
     std::string out;
@@ -40,13 +39,13 @@ auto Content(const std::string& raw) -> std::string {
     out += static_cast<char>(json::UInt(n));
   return out;
 }
+namespace {
 auto DocumentPath(const std::string& path) -> bool {
   if (path == "tsugumi.json" || path == "layout.json" ||
       IsExternalDocument(path, "tsugumi.json") ||
       IsExternalDocument(path, "layout.json"))
     return true;
-  return (path.ends_with("/_card.json") || path.ends_with("/_meta.json") ||
-          path.ends_with("/_link.json")) &&
+  return (path.ends_with("/_card.json") || path.ends_with("/_meta.json")) &&
          comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
 }
 }  // namespace
@@ -82,9 +81,8 @@ auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
   for (const auto& raw :
        json::Array(json::Get(snapshot, "definitions", "[]"))) {
     const auto definition = json::Object(raw);
-    for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                    {"meta_json", "_meta.json"},
-                                    {"link_json", "_link.json"}}) {
+    for (const auto& [key, file] :
+         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}}) {
       const auto text = json::Text(definition, key);
       if (!text.empty())
         base.files["definitions/" + json::Text(definition, "id") + '/' + file] =
@@ -103,7 +101,7 @@ auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
                                      {"if_hash", json::Get(source, "hash")},
                                      {"offset", std::to_string(text.size())},
                                      {"limit_bytes", "1048576"}});
-      const auto page = Content(json::Get(value, "bytes"));
+      const auto page = DecodeSourceBytes(json::Get(value, "bytes"));
       text += page;
       if (json::Bool(json::Get(value, "eof"))) break;
       if (page.empty())
