@@ -412,7 +412,6 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     throw Failure("busy", "The conversation is already running");
   const auto config = providers->ForConversation(id);
   auto messages = ParseMessages(c.messages);
-  access_service.AuthorizeContext(messages);
   if (!text.empty() || !pending_frame.empty()) {
     ContentBlock block;
     block.text = text;
@@ -438,6 +437,10 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       pending_index = pending.u64(2);
     }
   }
+  // A recovered message is prepared again, including any turn approval. The
+  // model hooks still check the complete context before an ordinary turn.
+  if (!turn.empty() || pending_frame.empty())
+    access_service.AuthorizeContext(messages);
   if (active_turn.empty() && action == A::Action::Resume) {
     auto previous = conversations->ConversationDatabase(id).prepare(
         "SELECT id,state,action FROM turns WHERE "
