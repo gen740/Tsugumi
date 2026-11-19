@@ -1,16 +1,15 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { chatFollowsAfterScroll } from '../model/chatFollow'
+import { useEffect, useState } from 'react'
+import { LOG_READ_BYTES } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { prefs } from '../model/prefs'
-import { terminalText } from '../model/terminalText'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../wire/rpc'
 import { Button, download, Empty, Segmented, Select, Sheet, Spinner } from './controls'
 import { RunComparisonView } from './runComparison'
+import { LogSource, LogText, useLogStream } from './logWindowView'
 import { Icon } from './icons'
 import { ProjectTerminalPanel } from './terminal'
 import { L } from '../i18n'
@@ -127,141 +126,20 @@ function truncationNotice(limit: bigint) {
   return L('ログはここで切り詰めました（上限 {0} MiB）', limit / 1_048_576n)
 }
 
-/** Bytes kept for drawing: the end of a longer log (export writes all of it). */
-const SHOWN_BYTES = 1 << 20
-const CHUNK = 256 * 1024
-
-type LogForm = 'terminal' | 'journal'
-
-interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream }
-
-interface LogState { text: string; size?: bigint; clipped: boolean; truncatedAt?: bigint; error?: string }
-
-/** Whole lines are shown for good; the last, unfinished one is shown as it
- *  stands and read again with what follows it. */
-function parseLog(raw: string, form: LogForm): { lines: string; rest: string; shownRest: string } {
-  const split = raw.lastIndexOf('\n') + 1
-  const whole = raw.slice(0, split), rest = raw.slice(split)
-  if (form === 'terminal') return { lines: terminalText(whole), rest, shownRest: terminalText(rest) }
-  const lines = whole.split('\n').flatMap((line) => {
-    try {
-      const v = JSON.parse(line)
-      return typeof v?.phase === 'string' && ['validate', 'save'].includes(v.phase) ? [`${v.phase} · ${v.event ?? ''}: ${v.message ?? ''}\n`] : []
-    } catch {
-      return []
-    }
-  }).join('')
-  return { lines, rest, shownRest: '' }
-}
-
-/** One stream of a run's log (or of one Card invocation), read through
- *  LogRange: its end first, then forward from where the last read stopped,
- *  each time LogAvailable says there is more. Reads never overlap; a
- *  notification during a read asks for one more read after it. */
-function useLogStream(session: ProjectSession, source: LogSource | undefined, form: LogForm): LogState {
-  const [state, setState] = useState<LogState>({ text: '', clipped: false })
-  const reader = useRef({ id: '', end: 0n, first: true, lines: '', partial: '', busy: false, again: false })
-  const id = source ? `${source.runId}|${source.card?.join('/') ?? ''}|${source.invocation ?? ''}|${source.stream}|${form}` : ''
-
-  const read = async () => {
-    const rpc = session.rpc
-    const r = reader.current
-    if (!rpc || !source || r.id !== id) return
-    if (r.busy) {
-      r.again = true
-      return
-    }
-    r.busy = true
-    try {
-      do {
-        r.again = false
-        for (;;) {
-          const first = r.first, start = r.end
-          const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, r.end, first, first ? SHOWN_BYTES : CHUNK)
-          if (reader.current !== r) return
-          r.first = false
-          const next = slice.nextOffset ?? r.end
-          const size = slice.sizeBytes ?? next
-          let clipped = first ? (slice.offset ?? 0n) > 0n : undefined
-          let shown: string | undefined
-          if (next > r.end || first) {
-            r.end = next
-            const parsed = parseLog(r.partial + s(slice.text), form)
-            r.lines += parsed.lines
-            r.partial = parsed.rest
-            // Keep about SHOWN_BYTES drawn: cut at a line once well past it.
-            if (r.lines.length > SHOWN_BYTES * 1.5) {
-              const cut = r.lines.indexOf('\n', r.lines.length - SHOWN_BYTES)
-              r.lines = r.lines.slice(cut < 0 ? r.lines.length - SHOWN_BYTES : cut + 1)
-              clipped = true
-            }
-            shown = r.lines + parsed.shownRest
-          }
-          setState((st) => ({
-            text: shown ?? st.text, size, clipped: clipped ?? st.clipped,
-            truncatedAt: slice.logTruncatedAtBytes ?? st.truncatedAt, error: undefined,
-          }))
-          if ((next <= start && !first) || r.end >= size) break
-        }
-      } while (r.again && reader.current === r)
-    } catch (e) {
-      if (reader.current !== r) return
-      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) setState({ text: '', size: 0n, clipped: false })
-      else setState((st) => ({ ...st, error: errorText(e) }))
-    } finally {
-      if (reader.current === r) r.busy = false
-    }
-  }
-
-  useEffect(() => {
-    reader.current = { id, end: 0n, first: true, lines: '', partial: '', busy: false, again: false }
-    setState({ text: '', clipped: false })
-    void read()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
-  useEffect(() => {
-    void read()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.logRevision])
-  return state
-}
-
 /** Writes a whole stream to a file, in pieces. */
-async function exportLog(session: ProjectSession, source: LogSource, size: bigint) {
+async function exportLog(session: ProjectSession, source: LogSource, size: number) {
   const rpc = session.rpc
-  if (!rpc) return
+  if (!rpc) throw new Error(L('実行環境に接続していません'))
   const chunks: string[] = []
   let offset = 0n
   while (offset < size) {
-    const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, CHUNK)
+    const slice = await rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES)
     const next = slice.nextOffset ?? offset
-    if (next <= offset) break
+    if (next <= offset) throw new Error(L('ログを読み込めませんでした'))
     chunks.push(s(slice.text))
     offset = next
   }
   download(`${source.runId}-${D.LogStream[source.stream]}.log`, new Blob(chunks).slice(0, Number(size), 'text/plain'))
-}
-
-/** A log in a scrolling block: lines are not wrapped, and the view follows
- *  the end while the reader is there. */
-function LogText({ text, placeholder }: { text: string; placeholder: string }) {
-  useObserve(prefs)
-  const scroll = useRef<HTMLDivElement>(null)
-  const following = useRef(true)
-  const lastTop = useRef(0)
-  useLayoutEffect(() => {
-    const el = scroll.current
-    if (el && following.current) el.scrollTop = el.scrollHeight
-  }, [text])
-  return (
-    <div className="log-text" ref={scroll} onScroll={(e) => {
-      const el = e.currentTarget
-      following.current = chatFollowsAfterScroll(following.current, lastTop.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })
-      lastTop.current = el.scrollTop
-    }}>
-      <pre className={`selectable${text ? '' : ' secondary'}`} style={{ fontSize: prefs.editorFontSize - 1 }}>{text || placeholder}</pre>
-    </div>
-  )
 }
 
 /** Log text of a run (or one Card / invocation of it), read incrementally
@@ -301,7 +179,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
   /** Why nothing is shown, so an empty pane is never ambiguous. */
   const emptyReason = (() => {
     if (log.error) return L('ログを読み込めませんでした: ') + log.error
-    if (log.size === undefined) return L('読み込んでいます…')
+    if (!log.loaded) return L('読み込んでいます…')
     if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return L('この実行では、この Card はまだ動いていません。')
     switch (stream) {
       case D.LogStream.standard_error: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
@@ -317,10 +195,9 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
           options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
         <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
-        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.size ?? 0n).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
+        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.size).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
       </div>
-      {log.clipped && <div className="caption secondary" style={{ padding: '0 6px' }}>{L('ログの末尾を表示しています')}</div>}
-      <LogText text={log.text} placeholder={emptyReason} />
+      <LogText log={log} placeholder={emptyReason} />
       {log.truncatedAt !== undefined && <div className="caption headline" style={{ padding: '0 6px' }}>{truncationNotice(log.truncatedAt)}</div>}
       {(log.error ?? exportError) && <div className="caption" style={{ color: 'var(--red)', padding: '0 6px' }}>{log.error ?? exportError}</div>}
     </div>
@@ -423,7 +300,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   }, [focus])
 
   const placeholder = (() => {
-    if (shownInvocation === undefined || (log.size === undefined && !log.error)) {
+    if (shownInvocation === undefined || (!log.loaded && !log.error)) {
       return !info && !live ? L('読み込んでいます…') : L('この実行では、この Card はまだ動いていません')
     }
     switch (current) {
@@ -470,11 +347,8 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
             )
           })}
         </div>
-        {log.clipped && log.size !== undefined && (
-          <div className="caption secondary stage-notice">{L('ログの末尾 {0} MiB を表示しています。全体は「ログを書き出す…」で保存できます。', SHOWN_BYTES >> 20)}</div>
-        )}
         {(log.error ?? exportError) && <div className="caption stage-notice" style={{ color: 'var(--red)' }}>{log.error ?? exportError}</div>}
-        <LogText text={log.text} placeholder={placeholder} />
+        <LogText log={log} placeholder={placeholder} />
         {limit != null && <div className="caption headline stage-notice">{truncationNotice(limit)}</div>}
         {failure && shownGroup && status(shownGroup).label === L('失敗') && <div className="caption selectable stage-notice" style={{ color: 'var(--red)' }}>{failure}</div>}
       </>
@@ -490,7 +364,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
         {source && !!log.size && <Button small disabled={exporting} onClick={() => {
           setExporting(true)
           setExportError(undefined)
-          void exportLog(session, source, log.size ?? 0n).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
+          void exportLog(session, source, log.size).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
         }}>{L('ログを書き出す…')}</Button>}
       </div>
       <div className="row gap6 stage-chips">
