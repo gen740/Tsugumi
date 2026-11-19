@@ -77,6 +77,8 @@ struct LogRead {
   bool starts_line = true;
   bool exists = false;
   bool truncated = false;
+  std::optional<uint64_t> raw_size;
+  bool reset = false;
   std::optional<uint64_t> log_truncated_at_bytes;
 };
 
@@ -126,7 +128,7 @@ class History {
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);
   // Appends UTF-8 text to a log stream; returns the new end offsets per scope.
-  std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
+  static std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
                                  LogStream stream, const std::string& text);
   static auto mark_log_truncated(sql::Db& db, const std::string& run_id,
@@ -240,7 +242,8 @@ class History {
                    const std::optional<CardPath>& card,
                    std::optional<uint64_t> invocation, LogStream stream,
                    uint64_t offset, bool tail, uint64_t limit,
-                   std::optional<uint64_t> before);
+                   std::optional<uint64_t> before, bool terminal,
+                   std::optional<uint64_t> since);
 
   // Cursors carry a paging position.
   std::string make_cursor(int64_t hi, const std::string& after) const;
@@ -280,12 +283,10 @@ class History {
   std::thread writer_;
   std::mutex rmu_;
   std::vector<std::unique_ptr<sql::Db>> reader_pool_;
-  // Log offsets and LF counts per scope, maintained by the writer thread.
   struct LogPosition {
     uint64_t offset = 0;
     uint64_t newlines = 0;
   };
-  std::map<std::string, LogPosition> log_ends_;
   // Progress of running invocations after their persisted start (stage
   // changes are not written; queries see them through overlay()).
   std::mutex live_mu_;

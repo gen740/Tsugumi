@@ -414,6 +414,20 @@
           "pattern": "^-?[0-9]+$",
           "description": "64 bit integer as a decimal string"
         },
+        "before": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset."
+        },
+        "terminal_since": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then."
+        },
+        "terminal": {
+          "type": "boolean",
+          "description": "Read the terminal display. Offsets and the size use four units per Unicode scalar."
+        },
         "tail": {
           "type": "boolean"
         },

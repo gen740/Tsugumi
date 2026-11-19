@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 47 requests.
+There are 48 requests.
 
 ## Connection
 
@@ -21,6 +21,7 @@ There are 47 requests.
 | --- | --- | --- |
 | [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. |
 | [`ProjectActivity`](#projectactivity) | ProjectActivity | Observe active runs and queued/running requests, across all connections. Does not stop work or restrict connections. |
+| [`CoreTrace`](#coretrace) |  |  |
 
 ### SessionHello
 
@@ -28,10 +29,18 @@ There are 47 requests.
 | --- | --- | --- | --- |
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
+| `client` | `Tsugumi.Trace.Client` |  |  |
 
 ### ProjectActivity
 
 No fields.
+
+### CoreTrace
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `capability` | `string` |  |  |
+| `mode` | `ubyte` |  |  |
 
 ## Projects and saving
 
@@ -284,7 +293,7 @@ No fields.
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
 | [`ArtifactRead`](#artifactread) | FileContent | Read artifact bytes; member selects a file within a Directory artifact. |
-| [`LogRange`](#logrange) | LogSlice | Read run logs; invocation requires card. tail=true reads the end with offset=0. |
+| [`LogRange`](#logrange) | LogSlice | Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. |
 | [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Read recorded environments in first-use order; no evaluation. |
 | [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Read a recorded runtime closure in store-path order, including its manifest. |
 | [`RunEnvironmentUses`](#runenvironmentuses) | EnvironmentUsePage | Recorded users of a shared environment, ordered by Card and invocation. |
@@ -373,6 +382,9 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `tail` | `bool` |  |  |
 | `limit_bytes` | `uint32` |  | Maximum number of bytes to read. |
+| `before` | `uint64` |  | Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset. |
+| `terminal` | `bool` |  | Read the terminal display. Offsets and the size use four units per Unicode scalar. |
+| `terminal_since` | `uint64` |  | Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then. |
 
 ### RunEnvironments
 
@@ -521,7 +533,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 
 | Request | Fields |
 | --- | --- |
-| `HelloRequest` | `token: string` (required) |
+| `HelloRequest` | `token: string` (required), `client: Tsugumi.Trace.Client` |
 | `ConfigureRequest` | `provider: Tsugumi.Service.ProviderSelection` (required), `conversation_id: string` (required) |
 | `ConversationCreateRequest` | `conversation_id: string`, `project_id: string`, `role: string` |
 | `ConversationListRequest` | `project_id: string` |
@@ -557,7 +569,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
-| `HelloRequest` | `token: string` (required) |
+| `HelloRequest` | `token: string` (required), `client: Tsugumi.Trace.Client` |
 | `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]` |
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
@@ -604,5 +616,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |
+| `HostTraceRequest` | `mode: ubyte`, `source: string` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`.

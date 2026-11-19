@@ -43,7 +43,6 @@ await import("./providerKeys")
 await import('./thoughts')
 
 await import("./chatFollow")
-await import("./terminalText")
 await import("./logWindow")
 
 await import("./projectActions")

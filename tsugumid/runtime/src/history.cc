@@ -246,6 +246,179 @@ InvocationSummaryData inv_row(sql::Db& db, const sql::Stmt& st,
 
 bool char_start(unsigned char c) { return (c & 0xC0) != 0x80; }
 
+// Terminal offsets reserve four bytes per Unicode scalar. A redraw can change
+// a glyph's UTF-8 width without changing its position or moving later pages.
+constexpr uint64_t kTerminalCellBytes = 4;
+constexpr uint64_t kTerminalTileCells = 4096;
+
+struct TerminalScope {
+  std::string_view run, card;
+  uint64_t invocation;
+  int stream;
+
+  auto bind(sql::Stmt& stmt) const -> sql::Stmt& {
+    return stmt.bind(1, run).bind(2, card).bind(3, invocation).bind(4, stream);
+  }
+};
+
+struct TerminalPosition {
+  uint64_t end = 0;
+  uint64_t cursor = 0;
+  uint64_t line_start = 0;
+  uint64_t newlines = 0;
+  uint64_t redrawn_at = 0;
+};
+
+auto terminal_position(sql::Db& db, const TerminalScope& scope)
+    -> TerminalPosition {
+  auto select = db.prepare(
+      "SELECT end_cell,cursor,line_start,newlines,redrawn_at FROM log_terminal_ends "
+      "WHERE run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4");
+  return scope.bind(select).step()
+      ? TerminalPosition{select.u64(0), select.u64(1), select.u64(2),
+                         select.u64(3), select.u64(4)}
+      : TerminalPosition{};
+}
+
+auto utf8_prefix(std::string_view data, uint64_t cells)
+    -> std::pair<size_t, uint64_t> {
+  size_t i = 0;
+  uint64_t count = 0;
+  for (; i < data.size(); ++i) {
+    if (!char_start(static_cast<unsigned char>(data[i]))) continue;
+    if (count == cells) break;
+    ++count;
+  }
+  return {i, count};
+}
+
+auto append_terminal(sql::Db& db, const TerminalScope& scope,
+                     std::string_view input, uint64_t raw_end) -> void {
+  auto pos = terminal_position(db, scope);
+  auto select = db.prepare(
+      "SELECT data,line,starts_line FROM log_terminal_tiles WHERE "
+      "run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4 AND tile=?5");
+  auto save = db.prepare("INSERT OR REPLACE INTO log_terminal_tiles VALUES(?,?,?,?,?,?,?,?)");
+  std::optional<uint64_t> tile;
+  std::string data;
+  uint64_t line = 0;
+  bool starts_line = true;
+  auto flush = [&] {
+    if (!tile) return;
+    scope.bind(save).bind(5, *tile).bind(6, line).bind(7, starts_line)
+        .bind_blob(8, data).run();
+    save.reset();
+  };
+  auto write = [&](std::string_view bytes) {
+    while (!bytes.empty()) {
+      const auto number = pos.cursor / kTerminalTileCells;
+      const auto column = pos.cursor % kTerminalTileCells;
+      if (tile != number) {
+        flush();
+        tile = number;
+        if (scope.bind(select).bind(5, number).step()) {
+          data = select.blob(0);
+          line = select.u64(1);
+          starts_line = select.i64(2) != 0;
+        } else {
+          data.clear();
+          line = pos.newlines + 1;
+          starts_line = pos.cursor == pos.line_start;
+        }
+        select.reset();
+      }
+      const auto [length, cells] = utf8_prefix(bytes, kTerminalTileCells - column);
+      const auto part = bytes.substr(0, length);
+      if (pos.cursor == pos.end) {
+        data.append(part);
+      } else {
+        const auto begin = utf8_prefix(data, column).first;
+        const auto replaced = utf8_prefix(std::string_view(data).substr(begin), cells).first;
+        data.replace(begin, replaced, part);
+        pos.redrawn_at = raw_end;
+      }
+      pos.cursor += cells;
+      pos.end = std::max(pos.end, pos.cursor);
+      const auto lf = part.rfind('\n');
+      if (lf != std::string_view::npos) {
+        pos.newlines += std::ranges::count(part, '\n');
+        pos.line_start = pos.cursor - utf8_prefix(part.substr(lf + 1), cells).second;
+      }
+      bytes.remove_prefix(length);
+    }
+  };
+  while (!input.empty()) {
+    if (input.front() == '\r') {
+      pos.cursor = pos.line_start;
+      input.remove_prefix(1);
+    } else if (input.front() == '\n' && pos.cursor < pos.end) {
+      pos.cursor = pos.end;
+      write(input.substr(0, 1));
+      input.remove_prefix(1);
+    } else {
+      const auto mark = pos.cursor < pos.end ? input.find_first_of("\r\n") : input.find('\r');
+      const auto count = std::min(input.size(), mark);
+      write(input.substr(0, count));
+      input.remove_prefix(count);
+    }
+  }
+  flush();
+  auto update = db.prepare("INSERT OR REPLACE INTO log_terminal_ends VALUES(?,?,?,?,?,?,?,?,?)");
+  scope.bind(update).bind(5, pos.end).bind(6, pos.cursor).bind(7, pos.line_start)
+      .bind(8, pos.newlines).bind(9, pos.redrawn_at).run();
+}
+
+auto read_terminal(sql::Db& db, const TerminalScope& scope, LogRead out,
+                   uint64_t offset, bool tail, uint64_t limit,
+                   std::optional<uint64_t> before,
+                   std::optional<uint64_t> since) -> LogRead {
+  out.raw_size = out.size;
+  const auto pos = terminal_position(db, scope);
+  out.size = pos.end * kTerminalCellBytes;
+  out.reset = since && pos.redrawn_at > *since;
+  tail = tail || out.reset;
+  uint64_t edge = tail ? out.size : before.value_or(offset);
+  if (edge > out.size || edge % kTerminalCellBytes != 0)
+    throw Failed(FailureKind::invalid_range, "invalid terminal log position");
+  limit -= limit % kTerminalCellBytes;
+  if (tail || before) offset = edge > limit ? edge - limit : 0;
+  const auto stop = tail || before ? edge : std::min(out.size, offset + limit);
+  out.offset = offset;
+  out.next_offset = stop;
+  out.line_number = pos.newlines + 1;
+  out.starts_line = pos.line_start * kTerminalCellBytes == offset;
+  out.truncated = ((tail || before) && offset > 0) || stop < out.size;
+  if (stop == offset) return out;
+
+  const auto begin = offset / kTerminalCellBytes;
+  const auto end = stop / kTerminalCellBytes;
+  auto rows = db.prepare(
+      "SELECT tile,line,starts_line,data FROM log_terminal_tiles WHERE "
+      "run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4 AND tile BETWEEN ?5 AND ?6 "
+      "ORDER BY tile");
+  scope.bind(rows).bind(5, begin / kTerminalTileCells)
+      .bind(6, (end - 1) / kTerminalTileCells);
+  auto cursor = begin;
+  while (rows.step()) {
+    if (rows.u64(0) != cursor / kTerminalTileCells)
+      throw Failed(FailureKind::persistence_failed, "discontinuous terminal log tiles");
+    const std::string data = rows.blob(3);
+    const auto column = cursor % kTerminalTileCells;
+    const auto start = utf8_prefix(data, column).first;
+    if (cursor == begin) {
+      out.line_number = rows.u64(1) + std::count(data.begin(), data.begin() + start, '\n');
+      out.starts_line = column == 0 ? rows.i64(2) != 0 : start > 0 && data[start - 1] == '\n';
+    }
+    const auto count = std::min(end - cursor, kTerminalTileCells - column);
+    const auto [length, cells] = utf8_prefix(std::string_view(data).substr(start), count);
+    out.text.append(data, start, length);
+    cursor += cells;
+  }
+  if (cursor != end)
+    throw Failed(FailureKind::persistence_failed, "discontinuous terminal log tiles");
+  return out;
+}
+
 // The tables a run lives in, the same in the history and in its copy
 // (.tsugumi/runs.sqlite); `p` is the schema prefix ("" or "ex.").
 std::string run_tables(const std::string& p) {
@@ -315,6 +488,17 @@ CREATE INDEX IF NOT EXISTS )SQL" +
 CREATE INDEX IF NOT EXISTS )SQL" +
          p + R"SQL(logs_inv ON logs(run_id, card, invocation, stream, inv_off);
 CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(log_terminal_ends(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
+  end_cell INTEGER NOT NULL, cursor INTEGER NOT NULL, line_start INTEGER NOT NULL,
+  newlines INTEGER NOT NULL, redrawn_at INTEGER NOT NULL,
+  PRIMARY KEY (run_id, card, invocation, stream)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS )SQL" +
+         p + R"SQL(log_terminal_tiles(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, stream INTEGER NOT NULL,
+  tile INTEGER NOT NULL, line INTEGER NOT NULL, starts_line INTEGER NOT NULL, data BLOB NOT NULL,
+  PRIMARY KEY (run_id, card, invocation, stream, tile)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
   artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
@@ -329,7 +513,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 14;
+constexpr int kHistoryVersion = 15;
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string fault)
@@ -477,8 +661,6 @@ void History::writer_loop() {
       ok = false;
     }
     if (!ok) {
-      // Cached log offsets may include rolled back rows.
-      log_ends_.clear();
       // Retry one by one so a single bad write does not lose the others.
       for (auto& [work, done] : batch) {
         bool one = true;
@@ -888,14 +1070,7 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
   if (text.empty()) return {};
   int s = static_cast<int>(stream);
   std::string ck = key(card);
-  std::string rk = "R|" + run_id + "|" + std::to_string(s);
-  std::string kk = "C|" + run_id + "|" + ck + "|" + std::to_string(s);
-  std::string ik = "I|" + run_id + "|" + ck + "|" + std::to_string(invocation) +
-                   "|" + std::to_string(s);
-  auto load = [&](const std::string& k, const char* sql_text, bool with_card,
-                  bool with_inv) {
-    auto it = log_ends_.find(k);
-    if (it != log_ends_.end()) return it->second;
+  auto load = [&](const char* sql_text, bool with_card, bool with_inv) {
     auto st = db.prepare(sql_text);
     int i = 1;
     st.bind(i++, run_id);
@@ -904,52 +1079,63 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
     st.bind(i++, s);
     return st.step() ? LogPosition{st.u64(0), st.u64(1)} : LogPosition{};
   };
-  auto r0 = load(rk,
+  auto r0 = load(
                  "SELECT run_off + length(data), run_lf + lf_count FROM logs "
                  "WHERE run_id=? AND stream=? ORDER BY run_off DESC LIMIT 1",
                  false, false);
   LogPosition c0, i0;
   if (!card.empty()) {
-    c0 = load(kk,
+    c0 = load(
               "SELECT card_off + length(data), card_lf + lf_count FROM logs "
               "WHERE run_id=? AND card=? AND stream=? "
               "ORDER BY card_off DESC LIMIT 1",
               true, false);
-    i0 = load(ik,
+    i0 = load(
               "SELECT inv_off + length(data), inv_lf + lf_count FROM logs "
               "WHERE run_id=? AND card=? AND invocation=? AND stream=? "
               "ORDER BY inv_off DESC LIMIT 1",
               true, true);
   }
-  const auto lf_count =
-      static_cast<uint64_t>(std::count(text.begin(), text.end(), '\n'));
-  db.prepare(
-        "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
-        "card_off, inv_off, run_lf, card_lf, inv_lf, lf_count, data) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(1, run_id)
-      .bind(2, ck)
-      .bind(3, invocation)
-      .bind(4, s)
-      .bind(5, r0.offset)
-      .bind(6, c0.offset)
-      .bind(7, i0.offset)
-      .bind(8, r0.newlines)
-      .bind(9, c0.newlines)
-      .bind(10, i0.newlines)
-      .bind(11, lf_count)
-      .bind_blob(12, text)
-      .run();
-  auto advance = [&](const std::string& k, LogPosition start) {
-    log_ends_[k] = {start.offset + text.size(), start.newlines + lf_count};
-    return start.offset + text.size();
-  };
-  std::vector<LogEnd> ends{
-      {run_id, std::nullopt, std::nullopt, stream, advance(rk, r0)}};
-  if (!card.empty()) {
-    advance(kk, c0);
-    ends.push_back({run_id, card, invocation, stream, advance(ik, i0)});
+  auto insert = db.prepare(
+      "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
+      "card_off, inv_off, run_lf, card_lf, inv_lf, lf_count, data) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  // Bound the extra bytes read and counted around a page boundary, even
+  // when one remote log entry is larger than the requested page.
+  constexpr size_t chunk_bytes = 64 * 1024;
+  for (std::string_view rest(text); !rest.empty();) {
+    const auto chunk = rest.substr(0, chunk_bytes);
+    const auto lf_count =
+        static_cast<uint64_t>(std::ranges::count(chunk, '\n'));
+    insert.bind(1, run_id)
+        .bind(2, ck)
+        .bind(3, invocation)
+        .bind(4, s)
+        .bind(5, r0.offset)
+        .bind(6, c0.offset)
+        .bind(7, i0.offset)
+        .bind(8, r0.newlines)
+        .bind(9, c0.newlines)
+        .bind(10, i0.newlines)
+        .bind(11, lf_count)
+        .bind_blob(12, chunk)
+        .run();
+    insert.reset();
+    for (auto* position : {&r0, &c0, &i0}) {
+      position->offset += chunk.size();
+      position->newlines += lf_count;
+    }
+    rest.remove_prefix(chunk.size());
   }
+  append_terminal(db, {run_id, "", 0, s}, text, r0.offset);
+  if (!card.empty()) {
+    append_terminal(db, {run_id, ck, 0, s}, text, c0.offset);
+    append_terminal(db, {run_id, ck, invocation, s}, text, i0.offset);
+  }
+  std::vector<LogEnd> ends{
+      {run_id, std::nullopt, std::nullopt, stream, r0.offset}};
+  if (!card.empty())
+    ends.push_back({run_id, card, invocation, stream, i0.offset});
   return ends;
 }
 
@@ -1461,7 +1647,8 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
                           const std::optional<CardPath>& card,
                           std::optional<uint64_t> invocation, LogStream stream,
                           uint64_t offset, bool tail, uint64_t limit,
-                          std::optional<uint64_t> before) {
+                          std::optional<uint64_t> before, bool terminal,
+                          std::optional<uint64_t> since) {
   int s = static_cast<int>(stream);
   const char* col = !card ? "run_off" : (invocation ? "inv_off" : "card_off");
   const char* lf_col = !card ? "run_lf" : (invocation ? "inv_lf" : "card_lf");
@@ -1485,6 +1672,9 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     out.exists = st.step();
     if (out.exists) out.size = st.u64(0);
   }
+  if (terminal)
+    return read_terminal(db, {run_id, card ? key(*card) : "", invocation.value_or(0), s},
+                         std::move(out), offset, tail, limit, before, since);
   const uint64_t edge = tail ? out.size : before.value_or(offset);
   if (edge > out.size)
     throw Failed(FailureKind::invalid_range,
@@ -1515,9 +1705,14 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
         out.line_number += st.u64(2);
         first = false;
       }
+      if (o != buf_start + buf.size())
+        throw Failed(FailureKind::persistence_failed, "discontinuous log chunks");
       buf += d;
     }
   }
+  if (scan_from < scan_end &&
+      (buf_start > scan_from || buf_start + buf.size() < scan_end))
+    throw Failed(FailureKind::persistence_failed, "discontinuous log chunks");
   auto at = [&](uint64_t pos) -> int {
     if (pos < buf_start || pos - buf_start >= buf.size()) return -1;
     return static_cast<unsigned char>(buf[pos - buf_start]);
@@ -1596,7 +1791,7 @@ std::vector<std::string> History::delete_runs(
     for (const auto* table :
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
-          "ivalues", "logs", "log_truncations", "artifacts", "displays",
+          "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles", "log_truncations", "artifacts", "displays",
           "statuses", "active_environments"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
