@@ -144,7 +144,7 @@ Each classifier Card shows its accuracy, single-thread CPU time (training and pr
 
 - Run it as it is. The seven branches run at the same time (how many at once is "Parallel runs" in the settings, default 4). Inspect accuracy, errors and the uncertainty of pairwise differences in `compare`.
 - Set `max_depth` of `forest` to 3 and run just that Card. No other branch runs; inspect how restricting tree depth changes its errors.
-- To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `share`. The branches you did not change do not run, so their accuracy is the same.
+- To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `prepare`. The branches you did not change do not run, so their accuracy is the same.
 - Change `k` of `knn`, `gamma` of `svm` or `epochs` of `cnn`.
 - Increase `train_size` of `prepare` and see which classifiers benefit from more images and whose time grows (`svm`'s and `knn`'s prediction times grow).
 

@@ -31,6 +31,21 @@ def codes(node):
     return {text(diagnostic.code) for diagnostic in node.diagnostics}
 
 
+@pytest.mark.parametrize("destination", ["right", "left"], ids=["distinct-input", "duplicate-wire"])
+def test_one_output_feeds_distinct_inputs_once(core_factory, project, destination):
+    """One output can feed several ports; the same endpoints cannot be wired twice."""
+    _, resolved = inspect_graph(core_factory, project,
+                                {"source": code(), "sink": code(["left", "right"])},
+                                [conn("source", "out", "sink", "left"),
+                                 conn("source", "out", "sink", destination)])
+
+    assert ("duplicate_wire" in codes(resolved["sink"])) == (destination == "left")
+    if destination == "right":
+        assert {text(p.name): text(p.rootType) for p in resolved["sink"].inputs} == {
+            "left": "t.Number", "right": "t.Number",
+        }
+
+
 @pytest.mark.parametrize("fields,compatible", [
     ("x:int; s:string;", True),
     ("x:long; s:string;", False),

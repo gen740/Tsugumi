@@ -6,6 +6,7 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
 #include "tsugumi/document/nix_refs.hh"
@@ -773,6 +774,7 @@ class Builder {
                               "boundary", false))
             res_->endpoints[{path_key(node.path), port.name, output}] = *end;
     }
+    std::set<std::tuple<size_t, std::string, size_t, std::string>> wires;
     for (const auto& e : raw_) {
       CardPath from = e.scope;
       CardPath to = e.scope;
@@ -832,9 +834,16 @@ class Builder {
       };
       check(sn, src->second, true);
       check(dn, dst->second, false);
-      if (ok)
-        res_->edges.push_back(
-            {src->first, src->second, dst->first, dst->second});
+      if (!ok) continue;
+      if (sn.kind != Template::Draft && dn.kind != Template::Draft &&
+          !wires.emplace(src->first, src->second, dst->first, dst->second)
+               .second) {
+        dn.diags.push_back(diag(dn.path, "duplicate_wire",
+                               wire + ": " + src->second + " -> " +
+                                   dst->second + " repeats a connection"));
+        continue;
+      }
+      res_->edges.push_back({src->first, src->second, dst->first, dst->second});
     }
   }
 
