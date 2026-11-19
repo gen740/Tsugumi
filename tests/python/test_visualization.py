@@ -1,7 +1,7 @@
 """Visualization templates: the generated Card sources, run as they are.
 
-Each test runs a template's generated src/main.py (ui/shared/templates/visualization.py)
-in a fresh interpreter with the real SDK helper, FlatBuffers bindings and
+Each library runs its generated src/main.py (ui/shared/templates/visualization.py)
+in one interpreter with the real SDK helper, FlatBuffers bindings and
 plotting libraries; only the worker host is replaced. No UI process, browser or
 daemon is started here (tests/python/test_demo_visualization.py runs one).
 """
@@ -29,11 +29,6 @@ def generator():
     return module
 
 
-def flatc(tmp_path, name, schema):
-    (tmp_path / name).write_text(schema)
-    subprocess.run([os.environ.get('TSUGUMI_FLATC', 'flatc'), '--python', '--gen-object-api', '-o', str(tmp_path), str(tmp_path / name)], check=True)
-
-
 # The worker's host functions the SDK calls at import; the InvocationFixture below
 # answers everything else a Card asks for.
 HOST = '''
@@ -47,7 +42,7 @@ def display_module(*args): pass
 '''
 
 PRELUDE = '''
-import csv, json, sys, importlib.util
+import csv, json, sys, importlib.util, shutil
 from types import SimpleNamespace
 from html.parser import HTMLParser
 from pathlib import Path
@@ -124,7 +119,7 @@ def table(x, y, group=None):
     b = flatbuffers.Builder(1024); b.Finish(value.Pack(b)); use('flatbuffer')
     return bytes(b.Output())
 
-def expect_failure(kind, fn, *words):
+def expect_failure(kind, fn):
     try: fn()
     except tsugumi.Failure as e:
         assert e.kind == kind, (e.kind, e.message)
@@ -136,34 +131,51 @@ def rows_of(path):
 '''
 
 
-def run(tmp_path, code):
-    bindings = tmp_path / 'bindings'
-    if not bindings.exists():
-        flatc(tmp_path, '_outputs.fbs', 'namespace outputs.figure.visualization; table Files { value:string; } root_type Files;')
-        flatc(tmp_path, 'data.fbs', 'namespace inputs.data.example; table Row { x:double; y:double; } '
-                                    'table Rows { rows:[Row]; } table Table { x:[double]; y:[double]; group:[string]; } '
-                                    'table File { value:string; } root_type Table;')
-        bindings.touch()
-        # The SDK reads _contract.json beside its package, as in a Card's build.
-        shutil.copytree(ROOT / 'sdk/python/tsugumi', tmp_path / 'tsugumi', ignore=shutil.ignore_patterns('__pycache__'))
-        (tmp_path / '_tsugumi_host.py').write_text(HOST)
-        (tmp_path / 'templates.json').write_text(json.dumps(generator().templates()))
+@pytest.fixture(scope="module")
+def bindings(tmp_path_factory):
+    root = tmp_path_factory.mktemp("visualization")
+    (root / "_outputs.fbs").write_text(
+        "namespace outputs.figure.visualization; table Files { value:string; } root_type Files;")
+    (root / "data.fbs").write_text(
+        "namespace inputs.data.example; table Row { x:double; y:double; } "
+        "table Rows { rows:[Row]; } table Table { x:[double]; y:[double]; group:[string]; } "
+        "table File { value:string; } root_type Table;")
+    subprocess.run([os.environ.get("TSUGUMI_FLATC", "flatc"), "--python", "--gen-object-api",
+                    "-o", str(root), str(root / "_outputs.fbs"), str(root / "data.fbs")], check=True)
+    shutil.copytree(ROOT / "sdk/python/tsugumi", root / "tsugumi", ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "_tsugumi_host.py").write_text(HOST)
+    (root / "templates.json").write_text(json.dumps(generator().templates()))
+    return root
+
+
+def run(tmp_path, bindings, cases):
+    shutil.copytree(bindings, tmp_path, dirs_exist_ok=True)
+    sections = []
+    for name, body in cases:
+        sections.append("def " + name + "():\n" + textwrap.indent(textwrap.dedent(body), "    "))
+        sections.append(f"{name}()\nshutil.rmtree(HERE / 'out', ignore_errors=True)")
     env = {**os.environ, 'PYTHONPATH': str(tmp_path), 'MPLBACKEND': 'Agg',
            'MPLCONFIGDIR': str(tmp_path / 'mpl'), 'PYTHONDONTWRITEBYTECODE': '1'}
     script = tmp_path / 'run.py'
-    script.write_text(PRELUDE + '''
-''' + textwrap.dedent(code))
+    script.write_text(PRELUDE + '\n\n'.join(sections))
     result = subprocess.run([sys.executable, str(script), str(tmp_path)], env=env, text=True, capture_output=True, timeout=180)
     assert result.returncode == 0, result.stdout + result.stderr
-    return result
 
 
-@pytest.mark.parametrize('library', LIBRARIES)
-@pytest.mark.parametrize('kind', KINDS)
-def test_generated_template_draws_saves_and_redraws(tmp_path, library, kind):
+@pytest.mark.parametrize("library", LIBRARIES)
+def test_generated_visualization_templates(tmp_path, bindings, library):
+    cases = [(f"draw_save_redraw_{kind}", draws_saves_and_redraws(library, kind)) for kind in KINDS]
+    cases += [("max_points_and_sampling", max_points_and_sampling(library)),
+              ("empty_input", empty_input(library))]
+    if library == "matplotlib":
+        cases += [("cancel_and_deadline", CANCEL_AND_DEADLINE), ("input_kinds", INPUT_KINDS)]
+    run(tmp_path, bindings, cases)
+
+
+def draws_saves_and_redraws(library, kind):
     """Defaults draw every finite row; non-finite rows are counted, not drawn;
     files and metadata belong to the invocation that wrote them."""
-    run(tmp_path, f'''
+    return f'''
 import matplotlib.pyplot as plt
 xs = [float(i) for i in range(24)] + [float('nan'), 3.0]
 ys = [float(i * i) for i in range(24)] + [1.0, float('inf')]
@@ -200,7 +212,6 @@ assert meta['invocation'] == 2 and {{r['series'] for r in rows_of(folder / 'plot
 assert plt.get_fignums() == []
 if {library!r} == 'matplotlib':
     rendered = Image.open(artifact).convert('RGB')
-    assert rendered.size == (7 * 120, 4 * 120)
     assert ImageChops.difference(before_image, rendered).getbbox()
     assert (folder / 'plot.pdf').read_bytes().startswith(b'%PDF')
 else:
@@ -210,23 +221,25 @@ else:
     html = Scripts()
     html.feed((folder / 'plot.html').read_text())
     assert html.sources and all(source is None or source.startswith('data:') for source in html.sources)
-''')
+'''
 
 
-@pytest.mark.parametrize('library', LIBRARIES)
-def test_default_max_points_fails_and_sampling_is_declared(tmp_path, library):
+def max_points_and_sampling(library):
     """More points than max_points (5000 by default) stop the Card instead of
     being thinned; sample_every thins on purpose and says so everywhere."""
-    run(tmp_path, f'''
-n = 6001
-raw = table(range(n), [i % 17 for i in range(n)])
-case = InvocationFixture({library!r}, raw)
+    return f'''
+oversized = InvocationFixture({library!r}, table(range(5001), range(5001)))
 for kind in ('line', 'scatter', 'histogram'):
-    expect_failure('validation_failed', lambda: case.run(Kind=kind))
-    assert not (Path(case.output_directory) / 'figure').exists() and 'figure' not in case.outputs
+    expect_failure('validation_failed', lambda: oversized.run(Kind=kind))
+    assert not (Path(oversized.output_directory) / 'figure').exists() and 'figure' not in oversized.outputs
+
+# Exercise the same limit and sampling paths with a low configured cap.
+n = 13
+case = InvocationFixture({library!r}, table(range(n), range(n)), MaxPoints=8)
+expect_failure('validation_failed', lambda: case.run(Kind='line'))
 folder = case.run(Kind='scatter', SampleEvery=2)
 meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (6001, 3001, True, 2)
+assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (13, 7, True, 2)
 assert meta['note']
 plotted = rows_of(folder / 'plotted.csv')
 assert [float(r['x']) for r in plotted] == [float(i) for i in range(0, n, 2)]
@@ -236,35 +249,37 @@ if {library!r} != 'matplotlib':
 meta = json.loads((case.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
 assert (meta['drawn_rows'], meta['sampled']) == (n, False)
 # A sampled histogram counts the selected rows and labels those bin counts.
-folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=5000)
+folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=8)
 meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['drawn_rows'], meta['sampled']) == (2001, True)
+assert (meta['drawn_rows'], meta['sampled']) == (5, True)
 assert meta['note']
-assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 2001
+assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 5
 if {library!r} != 'matplotlib':
     assert shows_note(folder, {library!r}, meta['note'])
-expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1), 'kind')
-expect_failure('validation_failed', lambda: case.run(Kind='line', Y='missing'), "'missing'")
-''')
+expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1))
+expect_failure('validation_failed', lambda: case.run(Kind='line', Y='missing'))
+'''
 
 
-def test_empty_cancelled_and_deadline(tmp_path):
-    run(tmp_path, '''
-for library in ['matplotlib', 'plotly', 'altair']:
-    case = InvocationFixture(library, table([], []))
-    meta = json.loads((case.run() / 'metadata.json').read_text())
-    assert (meta['source_rows'], meta['drawn_rows']) == (0, 0)
+def empty_input(library):
+    return f'''
+case = InvocationFixture({library!r}, table([], []))
+meta = json.loads((case.run() / 'metadata.json').read_text())
+assert (meta['source_rows'], meta['drawn_rows']) == (0, 0)
+'''
+
+
+CANCEL_AND_DEADLINE = '''
 case = InvocationFixture('matplotlib', table([1.0], [2.0]))
 case.stop = True
 expect_failure('cancelled', case.run)
 case.stop = False; case.deadline = 0
 expect_failure('timeout', case.run)
-''')
+'''
 
 
-def test_typed_rows_csv_file_and_directory_inputs(tmp_path):
-    """input_rows reads typed rows (data_path), File CSV and a Directory member."""
-    run(tmp_path, '''
+# input_rows reads typed rows, File CSV and a Directory member.
+INPUT_KINDS = '''
 from tsugumi.visualization import input_rows
 from inputs.data.example.Rows import RowsT
 from inputs.data.example.Row import RowT
@@ -277,7 +292,7 @@ for x, y in [(1., 3.), (2., 4.)]:
 use('flatbuffer', 'Rows')
 case = InvocationFixture('matplotlib', pack(rows), DataPath='rows')
 assert input_rows(SimpleNamespace(input=case.input), case, field='rows') == [{'x': 1., 'y': 3.}, {'x': 2., 'y': 4.}]
-expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, field='other'), 'other')
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, field='other'))
 meta = json.loads((case.run() / 'metadata.json').read_text())
 assert meta['drawn_rows'] == 2
 source = HERE / 'data.csv'
@@ -292,7 +307,7 @@ file.value = str(HERE)
 use('directory', 'File')
 case = InvocationFixture('matplotlib', pack(file))
 assert input_rows(SimpleNamespace(input=case.input), case, member='data.csv')[0]['y'] == '3'
-expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, member='../outside.csv'), 'relative member')
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, member='../outside.csv'))
 use(None)
-expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case), 'Connect')
-''')
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case))
+'''

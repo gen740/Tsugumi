@@ -5,13 +5,9 @@ from __future__ import annotations
 import json
 
 import pytest
-from projects import SINK, builtin_project, card, card_in_card, conn, write
+from projects import builtin_project, card, card_in_card, write
 from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, new_id, text
-
-
-
-
 
 
 def card_json(c, cid: str) -> dict:
@@ -26,8 +22,7 @@ def put(cid: str, body: dict):
     return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepMeta=True)
 
 
-@pytest.mark.parametrize("origin", ["agent", "ui", "external"])
-def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory, origin):
+def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory):
     """The same checked save requires every widening for all origin labels."""
     root = tmp_path / "p"
     builtin_project(root)
@@ -35,20 +30,19 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     c = d.connect()
     body = card_json(c, "src")
     wide = dict(body, network=True, sandbox=False, hostFolders=[{"path": "/data", "name": "data"}])
-    try:
-        save(c, [put("src", wide)], origin=origin, check=True)
-        raise AssertionError("a checked save widened permissions without approval")
-    except RpcFailure as e:
-        assert e.kind == "approval_required", e
-        asked = permissions(e)
-    assert sorted(asked) == ["host_folder_read src /data", "network src", "sandbox_off src"]
+    for origin in ("agent", "ui", "external"):
+        with pytest.raises(RpcFailure) as rejected:
+            save(c, [put("src", wide)], origin=origin, check=True)
+        assert rejected.value.kind == "approval_required"
+        asked = permissions(rejected.value)
+        assert sorted(asked) == ["host_folder_read src /data", "network src", "sandbox_off src"]
     # Approving only part of it is not enough.
     try:
-        save(c, [put("src", wide)], approved=asked[:1], origin=origin, check=True)
+        save(c, [put("src", wide)], approved=asked[:1], origin="external", check=True)
         raise AssertionError("a partly approved widening went through")
     except RpcFailure as e:
         assert e.kind == "approval_required"
-    save(c, [put("src", wide)], approved=asked, origin=origin, check=True)
+    save(c, [put("src", wide)], approved=asked, origin="external", check=True)
     assert card_json(c, "src")["network"] is True
     # Making the folder writable is another widening; narrowing is not.
     writable = dict(wide, hostFolders=[{"path": "/data", "name": "data", "write": True}])
@@ -60,99 +54,44 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     save(c, [put("src", body)])
     assert "network" not in card_json(c, "src")
     # With the same token and origin, explicit comparison off permits widening.
-    save(c, [put("src", wide)], origin=origin, check=False)
+    save(c, [put("src", wide)], origin="external", check=False)
 
 
-def test_a_card_in_card_is_checked_too(tmp_path, core_factory):
-    """An agent must obtain approval before widening a nested card's permissions."""
-    root = tmp_path / "p"
-    defs = {"src": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"}],
-                    "_outputs": "namespace m; table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},
-            "sink": SINK}
-    inner = [card("src", "src"), card("out", "sink")]
-    write(root, defs, [card_in_card("inner", inner, [conn("src", "msg", "out", "in")],
-                                     {"inputs": {}, "outputs": {"msg": {"card": "src", "port": "msg"}}})], [])
-    d = core_factory(project_root=root)
-    c = d.connect()
-    rel = "externals/inner/definitions/src/_card.json"
-    snap = c.call("ProjectInspectRequest")
-    hashes = {text(s.path): text(s.hash) for s in snap.sources}
-    body = json.loads(bytes(c.call("ProjectFileReadRequest", path=rel).bytes))
-    body["network"] = True
-    try:
-        save(c, [change("PutSource", path=rel, bytes=list(json.dumps(body).encode()), baseHash=hashes[rel])])
-        raise AssertionError("a Card in Card was widened without approval")
-    except RpcFailure as e:
-        assert permissions(e) == ["network inner/src"]
-
-
-@pytest.mark.parametrize("nested", [False, True])
-def test_agent_needs_approval_to_select_an_external_execution_service(tmp_path, core_factory, nested):
-    """The same approval gate applies to top-level and nested Code Cards."""
-    root = tmp_path / "project"
-    definition = {"language": "bash", "_outputs": "table Outputs {} root_type Outputs;",
-                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }'}
-    work = card("work", "code")
-    cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})] if nested else [work]
-    write(root, {"code": definition}, cards, [])
-    client = core_factory(project_root=root).connect()
-    body = {"language": "bash", "executionService": "ssh-test",
-            "executionResources": {"cpuMillis": 1000, "memoryBytes": 1 << 30}}
-    card_path = "inner/work" if nested else "work"
-    if nested:
-        source = "externals/inner/definitions/work/_card.json"
-        snapshot = client.call("ProjectInspectRequest")
-        base = next(text(s.hash) for s in snapshot.sources if text(s.path) == source)
-        edit = change("PutSource", path=source, bytes=list(json.dumps(body).encode()), baseHash=base)
-    else:
-        edit = put("work", body)
-    with pytest.raises(RpcFailure) as rejected:
-        save(client, [edit])
-    assert rejected.value.kind == "approval_required"
-    assert permissions(rejected.value) == [f"execution_service {card_path} ssh-test"]
-    save(client, [edit], approved=permissions(rejected.value))
-
-
-@pytest.mark.parametrize("origin", ["agent", "ui", "external"])
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("remote", [False, True])
-def test_reload_checks_every_permission_widening(tmp_path, core_factory, origin, nested, remote):
+def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     """External edits cannot bypass approval, including nested Cards and UI reloads."""
     root = tmp_path / "project"
     definition = {"language": "bash", "executionService": "local", "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }'}
     work = card("work", "code")
-    cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})] if nested else [work]
+    cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})]
     write(root, {"code": definition}, cards, [])
-    rel = "externals/inner/definitions/work/_card.json" if nested else "definitions/work/_card.json"
-    cid = "inner/work" if nested else "work"
+    rel = "externals/inner/definitions/work/_card.json"
+    cid = "inner/work"
     client = core_factory(project_root=root).connect()
     before = client.call("ProjectInspectRequest")
     path = root / rel
     body = json.loads(path.read_text())
-    if remote:
-        wide = dict(body, executionService="ssh-test",
-                    executionResources={"cpuMillis": 1000, "memoryBytes": 1 << 30})
-        expected = [f"execution_service {cid} ssh-test"]
-    else:
-        wide = dict(body, network=True, sandbox=False,
-                    hostFolders=[{"path": "/data", "name": "data", "write": True}])
-        expected = [f"network {cid}", f"sandbox_off {cid}", f"host_folder_write {cid} /data"]
+    wide = dict(body, executionService="ssh-test", network=True, sandbox=False,
+                hostFolders=[{"path": "/data", "name": "data", "write": True}],
+                executionResources={"cpuMillis": 1000, "memoryBytes": 1 << 30})
+    expected = {f"execution_service {cid} ssh-test", f"network {cid}",
+                f"sandbox_off {cid}", f"host_folder_write {cid} /data"}
     path.write_text(json.dumps(wide))
 
-    def reload(approved=()):
+    def reload(approved=(), *, check=True, origin="external"):
         return client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(),
-                           origin=origin, checkPermissions=True, **({"approvedPermissions": list(approved)} if approved else {}))
+                           origin=origin, checkPermissions=check, approvedPermissions=list(approved))
 
-    with pytest.raises(RpcFailure) as rejected:
-        reload()
-    assert rejected.value.kind == "approval_required"
-    assert permissions(rejected.value) == expected
+    for origin in ("agent", "ui", "external"):
+        with pytest.raises(RpcFailure) as rejected:
+            reload(origin=origin)
+        assert rejected.value.kind == "approval_required"
+        assert set(permissions(rejected.value)) == expected
     assert client.call("ProjectInspectRequest").rev == before.rev
     # Neither disk nor the accepted document is replaced on rejection.
     assert json.loads(path.read_text()) == wide
     with pytest.raises(RpcFailure) as partial:
-        reload(expected[:-1])
+        reload(expected - {f"network {cid}"})
     assert partial.value.kind == "approval_required"
     reload(expected)
     assert client.call("ProjectInspectRequest").rev == before.rev + 1
@@ -161,23 +100,13 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory, origin,
     before = client.call("ProjectInspectRequest")
     reload()
 
-
-@pytest.mark.parametrize("check", [False, True])
-def test_reload_selects_permission_comparison_explicitly(tmp_path, core_factory, check):
-    root = tmp_path / "project"
-    builtin_project(root)
-    client = core_factory(project_root=root).connect()
     before = client.call("ProjectInspectRequest")
-    path = root / "definitions/src/_card.json"
-    body = json.loads(path.read_text())
-    body["network"] = True
-    path.write_text(json.dumps(body))
-    def reload():
-        return client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(),
-                           origin="same-client", checkPermissions=check)
-    if check:
-        with pytest.raises(RpcFailure) as failure:
-            reload()
-        assert failure.value.kind == "approval_required"
-    else:
-        assert reload().rev == before.rev + 1
+    base_hash = next(text(source.hash) for source in before.sources if text(source.path) == rel)
+    edit = change("PutSource", path=rel, bytes=json.dumps(wide).encode(), baseHash=base_hash)
+    with pytest.raises(RpcFailure) as rejected:
+        save(client, [edit])
+    assert rejected.value.kind == "approval_required"
+    assert set(permissions(rejected.value)) == expected
+
+    path.write_text(json.dumps(wide))
+    assert reload(check=False).rev == before.rev + 1

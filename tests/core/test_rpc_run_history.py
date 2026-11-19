@@ -81,8 +81,10 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     prepare_history(client, project, tmp_path)
     runs = [successful_run(client) for _ in range(3)]
     run_ids = [run_id for run_id, _ in runs]
-    artifact_ids = [text(client.call("ArtifactListRequest", runId=run_id).artifacts[0].artifactId)
-                    for run_id in run_ids]
+    artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
+    artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
+    assert artifact_ids == [f"{run_id}/work/1/doc" for run_id in run_ids]
+    assert all(text(artifact.name) == "report.txt" for artifact in artifacts)
 
     operation = new_id()
     cutoff = runs[1][1].endedAt + 1

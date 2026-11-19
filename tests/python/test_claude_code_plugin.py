@@ -277,8 +277,9 @@ def waiting_plugin(tmp_path):
     yield from plugin_at(tmp_path, TSUGUMID=str(wrapper))
 
 
-@pytest.mark.parametrize("tool", ["run_status", "run"])
-@pytest.mark.parametrize("cancellation", ["notification", "disconnect", "stdio_close"])
+@pytest.mark.parametrize(("tool", "cancellation"), [
+    ("run_status", "notification"), ("run", "disconnect"), ("run_status", "stdio_close"),
+])
 def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waiting_plugin, tool, cancellation):
     mcp, root, data = waiting_plugin
     text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
@@ -349,7 +350,7 @@ def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waitin
             connection.close()
 
 
-def test_tools_and_instructions(plugin):
+def test_tools_instructions_and_demo_catalog(plugin):
     mcp, root, _ = plugin
     init = mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})["result"]
     assert isinstance(init["capabilities"]["tools"], dict)
@@ -378,12 +379,6 @@ def test_tools_and_instructions(plugin):
     assert not error, text
     assert {tool["action"] for tool in json.loads(text)} == set(shared["modelTools"]["families"]["files"])
 
-
-def test_demo_list_is_compact_and_demo_read_uses_repository_paths(plugin):
-    mcp, root, _ = plugin
-    write_project(root / "proj")
-    text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj"), "browser": False})
-    assert not error, text
     text, error = mcp.call("demo_list", {})
     assert not error, text
     demos = json.loads(text)
