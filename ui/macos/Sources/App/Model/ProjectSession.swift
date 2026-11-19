@@ -424,7 +424,13 @@ final class ProjectSession {
     let d = Int64(Date().timeIntervalSince1970 * 1000) - coreMs
     if coreClockOffset == nil || d < coreClockOffset! { coreClockOffset = d }
   }
-  private(set) var logRevision = 0  // bumps when new log bytes are available
+  @ObservationIgnored private var logListeners: [UUID: (Tsugumi_RPC_LogAvailableT?) -> Void] = [:]
+
+  func subscribeLogs(_ listener: @escaping (Tsugumi_RPC_LogAvailableT?) -> Void) -> () -> Void {
+    let id = UUID()
+    logListeners[id] = listener
+    return { [weak self] in self?.logListeners.removeValue(forKey: id) }
+  }
 
   init(identity: ProjectIdentity, environments: EnvironmentManager) {
     self.identity = identity
@@ -729,7 +735,9 @@ final class ProjectSession {
     case .displayupdated:
       if let d = (e.payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display { applyDisplay(d) }
     case .logavailable:
-      logRevision &+= 1
+      if let log = e.payload.value as? Tsugumi_RPC_LogAvailableT {
+        for listener in logListeners.values { listener(log) }
+      }
     default:
       break
     }
@@ -950,7 +958,7 @@ final class ProjectSession {
         }
         if inv.executionState != .unspecified {
           remoteHistoryRevision += 1
-          logRevision += 1
+          for listener in logListeners.values { listener(nil) }
           // Recovery also publishes events for runs already in history.
           guard e.runId == currentRunId else { break }
         }
