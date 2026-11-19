@@ -1141,6 +1141,7 @@
  "記録された出来事はありません": "No events were recorded",
  "記録された段階の出来事はありません。": "No stage events were recorded.",
  "記録した実行を再生する": "Replay the recorded run",
+ "配線の順にプレビューする": "Preview the Workflow in wire order",
  "記録と成果物": "Recording and artifacts",
  "設定": "Settings",
  "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。": "Choose “Retain artifact” and an output in Settings > Ports to keep them.",

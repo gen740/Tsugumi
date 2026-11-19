@@ -109,18 +109,21 @@ function readWires(doc) {
 function readProject(root, ports, prefix = '') {
   const doc = readJson(path.join(root, 'tsugumi.json'))
   const wires = readWires(doc)
+  const paths = new Set()
   const scoped = Object.fromEntries(Object.entries(ports ?? {}).filter(([k]) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/')).map(([k, v]) => [k.slice(prefix.length), v]))
   const cards = doc.canvas.cards.map((c) => {
+    paths.add(`${prefix}${c.id}`)
     const card = readCard(root, c.id, scoped, wires)
     if (card.kind === 'subgraph') {
       const ext = readJson(path.join(root, 'definitions', c.id, '_link.json')).external
       const inner = readProject(path.join(root, 'externals', ext), ports, `${prefix}${c.id}/`)
+      for (const path of inner.paths) paths.add(path)
       card.boundary = inner.doc.boundary ?? {}
       card.inner = inner.cards.map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, files: x.files.filter((f) => f.path !== '_card.json') }))
     }
     return card
   })
-  return { doc, wires, cards }
+  return { doc, wires, cards, paths }
 }
 
 // ---- The written project of docs/CardGuide.md ----------------------------------------------
@@ -260,7 +263,7 @@ function say(steps, narration, cards) {
 // ---- One demo --------------------------------------------------------------------------------
 
 function buildDemo(entry, root, portsOf, narrations) {
-  const { doc, wires, cards } = readProject(root, portsOf[entry.id])
+  const { wires, cards, paths } = readProject(root, portsOf[entry.id])
   const layout = readJson(path.join(root, 'layout.json'), {})
   // A Draft stops the run at it: such a project is shown as a plan.
   const draftOnly = cards.some((c) => c.kind === 'draft')
@@ -280,7 +283,9 @@ function buildDemo(entry, root, portsOf, narrations) {
   const narration = narrations[entry.id] ?? (draftOnly ? narrations.draft : undefined)
   let steps = [], final = {}, run, outputs = {}
   if (!draftOnly) {
-    if (recorded?.run?.state === 'succeeded') {
+    const removed = Object.keys(recorded?.timeline ?? {}).filter((card) => !paths.has(card))
+    if (removed.length) console.warn(`${entry.id}: recording references removed Cards (${removed.join(', ')}); previewing the current graph`)
+    if (recorded?.run?.state === 'succeeded' && !removed.length) {
       steps = stepsFromRun(cards, recorded.timeline)
       final = finalsFromRun(cards, recorded.timeline)
       for (const c of cards) {

@@ -1006,10 +1006,13 @@ const write = async (file, spec) => {
 const kb = (n) => `${(n / 1024).toFixed(0)} KB`
 let tiles = 0
 for (const id of ids) {
-  if (id === LARGE) {
-    for (const [name, spec] of [[`${id}-demo`, () => largeSvg(id)], [`${id}-window`, windowSvg], [`${id}-timeline`, timelineSvg], [`${id}-guide`, guideSvg], [`${id}-source`, sourceSvg], ['collatz-subworkflow', subworkflowSvg]]) {
+  if (id === LARGE && recorded.includes(id)) {
+    for (const [name, spec] of [[`${id}-demo`, () => largeSvg(id)], [`${id}-window`, windowSvg], [`${id}-timeline`, timelineSvg], [`${id}-guide`, guideSvg], [`${id}-source`, sourceSvg]]) {
       console.log(`docs/assets/${name}.svg ${kb(await write(path.join(OUT, `${name}.svg`), spec()))}`)
     }
+  }
+  if (id === 'collatz' && recorded.includes(id)) {
+    console.log(`docs/assets/collatz-subworkflow.svg ${kb(await write(path.join(OUT, 'collatz-subworkflow.svg'), subworkflowSvg()))}`)
   }
   const n = await write(path.join(OUT, 'demos', `${id}.svg`), tileSvg(id))
   tiles += n
