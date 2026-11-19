@@ -31,17 +31,15 @@ def publish_outputs(outputs):
             target.write(f"{key}={value}\n")
 
 
-def build(package, extra_packages):
-    records = json.loads(run("nix", "build", "--no-link", "--json",
-                             *[f".#{item}^*" for item in [package, *extra_packages]]))
-    primary = run("nix", "eval", "--raw", f".#{package}.outPath").strip()
-    record = next(item for item in records if primary in item["outputs"].values())
-    outputs = {"path": primary, "test-support": record["outputs"].get("testSupport", "")}
-    roots = sorted({path for item in records for path in item["outputs"].values()})
+def resolve(package, requested_outputs):
+    record, = json.loads(run("nix", "build", "--no-link", "--json", f".#{package}^{requested_outputs}"))
+    return record["outputs"]
+
+
+def link_output(path):
     out_link = os.environ.get("NIX_OUT_LINK", "")
     if out_link:
-        run("nix", "build", "--out-link", out_link, f".#{package}^out")
-    return outputs, roots
+        run("nix-store", "--realise", path, "--add-root", out_link, "--indirect")
 
 
 def store_paths(value):
@@ -104,7 +102,7 @@ def import_paths(artifact, manifest):
         process.stdin.close()
         if process.wait():
             raise subprocess.CalledProcessError(process.returncode, command)
-    run("nix-store", "--query", "--requisites", *store_paths(manifest["roots"]))
+    run("nix-store", "--query", "--requisites", *manifest["roots"])
 
 
 def main():
@@ -123,17 +121,24 @@ def main():
         manifest = json.loads((artifact / "manifest.json").read_text())
         if manifest["package"] != package or manifest["system"] != system:
             raise ValueError("artifact does not match the requested package and platform")
-        if not store_paths(manifest["roots"]):
-            raise ValueError("artifact contains no Nix store roots")
+        roots = store_paths(manifest["roots"])
+        primary = manifest["path"]
+        if primary not in roots:
+            raise ValueError("artifact primary output is missing from its store roots")
         import_paths(artifact, manifest)
+    else:
+        building = sys.argv[1] == "build"
+        resolved = resolve(package, "*" if building else "out")
+        primary = resolved["out"]
+        roots = sorted(set(resolved.values()))
 
-    extra_packages = [name(item, "extra package") for item in os.environ.get("NIX_EXTRA_PACKAGES", "").split()]
-    outputs, roots = build(package, extra_packages)
+    link_output(primary)
+    outputs = {"path": primary}
     if sys.argv[1] == "build" and fallback:
         artifact.mkdir(parents=True, exist_ok=False)
         cached = export_paths(artifact, roots)
         (artifact / "manifest.json").write_text(json.dumps({
-            "package": package, "system": system, "roots": roots, "cached": cached,
+            "package": package, "system": system, "path": primary, "roots": roots, "cached": cached,
         }) + "\n")
         outputs["artifact-path"] = str(artifact)
     publish_outputs(outputs)

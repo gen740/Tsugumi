@@ -22,9 +22,6 @@ outputs:
   path:
     description: Primary package output in the Nix store.
     value: ${{ steps.fetch.outputs.path }}
-  test-support:
-    description: Test-support output, or an empty string when the package has none.
-    value: ${{ steps.fetch.outputs.test-support }}
 runs:
   using: composite
   steps:

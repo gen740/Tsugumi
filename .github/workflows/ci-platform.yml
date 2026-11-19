@@ -53,7 +53,6 @@ jobs:
       - uses: ./.github/actions/build-nix
         with:
           package: web
-          extra-packages: client-wasm
           system: ${{ inputs.system }}
           artifact-name: web-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
