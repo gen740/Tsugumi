@@ -26,6 +26,7 @@ class NativeContract : public testing::Test {
   flatbuffers::FlatBufferBuilder message;
   flatbuffers::Parser schema;
   Call call{};
+  tsugumi_call abi{};
   std::string directory;
 
   void SetUp() override {
@@ -62,6 +63,7 @@ class NativeContract : public testing::Test {
     call.call_id = 1;
     call.phase = TSUGUMI_RUN;
     g_call = &call;
+    abi.effects = &kEffects;
   }
   void TearDown() override {
     g_call = nullptr;
@@ -161,7 +163,6 @@ TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   EXPECT_EQ(args, expected);
 }
 TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
-  const tsugumi_call abi{.effects = &kEffects};
   ASSERT_NE(tsugumi_display_scalar(&abi, NAN, "value"), 0);
   ASSERT_FALSE(call.failure);
   receive_json("first", R"({"value":"ok"})");
@@ -188,7 +189,6 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   ::rmdir(base.c_str());
 }
 TEST_F(NativeContract, MalformedDisplaysAreRejectedSynchronously) {
-  const tsugumi_call abi{.effects = &kEffects};
   EXPECT_NE(tsugumi_display_scalar(&abi, INFINITY, "value"), 0);
   EXPECT_NE(tsugumi_display_text(&abi, "\xff", 0), 0);
   EXPECT_NE(
