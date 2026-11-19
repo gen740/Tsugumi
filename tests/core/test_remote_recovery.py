@@ -23,11 +23,12 @@ from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunEventValue import RunEventValue
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
-from tsugumi_client import RpcFailure, path, text
+from tsugumi_client import RpcFailure, make, path, text
 
 
 class Gateway(socketserver.UnixStreamServer):
@@ -63,6 +64,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.catalog_system = self.system
         self.results = {}
         self.stall = None
+        self.skip_stall = 0
         self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
         self.resume = threading.Event()
@@ -185,6 +187,9 @@ class Handler(socketserver.StreamRequestHandler):
         except EOFError:
             return
         mode = self.server.stall
+        if mode and q.bodyType == self.server.stall_operation and self.server.skip_stall:
+            self.server.skip_stall -= 1
+            mode = None
         if mode and q.bodyType == self.server.stall_operation:
             try:
                 if mode == "trickle":
@@ -230,6 +235,33 @@ def remote_gateway(monkeypatch):
                 gateway.resume.set()
                 gateway.shutdown()
                 server.join()
+
+
+def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    remote_gateway.stall_operation = R.RequestBody.CatalogRequest
+    # Accept queries the catalog once to validate the run. Hold the next lookup
+    # inside the accepted run's early-build selection.
+    remote_gateway.skip_stall = 1
+    remote_gateway.stall = "blackhole"
+    try:
+        run_id = start_run(client, "work", propagate=False)
+        assert remote_gateway.stalled.wait(10), "early build never requested the catalog"
+        stop = client.send("RunCancelRequest", make("RunCancelRequest", runId=run_id))
+        client.wait_notification(
+            lambda n: n.valueType == NotificationPayload.RunEvent
+            and text(n.value.runId) == run_id
+            and n.value.valueType == RunEventValue.RunStatusChanged
+            and n.value.value.status.state == RunState.cancelling,
+            timeout=5,
+        )
+        assert client.wait_reply(stop).state == RunState.cancelling
+    finally:
+        remote_gateway.resume.set()
+    assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+    assert remote_gateway.submit_count == 0
 
 
 @pytest.fixture

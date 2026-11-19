@@ -26,6 +26,7 @@
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/indirect-root-store.hh>
+#include <nix/store/remote-store.hh>
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
 #include <nix/util/logging.hh>
@@ -213,16 +214,11 @@ std::string message(const nix::BaseError& e) {
 
 void on_usr1(int) {}  // interrupts a blocking read of the daemon connection
 
-// The calls in progress, one per thread: evaluations on the evaluator's thread
-// and builds and transfers on the thread that asked for them. Interrupt checks
-// and log lines belong to the calling thread's call, and the watchdog wakes a
-// thread whose call was cancelled or ran out of time.
+// Interrupt checks and log lines belong to the current Nix call.
 thread_local const NixCall* t_call = nullptr;
-std::mutex g_calls_mu;
-std::vector<std::pair<pthread_t, const NixCall*>> g_calls;
 
 bool interrupted(const NixCall& c, bool* timed_out) {
-  if (c.cancel && c.cancel->load()) return true;
+  if (c.cancel.stop_requested()) return true;
   if (c.deadline && std::chrono::steady_clock::now() >= *c.deadline) {
     if (timed_out) *timed_out = true;
     return true;
@@ -230,51 +226,55 @@ bool interrupted(const NixCall& c, bool* timed_out) {
   return false;
 }
 
+auto interruption(const NixCall& call) -> NixInterrupted {
+  bool timed_out = false;
+  interrupted(call, &timed_out);
+  return {timed_out, timed_out ? "Nix exceeded buildTimeoutSeconds"
+                               : "Nix cancelled"};
+}
+
 class CallScope {
  public:
-  explicit CallScope(const NixCall& c) : call_(c) {
-    t_call = &c;
-    g_logger->set_thread(c.log ? &c.log : nullptr);
-    std::lock_guard l(g_calls_mu);
-    g_calls.emplace_back(pthread_self(), &c);
-  }
-  ~CallScope() {
-    {
-      std::lock_guard l(g_calls_mu);
-      std::erase_if(g_calls, [&](const auto& item) {
-        return item.second == &call_ &&
-               pthread_equal(item.first, pthread_self());
+  explicit CallScope(const NixCall& call, nix::RemoteStore* build_store = nullptr)
+      : wake_([thread = pthread_self(), build_store] {
+          if (build_store) build_store->shutdownConnections();
+          pthread_kill(thread, SIGUSR1);
+        }),
+        stop_(call.cancel, wake_) {
+    if (call.deadline) {
+      timer_ = std::jthread([this, deadline = *call.deadline](std::stop_token stop) {
+        std::unique_lock lock(timer_mu_);
+        timer_cv_.wait_until(lock, stop, deadline, [] { return false; });
+        if (!stop.stop_requested()) wake_();
       });
     }
+    t_call = &call;
+    g_logger->set_thread(call.log ? &call.log : nullptr);
+  }
+
+  ~CallScope() {
     g_logger->set_thread(nullptr);
     t_call = nullptr;
   }
-  CallScope(const CallScope&) = delete;
-  auto operator=(const CallScope&) -> CallScope& = delete;
 
  private:
-  const NixCall& call_;
+  std::function<void()> wake_;
+  std::stop_callback<std::function<void()>> stop_;
+  std::mutex timer_mu_;
+  std::condition_variable_any timer_cv_;
+  std::jthread timer_;
 };
 
 // Nix's errors as NixEvaluator promises them.
 template <class F>
 auto translated(const NixCall& call, F f) -> decltype(f()) {
+  if (interrupted(call, nullptr)) throw interruption(call);
   try {
     return f();
   } catch (const nix::Interrupted&) {
-    bool timed_out = false;
-    interrupted(call, &timed_out);
-    throw NixInterrupted(timed_out, timed_out
-                                        ? "Nix exceeded buildTimeoutSeconds"
-                                        : "Nix cancelled");
+    throw interruption(call);
   } catch (const nix::BaseError& e) {
-    if (interrupted(call, nullptr)) {
-      bool timed_out = false;
-      interrupted(call, &timed_out);
-      throw NixInterrupted(timed_out, timed_out
-                                          ? "Nix exceeded buildTimeoutSeconds"
-                                          : "Nix cancelled");
-    }
+    if (interrupted(call, nullptr)) throw interruption(call);
     throw std::runtime_error(message(e));
   }
 }
@@ -287,6 +287,9 @@ void NixEvaluator::init_process() {
   done = true;
   NixStore::init_process();  // nix.conf: substituters, the daemon socket, ...
   nix::initGC();
+  nix::unix::interruptCheck = [] {
+    return t_call && interrupted(*t_call, nullptr);
+  };
   auto logger = std::make_unique<NixLogSink>();
   g_logger = logger.get();
   nix::logger = std::move(logger);
@@ -324,11 +327,12 @@ struct NixEvaluator::Impl {
   pthread_t thread{};
   std::mutex mu;
   std::condition_variable cv;
-  std::deque<std::function<void()>> tasks;
+  struct Evaluation {
+    const void* id;
+    std::function<void()> run;
+  };
+  std::deque<Evaluation> tasks;
   bool stopping = false;
-
-  std::thread watchdog;
-  std::atomic<bool> stop_watchdog{false};
 
   static void* main(void* self) {
     auto* d = static_cast<Impl*>(self);
@@ -340,7 +344,7 @@ struct NixEvaluator::Impl {
         std::unique_lock<std::mutex> l(d->mu);
         d->cv.wait(l, [&] { return d->stopping || !d->tasks.empty(); });
         if (d->tasks.empty()) break;
-        task = std::move(d->tasks.front());
+        task = std::move(d->tasks.front().run);
         d->tasks.pop_front();
       }
       task();
@@ -351,27 +355,32 @@ struct NixEvaluator::Impl {
     return nullptr;
   }
 
-  // Runs `f` on the evaluator's thread and waits for it.
-  template <class F>
-  auto run(F&& f) -> decltype(f()) {
-    std::packaged_task<decltype(f())()> task(std::forward<F>(f));
-    auto fut = task.get_future();
-    {
-      std::lock_guard<std::mutex> l(mu);
-      tasks.emplace_back([&task] { task(); });
-    }
-    cv.notify_all();
-    return fut.get();
-  }
-
-  // Runs on the evaluator's thread; Nix's errors become what NixEvaluator
-  // promises.
+  // Cancellation and the evaluator compete to take the same queued task.
   template <class F>
   auto guarded(const NixCall& call, F f) -> decltype(f()) {
-    return run([&]() -> decltype(f()) {
-      CallScope scope(call);
-      return translated(call, f);
+    auto task = std::make_shared<std::packaged_task<decltype(f())(bool)>>(
+        [&](bool removed) {
+          if (removed) throw interruption(call);
+          CallScope scope(call);
+          return translated(call, f);
+        });
+    auto result = task->get_future();
+    {
+      std::lock_guard lock(mu);
+      tasks.push_back({task.get(), [task] { (*task)(false); }});
+    }
+    std::stop_callback stop(call.cancel, [&] {
+      size_t removed;
+      {
+        std::lock_guard lock(mu);
+        removed = std::erase_if(tasks, [&](const Evaluation& queued) {
+          return queued.id == task.get();
+        });
+      }
+      if (removed) (*task)(true);
     });
+    cv.notify_one();
+    return result.get();
   }
 
   auto install(nix::Value& value, nix::PrimOp operation) -> void {
@@ -718,19 +727,24 @@ struct NixEvaluator::Impl {
   // decides how many builds run at a time, and evaluation goes on meanwhile.
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
+    CallScope scope(c, dynamic_cast<nix::RemoteStore*>(&*store));
     const auto drv_path = store->parseStorePath(r.derivation.path);
     const auto out = store->parseStorePath(r.derivation.output);
     // Held by this connection from here: a concurrent GC never removes it
     // between the check, the build and the permanent root. The evaluator's
     // connection holds the derivation.
     store->addTempRoot(out);
+    // The daemon connection is now established even if Stop raced its setup.
+    nix::checkInterrupt();
     if (!store->isValidPath(out)) {
       if (c.on_phase) c.on_phase(true);
+      nix::checkInterrupt();
       store->buildPaths({nix::DerivedPath::Built{
           .drvPath = nix::makeConstantStorePathRef(drv_path),
           .outputs = nix::OutputsSpec::All{}}});
       r.built = true;
     }
+    nix::checkInterrupt();
     nix::StorePathSet closure;
     r.closure.clear();
     store->computeFSClosure(out, closure);
@@ -784,27 +798,12 @@ NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed)
   pthread_attr_setstacksize(
       &attr,
       64u << 20);  // deep evaluations (nixpkgs); max-call-depth bounds them
-  nix::unix::interruptCheck = [] {
-    return t_call && interrupted(*t_call, nullptr);
-  };
   if (pthread_create(&impl_->thread, &attr, &Impl::main, impl_.get()) != 0)
     throw std::runtime_error("cannot start the Nix evaluator thread");
   pthread_attr_destroy(&attr);
-  // While a call is interrupted, a blocked read of the daemon connection is
-  // woken until the call notices.
-  impl_->watchdog = std::thread([d = impl_.get()] {
-    while (!d->stop_watchdog) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      std::lock_guard l(g_calls_mu);
-      for (const auto& [thread, call] : g_calls)
-        if (interrupted(*call, nullptr)) pthread_kill(thread, SIGUSR1);
-    }
-  });
 }
 
 NixEvaluator::~NixEvaluator() {
-  impl_->stop_watchdog = true;
-  if (impl_->watchdog.joinable()) impl_->watchdog.join();
   {
     std::lock_guard<std::mutex> l(impl_->mu);
     impl_->stopping = true;
@@ -855,7 +854,6 @@ auto NixEvaluator::make_available(const NixCall& call,
 
 auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
     -> NixResult {
-  CallScope scope(call);
   return translated(
       call, [&] { return Impl::realise_native(call, std::move(result)); });
 }

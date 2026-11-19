@@ -422,7 +422,7 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       break;
     }
     if (!selected.empty()) break;
-    if (build.cancel && build.cancel->load())
+    if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
     lock.unlock();

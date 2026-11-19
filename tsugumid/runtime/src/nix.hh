@@ -71,7 +71,7 @@ struct BuildRequest {
   std::optional<uint64_t> timeout_seconds;
   ExecutionTarget target;
   const DerivationClosureTransport* transport = nullptr;
-  const std::atomic<bool>* cancel = nullptr;
+  std::stop_token cancel;
   std::function<void(const std::string&)> log;  // build output lines
   std::function<void(Phase)>
       on_phase;  // evaluate, then build (only when the store lacks the result)

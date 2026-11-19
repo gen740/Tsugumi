@@ -1,12 +1,15 @@
 """Read a real Card's Nix output from run history."""
 
+import re
+import select
 from uuid import uuid4
 
 import pytest
 
+from harness.file_events import process_exit
 from harness.real_cards import log
-from projects import card, run_and_wait, write
-from tsugumi_client import path
+from projects import card, run_and_wait, start_run, wait_for_log, wait_run, write
+from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
@@ -57,3 +60,35 @@ in {
         stderr = log(client, run_id, "probe", LogStream.standard_error)
         assert "pre-run: \ufffd\n" in stderr
         assert "post-run: \ufffd\n" in stderr
+
+def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
+    monkeypatch.setenv("NIX_REMOTE", "daemon")
+    root = tmp_path / "project"
+    definition = {
+        "language": "bash",
+        "_outputs": "table Outputs {} root_type Outputs;",
+        "_nix": r'''
+{ pkgs, inputs, params }:
+let
+  probe = pkgs.runCommand "tsugumi-build-stop-@id@" {} ''
+    mkfifo gate
+    printf 'builder started: %s\n' "$$" >&2
+    read -r line < gate
+    touch "$out"
+  '';
+in { run = "test -f ${probe}"; }
+'''.replace("@id@", uuid4().hex),
+    }
+    write(root, {"probe": definition}, [card("probe", "probe")], [])
+    client = core_factory(project_root=root).connect()
+    run_id = start_run(client, "probe", propagate=False)
+    marker = re.compile(r"builder started: (\d+)")
+    build = wait_for_log(client, run_id, "probe", LogStream.build,
+                         lambda entry: marker.search(text(entry.text) or ""))
+    pid = int(marker.search(text(build.text))[1])
+
+    with process_exit(pid) as exited:
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        # The upper bounds only make an uninterruptible builder fail the test.
+        assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
+        assert select.select([exited], [], [], 15)[0], f"Nix builder {pid} is still alive"

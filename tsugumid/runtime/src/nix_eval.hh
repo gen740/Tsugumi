@@ -6,7 +6,6 @@
 // Nix CLI is involved.
 #pragma once
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -14,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -44,7 +44,7 @@ struct NixCall {
   std::filesystem::path root_dir;
   std::string root_prefix;
   uint32_t max_implementations = kMaxExecutionBatchSize;
-  const std::atomic<bool>* cancel = nullptr;
+  std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;
   std::function<void(const std::string&)>
       log;  // evaluation messages and build output

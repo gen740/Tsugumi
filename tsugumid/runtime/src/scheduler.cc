@@ -8,6 +8,7 @@
 #include <fstream>
 #include <future>
 #include <set>
+#include <stop_token>
 
 #include "collect_value.hh"
 #include "execution_service.hh"
@@ -251,9 +252,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (!cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
-      for (auto& node : nodes_)
-        if (node.cancellation) node.cancellation->stop.store(true);
-      for (const auto& early : early_started_) early->cancel.store(true);
+      work_stop_.request_stop();
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
@@ -278,8 +277,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool saved_partial_result = false;
   };
   struct BatchCancellation {
+    explicit BatchCancellation(std::stop_token run)
+        : run_stop(run, [this] { request_stop(); }) {}
+
     std::atomic<bool> stop{false};
     std::atomic<bool> failed{false};
+    std::stop_source stop_event;
+
+    void request_stop() {
+      stop.store(true);
+      stop_event.request_stop();
+    }
+
+    std::stop_callback<std::function<void()>> run_stop;
   };
   struct NodeRt {
     const Node* node = nullptr;
@@ -300,7 +310,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<FailureData> last_failure;
     std::optional<CardBuildPlan> build;
     std::optional<ExecutionTarget> build_target;
-    std::shared_ptr<BatchCancellation> cancellation;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
     // Groups of the latest activation, saved at the end of the run.
@@ -331,7 +340,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // takes it over, it keeps what Nix printed and the phases it entered.
   struct EarlyBuild {
     ExecutionTarget target;
-    std::atomic<bool> cancel{false};
+    std::stop_source cancel;
     std::mutex mu;
     std::condition_variable cv;
     bool done = false;
@@ -692,11 +701,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void main() {
     stdfs::create_directories(run_dir_);
-    {
-      std::lock_guard lock(mu_);
-      prepare_graph();
-      start_early_builds();
-    }
+    prepare_graph();
+    start_early_builds();
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
     for (const auto& note : seed_notes_)
@@ -722,8 +728,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               if (!w) continue;
               n.running = true;
               w->activation = ++n.activations;
-              w->cancellation = std::make_shared<BatchCancellation>();
-              n.cancellation = w->cancellation;
+              w->cancellation =
+                  std::make_shared<BatchCancellation>(work_stop_.get_token());
               ++running_;
               tasks_.push_back(std::move(*w));
               task_cv_.notify_one();
@@ -740,7 +746,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           stall_failure_ = stall_reason_locked();
           break;
         }
-        cv_.wait_for(l, std::chrono::milliseconds(200));
+        cv_.wait(l);
       }
       pool_stop_ = true;
     }
@@ -807,7 +813,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       {
         std::lock_guard<std::mutex> l(mu_);
         nodes_[w.node].running = false;
-        nodes_[w.node].cancellation.reset();
         --running_;
       }
       cv_.notify_all();
@@ -868,6 +873,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void start_early_builds() {
     early_.resize(nodes_.size());
     for (auto& rt : nodes_) {
+      if (work_stop_.stop_requested()) break;
       const Node& node = *rt.node;
       if (!rt.in_targets || rt.halted || node.is_virtual ||
           node.kind != Template::Code)
@@ -878,17 +884,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       request.jobs = p_.nix_jobs;
       request.cores = p_.nix_cores;
       request.timeout_seconds = node.settings.build_timeout_seconds;
-      if (!svc_.prepare_early_build(node, request)) continue;
       auto early = std::make_shared<EarlyBuild>();
+      request.cancel = work_stop_.get_token();
+      if (!svc_.prepare_early_build(node, request)) continue;
       early->target = request.target;
-      request.cancel = &early->cancel;
+      request.cancel = early->cancel.get_token();
       request.log = [e = early.get()](const std::string& line) {
         e->print(line);
       };
       request.on_phase = [e = early.get()](Phase phase) { e->enter(phase); };
       early_[rt.idx] = early;
-      early_started_.push_back(early);
       early_threads_.emplace_back([this, early, request] {
+        std::stop_callback stop(work_stop_.get_token(),
+                                [&] { early->cancel.request_stop(); });
         try {
           early->finish(svc_.nix().build(request), nullptr);
         } catch (...) {
@@ -913,7 +921,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // The run is over: builds nothing took over are not needed.
   void stop_early_builds() {
-    for (const auto& early : early_started_) early->cancel.store(true);
+    work_stop_.request_stop();
     for (auto& thread : early_threads_) thread.join();
   }
 
@@ -930,7 +938,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.cores = p_.nix_cores;
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
-    request.cancel = &work.cancellation->stop;
+    request.cancel = work.cancellation->stop_event.get_token();
     // Resolve worker kind and system before any Card or source evaluation.
     prepared = svc_.prepare_execution(
         node, invocation_dir(node, work.invocation), request);
@@ -980,10 +988,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       early->on_phase = enter;
       // A stopped batch cancels the build as it would its own; the build
       // then ends with that cancellation.
-      while (!early->done) {
-        if (work.cancellation->stop.load()) early->cancel.store(true);
-        early->cv.wait_for(l, std::chrono::milliseconds(100));
-      }
+      std::stop_callback stop(request.cancel,
+                              [&] { early->cancel.request_stop(); });
+      early->cv.wait(l, [&] { return early->done; });
       early->log = nullptr;
       early->on_phase = nullptr;
       if (early->error) std::rethrow_exception(early->error);
@@ -1213,7 +1220,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               FailureData::make(FailureKind::interrupted, "batch interrupted"));
           work.cancellation->failed.store(!produced.detached &&
                                           !detaching_.load());
-          work.cancellation->stop.store(true);
+          work.cancellation->request_stop();
         }
         if (failure) produced.outputs.clear();
         members[index] = std::move(produced);
@@ -1518,7 +1525,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             out.failure && w.execution && !detaching_.load();
         if (failed_batch) {
           w.cancellation->failed.store(true);
-          w.cancellation->stop.store(true);
+          w.cancellation->request_stop();
         }
         {
           std::lock_guard<std::mutex> lock(log_policy_mu_);
@@ -2261,7 +2268,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::vector<std::string> seed_notes_;  // journaled once the run has started
   // By node index; an activation takes its Card's build. Under mu_.
   std::vector<std::shared_ptr<EarlyBuild>> early_;
-  std::vector<std::shared_ptr<EarlyBuild>> early_started_;
+  std::stop_source work_stop_;
   std::vector<std::thread> early_threads_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> explicit_cancel_{false};
