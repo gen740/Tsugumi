@@ -13,7 +13,6 @@
 namespace tsugumi::host {
 using agent::AgentSave;
 using agent::PrepareAgentSave;
-using agent::SaveRevisionConflict;
 namespace {
 namespace json = ::tsugumi::json;
 class AgentSavePolicy : public ::testing::Test {
@@ -22,34 +21,15 @@ class AgentSavePolicy : public ::testing::Test {
       {"definitions/plan/_card.json", R"({"template":"draft"})"},
       {"definitions/plan/_meta.json",
        R"({"description":"Counts words","content":"Split and count.","comments":[{"id":"c1","text":"Use a log scale","author":"user"},{"id":"c2","text":"Name the axis","author":"user"}]})"}};
-  auto Read(const std::string& method, const json::Members& args)
-      -> json::Members {
-    if (method == "project_file_read") {
-      EXPECT_EQ(json::String(json::Get(args, "at_rev")), "7");
-      return {{"bytes", json::Quote(files.at(json::Text(args, "path")))}};
-    }
-    EXPECT_EQ(method, "project_inspect");
-    std::map<std::string, json::Members> definitions;
+  auto Base() -> SaveBase {
     std::vector<std::string> sources;
-    for (const auto& [path, text] : files) {
-      if (path.starts_with("definitions/") &&
-          (path.ends_with("/_card.json") || path.ends_with("/_meta.json"))) {
-        const auto slash = path.find('/', 12);
-        const auto id = path.substr(12, slash - 12),
-                   file = path.substr(slash + 1);
-        auto& d = definitions[id];
-        d["id"] = json::Quote(id);
-        d[file == "_card.json" ? "card_json" : "meta_json"] = json::Quote(text);
-      } else
+    for (const auto& [path, text] : files)
+      if (path.starts_with("externals/"))
         sources.push_back(json::Encode(
             json::Members{{"path", json::Quote(path)},
                           {"hash", json::Quote(crypto::sha256_hex(text))}}));
-    }
-    std::vector<std::string> defs;
-    for (const auto& [id, d] : definitions) defs.push_back(json::Encode(d));
-    return {{"rev", json::Quote("7")},
-            {"definitions", json::Encode(defs)},
-            {"sources", json::Encode(sources)}};
+    return {{{"rev", json::Quote("7")}, {"sources", json::Encode(sources)}},
+            files};
   }
   auto Put(const std::string& meta,
            const std::string& body = R"({"template":"sink"})",
@@ -64,8 +44,9 @@ class AgentSavePolicy : public ::testing::Test {
   auto Prepare(const std::vector<std::string>& changes) -> AgentSave {
     return PrepareAgentSave(
         {{"base_rev", json::Quote("7")}, {"changes", json::Encode(changes)}},
-        [&](const auto& method, const auto& args) {
-          return Read(method, args);
+        Base(), [&](const auto&, const auto& args) -> json::Members {
+          EXPECT_EQ(json::Text(args, "at_rev"), "7");
+          return {{"bytes", json::Quote(files.at(json::Text(args, "path")))}};
         });
   }
   auto Meta(const AgentSave& saved, size_t i = 0) -> json::Members {
@@ -94,14 +75,6 @@ class AgentSavePolicy : public ::testing::Test {
     files["definitions/plan/_card.json"] = R"({"template":"sink"})";
   }
 };
-TEST_F(AgentSavePolicy, DecimalStringRevisionsAreCheckedBeforePolicy) {
-  EXPECT_THROW(
-      PrepareAgentSave({{"base_rev", json::Quote("8")}, {"changes", "[]"}},
-                       [&](const auto& method, const auto& args) {
-                         return Read(method, args);
-                       }),
-      SaveRevisionConflict);
-}
 TEST_F(AgentSavePolicy, ImplementingADescribedDraftRequiresContext) {
   try {
     Prepare({Implement()});
@@ -302,7 +275,6 @@ TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
 namespace tsugumi::host {
 using agent::AgentSave;
 using agent::PrepareAgentSave;
-using agent::SaveRevisionConflict;
 namespace {
 TEST(HostVersionComments,
      RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {

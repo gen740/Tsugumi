@@ -36,7 +36,7 @@ function result(d: R.DocumentDeltaT) {
 for (const echoFirst of [false, true]) {
   const s = new ProjectSession('/test', 'test', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
   }))
@@ -107,7 +107,7 @@ for (const echoFirst of [false, true]) {
 {
   const s = new ProjectSession('/test', 'queued-settings', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{"flow":"topToBottom"}',
   }))
@@ -141,7 +141,7 @@ for (const echoFirst of [false, true]) {
 for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'] as const) {
   const s = new ProjectSession('/test', 'intent-' + action, 'test') as any
   s.projectId = 'p'; s.client = { readFile: () => { throw new Error('client source read') } }; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.cardIdProvider = async () => 'new-card'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
@@ -173,7 +173,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
 {
   const s = new ProjectSession('/test', 'pending-undo', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
   }))
@@ -205,7 +205,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   const { RevisionEdit } = await import('../src/ui/revisionEdit')
   const s = new ProjectSession('/test', 'cutover', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
     definitions: [new R.DefinitionT('a', '{"template":"draft"}', '{"description":"old"}')],

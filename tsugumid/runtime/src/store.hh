@@ -170,7 +170,6 @@ class Store {
 };
 
 // Size limits from the protocol.
-constexpr size_t kMaxDocumentJsonBytes = 8u << 20;
 constexpr size_t kMaxManifestEntries = 10000;
 constexpr size_t kMaxFrameBytes = 16u << 20;
 

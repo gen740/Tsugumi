@@ -310,7 +310,7 @@ final class ProjectSession {
   var cardHelper: [String: String] = [:]
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
-  @ObservationIgnored private var externalsKey = ""
+  @ObservationIgnored private var externalDocuments: [String: JSONValue] = [:]
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -753,8 +753,10 @@ final class ProjectSession {
       if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
     }
     sources = [:]
-    for src in s.sources.compactMap({ $0 }) { sources[src.path] = (src.hash ?? "", src.sizeBytes ?? 0) }
-    refreshExternals()
+    externalDocuments = [:]
+    externals = [:]
+    derivedLayouts = [:]
+    applySources(s.sources.compactMap { $0 }, removed: [])
     refreshDerivedLayout()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     if currentRunId != s.run.runId { runBatches = [:] }
@@ -898,9 +900,7 @@ final class ProjectSession {
       confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
       confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
     }
-    for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
-    for p in d.sourcesRemoved.compactMap({ $0 }) { sources[p] = nil }
-    refreshExternals()
+    applySources(d.sourcesUpsert.compactMap { $0 }, removed: d.sourcesRemoved.compactMap { $0 })
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
@@ -1129,12 +1129,6 @@ final class ProjectSession {
       guard connected, self.client === connection else { throw RPCError.disconnected }
       if let delta = result.delta { applyDelta(delta) }
       try await documentRevisions.applied(result.rev ?? rev)
-      // Source hashes arrive before the documents of Cards in Card.
-      var externalGeneration: UInt64
-      repeat {
-        externalGeneration = externalsGeneration
-        await externalsTask?.value
-      } while externalGeneration != externalsGeneration
       let inverse = record ? try operationInverse(result) : Tsugumi_Host_ProjectEditsT()
       if record && !inverse.edits.isEmpty {
         let entry = UndoEntry(operation: inverse)
@@ -1563,66 +1557,46 @@ final class ProjectSession {
     return CGPoint(x: derived?["x"]?.double ?? 0, y: derived?["y"]?.double ?? 0)
   }
 
-  /// Reads the externals' documents when their sources changed.
-  @ObservationIgnored var readExternalFile: ((String, UInt64) async throws -> Data)?
-  @ObservationIgnored private var externalsTask: Task<Void, Never>?
-  @ObservationIgnored private var externalsGeneration: UInt64 = 0
-
-  @discardableResult
-  func refreshExternals() -> Task<Void, Never>? {
-    let paths = sources.keys.filter { $0.hasPrefix("externals/") }.sorted()
-    let key = paths.map { "\($0)=\(sources[$0]?.hash ?? "")" }.joined(separator: ";")
-    guard key != externalsKey else { return externalsTask }
-    guard client != nil || readExternalFile != nil else { return nil }
-    externalsKey = key
-    let client = client
-    let readFile = readExternalFile ?? { path, revision in
-      guard let client else { throw RPCError.disconnected }
-      return try await client.readFile(path: path, atRev: revision)
+  private func applySources(_ upserts: [Tsugumi_RPC_SourceInfoT], removed: [String]) {
+    var changed = false
+    for path in removed {
+      sources[path] = nil
+      if externalDocuments.removeValue(forKey: path) != nil { changed = true }
     }
-    var definitionIds: [String: Set<String>] = [:]
-    for p in paths {
-      guard let split = p.range(of: "/definitions/", options: .backwards) else { continue }
-      let parts = p[split.upperBound...].split(separator: "/")
-      if parts.count == 2, parts[1] == "_card.json" {
-        definitionIds[String(p[..<split.lowerBound]) + "/", default: []].insert(String(parts[0]))
+    for source in upserts {
+      sources[source.path] = (source.hash ?? "", source.sizeBytes ?? 0)
+      guard let text = source.documentJson else { continue }
+      changed = true
+      do {
+        externalDocuments[source.path] = try JSONValue.parse(text)
+      } catch {
+        externalDocuments[source.path] = nil
+        notice = "\(source.path): \(error)"
       }
     }
-    let atRev = rev
-    let hashes = sources.mapValues(\.hash)
-    externalsGeneration += 1
-    externalsTask = Task { @MainActor in
-      var found: [String: ExternalProject] = [:]
-      for p in paths where p.hasSuffix("/tsugumi.json") {
-        let prefix = String(p.dropLast("tsugumi.json".count))
-        // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
-        let parts = prefix.split(separator: "/")
-        guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
-        @Sendable func doc(_ rel: String) async -> JSONValue? {
-          guard hashes[rel] != nil, let d = try? await readFile(rel, atRev) else { return nil }
-          return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
-        }
-        async let projectRead = doc(p)
-        async let layoutRead = doc(prefix + "layout.json")
-        guard let proj = await projectRead else { continue }
-        var ext = ExternalProject(project: proj, layout: await layoutRead ?? .object([]), definitions: [:])
-        let ids = definitionIds[prefix] ?? []
-        for id in ids.sorted() {
-          let dir = prefix + "definitions/\(id)/"
-          async let metaRead = doc(dir + "_meta.json")
-          async let cardRead = doc(dir + "_card.json")
-          let (meta, card) = await (metaRead, cardRead)
-          if let card { ext.definitions[id] = DefinitionDraft(card: card, meta: meta) }
-        }
-        found[prefix] = ext
-      }
-      guard self.externalsKey == key else { return }
-      self.externals = found
-      for prefix in found.keys { self.refreshDerivedLayout(prefix: prefix) }
-      // Cards inside Cards in Card are known now: their displays are wanted too.
-      Task { await self.refreshVisibleDisplays() }
+    guard changed else { return }
+    var found: [String: ExternalProject] = [:]
+    for (path, project) in externalDocuments where path.hasSuffix("/tsugumi.json") {
+      let prefix = String(path.dropLast("tsugumi.json".count))
+      found[prefix] = ExternalProject(
+        project: project, layout: externalDocuments[prefix + "layout.json"] ?? .object([]),
+        definitions: [:])
     }
-    return externalsTask
+    for (path, card) in externalDocuments where path.hasSuffix("/_card.json") {
+      let dir = path.dropLast("_card.json".count)
+      let parent = dir.dropLast()
+      guard let split = parent.lastIndex(of: "/") else { continue }
+      let id = String(parent[parent.index(after: split)...])
+      let prefix = String(parent[...split].dropLast("definitions/".count))
+      found[prefix]?.definitions[id] = DefinitionDraft(
+        card: card, meta: externalDocuments[String(dir) + "_meta.json"])
+    }
+    let previous = externals
+    externals = found
+    for prefix in previous.keys where found[prefix] == nil { derivedLayouts[prefix] = nil }
+    for (prefix, next) in found where previous[prefix] != next {
+      refreshDerivedLayout(prefix: prefix)
+    }
   }
 
   func setPosition(_ k: CardKey, _ pt: CGPoint) {

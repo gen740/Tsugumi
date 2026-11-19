@@ -3,10 +3,6 @@
 #include <algorithm>
 #include <set>
 
-#include "host/comments.hh"
-#include "host/document_edits.hh"
-#include "host/failure.hh"
-#include "host/layout_saving.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/text.hh"
 
@@ -39,17 +35,6 @@ auto DecodeSourceBytes(const std::string& raw) -> std::string {
     out += static_cast<char>(json::UInt(n));
   return out;
 }
-namespace {
-auto DocumentPath(const std::string& path) -> bool {
-  if (path == "tsugumi.json" || path == "layout.json" ||
-      IsExternalDocument(path, "tsugumi.json") ||
-      IsExternalDocument(path, "layout.json"))
-    return true;
-  return (path.ends_with("/_card.json") || path.ends_with("/_meta.json")) &&
-         comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
-}
-}  // namespace
-
 auto SourcePatches::Project(std::string_view source,
                             const std::vector<std::string>& patches) const
     -> const std::string& {
@@ -70,8 +55,7 @@ auto SourcePatches::Project(std::string_view source,
       .first->second;
 }
 
-auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
-    -> SaveBase {
+auto CaptureSaveBase(const json::Members& snapshot) -> SaveBase {
   SaveBase base;
   for (const auto* key :
        {"rev", "project_json", "layout_json", "definitions", "sources"})
@@ -92,38 +76,10 @@ auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
   for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {
     const auto source = json::Object(raw);
     const auto path = json::Text(source, "path");
-    if (!DocumentPath(path)) continue;
-    std::string text;
-    for (;;) {
-      const auto value =
-          read("project_file_read", {{"path", json::Quote(path)},
-                                     {"at_rev", json::Get(snapshot, "rev")},
-                                     {"if_hash", json::Get(source, "hash")},
-                                     {"offset", std::to_string(text.size())},
-                                     {"limit_bytes", "1048576"}});
-      const auto page = DecodeSourceBytes(json::Get(value, "bytes"));
-      text += page;
-      if (json::Bool(json::Get(value, "eof"))) break;
-      if (page.empty())
-        throw std::runtime_error("Document read made no progress: " + path);
-    }
-    base.files[path] = std::move(text);
+    if (source.contains("document_json"))
+      base.files[path] = json::Text(source, "document_json");
   }
   return base;
-}
-
-auto InspectForSave(const SaveRead& read) -> SaveInspection {
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    try {
-      auto snapshot = read("project_inspect", {});
-      auto base = CaptureSaveBase(snapshot, read);
-      return {std::move(snapshot), std::move(base)};
-    } catch (const Failure& error) {
-      if (error.code != "revision_conflict") throw;
-    }
-  }
-  throw Failure("revision_conflict",
-                "Project kept changing during inspection; inspect again");
 }
 
 }  // namespace tsugumi::host

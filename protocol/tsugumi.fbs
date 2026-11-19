@@ -25,6 +25,8 @@ table SourceInfo {
   exists:bool = null (id: 2);
   hash:string (id: 3);
   size_bytes:uint64 = null (id: 4);
+  /// Nested project, layout, Card or metadata text in snapshots and deltas.
+  document_json:string (id: 5);
 }
 
 /// definitions/<id>/_card.json. An external field names a Card in Card.

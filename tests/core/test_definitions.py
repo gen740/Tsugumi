@@ -242,6 +242,47 @@ def test_every_card_needs_its_own_definition(tmp_path, core_factory):
     assert err.value.kind == "invalid_document"
 
 
+def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core_factory):
+    root = tmp_path / "p"
+    builtin_project(root)
+    prefix = "externals/outer/externals/inner/"
+    project_path = prefix + "tsugumi.json"
+    card_path = prefix + "definitions/definitions/_card.json"
+    meta_path = prefix + "definitions/definitions/_meta.json"
+    code_path = prefix + "definitions/definitions/src/run.py"
+    project = '{"canvas":{"cards":[{"id":"definitions"}],"connections":[]}}'
+    draft = '{"template":"draft"}'
+    metadata = '{"name":"Nested Card"}'
+    for path, value in [(project_path, project), (card_path, draft),
+                        (meta_path, metadata), (code_path, "# code")]:
+        put(root / path, value)
+    c = core_factory(project_root=root).connect()
+    snap = c.call("ProjectInspectRequest")
+    sources = {text(s.path): s for s in snap.sources}
+    assert text(sources[project_path].documentJson) == project
+    assert text(sources[card_path].documentJson) == draft
+    assert text(sources[meta_path].documentJson) == metadata
+    assert sources[code_path].documentJson is None
+
+    updated = '{"template":"input"}'
+    saved = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+                   changes=[
+                       change("PutSource", path=card_path, bytes=updated.encode(),
+                              baseHash=text(sources[card_path].hash)),
+                       change("RemoveSource", path=meta_path, baseHash=text(sources[meta_path].hash)),
+                   ])
+    assert {text(s.path): text(s.documentJson) for s in saved.delta.sourcesUpsert} == {card_path: updated}
+    assert [text(p) for p in saved.delta.sourcesRemoved] == [meta_path]
+
+    # Only a reload accepts an out-of-band change.
+    put(root / card_path, draft)
+    inspected = c.call("ProjectInspectRequest")
+    assert inspected.rev == saved.rev
+    assert {text(s.path): text(s.documentJson) for s in inspected.sources}[card_path] == updated
+    reloaded = c.call("ProjectReloadRequest", baseRev=saved.rev, opId=new_id(), origin="t")
+    assert {text(s.path): text(s.documentJson) for s in reloaded.delta.sourcesUpsert} == {card_path: draft}
+
+
 def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     """A linked project can run as a nested card and as a standalone project."""
     root = tmp_path / "p"

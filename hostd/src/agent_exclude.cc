@@ -204,6 +204,7 @@ auto AgentExclude::Filter(const std::string& raw,
   }
   if (!raw.starts_with('{')) return raw;
   auto object = j::Object(raw);
+  object.erase("document_json");
   if (object.contains("id") && object.contains("card_json")) {
     const auto dir = prefix + "definitions/" + j::Text(object, "id") + '/';
     if (Contains(dir + "_meta.json")) object.erase("meta_json");

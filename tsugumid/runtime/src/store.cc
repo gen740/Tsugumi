@@ -779,15 +779,23 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   }
   wrap([&] { check_structure(*doc); });
 
-  size_t json_bytes = doc->project_json.size() + doc->layout_json.size();
-  for (const auto& [_, d] : doc->definitions)
-    json_bytes += d.card_json.size() + (d.meta_json ? d.meta_json->size() : 0);
-  if (json_bytes > kMaxDocumentJsonBytes)
-    throw Failed(
-        FailureKind::resource_limit,
-        "document JSON has " + std::to_string(json_bytes) +
-            " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
-            "folder and read it through hostFolders (/host/<name>).");
+  for (const auto& [path, content] : files) {
+    if (!content || !Document::is_external_document_file(path)) continue;
+    wrap([&] {
+      doc->sources.at(path) = external_document_source(path, *content);
+    });
+  }
+  for (const auto& [path, file] : streamed) {
+    if (!Document::is_external_document_file(path)) continue;
+    wrap([&] {
+      if (file->size > kMaxDocumentJsonBytes)
+        throw DocumentError("resource_limit",
+                            path + " exceeds the document JSON limit");
+      doc->sources.at(path) =
+          external_document_source(path, fs::read_file_or_throw(file->path));
+    });
+  }
+  wrap([&] { doc->check_document_size(); });
   if (doc->sources.size() > kMaxManifestEntries)
     throw Failed(
         FailureKind::resource_limit,
@@ -873,7 +881,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           throw DocumentError("invalid_document",
                               path + " has " + std::to_string(file->size) +
                                   " bytes; limit is 1048576 bytes (1 MiB)");
-        check_meta_json(fs::read_file_or_throw(file->path));
+        check_meta_json(*doc->sources.at(path).document_json);
       });
     auto old = base->sources.find(path);
     if (old != base->sources.end() && old->second.hash == file->hash) continue;

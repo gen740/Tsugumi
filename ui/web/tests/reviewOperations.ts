@@ -82,22 +82,22 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   assert.deepEqual(bases, ['before', 'agent'])
 }
 
-// Source hashes are delivered before an internal Card's updated JSON is read.
-// The next queued gesture must wait for that read, including notification-first.
+// A queued gesture uses the nested document from the preceding revision,
+// whether the save reply or the notification delivers it first.
 for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
   const card = (value: number) => `{"template":"input","params":[{"name":"value","type":"int","data":${value}}]}`
   s.confirmedDefinitions.set('sub', parse('{"external":"sub"}'))
   s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
-  s.externals.set(prefix, { project: parse('{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'), layout: parse('{}'),
-    definitions: new Map([['a', { card: parse(card(1)) }]]) })
-  const readStarted = deferred<void>(), releaseRead = deferred<void>()
-  let value = 2, calls = 0
-  s.client.readFile = async (file: string) => {
-    if (file.endsWith('/_card.json')) { readStarted.resolve(); await releaseRead.promise }
-    return new TextEncoder().encode(file.endsWith('/tsugumi.json') ? '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}' : card(value))
-  }
+  const source = (file: string, documentJson: string) =>
+    Object.assign(new R.SourceInfoT(), { path: prefix + file, documentJson })
+  s.applySources([
+    source('tsugumi.json', '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'),
+    source('definitions/a/_card.json', card(1)),
+  ], [])
+  s.client.readFile = async () => { throw new Error('Unexpected extra file read') }
+  let calls = 0
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     const edit = (request.body as H.ProjectEditsT).edits[0]
     const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
@@ -105,18 +105,14 @@ for (const echoFirst of [false, true]) {
     const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(field.oldValue!.json)
       : Number(serialize(get(arr(get(before, 'params'))![0], 'data')!))
     assert.equal(old, ++calls)
-    value = calls + 1
     const result = saved(s, request, inverse('internal'), { sourcesUpsert: [
-      Object.assign(new R.SourceInfoT(), { path: prefix + 'tsugumi.json', hash: 'project' }), Object.assign(new R.SourceInfoT(), { path: prefix + 'definitions/a/_card.json', hash: String(value) }),
+      source('definitions/a/_card.json', card(calls + 1)),
     ] })
     if (echoFirst) s.applyDelta(result.delta)
     return result
   }
   const first = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(2)))
   const second = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(3)))
-  await Promise.race([readStarted.promise, s.operationTask.then(() => { throw new Error('Operation completed before internal read: ' + s.saveError) })])
-  assert.equal(calls, 1)
-  releaseRead.resolve()
   await Promise.all([first, second])
   await s.save()
   assert.equal(calls, 2)

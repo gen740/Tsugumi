@@ -91,66 +91,27 @@ auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
 auto Tools::PrepareLayoutSave(const std::string& project,
                               const std::string& args, std::stop_token stop)
     -> std::string {
-  struct StaleRevision {};
-  std::optional<json::Members> snapshot;
+  std::optional<host::SaveBase> base;
   const auto fields = json::Object(args);
   const auto expected =
       json::Get(fields, fields.contains("base_rev") ? "base_rev" : "at_rev");
+  struct StaleRevision {};
   auto read = [&](const std::string& path) -> std::optional<host::LayoutFile> {
-    if (!snapshot) {
+    if (!base) {
       const auto response =
           json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
-      snapshot = json::Object(json::Get(response, "value", "{}"));
-      const auto revision = json::Get(*snapshot, "rev");
+      const auto snapshot = json::Object(json::Get(response, "value", "{}"));
+      if (json::Text(response, "reply") == "Failure")
+        throw Failure(json::Text(snapshot, "kind"),
+                      json::Text(snapshot, "diagnostic"));
+      const auto revision = json::Get(snapshot, "rev");
       if (json::String(expected, expected) != json::String(revision, revision))
         throw StaleRevision{};
+      base = host::CaptureSaveBase(snapshot);
     }
-    if (path == "tsugumi.json")
-      return host::LayoutFile{json::Text(*snapshot, "project_json"),
-                              std::nullopt};
-    if (path == "layout.json")
-      return host::LayoutFile{json::Text(*snapshot, "layout_json", "{}"),
-                              std::nullopt};
-    std::string hash;
-    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
-      const auto source = json::Object(raw);
-      if (json::Text(source, "path") == path) hash = json::Text(source, "hash");
-    }
-    if (hash.empty()) return std::nullopt;
-    std::string text;
-    uint64_t offset = 0;
-    for (;;) {
-      const auto response = json::Object(ProjectCall(
-          project, "project_file_read",
-          json::Encode(json::Members{{"path", json::Quote(path)},
-                                     {"at_rev", expected},
-                                     {"if_hash", json::Quote(hash)},
-                                     {"offset", std::to_string(offset)},
-                                     {"limit_bytes", "1048576"}}),
-          stop));
-      if (json::Text(response, "reply") == "Failure") {
-        const auto failure = json::Object(json::Get(response, "value", "{}"));
-        if (json::Text(failure, "kind") == "revision_conflict")
-          throw StaleRevision{};
-        throw Failure(json::Text(failure, "kind"),
-                      json::Text(failure, "diagnostic"));
-      }
-      const auto chunk = json::Object(json::Get(response, "value", "{}"));
-      const auto bytes = json::Get(chunk, "bytes");
-      if (!bytes.empty() && bytes.front() == '"')
-        text += json::String(bytes);
-      else {
-        std::string decoded;
-        if (!crypto::base64_decode(json::Text(json::Object(bytes), "base64"),
-                                   decoded))
-          throw Failure("invalid_request", "Invalid layout source bytes");
-        text += decoded;
-      }
-      if (json::Bool(json::Get(chunk, "eof"))) break;
-      const auto next = json::Get(chunk, "next_offset");
-      offset = json::UInt(json::String(next, next));
-    }
-    return host::LayoutFile{std::move(text), hash};
+    const auto file = base->files.find(path);
+    if (file == base->files.end()) return std::nullopt;
+    return host::LayoutFile{file->second, crypto::sha256_hex(file->second)};
   };
   try {
     return host::PrepareLayoutSave(args, read);
@@ -185,7 +146,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                         const std::function<void(const host::SaveBase&)>& check)
     -> std::string {
   std::lock_guard save_lock(save_mutex);
-  auto read = [&](const auto& method, const auto& query) {
+  auto read = [&](const std::string& method, const json::Members& query) {
     const auto reply = json::Object(
         RawProjectCall(project, method, json::Encode(query), stop));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
@@ -196,7 +157,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
   try {
     // A whole-document save keeps its original revision and input. Never merge
     // or issue another operation id when another writer has moved the document.
-    const auto latest = host::InspectForSave(read);
+    const auto latest = host::CaptureSaveBase(read("project_inspect", {}));
     if (json::String(json::Get(original, "base_rev"),
                      json::Get(original, "base_rev")) !=
         json::Text(latest.snapshot, "rev"))
@@ -204,11 +165,11 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                                "The project changed; read the project again "
                                "and re-apply your input.");
     const host::SourcePatches patches;
-    Exclusions(project, stop).CheckSave(original, latest.base, patches);
-    if (check) check(latest.base);
+    Exclusions(project, stop).CheckSave(original, latest, patches);
+    if (check) check(latest);
     original.erase("save_intent");
     auto prepared = PrepareAgentSave(
-        original, read,
+        original, latest, read,
         [&](const auto& card, const auto& occupied) {
           std::lock_guard lock(mutex);
           return host::ReserveOrdinal(
@@ -218,14 +179,13 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     prepared.arguments = json::Object(host::PrepareLayoutSave(
         json::Encode(prepared.arguments),
         [&](const std::string& path) -> std::optional<host::LayoutFile> {
-          const auto file = latest.base.files.find(path);
-          if (file == latest.base.files.end()) return std::nullopt;
+          const auto file = latest.files.find(path);
+          if (file == latest.files.end()) return std::nullopt;
           return host::LayoutFile{file->second,
                                   crypto::sha256_hex(file->second)};
         },
         patches));
-    Exclusions(project, stop)
-        .CheckSave(prepared.arguments, latest.base, patches);
+    Exclusions(project, stop).CheckSave(prepared.arguments, latest, patches);
     host::RestrictAgentRequest("project_save", prepared.arguments);
     auto result = json::Object(RawProjectCall(
         project, "project_save", json::Encode(prepared.arguments), stop));
@@ -240,10 +200,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                                "and re-apply your input.");
     }
     return json::Encode(result);
-  } catch (const SaveRevisionConflict&) {
-    return LayoutToolFailure(
-        "revision_conflict",
-        "The project changed; read the project again and re-apply your input.");
   } catch (const host::LayoutFailure& e) {
     return LayoutToolFailure("invalid_document", e.what());
   } catch (const Cancelled&) {
@@ -395,21 +351,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
     args.erase("name");
   }
   host::RestrictAgentRequest(name, args);
-  if (name == "project_inspect") {
-    const auto inspection =
-        host::InspectForSave([&](const auto& method, const auto& query) {
-          const auto reply = json::Object(
-              RawProjectCall(project, method, json::Encode(query), stop));
-          const auto value = json::Object(json::Get(reply, "value", "{}"));
-          if (json::Text(reply, "reply") == "Failure")
-            throw Failure(json::Text(value, "kind"),
-                          json::Text(value, "diagnostic"));
-          return value;
-        });
-    return json::Encode(
-        json::Members{{"reply", json::Quote("ProjectSnapshot")},
-                      {"value", json::Encode(inspection.snapshot)}});
-  }
   std::string raw_reply;
   auto result =
       RawProjectCall(project, name, json::Encode(args), stop, &raw_reply);

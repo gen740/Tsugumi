@@ -6,6 +6,7 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi {
 
@@ -80,6 +81,42 @@ bool Document::is_document_file(const std::string& rel) {
   if (slash == std::string::npos) return false;
   auto file = rest.substr(slash + 1);
   return file == "_card.json" || file == "_meta.json";
+}
+
+auto Document::is_external_document_file(std::string_view path) -> bool {
+  if (!path.starts_with("externals/")) return false;
+  do {
+    auto slash = path.find('/', 10);
+    if (slash == std::string_view::npos) return false;
+    path.remove_prefix(slash + 1);
+  } while (path.starts_with("externals/"));
+  return is_document_file(std::string(path));
+}
+
+auto external_document_source(const std::string& path, std::string bytes)
+    -> SourceEntry {
+  if (!text::valid_utf8(bytes))
+    throw DocumentError("invalid_document", path + ": expected UTF-8 JSON text",
+                        {{"path", path}});
+  return {crypto::sha256_hex(bytes), bytes.size(),
+          std::make_shared<const std::string>(std::move(bytes))};
+}
+
+auto Document::check_document_size() const -> void {
+  size_t json_bytes = project_json.size() + layout_json.size();
+  for (const auto& [_, definition] : definitions)
+    json_bytes += definition.card_json.size() +
+                  (definition.meta_json ? definition.meta_json->size() : 0);
+  for (const auto& [_, source] : sources)
+    if (source.document_json) json_bytes += source.size;
+  // Snapshot and save replies must leave room in the RPC frame for manifests,
+  // graph resolution and operation metadata in addition to document text.
+  if (json_bytes > kMaxDocumentJsonBytes)
+    throw DocumentError(
+        "resource_limit",
+        "document JSON has " + std::to_string(json_bytes) +
+            " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
+            "folder and read it through hostFolders (/host/<name>).");
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -454,8 +491,13 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
-      if (Document::is_card_meta_file(rel))
-        check_meta_json(fs::read_file_or_throw(root / rel));
+      if (Document::is_external_document_file(rel)) {
+        auto bytes = fs::read_beneath(root, rel);
+        if (Document::is_card_meta_file(rel)) check_meta_json(bytes);
+        doc->sources.emplace(rel,
+                             external_document_source(rel, std::move(bytes)));
+        continue;
+      }
       crypto::Sha256 hash;
       const auto size = fs::stream_beneath(
           root, rel, UINT64_MAX,
@@ -463,6 +505,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       doc->sources[rel] = SourceEntry{hash.finish_hex(), size};
     }
   }
+  doc->check_document_size();
   check_structure(*doc);
   doc->execution_fingerprint = execution_fingerprint(
       *doc,

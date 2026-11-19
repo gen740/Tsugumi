@@ -1040,8 +1040,8 @@ flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::SourceInfo>>>
 manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
   std::vector<flatbuffers::Offset<R::SourceInfo>> v;
   auto add = [&](const std::string& p, const SourceEntry& e) {
-    v.push_back(
-        wire::source_info(b, p, D::SourceKind::file, true, e.hash, e.size));
+    v.push_back(wire::source_info(b, p, D::SourceKind::file, true, e.hash,
+                                  e.size, e.document_json.get()));
   };
   if (only) {
     for (const auto& p : *only) add(p, doc.sources.at(p));
