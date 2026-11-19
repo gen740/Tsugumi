@@ -28,6 +28,9 @@ ADAPTER_TESTS = {
 
 
 def consumers(path):
+    # Repository metadata (funding, issue templates) is not built or tested.
+    if path.startswith(".github/") and not path.startswith((".github/workflows/", ".github/actions/")):
+        return set()
     if path.startswith(("protocol/", "nix/", ".github/", "tests/ci/")) or path in {
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
