@@ -74,6 +74,12 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
   let position = try #require(anchor.character(in: window.blocks))
   #expect(text.character(at: position) == 98)
   #expect(window.blocks.allSatisfy { $0.line == 1 })
+
+  var overlap = LogWindow(form: .terminal)
+  let clipped = logPage(String(last.dropFirst(3_000)), at: oldPage.offset + 3_000 * 4, line: 1, starts: false)
+  overlap.apply(try #require(overlap.request(.tail)), clipped)
+  let fragment = try #require(overlap.blocks.first)
+  #expect(window.blocks.first(where: { $0.fragmentOffset == fragment.fragmentOffset }) == fragment)
 }
 
 @Test func keepingVisibleJournalRowsDoesNotKeepTheirRawPage() throws {

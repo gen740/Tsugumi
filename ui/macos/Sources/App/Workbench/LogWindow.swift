@@ -85,6 +85,10 @@ struct LogAnchor {
 }
 
 struct LogPage: Sendable {
+  // An absolute grid keeps a fragment's identity across differently sized
+  // reads and bounds the text that AppKit wraps as a single paragraph.
+  private static let fragmentCells = 16 * 1024
+
   struct Fragment: Sendable {
     let line: UInt64
     let offset: UInt64
@@ -103,7 +107,7 @@ struct LogPage: Sendable {
   let reset: Bool
   let text: String
   let head: Fragment?
-  let body: LogBlock?
+  let body: [LogBlock]
   let tail: Fragment?
 
   init(offset: UInt64, end: UInt64, size: UInt64, truncatedAt: UInt64? = nil,
@@ -123,34 +127,72 @@ struct LogPage: Sendable {
     // is the line delimiter in the stored stream.
     var bytes = text.utf8[...]
     var number = line
+    var projectedOffset = offset
     if !startsLine, !bytes.isEmpty {
       let lf = bytes.firstIndex(of: 10)
-      head = Fragment(line: number, offset: offset, text: String(decoding: bytes.prefix(upTo: lf ?? bytes.endIndex), as: UTF8.self),
-                      starts: false, ends: lf != nil)
+      let leading = String(decoding: bytes.prefix(upTo: lf ?? bytes.endIndex), as: UTF8.self)
+      head = Fragment(line: number, offset: offset, text: leading, starts: false, ends: lf != nil)
+      if form == .terminal { projectedOffset += UInt64(4 * (leading.unicodeScalars.count + 1)) }
       bytes = bytes.suffix(from: lf.map { bytes.index(after: $0) } ?? bytes.endIndex)
       number += 1
     } else {
       head = nil
     }
+    var blocks: [LogBlock] = []
     var rows: [LogBlock.Row] = []
     var bodyText = ""
     var position = 0
+    func flushBody() {
+      guard !rows.isEmpty else { return }
+      blocks.append(LogBlock(text: bodyText, rows: rows))
+      rows.removeAll()
+      bodyText = ""
+      position = 0
+    }
     while let lf = bytes.firstIndex(of: 10) {
       let rawLine = String(decoding: bytes.prefix(upTo: lf), as: UTF8.self)
-      if let rendered = Self.render(rawLine, number: number, form: form) {
+      let cells = form == .terminal ? rawLine.unicodeScalars.count : 0
+      if cells >= Self.fragmentCells {
+        flushBody()
+        blocks += Self.terminalFragments(rawLine, offset: projectedOffset, number: number, startsLine: true)
+      } else if let rendered = Self.render(rawLine, number: number, form: form) {
         rows.append(.init(id: LogRowID(line: number), offset: position))
         bodyText += rendered + "\n"
         position += rendered.utf16.count + 1
       }
+      if form == .terminal { projectedOffset += UInt64(4 * (cells + 1)) }
       bytes = bytes.suffix(from: bytes.index(after: lf))
       number += 1
     }
-    body = rows.isEmpty ? nil : LogBlock(text: bodyText, rows: rows)
+    flushBody()
+    body = blocks
     let tailLength = form == .terminal
       ? bytes.reduce(into: 0) { $0 += $1 & 0xC0 == 0x80 ? 0 : 4 }
       : bytes.count
     tail = bytes.isEmpty ? nil : Fragment(line: number, offset: end - UInt64(tailLength),
                                           text: String(decoding: bytes, as: UTF8.self), starts: true, ends: false)
+  }
+
+  static func longTerminalLine(_ text: String) -> Bool { text.unicodeScalars.count >= fragmentCells }
+
+  static func terminalFragments(_ text: String, offset: UInt64, number: UInt64, startsLine: Bool) -> [LogBlock] {
+    let cells = text.unicodeScalars
+    let column = Int(offset / 4 % UInt64(fragmentCells))
+    // Wait for a missing leading section so its wrapped height stays stable.
+    let skip = startsLine || column == 0 ? 0 : fragmentCells - column
+    guard var start = cells.index(cells.startIndex, offsetBy: skip, limitedBy: cells.endIndex) else { return [] }
+    var scalarOffset = skip
+    var blocks: [LogBlock] = []
+    while start < cells.endIndex {
+      let length = fragmentCells - ((column + scalarOffset) % fragmentCells)
+      let end = cells.index(start, offsetBy: length, limitedBy: cells.endIndex) ?? cells.endIndex
+      let fragment = String(cells[start..<end])
+      blocks.append(LogBlock(line: number, text: "\(number)\t\(fragment)\n",
+                             fragmentOffset: offset + UInt64(scalarOffset * 4)))
+      start = end
+      scalarOffset += length
+    }
+    return blocks
   }
 
   static func render(_ raw: String, number: UInt64, form: LogForm) -> String? {
@@ -251,17 +293,11 @@ struct LogWindow {
       defer { pieces.removeAll(keepingCapacity: true) }
       guard let first = pieces.first, let last = pieces.last,
             form == .terminal || (first.starts && last.ends) else { return }
-      let long = pieces.reduce(0, { $0 + $1.text.utf8.count }) >= 64 * 1024
-      // Keep an incomplete leading line until a prepend reaches its start.
-      // Core resolves redraws before sending terminal cells. Long lines
-      // can outgrow the window and retain their page-relative fragments.
-      guard first.starts || long else { return }
-      if form == .terminal, long {
-        for piece in pieces where !piece.text.isEmpty {
-          next.append(LogBlock(line: piece.line, text: "\(piece.line)\t\(piece.text)\n", fragmentOffset: piece.offset))
-        }
-      } else if let text = LogPage.render(pieces.map(\.text).joined(), number: first.line, form: form) {
-        next.append(LogBlock(line: first.line, text: last.ends ? text + "\n" : text))
+      let text = pieces.map(\.text).joined()
+      if form == .terminal, LogPage.longTerminalLine(text) {
+        next += LogPage.terminalFragments(text, offset: first.offset, number: first.line, startsLine: first.starts)
+      } else if first.starts, let rendered = LogPage.render(text, number: first.line, form: form) {
+        next.append(LogBlock(line: first.line, text: last.ends ? rendered + "\n" : rendered))
       }
     }
     for page in pages {
@@ -270,7 +306,7 @@ struct LogWindow {
         if !head.ends { continue }
       }
       finish()
-      if let body = page.body { next.append(body) }
+      next += page.body
       if let tail = page.tail { pieces.append(tail) }
     }
     finish()
