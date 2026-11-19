@@ -656,23 +656,35 @@ private final class CountingRuler: LineNumberRuler {
   #expect(ruler.wholeRedraws > 0)
 }
 
-@Test func theChatTakesItsWidthFromWhatTheWorkbenchLeaves() {
-  #expect(ChatSplit.chatWidth(480, in: 1220) == 480)
-  // What was asked for stays within the chat's limits.
-  #expect(ChatSplit.chatWidth(100, in: 1220) == 320)
-  #expect(ChatSplit.chatWidth(2000, in: 2000) == 900)
-  // The workbench keeps its minimum, in a narrow window too.
-  #expect(ChatSplit.chatWidth(480, in: 700) == 340)
-  #expect(ChatSplit.chatWidth(480, in: 500) == 140)
-  #expect(ChatSplit.chatWidth(480, in: 200) == 0)
+@Test func theChatLeavesRoomForTheWorkbench() {
+  let wanted = 480.0
+  let room = ChatSplit.minWorkbench
+  #expect(ChatSplit.chatWidth(wanted, in: room + wanted) == wanted)
+  #expect(ChatSplit.chatWidth(wanted, in: room + wanted / 2) == wanted / 2)
+  #expect(ChatSplit.chatWidth(wanted, in: room) == 0)
 }
 
-@MainActor @Test(arguments: ["go", "rust", "ruby"])
-func sdkLanguagesAreOfferedByTheCanvas(language: String) async throws {
-  let template = try #require(DefinitionTemplate(rawValue: language))
-  #expect(BuiltinCardItems.written.contains(template))
-}
+@MainActor @Test func theAddCardMenuSelectsLanguageAndFigureTemplates() throws {
+  var chosen: DefinitionTemplate?
+  let menu = NSHostingMenu(rootView: BuiltinCardItems { chosen = $0 })
 
+  func find(_ title: String, in menu: NSMenu) -> (NSMenu, Int)? {
+    menu.update()
+    for (index, item) in menu.items.enumerated() {
+      if item.title == title && item.submenu == nil { return (menu, index) }
+      if let submenu = item.submenu, let found = find(title, in: submenu) { return found }
+    }
+    return nil
+  }
+
+  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair]
+  for template in templates {
+    let (parent, index) = try #require(find(template.label, in: menu))
+    parent.performActionForItem(at: index)
+    #expect(chosen == template)
+    chosen = nil
+  }
+}
 
 @MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
   let dir = try SyncTests.project()

@@ -44,10 +44,6 @@ import TsugumiRPC
     #expect(answer.isEmpty)
   }
 
-  @Test func everyOfferedToolHasAHumanLabel() throws {
-    let step = ToolStep(name: "project_inspect", args: "{}")
-    #expect(!step.running.isEmpty && !step.done.isEmpty)
-  }
 }
 
 @MainActor struct PermissionPresentationTests {

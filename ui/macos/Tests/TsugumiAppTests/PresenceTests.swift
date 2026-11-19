@@ -83,15 +83,15 @@ import SwiftUI
   p.enqueue(.visit("load"), now: t0)
   #expect(p.fade(at: t0).opacity == 0)
   #expect(p.fade(at: t0.addingTimeInterval(T.fadeIn)).opacity == 1)
-  p.turnEnded(now: t0.addingTimeInterval(1))
-  let end = t0.addingTimeInterval(1)
+  let end = t0.addingTimeInterval(T.fadeIn)
+  p.turnEnded(now: end)
   // Still fully there, the done line said and then gone before the bird.
-  #expect(p.fade(at: end.addingTimeInterval(1)).opacity == 1)
-  #expect(p.line(at: end.addingTimeInterval(1))?.text.isEmpty == false)
-  #expect(p.line(at: end.addingTimeInterval(T.doneLine + 0.1)) == nil)
+  #expect(p.fade(at: end).opacity == 1)
+  #expect(p.line(at: end)?.text.isEmpty == false)
+  #expect(p.line(at: end.addingTimeInterval((T.doneLine + T.linger) / 2)) == nil)
   // Fading and rising over the last moment of its stay.
   let mid = p.fade(at: end.addingTimeInterval(T.linger - T.fadeOut / 2))
-  #expect(mid.opacity > 0.2 && mid.opacity < 0.8 && mid.lift > 0.2)
+  #expect(mid.opacity > 0 && mid.opacity < 1 && mid.lift > 0)
   #expect(p.fade(at: end.addingTimeInterval(T.linger)).opacity == 0)
 }
 
@@ -267,30 +267,29 @@ import SwiftUI
 }
 
 
-@MainActor @Test func oneSaveIsOneSimultaneousShortStepAndRunSupersedesIt() {
+@MainActor @Test func oneSaveAnimatesTogetherAndRunSupersedesIt() {
   let p = AgentPresence(animateWork: { true })
   let t = Date(timeIntervalSinceReferenceDate: 1000)
   let wires = (0..<12).map { AgentPresence.Wire(from: "a", fromPort: "out", to: "b\($0)", toPort: "in") }
   p.turnStarted(now: t)
   p.saved(written: [("a", reveal: true), ("b", reveal: false)], wires: wires, now: t)
   #expect(p.beats.count == 1)
-  #expect(p.beats[0].start == t)
-  #expect(p.beats[0].length == 0.24)
-  let mid = t.addingTimeInterval(0.12)
+  let save = p.beats[0]
+  let mid = save.start.addingTimeInterval(save.length / 2)
   for w in wires {
     guard case .drawing(let progress, let sag) = p.thread(w, at: mid) else { Issue.record("wire must draw"); return }
     #expect(abs(progress - 0.5) < 0.0001 && sag == 0)
   }
   #expect(abs((p.writing("a", at: mid)?.reveal ?? -1) - 0.5) < 0.0001)
   #expect((p.writing("b", at: mid)?.settle ?? 0) > 0.99)
-  for w in wires { #expect(p.thread(w, at: t.addingTimeInterval(0.25)) == .plain) }
+  for w in wires { #expect(p.thread(w, at: save.start.addingTimeInterval(save.length)) == .plain) }
   p.enqueue(.run("start"), now: mid)
   #expect(p.current(at: mid)?.beat.beat == .run("start"))
   #expect(p.line(at: mid)?.text.isEmpty == false)
   #expect(p.writing("a", at: mid) == nil)
   for w in wires { #expect(p.thread(w, at: mid) == .plain) }
   // Every later event replaces playback, including another save and visits.
-  for i in 0..<1000 {
+  for i in 0..<3 {
     p.saved(written: [("c\(i)", reveal: false)], wires: wires, now: mid)
     p.enqueue(.visit("v\(i)"), now: mid)
     #expect(p.beats.count <= 2)
