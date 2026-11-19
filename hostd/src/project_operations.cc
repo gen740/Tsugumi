@@ -165,6 +165,26 @@ auto Prepare(
         json::Get(json::Object(CompleteLayout(project, layout, read_geometry)),
                   "cards", "{}"));
   };
+  auto external_id = [&](const std::string& card) {
+    return json::Text(
+        json::Object(
+            get(prefix + "definitions/" + card + "/_card.json").value_or("{}")),
+        "external");
+  };
+  auto retained_externals = [&](const std::set<std::string>& removed) {
+    std::set<std::string> retained;
+    const auto definitions = prefix + "definitions/";
+    for (const auto& [path, bytes] : base.files) {
+      if (!path.starts_with(definitions) || !path.ends_with("/_card.json"))
+        continue;
+      const auto local = std::string_view(path).substr(definitions.size());
+      const auto slash = local.find('/');
+      if (slash == local.rfind('/') &&
+          !removed.contains(std::string(local.substr(0, slash))))
+        retained.insert(json::Text(json::Object(bytes, path), "external"));
+    }
+    return retained;
+  };
   auto place = [&](const std::string& id, double x, double y,
                    bool automatic = false) {
     if (!valid_id(id))
@@ -294,15 +314,14 @@ auto Prepare(
                           "Cannot delete a placed definition");
       }
       if (deleting || definitions) {
+        const auto retained = retained_externals(ids);
         for (const auto& id : ids) {
           const auto dir = prefix + "definitions/" + id + '/';
           std::vector<std::string> roots{dir};
-          const auto external_id = json::Text(
-              json::Object(get(dir + "_card.json").value_or("{}")), "external");
-          if (!external_id.empty()) {
-            if (!valid_id(external_id))
-              throw Failure("invalid_path", external_id);
-            roots.push_back(prefix + "externals/" + external_id + '/');
+          const auto external = external_id(id);
+          if (!external.empty() && !retained.contains(external)) {
+            if (!valid_id(external)) throw Failure("invalid_path", external);
+            roots.push_back(prefix + "externals/" + external + '/');
           }
           for (const auto& path : paths)
             for (const auto& at : roots)
@@ -621,31 +640,14 @@ auto Prepare(
     auto outer_layout = json::Object(read_layout(), layout_path);
     const auto positions = displayed_positions(json::Encode(outer_layout));
     json::Members inner_positions;
+    const auto retained =
+        retained_externals({subgraph->cards.begin(), subgraph->cards.end()});
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
       const auto definition = prefix + "definitions/" + id + '/';
-      const auto external_id = json::Text(
-          json::Object(get(definition + "_card.json").value_or("{}")),
-          "external");
-      const auto external = external_id.empty()
-                                ? std::string{}
-                                : prefix + "externals/" + external_id + '/';
-      bool shared_external = false;
-      if (!external.empty()) {
-        for (const auto& [path, bytes] : base.files) {
-          if (!path.starts_with(prefix + "definitions/") ||
-              !path.ends_with("/_card.json"))
-            continue;
-          const auto local = path.substr(prefix.size() + 12);
-          const auto other = local.substr(0, local.find('/'));
-          if (std::find(subgraph->cards.begin(), subgraph->cards.end(),
-                        other) == subgraph->cards.end() &&
-              prefix + "externals/" +
-                      json::Text(json::Object(bytes, path), "external") + '/' ==
-                  external)
-            shared_external = true;
-        }
-      }
+      const auto target = external_id(id);
+      const auto external =
+          target.empty() ? std::string{} : prefix + "externals/" + target + '/';
       for (const auto& path : paths) {
         if (!path.starts_with(definition) &&
             (external.empty() || !path.starts_with(external)))
@@ -654,7 +656,8 @@ auto Prepare(
         put(destination + path.substr(prefix.size()), required(path));
         // Root definition removal includes its sources. External files and
         // nested definitions use the ordinary concrete source removals.
-        if (path.starts_with(definition) || !shared_external) remove(path);
+        if (path.starts_with(definition) || !retained.contains(target))
+          remove(path);
       }
       inner_positions[id] = positions.at(id);
     }

@@ -828,6 +828,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     if (content && Document::is_card_meta_file(path))
       wrap([&] { check_meta_json(*content); });
     if (Document::is_document_file(path)) continue;
+    if (content && Document::is_card_definition_file(path))
+      wrap([&] {
+        parse_card_json(stdfs::path(path).parent_path().filename().string(),
+                        *content);
+      });
     auto old = base->sources.find(path);
     if (content) {
       if (old == base->sources.end() ||
@@ -855,6 +860,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     st.ops.push_back({path, content});
   }
   for (const auto& [path, file] : streamed) {
+    if (Document::is_card_definition_file(path))
+      wrap([&] {
+        parse_card_json(stdfs::path(path).parent_path().filename().string(),
+                        fs::read_file_or_throw(file->path));
+      });
     if (Document::is_card_meta_file(path))
       wrap([&] {
         // Apply the existing metadata limit before reading its JSON into
@@ -888,12 +898,10 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   return st;
 }
 
-Store::Staged Store::stage_reload(const std::string& op_id,
-                                  const std::string& origin) const {
-  auto base = current();
-  std::shared_ptr<Document> doc;
+namespace {
+auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
   try {
-    doc = load_from_disk(opts_.root);
+    return load_from_disk(root);
   } catch (const DocumentError& e) {
     std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
                                                           e.args.end());
@@ -901,6 +909,32 @@ Store::Staged Store::stage_reload(const std::string& op_id,
         failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
         e.what(), args);
   }
+}
+
+void check_ports(const Resolution& resolution) {
+  // Endpoint validity is a document invariant, including when a Draft becomes
+  // implemented. Never infer a port, even if there is only one candidate.
+  for (const auto& diagnostic : resolution.all_diagnostics(false))
+    if (diagnostic.code == "unknown_port")
+      throw Failed(FailureKind::validation_failed, diagnostic.message);
+}
+}  // namespace
+
+void Store::validate_checkout(const stdfs::path& root) const {
+  const auto doc = load_document(root);
+  const auto resolution = resolve(*doc, [&](const std::string& path) {
+    return fs::read_file(root / path);
+  });
+  check_ports(*resolution);
+  for (const auto& diagnostic : resolution->all_diagnostics(false))
+    if (diagnostic.code == "invalid_document")
+      throw Failed(FailureKind::invalid_document, diagnostic.message);
+}
+
+Store::Staged Store::stage_reload(const std::string& op_id,
+                                  const std::string& origin) const {
+  auto base = current();
+  auto doc = load_document(opts_.root);
   Staged st;
   st.delta.base_rev = base->rev;
   st.delta.op_id = op_id;
@@ -967,11 +1001,7 @@ void Store::commit(Staged& st, const std::string& kind,
   auto doc = st.doc;
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
-  // Endpoint validity is a document invariant, including when a Draft becomes
-  // implemented. Never infer a port, even if there is only one candidate.
-  for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
-    if (diagnostic.code == "unknown_port")
-      throw Failed(FailureKind::validation_failed, diagnostic.message);
+  check_ports(*doc->resolution);
   doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
                            ? base->execution_rev + 1
                            : base->execution_rev;

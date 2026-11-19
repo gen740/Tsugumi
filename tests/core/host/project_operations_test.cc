@@ -531,6 +531,31 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
     }
   }
 }
+TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
+  TransformationProject project;
+  project.files["definitions/spare/_card.json"] = R"({"external":"inner"})";
+  const auto inner = project.files.at("externals/inner/tsugumi.json");
+  H::ProjectSelectionT remove_card;
+  remove_card.action = H::ProjectSelectionAction::Delete;
+  remove_card.cards = {"sub"};
+  const auto restore_card = project.Apply(remove_card);
+  EXPECT_FALSE(project.files.contains("definitions/sub/_card.json"));
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  project.Apply(restore_card);
+  EXPECT_EQ(project.files.at("definitions/sub/_card.json"),
+            R"({"external":"inner"})");
+
+  H::ProjectSelectionT remove_definition;
+  remove_definition.action = H::ProjectSelectionAction::DeleteDefinitions;
+  remove_definition.cards = {"spare"};
+  project.Apply(remove_definition);
+  EXPECT_FALSE(project.files.contains("definitions/spare/_card.json"));
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  const auto restore_tree = project.Apply(remove_card);
+  EXPECT_FALSE(project.files.contains("externals/inner/tsugumi.json"));
+  project.Apply(restore_tree);
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+}
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
   for (const auto* excluded :

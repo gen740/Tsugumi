@@ -3,6 +3,7 @@
 #include <regex>
 #include <set>
 
+#include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -50,14 +51,25 @@ bool valid_id(const std::string& id) {
   return true;
 }
 
-auto Document::is_card_meta_file(const std::string& path) -> bool {
-  auto rel = path;
-  while (rel.starts_with("externals/")) {
-    auto slash = rel.find('/', 10);
-    if (slash == std::string::npos) return false;
-    rel.erase(0, slash + 1);
+namespace {
+auto local_document_path(std::string_view path) -> std::string_view {
+  while (path.starts_with("externals/")) {
+    const auto slash = path.find('/', 10);
+    if (slash == std::string_view::npos) return {};
+    path.remove_prefix(slash + 1);
   }
-  return rel.ends_with("/_meta.json") && is_document_file(rel);
+  return path;
+}
+}  // namespace
+
+auto Document::is_card_definition_file(const std::string& path) -> bool {
+  const auto rel = local_document_path(path);
+  return rel.ends_with("/_card.json") && is_document_file(std::string(rel));
+}
+
+auto Document::is_card_meta_file(const std::string& path) -> bool {
+  const auto rel = local_document_path(path);
+  return rel.ends_with("/_meta.json") && is_document_file(std::string(rel));
 }
 
 bool Document::is_document_file(const std::string& rel) {
@@ -246,10 +258,18 @@ schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text) {
   const auto rel = "definitions/" + id + "/_card.json";
   auto card = decode_doc<schema::CardDefinition>(rel, text);
-  if (const auto* external = schema::get(card.external);
-      external && !valid_id(*external))
-    invalid(rel + ": \"external\" must name a folder of externals/",
-            {{"path", rel}});
+  if (const auto* external = schema::get(card.external)) {
+    if (!valid_id(*external))
+      invalid(rel + ": \"external\" must name a folder of externals/",
+              {{"path", rel}});
+    const auto members =
+        decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>(rel,
+                                                                        text);
+    for (const auto& [field, value] : members.value())
+      if (field != "external" && field != "displayMode")
+        invalid(rel + ": execution field " + field + " on a Card in Card",
+                {{"path", rel}});
+  }
   return card;
 }
 
@@ -274,9 +294,7 @@ void check_structure(const Document& doc) {
           "invalid_document",
           "card " + id + " has no definition (definitions/" + id + "/)",
           {{"card", id}, {"definition", id}});
-    if (const auto* t = schema::get(it->second.card.template_name);
-        t && *t == "trigger")
-      ++triggers;
+    if (template_of(&it->second) == Template::Trigger) ++triggers;
   }
   if (triggers > 1)
     throw DocumentError("invalid_document",

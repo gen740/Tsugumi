@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <set>
@@ -496,29 +497,36 @@ std::string Versions::init() {
   return hex(&*h);
 }
 
-std::string Versions::commit_all(const std::string& message) {
-  std::lock_guard<std::mutex> l(mu_);
-  Repo r;
-  if (!open(r, root_)) return "";
-  auto tree = stage_project(r.get(), root_);
-  auto head = head_oid(r.get());
+namespace {
+auto commit_worktree(git_repository* repo, const stdfs::path& root,
+                     const std::string& message) -> std::string {
+  auto tree = stage_project(repo, root);
+  auto head = head_oid(repo);
   if (head) {
     Commit c;
-    check(git_commit_lookup(c.out(), r.get(), &*head), "head");
+    check(git_commit_lookup(c.out(), repo, &*head), "head");
     if (git_oid_equal(git_commit_tree_id(c.get()), &tree)) return hex(&*head);
-    if (git_repository_head_detached(r.get()) == 1) {
+    if (git_repository_head_detached(repo) == 1) {
       // Started from an older version: the new commit opens a branch.
-      auto name = new_branch_name(r.get(), hex(&*head));
+      auto name = new_branch_name(repo, hex(&*head));
       Ref ref;
-      check(git_branch_create(ref.out(), r.get(), name.c_str(), c.get(), 0),
+      check(git_branch_create(ref.out(), repo, name.c_str(), c.get(), 0),
             "branch");
-      check(git_repository_set_head(r.get(), ("refs/heads/" + name).c_str()),
+      check(git_repository_set_head(repo, ("refs/heads/" + name).c_str()),
             "head");
     }
   }
   std::vector<git_oid> parents;
   if (head) parents.push_back(*head);
-  return commit_tree(r.get(), tree, parents, message, "HEAD");
+  return commit_tree(repo, tree, parents, message, "HEAD");
+}
+}  // namespace
+
+std::string Versions::commit_all(const std::string& message) {
+  std::lock_guard<std::mutex> l(mu_);
+  Repo r;
+  if (!open(r, root_)) return "";
+  return commit_worktree(r.get(), root_, message);
 }
 
 void Versions::note_run(const std::string& commit, const VersionRunNote& run) {
@@ -576,8 +584,9 @@ std::string Versions::mark(const std::string& name,
   return id;
 }
 
-void Versions::checkout(const std::string& commit) {
-  commit_all(version_record::commit("checkout"));
+void Versions::checkout(
+    const std::string& commit,
+    const std::function<void(const stdfs::path&)>& validate) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_))
@@ -592,6 +601,27 @@ void Versions::checkout(const std::string& commit) {
   git_checkout_options opts;
   git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION);
   opts.checkout_strategy = GIT_CHECKOUT_FORCE;
+  {
+    auto path = (root_ / ".tsugumi" / "checkout-XXXXXX").string();
+    if (!::mkdtemp(path.data()))
+      throw Failed(FailureKind::persistence_failed,
+                   "could not create a checkout validation directory");
+    struct Preview {
+      stdfs::path path;
+      ~Preview() {
+        std::error_code error;
+        stdfs::remove_all(path, error);
+        if (error) log::error("remove checkout preview: " + error.message());
+      }
+    } preview{path};
+    auto read_only = opts;
+    read_only.checkout_strategy |= GIT_CHECKOUT_DONT_UPDATE_INDEX;
+    read_only.target_directory = path.c_str();
+    check(git_checkout_tree(r.get(), target.get(), &read_only),
+          "prepare checkout");
+    validate(preview.path);
+  }
+  commit_worktree(r.get(), root_, version_record::commit("checkout"));
   check(git_checkout_tree(r.get(), target.get(), &opts), "checkout");
   // On a branch's tip, continue that branch.
   RefIter it;

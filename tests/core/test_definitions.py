@@ -300,6 +300,23 @@ def test_link_diagnostics(tmp_path, core_factory):
     assert {text(d.id) for d in after.definitions} == {text(d.id) for d in before.definitions}
 
 
+@pytest.mark.parametrize("settings", [{"template": "draft"}, {"template": "trigger"}, {"network": False}])
+def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_factory, settings):
+    root = tmp_path / "p"
+    builtin_project(root)
+    c = core_factory(project_root=root).connect()
+    before = c.call("ProjectInspectRequest")
+    invalid = json.dumps({"external": "inner", **settings})
+    for write in (change("PutDefinition", id="nested", cardJson=invalid),
+                  change("PutSource", path="externals/inner/definitions/nested/_card.json",
+                         bytes=list(invalid.encode()))):
+        with pytest.raises(RpcFailure) as error:
+            c.call("ProjectSaveRequest", baseRev=before.rev, origin="test",
+                   opId=new_id(), changes=[write])
+        assert error.value.kind == "invalid_document"
+        assert c.call("ProjectInspectRequest").rev == before.rev
+
+
 def test_trigger_setting(tmp_path, core_factory):
     """An unknown trigger setting is reported on the affected card."""
     root = tmp_path / "p"

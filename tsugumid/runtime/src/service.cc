@@ -1634,7 +1634,9 @@ void Service::version_checkout(RequestIn& req) {
     if (!versions_->enabled())
       throw Failed(FailureKind::invalid_request,
                    "the project is not versioned yet");
-    versions_->checkout(r->commit()->str());
+    versions_->checkout(r->commit()->str(), [&](const stdfs::path& target) {
+      store_->validate_checkout(target);
+    });
     // The files are those of the version now: read them like a reload.
     auto staged = store_->stage_reload(op_id, r->origin()->str());
     complete_reload(req, op_id, digest, *base, staged);

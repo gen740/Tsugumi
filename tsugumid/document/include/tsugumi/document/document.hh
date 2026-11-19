@@ -64,6 +64,7 @@ struct Document {
   // equal resolutions (metadata and layout changes keep the previous one).
   std::string resolution_key;
 
+  static auto is_card_definition_file(const std::string& rel) -> bool;
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   enum class SourcePath { Invalid, Protected, Source };
