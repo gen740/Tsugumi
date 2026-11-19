@@ -130,8 +130,8 @@ def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_
     assert staged_output.parent.parent == scratch / "workers"
     assert staged_input.is_relative_to(staged_output.parent / "inputs")
     assert Path(text(record.outputs[0].filePath)).read_text() == "current\n"
-    assert not any(staged_input.parent.iterdir())
-    assert not any(staged_output.iterdir())
+    assert not any((staged_output.parent / "inputs").glob("*"))
+    assert not any(staged_output.glob("*"))
 
 
 def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
