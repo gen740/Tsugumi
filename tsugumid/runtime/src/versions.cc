@@ -153,7 +153,8 @@ auto stage_project(git_repository* r, const stdfs::path& root,
   if (accepted) {
     expected = accepted->disk_hashes;
     for (const auto& [path, source] : accepted->sources)
-      expected.emplace(path, source.hash);
+      if (source.document_json || files.includes(path))
+        expected.emplace(path, source.hash);
   }
   const auto changed = [](const std::string& path) {
     throw Failed(FailureKind::external_change,

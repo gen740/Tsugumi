@@ -318,6 +318,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     root = tmp_path / "p"
     builtin_project(root)
     external(root, "greeting", "from the external")
+    put(root / "externals/greeting/.git/config", "# excluded Git metadata")
     put(root / "definitions" / "greet" / "_card.json", json.dumps({"external": "greeting"}))
     project = json.loads((root / "tsugumi.json").read_text())
     project["canvas"]["cards"].append({"id": "greet"})
@@ -360,6 +361,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     # The external opens on its own, with the same result.
     d.stop()
     alone = root / "externals" / "greeting"
+    (alone / ".git/config").unlink()
+    (alone / ".git").rmdir()
     d = core_factory(project_root=alone)
     c = d.connect()
     run_id, st = run_and_wait(c, "say")
