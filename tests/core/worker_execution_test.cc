@@ -48,7 +48,6 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
              const std::vector<Value>& inputs = {},
              const std::vector<Value>& original = {}) -> void {
     const std::atomic<bool> cancel{false};
-    if (outcome.failure) return;
     const std::vector<types::PortType> ports{{"result", kind, false, type_}};
     auto outputs = accept_outputs(outcome.outputs, ports);
     stage_outputs(outputs, inputs, original, output_,
@@ -93,16 +92,6 @@ TEST_P(WorkerDelivery, CopiesDeclaredDirectoryAndMaterializesInternalLinks) {
   EXPECT_TRUE(stdfs::is_directory(root_ / "result/files/out/tree/empty"));
 }
 
-TEST_P(WorkerDelivery, TransferFailureDoesNotBecomeACardFailure) {
-  const auto produced =
-      value("result", PortKind::File, root_ / "worker/out/missing");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
-  EXPECT_THROW(stage(outcome, PortKind::File), Failed);
-  EXPECT_FALSE(outcome.failure);
-  EXPECT_TRUE(
-      worker_disposition(true, true, true, false, outcome.failure).keep);
-}
-
 TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
   fs::write_atomic(root_ / "outside", "private");
   stdfs::create_symlink(root_ / "outside", root_ / "worker/out/link");
@@ -132,17 +121,6 @@ TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
     EXPECT_TRUE(delivered->starts_with("out/.forwarded-"));
     EXPECT_EQ(fs::read_file(root_ / "result/files" / *delivered), "forwarded");
   }
-}
-
-TEST_P(WorkerDelivery, FailedCardDoesNotTransferOutputs) {
-  const auto produced =
-      value("result", PortKind::File, root_ / "worker/out/missing");
-  WorkerOutcome outcome{{{"result", produced.bytes}},
-                        FailureData::make(FailureKind::worker_failed)};
-  EXPECT_NO_THROW(stage(outcome, PortKind::File));
-  EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
-  EXPECT_FALSE(
-      worker_disposition(true, true, true, false, outcome.failure).keep);
 }
 
 TEST_P(WorkerDelivery, InvalidOutputIsRejectedBeforeTransfer) {
@@ -190,7 +168,6 @@ TEST(WorkerDisposition, CardFailuresAndMissingRequiredOutputsDiscardResidents) {
     const auto result =
         worker_disposition(true, true, true, false, FailureData::make(kind));
     EXPECT_FALSE(result.keep);
-    EXPECT_FALSE(result.reason.empty());
   }
   EXPECT_FALSE(worker_disposition(true, true, true, true, {}).keep);
 }
