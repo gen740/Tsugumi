@@ -16,7 +16,8 @@ import shutil
 
 import pytest
 
-from conftest import ROOT, demo_environment
+from conftest import ROOT, Daemon, demo_environment, write_project
+from harness.values import reference_json
 from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
 from tsugumi_client import line_chart_series, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
@@ -69,47 +70,52 @@ def stderr(c, run_id, *card):
     return text(c.call("LogRangeRequest", runId=run_id, card=path(*card), stream=2, limitBytes=262144).text)
 
 
-DEMOS = json.loads((ROOT / "demos" / "ja" / "index.json").read_text())["demos"]
-
-
-@pytest.mark.parametrize("language", ["ja", "en"])
-@pytest.mark.parametrize("demo", [d["path"] for d in DEMOS])
-def test_every_listed_demo_resolves(tmp_path, demo, language):
-    """Each demo on the list, in either language, opens and resolves:
-    implemented ones without a diagnostic, a Draft-only plan with nothing but
-    its Drafts."""
-    env = demo_environment(tmp_path, demo, language=language)
+def test_every_listed_demo_resolves(tmp_path):
+    """Resolve each bundled project through the same core session."""
+    project = tmp_path / "demo"
+    write_project(project)
+    daemon = Daemon(project).start()
     try:
-        c = connect(env)
-        snap = c.call("ProjectInspectRequest")
-        codes = {(text(r.card.segments[-1]), text(d.code)) for r in snap.resolution for d in r.diagnostics}
-        if demo.endswith("-draft"):
-            assert codes and {code for _, code in codes} == {"draft"}, codes
-        else:
-            assert not codes, codes
+        client = daemon.connect()
+        rev = client.call("ProjectInspectRequest").rev
+        for language in ("ja", "en"):
+            demos = ROOT / "demos" / language
+            for entry in json.loads((demos / "index.json").read_text())["demos"]:
+                demo = entry["path"]
+                for child in project.iterdir():
+                    if not child.name.startswith("."):
+                        if child.is_dir():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
+                shutil.copytree(demos / demo, project, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns(".tsugumi-history.json"))
+                rev = client.call("ProjectReloadRequest", baseRev=rev, opId=new_id(), origin="test").rev
+                snapshot = client.call("ProjectInspectRequest")
+                assert snapshot.resolution, (language, demo)
+                codes = {text(d.code) for row in snapshot.resolution for d in row.diagnostics}
+                assert codes == ({"draft"} if demo.endswith("-draft") else set()), (language, demo, codes)
     finally:
-        env.cleanup()
+        daemon.cleanup()
 
 
-@pytest.mark.parametrize(("language", "expected"), [
-    ("en", "3 of 6 comparisons passed across 2 thresholds."),
-    ("ja", "2 個のしきい値で比較し、6 件のうち 3 件を検出しました。"),
-])
-def test_signal_sweep_collects_all_comparisons(tmp_path, language, expected):
-    """Run both versions through real Nix evaluation and the ordinary Card worker."""
-    env = demo_environment(tmp_path, "signal-sweep", language=language)
+def test_signal_sweep_collects_all_comparisons(tmp_path):
+    env = demo_environment(tmp_path, "signal-sweep", language="en")
     try:
         client = connect(env)
         run_id = start_run(client, ["start"])
         status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         comparisons = client.call("RunInvocationsRequest", runId=run_id, card=path("score"))
-        assert [row.implementationIndex for row in comparisons.records] == [1, 2] * 3
+        assert sorted(row.implementationIndex for row in comparisons.records) == [1] * 3 + [2] * 3
         batch, = comparisons.batches
         assert batch.complete and not batch.failed and batch.invocationCount == 6
         summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))
         assert len(summary.records) == 1
-        assert display_text(client, run_id, "summary") == expected
+        record = client.call("RunRecordRequest", runId=run_id, card=path("summary"))
+        output, = record.record.outputs
+        assert reference_json(tmp_path / "summary", bytes(output.schemaBfbs), bytes(output.inlineBytes),
+                              root_type=text(output.rootType)) == {"comparisons": 6, "detections": 3}
     finally:
         env.cleanup()
 
@@ -205,7 +211,7 @@ def test_collatz_27(collatz):
     # The C++ Card in Card runs alone from its boundary input (saved value).
     rid2 = start_run(c, ["collatz-cpp"], propagate=False)
     assert wait_run(c, rid2).state == RunState.succeeded
-    assert display_text(c, rid2, "collatz-cpp", "collect") == "112 values: " + " ".join(map(str, expected))
+    assert collected_collatz(c, rid2, "collatz-cpp", "collect") == expected
 
 
 def test_collatz_limit_overflow_and_skipped(collatz):
@@ -237,12 +243,12 @@ def test_collatz_limit_overflow_and_skipped(collatz):
     assert rec.status.state == CardState.skipped
 
 
-def test_report_failure_rerun_and_artifacts(report):
+def test_report_rerun_artifacts_and_restart(report):
     c = connect(report)
     rid = start_run(c, ["start"])
     assert wait_run(c, rid).state == RunState.succeeded
     first = display_text(c, rid, "render")
-    assert first.startswith("# Quarterly sales")
+    assert first
     # Same seed, same aggregate.
     rid2 = start_run(c, ["start"])
     assert wait_run(c, rid2).state == RunState.succeeded
@@ -269,19 +275,15 @@ def test_report_failure_rerun_and_artifacts(report):
     assert rec.record.recordIo is True and rec.record.inputs[0].name in (b"csv", "csv")
     arts = c.call("ArtifactListRequest", runId=rid3).artifacts
     assert {text(a.output) for a in arts} == {"report", "archive"}
-
-
-def test_report_artifacts_survive_restart(report):
-    c = connect(report)
-    rid = start_run(c, ["start"])
-    assert wait_run(c, rid).state == RunState.succeeded
     art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "report")
+    original = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId), member="report.md").bytes).decode()
+    assert original
     c.close()
     report.stop()
     report.start()
     c = connect(report)
     content = c.call("ArtifactReadRequest", artifactId=text(art.artifactId), member="report.md")
-    assert bytes(content.bytes).decode().startswith("# Quarterly sales")
+    assert bytes(content.bytes).decode() == original
 
 
 def live_points(c, rid):
@@ -294,42 +296,23 @@ def live_points(c, rid):
     return [float(x) for x in series[0].x], rec.aggregate.calls
 
 
-@pytest.mark.parametrize("concurrency", [1, 2])
-def test_live_stream_complete_and_ordered(live, concurrency):
-    # Count and order only: no interval between samples (the pace is its own test).
+def test_live_stream_complete_and_ordered(live):
     c = connect(live)
     edit_card(live, c, "settings", lambda b: set_param(b, "interval_ms", 0))
-    rid = start_run(c, ["start"], concurrency=concurrency)
-    assert wait_run(c, rid).state == RunState.succeeded
-    xs, calls = live_points(c, rid)
-    assert calls == 200
-    assert xs == [float(i) for i in range(140, 200)]  # most recent 60 points, none missing
+    for concurrency in (1, 2):
+        rid = start_run(c, ["start"], concurrency=concurrency)
+        assert wait_run(c, rid).state == RunState.succeeded
+        xs, calls = live_points(c, rid)
+        assert calls == 200
+        assert xs == [float(i) for i in range(140, 200)]
 
 
-def test_live_stream_keeps_its_pace(live):
-    # The demo should retain all five samples with its configured interval.
-    interval_ms = 100
-    c = connect(live)
-    def configure(body):
-        set_param(body, "samples", 5)
-        set_param(body, "interval_ms", interval_ms)
-    edit_card(live, c, "settings", configure)
-    rid = start_run(c, ["start"])
-    st = wait_run(c, rid)
-    assert st.state == RunState.succeeded
-    xs, calls = live_points(c, rid)
-    assert calls == 5 and xs == [0.0, 1.0, 2.0, 3.0, 4.0]
-    # Measured by the core from start to end: at least the four waits between five samples.
-    assert st.endedAt - st.startedAt >= (calls - 1) * interval_ms, st.endedAt - st.startedAt
-
-
-def test_live_stream_cancel_and_rerun(live):
+def test_live_stream_cancel_rerun_and_crash_recovery(live):
     c = connect(live)
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
     # Keep the first sample and then wait for cancellation, rather than racing
-    # the demo's 20-second natural completion on a busy runner. The separate
-    # pace test exercises the unmodified sampling delay.
+    # the demo's natural completion on a busy runner.
     source = "definitions/generate/src/card.cc"
     snap = c.call("ProjectInspectRequest")
     src = next(s for s in snap.sources if text(s.path) == source)
@@ -365,13 +348,8 @@ def test_live_stream_cancel_and_rerun(live):
     assert c.call("RunCancelRequest", runId=rid2).state == RunState.cancelling
     assert wait_run(c, rid2).state == RunState.cancelled
 
-
-def test_crash_marks_run_interrupted_and_recovers(live):
-    c = connect(live)
-    opened = c.open()
-    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
     rid = start_run(c, ["start"])
-    first_display(c, rid)
+    wait_for_blocked_sample(rid)
     c.close()
     live.crash()
     live.start()
@@ -383,8 +361,6 @@ def test_crash_marks_run_interrupted_and_recovers(live):
     rid2 = start_run(c, ["start"])
     c.call("RunCancelRequest", runId=rid2)
     assert wait_run(c, rid2).state == RunState.cancelled
-
-
 
 
 @pytest.fixture

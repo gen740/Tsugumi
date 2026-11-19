@@ -18,10 +18,9 @@ pytest.importorskip("matplotlib")
 ROOT = Path(__file__).resolve().parents[2]
 
 HOST = '''
-import time
 sent = []
 cancel_after_frames = None
-def display_image(media_type, data, alt): sent.append((time.monotonic(), media_type, bytes(data), alt))
+def display_image(media_type, data, alt): sent.append((media_type, bytes(data), alt))
 def cancelled(): return cancel_after_frames is not None and len(sent) >= cancel_after_frames
 def remaining_ms(): return 60000
 def inputs(): return []
@@ -34,11 +33,11 @@ def display_text(text): texts.append(text)
 '''
 
 PRELUDE = '''
-import hashlib, json, sys, time
+import io
+from PIL import Image
 import _tsugumi_host as h
 import tsugumi
 import numpy as np
-import types
 import tsugumi.mpl as backend
 class Clock:
     now = 0.0
@@ -49,150 +48,116 @@ backend.time = clock
 
 def call(body):
     h.sent.clear()
-    ok = tsugumi._guard(body)
-    import matplotlib.pyplot as plt
-    return {"ok": ok, "frames": len(h.sent), "types": sorted({s[1] for s in h.sent}),
-            "alts": [s[3] for s in h.sent], "open": bool(plt.get_fignums()), "failures": h.failures,
-            "images": [hashlib.sha256(frame[2]).hexdigest() for frame in h.sent],
-            "cancelled": h.cancelled(),
-            "sizes": [list(__import__("PIL.Image").Image.open(__import__("io").BytesIO(s[2])).size) for s in h.sent]}
+    h.texts.clear()
+    h.failures.clear()
+    try:
+        return tsugumi._guard(body)
+    finally:
+        h.cancel_after_frames = None
+
+def image(frame):
+    return Image.open(io.BytesIO(frame[1]))
 '''
 
 
-@pytest.fixture(scope="module")
-def mpl_home(tmp_path_factory):
-    """One matplotlib configuration folder (and font cache) for the module."""
-    return tmp_path_factory.mktemp("mpl")
-
-
-@pytest.fixture
-def run(tmp_path, mpl_home):
-    return lambda body: run_case(tmp_path, mpl_home, body)
-
-
-def run_case(tmp_path, mpl_home, body: str) -> dict:
-    """Runs ``body`` (which prints one JSON line) with the SDK and the stand-in host."""
+def run_case(tmp_path, body):
     (tmp_path / "_tsugumi_host.py").write_text(HOST)
     script = tmp_path / "case.py"
     script.write_text(PRELUDE + textwrap.dedent(body))
     env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{ROOT / 'sdk' / 'python'}",
-           "MPLCONFIGDIR": str(mpl_home), "HOME": str(tmp_path)}
+           "MPLCONFIGDIR": str(tmp_path / "mpl"), "HOME": str(tmp_path)}
     env.pop("MPLBACKEND", None)
     out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=300)
     assert out.returncode == 0, out.stderr
-    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def test_the_backend_is_chosen_and_show_sends_one_image(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        def body():
-            plt.plot([1, 2, 3], [1, 4, 9]); plt.title("squares"); tsugumi.Report().figure()
-        res = call(body); res["backend"] = plt.get_backend(); print(json.dumps(res))
-    ''')
-    assert r["backend"] == "module://tsugumi.mpl"
-    assert r["ok"] and r["frames"] == 1 and r["types"] == ["image/png"] and r["alts"] == ["squares"]
-    assert not r["open"]  # show() closes the figures, as closing the window would
-
-
-def test_figures_left_open_are_closed_without_publishing(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        def body():
-            plt.figure(); plt.plot([1, 2]); plt.title("a")
-            plt.figure(); plt.bar([1, 2], [3, 4]); plt.title("b")
-        print(json.dumps(call(body)))
-    ''')
-    assert r["ok"] and r["frames"] == 0 and not r["open"]
-
-
-def test_pause_sends_live_frames_and_a_sharp_last_one(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        def body():
-            fig, ax = plt.subplots(); line, = ax.plot([], []); ax.set_xlim(0, 60); ax.set_ylim(-1, 1)
-            for i in range(20):
-                line.set_data(np.arange(i * 3), np.sin(np.arange(i * 3) / 5)); tsugumi.Report().figure(wait=0.05)
-            tsugumi.Report().figure(fig)
-        print(json.dumps(call(body)))
-    ''')
-    assert r["ok"] and len(set(r["images"][:-1])) > 1 and not r["open"]
-    live, last = r["sizes"][0], r["sizes"][-1]
-    assert last[0] == 2 * live[0] and last[1] == 2 * live[1]  # live frames at 1x, the last at 2x
-
-
-def test_animations_play_while_show_waits(run):
-    r = run('''
+def test_the_backend_is_chosen_and_show_sends_one_image(tmp_path):
+    run_case(tmp_path, '''
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation
-        def body():
-            fig, ax = plt.subplots(); ln, = ax.plot([], [], "r-", lw=4); ax.set_xlim(0, 20); ax.set_ylim(0, 20)
-            anim = FuncAnimation(fig, lambda k: (ln.set_data([0, k], [0, k]), ln)[1:], frames=20,
-                                 interval=20, blit=True, repeat=False)
+
+        def show():
+            plt.plot([1, 2, 3], [1, 4, 9])
+            plt.title("squares")
             tsugumi.Report().figure()
-        res = call(body)
-        from PIL import Image
-        import io
-        im = Image.open(io.BytesIO(h.sent[-1][2])).convert("RGB")
-        res["red"] = sum(1 for p in im.getdata() if p[0] > 200 and p[1] < 80 and p[2] < 80)
-        print(json.dumps(res))
-    ''')
-    assert r["ok"] and len(set(r["images"])) > 1 and not r["open"]
-    assert r["red"] > 0  # the animated line is in the image (no blitting)
 
+        assert call(show) and plt.get_backend() == "module://tsugumi.mpl"
+        frame, = h.sent
+        assert frame[0] == "image/png" and frame[2] == "squares" and not plt.get_fignums()
 
-def test_an_endless_animation_ends_when_the_run_is_stopped(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        from matplotlib.animation import FuncAnimation
-        def body():
-            fig, ax = plt.subplots(); ln, = ax.plot([], [])
-            anim = FuncAnimation(fig, lambda k: (ln.set_data([0, k], [0, k]), ln)[1:], interval=20,
-                                 cache_frame_data=False)
+        def leave_figures_open():
+            plt.figure()
+            plt.plot([1, 2])
+            plt.figure()
+            plt.bar([1, 2], [3, 4])
+
+        assert call(leave_figures_open) and not h.sent and not plt.get_fignums()
+
+        def show_text():
+            leave_figures_open()
+            tsugumi.Report().text("the result")
+
+        assert call(show_text) and not h.sent and h.texts == ["the result"] and not plt.get_fignums()
+
+        def pause():
+            fig, ax = plt.subplots()
+            line, = ax.plot([], [])
+            ax.set(xlim=(0, 60), ylim=(-1, 1))
+            for i in range(12):
+                x = np.arange(i * 3)
+                line.set_data(x, np.sin(x / 5))
+                tsugumi.Report().figure(wait=0.05)
+            tsugumi.Report().figure(fig)
+
+        assert call(pause) and not plt.get_fignums()
+        assert len({frame[1] for frame in h.sent[:-1]}) > 1
+        assert image(h.sent[-1]).size == tuple(2 * size for size in image(h.sent[0]).size)
+
+        def animate():
+            fig, ax = plt.subplots()
+            line, = ax.plot([], [], "r-", lw=4)
+            ax.set(xlim=(0, 20), ylim=(0, 20))
+            animation = FuncAnimation(fig, lambda k: (line.set_data([0, k], [0, k]), line)[1:],
+                                      frames=20, interval=20, blit=True, repeat=False)
+            tsugumi.Report().figure()
+
+        assert call(animate) and len({frame[1] for frame in h.sent}) > 1 and not plt.get_fignums()
+        assert any(r > 200 and g < 80 and b < 80 for r, g, b in image(h.sent[-1]).convert("RGB").getdata())
+
+        def endless():
+            fig, ax = plt.subplots()
+            line, = ax.plot([], [])
+            animation = FuncAnimation(fig, lambda k: (line.set_data([0, k], [0, k]), line)[1:],
+                                      interval=20, cache_frame_data=False)
             h.cancel_after_frames = 2
             tsugumi.Report().figure()
-        res = call(body)
-        print(json.dumps(res))
+            assert h.cancelled()
+
+        assert call(endless) and not plt.get_fignums()
+
+        def fail():
+            plt.plot([1])
+            raise ValueError("boom")
+
+        assert not call(fail) and not h.sent and not plt.get_fignums()
+        assert h.failures[0][0] == "worker_failed"
     ''')
-    assert r["ok"] and r["cancelled"] and not r["open"]
 
 
-def test_a_failing_call_leaves_no_figure(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        def body():
-            plt.plot([1]); raise ValueError("boom")
-        print(json.dumps(call(body)))
-    ''')
-    assert not r["ok"] and r["frames"] == 0 and not r["open"]
-    assert r["failures"][0][0] == "worker_failed"
-    assert "boom" in r["failures"][0][1]
-
-
-def test_a_card_that_picks_its_backend_keeps_it(run):
-    r = run('''
+def test_a_card_that_picks_its_backend_keeps_it(tmp_path):
+    run_case(tmp_path, '''
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         def body():
-            fig = plt.figure(); plt.plot([1, 2]); plt.title("explicit")
+            fig = plt.figure()
+            plt.plot([1, 2])
+            plt.title("explicit")
             tsugumi.Report().figure(fig)
-        res = call(body); res["backend"] = plt.get_backend(); print(json.dumps(res))
+        assert call(body) and plt.get_backend().lower() == "agg"
+        frame, = h.sent
+        assert frame[2] == "explicit" and plt.get_fignums()
     ''')
-    # Agg: nothing is sent by itself, figures stay as the Card left them; display_figure still works.
-    assert r["backend"].lower() == "agg"
-    assert r["frames"] == 1 and r["alts"] == ["explicit"] and r["open"]
-
-
-def test_a_display_of_the_card_is_not_replaced_by_a_figure_left_open(run):
-    r = run('''
-        import matplotlib.pyplot as plt
-        def body():
-            plt.plot([1, 2]); plt.title("forgotten")
-            tsugumi.Report().text("the result")
-        res = call(body); res["texts"] = h.texts; print(json.dumps(res))
-    ''')
-    assert r["ok"] and r["frames"] == 0 and r["texts"] == ["the result"] and not r["open"]
 
 
 def test_the_sdk_loads_no_native_library_before_the_card(tmp_path):

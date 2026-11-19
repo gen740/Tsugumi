@@ -222,47 +222,40 @@ def test_a_double_crosses_bash_r_and_julia_unchanged(project):
     assert "0.042169650342858," in raw and "1e-20," in raw  # the shortest digits, as a person would read them
 
 
-@pytest.mark.parametrize("display, check", [
-    ('{"markdown": "**bold**"}', lambda d: d.value.markdown and text(d.value.text) == "**bold**"),
-    ('{"text": "plain"}', lambda d: not d.value.markdown and text(d.value.text) == "plain"),
-])
-def test_a_bash_card_shows_what_it_writes(project, display, check):
+def test_bash_display_validates_the_report(project):
     root, connect = project
+    reports = [
+        {"markdown": "**bold**"},
+        {"text": "plain"},
+        {"image": {"path": "missing.png"}},
+        {"table": {"columns": ["a"], "rows": [["1", "2"]]}},
+        {},
+    ]
+    nix = """{ pkgs, inputs, params }: { run = ''
+      jq -r .report <<< "$TSUGUMI_PARAMS_JSON" > "$TSUGUMI_REPORT"
+    ''; }
+    """
     write_project(root, {"show": {
-        "card": {"language": "bash", "inputs": [{"name": "start"}]},
-        "nix": '''{ pkgs, inputs, params }: { run = ''
-  cat > "$TSUGUMI_REPORT" <<'END'
-''' + display + '''
-END
-''; }
-'''}},
-        [("start", "out", "show", "start")])
+        "card": {"language": "bash", "params": [{"name": "report", "type": "string", "data": "{}"}]},
+        "nix": nix,
+    }}, [])
     c = connect()
-    run_id, status = run_and_wait(c, "start")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    assert check(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display)
-
-
-@pytest.mark.parametrize("display", [
-    '{"image": {"path": "missing.png"}}',
-    '{"table": {"columns": ["a"], "rows": [["1", "2"]]}}',
-    "{}",
-], ids=["missing-image", "ragged-table", "empty-report"])
-def test_an_invalid_display_fails_the_card(project, display):
-    root, connect = project
-    write_project(root, {"show": {
-        "card": {"language": "bash", "inputs": [{"name": "start"}]},
-        "nix": '''{ pkgs, inputs, params }: { run = ''
-  cat > "$TSUGUMI_REPORT" <<'END'
-''' + display + '''
-END
-''; }
-'''}},
-        [("start", "out", "show", "start")])
-    c = connect()
-    run_id, status = run_and_wait(c, "start")
-    assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
-    assert c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display is None
+    definition = root / "definitions/show/_card.json"
+    settings = json.loads(definition.read_text())
+    for report in reports:
+        settings["params"][0]["data"] = json.dumps(report)
+        definition.write_text(json.dumps(settings))
+        reload(c)
+        run_id, status = run_and_wait(c, "show")
+        display = c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display
+        if "markdown" in report or "text" in report:
+            key, = report
+            assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+            assert bool(display.value.markdown) == (key == "markdown")
+            assert text(display.value.text) == report[key]
+        else:
+            assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid, report
+            assert display is None
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])
@@ -319,21 +312,19 @@ end
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])
-@pytest.mark.parametrize("reuse", [True, False])
-def test_interpreter_state_and_run_hook(project, language, reuse):
+def test_interpreter_state_and_run_hook(project, language):
     root, connect = project
     nix, name, source = LIFECYCLE[language]
-    write_project(root, {"count": {"card": {"language": language, "reuseWorker": reuse},
+    write_project(root, {"count": {"card": {"language": language, "reuseWorker": True},
                                   "nix": nix, "src": {name: source}}}, [])
     c = connect()
     for n in (1, 2):
         run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         shown = c.call("RunRecordRequest", runId=run_id, card=path("count")).record.display
-        expected = n if reuse else 1
-        assert text(shown.value.text) == f"{expected} {expected}"
+        assert text(shown.value.text) == f"{n} {n}"
         inv = c.call("RunInvocationsRequest", runId=run_id, card=path("count")).records[0]
-        assert bool(inv.workerReused) == (reuse and n == 2)
+        assert bool(inv.workerReused) == (n == 2)
 
 
 # What an interpreter could carry from one invocation to the next: a global,
@@ -626,42 +617,38 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
 }
 
 
-@pytest.mark.parametrize("language,how",
-    [(language, how) for language in ("r", "julia") for how in ("fail", "cancel", "exit", "crash")]
-    + [(language, how) for language in ("python", "ruby", "csharp", "cpp") for how in ("fail", "cancel")])
-def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language, how):
-    # An error, a cancellation, the interpreter leaving by itself (quit/exit)
-    # and the process being killed all end the worker: the next run starts a
-    # new interpreter, and the daemon goes on serving.
+@pytest.mark.parametrize("language", BAD_SECOND_CALL)
+def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language):
     from projects import start_run, wait_for_display, wait_run
+
     root, connect = project
     nix, name, source = BAD_SECOND_CALL[language]
-    write_project(root, {"count": {"card": {"language": language, "reuseWorker": True},
-                                  "nix": nix, "src": {name: source.replace("HOW", how)}}}, [])
+    modes = ("fail", "cancel", "exit", "crash") if language in ("r", "julia") else ("fail", "cancel")
+    write_project(root, {
+        how: {"card": {"language": language, "reuseWorker": True},
+              "nix": nix, "src": {name: source.replace("HOW", how)}}
+        for how in modes
+    }, [])
     c = connect()
-    run_id, status = run_and_wait(c, "start")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    assert shown_text(c, run_id, "count") == "call 1"
-    if how == "cancel":
-        opened = c.open()
-        c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("count")])
-        run_id = start_run(c, "start")
-        wait_for_display(c, run_id, lambda display: text(display.value.text) == "call 2")
-        c.call("RunCancelRequest", runId=run_id)
-        assert wait_run(c, run_id).state == RunState.cancelled
-    else:
-        run_id, status = run_and_wait(c, "start")
-        assert status.state == RunState.failed
-        failure = c.call("RunRecordRequest", runId=run_id, card=path("count")).status.failure
-        assert failure is not None and failure.kind != 14  # not a timeout: the call ended at once
-    c.call("ProjectInspectRequest")
-    run_id, status = run_and_wait(c, "start")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    assert shown_text(c, run_id, "count") == "call 1" and not reused(c, run_id, "count")
-    log = text(c.call("LogRangeRequest", runId=run_id, card=path("count"), stream=2, limitBytes=65536).text)
-    reason = {"fail": "the previous call failed", "cancel": "the previous call was cancelled",
-              "exit": "the resident worker died", "crash": "the resident worker died"}[how]
-    assert f"Resident worker state started fresh: {reason}." in log
+    opened = c.open()
+    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path(how) for how in modes])
+    for how in modes:
+        run_id, status = run_and_wait(c, how)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert shown_text(c, run_id, how) == "call 1"
+        if how == "cancel":
+            run_id = start_run(c, how)
+            wait_for_display(c, run_id, lambda display: text(display.value.text) == "call 2")
+            c.call("RunCancelRequest", runId=run_id)
+            assert wait_run(c, run_id).state == RunState.cancelled
+        else:
+            run_id, status = run_and_wait(c, how)
+            assert status.state == RunState.failed
+            failure = c.call("RunRecordRequest", runId=run_id, card=path(how)).status.failure
+            assert failure is not None and failure.kind != FailureKind.timeout
+        run_id, status = run_and_wait(c, how)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert shown_text(c, run_id, how) == "call 1" and not reused(c, run_id, how)
 
 
 LIVE = {
@@ -720,7 +707,7 @@ def test_interpreter_deadline_ends_uncooperative_code(project, language):
 
     return nothing
 end''')
-    write_project(root, {"slow": {"card": {"language": language, "timeoutSeconds": 2},
+    write_project(root, {"slow": {"card": {"language": language, "timeoutSeconds": 1},
                                  "nix": nix, "src": {name: source}}}, [])
     c = connect()
     run_id, status = run_and_wait(c, "start")

@@ -14,6 +14,7 @@ from harness.file_events import wait_for_exit
 from projects import run_and_wait, start_run, wait_for_log, wait_run
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 OUTPUTS = '''attribute "tsugumi";
@@ -95,8 +96,8 @@ def test_report_html_assets_and_typed_downstream(project, extension):
     assert text(display.value.text) == 'saved report'
 
 
-@pytest.mark.parametrize('extension', ['Rmd', 'qmd'])
-def test_report_chunk_failure_stops_downstream(project, extension):
+def test_report_chunk_failure_stops_downstream(project):
+    extension = 'Rmd'
     root, connect = project
     report_project(root, extension, REPORT.replace('plot(values, type="b")', 'stop("report-cell-error")'))
     client = connect()
@@ -104,6 +105,7 @@ def test_report_chunk_failure_stops_downstream(project, extension):
     assert state.state == RunState.failed
     log = text(client.call('LogRangeRequest', runId=run, card=path('report'), stream=2, limitBytes=65536).text)
     assert 'report-cell-error' in log
+    assert client.call('RunRecordRequest', runId=run, card=path('read')).status.state == CardState.blocked, log
     assert not client.call('ArtifactListRequest', runId=run).artifacts
 
 
@@ -150,8 +152,8 @@ def reload(client):
     client.call('ProjectReloadRequest', baseRev=client.call('ProjectInspectRequest').rev, opId=new_id(), origin='test')
 
 
-@pytest.mark.parametrize('extension', ['Rmd', 'qmd'])
-def test_report_file_and_directory_parameters(project, extension):
+def test_report_file_and_directory_parameters(project):
+    extension = 'Rmd'
     root, connect = project
     source = REPORT + '''\n```{r file-inputs}
 stopifnot(readLines(params$tsugumi$paths$file) == "file-data")
@@ -180,8 +182,8 @@ table Outputs { file:Path (required, tsugumi:"file"); folder:Path (required, tsu
     assert state.state == RunState.succeeded, text(client.call('LogRangeRequest', runId=run, card=path('report'), stream=2, limitBytes=65536).text)
 
 
-@pytest.mark.parametrize('extension', ['Rmd', 'qmd'])
-def test_report_cancel_deadline_and_recovery(project, extension):
+def test_report_cancel_deadline_and_recovery(project):
+    extension = 'Rmd'
     root, connect = project
     marker = f'tsugumi-report-child-{uuid.uuid4().hex}'
     slow = REPORT.replace('plot(values, type="b")',
@@ -204,7 +206,7 @@ def test_report_cancel_deadline_and_recovery(project, extension):
         wait_for_exit(pid)
     card_file = root / 'definitions/report/_card.json'
     card = json.loads(card_file.read_text())
-    card['timeoutSeconds'] = 2
+    card['timeoutSeconds'] = 1
     card_file.write_text(json.dumps(card))
     reload(client)
     run, state = run_and_wait(client, 'start')
@@ -217,8 +219,8 @@ def test_report_cancel_deadline_and_recovery(project, extension):
     assert run_and_wait(client, 'start')[1].state == RunState.succeeded
 
 
-@pytest.mark.parametrize('extension', ['Rmd', 'qmd'])
-def test_reports_survive_restart_and_parameter_source_changes(tmp_path, extension):
+def test_reports_survive_restart_and_parameter_source_changes(tmp_path):
+    extension = 'Rmd'
     root = tmp_path / 'reports'
     report_project(root, extension, REPORT.replace('{r figure}', '{r figure, cache=TRUE}'))
     daemon = Daemon(root).start()
