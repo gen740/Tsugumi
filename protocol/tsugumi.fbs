@@ -689,6 +689,7 @@ table LogRangeRequest {
   stream:Tsugumi.Data.LogStream (id: 3);
   offset:uint64 = null (id: 4);
   tail:bool = null (id: 5);
+  /// Maximum number of bytes to read.
   limit_bytes:uint32 = null (id: 6);
 }
 
