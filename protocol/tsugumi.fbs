@@ -586,6 +586,14 @@ table RunInvocationsRequest {
 /// -> InvocationPage. Read each Card's latest invocation in a run.
 table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
 
+/// -> RunDefinitionPaths. Accepted definition files for the recorded Card
+/// and its enclosing Cards, or for the whole run if card is absent.
+table RunDefinitionPathsRequest {
+  run_id:string (required);
+  card:Tsugumi.Data.CardPath;
+}
+table RunDefinitionPaths { paths:[string] (required); }
+
 /// -> BuildEnvironmentPage. Read recorded environments in first-use order; no evaluation.
 table RunEnvironmentsRequest {
   run_id:string (id: 0, required);
@@ -769,6 +777,7 @@ union RequestPayload {
   InputTypesRequest = 54,
   ProjectActivityRequest = 55,
   CoreTraceRequest:Tsugumi.Trace.CoreTraceRequest = 56,
+  RunDefinitionPathsRequest = 57,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1139,6 +1148,7 @@ union ReplyPayload {
   InputTypesResult = 42,
   ProjectActivity = 43,
   TraceSnapshot:Tsugumi.Trace.Snapshot = 44,
+  RunDefinitionPaths = 45,
 }
 
 // ---- Notifications -----------------------------------------------------------

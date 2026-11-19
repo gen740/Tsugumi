@@ -166,7 +166,7 @@ auto Tools::FileOperation(const std::string& conversation,
                     "base_rev must be an unsigned decimal integer");
   }
   const auto inspected = host::CaptureSaveBase(InspectProject(project, stop));
-  const auto policy = ExclusionsFor(project, inspected.files.at("tsugumi.json"));
+  const auto policy = ExclusionsFor(project, inspected);
   policy.Check("tsugumi.json");
   const auto snapshot = json::Object(policy.Filter(json::Encode(inspected.snapshot)));
   const auto revision = json::Get(snapshot, "rev");

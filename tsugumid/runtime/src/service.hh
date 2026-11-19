@@ -193,6 +193,7 @@ class Service : public RequestSink {
   void run_status(RequestIn& req);
   void run_history(RequestIn& req);
   void run_invocations(RequestIn& req);
+  void run_definition_paths(RequestIn& req);
   void run_latest_invocations(RequestIn& req);
   auto dispatch_shell(RequestIn req) -> void;
   auto project_shell(RequestIn& req, const std::atomic<bool>& cancelled)

@@ -57,10 +57,14 @@ TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
 }
 TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
   Write(root / "definitions/group/_card.json",
-        R"({"external":"different-folder"})");
+        R"({"external":"unaccepted-folder"})");
   AgentExclude policy(
       root,
-      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})");
+      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})",
+      {{"definitions/group/_card.json", R"({"external":"different-folder"})"}});
+  Refused([&] {
+    policy.CheckContent(R"({"targets":[{"segments":["group","leaf"]}]})");
+  });
   Refused([&] {
     policy.CheckRequest("run_record",
                         {{"card", R"({"segments":["group","leaf"]})"}});

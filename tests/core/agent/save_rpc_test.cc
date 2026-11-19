@@ -113,6 +113,109 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
             accepted);
 }
 
+TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
+  const auto root = directory.path / "project";
+  const auto link = root / "definitions/group/_card.json";
+  Write(link, R"({"external":"private"})");
+  for (const auto* name : {"private", "public"}) {
+    const auto folder = root / "externals" / name;
+    Write(folder / "tsugumi.json",
+          R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
+    Write(folder / "definitions/leaf/_card.json", R"({"template":"trigger"})");
+  }
+  StartProject(
+      false,
+      R"({"agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
+  const auto conversation = Conversation("confirmed-exclusions");
+  for (const auto access :
+       {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
+    Grant(conversation, access);
+  const auto revision = JsonString(
+      JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
+  Write(link, R"({"external":"public"})");
+  const auto request =
+      "{\"base_rev\":" + Quote(revision) +
+      R"(,"card":{"segments":["group","leaf"]},"propagate":false})";
+  const auto run = Tool(conversation, "run", request);
+  EXPECT_EQ(run.Code(), "not_found");
+
+  // A human can run the same Card. The run retains the accepted physical path,
+  // even after the alias has been reloaded and the current path is public.
+  namespace R = Tsugumi::RPC;
+  client::Options options;
+  options.endpoint = "unix:" + JsonString(project_ready, "/unix_socket");
+  std::promise<std::string> finished;
+  auto completion = finished.get_future();
+  client::Connection core(options);
+  core.OnEvent([&](client::Bytes bytes) {
+    const auto* note = R::GetMessage(bytes.data())->payload_as_Notification();
+    const auto* event = note ? note->value_as_RunEvent() : nullptr;
+    if (event && event->value_as_RunFinished())
+      finished.set_value(event->run_id()->str());
+  });
+  ASSERT_FALSE(core.Start().get());
+  const auto call = [&](R::RequestPayload type, const auto& value) {
+    auto result =
+        core.Call([&](uint64_t id) {
+              Builder b;
+              const auto request = R::CreateRequest(b, type, value(b));
+              R::FinishMessageBuffer(
+                  b, R::CreateMessage(b, id, R::Payload::Request,
+                                      request.Union()));
+              return client::Bytes(b.GetBufferPointer(),
+                                   b.GetBufferPointer() + b.GetSize());
+            })
+            .get();
+    if (result.error) throw std::runtime_error(result.error.message);
+    return result.bytes;
+  };
+  const auto hello =
+      call(R::RequestPayload::SessionHelloRequest, [&](Builder& b) {
+        return R::CreateSessionHelloRequest(
+                   b, b.CreateString(project_id),
+                   b.CreateString(JsonString(project_ready, "/token")))
+            .Union();
+      });
+  ASSERT_NE(
+      R::GetMessage(hello.data())->payload_as_Reply()->value_as_HelloResult(),
+      nullptr);
+  const auto opened =
+      call(R::RequestPayload::ProjectOpenRequest,
+           [&](Builder& b) { return R::CreateProjectOpenRequest(b).Union(); });
+  ASSERT_NE(
+      R::GetMessage(opened.data())->payload_as_Reply()->value_as_OpenResult(),
+      nullptr);
+  const auto accepted = call(R::RequestPayload::RunRequest, [&](Builder& b) {
+    const auto card = Tsugumi::Data::CreateCardPath(
+        b, b.CreateVectorOfStrings(std::vector<std::string>{"group", "leaf"}));
+    return R::CreateRunRequest(b, 0, b.CreateString("human-run"),
+                               b.CreateString("test"), card, false)
+        .Union();
+  });
+  const auto* started = R::GetMessage(accepted.data())
+                            ->payload_as_Reply()
+                            ->value_as_RunAccepted();
+  ASSERT_NE(started, nullptr);
+  const auto run_id = started->run()->run_id()->str();
+  const auto raw_record = "{\"run_id\":" + Quote(run_id) +
+                          R"(,"card":{"segments":["group","leaf"]}})";
+  EXPECT_EQ(Tool(conversation, "run_record", raw_record).Code(), "not_found");
+
+  // Wait for a real terminal event before reloading the alias.
+  ASSERT_EQ(completion.wait_for(5s), std::future_status::ready);
+  EXPECT_EQ(completion.get(), run_id);
+  const auto reloaded =
+      call(R::RequestPayload::ProjectReloadRequest, [&](Builder& b) {
+        return R::CreateProjectReloadRequest(
+                   b, 0, b.CreateString("human-reload"), b.CreateString("test"))
+            .Union();
+      });
+  ASSERT_NE(
+      R::GetMessage(reloaded.data())->payload_as_Reply()->value_as_SaveResult(),
+      nullptr);
+  EXPECT_EQ(Tool(conversation, "run_record", raw_record).Code(), "not_found");
+}
+
 TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   StartProject();
   const auto conversation = Conversation("stale-save");

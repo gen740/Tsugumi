@@ -14,16 +14,18 @@ class AgentExclude {
   static auto Defaults() -> std::vector<std::string>;
   static auto Entries(const std::string& project_json)
       -> std::vector<std::string>;
-  AgentExclude(std::filesystem::path root, const std::string& project_json);
+  AgentExclude(std::filesystem::path root, const std::string& project_json,
+               const ::tsugumi::json::Members& files = {});
   auto Contains(const std::filesystem::path& path) const -> bool;
   auto Check(const std::filesystem::path& path) const -> void;
   auto CheckRequest(const std::string& name,
-                    const ::tsugumi::json::Members& args) const -> void;
+                    const ::tsugumi::json::Members& args,
+                    bool recorded = false) const -> void;
   auto CheckContent(const std::string& raw) const -> void;
   auto CheckSave(const ::tsugumi::json::Members& plan, const SaveBase& base,
                  const SourcePatches& patches = {}) const -> void;
-  auto Filter(const std::string& raw, const std::string& prefix = "") const
-      -> std::string;
+  auto Filter(const std::string& raw, const std::string& prefix = "",
+              bool recorded = false) const -> std::string;
   auto ProjectText(const std::string& raw, const std::string& prefix = "") const
       -> std::string;
   auto FileText(const std::string& path, const std::string& raw) const
@@ -37,5 +39,6 @@ class AgentExclude {
       -> bool;
   std::filesystem::path root_;
   std::vector<std::filesystem::path> paths_;
+  ::tsugumi::json::Members links_;
 };
 }  // namespace tsugumi::host

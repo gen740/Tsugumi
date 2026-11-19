@@ -167,7 +167,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
       const auto current = json::Get(base.snapshot, "rev");
       if (policy && current == revision) return;
       revision = current;
-      policy = ExclusionsFor(project, base.files.at("tsugumi.json"));
+      policy = ExclusionsFor(project, base);
       if (boundary && boundary->scoped()) {
         scoped_base = base;
         read = HelperReader(conversation, stop, revision, authorization,

@@ -832,6 +832,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::run_history);
     case P::RunInvocationsRequest:
       return on_lane(r, std::move(req), &Service::run_invocations);
+    case P::RunDefinitionPathsRequest:
+      return on_lane(r, std::move(req), &Service::run_definition_paths);
     case P::RunLatestInvocationsRequest:
       return on_lane(r, std::move(req), &Service::run_latest_invocations);
     case P::ProjectShellRequest:
