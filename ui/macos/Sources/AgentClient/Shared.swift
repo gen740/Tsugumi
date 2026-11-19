@@ -453,6 +453,10 @@ enum Shared {
   "notForModels": {
     "ProjectValidateRequest": [
       "changes"
+    ],
+    "LogRangeRequest": [
+      "terminal",
+      "terminal_since"
     ]
   },
   "draftRequest": {

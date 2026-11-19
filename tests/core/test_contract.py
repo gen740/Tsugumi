@@ -444,6 +444,45 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert isinstance(json.loads(line), dict)
 
 
+def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):
+    import os
+
+    client = core_factory(mocked_builds=True).connect()
+    enter, redraw = tmp_path / "enter", tmp_path / "redraw"
+    os.mkfifo(enter)
+    os.mkfifo(redraw)
+    body = f"""
+        printf 'first\\nabcdef'
+        read -r gate < {shlex.quote(str(enter))}
+        printf '\\r'
+        read -r gate < {shlex.quote(str(redraw))}
+        printf '%s' '雪Y'
+        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
+    """
+    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+                          manifest={"run": {"bash": body}}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 12)
+    initial = client.call("LogRangeRequest", **args, terminal=True, tail=True)
+    assert text(initial.text) == "first\nabcdef"
+    with enter.open("w") as gate:
+        gate.write("start redraw\n")
+    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 13)
+    cursor = client.call("LogRangeRequest", **args, terminal=True, offset=initial.nextOffset,
+                         terminalSince=initial.rawSizeBytes)
+    assert not cursor.reset and cursor.nextOffset == initial.nextOffset
+    with redraw.open("w") as gate:
+        gate.write("write replacement\n")
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+    replaced = client.call("LogRangeRequest", **args, terminal=True, offset=cursor.nextOffset,
+                           terminalSince=cursor.rawSizeBytes)
+    assert replaced.reset and replaced.nextOffset == initial.nextOffset
+    assert text(replaced.text) == "first\n雪Ycdef"
+    assert text(client.call("LogRangeRequest", **args).text) == "first\nabcdef\r雪Y"
+
+
 def test_card_log_ui_page_sizes(project, core_factory):
     tail_limit = 1 << 20
     forward_limit = 256 << 10

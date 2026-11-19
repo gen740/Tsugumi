@@ -372,7 +372,7 @@
   {
     "name": "log_range",
     "payloadType": 27,
-    "description": "-> LogSlice. Read run logs; invocation requires card. tail=true reads the end with offset=0. Agent pages default to 2048 bytes; continue with next_offset.",
+    "description": "-> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. Agent pages default to 2048 bytes; continue with next_offset.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -418,15 +418,6 @@
           "type": "string",
           "pattern": "^-?[0-9]+$",
           "description": "Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset."
-        },
-        "terminal_since": {
-          "type": "string",
-          "pattern": "^-?[0-9]+$",
-          "description": "Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then."
-        },
-        "terminal": {
-          "type": "boolean",
-          "description": "Read the terminal display. Offsets and the size use four units per Unicode scalar."
         },
         "tail": {
           "type": "boolean"
