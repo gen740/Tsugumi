@@ -37,11 +37,18 @@ final class DebugOptions {
   }
 }
 
-/// The debug panel (Window menu): toggles for what the app shows.
+/// The debug panel in the Window menu.
 struct DebugPanel: View {
   @Bindable private var options = DebugOptions.shared
 
   var body: some View {
+    TabView {
+      presentation.tabItem { Text("表示オプション") }
+      RPCTraceView().tabItem { Text("RPC トレース") }
+    }
+  }
+
+  private var presentation: some View {
     Form {
       Section("Canvas") {
         Toggle("クリックの当たり判定を表示", isOn: $options.showHitAreas)

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/workerd/local.hh"
 
 namespace tsugumi::workerd {
@@ -35,7 +36,7 @@ LocalPacket::~LocalPacket() {
 }
 
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
-                const std::array<int, 4>* descriptors) -> void {
+                const std::array<int, 4>* descriptors, trace::Link* link) -> void {
   flatbuffers::FlatBufferBuilder builder;
   Tsugumi::LocalWorker::FinishMessageBuffer(
       builder, Tsugumi::LocalWorker::Message::Pack(builder, &message));
@@ -74,9 +75,12 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
   transfer(fd, const_cast<unsigned char*>(prefix.data()) + sent,
            prefix.size() - sent, true);
   transfer(fd, builder.GetBufferPointer(), size, true);
+  trace::Observe(link, "project core", "Card host", true,
+                 {reinterpret_cast<const char*>(builder.GetBufferPointer()), size},
+                 &trace::kFlatBufferCodec);
 }
 
-auto receive_local(int fd, LocalPacket& packet) -> bool {
+auto receive_local(int fd, LocalPacket& packet, trace::Link* link) -> bool {
   std::array<unsigned char, 4> prefix{};
   iovec data{prefix.data(), prefix.size()};
   alignas(cmsghdr) char control[CMSG_SPACE(4 * sizeof(int))]{};
@@ -121,6 +125,8 @@ auto receive_local(int fd, LocalPacket& packet) -> bool {
                                  bytes.size());
   if (!Tsugumi::LocalWorker::VerifyMessageBuffer(verifier))
     throw std::runtime_error("invalid local workerd message");
+  trace::Observe(link, "Card host", "project core", false, bytes,
+                 &trace::kFlatBufferCodec);
   packet.message.reset(
       Tsugumi::LocalWorker::GetMessage(bytes.data())->UnPack());
   return true;

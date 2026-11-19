@@ -11,7 +11,7 @@ FAMILIES = {
     "client": "client", "vm/guest": "guest", "sdk": "sdk",
 }
 ALLOWED = {
-    "util": {"util"}, "rpc": {"rpc", "util"}, "protocol": {"protocol"},
+    "util": {"util"}, "rpc": {"rpc", "util"}, "protocol": {"protocol", "rpc"},  # The BFBS trace adapter implements the recorder codec.
     "document": {"document", "util", "protocol"},
     "store": {"store"},
     "support": {"support", "store", "util", "protocol"},
@@ -22,7 +22,7 @@ ALLOWED = {
     "guest": {"guest", "support", "store", "util", "protocol"},
 }
 INCLUDES = [ROOT / path for path in (
-    "util/include", "rpc/include", "rpc/tls/include", "tsugumid/document/include",
+    "util/include", "protocol/include", "rpc/include", "rpc/tls/include", "tsugumid/document/include",
     "tsugumid/runtime_support/include", "tsugumid/include", "workerd/include",
     "workerd/nix/include", "client/include", "sdk/include", "sdk/describe",
     "hostd/private", "hostd/agent/private", "tsugumid/runtime/src", "workerd/src",

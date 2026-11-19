@@ -16,8 +16,9 @@ struct LocalPacket {
   ~LocalPacket();
 };
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
-                const std::array<int, 4>* descriptors = nullptr) -> void;
-auto receive_local(int fd, LocalPacket& packet) -> bool;
+                const std::array<int, 4>* descriptors = nullptr,
+                trace::Link* link = nullptr) -> void;
+auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr) -> bool;
 auto serve_local(int fd, const std::filesystem::path& scratch) -> void;
 
 // One workerd process for this core lifetime, connected by an inherited socket.

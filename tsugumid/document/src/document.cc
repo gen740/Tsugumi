@@ -375,15 +375,10 @@ std::string execution_fingerprint(
     if (relative == "layout.json") continue;
     h.update("\0src\0", 5);
     h.update(path);
-    auto rel = path;
-    while (rel.starts_with("externals/")) {
-      auto slash = rel.find('/', 10);
-      if (slash == std::string::npos) break;
-      rel.erase(0, slash + 1);
-    }
     const char* omitted =
-        rel == "tsugumi.json" ? "name"
-        : Document::is_document_file(rel) && rel.ends_with("/_card.json")
+        relative == "tsugumi.json" ? "name"
+        : Document::is_document_file(relative) &&
+                relative.ends_with("/_card.json")
             ? "displayMode"
             : nullptr;
     if (omitted) {

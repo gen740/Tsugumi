@@ -607,6 +607,13 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
         throw Failed(FailureKind::invalid_path, "invalid shell output path");
       view.output_prefix = opts_.root / path;
     }
+    struct SymlinkCleanup {
+      std::vector<std::filesystem::path> links;
+      ~SymlinkCleanup() {
+        std::error_code ec;
+        for (const auto& link : links) std::filesystem::remove(link, ec);
+      }
+    } symlink_cleanup;
     if (request->mounts())
       for (const auto* mount : *request->mounts()) {
         auto source = mount->project_relative()
@@ -617,6 +624,7 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
 #ifdef __APPLE__
         std::filesystem::remove(target);
         std::filesystem::create_directory_symlink(source, target);
+        symlink_cleanup.links.push_back(target);
 #endif
         view.mounts.push_back({source, target, mount->writable()});
       }

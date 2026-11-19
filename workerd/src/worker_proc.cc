@@ -17,6 +17,7 @@
 #include <libproc.h>
 #endif
 
+#include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
@@ -41,7 +42,7 @@ void close_fd(int& fd) {
   fd = -1;
 }
 
-auto send_frame(int fd, const std::string& frame,
+auto send_frame(trace::Link& link, int fd, const std::string& frame,
                 const std::atomic<bool>* cancel,
                 std::optional<std::chrono::steady_clock::time_point> deadline)
     -> void {
@@ -72,6 +73,8 @@ auto send_frame(int fd, const std::string& frame,
     }
     throw Failed(FailureKind::worker_failed, "worker connection broken");
   }
+  trace::Observe(link, "project core", "Card worker", true, frame,
+                 &trace::kFlatBufferCodec);
 }
 
 #ifdef __APPLE__
@@ -574,7 +577,7 @@ void WorkerProc::read_logs(bool drain) {
 void WorkerProc::send(int fd, const std::string& frame) {
   // A stopped worker may also stop draining control messages. Never let the
   // cancellation notification delay escalation to killing the process group.
-  send_frame(fd, frame, nullptr,
+  send_frame(trace_link_, fd, frame, nullptr,
              std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
 }
 
@@ -584,7 +587,7 @@ WorkerOutcome WorkerProc::call(
     const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
-    send_frame(data_fd_, frame, cancel, deadline);
+    send_frame(trace_link_, data_fd_, frame, cancel, deadline);
   } catch (const Failed& error) {
     // A partially sent call cannot be resumed or reused.
     terminate();
@@ -670,6 +673,8 @@ WorkerOutcome WorkerProc::call(
                               "worker sent a buffer that does not verify");
         return outcome;
       }
+      trace::Observe(trace_link_, "Card worker", "project core", false, msg,
+                     &trace::kFlatBufferCodec);
       const auto* m = W::GetWorkerMessage(msg.data());
       if (!m->call_id() || *m->call_id() != call_id) {
         terminate();

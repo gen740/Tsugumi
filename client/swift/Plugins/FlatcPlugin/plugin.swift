@@ -9,7 +9,7 @@ struct FlatcPlugin: BuildToolPlugin {
     let protocolDir = context.package.directoryURL.appending(path: "../../protocol").standardizedFileURL
     let flatc = try locateFlatc()
     let out = context.pluginWorkDirectoryURL.appending(path: "generated")
-    let schemas = ["tsugumi_enums", "data", "worker", "local_worker", "remote_worker", "tsugumi", "service_common", "agent", "host", "vm_host"]
+    let schemas = ["tsugumi_enums", "rpc_trace", "data", "worker", "local_worker", "remote_worker", "tsugumi", "service_common", "agent", "host", "vm_host"]
     let inputs = schemas.map { protocolDir.appending(path: "\($0).fbs") }
     return [.buildCommand(
       displayName: "flatc Swift protocol bindings",

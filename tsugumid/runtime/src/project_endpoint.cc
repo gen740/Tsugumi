@@ -1,9 +1,13 @@
 #include "server.hh"
+
+#include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/workerd/value_wire.hh"
 namespace tsugumi {
 auto ProjectEndpoint(ServerOptions& options) -> void {
   namespace R = Tsugumi::RPC;
   options.subprotocol = "tsugumi.rpc.v1";
+  options.trace_endpoint = "project core";
+  options.trace_codec = &trace::kFlatBufferCodec;
   options.codec.inspect = [](std::string_view bytes,
                              uint32_t limit) -> std::optional<FrameInfo> {
     flatbuffers::Verifier::Options vo;
@@ -13,12 +17,13 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
     if (!R::VerifyMessageBuffer(v)) return std::nullopt;
     const auto* m = R::GetMessage(bytes.data());
     const auto* r = m->payload_as_Request();
-    if (!r || !m->request_id() || !*m->request_id() ||
+    if (!r || !r->value() || !m->request_id() || !*m->request_id() ||
         r->value_type() == R::RequestPayload::NONE ||
         r->value_type() > R::RequestPayload::MAX)
       return std::nullopt;
-    return FrameInfo{*m->request_id(),
-                     r->value_type() == R::RequestPayload::SessionHelloRequest};
+    const auto* hello = r->value_as_SessionHelloRequest();
+    return FrameInfo{*m->request_id(), hello != nullptr,
+                     hello ? trace::ClientName(hello->client()) : nullptr};
   };
   options.codec.completed = [](std::string_view bytes) {
     return R::GetMessage(bytes.data())->request_id().value_or(0);

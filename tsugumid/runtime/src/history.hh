@@ -254,10 +254,19 @@ class History {
       const std::optional<std::vector<std::string>>& run_ids);
 
  private:
+  struct ReaderLease {
+    History* owner = nullptr;
+    std::unique_ptr<sql::Db> db;
+    ~ReaderLease() {
+      if (owner && db) owner->release_reader(std::move(db));
+    }
+    sql::Db& operator*() const { return *db; }
+  };
   void writer_loop();
   void init_schema(sql::Db& db);
   auto check_version() const -> void;
-  sql::Db& reader();
+  ReaderLease acquire_reader();
+  void release_reader(std::unique_ptr<sql::Db> db);
 
   std::filesystem::path path_;
   std::string fault_;
@@ -269,7 +278,7 @@ class History {
   bool stopping_ = false;
   std::thread writer_;
   std::mutex rmu_;
-  std::map<std::thread::id, std::unique_ptr<sql::Db>> readers_;
+  std::vector<std::unique_ptr<sql::Db>> reader_pool_;
   // Log offsets per scope key, maintained by the writer thread.
   std::map<std::string, uint64_t> log_ends_;
   // Progress of running invocations after their persisted start (stage
@@ -286,9 +295,9 @@ class History {
 
 template <class F>
 auto History::read(F&& f) -> decltype(f(std::declval<sql::Db&>())) {
-  sql::Db& db = reader();
-  sql::Transaction t(db, false);
-  return f(db);
+  auto lease = acquire_reader();
+  sql::Transaction t(*lease, false);
+  return f(*lease);
 }
 
 }  // namespace tsugumi

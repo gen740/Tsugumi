@@ -264,6 +264,8 @@ class Service : public RequestSink {
   std::map<std::string, Pending> pending_ops_;
 
   std::mutex subs_mu_;
+  // Owned by the transport loop, alongside debug dispatch and disconnect.
+  std::optional<ConnId> trace_owner_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
 
   std::mutex view_mu_;
