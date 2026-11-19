@@ -3,6 +3,9 @@ import { ProjectTrust } from '../shared/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../shared/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../shared/gen/tsugumi/host/settings'
 import { SignInStatus } from '../shared/gen/tsugumi/host/sign-in-status'
+import { SignInChangedT } from '../shared/gen/tsugumi/host/sign-in-changed'
+import { EventT as HostEventT } from '../shared/gen/tsugumi/host/event'
+import { EventPayload as HostEventPayload } from '../shared/gen/tsugumi/host/event-payload'
 import { Reply as HostReply } from '../shared/gen/tsugumi/host/reply'
 import { ReplyPayload as HostReplyPayload } from '../shared/gen/tsugumi/host/reply-payload'
 import { Payload as HostPayload } from '../shared/gen/tsugumi/host/payload'
@@ -26,7 +29,7 @@ import { EventsPageT } from '../shared/gen/tsugumi/agent/events-page'
 import { SequencedEventT } from '../shared/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../shared/gen/tsugumi/agent/event'
 import { FailureT } from '../shared/gen/tsugumi/service/failure'
-import { Message as HostMessage } from '../shared/gen/tsugumi/host/message'
+import { Message as HostMessage, MessageT as HostMessageT } from '../shared/gen/tsugumi/host/message'
 import { hostProjectErrorText } from '../server/hostProjects'
 import { setLanguage } from '../server/i18n'
 
@@ -102,13 +105,31 @@ console.log('Host list readers: omitted vectors are empty')
 for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   const b = new fb.Builder()
   const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
-    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false)
+    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0)
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
   assert.deepEqual(type === HostReplyPayload.Settings ? decoded.values : decoded.accounts, [])
 }
 console.log('Settings and sign-in readers: omitted vectors are empty')
+
+{
+  const b = new fb.Builder()
+  const attempt = b.createString('attempt-a')
+  const client = b.createString('account-a')
+  const status = SignInStatus.createSignInStatus(b, attempt, b.createString('complete'), 0, 0, 0, false, client)
+  const reply = HostReply.createReply(b, HostReplyPayload.SignInStatus, status)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.equal(decoded.attempt_id, 'attempt-a')
+  assert.equal(decoded.client_id, 'account-a')
+}
+{
+  const b = new fb.Builder()
+  const change = new HostEventT(HostEventPayload.SignInChanged, new SignInChangedT('web:fixture'))
+  HostMessage.finishMessageBuffer(b, new HostMessageT(0n, HostPayload.Event, change).pack(b))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SignInChanged', value: { profile: 'web:fixture' } })
+}
 
 // Guide replies expose presentation fields directly; omitted vectors are empty.
 const { GuideState } = await import('../shared/gen/tsugumi/host/guide-state')

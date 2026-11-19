@@ -5,7 +5,7 @@ sniffing. Needs node and a built ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
@@ -207,6 +207,56 @@ def post(port: int, cookie: str, route: str, body: dict):
     r, data = request(port, "POST", route, {"Cookie": cookie, "content-type": "application/json", "x-tsugumi": "1"}, json.dumps(body))
     assert r.status == 200, data
     return json.loads(data)
+
+
+def test_event_stream_reconnects_after_a_failed_host_restart(tmp_path):
+    fail = tmp_path / "fail-next-start"
+    binary = tmp_path / "host-launcher"
+    host = isolated_environment(tmp_path)["TSUGUMI_HOSTD"]
+    binary.write_text(f"""#!{sys.executable}
+import os
+import sys
+from pathlib import Path
+
+try:
+    Path({str(fail)!r}).unlink()
+except FileNotFoundError:
+    os.execv({host!r}, [{host!r}, *sys.argv[1:]])
+sys.exit(1)
+""")
+    binary.chmod(0o700)
+
+    with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (_, port, key):
+        cookie = page_cookie(port, key)
+
+        def open_events(connection):
+            connection.request("GET", "/api/events?page=settings", headers={"Cookie": cookie})
+            response = connection.getresponse()
+            assert response.status == 200
+            return response
+
+        def event(response):
+            return json.loads(response.readline().removeprefix(b"data: "))
+
+        with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)) as connection:
+            response = open_events(connection)
+            assert event(response)["type"] == "eventsConnected"
+            assert request(port, "GET", "/api/chatgpt", {"Cookie": cookie})[0].status == 200
+            pid = json.loads((tmp_path / "host-core/host.ready").read_text())["pid"]
+            fail.touch()
+            terminate_process(pid)
+            response.read()  # Host loss must end the browser's stream.
+        with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)) as connection:
+            response = open_events(connection)
+            assert event(response)["type"] == "hostUnavailable"
+            response.read()  # An unavailable Host must also end the stream.
+        with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)) as connection:
+            assert event(open_events(connection))["type"] == "eventsConnected"
+            status, body = request(port, "GET", "/api/chatgpt?attemptId=old-host-attempt", {"Cookie": cookie})
+            assert status.status == 200, body
+            interrupted = json.loads(body)
+            assert interrupted["signingIn"] is False
+            assert interrupted["outcome"]["ok"] is False
 
 
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):

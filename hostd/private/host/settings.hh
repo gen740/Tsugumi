@@ -43,7 +43,7 @@ class Settings {
   Settings(const std::filesystem::path& directory, Import import, Token token,
            Forget forget, std::unique_ptr<SecretStore> secrets = {},
            KeyStorage storage = kKeyStorage, Models models = {},
-           std::function<void(const std::string&)> provider_changed = {});
+           std::function<void(std::string)> publish = {});
   ~Settings();
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)

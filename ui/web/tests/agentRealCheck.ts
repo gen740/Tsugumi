@@ -23,6 +23,7 @@ const original = { settings: CoreHost.prototype.getSettings, environment: CoreHo
   project: CoreHost.prototype.project, folder: CoreHost.prototype.projectFolder }
 let model = 'gpt-6.1-sol'
 let busy = false
+let signInState = 'idle'
 const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
 const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', needed_now: false })
 const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', needed_now: false })
@@ -41,6 +42,18 @@ try {
     host = this
     this.user.call = async <T>(method: string, fields: any = {}): Promise<T> => {
       calls.push({ method, fields })
+      if (method === 'SignInBeginRequest') {
+        signInState = 'pending'
+        return { url: 'https://fixture.invalid/authorize', attempt_id: 'attempt-a' } as T
+      }
+      if (method === 'SignInStatusRequest') {
+        return { accounts: [], attempt_id: 'attempt-a', state: signInState } as T
+      }
+      if (method === 'SignInActionRequest' && fields.action === 'cancel') {
+        assert.equal(fields.attempt_id, 'attempt-a')
+        signInState = 'cancelled'
+        return {} as T
+      }
       if (method === 'AccessResolveRequest') return {} as T
       if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', model: 'gpt-6.1-luna' } } as T
       if (method === 'ModelsListRequest') return [] as T
@@ -70,6 +83,25 @@ try {
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
   assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
+  const oauth = async (route: string, fields?: object) =>
+    routes[fields ? `POST /api/chatgpt/${route}` : 'GET /api/chatgpt'](fields, new URL(`http://fixture/${route}`)) as Promise<any>
+  const begin = await oauth('signin', {})
+  assert.equal(begin.attemptId, 'attempt-a')
+  assert.equal((await oauth('')).signingIn, true)
+  assert.equal((await oauth('?attemptId=attempt-a')).signingIn, true)
+  assert.equal(calls.at(-1)?.fields.attempt_id, 'attempt-a')
+  host!.event({ type: 'SignInChanged', value: { profile: 'desktop' } })
+  assert.equal(events.length, 1)
+  host!.event({ type: 'SignInChanged', value: { profile: `web:${dir}` } })
+  assert.deepEqual(events.at(-1), { type: 'chatgptChanged' })
+  host!.event({ type: 'ProviderChanged', value: { profile: 'desktop' } })
+  assert.deepEqual(events.at(-1), { type: 'providerChanged' })
+  host!.event({ type: 'ProviderChanged', value: { profile: `web:${dir}` } })
+  assert.deepEqual(events.at(-1), { type: 'chatgptChanged' })
+  await oauth('cancel', { attemptId: begin.attemptId })
+  const cancelled = await oauth('')
+  assert.equal(cancelled.signingIn, false)
+  assert.equal(cancelled.outcome?.ok, false)
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
   await call('search', { path: folders[1], text: 'Only A' })
   assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')

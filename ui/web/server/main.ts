@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { cancelChats, resumeChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
+import { cancelChats, connectHost, resumeChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
 import { EnvironmentManager, EnvState } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
@@ -112,6 +112,12 @@ const pageProjects = new Map<string, string>()
 function broadcast(v: unknown) {
   const line = `data: ${JSON.stringify(v)}\n\n`
   for (const s of streams.keys()) s.write(line)
+}
+function endEventStreams() {
+  for (const stream of streams.keys()) {
+    streams.delete(stream)
+    stream.end()
+  }
 }
 
 /** Shows a project without taking another tab's away: a page that shows it
@@ -319,6 +325,11 @@ const routes: Record<string, Handler> = {
   },
   ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, listeners: () => streams.size, showOnPage, openPage, desktop }),
 }
+// EventSource reconnects when a stream ends. Each new stream first authenticates
+// with Host, so a failed restart also leaves the browser on that recovery path.
+observeHost(event => {
+  if (event.type === 'Disconnected') endEventStreams()
+})
 
 // The page is opened through the URL printed at start, which carries this
 // run's key: the server answers it with a cookie only the page's own origin
@@ -424,12 +435,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
-    res.write(': hello\n\n')
+    try {
+      await connectHost()
+    } catch (error) {
+      const event = { type: 'hostUnavailable', message: (error as Error).message }
+      res.end(`data: ${JSON.stringify(event)}\n\n`)
+      return
+    }
+    if (res.destroyed) return
+    res.write('data: {"type":"eventsConnected"}\n\n')
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
     resumeChats()
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-    req.on('close', () => {
+    res.on('close', () => {
       clearInterval(ping)
       streams.delete(res)
       pageProjects.delete(page.id)
@@ -521,7 +540,7 @@ async function shutdown() {
   try {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
-  for (const s of streams.keys()) s.end()
+  endEventStreams()
   for (const t of terminals.values()) stopTerminal(t)
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.

@@ -114,12 +114,10 @@ struct Service::State {
         [this](const std::string& id) { return credentials.Forget(id); },
         nullptr, host::Settings::kKeyStorage,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
-        [this](const std::string& profile) {
-          requests.submit([this, profile]() {
+        [this](std::string event) {
+          requests.submit([this, event = std::move(event)]() {
             std::lock_guard lock(mutex);
-            H::ProviderChangedT event;
-            event.profile = profile;
-            events->Publish(wire::HostEvent(std::move(event)));
+            events->Publish(event);
           });
         });
     providers = std::make_unique<Providers>(state_gate, db, *host_settings);

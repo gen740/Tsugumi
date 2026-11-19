@@ -36,7 +36,7 @@ class Connection {
 
   constructor(private host: CoreHost, private external: boolean, private hostContract = false) {}
 
-  private open() {
+  connect() {
     return this.opening ??= this.start().catch((e) => { this.opening = undefined; throw e })
   }
 
@@ -61,13 +61,15 @@ class Connection {
       return result
     }
     let length: number | undefined
+    let authenticated = false
     const fail = (error: Error) => {
       if (this.socket !== socket) return
       this.socket = undefined
-      this.opening = undefined
+      if (authenticated) this.opening = undefined
       for (const p of this.waiting.values()) p.reject(error)
       this.waiting.clear()
       socket.destroy()
+      if (authenticated && this.hostContract) this.host.event({ type: 'Disconnected', value: {} })
     }
     socket.on('error', fail)
     socket.on('close', () => fail(new Error('Service connection closed')))
@@ -97,8 +99,14 @@ class Connection {
       socket.once('error', reject)
       socket.once('close', () => reject(new Error('Service connection closed')))
     })
-    await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
-    if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
+    try {
+      await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
+    } catch (error) {
+      fail(error as Error)
+      throw error
+    }
+    if (this.socket !== socket) throw new Error('Service connection closed')
+    authenticated = true
   }
 
   private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {
@@ -129,7 +137,7 @@ class Connection {
 
   async call<T>(method: string, value: unknown = {}, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted()
-    await this.open()
+    await this.connect()
     signal?.throwIfAborted()
     return this.write(method, value, signal)
   }
@@ -157,6 +165,7 @@ export class CoreHost {
     this.hostListeners.add(fn)
     return () => this.hostListeners.delete(fn)
   }
+  connectHost() { return this.host.connect() }
   event(event: HostEvent) { for (const listener of this.hostListeners) listener(event) }
   private api?: ToolCatalog
 

@@ -19,37 +19,74 @@ function tracked(model: ChatGPTSignInModel) {
   return Object.assign(model, { settled: () => pending, statusRead: () => status })
 }
 const account = { clientId: 'fixture', email: 'fixture@example.com', signedIn: true, planEnabled: true, active: true }
-function fixture(local = true) {
-  let welcomed = false
+function fixture(local = true, welcomed = false) {
   let outcome: 'success' | 'no-plan' | 'cancelled' | 'failed' | 'pending' = 'success'
   let state: ChatGPTState = { accounts: [], signingIn: false, outcome: null, usageURL: 'https://chatgpt.com/settings/usage' }
+  const attempts = new Map<string, ChatGPTState>()
   const calls: { path: string; body: any }[] = []
   const opened: string[] = []
   const tab = { opener: {}, location: { href: '' }, close() {} }
+  let nextAttempt = 0
+  type Event = { type: string; message?: string }
+  const listeners = new Set<(event: Event) => void>()
+  const observe = (fn: (event: Event) => void) => {
+    listeners.add(fn)
+    return () => { listeners.delete(fn) }
+  }
+  const finish = (result: Exclude<typeof outcome, 'pending'>) => {
+    const ok = result === 'success' || result === 'no-plan'
+    state = { ...state, signingIn: false,
+      accounts: ok ? [{ ...account, planEnabled: result === 'success' }] : [],
+      outcome: { ok, clientId: ok ? account.clientId : undefined,
+        message: result, welcome: result === 'success' && !welcomed ? account.clientId : undefined } }
+    attempts.set(state.attemptId!, state)
+  }
+  const notify = (type: string, message?: string) => {
+    for (const fn of listeners) fn({ type, message })
+  }
   const request = (async (path: string, body?: any) => {
     calls.push({ path, body })
     if (path === '/api/chatgpt/signin') {
-      state = { ...state, signingIn: true, outcome: null }
-      return { url: 'https://fixture.invalid/authorize' }
+      const attemptId = String(++nextAttempt)
+      state = { ...state, signingIn: true, attemptId, outcome: null }
+      attempts.set(attemptId, state)
+      if (outcome !== 'pending') finish(outcome)
+      return { url: 'https://fixture.invalid/authorize', attemptId }
     }
-    if (path === '/api/chatgpt/cancel') { outcome = 'cancelled'; return state }
+    if (path === '/api/chatgpt/cancel') {
+      assert.equal(body.attemptId, state.attemptId)
+      finish('cancelled')
+      return {}
+    }
     if (path === '/api/chatgpt/welcomed') {
       assert.equal(body.clientId, account.clientId)
       welcomed = true
-      state = { ...state, outcome: { ...state.outcome!, welcome: undefined } }
-      return state
+      for (const [id, value] of attempts) {
+        if (value.outcome?.welcome === body.clientId)
+          attempts.set(id, { ...value, outcome: { ...value.outcome, welcome: undefined } })
+      }
+      state = attempts.get(state.attemptId!)!
+      return {}
+    }
+    if (path.startsWith('/api/chatgpt?')) {
+      const id = new URL(path, 'http://fixture').searchParams.get('attemptId')!
+      assert.ok(attempts.has(id))
+      return { ...attempts.get(id), accounts: state.accounts }
     }
     assert.equal(path, '/api/chatgpt')
-    if (state.signingIn && outcome !== 'pending') {
-      const ok = outcome === 'success' || outcome === 'no-plan'
-      state = { ...state, signingIn: false,
-        accounts: ok ? [{ ...account, planEnabled: outcome === 'success' }] : [],
-        outcome: { ok, message: outcome, welcome: outcome === 'success' && !welcomed ? account.clientId : undefined } }
-    }
     return state
   }) as typeof api
-  return { request, calls, opened, setOutcome(v: typeof outcome) { outcome = v },
-    model: () => tracked(new ChatGPTSignInModel(local, request, ((url: string) => { opened.push(url); return tab }) as never)) }
+  return { request, observe, calls, opened, finish, notify, setOutcome(v: typeof outcome) { outcome = v },
+    setAccounts(accounts: ChatGPTState['accounts']) { state = { ...state, accounts } },
+    failAttempt() {
+      attempts.set(state.attemptId!, { ...state, signingIn: false, outcome: { ok: false, message: 'Interrupted' } })
+      state = { ...state, signingIn: false, attemptId: undefined }
+    },
+    completeAndNotify(type: string) {
+      finish('success')
+      notify(type)
+    },
+    model: () => tracked(new ChatGPTSignInModel(local, request, ((url: string) => { opened.push(url); return tab }) as never, observe)) }
 }
 
 for (const host of ['localhost', '127.0.0.1', '[::1]', '::1']) assert.equal(chatGPTSignInIsLocal(host), true)
@@ -137,14 +174,125 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   assert.equal(model.message, 'cancelled')
   assert.equal(model.state?.signingIn, false)
 }
+// A callback that arrives after the begin response is observed through
+// the event stream. Reconnecting also recovers a missed completion.
+for (const type of ['chatgptChanged', 'reconnected', 'eventsConnected']) {
+  const f = fixture(), model = f.model()
+  f.setOutcome('pending')
+  await model.mount()
+  model.signIn()
+  await model.settled()
+  assert.equal(model.state.signingIn, true)
+  f.completeAndNotify(type)
+  await model.statusRead()
+  assert.equal(model.state.signingIn, false)
+  assert.equal(model.state.outcome?.welcome, account.clientId)
+  model.dispose()
+}
+// Tab A keeps its outcome even after tab B starts the next sign-in.
+for (const welcomed of [true, false]) {
+  const f = fixture(true, welcomed), a = f.model(), b = f.model()
+  let connected = 0
+  a.onConnected = () => { connected++ }
+  await a.mount()
+  f.setOutcome('pending')
+  a.signIn()
+  await a.settled()
+  const attempt = a.state.attemptId
+  f.finish('success')
+  await b.reload()
+  b.signIn()
+  await b.settled()
+  f.notify('chatgptChanged')
+  await a.statusRead()
+  assert.ok(f.calls.some(c => c.path === `/api/chatgpt?attemptId=${attempt}`))
+  assert.equal(a.state.attemptId, b.state.attemptId)
+  assert.equal(a.state.signingIn, true)
+  assert.equal(a.url, undefined)
+  assert.equal(a.message, 'success')
+  if (!welcomed) {
+    assert.equal(connected, 0)
+    assert.equal(a.state.outcome?.welcome, account.clientId)
+    await a.welcomed(false)
+  }
+  assert.equal(connected, 1)
+  a.dispose()
+  assert.equal(b.state.signingIn, true)
+  assert.ok(!f.calls.some(c => c.path.endsWith('/cancel')))
+  await b.cancel()
+}
+// Selecting an account can return after the callback has completed.
+{
+  const f = fixture()
+  const selected = Promise.withResolvers<void>(), respond = Promise.withResolvers<void>()
+  const request = (async (path: string, body?: any) => {
+    if (path === '/api/chatgpt/select') {
+      const pending = await f.request('/api/chatgpt')
+      selected.resolve()
+      await respond.promise
+      return pending
+    }
+    return f.request(path, body)
+  }) as typeof api
+  const model = tracked(new ChatGPTSignInModel(true, request, (() => null) as never, f.observe))
+  await model.mount()
+  f.setOutcome('pending')
+  model.signIn()
+  await model.settled()
+  const action = model.updateAccount('select', account.clientId)
+  await selected.promise
+  f.completeAndNotify('chatgptChanged')
+  await model.statusRead()
+  assert.equal(model.state.signingIn, false)
+  respond.resolve()
+  await action
+  assert.equal(model.state.signingIn, false)
+  assert.equal(model.state.outcome?.welcome, account.clientId)
+  model.dispose()
+}
+// A follow-up setup action can fail after an event delivers sign-in success.
+{
+  const f = fixture(true, true), model = f.model()
+  await model.mount()
+  f.setOutcome('pending')
+  model.onConnected = () => { throw new Error('Setup could not be saved') }
+  model.signIn()
+  await model.settled()
+  f.completeAndNotify('chatgptChanged')
+  await model.settled()
+  assert.match(model.message!, /Setup could not be saved/)
+  assert.equal(model.state.signingIn, false)
+  model.dispose()
+}
+// The stream can fail to reattach once. A later authenticated stream
+// resynchronizes and clears a pending attempt lost on Host restart.
+{
+  const f = fixture(), model = f.model()
+  await model.mount()
+  f.setOutcome('pending')
+  model.signIn()
+  await model.settled()
+  f.notify('hostUnavailable', 'Host unavailable')
+  assert.ok(model.connectionError)
+  f.failAttempt()
+  f.notify('reconnected')
+  await model.statusRead()
+  assert.equal(model.state.signingIn, false)
+  assert.equal(model.connectionError, undefined)
+  assert.equal(model.url, undefined)
+  assert.equal(model.message, 'Interrupted')
+  model.dispose()
+}
 // A slow initial status read cannot re-enable sign-in while begin is pending.
 {
   const f = fixture()
-  let begin!: (value: { url: string }) => void
+  f.setOutcome('pending')
+  let begin!: () => void
   const request = (async (path: string, body?: any) => {
     if (path === '/api/chatgpt/signin') {
-      await f.request(path, body)
-      return new Promise(resolve => { begin = resolve })
+      const result = await f.request(path, body)
+      await new Promise<void>(resolve => { begin = resolve })
+      return result
     }
     return f.request(path, body)
   }) as typeof api
@@ -156,7 +304,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   model.signIn()
   assert.equal(f.calls.filter(c => c.path.endsWith('/signin')).length, 1)
   await model.cancel()
-  begin({ url: 'https://fixture.invalid/authorize' })
+  begin()
   await model.settled()
   assert.equal(model.message, 'cancelled')
   assert.equal(model.state.signingIn, false)
@@ -176,7 +324,7 @@ for (const beginPending of [false, true]) {
     return result
   }) as typeof api
   const tab = { opener: {}, location: { href: '' }, closed: false, close() { this.closed = true } }
-  const model = tracked(new ChatGPTSignInModel(true, request, (() => tab) as never))
+  const model = tracked(new ChatGPTSignInModel(true, request, (() => tab) as never, f.observe))
   let mounted!: ReturnType<typeof create>
   act(() => {
     mounted = create(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail('unmounted setup completed')} />)
@@ -269,9 +417,16 @@ for (const beginPending of [false, true]) {
   const f = fixture()
   f.setOutcome('pending')
   const model = f.model()
-  model.setState({ ...model.state, accounts: [{ ...account, signedIn: false }] })
-  const ui = create(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  f.setAccounts([account])
+  let ui!: ReturnType<typeof create>
+  act(() => {
+    ui = create(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  })
+  await model.statusRead()
   try {
+    f.setAccounts([{ ...account, signedIn: false }])
+    f.notify('chatgptChanged')
+    await model.statusRead()
     assert.equal(model.state?.accounts.find(a => a.clientId === account.clientId)?.signedIn, false)
     const signIn = ui.root.findAllByType(ChatGPTButton).find(button => {
       const row = button.parent

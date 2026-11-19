@@ -301,10 +301,10 @@ struct Settings::State {
   std::map<std::string, std::string> latest;
   KeyStorage storage;
   Models models;
-  std::function<void(const std::string&)> provider_changed;
+  std::function<void(std::string)> publish;
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
-        Models model_list, std::function<void(const std::string&)> changed)
+        Models model_list, std::function<void(std::string)> event_sink)
       : directory(dir),
         db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
@@ -313,7 +313,7 @@ struct Settings::State {
         forget(std::move(f)),
         storage(key_storage),
         models(std::move(model_list)),
-        provider_changed(std::move(changed)) {
+        publish(std::move(event_sink)) {
     ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
     db.exec(
         "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
@@ -364,6 +364,13 @@ struct Settings::State {
     if (!q.step()) throw std::runtime_error("Unknown ChatGPT account");
     return j::Object(q.text(0));
   }
+  template <typename Event>
+  auto Publish(const std::string& profile) -> void {
+    if (!publish) return;
+    Event event;
+    event.profile = profile;
+    publish(agent::wire::HostEvent(std::move(event)));
+  }
   auto SaveAccount(const std::string& profile, const std::string& id,
                    const j::Members& value) -> void {
     const auto encoded = j::Encode(value);
@@ -372,7 +379,7 @@ struct Settings::State {
     if (old.step() && old.text(0) == encoded) return;
     auto q = db.prepare("INSERT OR REPLACE INTO accounts VALUES(?,?,?)");
     q.bind(1, profile).bind(2, id).bind(3, encoded).run();
-    if (provider_changed) provider_changed(profile);
+    Publish<H::ProviderChangedT>(profile);
   }
   auto MemoryKey(const std::string& profile, const std::string& id)
       -> std::pair<std::string, std::string> {
@@ -441,13 +448,17 @@ struct Settings::State {
                               : attempt;
     if (!selected.empty()) {
       const auto it = attempts.find(selected);
-      if (it == attempts.end() || it->second->profile != profile)
-        throw std::runtime_error("Unknown sign-in attempt");
-      const auto& a = *it->second;
-      out.attempt_id = a.id;
-      out.state = a.state;
-      out.message = a.message;
-      out.welcome = a.welcome;
+      if (it == attempts.end() || it->second->profile != profile) {
+        out.state = "failed";
+        out.message = "Sign-in was interrupted; try again";
+      } else {
+        const auto& a = *it->second;
+        out.attempt_id = a.id;
+        out.state = a.state;
+        out.message = a.message;
+        out.welcome = a.welcome;
+        if (a.state == "complete") out.client_id = a.client;
+      }
     }
     auto q = db.prepare(
         "SELECT id,json FROM accounts WHERE profile=? ORDER BY rowid");
@@ -460,9 +471,9 @@ struct Settings::State {
       a->signed_in = j::Bool(j::Get(v, "signed_in"));
       a->plan_enabled = j::Bool(j::Get(v, "plan_enabled"));
       a->active = j::Bool(j::Get(v, "active"));
-      if (a->active && !a->signed_in) {
-        if (out.state == "idle" || out.state == "complete")
-          out.state = "needs_sign_in";
+      if (!a->signed_in &&
+          ((a->active && out.state == "idle") || a->client_id == out.client_id)) {
+        out.state = "needs_sign_in";
         out.message = "Sign in to ChatGPT again";
       }
       out.accounts.push_back(std::move(a));
@@ -483,6 +494,11 @@ struct Settings::State {
   auto Begin(const H::SignInBeginRequest& p) -> H::SignInBeginT {
     auto a = std::make_shared<Attempt>();
     a->profile = p.profile()->str();
+    if (const auto current = latest.find(a->profile); current != latest.end()) {
+      const auto& state = attempts.at(current->second)->state;
+      if (state == "pending" || state == "committing")
+        throw std::runtime_error("Sign-in is already in progress");
+    }
     a->id = crypto::uuid4();
     a->client = Text(p.client_id());
     a->issuer = Text(p.issuer());
@@ -695,11 +711,13 @@ struct Settings::State {
           a->socket = -1;
         }
         std::lock_guard guard(mutex);
-        a->state = stop.stop_requested() ? "cancelled" : "failed";
-        a->message = stop.stop_requested() ? "Sign-in cancelled"
-                                           : "Sign-in failed; try again";
+        if (a->state == "cancelled") return;
+        a->state = "failed";
+        a->message = "Sign-in failed; try again";
       }
+      Publish<H::SignInChangedT>(a->profile);
     });
+    Publish<H::SignInChangedT>(a->profile);
     H::SignInBeginT out;
     out.attempt_id = a->id;
     out.url = a->issuer + "/api/accounts/authorize?" + Form(query);
@@ -709,10 +727,10 @@ struct Settings::State {
 Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
                    std::unique_ptr<SecretStore> store, KeyStorage storage,
                    Models models,
-                   std::function<void(const std::string&)> provider_changed)
+                   std::function<void(std::string)> publish)
     : state_(std::make_unique<State>(
           d, std::move(i), std::move(t), std::move(f), std::move(store),
-          storage, std::move(models), std::move(provider_changed))) {}
+          storage, std::move(models), std::move(publish))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
   switch (type) {
@@ -891,7 +909,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   "Ephemeral provisioning accepts only a key");
             s.ephemeral[memory_key] = p.provider()->api_key()->str();
           }
-          if (changed && s.provider_changed) s.provider_changed(profile);
+          if (changed) s.Publish<H::ProviderChangedT>(profile);
           return agent::wire::HostReply(id,
                                         s.ProviderStatus(profile, provider));
         }
@@ -927,11 +945,10 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           q.bind(1, profile).bind(2, provider).bind(3, j::Encode(value)).run();
         }
         const auto after = s.ProviderStatus(profile, provider);
-        if (s.provider_changed && (before.configured != after.configured ||
-                                   before.message != after.message ||
-                                   before.endpoint != after.endpoint ||
-                                   before.source != after.source))
-          s.provider_changed(profile);
+        if (before.configured != after.configured ||
+            before.message != after.message ||
+            before.endpoint != after.endpoint || before.source != after.source)
+          s.Publish<H::ProviderChangedT>(profile);
         return agent::wire::HostReply(id, after);
       }
       case H::RequestPayload::ProviderStatusRequest: {
@@ -988,6 +1005,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           } else
             throw std::runtime_error("Unknown sign-in action");
         }
+        s.Publish<H::SignInChangedT>(profile);
         auto out = s.Status(profile, attempt);
         out.revoked = revoked;
         return agent::wire::HostReply(id, std::move(out));
