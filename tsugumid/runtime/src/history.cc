@@ -396,14 +396,28 @@ CREATE TABLE IF NOT EXISTS receipts(
   db.exec("PRAGMA user_version=" + std::to_string(kHistoryVersion));
 }
 
-sql::Db& History::reader() {
-  std::lock_guard<std::mutex> l(rmu_);
-  auto& slot = readers_[std::this_thread::get_id()];
-  if (!slot) {
-    slot = std::make_unique<sql::Db>(path_.string(), true);
-    slot->exec("PRAGMA query_only=ON");
+History::ReaderLease History::acquire_reader() {
+  std::unique_ptr<sql::Db> db;
+  {
+    std::lock_guard<std::mutex> l(rmu_);
+    if (!reader_pool_.empty()) {
+      db = std::move(reader_pool_.back());
+      reader_pool_.pop_back();
+    }
   }
-  return *slot;
+  if (!db) {
+    db = std::make_unique<sql::Db>(path_.string(), true);
+    db->exec("PRAGMA query_only=ON");
+  }
+  return ReaderLease{this, std::move(db)};
+}
+
+void History::release_reader(std::unique_ptr<sql::Db> db) {
+  std::lock_guard<std::mutex> l(rmu_);
+  constexpr size_t kMaxIdleReaders = 16;
+  if (reader_pool_.size() < kMaxIdleReaders) {
+    reader_pool_.push_back(std::move(db));
+  }
 }
 
 void History::submit(Work work, std::function<void(bool)> done) {

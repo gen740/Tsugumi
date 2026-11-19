@@ -33,7 +33,7 @@
     {
       "id": "ruby-pipeline",
       "title": "Python → Ruby → C++",
-      "field": "基本を学ぶ",
+      "field": "基本の機能を知る",
       "description": "整数を三つの言語で受け渡す。Ruby の factor を変更し、結果を確かめる。",
       "path": "ruby-pipeline",
       "tags": [
@@ -99,7 +99,7 @@
     {
       "id": "casa-draft",
       "title": "Cas A · Chandra RGB（Draft）",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "description": "同じ構成を Draft だけで示す。開始 Card と、各ステップの入出力を記した 3 つの Draft を並べており、Agent の「Card を生成」でそのまま実装できる。",
       "path": "casa-draft",
       "tags": [
         "Draft",
@@ -129,7 +129,7 @@
     {
       "id": "gw150914-draft",
       "title": "GW150914 · 重力波（Draft）",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "description": "同じ構成を Draft だけで示す。開始 Card と、各ステップの入出力を記した 3 つの Draft を並べており、Agent の「Card を生成」でそのまま実装できる。",
       "path": "gw150914-draft",
       "tags": [
         "Draft",
@@ -159,7 +159,7 @@
     {
       "id": "protein-6lu7-draft",
       "title": "6LU7 · タンパク質と結合ポケット（Draft）",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "description": "同じ構成を Draft だけで示す。開始 Card と、各ステップの入出力を記した 3 つの Draft を並べており、Agent の「Card を生成」でそのまま実装できる。",
       "path": "protein-6lu7-draft",
       "tags": [
         "Draft",
@@ -189,7 +189,7 @@
     {
       "id": "exoplanet-transit-draft",
       "title": "Kepler-6 b · 系外惑星トランジット（Draft）",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "description": "同じ構成を Draft だけで示す。開始 Card と、各ステップの入出力を記した 3 つの Draft を並べており、Agent の「Card を生成」でそのまま実装できる。",
       "path": "exoplanet-transit-draft",
       "tags": [
         "Draft",
@@ -219,7 +219,7 @@
     {
       "id": "seismic-trench-draft",
       "title": "日本海溝 · 震源断面と b 値（Draft）",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Card を生成\".",
+      "description": "同じ構成を Draft だけで示す。開始 Card と、各ステップの入出力を記した 3 つの Draft を並べており、Agent の「Card を生成」でそのまま実装できる。",
       "path": "seismic-trench-draft",
       "tags": [
         "Draft",
@@ -440,7 +440,7 @@
     {
       "id": "dynamics-draft",
       "title": "力学系ギャラリー（Draft）",
-      "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each.",
+      "description": "6 つの独立した計算（Lorenz・Mandelbrot・ロジスティック写像・ライフゲーム・Gray–Scott・二重振り子）を設定だけ共有する Draft として並べる。Agent の「Card を生成」でヘルパーに手分けして同時に実装できる。",
       "path": "dynamics-draft",
       "tags": [
         "Draft",
@@ -453,7 +453,7 @@
     {
       "id": "mnist-classifiers-draft",
       "title": "MNIST · 分類器くらべ（Draft）",
-      "description": "Real MNIST digits are loaded and subsampled, and seven classifiers (kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a CNN) wait as Drafts with a shared output type, each in its own Nix environment: the Agent's \"Card を生成\" hands them to helpers that write them at the same time, a bird each, and then writes the comparison.",
+      "description": "本物の MNIST を読み込んで部分抽出し、共通の出力型を持つ 7 つの分類器（kNN・ロジスティック回帰・RBF SVM・ランダムフォレスト・勾配ブースティング・MLP・CNN）をそれぞれの Nix 環境の Draft として並べる。Agent の「Card を生成」でヘルパーが手分けして同時に実装し、比較までまとめる。",
       "path": "mnist-classifiers-draft",
       "tags": [
         "Draft",
@@ -471,7 +471,7 @@
     {
       "id": "csharp-calibration",
       "title": "言語をまたぐ校正（C#）",
-      "field": "基本を学ぶ",
+      "field": "基本の機能を知る",
       "description": "C++ → C# → Python を型付きポートで接続。校正係数を変え、CSV と集計を確認します。",
       "path": "csharp-calibration",
       "tags": [
@@ -479,7 +479,7 @@
         "C++",
         "Python",
         "NuGet",
-        "Artifacts"
+        "成果物"
       ]
     },
     {
@@ -489,8 +489,8 @@
       "description": "型付きの測定値を集計して3種類の図を作り、PNG・SVG・PDFと描いた値をオフラインのレポートへ渡します。",
       "tags": [
         "Python",
-        "Visualization",
-        "Artifacts"
+        "可視化",
+        "成果物"
       ],
       "field": "プログラミングと可視化"
     },
@@ -502,7 +502,7 @@
       "tags": [
         "Python",
         "marimo",
-        "Artifacts"
+        "成果物"
       ],
       "field": "プログラミングと可視化"
     },
@@ -510,13 +510,13 @@
       "id": "r-reports",
       "path": "r-reports",
       "title": "R レポート: R Markdown と Quarto",
-      "field": "基本を学ぶ",
+      "field": "基本の機能を知る",
       "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
       "tags": [
         "R",
         "Quarto",
         "R Markdown",
-        "Artifacts"
+        "成果物"
       ]
     },
     {
@@ -528,7 +528,7 @@
         "R",
         "Quarto",
         "R Markdown",
-        "Artifacts",
+        "成果物",
         "Draft"
       ],
       "agentExclude": [
@@ -546,7 +546,7 @@
         "Python",
         "C++"
       ],
-      "field": "基本を学ぶ"
+      "field": "基本の機能を知る"
     },
     {
       "id": "go-pipeline-draft",
@@ -575,7 +575,7 @@
         "Python",
         "C++"
       ],
-      "field": "基本を学ぶ"
+      "field": "基本の機能を知る"
     },
     {
       "id": "rust-pipeline-draft",
