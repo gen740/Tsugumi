@@ -61,6 +61,7 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
+  private presetOutputs?: string
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -120,7 +121,15 @@ export class CardEditorModel extends Observable {
     if (value === 'input' || value === 'input_bool') {
       const files = inputTemplates[value]
       this.definition = parse(files['_card.json'])
-      this.createFile('_outputs.fbs', files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card'))
+      const p = this.outputsPath
+      if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
+        const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
+        if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
+          const outputs = files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card')
+          this.createFile('_outputs.fbs', outputs)
+          this.presetOutputs = outputs
+        }
+      }
     } else if (value === 'draft') this.definition = obj([['template', 'draft']])
     else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
     else this.definition = obj([['template', value]])
@@ -157,6 +166,7 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
+    this.presetOutputs = undefined
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -288,6 +298,7 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
+    if (p === this.outputsPath) this.presetOutputs = undefined
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -301,6 +312,7 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
+    if (p === this.outputsPath || target === this.outputsPath) this.presetOutputs = undefined
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)

@@ -56,6 +56,7 @@ assert.equal(session.inlineParams(card)[0].value, 'true')
 
 const draft = await session.addCard('draft', [], { x: 100, y: 0 })
 const draftEditor = new CardEditorModel(session, draft)
+draftEditor.implementAs('input')
 draftEditor.implementAs(preset.id)
 assert.equal(draftEditor.implementation, preset.id)
 assert.equal(await draftEditor.apply(), true)
@@ -63,6 +64,28 @@ assert.deepEqual(session.inlineParams(draft), [{ name: 'value', type: 'bool', va
 const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
   .replace(/^namespace .*;\n/, ''))
 assert.equal(await outputSchema(draft), await outputSchema(card))
+
+const customDraft = await session.addCard('draft', [], { x: 200, y: 0 })
+const original = 'table Value { value:bool; } table Outputs { custom:Value (required); } root_type Outputs;'
+const sourceEditor = new CardEditorModel(session, customDraft)
+sourceEditor.createFile('_outputs.fbs', original)
+assert.equal(await sourceEditor.apply(), true)
+
+const existingEditor = new CardEditorModel(session, customDraft)
+const schemaPath = existingEditor.outputsPath!
+existingEditor.implementAs('input')
+existingEditor.implementAs(preset.id)
+assert.equal(await existingEditor.apply(), true)
+assert.equal(await session.sourceText(schemaPath), original)
+
+const freshDraft = await session.addCard('draft', [], { x: 300, y: 0 })
+const freshEditor = new CardEditorModel(session, freshDraft)
+freshEditor.implementAs('input')
+const localSchema = original.replace('custom:', 'unsaved:')
+freshEditor.setText(freshEditor.outputsPath!, localSchema)
+freshEditor.implementAs(preset.id)
+assert.equal(await freshEditor.apply(), true)
+assert.equal(await session.sourceText(freshEditor.outputsPath!), localSchema)
 
 // Routing ports shrink with the body. At 20%, the old 16px target covered the
 // start's title and the branch's centre, stealing a body drag to start a wire.

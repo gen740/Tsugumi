@@ -703,6 +703,7 @@ private final class CountingRuler: LineNumberRuler {
   #expect(session.kind("plan") == .draft)
   #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
 
+  editor.implementAs("input")
   editor.implementAs(DefinitionTemplate.booleanInput.rawValue)
   #expect(editor.kind == .input)
   #expect(editor.implementation == DefinitionTemplate.booleanInput.rawValue)
@@ -711,6 +712,10 @@ private final class CountingRuler: LineNumberRuler {
   #expect(flag["data"]?.bool == false)
   let schema = try #require(editor.texts["definitions/plan/_outputs.fbs"])
   #expect(schema.contains("value:bool"))
+  let local = "table Value { value:double; } table Outputs { custom:Value; } root_type Outputs;"
+  editor.texts["definitions/plan/_outputs.fbs"] = local
+  editor.implementAs("input")
+  #expect(editor.texts["definitions/plan/_outputs.fbs"] == local)
 }
 
 

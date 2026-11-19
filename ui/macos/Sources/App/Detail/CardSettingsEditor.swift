@@ -35,6 +35,7 @@ final class CardEditorModel {
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
+  private var presetOutputs: String?
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
 
   init(session: ProjectSession, cardKey: CardKey) {
@@ -102,7 +103,14 @@ final class CardEditorModel {
           throw CocoaError(.fileReadCorruptFile)
         }
         definition = try JSONValue.parse(card)
-        createFile("_outputs.fbs", text: outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card"))
+        if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
+          let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
+          if untouched || (!created.contains(p) && texts[p] == nil) {
+            let schema = outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card")
+            createFile("_outputs.fbs", text: schema)
+            presetOutputs = schema
+          }
+        }
       } catch {
         message = error.localizedDescription
       }
@@ -138,6 +146,7 @@ final class CardEditorModel {
     baseMeta = meta
     texts = [:]
     baseTexts = [:]
+    presetOutputs = nil
     baseHashes = [:]
     loads = [:]
     for (p, t) in keep {
@@ -260,6 +269,7 @@ final class CardEditorModel {
   func createFile(_ rel: String, text: String = "") {
     guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
+    if p == outputsPath { presetOutputs = nil }
     removed.remove(p)
     created.insert(p)
     if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
@@ -272,6 +282,7 @@ final class CardEditorModel {
   func rename(_ p: String, to rel: String) async -> Bool {
     let target = prefix + rel
     if target == p { return true }
+    if p == outputsPath || target == outputsPath { presetOutputs = nil }
     let origin = renames[p] ?? p
     let hash = baseHashes[p] ?? session.sources[origin]?.hash
     let text = texts[p], base = baseTexts[p], load = loads[p]
