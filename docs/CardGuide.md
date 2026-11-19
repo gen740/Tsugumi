@@ -233,7 +233,7 @@ R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker
 
 Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The worker uses `NaN`, `Infinity` and `-Infinity` in its JSON conversion. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
 
-The worker validates the returned Outputs buffer, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
+The worker validates each emitted output against its port type, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
 
 File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time. Python, R and Julia cancellation/deadline callbacks expire with their invocation; retaining a Run does not give it access to a later invocation.
 
@@ -471,10 +471,11 @@ See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks
 ### Native Card ABI
 
 Every package provides `lib/main.so` with one exported entry, `tsugumi_main`.
-ABI 7 passes the generated `_inputs.fbs` and `_params.fbs` FlatBuffers to that
-entry. File and Directory inputs carry paths. The run phase returns one
-`_outputs.fbs` FlatBuffer. The worker's separate function table provides
-presentation, logging, cancellation, deadlines, structured failures and typed
+ABI 8 exposes each input and output as a separate FlatBuffer through
+the function table. Each buffer uses that port's message type. File and
+Directory messages carry paths. Parameters arrive as a `parameters.Params`
+FlatBuffer from `_params.fbs`. The function table also provides one display
+callback, logging, cancellation, deadlines, structured failures and typed
 JSON conversion. The same entry handles interpreter preparation, source
 loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
 

@@ -588,12 +588,12 @@ public sealed class Card : ICard {
 #include <string.h>
 #include <unistd.h>
 static int calls;
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char display[80];
   snprintf(display, sizeof display, "{\\"text\\":\\"call %d\\"}", ++calls);
-  c->effects->display_json(c->host, display);
-  if (calls != 2) return c->effects->outputs_json(c->host, "{}", outputs);
+  c->effects->display(c->host, TSUGUMI_DISPLAY_JSON, display);
+  if (calls != 2) return 0;
   const char* params = c->effects->params_json(c->host);
   if (!params) return 1;
   if (strstr(params, "\\"fail\\"")) {
@@ -601,7 +601,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     return 1;
   }
   while (!c->effects->cancelled(c->host)) usleep(10000);
-  return c->effects->outputs_json(c->host, "{}", outputs);
+  return 0;
 }
 '''),
 }

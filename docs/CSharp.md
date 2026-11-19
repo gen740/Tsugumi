@@ -39,7 +39,7 @@ public sealed class Card : ICard {
 }
 ```
 
-The exact types come from the resolved Card contract: `inputs.<port>.<namespace>.<Table>T`, `outputs.<port>.<namespace>.<Table>T`, and `params.ParamsT`. Optional ports return nullable objects; check them before use. Scalar parameters are nullable, so choose a fallback or report a missing value explicitly. C# namespaces use verbatim identifiers when needed (`@params`). Unions use FlatBuffers' generated union object API. Core validation still checks every emitted message.
+The exact types come from the resolved Card contract: `inputs.<port>.<namespace>.<Table>T`, `outputs.<port>.<namespace>.<Table>T`, and `parameters.ParamsT`. Optional ports return nullable objects; check them before use. Scalar parameters are nullable, so choose a fallback or report a missing value explicitly. Unions use FlatBuffers' generated union object API. Core validation still checks every emitted message.
 
 Implement an instance `ICard.RunAsync` returning exactly `ValueTask<Tsugumi.Outputs>`, using this Card's generated types. Trailing roles may be omitted, but requesting `Run` requires `(Inputs inputs, Report report, Run run)`. A method with a different signature can compile without implementing the interface's entry point; the runtime diagnostic lists the candidates and why they were rejected.
 
@@ -64,7 +64,7 @@ The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineCha
 
 ## The native boundary
 
-`sdk/csharp/InvocationScope.cs` mirrors the native ABI structs in `sdk/include/tsugumi/sdk/abi.h`, including `tsugumi_call`, `tsugumi_buffer` and the separate `tsugumi_host` callback table. During source loading, the C++ host passes its compiler's `offsetof` and `sizeof` values and the managed SDK checks them before calling the Card. Layout errors name the field in the Card's log. `tests/static/test_csharp_abi.py` checks the mirrors without .NET.
+`sdk/csharp/InvocationScope.cs` mirrors the native ABI structs in `sdk/include/tsugumi/sdk/abi.h`, including `tsugumi_call`, the display descriptors and the `tsugumi_host` callback table. During source loading, the C++ host passes its compiler's `offsetof` and `sizeof` values and the managed SDK checks them before calling the Card. Layout errors name the field in the Card's log.
 
 ## NuGet packages
 

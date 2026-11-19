@@ -847,7 +847,7 @@ bool json_to_flatbuffer(const Type& t, const std::string& json,
 
 std::string params_schema(
     const std::vector<std::pair<std::string, std::string>>& fields) {
-  std::string text = "namespace params;\ntable Params {\n";
+  std::string text = "namespace parameters;\ntable Params {\n";
   int id = 0;
   for (const auto& [name, type] : fields) {
     bool scalar =

@@ -754,23 +754,29 @@ std::string worker_call_frame(
     const std::string& params, const std::vector<types::PortType>& outputs,
     const std::string& work, const std::string& tmp, const std::string& out,
     const std::vector<std::pair<std::string, std::string>>& env,
-    std::optional<uint64_t> deadline_ms, const std::string& input_schema,
-    const std::string& output_schema) {
+    std::optional<uint64_t> deadline_ms) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) {
     return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size());
   };
+  // The Card reads each nested message in place.
+  auto message = [&](const std::string& s) {
+    b.ForceVectorAlignment(s.size(), sizeof(uint8_t),
+                           FLATBUFFERS_MAX_ALIGNMENT);
+    return bytes(s);
+  };
   std::vector<flatbuffers::Offset<W::WorkerInput>> ins;
   for (const auto& v : inputs) {
-    auto data = D::CreateFlatBufferData(b, bytes(v.type->bfbs),
-                                        b.CreateString(v.type->root_type),
-                                        bytes(v.bytes));
+    auto payload = message(v.bytes);
+    auto data = D::CreateFlatBufferData(
+        b, bytes(v.type->bfbs), b.CreateString(v.type->root_type), payload);
     ins.push_back(
         W::CreateWorkerInput(b, b.CreateString(v.name), v.kind, data));
   }
   auto insv = b.CreateVector(ins);
-  auto pdata = D::CreateFlatBufferData(
-      b, bytes(params_bfbs), b.CreateString(params_root), bytes(params));
+  auto payload = message(params);
+  auto pdata = D::CreateFlatBufferData(b, bytes(params_bfbs),
+                                       b.CreateString(params_root), payload);
   std::vector<flatbuffers::Offset<D::Port>> outs;
   for (const auto& p : outputs) outs.push_back(wire::port(b, p));
   auto outsv = b.CreateVector(outs);
@@ -784,8 +790,6 @@ std::string worker_call_frame(
   auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
-  auto input_catalog = b.CreateString(input_schema);
-  auto output_catalog = b.CreateString(output_schema);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -797,8 +801,6 @@ std::string worker_call_frame(
   cb.add_temporary_directory(t);
   if (!out.empty()) cb.add_output_directory(o);
   cb.add_environment(evv);
-  cb.add_input_schema(input_catalog);
-  cb.add_output_schema(output_catalog);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);

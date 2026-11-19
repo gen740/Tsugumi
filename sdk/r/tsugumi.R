@@ -119,10 +119,13 @@
       if (!(count %in% 1:3)) stop("Card functions take inputs, optionally report and run")
       result <- do.call(function_, arguments$roles[seq_len(count)])
     }
-    if (hook) return(TRUE)
-    if (is.null(result) || (is.list(result) && !length(result))) return("{}")
+    if (hook || is.null(result) || (is.list(result) && !length(result))) return(TRUE)
     if (!is.list(result) || is.null(names(result))) stop("return a named list of output ports")
-    as.character(arguments$to_json(result))
+    for (index in seq_along(result)) {
+      json <- as.character(arguments$to_json(result[[index]]))
+      if (!.Call("tsugumi_output", names(result)[[index]], json)) return(FALSE)
+    }
+    TRUE
   }, error = function(error) {
     .Call("tsugumi_fail", conditionMessage(error))
     FALSE

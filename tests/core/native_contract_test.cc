@@ -43,9 +43,6 @@ class NativeContract : public testing::Test {
     request.card->segments = {"card"};
     request.invocation = 1;
     request.params = std::make_unique<D::FlatBufferDataT>();
-    request.output_schema =
-        "namespace sample; table Output { value:string (required); } "
-        "table Outputs { first:Output; second:Output; } root_type Outputs;";
     request.working_directory = directory;
     request.temporary_directory = directory;
     for (const auto* name : {"first", "second"}) {
@@ -63,6 +60,7 @@ class NativeContract : public testing::Test {
     call.card = "card";
     call.run_id = "run";
     call.call_id = 1;
+    call.phase = TSUGUMI_RUN;
     g_call = &call;
   }
   void TearDown() override {
@@ -70,16 +68,11 @@ class NativeContract : public testing::Test {
     std::filesystem::remove_all(directory);
   }
   auto receive(const std::string& bytes) -> void {
-    tsugumi_buffer buffer{};
-    ASSERT_EQ(tsugumi_copy_outputs(&buffer, bytes.data(), bytes.size()), 0);
-    receive_outputs(buffer);
-    std::free(buffer.data);
+    output_impl(nullptr, "first",
+                reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
   }
-  auto receive_json(const std::string& json) -> void {
-    tsugumi_buffer buffer{};
-    ASSERT_EQ(outputs_json_impl(nullptr, json.c_str(), &buffer), 0);
-    receive_outputs(buffer);
-    std::free(buffer.data);
+  auto receive_json(const char* port, const std::string& json) -> void {
+    ASSERT_EQ(output_json_impl(nullptr, port, json.c_str()), 0);
   }
 };
 
@@ -88,28 +81,37 @@ TEST_F(NativeContract, InvalidReturnedBufferIsRejected) {
   EXPECT_TRUE(call.failure);
   EXPECT_TRUE(call.outputs.empty());
 }
+TEST_F(NativeContract, DuplicateOutputDoesNotReplaceTheFirstValue) {
+  receive_json("first", R"({"value":"original"})");
+  const auto original = call.outputs;
+  ASSERT_NE(output_json_impl(nullptr, "first", R"({"value":"replacement"})"),
+            0);
+  ASSERT_TRUE(call.failure);
+  EXPECT_EQ(call.failure->kind, D::FailureKind::output_invalid);
+  EXPECT_EQ(call.outputs, original);
+}
 TEST_F(NativeContract, OversizedReturnedBufferIsRejected) {
   receive(std::string(kMaxFrame + 1, 'x'));
   EXPECT_TRUE(call.failure);
   EXPECT_TRUE(call.outputs.empty());
 }
 TEST_F(NativeContract, CombinedOutputsMustFitOneResultFrame) {
-  const std::string value(8u << 20, 'a');
-  receive_json("{\"first\":{\"value\":\"" + value +
-               "\"},\"second\":{\"value\":\"" + value + "\"}}");
+  const std::string json =
+      "{\"value\":\"" + std::string((8u << 20) - 32, 'a') + "\"}";
+  receive_json("first", json);
+  receive_json("second", json);
   (void)finish_outputs(call);
   ASSERT_TRUE(call.failure);
   EXPECT_EQ(call.failure->kind, D::FailureKind::output_invalid);
 }
 TEST_F(NativeContract, ValidOutputAndOmittedOptionalCompletes) {
-  receive_json(R"({"first":{"value":"ok"}})");
+  receive_json("first", R"({"value":"ok"})");
   validate_required_outputs(call);
   EXPECT_FALSE(call.failure);
   ASSERT_EQ(call.outputs.size(), 1u);
   EXPECT_EQ(call.outputs[0].first, "first");
 }
 TEST_F(NativeContract, RequiredOutputIsCheckedOnReturn) {
-  receive_json("{}");
   validate_required_outputs(call);
   ASSERT_TRUE(call.failure);
   ASSERT_EQ(call.failure->args.size(), 1u);
@@ -159,9 +161,10 @@ TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   EXPECT_EQ(args, expected);
 }
 TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
-  ASSERT_NE(display_scalar_impl(nullptr, NAN, "value"), 0);
+  const tsugumi_call abi{.effects = &kEffects};
+  ASSERT_NE(tsugumi_display_scalar(&abi, NAN, "value"), 0);
   ASSERT_FALSE(call.failure);
-  receive_json(R"({"first":{"value":"ok"}})");
+  receive_json("first", R"({"value":"ok"})");
   validate_required_outputs(call);
   EXPECT_FALSE(call.failure);
 }
@@ -185,18 +188,19 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   ::rmdir(base.c_str());
 }
 TEST_F(NativeContract, MalformedDisplaysAreRejectedSynchronously) {
-  EXPECT_NE(display_scalar_impl(nullptr, INFINITY, "value"), 0);
-  EXPECT_NE(display_text_impl(nullptr, "\xff"), 0);
+  const tsugumi_call abi{.effects = &kEffects};
+  EXPECT_NE(tsugumi_display_scalar(&abi, INFINITY, "value"), 0);
+  EXPECT_NE(tsugumi_display_text(&abi, "\xff", 0), 0);
   EXPECT_NE(
-      display_image_impl(nullptr, "image/png",
-                         reinterpret_cast<const uint8_t*>("invalid"), 7, ""),
+      tsugumi_display_image(&abi, "image/png",
+                            reinterpret_cast<const uint8_t*>("invalid"), 7, ""),
       0);
-  EXPECT_NE(display_table_impl(nullptr, nullptr, 0, nullptr, 0), 0);
+  EXPECT_NE(tsugumi_display_table(&abi, nullptr, 0, nullptr, 0), 0);
   const std::vector<uint8_t> oversized((8u << 20) + 1);
   const tsugumi_blob blob{"points", oversized.data(), oversized.size()};
-  EXPECT_NE(display_module_impl(
-                nullptr, "/nix/store/00000000000000000000000000000000-view",
-                "{}", &blob, 1),
+  EXPECT_NE(tsugumi_display_module(
+                &abi, "/nix/store/00000000000000000000000000000000-view", "{}",
+                &blob, 1),
             0);
 }
 }  // namespace

@@ -117,7 +117,7 @@ __attribute__((constructor)) static void constructor(void) {
   const char* marker = getenv("LOAD_MARKER");
   if (marker) { FILE* f = fopen(marker, "w"); fputs(getenv("TSUGUMI_RUN_ID"), f); fclose(f); }
 }
-int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* call) {
   if (call->phase == TSUGUMI_LOAD) {
     puts("card load"); setenv("FROM_SOURCE", "source", 1); return 0;
   }
@@ -125,7 +125,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
   if (!getenv("FROM_SOURCE") || getenv("FROM_MAIN")) return 1;
   if (call->invocation == 2 && getenv("ONLY_FIRST_CALL")) return 2;
   setenv("FROM_MAIN", "transient", 1);
-  return call->effects->outputs_json(call->host, "{}", outputs);
+  return 0;
 }
 ''')
     with worker(tmp_path) as (p, data, _):
@@ -149,10 +149,10 @@ __attribute__((constructor)) static void constructor(void) {
   const char* run = getenv("TSUGUMI_RUN_ID");
   if (run) { puts(run); fflush(stdout); }
 }
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_PREPARE) { puts("runtime ready"); fflush(stdout); }
-  if (c->phase == TSUGUMI_LOAD) return c->effects->display_text(c->host, c->run_id);
-  if (c->phase == TSUGUMI_RUN) return c->effects->outputs_json(c->host, "{}", outputs);
+  if (c->phase == TSUGUMI_LOAD) return tsugumi_display_text(c, c->run_id, 0);
+  if (c->phase == TSUGUMI_RUN) return 0;
   return 0;
 }
 ''')
@@ -179,7 +179,7 @@ def test_source_loading_obeys_the_call_stop(tmp_path, stop):
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_LOAD) {
     puts("loading"); fflush(stdout);
     // The Card ABI exposes cancellation and remaining time as queries.
@@ -187,7 +187,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   }
   if (c->phase == TSUGUMI_RUN) {
     puts("main ran");
-    return c->effects->outputs_json(c->host, "{}", outputs);
+    return 0;
   }
   return 0;
 }
@@ -214,7 +214,7 @@ def test_source_loading_failure_is_an_invocation_failure(tmp_path):
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_LOAD) { fputs("source failed\n", stderr); return 1; }
   return 0;
 }
@@ -254,9 +254,9 @@ raise RuntimeError("import stopped")
     paths = str(ROOT / "sdk/python") + ":" + str(source)
     entry.write_text(f"const char tsugumi_python_path[] = {json.dumps(paths)};\n" + """
 #include <tsugumi/sdk/abi.h>
-extern int tsugumi_card_invoke(const tsugumi_call*, tsugumi_buffer*);
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
-  return tsugumi_card_invoke(c, outputs);
+extern int tsugumi_card_invoke(const tsugumi_call*);
+int tsugumi_main(const tsugumi_call* c) {
+  return tsugumi_card_invoke(c);
 }
 """)
     library = tmp_path / "lib/main.so"
@@ -288,7 +288,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
 def test_source_failure_position_survives_the_worker_reply(tmp_path):
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   c->effects->fail_at(c->host, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");
   c->effects->fail(c->host, "output_invalid", "must not replace the first failure");

@@ -197,15 +197,14 @@ module Tsugumi
     function.call(*args.take(function.arity))
   end
 
-  def self.outputs_json(result)
+  def self.encode_outputs(result)
     result ||= {}
     raise ArgumentError, 'return a Hash by output port' unless result.is_a?(Hash)
-    values = result.to_h do |port, value|
+    result.to_h do |port, value|
       value = json_value(value)
       raise ArgumentError, "output #{port} needs a Hash or #to_h value object; omit the port to leave it unproduced" unless value.is_a?(Hash)
-      [port.to_s, value]
+      [port.to_s, JSON.generate(value, allow_nan: true)]
     end
-    JSON.generate(values, allow_nan: true)
   rescue ArgumentError, JSON::GeneratorError => error
     raise Failure.new('output_invalid', error.message)
   end
@@ -255,6 +254,7 @@ module Tsugumi
   end
 
   def self._invoke
-    guard { |scope| outputs_json(call(@card.method(:main), scope)) }
+    outputs = guard { |scope| encode_outputs(call(@card.method(:main), scope)) }
+    outputs && outputs.all? { |port, json| TsugumiHost.output(port, json) }
   end
 end

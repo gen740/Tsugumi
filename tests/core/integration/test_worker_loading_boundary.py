@@ -17,13 +17,13 @@ __attribute__((constructor)) static void constructor(void) {
   const char* marker = getenv("LOAD_MARKER");
   if (marker) { FILE* f = fopen(marker, "w"); fputs(getenv("TSUGUMI_RUN_ID"), f); fclose(f); }
 }
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) { return 1; }
+int tsugumi_main(const tsugumi_call* c) { return 1; }
 ''', "runtime")
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
-  if (c->phase == TSUGUMI_LOAD) return c->effects->display_text(c->host, c->run_id);
-  if (c->phase == TSUGUMI_RUN) return c->effects->outputs_json(c->host, "{}", outputs);
+int tsugumi_main(const tsugumi_call* c) {
+  if (c->phase == TSUGUMI_LOAD) return tsugumi_display_text(c, c->run_id, 0);
+  if (c->phase == TSUGUMI_RUN) return 0;
   return 0;
 }
 ''')
@@ -48,14 +48,14 @@ def test_source_unsets_survive_later_calls(tmp_path):
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdlib.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_PREPARE) setenv("SDK_DEFAULT", "default", 1);
   if (c->phase == TSUGUMI_LOAD) {
     unsetenv("SDK_DEFAULT"); unsetenv("ONLY_FIRST_CALL");
   }
   if (c->phase != TSUGUMI_RUN) return 0;
   if (getenv("SDK_DEFAULT") || getenv("ONLY_FIRST_CALL")) return 1;
-  return c->effects->outputs_json(c->host, "{}", outputs);
+  return 0;
 }
 ''')
     with worker(tmp_path) as (_, data, _):
