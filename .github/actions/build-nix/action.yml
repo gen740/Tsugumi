@@ -4,10 +4,6 @@ inputs:
   package:
     description: Flake package attribute, without the dot-hash prefix.
     required: true
-  extra-packages:
-    description: Additional package attributes to build and include in the fallback artifact.
-    required: false
-    default: ''
   system:
     description: Expected Nix platform.
     required: true
@@ -26,9 +22,6 @@ outputs:
   path:
     description: Primary package output in the Nix store.
     value: ${{ steps.build.outputs.path }}
-  test-support:
-    description: Test-support output, or an empty string when the package has none.
-    value: ${{ steps.build.outputs.test-support }}
 runs:
   using: composite
   steps:
@@ -37,7 +30,6 @@ runs:
       shell: bash
       env:
         NIX_PACKAGE: ${{ inputs.package }}
-        NIX_EXTRA_PACKAGES: ${{ inputs.extra-packages }}
         NIX_SYSTEM: ${{ inputs.system }}
         NIX_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         NIX_ARTIFACT_FALLBACK: ${{ inputs.artifact-fallback }}

@@ -5,6 +5,10 @@ on:
       revision:
         required: true
         type: string
+      runtime-artifact:
+        description: Native runtime artifact from the current CI run.
+        type: string
+        default: ''
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
@@ -37,18 +41,24 @@ jobs:
           identity=$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")
           echo "identity=${identity##*/}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/fetch-nix
+        if: inputs.runtime-artifact != ''
         with:
-          package: ci-core
+          package: ci-runtime
           system: aarch64-linux
-          artifact-name: native-aarch64-linux
+          artifact-name: ${{ inputs.runtime-artifact }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
+      - name: Build the native runner for a standalone release
+        if: inputs.runtime-artifact == ''
+        run: nix build .#ci-runtime --out-link build-ci
+      - name: Build the VM lifetime test
+        run: nix build .#ci-vm-tests --out-link build-ci-vm-tests
       - name: Build the guest image from the production archives
         run: |
           nix build -L "path:$GUEST_BUILD_ROOT#packages.aarch64-linux.vm" -o build-vm
       - name: Guest runtime and lifetime contracts
         run: |
-          build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_vm_lifetime_tests
+          build-ci/bin/tsugumi-test-env build-ci-vm-tests/libexec/tsugumi-tests/tsugumi_vm_lifetime_tests
           runtime=$(nix build --no-link --print-out-paths "path:$GUEST_BUILD_ROOT#tsugumid")
           test -x "$runtime/bin/tsugumid"
           test -x "$runtime/bin/tsugumi-vmd"

@@ -69,6 +69,6 @@ def test_every_core_gtest_target_has_an_unfiltered_ci_run(commands):
                  for command in plan if len(command) == 1}
     vm_workflow = (ROOT / ".github/workflows/vm-image.yml").read_text()
     if "vm" in matrix["aarch64-linux"]:
-        full_runs.update(re.findall(r"tsugumi-test-env build-ci/libexec/tsugumi-tests/(\w+)\s*$",
+        full_runs.update(re.findall(r"tsugumi-test-env build-ci-vm-tests/libexec/tsugumi-tests/(\w+)\s*$",
                                     vm_workflow, re.MULTILINE))
     assert targets <= full_runs, f"No unfiltered CI run for: {sorted(targets - full_runs)}"

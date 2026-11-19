@@ -42,6 +42,7 @@ def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms()
         for system, jobs in checks([path]).items():
             if jobs & selection.CORE:
                 assert "native" in jobs, (path, system)
+            assert ("native-tests" in jobs) == bool(jobs & selection.NATIVE_TESTS), (path, system)
             if jobs & {"web-contracts", "adapters"}:
                 assert "web" in jobs, (path, system)
             if system == "aarch64-darwin":
@@ -50,6 +51,12 @@ def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms()
                 assert system == "aarch64-linux"
             if "remote-execution" in jobs:
                 assert system == "x86_64-linux"
+
+
+def test_a_shared_native_test_fixture_selects_all_its_consumers():
+    selected = checks(["tests/core/doubles/nix_eval.cc"])
+    assert {"native", "native-tests", "swift", "rpc", "agent-rpc"} <= selected["aarch64-darwin"]
+    assert {"adapters", "sdk"} <= selected["x86_64-linux"]
 
 
 def test_scheduled_manual_missing_base_and_initial_push_run_all(monkeypatch):

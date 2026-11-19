@@ -1,6 +1,9 @@
 /build/
 /build-*/
 /build-ci
+/build-ci-input-types
+/build-ci-mock
+/build-ci-vm-tests
 /compile_commands.json
 /result
 /result-*
