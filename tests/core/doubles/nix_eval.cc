@@ -86,6 +86,7 @@ struct NixEvaluator::Impl {
 };
 
 auto NixEvaluator::init_process() -> void {}
+auto NixEvaluator::run_subprocess_if_requested(int, char**) -> void {}
 auto NixStore::init_process() -> void {}
 
 auto NixStore::substituters() -> std::vector<std::string> { return {}; }
