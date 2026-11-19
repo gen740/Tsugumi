@@ -99,6 +99,10 @@ case "$suite" in
     ;;
   adapters)
     if $full; then
+      if ! $list; then
+        nix build .#ci-mock --out-link build-ci-mock
+        export TSUGUMI_MOCK_DAEMON="$root/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"
+      fi
       run python3 -m pytest -q tests/python/test_claude_code_plugin.py tests/python/test_web_server.py tests/python/test_cli.py
     else
       run python3 -m pytest -q -m package_smoke tests/python/test_web_server.py tests/python/test_cli.py
@@ -106,6 +110,10 @@ case "$suite" in
     ;;
   sdk)
     python=$3
+    if ! $list; then
+      nix build .#ci-input-types --out-link build-ci-input-types
+      export TSUGUMI_INPUT_TYPES_TESTS="$root/build-ci-input-types/libexec/tsugumi-tests/tsugumi_input_types_tests"
+    fi
     run "$python" -c 'import matplotlib, plotly, altair'
     run "$python" -m pytest -q -m "$sdk_marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile --durations=40 tests/python \
       --ignore=tests/python/test_sdk_examples.py --ignore=tests/python/test_csharp_sdk.py \

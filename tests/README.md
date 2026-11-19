@@ -53,6 +53,25 @@ Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory f
 
 The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs. Static tests run alongside the platform workflow, and the final gate requires both.
 
+Build `nix build .#ci-core --out-link build-ci` for the Core and Agent RPC
+suites. Host, remote, SDK, adapter and Swift jobs start with
+`nix build .#ci-runtime --out-link build-ci`. The suite runner builds the input
+description executable for SDK tests and the daemon double for plugin tests.
+The guest workflow builds its lifetime test separately.
+
+Run the macOS Swift checks with the same runtime and only the daemon double
+used by the app's batch execution tests.
+
+```sh
+nix build .#ci-runtime --out-link build-ci
+nix build .#ci-mock --out-link build-ci-mock
+export TSUGUMI_MOCK_DAEMON="$PWD/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"
+bash ui/macos/tools/check-plugin-warnings.sh
+build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path ui/macos/CoreTests
+build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path vm/macos/runtime
+build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path ui/macos
+```
+
 Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on both Linux architectures and macOS, including guest builds on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
 
 `protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.

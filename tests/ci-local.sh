@@ -32,7 +32,7 @@ system_name() { nix --extra-experimental-features 'nix-command flakes' eval --ra
 linux_job() {
   export TSUGUMI_FULL_RULES=1 # This pass represents CI's canonical full Linux job.
   step "Build or fetch the native runtime, tests and Web CLI"
-  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#ci-core .#cli
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#cli
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   local web system sdk_python
   system=$(system_name)
@@ -42,6 +42,7 @@ linux_job() {
   bash tests/ci/run-suite.sh agent "$system"
   step "Public core and CLI RPC tests"
   bash tests/ci/run-suite.sh core "$system"
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
   step "Web UI typecheck and behavior contracts"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link ".#checks.$system.web"
   step "Core integration tests with the real host environment"
@@ -91,6 +92,9 @@ mac_job() {
   bash tests/ci/run-suite.sh agent "$system"
   step "Core RPC behavior tests"
   bash tests/ci/run-suite.sh core "$system"
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-mock --out-link build-ci-mock
+  export TSUGUMI_MOCK_DAEMON="$root/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"
   step "Card isolation on a Mac host (Seatbelt)"
   bash tests/ci/run-suite.sh host "$system"
   step "Model, RPC, Agent and launcher (ui/macos/CoreTests)"

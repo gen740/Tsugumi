@@ -17,14 +17,43 @@ else()
   set(_test_project_schema ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs)
 endif()
 
-# Also cover the daemon doubles when this directory builds against ci-core.
 add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough
   -Wmissing-designated-field-initializers)
 
-include(cmake/daemon-double.cmake)
+if(TSUGUMI_INSTALLED_CORE)
+  # These fixtures have consumers outside the native RPC suites.
+  if(TSUGUMI_TEST_TARGET STREQUAL "tsugumid-mock")
+    include(cmake/daemon-double.cmake)
+    install(TARGETS tsugumid-mock RUNTIME DESTINATION libexec/tsugumi-tests)
+    return()
+  elseif(TSUGUMI_TEST_TARGET STREQUAL "tsugumi_input_types_tests")
+    find_package(GTest CONFIG REQUIRED)
+    include(GoogleTest)
+    include(cmake/input-types.cmake)
+    return()
+  elseif(TSUGUMI_TEST_TARGET STREQUAL "tsugumi_document_edit_driver")
+    include(cmake/host-edit-driver.cmake)
+    return()
+  elseif(TSUGUMI_TEST_TARGET STREQUAL "tsugumi_vm_lifetime_tests")
+    find_package(GTest CONFIG REQUIRED)
+    include(GoogleTest)
+    include(cmake/vm.cmake)
+    return()
+  endif()
+  add_executable(tsugumid-mock IMPORTED)
+  set_target_properties(tsugumid-mock PROPERTIES IMPORTED_LOCATION "${TSUGUMI_TEST_MOCK}")
+  set(_test_mock "${TSUGUMI_TEST_MOCK}")
+else()
+  include(cmake/daemon-double.cmake)
+endif()
 
 find_package(GTest CONFIG REQUIRED)
 include(GoogleTest)
+if(NOT TSUGUMI_INSTALLED_CORE)
+  include(cmake/input-types.cmake)
+  include(cmake/host-edit-driver.cmake)
+  include(cmake/vm.cmake)
+endif()
 include(cmake/document.cmake)
 
 include(cmake/host-rpc.cmake)
@@ -39,10 +68,6 @@ include(cmake/tls.cmake)
 
 include(cmake/host.cmake)
 
-include(cmake/host-edit-driver.cmake)
-
 include(cmake/execution.cmake)
 
 include(cmake/nix.cmake)
-
-include(cmake/vm.cmake)

@@ -18,7 +18,8 @@ SYSTEMS = {
     "aarch64-linux": "ubuntu-24.04-arm",
     "aarch64-darwin": "macos-26",
 }
-CORE = {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "sdk", "swift", "vm"}
+NATIVE_TESTS = {"agent-rpc", "rpc"}
+CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "sdk", "swift", "vm"}
 GUEST = {"vm", "pack-guest"}
 WEB = {"docs", "web-contracts", "adapters", "swift"}
 ALL = CORE | GUEST | WEB | {"prompt"}
@@ -39,12 +40,19 @@ def consumers(path):
     if path.startswith("tests/core/"):
         if path in {"tests/core/vm_lifetime_test.cc", "tests/core/cmake/vm.cmake"}:
             return {"vm"}
-        if path.endswith((".cmake", "/CMakeLists.txt")) or path == "tests/core/agent/document_edit_driver.cc":
-            # The Web checks compile their edit driver from these manifests
-            # against the same installed core as the C++ tests.
-            return {"agent-rpc", "rpc", "web-contracts"}
-        if path.endswith((".cc", ".hh")):
-            return {"agent-rpc", "rpc"}
+        if path in {"tests/core/doubles/nix_eval.cc", "tests/core/cmake/daemon-double.cmake"}:
+            jobs = NATIVE_TESTS | {"swift", "adapters"}
+            return jobs | {"sdk"} if path.endswith(".cc") else jobs
+        if path in {"tests/core/input_types_test.cc", "tests/core/cmake/input-types.cmake"}:
+            return {"agent-rpc", "sdk"}
+        if path in {"tests/core/agent/document_edit_driver.cc", "tests/core/cmake/host-edit-driver.cmake"}:
+            return {"web-contracts"}
+        if path in {"tests/core/CMakeLists.txt", "tests/core/cmake/installed-core.cmake"} or path.startswith(
+            "tests/core/cmake/installed/"
+        ):
+            return NATIVE_TESTS | {"swift", "adapters", "sdk", "vm", "web-contracts"}
+        if path.endswith((".cc", ".hh", ".cmake", "/CMakeLists.txt")):
+            return NATIVE_TESTS
         if path.startswith("tests/core/integration/"):
             return {"host", "remote-execution"} if path.endswith("/test_remote_execution.py") else {"host"}
         # Shared harness modules are also imported by the Host project RPC
@@ -151,6 +159,7 @@ def select(paths=None):
                                      if system in systems_for(path)))
         checks = {job: job in platform_jobs and job in supported for job in sorted(ALL - {"docs", "prompt"})}
         checks["native"] = any(checks[job] for job in CORE)
+        checks["native-tests"] = any(checks[job] for job in NATIVE_TESTS)
         checks["web"] = checks["web-contracts"] or checks["adapters"]
         if any(checks.values()):
             matrix.append({"system": system, "runner": runner, "checks": checks})

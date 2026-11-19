@@ -12,57 +12,76 @@
   curl,
   gtest,
   openssl,
-  bash,
-  coreutils,
-  git,
-  nodejs,
-  jq,
   nix,
-  clang-tools,
-  ruff,
-  nixfmt,
-  shfmt,
-  python3,
-  ruby,
   core,
   hosq,
+  runtime,
+  mock,
+  inputTypes,
+  # The narrow consumers configure only the target they actually execute.
+  target ? null,
 }:
 clangStdenv.mkDerivation {
-  pname = "tsugumi-core-tests";
+  pname = if target == null then "tsugumi-core-tests" else target;
   inherit (core) version;
   src = lib.fileset.toSource {
     root = ../.;
     # Python cases run from the checkout. Editing a scenario does not rebuild
     # the production core or any cached C++ test executable.
-    fileset = lib.fileset.unions [
-      ../hostd/agent/Shared/guide-script.json
-      ../hostd/agent/Shared/guide-script.en.json
-      ../hostd/tools/test-binary-cache.py
-      ../demos
-      ../tests/run-isolated.py
-      ../tests/fixtures/layout-invalid.json
-      ../tests/fixtures/layout-scenes.json
-      ../tests/fixtures/wire-routes.json
-      ../tests/fixtures/subgraph-edits.json
-      ../tests/fixtures/service-contract.json
-      (lib.fileset.fileFilter (
-        file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
-      ) ../tests/core)
-    ];
+    fileset = lib.fileset.unions (
+      if target == null then
+        [
+          ../hostd/agent/Shared/guide-script.json
+          ../hostd/agent/Shared/guide-script.en.json
+          ../hostd/tools/test-binary-cache.py
+          ../demos
+          ../tests/fixtures/layout-invalid.json
+          ../tests/fixtures/layout-scenes.json
+          ../tests/fixtures/wire-routes.json
+          (lib.fileset.fileFilter (
+            file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
+          ) ../tests/core)
+        ]
+      else
+        [
+          ../tests/core/CMakeLists.txt
+          ../tests/core/cmake/installed-core.cmake
+          ../tests/core/cmake/installed
+        ]
+        ++ {
+          tsugumid-mock = [
+            ../tests/core/cmake/daemon-double.cmake
+            ../tests/core/doubles/nix_eval.cc
+          ];
+          tsugumi_input_types_tests = [
+            ../tests/core/cmake/input-types.cmake
+            ../tests/core/doubles/nix_eval.cc
+            ../tests/core/input_types_test.cc
+          ];
+          tsugumi_document_edit_driver = [
+            ../tests/core/cmake/host-edit-driver.cmake
+            ../tests/core/agent/document_edit_driver.cc
+          ];
+          tsugumi_vm_lifetime_tests = [
+            ../tests/core/cmake/vm.cmake
+            ../tests/core/vm_lifetime_test.cc
+          ];
+        }
+        .${target}
+    );
   };
   cmakeDir = "../tests/core";
   nativeBuildInputs = [
     cmake
     ninja
     pkg-config
-    makeWrapper
-  ];
+  ]
+  ++ lib.optional (target == null) makeWrapper;
   buildInputs = [
     flatbuffers
     sqlite
     libgit2
     curl
-    gtest
     openssl
     nix.libs.nix-expr
     nix.libs.nix-store
@@ -70,72 +89,39 @@ clangStdenv.mkDerivation {
     nix.libs.nix-flake
     nix.libs.nix-util
   ]
-  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
+  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ]
+  ++ lib.optional (target != "tsugumid-mock" && target != "tsugumi_document_edit_driver") gtest;
   cmakeFlags = [
     "-DTSUGUMI_CORE_ROOT=${core}"
     "-DTSUGUMI_CORE_TEST_SUPPORT=${core.testSupport}"
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
-  ];
+  ]
+  ++ (
+    if target == null then
+      [
+        "-DTSUGUMI_TEST_MOCK=${mock}/libexec/tsugumi-tests/tsugumid-mock"
+      ]
+    else
+      [
+        "-DTSUGUMI_TEST_TARGET=${target}"
+      ]
+  );
   # RPC listeners, process failures and host isolation are tested on the
   # runner after caching this output, not inside the Nix build sandbox.
   doCheck = false;
   doInstallCheck = false;
-  postInstall = ''
+  postInstall = lib.optionalString (target == null) ''
     mkdir -p "$out/bin" "$out/share/tsugumi"
     for program in ${core}/bin/*; do
       ln -s "$program" "$out/bin/$(basename "$program")"
     done
-    ln -s ${core}/share/tsugumi/sdk "$out/share/tsugumi/sdk"
-    ln -s ${core}/share/tsugumi/protocol "$out/share/tsugumi/protocol"
-    ln -s ${core.testSupport}/python "$out/share/tsugumi/python"
-    ln -s ${core}/lib "$out/lib"
-    ln -s ${core}/include "$out/include"
-    cp ${../tests/run-isolated.py} "$out/libexec/tsugumi-tests/run-isolated.py"
-    cat > "$out/libexec/tsugumi-tests/run-command" <<'EOF'
-    #!${bash}/bin/bash
-    set -euo pipefail
-    exec python3 "$(dirname "$0")/run-isolated.py" "$@"
-    EOF
-    chmod +x "$out/libexec/tsugumi-tests/run-command"
-    makeWrapper "$out/libexec/tsugumi-tests/run-command" "$out/bin/tsugumi-test-env" \
-      --prefix PATH : ${
-        lib.makeBinPath [
-          (python3.withPackages (ps: [
-            ps.pytest
-            ps.pytest-xdist
-            ps.flatbuffers
-            ps.websockets
-          ]))
-          flatbuffers
-          # Interpreter adapter tests must use the SDK's Ruby, not macOS Ruby 2.6.
-          ruby
-          bash
-          coreutils
-          openssl
-          git
-          nodejs
-          jq
-          nix
-          clang-tools
-          ruff
-          nixfmt
-          shfmt
-        ]
-      } \
-      --set TSUGUMID ${core}/bin/tsugumid \
-      --set TSUGUMI_HOSTD ${core}/bin/tsugumi-hostd \
-      ${lib.optionalString clangStdenv.hostPlatform.isLinux "--set TSUGUMI_REMOTE_TEST_RAW_WORKER ${core}/bin/tsugumi-workerd"} \
-      --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
-      --set TSUGUMI_WORKERD ${core}/bin/tsugumi-workerd \
-      --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
+    ln -s ${runtime}/share/tsugumi/* "$out/share/tsugumi/"
+    ln -s ${runtime}/{lib,include} "$out/"
+    ln -s ${mock}/libexec/tsugumi-tests/tsugumid-mock "$out/libexec/tsugumi-tests/"
+    ln -s ${inputTypes}/libexec/tsugumi-tests/tsugumi_input_types_tests "$out/libexec/tsugumi-tests/"
+    makeWrapper ${runtime}/bin/tsugumi-test-env "$out/bin/tsugumi-test-env" \
       --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
-      --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \
-      --set TSUGUMI_AGENT_SCHEMA ${core}/share/tsugumi/protocol/agent.bfbs \
-      --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
-      --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \
-      --set TSUGUMI_CLIENT_LIB_DIR ${core}/lib \
-      --set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests" \
-      --set TSUGUMI_FLATC ${flatbuffers}/bin/flatc
+      --set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests"
   '';
   meta = {
     description = "Reusable public RPC test binaries and runner environment for Tsugumi";
