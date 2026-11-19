@@ -1,5 +1,6 @@
 """Generate typed C# object-API accessors from the resolved Card contract."""
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -56,4 +57,11 @@ def generate(contract):
 
 if __name__=='__main__':
     output = Path(sys.argv[2])
+    # flatc leaves namespace segments unescaped. Card port names can be C#
+    # keywords, such as the output port `out`.
+    for generated in output.parent.rglob("*.cs"):
+        text = generated.read_text()
+        text = re.sub(r"(namespace |global::)([A-Za-z_][\w.]*)",
+                      lambda match: match[1] + ".".join("@" + part for part in match[2].split(".")), text)
+        generated.write_text(text)
     output.write_text(generate(json.loads(Path(sys.argv[1]).read_text())))
