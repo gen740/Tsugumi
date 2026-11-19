@@ -3,6 +3,7 @@
 import pytest
 
 from projects import FILE_FBS, card, card_in_card, conn, run_and_wait, write
+from test_rpc_scheduler import FLAG_FBS
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -16,25 +17,32 @@ def saved_file_subgraph(project, core_factory):
     write(
         project,
         defs={
+            "start": {"template": "trigger"},
             "source": {
                 "template": "input",
                 "params": [{"name": "value", "type": "string", "data": "report.txt"}],
                 "_outputs": FILE_FBS,
             },
-            "copy": {
-                "template": "collect",
-                "trigger": "eachInput",
+            "flag": {
+                "template": "input",
+                "params": [{"name": "value", "type": "bool", "data": True}],
+                "_outputs": FLAG_FBS,
+            },
+            "forward": {
+                "template": "branch",
                 "recordIO": True,
                 "retainArtifact": True,
-                "artifactOutput": "out",
+                "artifactOutput": "a",
             },
         },
         cards=[
+            card("start", "start"),
             card("source", "source"),
             card_in_card(
-                "child", [card("inner", "copy")], [],
-                {"inputs": {"in": {"card": "inner", "port": "in"}},
-                 "outputs": {"out": {"card": "inner", "port": "out"}}},
+                "child", [card("inner", "forward"), card("flag", "flag")],
+                [conn("flag", "flag", "inner", "condition")],
+                {"inputs": {"in": {"card": "inner", "port": "value"}},
+                 "outputs": {"out": {"card": "inner", "port": "a"}}},
             ),
         ],
         conns=[conn("source", "doc", "child", "in")],
@@ -44,20 +52,22 @@ def saved_file_subgraph(project, core_factory):
     _, missing = run_and_wait(client, "child", propagate=False)
     assert missing.state == RunState.failed
     assert missing.failure.kind == FailureKind.input_missing
-    run_id, status = run_and_wait(client, "source")
+    run_id, status = run_and_wait(client, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     return client, run_id
 
 
 def artifact_contents(client, run_id):
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("child", "inner")).artifacts
-    assert len(artifacts) == 1
-    content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), member="0/report.txt", limitBytes=4096)
+    artifact, = artifacts
+    assert text(artifact.output) == "a"
+    assert text(artifact.name) == "report.txt"
+    content = client.call("ArtifactReadRequest", artifactId=text(artifact.artifactId), limitBytes=4096)
     assert content.eof is True
     return bytes(content.bytes).decode()
 
 
-def test_each_input_child_preserves_saved_files_across_partial_runs(saved_file_subgraph):
+def test_child_branch_forwards_saved_files_across_partial_runs(saved_file_subgraph):
     """Repeated partial runs can reuse a nested Workflow's saved file input."""
     client, first_run = saved_file_subgraph
     assert artifact_contents(client, first_run) == CONTENTS
