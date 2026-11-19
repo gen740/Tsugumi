@@ -111,7 +111,19 @@ const streams = new Map<http.ServerResponse, Page>()
 const pageProjects = new Map<string, string>()
 function broadcast(v: unknown) {
   const line = `data: ${JSON.stringify(v)}\n\n`
-  for (const s of streams.keys()) s.write(line)
+  for (const [s, page] of [...streams.entries()]) {
+    if (s.writableEnded || s.destroyed) {
+      streams.delete(s)
+      pageProjects.delete(page.id)
+      continue
+    }
+    try {
+      s.write(line)
+    } catch {
+      streams.delete(s)
+      pageProjects.delete(page.id)
+    }
+  }
 }
 
 /** Shows a project without taking another tab's away: a page that shows it
@@ -141,10 +153,14 @@ function publicState(s: EnvState) {
  *  (the API header), and they end with the server. */
 interface Terminal { id: string; project: string; proc: VMTerminal }
 const terminals = new Map<string, Terminal>()
+const MAX_TERMINALS = 8
 
 const terminalSize = (v: unknown, fallback: number) => Number(v ?? fallback)
 
 async function startTerminal(project: string, cols: unknown, rows: unknown) {
+  if (terminals.size >= MAX_TERMINALS) {
+    throw new HttpError(429, L('開けるターミナル数の上限に達しました'))
+  }
   const id = randomUUID()
   const shell = '/bin/bash'
   const proc = await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
@@ -202,12 +218,23 @@ class HttpError extends Error {
   }
 }
 
+const MAX_BODY_BYTES = 16 * 1024 * 1024
+
 async function body(req: http.IncomingMessage): Promise<any> {
   const chunks: Buffer[] = []
+  let total = 0
   for await (const c of req) {
-    chunks.push(c as Buffer)
+    const buf = c as Buffer
+    total += buf.length
+    if (total > MAX_BODY_BYTES) throw new HttpError(413, 'request body too large')
+    chunks.push(buf)
   }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
+  if (!chunks.length) return {}
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw new HttpError(400, 'invalid JSON body')
+  }
 }
 
 function projectDir(p: unknown): string {
@@ -255,8 +282,13 @@ const routes: Record<string, Handler> = {
   'POST /api/recents/forget': (b) => hostRequest('HostRecentForgetRequest', { paths: b.paths }),
   // Finder (or the file manager) at a recent project; only folders on the list.
   'POST /api/reveal': async (b) => {
-    const p = String(b.path)
-    const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', p]] : ['xdg-open', [path.dirname(p)]]
+    const raw = String(b.path ?? '')
+    const canonical = (p: string) => { try { return fs.realpathSync(p) } catch { return path.resolve(p) } }
+    const target = canonical(raw)
+    const recents = await hostRequest('HostRecentListRequest') as { path: string }[]
+    const allowed = Array.isArray(recents) && recents.some((r) => canonical(r.path) === target)
+    if (!allowed) throw new HttpError(403, 'path is not in recent projects')
+    const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', target]] : ['xdg-open', [path.dirname(target)]]
     spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return { ok: true }
   },
@@ -408,8 +440,25 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     })
     return void res.end()
   }
-  if (url.pathname.startsWith('/api/') && !authorized(req) && !agentAuthorized(req, `${req.method} ${url.pathname}`)) {
+  const isAgent = agentAuthorized(req, `${req.method} ${url.pathname}`)
+  if (url.pathname.startsWith('/api/') && !authorized(req) && !isAgent) {
     return send(res, 401, { error: L('このページを開く鍵がありません。サーバーが起動時に表示した URL（?key=…）から開き直してください。') })
+  }
+  if (url.pathname.startsWith('/api/') && !isAgent) {
+    const allowedOrigins = [`http://127.0.0.1:${actualPort}`, `http://localhost:${actualPort}`]
+    const origin = req.headers.origin
+    if (origin && !allowedOrigins.includes(origin)) {
+      return send(res, 403, { error: 'forbidden origin' })
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (req.headers['x-tsugumi'] !== '1') {
+        return send(res, 403, { error: 'missing x-tsugumi header' })
+      }
+      const ct = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
+      if (ct && ct !== 'application/json') {
+        return send(res, 415, { error: 'expected application/json' })
+      }
+    }
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -417,7 +466,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
     resumeChats()
-    const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
+    const ping = setInterval(() => {
+      if (res.writableEnded || res.destroyed) {
+        clearInterval(ping)
+        streams.delete(res)
+        pageProjects.delete(page.id)
+        return
+      }
+      try { res.write(': ping\n\n') } catch {
+        clearInterval(ping)
+        streams.delete(res)
+        pageProjects.delete(page.id)
+      }
+    }, 15_000)
     req.on('close', () => {
       clearInterval(ping)
       streams.delete(res)

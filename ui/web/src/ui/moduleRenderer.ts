@@ -42,6 +42,7 @@ export class FrameRenderer implements ThumbnailRenderer {
     const ready = this.ready
     frame.style.width = `${request.width}px`; frame.style.height = `${request.height}px`
 
+    let timeout: ReturnType<typeof setTimeout> | undefined
     try {
       const image = await Promise.race([
         (async () => {
@@ -56,6 +57,12 @@ export class FrameRenderer implements ThumbnailRenderer {
           })
         })(),
         new Promise<never>((_, reject) => { this.cancelDraw = () => reject(new Error('Chart preview closed')) }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            this.close()
+            reject(new Error('Chart preview timed out'))
+          }, 15_000)
+        }),
       ])
       // Composite Vega figures may be larger than the requested frame. Count
       // their actual PNG dimensions, not the frame size, against the cache.
@@ -65,6 +72,7 @@ export class FrameRenderer implements ThumbnailRenderer {
       if (header.getUint32(0) !== 0x89504e47 || header.getUint32(12) !== 0x49484452) throw new Error('Invalid chart PNG')
       return { image, pixelBytes: header.getUint32(16) * header.getUint32(20) * 4 }
     } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
       if (this.frame === frame) { this.cancelDraw = undefined; this.result = undefined }
     }
   }
