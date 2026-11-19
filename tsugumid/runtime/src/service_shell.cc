@@ -607,16 +607,32 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
         throw Failed(FailureKind::invalid_path, "invalid shell output path");
       view.output_prefix = opts_.root / path;
     }
+    struct SymlinkCleanup {
+      std::vector<std::filesystem::path> links;
+      ~SymlinkCleanup() {
+        std::error_code ec;
+        for (const auto& link : links) std::filesystem::remove(link, ec);
+      }
+    } symlink_cleanup;
     if (request->mounts())
       for (const auto* mount : *request->mounts()) {
-        auto source = mount->project_relative()
-                          ? opts_.root / mount->path()->str()
-                          : std::filesystem::path(mount->path()->str());
+        std::filesystem::path source;
+        if (mount->project_relative()) {
+          const auto rel = mount->path()->str();
+          if (!fs::valid_relative_path(rel) ||
+              !fs::resolves_inside(opts_.root, opts_.root / rel))
+            throw Failed(FailureKind::invalid_path,
+                         "invalid project-relative mount path");
+          source = opts_.root / rel;
+        } else {
+          source = std::filesystem::path(mount->path()->str());
+        }
         source = std::filesystem::canonical(source);
         const auto target = path_in_view(mount->name()->str());
 #ifdef __APPLE__
         std::filesystem::remove(target);
         std::filesystem::create_directory_symlink(source, target);
+        symlink_cleanup.links.push_back(target);
 #endif
         view.mounts.push_back({source, target, mount->writable()});
       }

@@ -358,6 +358,7 @@ struct NixEvaluator::Impl {
     auto fut = task.get_future();
     {
       std::lock_guard<std::mutex> l(mu);
+      if (stopping) throw std::runtime_error("Nix evaluator is stopping");
       tasks.emplace_back([&task] { task(); });
     }
     cv.notify_all();

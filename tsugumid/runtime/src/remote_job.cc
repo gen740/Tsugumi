@@ -261,6 +261,8 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   if (!catalog) throw BrokerDisconnected("expected execution broker catalog");
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
+    if (!t || !t->capabilities)
+      throw BrokerDisconnected("execution broker service missing capabilities");
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
                        t->available, c.resource_limits, c.max_jobs, t->grade,
@@ -277,7 +279,10 @@ auto RemoteJobClient::probe(std::string_view service,
   } catch (const BrokerRequestRejected& error) {
     throw Failed(FailureKind::unsupported, error.what());
   }
-  const auto& c = *reply.body.AsCapabilities();
+  const auto* caps = reply.body.AsCapabilities();
+  if (!caps)
+    throw BrokerDisconnected("expected execution broker capabilities");
+  const auto& c = *caps;
   // The catalog may have been replaced before the broker received this probe.
   if (c.server_id != registered_server)
     throw Failed(FailureKind::unsupported,

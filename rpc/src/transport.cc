@@ -102,21 +102,32 @@ void TransportServer::start() {
   // replace.
   auto listen_unix = [](const std::string& path) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+      throw std::runtime_error("create unix socket: " +
+                               std::string(std::strerror(errno)));
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    if (path.size() >= sizeof addr.sun_path)
+    if (path.size() >= sizeof addr.sun_path) {
+      ::close(fd);
       throw std::runtime_error("unix socket path too long");
+    }
     std::strcpy(addr.sun_path, path.c_str());
     ::unlink(path.c_str());
-    mode_t old = ::umask(0177);
     int rc = ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
-    ::umask(old);
-    if (rc != 0)
+    if (rc != 0) {
+      int err = errno;
+      ::close(fd);
       throw std::runtime_error("bind unix socket: " +
-                               std::string(std::strerror(errno)));
+                               std::string(std::strerror(err)));
+    }
     ::chmod(path.c_str(), 0600);
-    ::listen(fd, 64);
+    if (::listen(fd, 64) != 0) {
+      int err = errno;
+      ::close(fd);
+      throw std::runtime_error("listen unix socket: " +
+                               std::string(std::strerror(err)));
+    }
     set_nonblock(fd);
     return fd;
   };
@@ -436,9 +447,13 @@ void TransportServer::parse_ws(Conn& c) {
     if (b.size() < 2) break;
     auto b0 = static_cast<uint8_t>(b[0]);
     auto b1 = static_cast<uint8_t>(b[1]);
-    bool fin = b0 & 0x80;
+    bool fin = (b0 & 0x80) != 0;
+    bool masked = (b1 & 0x80) != 0;
+    if (!masked) return drop(c, "unmasked client frame");
     int opcode = b0 & 0x0F;
     uint64_t len = b1 & 0x7F;
+    if (opcode >= 0x8 && (!fin || len > 125))
+      return drop(c, "invalid control frame");
     size_t off = 2;
     if (len == 126) {
       if (b.size() < 4) break;
@@ -519,6 +534,8 @@ void TransportServer::on_readable(Conn& c) {
       return drop(c, "read error");
     }
     c.rbuf.append(buf, static_cast<size_t>(r));
+    if (c.rbuf.size() > opts_.limits.max_frame_bytes + 65536)
+      return drop(c, "read buffer limit exceeded");
   }
   // Requests that arrived before the peer closed are still accepted.
   if (c.websocket) {

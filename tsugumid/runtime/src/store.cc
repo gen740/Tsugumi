@@ -68,6 +68,9 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev,
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
+Store::~Store() {
+  if (journal_fd_ >= 0) ::close(journal_fd_);
+}
 
 auto Store::stage_file(const stdfs::path& root, const std::string& from,
                        const std::optional<std::string>& expected_hash,
@@ -764,6 +767,8 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           if (it == doc->sources.end())
             throw Failed(FailureKind::not_found, c.path + " does not exist",
                          {{"path", c.path}});
+          if (!c.base_hash)
+            throw hash_conflict(c.path, "", it->second.hash);
           if (*c.base_hash != it->second.hash)
             throw hash_conflict(c.path, *c.base_hash, it->second.hash);
           doc->sources.erase(it);
