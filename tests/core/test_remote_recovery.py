@@ -299,8 +299,9 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     remote_gateway.system = "aarch64-linux"
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                   system=requested_system)
+    settings = {} if requested_system is None else {"system": requested_system}
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster", **settings)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
