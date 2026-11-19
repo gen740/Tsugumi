@@ -48,6 +48,27 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
     EXPECT_EQ(query.i64(0), 0) << table;
   }
 }
+TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
+  TemporaryDirectory directory;
+  const auto retired_path = directory.path / "host-settings.sqlite";
+  {
+    sql::Db retired(retired_path.string());
+    retired.exec("CREATE TABLE secrets(id TEXT PRIMARY KEY, value TEXT);"
+                 "INSERT INTO secrets VALUES('desktop:anthropic','old-key')");
+  }
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::Credentials credentials(gate, store.db, {});
+  host::Settings settings(directory.path, credentials, nullptr,
+                          host::Settings::KeyStorage::Host);
+  const auto resolve = [&] {
+    return settings.Resolve({{"provider_id", Quote("anthropic")}});
+  };
+  EXPECT_THROW(resolve(), std::runtime_error);
+  ASSERT_TRUE(std::filesystem::remove(retired_path));
+  store.db.exec("INSERT INTO secrets VALUES('desktop:anthropic','new-key')");
+  EXPECT_EQ(resolve().credential, "new-key");
+}
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
