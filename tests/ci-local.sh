@@ -15,8 +15,8 @@
 # named volume (tsugumi-ci-nix), kept between runs. An Apple silicon Mac runs
 # arm64 Linux, while CI covers both Linux architectures. The macOS checks
 # use this Mac's OS, Xcode and existing build folders.
-# Keep the checks in step with ci-platform.yml. The Static checks job of ci.yml
-# is tests/check-fast.sh; run that first.
+# Keep the checks in step with ci-platform.yml. Use tests/check-fast.sh for
+# the separate static and Web contract checks.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -28,8 +28,6 @@ step() { printf '\n== %s\n' "$1"; }
 export CORE_TEST_ENV="$root/build-ci/bin/tsugumi-test-env"
 core_run() { "$CORE_TEST_ENV" "$@"; }
 system_name() { nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem; }
-agent_checks() { bash tests/ci/run-suite.sh agent "$(system_name)"; }
-core_checks() { bash tests/ci/run-suite.sh core "$(system_name)"; }
 
 linux_job() {
   export TSUGUMI_FULL_RULES=1 # This pass represents CI's canonical full Linux job.
@@ -37,17 +35,17 @@ linux_job() {
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#ci-core .#cli
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   local web system sdk_python
+  system=$(system_name)
   web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/ui/web/dist"
   step "Public Agent RPC tests"
-  agent_checks
+  bash tests/ci/run-suite.sh agent "$system"
   step "Public core and CLI RPC tests"
-  core_checks
+  bash tests/ci/run-suite.sh core "$system"
   step "Web UI typecheck and behavior contracts"
-  system=$(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem)
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link ".#checks.$system.web"
   step "Core integration tests with the real host environment"
-  core_run python3 -m pytest -q tests/core/integration
+  bash tests/ci/run-suite.sh host "$system"
   step "Python tests"
   sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
   bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
@@ -83,16 +81,18 @@ linux_in_container() {
 }
 
 mac_job() {
+  local system
+  system=$(system_name)
   step "Build-tool plugin warnings"
   bash ui/macos/tools/check-plugin-warnings.sh
   step "Build or fetch the native runtime and public RPC tests"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
   step "Public Agent RPC tests"
-  agent_checks
+  bash tests/ci/run-suite.sh agent "$system"
   step "Core RPC behavior tests"
-  core_checks
+  bash tests/ci/run-suite.sh core "$system"
   step "Card isolation on a Mac host (Seatbelt)"
-  core_run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
+  bash tests/ci/run-suite.sh host "$system"
   step "Model, RPC, Agent and launcher (ui/macos/CoreTests)"
   core_run /usr/bin/swift test --package-path ui/macos/CoreTests
   core_run /usr/bin/swift test --package-path vm/macos/runtime
@@ -103,7 +103,7 @@ mac_job() {
 case "${1:-all}" in
   agent)
     nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
-    TSUGUMI_FULL_RULES=1 agent_checks ;;
+    TSUGUMI_FULL_RULES=1 bash tests/ci/run-suite.sh agent "$(system_name)" ;;
   mac) mac_job ;;
   linux) if [ "$(uname)" = Linux ]; then linux_job; else linux_in_container; fi ;;
   all)

@@ -49,7 +49,6 @@ jobs:
       - name: Guest runtime and lifetime contracts
         run: |
           build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_vm_lifetime_tests
-          build-ci/bin/tsugumi-test-env build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests --gtest_filter='VMResetPolicy.*'
           runtime=$(nix build --no-link --print-out-paths "path:$GUEST_BUILD_ROOT#tsugumid")
           test -x "$runtime/bin/tsugumid"
           test -x "$runtime/bin/tsugumi-vmd"

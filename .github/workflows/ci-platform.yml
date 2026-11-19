@@ -124,12 +124,8 @@ jobs:
       - name: Allow user namespaces for bubblewrap
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Linux host integrations
-        if: runner.os == 'Linux'
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration'
-      - name: macOS host isolation
-        if: runner.os == 'macOS'
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
+      - name: Native host integrations
+        run: bash tests/ci/run-suite.sh host '${{ inputs.system }}'
 
   remote-execution:
     name: Real remote worker execution
@@ -289,7 +285,7 @@ jobs:
 
   pack-guest:
     name: tsugumi-pack guest
-    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks).vm }}
+    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks)['pack-guest'] }}
     runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v4
