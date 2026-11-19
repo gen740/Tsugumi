@@ -18,17 +18,20 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <optional>
 #include <regex>
 #include <set>
+#include <system_error>
 #include <thread>
 
 #include "agent/wire.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/util/sqlite.hh"
 #include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -229,8 +232,10 @@ struct ExecutionBroker::State {
   std::mutex mutex;
   std::set<int> active;
   bool stopping = false;
-  Socket listener;
-  std::vector<std::jthread> threads;
+  Socket listener, wake_reader, wake_writer;
+  std::jthread acceptor;
+  std::condition_variable drained;
+  size_t clients = 0;
 
   State(std::filesystem::path dir, std::string path)
       : state(std::move(dir)),
@@ -267,35 +272,71 @@ struct ExecutionBroker::State {
                 ::chmod(socket.c_str(), 0600) == 0 &&
                 ::listen(listener.fd, 64) == 0,
             "Cannot listen on execution broker socket");
-    ::fcntl(listener.fd, F_SETFL, O_NONBLOCK);
-    for (int i = 0; i < 8; ++i)
-      threads.emplace_back([this](std::stop_token stop) {
-        while (!stop.stop_requested()) {
-          pollfd p{listener.fd, POLLIN, 0};
-          if (::poll(&p, 1, 100) <= 0) continue;
-          // Serialize accept with shutdown, and use a nonblocking listener so
-          // competing acceptors cannot get stuck after another drained the
-          // queue.
-          Socket client;
-          {
-            std::lock_guard lock(mutex);
-            if (stopping) return;
-            client.fd = ::accept(listener.fd, nullptr, nullptr);
-            if (client.fd < 0) continue;
-            active.insert(client.fd);
-          }
-          try {
-            Configure(client.fd);
-            Forward(client.fd);
-          } catch (...) {
-          }
-          {
-            std::lock_guard lock(mutex);
-            active.erase(client.fd);
-          }
-        }
-      });
+    Require(::fcntl(listener.fd, F_SETFL, O_NONBLOCK) == 0,
+            "Cannot configure execution broker listener");
+    int wake[2];
+    Require(::pipe(wake) == 0, "Cannot open execution broker wake pipe");
+    wake_reader.fd = wake[0];
+    wake_writer.fd = wake[1];
+    Require(::fcntl(wake_reader.fd, F_SETFD, FD_CLOEXEC) == 0 &&
+                ::fcntl(wake_writer.fd, F_SETFD, FD_CLOEXEC) == 0,
+            "Cannot configure execution broker wake pipe");
+    acceptor = std::jthread([this] { Accept(); });
   }
+
+  auto Accept() -> void {
+    for (;;) {
+      pollfd ready[]{{listener.fd, POLLIN, 0}, {wake_reader.fd, POLLIN, 0}};
+      if (::poll(ready, 2, -1) < 0) {
+        if (errno == EINTR) continue;
+        log::error("Execution broker listener poll failed");
+        return;
+      }
+      if (ready[1].revents) return;
+      std::lock_guard lock(mutex);
+      if (stopping) return;
+      const int fd = ::accept(listener.fd, nullptr, nullptr);
+      if (fd < 0) {
+        if (errno == EINTR || errno == ECONNABORTED || errno == EAGAIN ||
+            errno == EWOULDBLOCK)
+          continue;
+        log::error("Execution broker accept failed");
+        continue;
+      }
+      active.insert(fd);
+      ++clients;
+      // A completed request is sent over its own worker connection. A
+      // transfer waiting on its peer must never occupy a Cancel request's slot.
+      try {
+        std::thread([this, fd] { Serve(fd); }).detach();
+      } catch (const std::system_error& e) {
+        log::error("Cannot start execution broker request: " +
+                   std::string(e.what()));
+        active.erase(fd);
+        --clients;
+        ::close(fd);
+      }
+    }
+  }
+
+  auto Serve(int fd) -> void {
+    try {
+      // On macOS the accepted socket inherits O_NONBLOCK from the listener.
+      Require(::fcntl(fd, F_SETFL, 0) == 0,
+              "Cannot configure execution broker stream");
+      Configure(fd);
+      Forward(fd);
+    } catch (const std::exception&) {
+      // Reading a partial request or writing to a disconnected client can
+      // fail without a peer to report the failure to.
+    }
+    std::lock_guard lock(mutex);
+    active.erase(fd);
+    ::close(fd);
+    --clients;
+    drained.notify_all();
+  }
+
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
@@ -496,9 +537,11 @@ struct ExecutionBroker::State {
       if (stopping) return;
       stopping = true;
       for (int fd : active) ::shutdown(fd, SHUT_RDWR);
-      for (auto& thread : threads) thread.request_stop();
+      while (::write(wake_writer.fd, "x", 1) < 0 && errno == EINTR) {}
     }
-    threads.clear();
+    acceptor.join();
+    std::unique_lock lock(mutex);
+    drained.wait(lock, [&] { return clients == 0; });
     ::unlink(socket.c_str());
   }
 };

@@ -6,9 +6,13 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <utility>
 
 #include "fixture.hh"
 #include "tsugumi/rpc/peer_tls.hh"
@@ -19,7 +23,7 @@ namespace {
 namespace R = Tsugumi::RemoteWorker;
 namespace W = tsugumi::workerd;
 struct Socket {
-  int fd;
+  int fd = -1;
   ~Socket() {
     if (fd >= 0) ::close(fd);
   }
@@ -122,7 +126,13 @@ class WorkerPeer {
             chunk.bytes = put->bytes;
             respond(W::reply(std::move(chunk)));
           } else if (q->body.AsStatusRequest()) {
-            // Simulate a submit/status whose response was lost.
+            // A held reply keeps the broker forwarding while this fixture
+            // continues to accept new connections.
+            if (hold_status_) {
+              held_status_.push_back(peer.fd);
+              peer.fd = -1;
+              status_seen_.notify_all();
+            }
           } else
             respond(W::reply(R::AckT{}));
         } catch (...) {
@@ -138,8 +148,18 @@ class WorkerPeer {
     } catch (...) {
     }
     thread_.join();
+    for (int fd : held_status_) ::close(fd);
     ::close(socket_);
     ::unlink(path_.c_str());
+  }
+  auto HoldStatus() -> void {
+    std::lock_guard lock(mutex_);
+    hold_status_ = true;
+  }
+  auto WaitForHeldStatus(size_t count) -> bool {
+    std::unique_lock lock(mutex_);
+    return status_seen_.wait_for(lock, std::chrono::seconds(5),
+                                 [&] { return held_status_.size() == count; });
   }
   auto Requests() -> std::vector<R::RequestT> {
     std::lock_guard lock(mutex_);
@@ -169,6 +189,9 @@ class WorkerPeer {
   std::atomic<bool> stopping_ = false;
   std::mutex mutex_;
   std::vector<R::RequestT> requests_;
+  std::condition_variable status_seen_;
+  bool hold_status_ = false;
+  std::vector<int> held_status_;
   std::jthread thread_;
 };
 class BrokerFixture : public AgentFixture {
@@ -250,8 +273,7 @@ class BrokerFixture : public AgentFixture {
                     .empty());
   }
   template <class T>
-  auto Broker(T body, const std::string& capability)
-      -> std::unique_ptr<R::MessageT> {
+  auto SendBroker(T body, const std::string& capability) -> int {
     Socket socket{
         ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
     R::RequestT request;
@@ -267,6 +289,12 @@ class BrokerFixture : public AgentFixture {
     message.payload.Set(std::move(broker));
     SendMessage(socket.fd, std::move(message));
     ::shutdown(socket.fd, SHUT_WR);
+    return std::exchange(socket.fd, -1);
+  }
+  template <class T>
+  auto Broker(T body, const std::string& capability)
+      -> std::unique_ptr<R::MessageT> {
+    const Socket socket{SendBroker(std::move(body), capability)};
     return ReadMessage(socket.fd);
   }
   auto Restart() -> void {
@@ -581,6 +609,27 @@ TEST_F(BrokerFixture, PublicPinCanBeRegisteredBeforeAuthorizingTheHost) {
 
 namespace tsugumi::test {
 namespace {
+TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
+  ASSERT_TRUE(Put().Code().empty());
+  const auto capability = Authorize("project");
+  worker->HoldStatus();
+  // Fill every slot of the former forwarding pool with pending worker replies.
+  std::array<Socket, 8> pending;
+  for (auto& socket : pending)
+    socket.fd = SendBroker(R::StatusRequestT{}, capability);
+  ASSERT_TRUE(worker->WaitForHeldStatus(pending.size()));
+
+  R::CancelRequestT cancel;
+  cancel.fingerprint = std::string(64, 'd');
+  const auto response = Broker(std::move(cancel), capability);
+  ASSERT_NE(response->payload.AsReply(), nullptr);
+  ASSERT_NE(response->payload.AsReply()->body.AsAck(), nullptr);
+  const auto requests = worker->Requests();
+  ASSERT_NE(requests.back().body.AsCancelRequest(), nullptr);
+  EXPECT_EQ(requests.back().body.AsCancelRequest()->fingerprint,
+            std::string(64, 'd'));
+}
+
 TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");

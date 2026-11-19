@@ -45,6 +45,7 @@ native_agent=(
   'SkillsFixture.StrictSizeBoundaryAndUnreadableFilesAndFolders'
   'BrokerFixture.*Handshake*' 'BrokerFixture.WrongWorkerKeyIsRejectedBeforeAnyApplicationRequest'
   'BrokerFixture.FragmentedFramesWaitForTheCompleteRequest'
+  'BrokerFixture.CancelReachesWorkerWhileOtherRepliesAreBlocked'
 )
 # Python suites that exercise native workers, paths or transports keep their
 # own marker. Shared rules and the rest of each mixed fixture run on x86 Linux.
