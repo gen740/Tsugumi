@@ -671,6 +671,7 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 
 void Service::disconnected(ConnId conn) {
   if (trace_owner_ == conn) {
+    trace::CancelWatch();
     trace::SetMode(trace::Mode::Off);
     trace_owner_.reset();
   }
@@ -752,7 +753,25 @@ void Service::dispatch(RequestIn req) {
         trace::SetMode(static_cast<trace::Mode>(*mode));
         snapshot.mode = static_cast<T::Mode>(*mode);
       } else {
-        snapshot = trace::ToWire(trace::Read());
+        std::function<void()> changed;
+        if (trace_owner_ == req.conn) {
+          changed = [server = server_, conn = req.conn] {
+            FBB b;
+            auto value = T::CreateTraceChanged(b);
+            auto note = R::CreateNotification(
+                b, b.CreateString("rpc-trace"), flatbuffers::nullopt,
+                R::NotificationPayload::TraceChanged, value.Union());
+            R::FinishMessageBuffer(
+                b, R::CreateMessage(b, flatbuffers::nullopt,
+                                    R::Payload::Notification, note.Union()));
+            server->reply(
+                conn,
+                std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                            b.GetSize()));
+          };
+        }
+        snapshot =
+            trace::ToWire(trace::Read(std::move(changed), debug->after()));
       }
       FBB b;
       auto value = T::Snapshot::Pack(b, &snapshot);

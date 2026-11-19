@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -50,6 +51,9 @@ struct Entry {
 
 struct Snapshot {
   Mode mode;
+  uint64_t first_sequence;
+  uint64_t cleared_through;
+  uint64_t evicted_through;
   std::vector<Entry> entries;
 };
 
@@ -64,7 +68,10 @@ inline constexpr char kLaunchVariable[] = "TSUGUMI_RPC_TRACE";
 auto LaunchEnabled() -> bool;
 auto SetMode(Mode mode) -> void;
 auto CurrentMode() -> Mode;
-auto Read() -> Snapshot;
+// Arm a one-shot notification atomically with the snapshot. The callback
+// posts a wakeup only and must not call back into the recorder.
+auto Read(std::function<void()> changed = {}, uint64_t after = 0) -> Snapshot;
+auto CancelWatch() -> void;
 
 namespace detail {
 extern std::atomic<uint64_t> mode_epoch;
@@ -80,16 +87,19 @@ auto Record(uint64_t epoch, Link& link, const char* from, const char* to,
 // load.
 template <class Frame = std::string_view>
 inline auto Observe(Link* link, const char* from, const char* to, bool outgoing,
-                    const Frame& bytes, const Codec* codec) noexcept -> void {
+                    const Frame& bytes, const Codec* codec,
+                    bool include = true) noexcept -> void {
   const auto epoch = detail::mode_epoch.load(std::memory_order_relaxed);
   if ((epoch & 3) != 0) [[unlikely]]
-    if (link) detail::Record(epoch, *link, from, to, outgoing, bytes, codec);
+    if (include && link)
+      detail::Record(epoch, *link, from, to, outgoing, bytes, codec);
 }
 
 template <class Frame = std::string_view>
 inline auto Observe(Link& link, const char* from, const char* to, bool outgoing,
-                    const Frame& bytes, const Codec* codec) noexcept -> void {
-  Observe(&link, from, to, outgoing, bytes, codec);
+                    const Frame& bytes, const Codec* codec,
+                    bool include = true) noexcept -> void {
+  Observe(&link, from, to, outgoing, bytes, codec, include);
 }
 
 }  // namespace tsugumi::trace

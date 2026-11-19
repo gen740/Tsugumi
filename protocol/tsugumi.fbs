@@ -1193,6 +1193,7 @@ union NotificationPayload {
   RunEvent = 2,
   DisplayUpdated = 3,
   LogAvailable = 4,
+  TraceChanged:Tsugumi.Trace.TraceChanged = 5,
 }
 
 // ---- Frame -------------------------------------------------------------------

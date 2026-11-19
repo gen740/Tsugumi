@@ -1,10 +1,12 @@
 #include "tsugumi/rpc/trace.hh"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <map>
 #include <mutex>
+#include <utility>
 
 namespace tsugumi::trace {
 namespace {
@@ -22,7 +24,10 @@ struct Recorder {
   std::map<Key, Clock::time_point> pending;
   size_t content_bytes = 0;
   uint64_t sequence = 0;
+  uint64_t cleared_through = 0;
+  uint64_t evicted_through = 0;
   uint64_t next_link = 0;
+  std::function<void()> changed;
 };
 
 auto State() -> Recorder& {
@@ -50,17 +55,33 @@ auto SetMode(Mode mode) -> void {
   if (mode != Mode::Capture) {
     for (auto& entry : state.entries) entry.content = {};
     state.content_bytes = 0;
+    state.cleared_through = state.sequence;
   }
   if (mode == Mode::Off) state.pending.clear();
   detail::mode_epoch.store(
       ((epoch & ~uint64_t{3}) + 4) | static_cast<uint64_t>(mode),
       std::memory_order_relaxed);
+  if (auto notify = std::exchange(state.changed, {})) notify();
 }
 
-auto Read() -> Snapshot {
+auto Read(std::function<void()> changed, uint64_t after) -> Snapshot {
   auto& state = State();
   std::lock_guard lock(state.mutex);
-  return {CurrentMode(), {state.entries.begin(), state.entries.end()}};
+  const auto mode = CurrentMode();
+  if (changed && mode != Mode::Off) state.changed = std::move(changed);
+  const auto begin =
+      std::ranges::upper_bound(state.entries, after, {}, &Entry::sequence);
+  return {mode,
+          state.entries.empty() ? 0 : state.entries.front().sequence,
+          state.cleared_through,
+          state.evicted_through,
+          {begin, state.entries.end()}};
+}
+
+auto CancelWatch() -> void {
+  auto& state = State();
+  std::lock_guard lock(state.mutex);
+  state.changed = {};
 }
 
 auto detail::Record(uint64_t epoch, Link& link, const char* from,
@@ -117,10 +138,12 @@ auto detail::Record(uint64_t epoch, Link& link, const char* from,
       if (old.content.json.empty()) continue;
       state.content_bytes -= old.content.json.size();
       old.content = {.json = {}, .omission = "evicted"};
+      state.evicted_through = old.sequence;
     }
     state.content_bytes += entry.content.json.size();
     entry.sequence = ++state.sequence;
     state.entries.push_back(std::move(entry));
+    if (auto notify = std::exchange(state.changed, {})) notify();
   } catch (...) {
     // Debug recording must never interrupt traffic.
   }

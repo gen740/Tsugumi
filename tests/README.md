@@ -166,7 +166,7 @@ To show the RPC Trace tab in the Mac debug panel and permit recording in newly l
 open -g -n --env TSUGUMI_RPC_TRACE=1 --env TSUGUMI_HOST_STATE=/absolute/debug-host dist/Tsugumi.app
 ```
 
-For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. Reusing a running host or project core leaves its launch setting unchanged. The Web UI and CLI have no RPC Trace view.
+For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. The panel follows the host connection and shows new entries as they are recorded. Closing the panel ends delivery to the view. Select Off to stop recording and clear captured bodies. Reusing a running host or project core leaves its launch setting unchanged. The Web UI and CLI have no RPC Trace view.
 
 ## Execution ownership and timing
 

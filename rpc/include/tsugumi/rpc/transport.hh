@@ -12,7 +12,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -39,6 +38,7 @@ struct FrameInfo {
   uint64_t request_id;
   bool hello;
   const char* peer = nullptr;
+  bool trace = true;
 };
 enum class AdmissionFailure { AlreadyHello, Unauthenticated, Busy };
 struct FrameCodec {
@@ -117,7 +117,8 @@ class TransportServer {
   void handle_frame(Conn& c, std::string frame);
   bool handle_ws_handshake(Conn& c);
   void parse_ws(Conn& c);
-  void enqueue_raw(Conn& c, std::string bytes, bool is_reply);
+  void enqueue_raw(Conn& c, std::string bytes, bool is_reply,
+                   bool trace = true);
   void enqueue_note(Conn& c, const PendingMessage& n);
   bool fill_write(Conn& c);
   void drop(Conn& c, const char* why);
