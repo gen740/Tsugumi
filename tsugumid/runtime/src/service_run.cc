@@ -1030,12 +1030,14 @@ void Service::log_range(RequestIn& req) {
                      std::to_string(protocol::kMinLogRangeBytes) + ".." +
                      std::to_string(protocol::kMaxLogRangeBytes));
   if (r->terminal_since() && (!r->terminal() || tail || before))
-    throw Failed(FailureKind::invalid_request, "terminal_since requires a forward terminal read");
+    throw Failed(FailureKind::invalid_request,
+                 "terminal_since requires a forward terminal read");
   auto slice = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     return history_->read_log(db, run_id, card, inv, stream, offset, tail,
-                              limit, before, r->terminal(), r->terminal_since());
+                              limit, before, r->terminal(),
+                              r->terminal_since());
   });
   FBB b(slice.text.size() + 512);
   auto t = b.CreateString(slice.text);

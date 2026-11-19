@@ -272,12 +272,13 @@ struct TerminalPosition {
 auto terminal_position(sql::Db& db, const TerminalScope& scope)
     -> TerminalPosition {
   auto select = db.prepare(
-      "SELECT end_cell,cursor,line_start,newlines,redrawn_at FROM log_terminal_ends "
+      "SELECT end_cell,cursor,line_start,newlines,redrawn_at FROM "
+      "log_terminal_ends "
       "WHERE run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4");
   return scope.bind(select).step()
-      ? TerminalPosition{select.u64(0), select.u64(1), select.u64(2),
-                         select.u64(3), select.u64(4)}
-      : TerminalPosition{};
+             ? TerminalPosition{select.u64(0), select.u64(1), select.u64(2),
+                                select.u64(3), select.u64(4)}
+             : TerminalPosition{};
 }
 
 auto utf8_prefix(std::string_view data, uint64_t cells)
@@ -298,15 +299,20 @@ auto append_terminal(sql::Db& db, const TerminalScope& scope,
   auto select = db.prepare(
       "SELECT data,line,starts_line FROM log_terminal_tiles WHERE "
       "run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4 AND tile=?5");
-  auto save = db.prepare("INSERT OR REPLACE INTO log_terminal_tiles VALUES(?,?,?,?,?,?,?,?)");
+  auto save = db.prepare(
+      "INSERT OR REPLACE INTO log_terminal_tiles VALUES(?,?,?,?,?,?,?,?)");
   std::optional<uint64_t> tile;
   std::string data;
   uint64_t line = 0;
   bool starts_line = true;
   auto flush = [&] {
     if (!tile) return;
-    scope.bind(save).bind(5, *tile).bind(6, line).bind(7, starts_line)
-        .bind_blob(8, data).run();
+    scope.bind(save)
+        .bind(5, *tile)
+        .bind(6, line)
+        .bind(7, starts_line)
+        .bind_blob(8, data)
+        .run();
     save.reset();
   };
   auto write = [&](std::string_view bytes) {
@@ -327,13 +333,15 @@ auto append_terminal(sql::Db& db, const TerminalScope& scope,
         }
         select.reset();
       }
-      const auto [length, cells] = utf8_prefix(bytes, kTerminalTileCells - column);
+      const auto [length, cells] =
+          utf8_prefix(bytes, kTerminalTileCells - column);
       const auto part = bytes.substr(0, length);
       if (pos.cursor == pos.end) {
         data.append(part);
       } else {
         const auto begin = utf8_prefix(data, column).first;
-        const auto replaced = utf8_prefix(std::string_view(data).substr(begin), cells).first;
+        const auto replaced =
+            utf8_prefix(std::string_view(data).substr(begin), cells).first;
         data.replace(begin, replaced, part);
         pos.redrawn_at = raw_end;
       }
@@ -342,7 +350,8 @@ auto append_terminal(sql::Db& db, const TerminalScope& scope,
       const auto lf = part.rfind('\n');
       if (lf != std::string_view::npos) {
         pos.newlines += std::ranges::count(part, '\n');
-        pos.line_start = pos.cursor - utf8_prefix(part.substr(lf + 1), cells).second;
+        pos.line_start =
+            pos.cursor - utf8_prefix(part.substr(lf + 1), cells).second;
       }
       bytes.remove_prefix(length);
     }
@@ -356,16 +365,23 @@ auto append_terminal(sql::Db& db, const TerminalScope& scope,
       write(input.substr(0, 1));
       input.remove_prefix(1);
     } else {
-      const auto mark = pos.cursor < pos.end ? input.find_first_of("\r\n") : input.find('\r');
+      const auto mark =
+          pos.cursor < pos.end ? input.find_first_of("\r\n") : input.find('\r');
       const auto count = std::min(input.size(), mark);
       write(input.substr(0, count));
       input.remove_prefix(count);
     }
   }
   flush();
-  auto update = db.prepare("INSERT OR REPLACE INTO log_terminal_ends VALUES(?,?,?,?,?,?,?,?,?)");
-  scope.bind(update).bind(5, pos.end).bind(6, pos.cursor).bind(7, pos.line_start)
-      .bind(8, pos.newlines).bind(9, pos.redrawn_at).run();
+  auto update = db.prepare(
+      "INSERT OR REPLACE INTO log_terminal_ends VALUES(?,?,?,?,?,?,?,?,?)");
+  scope.bind(update)
+      .bind(5, pos.end)
+      .bind(6, pos.cursor)
+      .bind(7, pos.line_start)
+      .bind(8, pos.newlines)
+      .bind(9, pos.redrawn_at)
+      .run();
 }
 
 auto read_terminal(sql::Db& db, const TerminalScope& scope, LogRead out,
@@ -394,28 +410,35 @@ auto read_terminal(sql::Db& db, const TerminalScope& scope, LogRead out,
   const auto end = stop / kTerminalCellBytes;
   auto rows = db.prepare(
       "SELECT tile,line,starts_line,data FROM log_terminal_tiles WHERE "
-      "run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4 AND tile BETWEEN ?5 AND ?6 "
+      "run_id=?1 AND card=?2 AND invocation=?3 AND stream=?4 AND tile BETWEEN "
+      "?5 AND ?6 "
       "ORDER BY tile");
-  scope.bind(rows).bind(5, begin / kTerminalTileCells)
+  scope.bind(rows)
+      .bind(5, begin / kTerminalTileCells)
       .bind(6, (end - 1) / kTerminalTileCells);
   auto cursor = begin;
   while (rows.step()) {
     if (rows.u64(0) != cursor / kTerminalTileCells)
-      throw Failed(FailureKind::persistence_failed, "discontinuous terminal log tiles");
+      throw Failed(FailureKind::persistence_failed,
+                   "discontinuous terminal log tiles");
     const std::string data = rows.blob(3);
     const auto column = cursor % kTerminalTileCells;
     const auto start = utf8_prefix(data, column).first;
     if (cursor == begin) {
-      out.line_number = rows.u64(1) + std::count(data.begin(), data.begin() + start, '\n');
-      out.starts_line = column == 0 ? rows.i64(2) != 0 : start > 0 && data[start - 1] == '\n';
+      out.line_number =
+          rows.u64(1) + std::count(data.begin(), data.begin() + start, '\n');
+      out.starts_line =
+          column == 0 ? rows.i64(2) != 0 : start > 0 && data[start - 1] == '\n';
     }
     const auto count = std::min(end - cursor, kTerminalTileCells - column);
-    const auto [length, cells] = utf8_prefix(std::string_view(data).substr(start), count);
+    const auto [length, cells] =
+        utf8_prefix(std::string_view(data).substr(start), count);
     out.text.append(data, start, length);
     cursor += cells;
   }
   if (cursor != end)
-    throw Failed(FailureKind::persistence_failed, "discontinuous terminal log tiles");
+    throw Failed(FailureKind::persistence_failed,
+                 "discontinuous terminal log tiles");
   return out;
 }
 
@@ -1673,8 +1696,9 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     if (out.exists) out.size = st.u64(0);
   }
   if (terminal)
-    return read_terminal(db, {run_id, card ? key(*card) : "", invocation.value_or(0), s},
-                         std::move(out), offset, tail, limit, before, since);
+    return read_terminal(
+        db, {run_id, card ? key(*card) : "", invocation.value_or(0), s},
+        std::move(out), offset, tail, limit, before, since);
   const uint64_t edge = tail ? out.size : before.value_or(offset);
   if (edge > out.size)
     throw Failed(FailureKind::invalid_range,
@@ -1791,8 +1815,9 @@ std::vector<std::string> History::delete_runs(
     for (const auto* table :
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
-          "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles", "log_truncations", "artifacts", "displays",
-          "statuses", "active_environments"}) {
+          "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles",
+          "log_truncations", "artifacts", "displays", "statuses",
+          "active_environments"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
       for (const auto& id : ids) {
