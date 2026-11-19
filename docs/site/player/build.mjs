@@ -7,6 +7,7 @@
 //   node docs/site/player/build.mjs [--out-dir <directory>]
 // The output directory has the same layout as docs/site, including recorded assets.
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -106,24 +107,45 @@ function readWires(doc) {
   return (doc.canvas?.connections ?? []).map((c) => ({ from: c.from.card, fromPort: c.from.port, to: c.to.card, toPort: c.to.port }))
 }
 
-function readProject(root, ports, prefix = '') {
+function readGraph(root) {
   const doc = readJson(path.join(root, 'tsugumi.json'))
   const wires = readWires(doc)
-  const paths = new Set()
+  const children = new Map()
+  for (const { id } of doc.canvas.cards) {
+    const link = readJson(path.join(root, 'definitions', id, '_link.json'))
+    if (link) children.set(id, readGraph(path.join(root, 'externals', link.external)))
+  }
+  return { root, doc, wires, children }
+}
+
+function graphId(graph) {
+  const topology = ({ doc, wires, children }) => ({
+    cards: doc.canvas.cards.map(({ id }) => id).sort(),
+    wires: wires.map(({ from, fromPort, to, toPort }) => JSON.stringify([from, fromPort, to, toPort])).sort(),
+    boundary: doc.boundary ?? {},
+    children: Object.fromEntries([...children].map(([id, child]) => [id, topology(child)])),
+  })
+  const canonical = JSON.stringify(topology(graph), (_, value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]))
+      : value)
+  return createHash('sha256').update(canonical).digest('hex')
+}
+
+function readProject(root, ports, prefix = '', graph = readGraph(root)) {
+  const { doc, wires, children } = graph
   const scoped = Object.fromEntries(Object.entries(ports ?? {}).filter(([k]) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/')).map(([k, v]) => [k.slice(prefix.length), v]))
   const cards = doc.canvas.cards.map((c) => {
-    paths.add(`${prefix}${c.id}`)
     const card = readCard(root, c.id, scoped, wires)
     if (card.kind === 'subgraph') {
-      const ext = readJson(path.join(root, 'definitions', c.id, '_link.json')).external
-      const inner = readProject(path.join(root, 'externals', ext), ports, `${prefix}${c.id}/`)
-      for (const path of inner.paths) paths.add(path)
+      const child = children.get(c.id)
+      const inner = readProject(child.root, ports, `${prefix}${c.id}/`, child)
       card.boundary = inner.doc.boundary ?? {}
       card.inner = inner.cards.map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, files: x.files.filter((f) => f.path !== '_card.json') }))
     }
     return card
   })
-  return { doc, wires, cards, paths }
+  return { doc, wires, cards }
 }
 
 // ---- The written project of docs/CardGuide.md ----------------------------------------------
@@ -262,8 +284,9 @@ function say(steps, narration, cards) {
 
 // ---- One demo --------------------------------------------------------------------------------
 
-function buildDemo(entry, root, portsOf, narrations) {
-  const { wires, cards, paths } = readProject(root, portsOf[entry.id])
+export function buildDemo(entry, root, portsOf, narrations, recorded) {
+  const graph = readGraph(root)
+  const { wires, cards } = readProject(root, portsOf[entry.id], '', graph)
   const layout = readJson(path.join(root, 'layout.json'), {})
   // A Draft stops the run at it: such a project is shown as a plan.
   const draftOnly = cards.some((c) => c.kind === 'draft')
@@ -279,13 +302,12 @@ function buildDemo(entry, root, portsOf, narrations) {
     id: n.id, x: n.x ?? 0, y: n.y ?? 0, width: n.width ?? 240, height: n.height ?? 120, color: ['yellow', 'blue', 'green', 'pink', 'gray'].includes(n.color) ? n.color : 'yellow',
     fontSize: n.fontSize ?? 13, html: markdownHtml(n.text ?? ''),
   }))
-  const recorded = readJson(path.join(ASSETS, `${entry.id}.run.json`))
   const narration = narrations[entry.id] ?? (draftOnly ? narrations.draft : undefined)
   let steps = [], final = {}, run, outputs = {}
   if (!draftOnly) {
-    const removed = Object.keys(recorded?.timeline ?? {}).filter((card) => !paths.has(card))
-    if (removed.length) console.warn(`${entry.id}: recording references removed Cards (${removed.join(', ')}); previewing the current graph`)
-    if (recorded?.run?.state === 'succeeded' && !removed.length) {
+    const matches = recorded && recorded.graphId === graphId(graph)
+    if (recorded && !matches) console.warn(`${entry.id}: recorded graph differs; previewing the current graph`)
+    if (matches && recorded.run.state === 'succeeded') {
       steps = stepsFromRun(cards, recorded.timeline)
       final = finalsFromRun(cards, recorded.timeline)
       for (const c of cards) {
@@ -336,6 +358,10 @@ export { readJson, readProject, flowOf, stepsFromRun, finalsFromRun }
 
 async function main() {
   const args = process.argv.slice(2)
+  if (args.length === 2 && args[0] === '--graph-id') {
+    console.log(graphId(readGraph(path.resolve(args[1]))))
+    return
+  }
   if (args.length && (args.length !== 2 || args[0] !== '--out-dir')) {
     throw new Error('usage: node docs/site/player/build.mjs [--out-dir <directory>]')
   }
@@ -376,7 +402,8 @@ async function main() {
   const built = []
   try {
     for (const e of entries) {
-      const demo = buildDemo(e, e.root, portsOf, narrations)
+      const recording = readJson(path.join(ASSETS, `${e.id}.run.json`))
+      const demo = buildDemo(e, e.root, portsOf, narrations, recording)
       outputs.set(rel(path.join(DATA, `${e.id}.json`)), JSON.stringify(demo))
       built.push(demo)
       index.push({ id: e.id, title: e.title, description: e.description, tags: demo.tags, draftOnly: demo.draftOnly, recorded: !!demo.run, outputs: Object.keys(demo.outputs) })

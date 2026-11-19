@@ -125,7 +125,6 @@ The generated code stays as ordinary files, and a finished Workflow runs without
 The bundled "Cas A · Chandra RGB" demo fetches an X-ray observation (Chandra) of the supernova remnant Cassiopeia A, pinned with Nix, and splits its photons into three energy bands to make an RGB image.
 It also draws the energy spectrum of the same photons with matplotlib, so you can see which element's emission lines became which colour.
 Switch to the deep observation ObsID 114 (50 ks, about 15 million photons in the three bands) and the lines in the spectrum stand out more clearly.
-The animations in this section show the graphs as they were when the runs were recorded.
 
 ### Seeing the whole flow
 

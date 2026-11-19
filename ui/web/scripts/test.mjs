@@ -50,6 +50,7 @@ try {
     process.env.TSUGUMI_SITE_PLAYER_DIR = player
   }
   preparePlayer()
+  await import('../tests/demoRecording.mjs')
   await esbuild.build({
     entryPoints: [path.join(web, 'tests', 'behavior.ts')], outfile: out,
     bundle: true, platform: 'node', format: 'esm', target: 'node22', loader: { '.md': 'text' }, logLevel: 'warning',

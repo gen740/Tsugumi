@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from array import array
 from datetime import date
 from pathlib import Path
@@ -101,7 +102,7 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
 def resized(data: bytes, media: str, dest: Path) -> str:
     """Writes the image at a size for the page with sips (macOS); its file name."""
     suffix = ".jpg" if "jpeg" in media else ".png"
-    dest = dest.with_suffix(suffix)
+    dest = dest.with_name(f"{dest.name}{suffix}")
     dest.write_bytes(data)
     subprocess.run(["sips", "-Z", str(MAX_IMAGE), str(dest)], check=True, capture_output=True)
     if dest.stat().st_size > MAX_PNG:  # a photograph-like image: JPEG keeps it small
@@ -181,7 +182,7 @@ def module_value(name: str, data: dict, dest: Path) -> dict:
     return {"type": "module", "name": name}
 
 
-def display_value(d, demo: str, card: list[str]) -> dict | None:
+def display_value(d, dest: Path) -> dict | None:
     v = d.value
     t = d.valueType
     if t == 1:
@@ -193,7 +194,7 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
         rows = [[text(c) for c in r.cells] for r in v.rows]
         return {"type": "table", "columns": [text(c) for c in v.columns], "rows": rows[:MAX_ROWS], "totalRows": len(rows)}
     if t == 5:
-        name = resized(bytes(v.data), text(v.mediaType), OUT / f"{demo}-{'-'.join(card)}")
+        name = resized(bytes(v.data), text(v.mediaType), dest)
         return {"type": "image", "src": f"assets/{name}", "alt": text(v.alt) if v.alt else ""}
     if t == 6:
         return {"type": "points", "count": len(v.x)}
@@ -203,7 +204,7 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
             return {"type": "plot", "library": "line", "title": "", "xLabel": "", "yLabel": "",
                     "series": [{"label": s.label, "x": thin(s.x, MAX_POINTS), "y": thin(s.y, MAX_POINTS), "points": False}
                                for s in line_chart_series(v)]}
-        return module_value("plotly" if text(v.module).endswith("-tsugumi-view-plotly") else "vega-lite" if text(v.module).endswith("-tsugumi-view-vega-lite") else text(v.module), json.loads(text(v.configJson)), OUT / f"{demo}-{'-'.join(card)}")
+        return module_value("plotly" if text(v.module).endswith("-tsugumi-view-plotly") else "vega-lite" if text(v.module).endswith("-tsugumi-view-vega-lite") else text(v.module), json.loads(text(v.configJson)), dest)
     return None
 
 
@@ -218,8 +219,11 @@ def invocations(c, run_id: str, card: list[str]) -> list:
             return out
 
 
-def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
+def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) -> dict:
     root = project_copy(demo, tmp, sandbox)
+    graph_id = subprocess.check_output(
+        ["node", str(Path(__file__).with_name("build.mjs")), "--graph-id", str(root)], text=True,
+    ).strip()
     daemon = Daemon(root).start()
     began = time.time()
     try:
@@ -227,7 +231,11 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
         c.hello()
         run_id = start_run(c, ["start"], concurrency=4)
         status = wait_run(c, run_id, timeout=timeout)
-        state = RUN.get(status.state, str(status.state))
+        if status.state != RunState.succeeded:
+            state = RUN.get(status.state, str(status.state))
+            failure = text(status.failure.diagnostic) if status.failure else None
+            raise RuntimeError(f"run {run_id} {state}: {failure}")
+        recording_id = uuid.uuid4().hex
         cards = {}
         t0 = None
         outputs = {}
@@ -236,8 +244,10 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
             k = "/".join(card)
             try:
                 recs = invocations(c, run_id, card)
-            except RpcFailure:
-                recs = []
+            except RpcFailure as error:
+                if error.kind == "not_found" and error.args_map.get("card") == k:
+                    continue
+                raise
             if not recs:
                 continue
             for r in recs:
@@ -246,7 +256,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
             cards[k] = recs
             rec = c.call("RunRecordRequest", runId=run_id, card=path(*card)).record
             if len(card) == 1 and rec and rec.display and rec.display.value is not None:
-                value = display_value(rec.display, demo, card)
+                value = display_value(rec.display, staging / f"{demo}-{recording_id}-{k}")
                 if value:
                     outputs[k] = value
         timeline = {}
@@ -264,13 +274,12 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
         for a in c.call("ArtifactListRequest", runId=run_id, limit=50).artifacts:
             artifacts.append({"card": "/".join(text(s) for s in a.card.segments), "output": text(a.output), "name": text(a.name),
                               "members": [{"path": text(m.path), "size": int(m.sizeBytes or 0)} for m in a.members]})
-        failure = text(status.failure.diagnostic) if getattr(status, "failure", None) and status.failure.diagnostic else None
         return {
+            "graphId": graph_id,
             "run": {
-                "id": run_id, "state": state, "date": date.today().isoformat(), "wallSeconds": round(time.time() - began, 1),
+                "id": run_id, "state": "succeeded", "date": date.today().isoformat(), "wallSeconds": round(time.time() - began, 1),
                 "host": f"{platform.system()} {platform.machine()}, tsugumid on the host",
-                "sandbox": "Seatbelt" if sandbox else "off", "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
-                "failure": failure,
+                "sandbox": "Seatbelt" if sandbox else "off", "commit": subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip(),
             },
             "timeline": timeline, "outputs": outputs, "artifacts": artifacts,
         }
@@ -307,19 +316,26 @@ def main() -> int:
     code = 0
     for demo in demos:
         print(f"== {demo}", flush=True)
-        with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
+        with (
+            tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp,
+            tempfile.TemporaryDirectory(prefix=".harvest-", dir=OUT) as staging_dir,
+        ):
             try:
-                result = harvest(demo, Path(tmp), sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
+                staging = Path(staging_dir)
+                result = harvest(demo, Path(tmp), staging, sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
+                record = staging / f"{demo}.run.json"
+                record.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+                # Keep the old recording readable until every image for the new one is published.
+                for image in staging.iterdir():
+                    if image != record:
+                        image.rename(OUT / image.name)
+                record.replace(OUT / record.name)
             except Exception as e:  # one demo failing does not stop the others
                 print(f"{demo}: FAILED {type(e).__name__}: {e}", flush=True)
                 code = 1
                 continue
-        if result["run"]["state"] == "succeeded":  # a run that failed is no record to replay
-            (OUT / f"{demo}.run.json").write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
-        else:
-            code = 1
-        print(f"{demo}: {result['run']['state']} in {result['run']['wallSeconds']} s, "
-              f"{len(result['timeline'])} Cards, displays: {sorted(result['outputs'])}, failure: {result['run']['failure']}", flush=True)
+        print(f"{demo}: succeeded in {result['run']['wallSeconds']} s, "
+              f"{len(result['timeline'])} Cards, displays: {sorted(result['outputs'])}", flush=True)
     return code
 
 
