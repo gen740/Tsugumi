@@ -109,9 +109,8 @@ class Store {
                   const std::optional<std::string>& expected_hash,
                   const std::function<void()>& check_cancelled) const
       -> std::shared_ptr<SourceFile>;
-  void validate_checkout(const std::filesystem::path& root) const;
-  Staged stage_reload(const std::string& op_id,
-                      const std::string& origin) const;
+  Staged stage_reload(const std::string& op_id, const std::string& origin,
+                      const std::filesystem::path& checkout = {}) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
   // Resolves a staged document now (commit then reuses it).

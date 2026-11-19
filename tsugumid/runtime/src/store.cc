@@ -920,21 +920,21 @@ void check_ports(const Resolution& resolution) {
 }
 }  // namespace
 
-void Store::validate_checkout(const stdfs::path& root) const {
-  const auto doc = load_document(root);
-  const auto resolution = resolve(*doc, [&](const std::string& path) {
-    return fs::read_file(root / path);
-  });
-  check_ports(*resolution);
-  for (const auto& diagnostic : resolution->all_diagnostics(false))
-    if (diagnostic.code == "invalid_document")
-      throw Failed(FailureKind::invalid_document, diagnostic.message);
-}
-
 Store::Staged Store::stage_reload(const std::string& op_id,
-                                  const std::string& origin) const {
+                                  const std::string& origin,
+                                  const stdfs::path& checkout) const {
   auto base = current();
-  auto doc = load_document(opts_.root);
+  auto doc = load_document(checkout.empty() ? opts_.root : checkout);
+  if (!checkout.empty()) {
+    doc->resolution = resolve(*doc, [&](const std::string& path) {
+      return fs::read_file(checkout / path);
+    });
+    doc->resolution_key = doc->execution_fingerprint;
+    check_ports(*doc->resolution);
+    for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
+      if (diagnostic.code == "invalid_document")
+        throw Failed(FailureKind::invalid_document, diagnostic.message);
+  }
   Staged st;
   st.delta.base_rev = base->rev;
   st.delta.op_id = op_id;
@@ -966,8 +966,6 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   // changes.
   doc->rev = base->rev;
   doc->execution_rev = base->execution_rev;
-  doc->execution_fingerprint =
-      execution_fingerprint(*doc, reader(*doc, &st.ops));
   st.doc = doc;
   return st;
 }

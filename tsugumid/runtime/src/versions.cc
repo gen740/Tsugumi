@@ -597,50 +597,189 @@ void Versions::checkout(
   git_oid oid;
   if (!resolve_commit(r.get(), commit, oid))
     throw Failed(FailureKind::invalid_request, "not a commit id: " + commit);
-  Object target;
-  if (git_object_lookup(target.out(), r.get(), &oid, GIT_OBJECT_COMMIT) != 0)
-    throw Failed(FailureKind::not_found, "no version " + commit);
-  git_checkout_options opts;
-  git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION);
-  opts.checkout_strategy = GIT_CHECKOUT_FORCE;
-  {
-    auto path = (root_ / ".tsugumi" / "checkout-XXXXXX").string();
-    if (!::mkdtemp(path.data()))
-      throw Failed(FailureKind::persistence_failed,
-                   "could not create a checkout validation directory");
-    struct Preview {
-      stdfs::path path;
-      ~Preview() {
-        std::error_code error;
-        stdfs::remove_all(path, error);
-        if (error) log::error("remove checkout preview: " + error.message());
-      }
-    } preview{path};
-    auto read_only = opts;
-    read_only.checkout_strategy |= GIT_CHECKOUT_DONT_UPDATE_INDEX;
-    read_only.target_directory = path.c_str();
-    check(git_checkout_tree(r.get(), target.get(), &read_only),
-          "prepare checkout");
-    validate(preview.path);
+  Commit target;
+  check(git_commit_lookup(target.out(), r.get(), &oid), "checkout target");
+  Tree target_tree;
+  check(git_commit_tree(target_tree.out(), target.get()), "checkout tree");
+
+  // Stage the working project in memory, preserving the user's original index.
+  Index index;
+  check(git_repository_index(index.out(), r.get()), "checkout index");
+  const stdfs::path index_path = git_index_path(index.get());
+  const auto index_before = fs::read_file(index_path);
+  const stdfs::path head_path =
+      stdfs::path(git_repository_path(r.get())) / "HEAD";
+  const auto head_before = fs::read_file_or_throw(head_path);
+  const auto baseline_oid = stage_project(r.get(), root_, false);
+  Tree baseline;
+  check(git_tree_lookup(baseline.out(), r.get(), &baseline_oid),
+        "checkout baseline");
+
+  // Untracked and ignored paths survive an ordinary checkout. Give Git the
+  // same input here and install this exact tree after validation.
+  std::set<std::string> roots{"tsugumi.json", "layout.json", "definitions",
+                              "externals", "skills"};
+  for (auto* tree : {baseline.get(), target_tree.get()})
+    for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
+      const std::string name =
+          git_tree_entry_name(git_tree_entry_byindex(tree, i));
+      if (!Document::valid_version_path(name))
+        throw Failed(FailureKind::invalid_path,
+                     "invalid checkout path: " + name);
+      roots.insert(name);
+    }
+  auto scratch_path = (root_ / ".tsugumi" / "checkout-XXXXXX").string();
+  if (!::mkdtemp(scratch_path.data()))
+    throw Failed(FailureKind::persistence_failed,
+                 "could not create a checkout directory");
+  struct CheckoutScratch {
+    stdfs::path path;
+    bool keep = false;
+    ~CheckoutScratch() {
+      if (keep) return;
+      std::error_code error;
+      stdfs::remove_all(path, error);
+      if (error) log::error("remove checkout directory: " + error.message());
+    }
+  } scratch{scratch_path};
+  const auto preview = scratch.path / "target";
+  const auto backup = scratch.path / "original";
+  stdfs::create_directory(preview);
+  stdfs::create_directory(backup);
+  for (const auto& name : roots) {
+    const auto from = root_ / name;
+    if (stdfs::exists(stdfs::symlink_status(from)))
+      stdfs::copy(
+          from, preview / name,
+          stdfs::copy_options::recursive | stdfs::copy_options::copy_symlinks);
   }
-  commit_worktree(r.get(), root_, version_record::commit("checkout"));
-  check(git_checkout_tree(r.get(), target.get(), &opts), "checkout");
-  // On a branch's tip, continue that branch.
+  git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
+  opts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_DONT_UPDATE_INDEX |
+                           GIT_CHECKOUT_NO_REFRESH;
+  opts.baseline = baseline.get();
+  opts.target_directory = preview.c_str();
+  check(git_checkout_tree(r.get(), target_tree.get(), &opts),
+        "prepare checkout");
+  validate(preview);
+
+  // Build the outgoing version without changing the branch or HEAD. Advance
+  // that branch only after the worktree, index and new HEAD are installed.
+  const auto before = head_oid(r.get());
+  Ref head;
+  check(git_reference_lookup(head.out(), r.get(), "HEAD"), "checkout HEAD");
+  std::string source_branch;
+  std::optional<git_oid> saved;
+  Commit current;
+  if (before)
+    check(git_commit_lookup(current.out(), r.get(), &*before),
+          "checkout current version");
+  if (!before ||
+      !git_oid_equal(git_commit_tree_id(current.get()), &baseline_oid)) {
+    if (const auto* name = git_reference_symbolic_target(head.get()))
+      source_branch = name;
+    else
+      source_branch = "refs/heads/" + new_branch_name(r.get(), hex(&*before));
+    const auto id = commit_tree(
+        r.get(), baseline_oid,
+        before ? std::vector<git_oid>{*before} : std::vector<git_oid>{},
+        version_record::commit("checkout"), nullptr);
+    git_oid saved_oid;
+    check(git_oid_fromstr(&saved_oid, id.c_str()), "checkout saved version");
+    saved = saved_oid;
+  }
+
+  // A branch at the target stays attached, unless it is about to advance.
   RefIter it;
   check(git_reference_iterator_glob_new(it.out(), r.get(), "refs/heads/*"),
         "branches");
-  git_reference* ref = nullptr;
   std::string branch;
-  while (git_reference_next(&ref, it.get()) == 0) {
-    const git_oid* t = git_reference_target(ref);
-    if (branch.empty() && t && git_oid_equal(t, &oid))
-      branch = git_reference_name(ref);
-    git_reference_free(ref);
+  for (;;) {
+    Ref ref;
+    const int status = git_reference_next(ref.out(), it.get());
+    if (status == GIT_ITEROVER) break;
+    check(status, "iterate checkout branches");
+    const auto* target_id = git_reference_target(ref.get());
+    const std::string name = git_reference_name(ref.get());
+    if (target_id && name != source_branch && git_oid_equal(target_id, &oid)) {
+      branch = name;
+      break;
+    }
   }
-  if (!branch.empty())
-    check(git_repository_set_head(r.get(), branch.c_str()), "head");
-  else
-    check(git_repository_set_head_detached(r.get(), &oid), "head");
+
+  struct Move {
+    std::string name;
+    bool backed_up = false;
+    bool installed = false;
+  };
+  std::vector<Move> moves;
+  moves.reserve(roots.size());
+  bool index_written = false, head_written = false;
+  try {
+    for (const auto& name : roots) {
+      auto& move = moves.emplace_back(Move{name});
+      if (stdfs::exists(stdfs::symlink_status(root_ / name))) {
+        stdfs::rename(root_ / name, backup / name);
+        move.backed_up = true;
+      }
+      if (stdfs::exists(stdfs::symlink_status(preview / name))) {
+        stdfs::rename(preview / name, root_ / name);
+        move.installed = true;
+      }
+    }
+    check(git_index_read_tree(index.get(), target_tree.get()),
+          "set checkout index");
+    check(git_index_write(index.get()), "write checkout index");
+    index_written = true;
+    check(branch.empty() ? git_repository_set_head_detached(r.get(), &oid)
+                         : git_repository_set_head(r.get(), branch.c_str()),
+          "set checkout HEAD");
+    head_written = true;
+    if (saved) {
+      Ref ref;
+      const auto* expected = git_reference_symbolic_target(head.get()) && before
+                                 ? &*before
+                                 : nullptr;
+      check(git_reference_create_matching(
+                ref.out(), r.get(), source_branch.c_str(), &*saved,
+                expected != nullptr, expected, "save project before checkout"),
+            "save checkout branch");
+    }
+  } catch (const std::exception& error) {
+    // Keep original files available if a second I/O error prevents rollback.
+    std::string failures;
+    auto restore = [&](const auto& action) {
+      try {
+        action();
+      } catch (const std::exception& failure) {
+        failures += "; " + std::string(failure.what());
+      }
+    };
+    if (head_written)
+      restore([&] { fs::write_atomic(head_path, head_before); });
+    if (index_written)
+      restore([&] {
+        if (index_before)
+          fs::write_atomic(index_path, *index_before);
+        else
+          fs::remove_file_durable(index_path);
+      });
+    for (auto move = moves.rbegin(); move != moves.rend(); ++move) {
+      if (move->installed)
+        restore(
+            [&] { stdfs::rename(root_ / move->name, preview / move->name); });
+      if (move->backed_up)
+        restore(
+            [&] { stdfs::rename(backup / move->name, root_ / move->name); });
+    }
+    if (!failures.empty()) {
+      scratch.keep = true;
+      throw Failed(FailureKind::persistence_failed,
+                   std::string(error.what()) +
+                       "; checkout rollback failed (originals in " +
+                       backup.string() + ")" + failures);
+    }
+    throw Failed(FailureKind::persistence_failed, error.what());
+  }
 }
 
 VersionGraphData Versions::graph(size_t limit) {
