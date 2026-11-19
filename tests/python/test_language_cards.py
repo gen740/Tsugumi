@@ -496,7 +496,7 @@ main <- function(inputs, report, run) {
   calls <<- calls + 1L
   report$text(sprintf("call %d", calls))
   if (calls != 2L) return(invisible(NULL))
-  how <- "HOW"
+  how <- inputs$params$how
   if (how == "fail") stop("on purpose")
   if (how == "exit") quit(save = "no", status = 3)
   if (how == "crash") tools::pskill(Sys.getpid(), tools::SIGKILL)
@@ -511,7 +511,7 @@ function main(inputs, report, run)
     global calls += 1
     text(report, "call $calls")
     calls == 2 || return
-    how = "HOW"
+    how = inputs.params["how"]
     how == "fail" && error("on purpose")
     how == "exit" && exit(3)
     how == "crash" && ccall(:kill, Cint, (Cint, Cint), getpid(), 9)
@@ -534,7 +534,7 @@ def main(inputs, report, run):
     report.text(f"call {calls}")
     if calls != 2:
         return
-    if "HOW" == "fail":
+    if inputs.params.how == b"fail":
         raise RuntimeError("on purpose")
     while not run.cancelled():
         time.sleep(0.01)
@@ -545,7 +545,7 @@ def main(inputs, report, run)
   @calls = (@calls || 0) + 1
   report.text("call #{@calls}")
   return nil unless @calls == 2
-  raise "on purpose" if "HOW" == "fail"
+  raise "on purpose" if inputs.params.fetch("how") == "fail"
   sleep(0.01) until run.cancelled?
   nil
 end
@@ -562,8 +562,7 @@ public sealed class Card : ICard {
   public async ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
     report.Text($"call {++calls}");
     if (calls == 2) {
-      var how = "HOW";
-      if (how == "fail") throw new Exception("on purpose");
+      if (inputs.Params.How == "fail") throw new Exception("on purpose");
       await Task.Delay(60000, run.CancellationToken);
     }
     return new Outputs();
@@ -588,7 +587,9 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   snprintf(display, sizeof display, "{\\"text\\":\\"call %d\\"}", ++calls);
   c->effects->display_json(c->host, display);
   if (calls != 2) return c->effects->outputs_json(c->host, "{}", outputs);
-  if (!strcmp("HOW", "fail")) {
+  const char* params = c->effects->params_json(c->host);
+  if (!params) return 1;
+  if (strstr(params, "\\"fail\\"")) {
     c->effects->fail(c->host, "worker_failed", "on purpose");
     return 1;
   }
@@ -607,8 +608,9 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
     nix, name, source = BAD_SECOND_CALL[language]
     modes = ("fail", "cancel", "exit", "crash") if language in ("r", "julia") else ("fail", "cancel")
     write_project(root, {
-        how: {"card": {"language": language, "reuseWorker": True},
-              "nix": nix, "src": {name: source.replace("HOW", how)}}
+        how: {"card": {"language": language, "reuseWorker": True,
+                       "params": [{"name": "how", "type": "string", "data": how}]},
+              "nix": nix, "src": {name: source}}
         for how in modes
     }, [])
     c = connect()
