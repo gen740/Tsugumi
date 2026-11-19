@@ -6,8 +6,9 @@ import path from 'node:path'
 import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
+import { permissionCatalog } from '../src/model/permissions'
 import { projectAccessNeededNow } from '../shared/agentShared'
-import { create } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { createElement } from 'react'
 
 // The HTTP adapter must scope lists/search and adopt host edits and the
@@ -112,6 +113,29 @@ const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], l
   return { request, operation: fields.access, neededNow: fields.needed_now }
 }) }]
 const selections: string[] = []
+const originalFetch = globalThis.fetch
+const sandboxRequest = 'sandbox_off Collatz'
+const sandboxLabel = 'Run outside the sandbox'
+try {
+  globalThis.fetch = async () => { throw new Error('Host unavailable at startup') }
+  await permissionCatalog.load()
+  let requested = false
+  globalThis.fetch = async (url) => {
+    assert.equal(url, '/api/permission-kinds')
+    requested = true
+    return Response.json({ kinds: [{ id: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }] })
+  }
+  const props = { asked: [sandboxRequest], selected: [], onSelect() {} }
+  const refreshed = Promise.withResolvers<void>()
+  const unsubscribe = permissionCatalog.subscribe(refreshed.resolve)
+  let prompt!: ReturnType<typeof create>
+  act(() => { prompt = create(createElement(PermissionRequests, props)) })
+  try {
+    assert.ok(requested)
+    await refreshed.promise
+    assert.ok(prompt.root.findByType('input').props['aria-label'].includes(sandboxLabel))
+  } finally { unsubscribe(); prompt.unmount() }
+} finally { globalThis.fetch = originalFetch }
 const view = create(createElement(PermissionRequests, {
   asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
 }))

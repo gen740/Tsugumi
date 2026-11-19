@@ -547,8 +547,7 @@ export class ChatController extends Observable {
     void this.refreshProvider()
   }
 
-  /** The user's answer; `always` are kinds allowed without asking from now on. */
-  answerPermission(allow: boolean, always: string[], id = this.permission?.id, selected?: string[]) {
+  answerPermission(allow: boolean, id = this.permission?.id, selected?: string[]) {
     const p = this.permission
     if (!p || p.id !== id) return
     this.removePermission(p.id)
@@ -559,7 +558,7 @@ export class ChatController extends Observable {
       const { access_id } = JSON.parse(line.slice('project_access '.length)) as { access_id: Access }
       return [access_id]
     })
-    void api('/api/chat/permission', { id: p.id, allow, always, selected: access }).catch((e) => this.fail(e))
+    void api('/api/chat/permission', { id: p.id, allow, selected: access }).catch((e) => this.fail(e))
   }
 
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */

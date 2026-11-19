@@ -17,14 +17,12 @@ import TsugumiRPC
   }
 }
 
-struct CardPermission: RawRepresentable, Identifiable, Hashable {
+struct CardPermission: RawRepresentable, Hashable {
   let rawValue: String
   init?(rawValue: String) {
     guard !rawValue.isEmpty else { return nil }
     self.rawValue = rawValue
   }
-  var id: String { rawValue }
-  @MainActor static var allCases: [CardPermission] { PermissionCatalog.shared.entries.compactMap { CardPermission(rawValue: $0.id) } }
   @MainActor var known: Bool { PermissionCatalog.shared.entries.contains { $0.id == rawValue } }
   @MainActor var label: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.label ?? rawValue }
   @MainActor var symbol: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.icon ?? "hand.raised" }

@@ -66,35 +66,6 @@ TEST_F(AgentFixture,
   EXPECT_EQ(after.HostValue()->value_as_Settings()->revision(), revision + 2);
   EXPECT_NE(Bytes(after).find("retry after reading"), std::string::npos);
 }
-TEST_F(AgentFixture, WebPermissionUpdatesKeepTheNativeNixPermission) {
-  ASSERT_TRUE(
-      SettingsPatch(*host, "desktop",
-                    {{"agent.permissions.allowed", R"(["nix_source"])"}})
-          .Code()
-          .empty());
-  const auto before = SettingsGet(*host);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
-  const auto updated =
-      Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
-        const auto change =
-            H::CreateSetting(b, b.CreateString("agent.permissions.allowed"),
-                             b.CreateString(R"(["network"])"));
-        return H::CreateSettingsUpdateRequest(
-                   b, b.CreateString("desktop"), revision,
-                   b.CreateVector(std::vector{change}), b.CreateString("web"))
-            .Union();
-      });
-  ASSERT_TRUE(updated.Code().empty());
-  bool found = false;
-  for (const auto* value : *updated.HostValue()->value_as_Settings()->values())
-    if (value->key()->str() == "agent.permissions.allowed") {
-      found = true;
-      EXPECT_NE(value->value_json()->str().find("nix_source"),
-                std::string::npos);
-      EXPECT_NE(value->value_json()->str().find("network"), std::string::npos);
-    }
-  EXPECT_TRUE(found);
-}
 TEST_F(AgentFixture,
        ProviderSetAndStatusNeverReturnTheSecretAndFollowPlatformStorage) {
   const std::string key = "PRIVATE_KEY_SENTINEL";

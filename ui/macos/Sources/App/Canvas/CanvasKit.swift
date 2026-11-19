@@ -1187,7 +1187,7 @@ struct CardNodeView: View {
           .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       }
       if edit == nil { Spacer(minLength: s(2)) }
-      ForEach(data.permissions) { p in
+      ForEach(data.permissions, id: \.rawValue) { p in
         Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
       }
       if !data.errors.isEmpty {

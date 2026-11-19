@@ -6,7 +6,6 @@ import { api, onServerEvent } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
-import { permissionCatalog } from '../model/permissions'
 import { useObserve } from '../model/observable'
 import {
   bindingLabel, CANVAS_ONLY, EDITOR_THEME_LABELS, EditorTheme, eventBinding, FLOW_LABELS, FlowDirection, Motion, MOTION_LABELS, prefs,
@@ -523,7 +522,6 @@ interface APIState {
   models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
   keys: { Anthropic: KeySource; OpenAI: KeySource }
   keyEnv: { Anthropic: string; OpenAI: string }
-  allowedPermissions: string[]
   allowUnscopedHelpers: boolean
   webSearch: boolean
 }
@@ -540,8 +538,6 @@ function refreshChats(saved = false) {
  *  never sent to this page, tsugumid or Cards, nor written to project files,
  *  settings or logs. */
 function APISettings() {
-  useObserve(permissionCatalog)
-  useEffect(() => { void permissionCatalog.load() }, [])
   const [s, setS] = useState<APIState>()
   const reload = () => api<APIState>('/api/settings').then((v) => {
     setS(v)
@@ -579,14 +575,6 @@ function APISettings() {
       <KeySection id="openai" s={s} reload={reload} update={update} />
       <ChatGPTSettings onConnected={() => refreshChats(true)} onChanged={() => refreshChats()} model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
       <ProjectPermissionSettings />
-      <Section info={L('オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。')} title={L('Agent が確認なしに Card に与えてよい権限')}>
-        {permissionCatalog.kinds.map((p) => (
-          <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
-            <Toggle checked={s.allowedPermissions.includes(p.kind)}
-              onChange={(on) => update({ allowedPermissions: on ? [...s.allowedPermissions, p.kind] : s.allowedPermissions.filter((k) => k !== p.kind) })} />
-          </Row>
-        ))}
-      </Section>
       <Section info={L('オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。')} title={L('ヘルパー')}>
         <Row label={L('範囲を指定しないヘルパーを許可する')}>
           <Toggle checked={s.allowUnscopedHelpers} onChange={(v) => update({ allowUnscopedHelpers: v })} />

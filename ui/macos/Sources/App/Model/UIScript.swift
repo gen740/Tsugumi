@@ -407,7 +407,7 @@ final class UIScript {
           while chat.permissionPrompt == nil && chat.busy && Date() < deadline { try? await Task.sleep(for: .milliseconds(500)) }
           if let p = chat.permissionPrompt {
             say("permission \(w[1]): " + p.raw.joined(separator: " | ").replacingOccurrences(of: "\n", with: " "))
-            chat.answerPermissions(id: p.id, allow: w[1] == "allow", always: [])
+            chat.answerPermissions(id: p.id, allow: w[1] == "allow")
           } else {
             say("permission: none asked")
           }

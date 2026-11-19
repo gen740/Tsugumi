@@ -264,7 +264,6 @@ auto Defaults() -> j::Members {
           {"agent.webSearch", "false"},
           {"agent.animateWork", "true"},
           {"agent.allowUnscopedHelpers", "false"},
-          {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
           {"agent.trustedFolders", "[]"},
           {"versions.noteMode", j::Quote("mechanical")},
@@ -272,6 +271,11 @@ auto Defaults() -> j::Members {
           {"vm.memoryGiB", "0"},
           {"vm.storeGiB", "0"},
           {"app.language", j::Quote("ja")}};
+}
+auto IsSetting(const j::Members& defaults, const std::string& key) -> bool {
+  return defaults.contains(key) || key == "agent.drawThoughts" ||
+         key == "agent.drawThoughtsAsked" || key == "agent.thoughtModel" ||
+         key == "agent.thoughtModel.openai" || key == "agent.speechModel.chatgpt";
 }
 }  // namespace
 struct Settings::State {
@@ -335,7 +339,9 @@ struct Settings::State {
     q.bind(1, profile);
     if (q.step()) {
       revision = q.u64(0);
-      for (const auto& [k, v] : j::Object(q.text(1))) values[k] = v;
+      const auto defaults = Defaults();
+      for (const auto& [k, v] : j::Object(q.text(1)))
+        if (IsSetting(defaults, k)) values[k] = v;
     }
     return {revision, values};
   }
@@ -749,39 +755,17 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           f.message = "Settings changed; read the latest revision";
           return agent::wire::HostReply(id, std::move(f));
         }
+        const auto defaults = Defaults();
         if (p.changes())
           for (const auto* item : *p.changes()) {
             const auto key = item->key()->str();
             auto value = item->value_json()->str();
-            if (key == "agent.permissions.allowed" &&
-                Text(p.client()) == "web") {
-              // The Web screen edits four kinds; preserve the app-only Nix
-              // kind, as the former desktop preference adapter did.
-              const std::vector<std::string> kinds = {"network", "sandbox_off",
-                                                      "host_folder_read",
-                                                      "host_folder_write"};
-              std::vector<std::string> merged;
-              for (const auto& raw : j::Array(j::Get(values, key, "[]")))
-                if (std::find(kinds.begin(), kinds.end(), j::String(raw)) ==
-                    kinds.end())
-                  merged.push_back(raw);
-              for (const auto& raw : j::Array(value))
-                if (std::find(kinds.begin(), kinds.end(), j::String(raw)) !=
-                    kinds.end())
-                  merged.push_back(raw);
-              value = j::Encode(merged);
-            }
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
                 !(key.starts_with("agent.") || key.starts_with("vm.") ||
                   key == "versions.noteMode" || key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
-            const auto defaults = Defaults();
-            if (!defaults.contains(key) && key != "agent.drawThoughts" &&
-                key != "agent.drawThoughtsAsked" &&
-                key != "agent.thoughtModel" &&
-                key != "agent.thoughtModel.openai" &&
-                key != "agent.speechModel.chatgpt")
+            if (!IsSetting(defaults, key))
               throw std::runtime_error("Unknown setting");
             if (key == "app.language" && j::String(value) != "ja" &&
                 j::String(value) != "en")
@@ -836,10 +820,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                      j::Get(entry, "enabled") != "false"))
                   throw std::runtime_error("Invalid skill folder");
               }
-            if (key == "agent.permissions.allowed")
-              for (const auto& kind : j::Array(value))
-                if (j::String(kind).empty())
-                  throw std::runtime_error("Invalid permission kind");
             if (key == "versions.noteMode" &&
                 j::String(value) != "mechanical" && j::String(value) != "agent")
               throw std::runtime_error("Unknown version note mode");

@@ -52,9 +52,6 @@ interface Settings {
   effort: string
   fastModel: string
   fixturePort: number
-  /** What the Agent may give Cards without asking (network, sandbox_off,
-   *  host_folder_read, host_folder_write); the rest waits for the user. */
-  allowedPermissions: string[]
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
@@ -74,7 +71,7 @@ interface Settings {
 // The host keeps presentation snapshots only; persistence and validation are RPC.
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
-  effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
+  effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
@@ -104,7 +101,7 @@ async function patchSettings(change: Partial<Settings>, expected: Record<string,
     if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
   }
   for (const [profile, changes] of patches) {
-    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes, client: 'web' })
+    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes })
   }
   await loadSettings()
 }
@@ -623,10 +620,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
-    if (allow && Array.isArray(b.always) && b.always.length > 0) {
-      const merged = [...new Set([...(settings().allowedPermissions ?? []), ...b.always.map(String)])]
-      await patchSettings({ allowedPermissions: merged })
-    }
     await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
   },

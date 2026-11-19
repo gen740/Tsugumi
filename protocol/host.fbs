@@ -29,7 +29,7 @@ table ProviderChanged { profile:string (required); }
 
 table Setting { key:string (required); value_json:string (required, trace_secret); }
 table SettingsGetRequest { profile:string (required); }
-table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
+table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; }
 table Settings { revision:ulong; values:[Setting]; }
 // ephemeral source: env, keychain, or memory (omitted). The host selects env
 // before keychain before memory, then a stored key on Linux only. On macOS

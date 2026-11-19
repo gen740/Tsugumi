@@ -135,7 +135,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ProjectPermissionsRequest': return new H.ProjectPermissionsRequestT()
     case 'ProjectPermissionSetRequest': return new H.ProjectPermissionSetRequestT(v.project_id, v.resource_id, enumValue(Access, v.access), v.allow === true)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
-    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
+    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)))
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral, v.source)
     case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id, v.key_profile)
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)

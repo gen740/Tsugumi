@@ -33,20 +33,17 @@ private func accessOperation(_ name: String) -> String {
 /// Shows core-owned access requests and approvals for a single operation.
 struct PermissionPromptView: View {
   let prompt: ChatController.PermissionPrompt
-  let answer: (_ allow: Bool, _ always: Set<CardPermission>, _ selected: Set<String>) -> Void
+  let answer: (_ allow: Bool, _ selected: Set<String>) -> Void
   var reload = false
-  @State private var always: Set<CardPermission> = []
   @State private var selected: Set<String>
 
   init(prompt: ChatController.PermissionPrompt,
-       answer: @escaping (Bool, Set<CardPermission>, Set<String>) -> Void, reload: Bool = false) {
+       answer: @escaping (Bool, Set<String>) -> Void, reload: Bool = false) {
     self.prompt = prompt
     self.answer = answer
     self.reload = reload
     _selected = State(initialValue: prompt.defaultSelection)
   }
-
-  private var kinds: [CardPermission] { (prompt.operation != nil || reload) ? [] : CardPermission.allCases.filter { k in prompt.requests.contains { $0.kind == k } } }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -108,19 +105,10 @@ struct PermissionPromptView: View {
       if !prompt.groups.isEmpty {
         Text("読み取った内容は接続先のモデルに送信される場合があります。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
-      VStack(alignment: .leading, spacing: 4) {
-        if !kinds.isEmpty {
-          Text("今後は確認しない（設定の「API」でいつでも変えられます）").font(.caption).foregroundStyle(.secondary)
-        }
-        ForEach(kinds) { k in
-          Toggle(k.label, isOn: Binding(get: { always.contains(k) }, set: { on in if on { always.insert(k) } else { always.remove(k) } }))
-            .toggleStyle(.checkbox)
-        }
-      }
       HStack {
         Spacer()
-        Button("許可しない") { answer(false, [], []) }.keyboardShortcut(.cancelAction)
-        Button("許可する") { answer(true, always, selected) }.keyboardShortcut(.defaultAction)
+        Button("許可しない") { answer(false, []) }.keyboardShortcut(.cancelAction)
+        Button("許可する") { answer(true, selected) }.keyboardShortcut(.defaultAction)
       }
     }
     .padding(20)
