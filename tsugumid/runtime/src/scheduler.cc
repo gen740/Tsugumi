@@ -339,20 +339,26 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::exception_ptr error;
     std::vector<std::vector<std::string>> chunks;
     uint64_t line_bytes = 0;
+    bool log_truncated = false;
     std::vector<std::pair<Phase, int64_t>> phases;
     NixOutput log;
     std::function<void(Phase, int64_t)> on_phase;
 
-    auto print(std::span<const std::string> received) -> void {
+    auto print(proc::LineChunk chunk) -> void {
       std::lock_guard l(mu);
-      if (log) return log(received);
-      // Retain enough for the invocation's budget to record the omission.
-      auto end = received.begin();
-      while (end != received.end() && line_bytes <= kInvocationLogLimitBytes) {
+      if (log) return log(chunk);
+      if (log_truncated) return;
+      // Until the invocation takes ownership, bound the buffered text by the
+      // same byte ceiling as history. The invocation accounts for JSON too.
+      auto end = chunk.lines.begin();
+      while (end != chunk.lines.end() &&
+             end->size() <= kInvocationLogLimitBytes - line_bytes) {
         line_bytes += end->size();
         ++end;
       }
-      if (end != received.begin()) chunks.emplace_back(received.begin(), end);
+      if (end != chunk.lines.begin())
+        chunks.emplace_back(chunk.lines.begin(), end);
+      log_truncated = chunk.truncated || end != chunk.lines.end();
     }
     auto enter(Phase phase) -> void {
       std::lock_guard l(mu);
@@ -490,22 +496,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 const std::string& text) {
-    card_log(card, inv, stream, std::span(&text, 1));
+    card_log(card, inv, stream, {std::span(&text, 1)});
   }
 
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
-                std::span<const std::string> lines) {
+                proc::LineChunk received) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
     auto& budget = log_budget(card, inv);
     if (budget.truncated()) return;
     // The budget still measures each log entry. Store the accepted prefix
     // with one insert and publish its end before any truncation notice.
     std::string chunk;
-    for (const auto& line : lines) {
+    for (const auto& line : received.lines) {
       if (!budget.append(stream, line)) break;
       chunk += line;
     }
     if (!chunk.empty()) record_card_log(card, inv, stream, std::move(chunk));
+    if (received.truncated) budget.truncate();
     if (budget.truncated()) mark_card_log_truncated(card, inv);
   }
 
@@ -984,7 +991,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (auto early = take_early_build(rt, request.target)) {
       std::unique_lock l(early->mu);
       for (const auto& [phase, at] : early->phases) enter(phase, at);
-      for (const auto& chunk : early->chunks) request.log(chunk);
+      for (const auto& chunk : early->chunks) request.log({chunk});
+      if (early->log_truncated) request.log({{}, true});
       early->phases.clear();
       early->chunks.clear();
       early->log = request.log;

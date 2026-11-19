@@ -12,12 +12,12 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
 
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/store_result.hh"
 
 namespace tsugumi {
@@ -29,7 +29,7 @@ inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 using EvaluationKey =
     std::tuple<std::string, std::string, std::string, std::string>;
 
-using NixOutput = std::function<void(std::span<const std::string>)>;
+using NixOutput = std::function<void(proc::LineChunk)>;
 
 struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
@@ -77,6 +77,8 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
+  // Dispatch the private build-client mode before starting the evaluator.
+  static auto build_client(int argc, char** argv) -> std::optional<int>;
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.
   NixEvaluator(std::string entry, std::vector<std::string> allowed);
