@@ -140,38 +140,8 @@ auto AgentExclude::CheckContent(const std::string& raw) const -> void {
 }
 auto AgentExclude::ProjectText(const std::string& raw,
                                const std::string& prefix) const -> std::string {
-  auto project = j::Object(raw);
-  if (project.contains("canvas")) {
-    auto graph = j::Object(project.at("canvas"));
-    auto cards = j::Array(j::Get(graph, "cards", "[]"));
-    std::erase_if(cards, [&](const auto& card) {
-      return !Card(j::Text(j::Object(card), "id"), prefix);
-    });
-    graph["cards"] = j::Encode(cards);
-    auto connections = j::Array(j::Get(graph, "connections", "[]"));
-    std::erase_if(connections, [&](const auto& raw_wire) {
-      const auto wire = j::Object(raw_wire);
-      return !Card(j::Text(j::Object(j::Get(wire, "from", "{}")), "card"),
-                   prefix) ||
-             !Card(j::Text(j::Object(j::Get(wire, "to", "{}")), "card"),
-                   prefix);
-    });
-    graph["connections"] = j::Encode(connections);
-    project["canvas"] = j::Encode(graph);
-  }
-  if (project.contains("boundary")) {
-    auto boundary = j::Object(project.at("boundary"));
-    for (auto& [key, value] : boundary) {
-      (void)key;
-      auto ports = j::Object(value);
-      std::erase_if(ports, [&](const auto& entry) {
-        return !Card(j::Text(j::Object(entry.second), "card"), prefix);
-      });
-      value = j::Encode(ports);
-    }
-    project["boundary"] = j::Encode(boundary);
-  }
-  return j::Encode(project);
+  return j::Encode(FilterProjectGraph(
+      j::Object(raw), [&](const auto& id) { return Card(id, prefix); }));
 }
 auto AgentExclude::FileText(const std::string& path,
                             const std::string& raw) const -> std::string {

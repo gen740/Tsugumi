@@ -390,40 +390,22 @@ auto HelperScope::CheckBindings(const Reader& before, const Reader& now) const
 auto HelperScope::Graph(const std::string& text,
                         const std::string& prefix) const -> std::string {
   const auto project = json::Object(text);
-  auto visible = json::Members{};
+  json::Members visible;
   for (const auto* key : {"name", "pkgsPath"})
     if (project.contains(key)) visible[key] = project.at(key);
   const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
-  std::vector<std::string> cards, wires;
-  for (const auto& raw : json::Array(json::Get(canvas, "cards", "[]")))
-    if (reads_.contains(prefix + json::Text(json::Object(raw), "id")))
-      cards.push_back(raw);
-  for (const auto& raw : json::Array(json::Get(canvas, "connections", "[]"))) {
-    const auto w = json::Object(raw);
-    if (reads_.contains(
-            prefix +
-            json::Text(json::Object(json::Get(w, "from", "{}")), "card")) &&
-        reads_.contains(
-            prefix +
-            json::Text(json::Object(json::Get(w, "to", "{}")), "card")))
-      wires.push_back(raw);
-  }
+  visible["canvas"] = json::Encode(
+      json::Members{{"cards", json::Get(canvas, "cards", "[]")},
+                    {"connections", json::Get(canvas, "connections", "[]")}});
   if (project.contains("boundary")) {
-    json::Members boundary;
-    const auto original = json::Object(project.at("boundary"));
-    for (const auto* side : {"inputs", "outputs"}) {
-      json::Members ports;
-      for (const auto& [name, raw] :
-           json::Object(json::Get(original, side, "{}")))
-        if (reads_.contains(prefix + json::Text(json::Object(raw), "card")))
-          ports[name] = raw;
-      boundary[side] = json::Encode(ports);
-    }
-    visible["boundary"] = json::Encode(boundary);
+    const auto boundary = json::Object(project.at("boundary"));
+    visible["boundary"] = json::Encode(
+        json::Members{{"inputs", json::Get(boundary, "inputs", "{}")},
+                      {"outputs", json::Get(boundary, "outputs", "{}")}});
   }
-  visible["canvas"] = json::Encode(json::Members{
-      {"cards", json::Encode(cards)}, {"connections", json::Encode(wires)}});
-  return json::Encode(visible);
+  return json::Encode(host::FilterProjectGraph(
+      std::move(visible),
+      [&](const auto& id) { return reads_.contains(prefix + id); }));
 }
 
 auto HelperScope::ExpandSave(json::Members args, const Reader& read) const

@@ -22,6 +22,44 @@ auto CardStem(const std::string& name) -> std::string {
 }
 
 namespace json = ::tsugumi::json;
+
+auto FilterProjectGraph(json::Members project,
+                        const std::function<bool(const std::string&)>& visible)
+    -> json::Members {
+  if (project.contains("canvas")) {
+    auto canvas = json::Object(project.at("canvas"));
+    auto cards = json::Array(json::Get(canvas, "cards", "[]"));
+    std::erase_if(cards, [&](const auto& card) {
+      return !visible(json::Text(json::Object(card), "id"));
+    });
+    auto wires = json::Array(json::Get(canvas, "connections", "[]"));
+    std::erase_if(wires, [&](const auto& raw) {
+      const auto wire = json::Object(raw);
+      for (const auto* end : {"from", "to"})
+        if (!visible(
+                json::Text(json::Object(json::Get(wire, end, "{}")), "card")))
+          return true;
+      return false;
+    });
+    canvas["cards"] = json::Encode(cards);
+    canvas["connections"] = json::Encode(wires);
+    project["canvas"] = json::Encode(canvas);
+  }
+  if (project.contains("boundary")) {
+    auto boundary = json::Object(project.at("boundary"));
+    for (auto& [side, raw] : boundary) {
+      (void)side;
+      auto ports = json::Object(raw);
+      std::erase_if(ports, [&](const auto& port) {
+        return !visible(json::Text(json::Object(port.second), "card"));
+      });
+      raw = json::Encode(ports);
+    }
+    project["boundary"] = json::Encode(boundary);
+  }
+  return project;
+}
+
 auto DecodeSourceBytes(const std::string& raw) -> std::string {
   if (raw.starts_with('"')) return json::String(raw);
   if (raw.starts_with('{')) {
