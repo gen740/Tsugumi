@@ -68,6 +68,9 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev,
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
+Store::~Store() {
+  if (journal_fd_ >= 0) ::close(journal_fd_);
+}
 
 auto Store::stage_file(const stdfs::path& root, const std::string& from,
                        const std::optional<std::string>& expected_hash,

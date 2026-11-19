@@ -309,7 +309,6 @@ int run_daemon(int argc, char** argv) {
     sv.origins_file = (opt.control_dir / "origins.json").string();
   sv.allow_missing_origin = opt.allow_missing_origin;
   ProjectEndpoint(sv);
-  ProjectEndpoint(sv);
   Server server(sv, &service);
   service.attach(&server);
   try {
