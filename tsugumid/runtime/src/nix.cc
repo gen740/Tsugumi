@@ -652,6 +652,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   if (prepared_) {
     if (req.on_phase) req.on_phase(Phase::evaluate);
     res = prepared(path_key(node.path), key_text);
+    if (req.on_plan) req.on_plan(res.implementation_count);
   } else {
     try {
       call.root_dir = gcroots_dir();
@@ -687,6 +688,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
         log::info("Card full evaluation " + std::to_string(count));
         res = evaluator().evaluate(call);
       }
+      if (req.on_plan) req.on_plan(res.implementation_count);
       if (!req.transport)
         throw std::runtime_error(
             "execution target has no derivation transport");

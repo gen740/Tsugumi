@@ -75,6 +75,7 @@ struct BuildRequest {
   std::function<void(const std::string&)> log;  // build output lines
   std::function<void(Phase)>
       on_phase;  // evaluate, then build (only when the store lacks the result)
+  std::function<void(uint32_t)> on_plan;  // implementation count before build
 };
 
 struct CacheClearOutcome {

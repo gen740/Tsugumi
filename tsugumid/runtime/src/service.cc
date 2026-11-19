@@ -452,32 +452,6 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   }
 }
 
-auto Service::prepare_early_build(const Node& node, BuildRequest& build)
-    -> bool {
-  const auto targets = remote_targets();
-  std::vector<WorkerCandidate> candidates;
-  for (const auto& target : targets)
-    candidates.push_back({target.id, target.grade, target.available});
-  std::string resident;
-  if (node.settings.reuse_worker) {
-    std::lock_guard guard(worker_selection_mutex_);
-    if (auto it = resident_targets_.find(path_key(node.path));
-        it != resident_targets_.end())
-      resident = it->second;
-  }
-  const auto choice =
-      select_worker(candidates, node.settings.worker_condition.get(),
-                    node.settings.execution_service, resident);
-  if (!choice.index || targets[*choice.index].id != kLocalExecutionService)
-    return false;
-  try {
-    execution_service_->prepare(node, {}, build);
-  } catch (const Failed&) {
-    return false;  // the activation reports it
-  }
-  return true;
-}
-
 auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
 }

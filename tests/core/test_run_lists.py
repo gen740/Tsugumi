@@ -145,6 +145,10 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
     connect_collect(graph)
     graph.save(client)
 
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
+                cards=[path("left"), path("work")])
+
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     for name in ("left", "work"):
@@ -153,6 +157,14 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
         batch, = page.batches
         assert batch.complete and batch.executionList and batch.invocationCount == 0
     assert collected(client, tmp_path / "decode", run_id) == []
+
+    assert not any(
+        note.valueType == NotificationPayload.RunEvent
+        and text(note.value.runId) == run_id
+        and note.value.valueType == RunEventValue.RunCardChanged
+        and note.value.value.invocation.card.segments in ([b"left"], [b"work"])
+        for note in client.notifications
+    )
 
     replay = run(client, "work", propagate=False)
     assert wait_run(client, replay).state == RunState.succeeded
