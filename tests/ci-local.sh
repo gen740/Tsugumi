@@ -2,7 +2,7 @@
 # Runs the checks of ci.yml and ci-platform.yml on this machine, as a local
 # stand-in for the separate GitHub Actions jobs.
 #
-#   tests/ci-local.sh          both jobs (on a Mac: macOS here, Linux in Docker)
+#   tests/ci-local.sh          both sets (on a Mac: macOS here, Linux in Docker)
 #   tests/ci-local.sh agent    only the public Agent RPC fixtures
 #   tests/ci-local.sh mac      the macOS job: Swift tests and Seatbelt isolation
 #   tests/ci-local.sh linux    the Linux job: tsugumid, C++, Web UI, the tsugumi
@@ -12,11 +12,10 @@
 # so that bubblewrap can isolate Cards) on a copy of the tracked files as they
 # are in the working tree, so uncommitted edits are checked too and this
 # checkout's build/ and node_modules are left alone. The container's /nix is a
-# named volume (tsugumi-ci-nix), kept between runs. An Apple silicon Mac runs
-# arm64 Linux, while CI covers both Linux architectures. The macOS checks
-# use this Mac's OS, Xcode and existing build folders.
-# Keep the checks in step with ci-platform.yml. Use tests/check-fast.sh for
-# the separate static and Web contract checks.
+# named volume (tsugumi-ci-nix), kept between runs. On Apple silicon the
+# container runs the full x86_64 CI suite selection on native ARM Linux.
+# Guest images are built by their dedicated jobs. macOS uses local Xcode.
+# Keep the checks in step with CI. Use tests/check-fast.sh for static checks.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -42,22 +41,18 @@ linux_job() {
   bash tests/ci/run-suite.sh agent "$system"
   step "Public core and CLI RPC tests"
   bash tests/ci/run-suite.sh core "$system"
-  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
-  step "Web UI typecheck and behavior contracts"
-  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link ".#checks.$system.web"
   step "Core integration tests with the real host environment"
   bash tests/ci/run-suite.sh host "$system"
   step "Python tests"
   sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
   bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
   bash tests/ci/run-suite.sh adapters "$system"
+  step "Web UI typecheck and behavior contracts"
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link \
+    ".#checks.$system.web-typecheck" ".#checks.$system.web"
   if [[ "${TSUGUMI_LOCAL_REMOTE:-1}" == 1 ]]; then
     step "Real remote worker execution"
     bash tests/ci-remote-worker.sh
-  fi
-  if [ "$system" = aarch64-linux ]; then
-    step "Cache the VM runtime"
-    nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#vm-system
   fi
   step "Prompt probe scoring (offline)"
   python3 -m unittest discover -s tests/prompt
@@ -84,19 +79,19 @@ linux_in_container() {
 mac_job() {
   local system
   system=$(system_name)
-  step "Build-tool plugin warnings"
-  bash ui/macos/tools/check-plugin-warnings.sh
   step "Build or fetch the native runtime and public RPC tests"
-  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core-native --out-link build-ci
   step "Public Agent RPC tests"
   bash tests/ci/run-suite.sh agent "$system"
   step "Core RPC behavior tests"
   bash tests/ci/run-suite.sh core "$system"
+  step "Card isolation on a Mac host (Seatbelt)"
+  bash tests/ci/run-suite.sh host "$system"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-mock --out-link build-ci-mock
   export TSUGUMI_MOCK_DAEMON="$root/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"
-  step "Card isolation on a Mac host (Seatbelt)"
-  bash tests/ci/run-suite.sh host "$system"
+  step "Build-tool plugin warnings"
+  bash ui/macos/tools/check-plugin-warnings.sh
   step "Model, RPC, Agent and launcher (ui/macos/CoreTests)"
   core_run /usr/bin/swift test --package-path ui/macos/CoreTests
   core_run /usr/bin/swift test --package-path vm/macos/runtime

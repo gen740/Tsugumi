@@ -54,9 +54,57 @@ jobs:
     with:
       system: ${{ matrix.system }}
       runner: ${{ matrix.runner }}
-      checks: ${{ toJSON(matrix.checks) }}
+      tests: ${{ toJSON(matrix.tests) }}
     secrets:
       CACHIX_AUTH_TOKEN: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
+
+  web-typecheck:
+    name: Web TypeScript
+    needs: changes
+    if: ${{ fromJSON(needs.changes.outputs.selection)['web-typecheck'] }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
+      - run: nix build -L --no-link .#checks.x86_64-linux.web-typecheck
+
+  vm:
+    name: Release-built guest closure
+    needs: changes
+    if: ${{ fromJSON(needs.changes.outputs.selection).vm }}
+    uses: ./.github/workflows/vm-image.yml
+    with:
+      revision: ${{ github.sha }}
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
+
+  pack-guest:
+    name: tsugumi-pack guest
+    needs: changes
+    if: ${{ fromJSON(needs.changes.outputs.selection)['pack-guest'] }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
+      # pack/build.sh takes this folder as TSUGUMI_PACK_GUEST, so the guest
+      # need not be built on a Mac.
+      - name: Build the export and runner images
+        run: |
+          nix build -L ".#packages.aarch64-linux.pack-guest" -o build-pack-guest
+          mkdir -p dist/pack-guest
+          cp build-pack-guest/{vmlinux,export.erofs,run.erofs,identity} dist/pack-guest/
+      - uses: actions/upload-artifact@v4
+        with:
+          # The branch's commit, not a pull request's merge commit.
+          name: pack-guest-${{ github.event.pull_request.head.sha || github.sha }}
+          path: dist/pack-guest
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
 
   prompt:
     name: Offline prompt scoring
@@ -79,7 +127,7 @@ jobs:
 
   result:
     name: CI
-    needs: [changes, static, platform, prompt, docs]
+    needs: [changes, static, platform, web-typecheck, vm, pack-guest, prompt, docs]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -93,6 +141,6 @@ jobs:
           jq -e --argjson selected "$SELECTION" '
             . as $results |
             (.changes.result == "success" and .static.result == "success") and
-            (["platform", "prompt", "docs"] | all(.[]; . as $job |
-              $results[$job].result == (if $selected[$job] then "success" else "skipped" end)))
+            ($selected | del(.matrix) | to_entries | all(.[]; . as $job |
+              $results[$job.key].result == (if $job.value then "success" else "skipped" end)))
           ' <<<"$RESULTS" > /dev/null

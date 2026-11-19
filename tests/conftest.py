@@ -19,7 +19,7 @@ def pytest_configure(config):
     for marker in (
         "native_core: exercises native transport, processes, filesystem or system selection",
         "sdk_pure: Python SDK library semantics owned by the canonical Linux job",
-        "package_smoke: actual packaged client/server or native library smoke on every architecture",
+        "package_smoke: exercises a packaged client/server or native library",
     ):
         config.addinivalue_line("markers", marker)
     config.addinivalue_line(
@@ -39,7 +39,7 @@ PACKAGE_SMOKES = {
     "test_only_the_page_with_the_key_reaches_the_api",
     "test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy",
     "test_a_second_run_opens_a_page_on_the_running_server",
-    # Native imports/rendering remain on the second SDK architecture.
+    # Exercise native imports and rendering in the filtered SDK run.
     "test_report_figure_sends_plotly",
     "test_the_backend_is_chosen_and_show_sends_one_image",
     "test_notebook_passes_typed_result_and_keeps_snapshot",
