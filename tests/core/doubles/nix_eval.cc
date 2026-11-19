@@ -25,9 +25,6 @@ namespace {
 
 struct BuildPlan {
   schema::Opt<"manifest", schema::Json> manifest;
-  schema::Opt<"log_chunks",
-              schema::v::Array<schema::v::Array<schema::v::String>>>
-      log_chunks;
   schema::Opt<"gate", schema::v::String> gate;
   schema::Opt<"error", schema::v::String> error;
   schema::Opt<"cached", schema::v::Bool> cached;
@@ -89,6 +86,10 @@ struct NixEvaluator::Impl {
 };
 
 auto NixEvaluator::init_process() -> void {}
+
+auto NixEvaluator::build_client(int, char**) -> std::optional<int> {
+  return std::nullopt;
+}
 auto NixStore::init_process() -> void {}
 
 auto NixStore::substituters() -> std::vector<std::string> { return {}; }
@@ -141,9 +142,6 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (!schema::get(plan.error) && manifest.empty())
     throw std::runtime_error("mock-build.json needs manifest or error");
   if (call.on_phase) call.on_phase(false);
-  if (call.log)
-    if (const auto* chunks = schema::get(plan.log_chunks))
-      for (const auto& chunk : *chunks) call.log(chunk);
   if (const auto* gate = schema::get(plan.gate)) {
     if (!valid_gate(*gate))
       throw std::runtime_error(

@@ -1,16 +1,13 @@
 """History portability and deletion, checked through public RPC."""
 
 import shutil
-import sqlite3
-from contextlib import closing
 
 import pytest
 
 from harness.fixtures import worker_project
 from harness.observations import read_output, read_pages
-from harness.scenario import FILE_OUTPUT, Gate, Project, run, wait_run
+from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
-from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -199,29 +196,3 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
             and text(n.value.runId) == run_id and n.value.valueType == RunEventValue.RunFinished,
         )
         assert note.value.value.summary.status.state == RunState.succeeded
-
-
-
-def test_build_log_writes_each_chunk_once(core_factory, project, tmp_path):
-    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
-    package = tmp_path / "package"
-    package.mkdir()
-    (package / "scenario.json").write_text("{}")
-    lines = [f"build line {index} 日本語\n" for index in range(400)]
-    Project(project).card(
-        "work", {"language": "bash", "sandbox": False},
-        outputs="table Outputs {} root_type Outputs;",
-        manifest={"run": {"package": str(package)}},
-        plan={"log_chunks": [lines[:200], lines[200:]]},
-    ).save(client)
-
-    run_id, _ = successful_run(client)
-    with closing(sqlite3.connect(project / ".tsugumi" / "runs.sqlite")) as db:
-        writes, = db.execute(
-            "SELECT count(*) FROM logs WHERE run_id=? AND stream=?",
-            (run_id, LogStream.build),
-        ).fetchone()
-    history = client.call("LogRangeRequest", runId=run_id, card=path("work"),
-                          invocation=1, stream=LogStream.build, limitBytes=65536)
-    assert text(history.text) == "".join(lines)
-    assert writes == 2

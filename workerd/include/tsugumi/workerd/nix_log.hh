@@ -38,9 +38,13 @@ class NixLogSink final : public nix::Logger {
   }
   auto result(nix::ActivityId, nix::ResultType type, const Fields& fields)
       -> void override {
-    if ((type == nix::resBuildLogLine || type == nix::resPostBuildLogLine) &&
-        !fields.empty() && fields[0].type == Field::tString)
-      emit(fields[0].s);
+    if (type != nix::resBuildLogLine && type != nix::resPostBuildLogLine)
+      return;
+    if (fields.empty() || fields[0].type != Field::tString) {
+      emit("warning: invalid Nix build log record");
+      return;
+    }
+    emit(fields[0].s);
   }
 
  private:

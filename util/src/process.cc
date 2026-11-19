@@ -12,6 +12,7 @@
 #include <cstring>
 #include <exception>
 #include <stdexcept>
+#include <string_view>
 
 namespace tsugumi::proc {
 
@@ -198,7 +199,8 @@ int wait(pid_t pid) {
 
 Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
-           const std::function<void(std::span<const std::string>)>& on_stderr,
+           const std::function<void(LineChunk)>& on_stderr,
+           std::optional<size_t> stderr_line_limit,
            std::chrono::milliseconds grace) {
   int out_pipe[2] = {-1, -1};
   int err_pipe[2] = {-1, -1};
@@ -225,10 +227,10 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   ::close(err_pipe[1]);
   Result res;
   std::exception_ptr log_error;
-  const auto deliver = [&](std::span<const std::string> lines) {
-    if (!on_stderr || log_error || lines.empty()) return;
+  const auto deliver = [&](LineChunk chunk) {
+    if (chunk.lines.empty() && !chunk.truncated) return;
     try {
-      on_stderr(lines);
+      on_stderr(chunk);
     } catch (...) {
       log_error = std::current_exception();
       kill_group(pid, SIGKILL);
@@ -236,6 +238,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   };
   std::string pending;
   std::vector<std::string> lines;
+  bool truncated = false;
   bool out_open = true;
   bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -258,15 +261,30 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0) {
         err_open = false;
-      } else if (on_stderr && !log_error) {
-        pending.append(buf, static_cast<size_t>(r));
-        size_t consumed = 0;
-        for (size_t nl;
-             (nl = pending.find('\n', consumed)) != std::string::npos;
-             consumed = nl + 1)
-          lines.emplace_back(pending, consumed, nl + 1 - consumed);
-        pending.erase(0, consumed);
-        deliver(lines);
+      } else if (on_stderr && !log_error && !truncated) {
+        std::string_view remaining(buf, static_cast<size_t>(r));
+        while (!remaining.empty()) {
+          const auto newline = remaining.find('\n');
+          const auto fragment = remaining.substr(
+              0, newline == remaining.npos ? remaining.size() : newline + 1);
+          if (stderr_line_limit &&
+              fragment.size() > *stderr_line_limit - pending.size()) {
+            truncated = true;
+            std::string{}.swap(pending);
+            break;
+          }
+          remaining.remove_prefix(fragment.size());
+          if (newline == remaining.npos) {
+            pending.append(fragment);
+          } else if (pending.empty()) {
+            lines.emplace_back(fragment);
+          } else {
+            pending.append(fragment);
+            lines.push_back(std::move(pending));
+            pending.clear();
+          }
+        }
+        deliver({lines, truncated});
         lines.clear();
       }
     }
@@ -291,7 +309,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       kill_at.reset();
     }
   }
-  if (!pending.empty()) deliver(std::span(&pending, 1));
+  if (!pending.empty() && !log_error) deliver({std::span(&pending, 1)});
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
   res.status = wait(pid);

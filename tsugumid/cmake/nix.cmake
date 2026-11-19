@@ -1,6 +1,4 @@
 add_library(tsugumi_nix_eval STATIC runtime/src/nix_eval.cc)
-find_program(TSUGUMI_NIX nix REQUIRED)
-target_compile_definitions(tsugumi_nix_eval PRIVATE TSUGUMI_NIX="${TSUGUMI_NIX}")
 target_compile_features(tsugumi_nix_eval PRIVATE cxx_std_23)
 target_include_directories(tsugumi_nix_eval PRIVATE ${PROJECT_SOURCE_DIR}/workerd/include)
 target_link_libraries(tsugumi_nix_eval PUBLIC tsugumi_nix_store PRIVATE tsugumi_util PkgConfig::NIX Threads::Threads)
