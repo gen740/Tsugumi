@@ -492,7 +492,10 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
       if (Document::is_external_document_file(rel)) {
-        auto bytes = fs::read_beneath(root, rel);
+        std::string bytes;
+        fs::stream_beneath(
+            root, rel, kMaxDocumentJsonBytes,
+            [&](std::string_view chunk) { bytes.append(chunk); });
         if (Document::is_card_meta_file(rel)) check_meta_json(bytes);
         doc->sources.emplace(rel,
                              external_document_source(rel, std::move(bytes)));

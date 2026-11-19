@@ -52,7 +52,7 @@ class ProjectFixture {
         }
         json::Members source{{"path", json::Quote(path)},
                              {"hash", json::Quote(crypto::sha256_hex(bytes))}};
-        if (Document::is_external_document_file(path))
+        if (tsugumi::Document::is_external_document_file(path))
           source["document_json"] = json::Quote(bytes);
         sources.push_back(json::Encode(source));
       }

@@ -86,6 +86,18 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
     policy.CheckRequest("run_record", {{"card", R"({"segments":["hidden"]})"}});
   });
 }
+TEST_F(AgentExcludeTest, NestedDocumentTextRequiresTheScopedFileRead) {
+  AgentExclude policy(root, "{}");
+  const auto filtered = j::Object(policy.Filter(
+      R"({"sources":[{"path":"externals/sub/tsugumi.json","hash":"h","document_json":"{\"name\":\"Private workflow\"}"}]})"));
+  const auto sources = j::Array(filtered.at("sources"));
+  ASSERT_EQ(sources.size(), 1u);
+  const auto source = j::Object(sources.front());
+  EXPECT_EQ(j::Text(source, "path"), "externals/sub/tsugumi.json");
+  EXPECT_EQ(j::Text(source, "hash"), "h");
+  EXPECT_FALSE(source.contains("document_json"));
+}
+
 TEST_F(AgentExcludeTest, AttachmentsAndDemoToolsShareTheRealPathBoundary) {
   Write(root / "visible.txt", "VISIBLE");
   Write(root / "hidden/secret.txt", "SECRET");
