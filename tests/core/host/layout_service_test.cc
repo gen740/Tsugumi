@@ -613,6 +613,27 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
   }
 }
 
+TEST(HostLayout, MovingACardStartsAtItsDerivedPosition) {
+  namespace json = ::tsugumi::json;
+  const std::string project =
+      R"({"canvas":{"cards":[{"id":"fixed"},{"id":"new"}],"connections":[{"from":{"card":"fixed","port":"out"},"to":{"card":"new","port":"in"}}]}})";
+  const std::string saved = R"({"cards":{"fixed":{"x":500,"y":700}}})";
+  const auto position = [](const std::string& layout) {
+    return json::Object(
+        json::Object(json::Object(layout).at("cards")).at("new"));
+  };
+  const auto displayed = position(CompleteLayout(project, saved));
+  H::ProjectMoveT move;
+  move.cards = {"new"};
+  move.dx = 100;
+  move.dy = -20;
+  const auto moved = position(MoveProjectLayout(project, saved, {}, move));
+  EXPECT_DOUBLE_EQ(std::stod(moved.at("x")),
+                   std::stod(displayed.at("x")) + move.dx);
+  EXPECT_DOUBLE_EQ(std::stod(moved.at("y")),
+                   std::stod(displayed.at("y")) + move.dy);
+}
+
 TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
   for (const auto* flow : {"topToBottom", "leftToRight"}) {
     for (const auto* cards :

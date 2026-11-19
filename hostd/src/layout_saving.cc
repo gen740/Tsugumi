@@ -187,6 +187,17 @@ static auto TransformLayout(
                            number(b, "y", 0), number(b, "width", 240),
                            number(b, "height", 160)});
   }
+  if (move) {
+    // A drag starts at the displayed positions, including derived positions
+    // that have never been saved. Use the same placement before measuring.
+    for (const auto& placed : layout::place_missing(scene, missing).cards)
+      for (auto& card : scene.cards)
+        if (card.id == placed.id) {
+          card.x = placed.x;
+          card.y = placed.y;
+          break;
+        }
+  }
   if (measurements) {
     const auto measured = MeasuredScene(*measurements);
     if (!doc.contains("flow")) scene.top_to_bottom = measured.top_to_bottom;
