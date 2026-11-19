@@ -57,6 +57,36 @@ let
         nix
       ]
     }
+    start_rosetta_cache() {
+      local cache=/persist/rosettad
+      local socket="$cache/uds/rosetta.sock"
+      local visible=/run/rosettad/rosetta.sock
+      if [ ! -x /run/rosetta/rosettad ]; then
+        echo "Rosetta AOT: rosettad is missing from the share"
+        return 1
+      fi
+      install -d -m 0700 "$cache" "$cache/uds" &&
+        mkdir -p /run/rosettad && rm -f "$socket" || return 1
+      (
+        /run/rosetta/rosettad daemon "$cache" &
+        child=$!
+        trap 'kill "$child"; exit' TERM
+        wait "$child"
+        echo "Rosetta AOT: rosettad exited ($?); translating without the cache"
+      ) &
+      local daemon=$!
+      # The cache is optional. Bound the startup wait so a wedged rosettad
+      # cannot prevent the guest from opening projects.
+      if timeout 5s ${tsugumid}/bin/tsugumi-vmd --wait-daemon "$daemon" "$socket" &&
+        chmod 0666 "$socket" && touch "$visible" && mount --bind "$socket" "$visible"; then
+        echo "Rosetta AOT: cache socket ready at $visible"
+        return 0
+      fi
+      kill "$daemon" 2>/dev/null
+      rm -f "$visible"
+      echo "Rosetta AOT: rosettad did not provide a usable socket"
+      return 1
+    }
     mode=$(sed -n 's/.*tsugumi\.x86=\([a-z]*\).*/\1/p' /proc/cmdline)
     sandbox=""
     case "$mode" in
@@ -64,8 +94,12 @@ let
         mkdir -p /run/rosetta
         mount -t virtiofs -o ro rosetta /run/rosetta || { echo "x86_64-linux: Rosetta's share is missing"; exit 0; }
         interpreter=/run/rosetta/rosetta
-        # Rosetta reads its own folder while it runs: Nix's build sandbox sees it.
-        sandbox=/run/rosetta ;;
+        if ! start_rosetta_cache; then
+          echo "Rosetta AOT: translating without the cache"
+        fi
+        # Nix bind-mounts the socket when present. An absolute symlink into
+        # /persist would be broken inside the build sandbox.
+        sandbox="/run/rosetta /run/rosettad/rosetta.sock?" ;;
       qemu)
         NIX_REMOTE=daemon nix-store --realise ${qemu} >/dev/null || { echo "x86_64-linux: cannot fetch qemu-user"; exit 0; }
         interpreter=${qemu}/bin/qemu-x86_64

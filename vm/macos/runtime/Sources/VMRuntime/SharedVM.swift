@@ -305,7 +305,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   /// After the slots: setShare finds a slot by its index among these devices.
   private func rosettaShare() throws -> VZVirtioFileSystemDeviceConfiguration {
     let fs = VZVirtioFileSystemDeviceConfiguration(tag: "rosetta")
-    fs.share = try VZLinuxRosettaDirectoryShare()
+    let share = try VZLinuxRosettaDirectoryShare()
+    try share.setCachingOptions(.unixSocket("/run/rosettad/rosetta.sock"))
+    fs.share = share
     return fs
   }
 
