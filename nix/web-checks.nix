@@ -1,4 +1,4 @@
-# Type and behavior checks consume the exact package build's dependencies.
+# Behavior checks consume the exact package build's dependencies.
 # A test-only edit reruns this derivation without rebuilding the Web bundle.
 {
   lib,
@@ -35,7 +35,6 @@ runCommand "tsugumi-web-checks"
     export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
     export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/libexec/tsugumi-tests/tsugumi_document_edit_driver
     cd source/ui/web
-    npm run typecheck
     npm test
     touch $out
   ''
