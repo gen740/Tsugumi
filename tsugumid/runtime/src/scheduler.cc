@@ -899,7 +899,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       throw;
     }
     rt.build_target = request.target;
-    if (!rt.build->implementations.empty()) {
+    if (rt.build->implementations.empty()) {
+      if (!pending_logs.empty() || pending_budget.truncated()) {
+        std::string diagnostics;
+        for (const auto& line : pending_logs) diagnostics += line;
+        if (pending_budget.truncated())
+          diagnostics += "\nEvaluation log truncated at " +
+                         std::to_string(kInvocationLogLimitBytes) + " bytes";
+        journal("evaluate", "empty_batch", std::nullopt, std::nullopt,
+                path_key(node.path) + " activation " +
+                    std::to_string(work.activation) + "\n" + diagnostics);
+      }
+    } else {
       trace_phase(s.stages.back(), now_ms());
       if (reuses_builds && rt.build->common.cached)
         stage_begin(s, Phase::build, StageOutcome::cached);
@@ -1070,7 +1081,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::mutex outcome_mu;
     size_t bytes = 0;
     auto execute = [&](uint32_t index, uint32_t worker_lane) {
-      // The provisional preparation record belongs to the first member.
+      // The first member carries the batch's preparation stages.
       if (index != 0 && work.cancellation->stop.load()) return;
       started.fetch_add(1);
       Work member;

@@ -131,7 +131,8 @@ class NixRunner {
   NixEvaluator& evaluator();
   // The prepared build of `card` (--prepared-cards), checked against the
   // evaluation the core would run now.
-  auto prepared(const std::string& card, const std::string& key) const
+  auto prepared(const std::string& card, const std::string& key,
+                uint32_t max_implementations) const
       -> NixResult;
   std::filesystem::path content_dir(
       const char* kind, const std::string& digest,
