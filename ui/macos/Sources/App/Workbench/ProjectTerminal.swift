@@ -344,8 +344,6 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
   /// Ends the shell: vmd hangs it up when its connection closes.
   func close() {
     generation += 1
-    opening?.cancel()
-    opening = nil
     live = false
     sessionId = nil
     if fd >= 0 {
