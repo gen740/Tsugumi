@@ -264,6 +264,7 @@ final class LogScroll: NSScrollView {
     text.textContainer?.widthTracksTextView = true
     text.textContainer?.lineBreakMode = .byCharWrapping
     text.layoutManager?.allowsNonContiguousLayout = true
+    text.layoutManager?.backgroundLayoutEnabled = false
     text.isEditable = false
     text.isSelectable = true
     text.isRichText = false
