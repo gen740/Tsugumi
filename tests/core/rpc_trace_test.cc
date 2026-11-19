@@ -103,7 +103,6 @@ TEST_F(RpcTrace, CaptureDecodesAndClearsContentOnModeChange) {
   SetMode(Mode::Capture);
   H::SettingsGetRequestT settings;
   settings.profile = "desktop";
-  settings.revision = "host:0";
   ObserveFrame(Request(settings));
   auto entries = Entries();
   ASSERT_EQ(entries.size(), 1);
