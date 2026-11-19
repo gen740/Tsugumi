@@ -870,6 +870,9 @@ select the string field to display explicitly.
 ### An input Card with fixed values
 
 `demos/en/report/definitions/settings`: params named like the fields of its output table.
+To control a Branch from the Canvas, declare a `bool` parameter named `value`
+and an output message with a `value:bool` field. Wire that output to the
+Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 
 ```json
 {"template": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
