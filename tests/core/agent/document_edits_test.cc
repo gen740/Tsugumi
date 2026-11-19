@@ -82,7 +82,7 @@ TEST(DocumentTemplate,
   const auto draft =
       json::Object(WriteTemplate("draft", "new-card").definition_json);
   EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
-  EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"));
+  EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
   for (const auto* name :
        {"trigger", "branch", "collect", "merge", "input", "switch"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
@@ -197,7 +197,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
       "externals/inner/externals/grand/data.bin",
       "externals/other/no"};
   const auto edit = CopyDocuments(state, paths, "definitions/a/",
-                                  "externals/target/definitions/copy/");
+                                  "externals/target/definitions/copy/", "");
   const auto patch = json::Object(edit.edits_json);
   const auto defs = json::Object(patch.at("definitions"));
   EXPECT_EQ(
@@ -220,7 +220,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
                 "externals/target/externals/copy/asset.bin",
                 "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
-      CopyDocuments(state, paths, "externals/inner/", "externals/another/");
+      CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");
   EXPECT_EQ(external.files.size(), 2);
   EXPECT_EQ(
       json::Object(json::Object(external.edits_json).at("externals")).size(),
@@ -231,10 +231,11 @@ TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
       CopyDocuments(
           R"({"definitions":{"a":{"card":{},"link":{"external":"missing"}}}})",
-          {}, "definitions/a/", "definitions/b/"),
+          {}, "definitions/a/", "definitions/b/", ""),
       std::runtime_error);
-  EXPECT_THROW(CopyDocuments("{}", {}, "externals/missing/", "externals/copy/"),
-               std::runtime_error);
+  EXPECT_THROW(
+      CopyDocuments("{}", {}, "externals/missing/", "externals/copy/", ""),
+      std::runtime_error);
 }
 
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {

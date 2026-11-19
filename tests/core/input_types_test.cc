@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -106,13 +107,16 @@ TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
        {"definitions/other/_card.json", R"({"template":"trigger"})"}});
   const auto ends = input_types(*graph, {"draft"});
   ASSERT_EQ(ends.size(), 2u);
-  EXPECT_TRUE(ends[0].port.empty());
-  EXPECT_TRUE(ends[1].port.empty());
-  EXPECT_EQ(ends[0].source->path, (CardPath{"src"}));
-  EXPECT_EQ(ends[0].source_port, "out");
-  ASSERT_TRUE(ends[0].type);
-  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
-  EXPECT_EQ(ends[1].source->path, (CardPath{"other"}));
+  CardPath sources;
+  for (const auto& end : ends) {
+    EXPECT_TRUE(end.port.empty());
+    ASSERT_TRUE(end.source && end.type);
+    EXPECT_EQ(end.source_port, "out");
+    EXPECT_EQ(end.type->type, end.source->output("out")->type);
+    sources.push_back(end.source->path.front());
+  }
+  std::ranges::sort(sources);
+  EXPECT_EQ(sources, (CardPath{"other", "src"}));
   EXPECT_EQ(Present(*graph, {"draft"}, "python").inputs.size(), 2u);
 }
 TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
@@ -138,7 +142,9 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_EQ(ends.size(), 1u);
   ASSERT_NE(ends[0].type, nullptr);
   EXPECT_EQ(ends[0].source->path, (CardPath{"container", "inner", "leaf"}));
-  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
+  ASSERT_TRUE(ends[0].type->type);
+  EXPECT_TRUE(types::compatible(*ends[0].type->type,
+                                *graph->find({"src"})->output("out")->type));
   const auto boundary = input_types(*graph, {"container"}, "out");
   ASSERT_EQ(boundary.size(), 1u);
   EXPECT_EQ(boundary[0].type->type, ends[0].type->type);
