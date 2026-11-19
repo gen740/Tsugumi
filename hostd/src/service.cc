@@ -200,7 +200,7 @@ struct Service::State {
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
         });
-    skills_service = std::make_unique<host::SkillsService>(db, *host_settings);
+    skills_service = std::make_unique<host::SkillsService>(db);
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
         [this](std::string raw) { return Scrub(std::move(raw)); });

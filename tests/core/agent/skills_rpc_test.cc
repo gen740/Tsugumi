@@ -134,6 +134,18 @@ TEST_F(SkillsFixture, ReplacingARegisteredRootWithALinkDoesNotTrustItsTarget) {
   EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Unknown);
 }
 
+TEST_F(SkillsFixture, ReplacingARegisteredDirectoryRequiresNewTrust) {
+  const auto root = directory.path / "trusted";
+  Write(root / "project/tsugumi.json", "{}");
+  ASSERT_TRUE(Roots({root.string()}).Code().empty());
+  std::filesystem::rename(root, directory.path / "saved");
+  Write(root / "project/tsugumi.json", "{}");
+  EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Unknown);
+  ASSERT_TRUE(Roots({}).Code().empty());
+  ASSERT_TRUE(Roots({root.string()}).Code().empty());
+  EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Trusted);
+}
+
 TEST_F(SkillsFixture, FolderTrustIsAppliedAndRevokedAtTheModelBoundary) {
   ModelServer model;
   Configure(model);

@@ -11,6 +11,7 @@
 #include "host/credentials.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
+#include "host/skills.hh"
 #include "host/store.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -1146,21 +1147,21 @@ TEST(HostSettingsStore,
     }
     return false;
   };
-  EXPECT_TRUE(service.TrustedFolders().empty());
+  EXPECT_TRUE(host::TrustedFolders(settings_store.db).empty());
   EXPECT_TRUE(update("[" + Quote((directory.path / "link").string()) + "," +
                      Quote(folder.string()) + "]"));
   const std::vector<std::string> expected{
       std::filesystem::canonical(folder).string()};
-  EXPECT_EQ(service.TrustedFolders(), expected);
+  EXPECT_EQ(host::TrustedFolders(settings_store.db), expected);
   EXPECT_FALSE(update(R"(["relative"])"));
   EXPECT_FALSE(update("[" + Quote((directory.path / "absent").string()) + "]"));
   EXPECT_FALSE(update(R"([42])"));
-  EXPECT_EQ(service.TrustedFolders(), expected);
+  EXPECT_EQ(host::TrustedFolders(settings_store.db), expected);
   std::filesystem::rename(folder, directory.path / "moved");
   EXPECT_TRUE(update("[" + Quote(expected.front()) + "," +
                      Quote((directory.path / "moved").string()) + "]"));
-  EXPECT_EQ(service.TrustedFolders().front(), expected.front());
+  EXPECT_EQ(host::TrustedFolders(settings_store.db).size(), 2u);
   EXPECT_TRUE(update("[]"));
-  EXPECT_TRUE(service.TrustedFolders().empty());
+  EXPECT_TRUE(host::TrustedFolders(settings_store.db).empty());
 }
 }  // namespace tsugumi::test

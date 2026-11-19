@@ -46,7 +46,6 @@ class Settings {
       -> std::string;
   auto Redact(std::string text) -> std::string;
   auto AllowUnscopedHelpers() -> bool;
-  auto TrustedFolders() -> std::vector<std::string>;
   // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
   // takes VMDefaultResources' value.
   auto VMResources() -> Tsugumi::Host::VMResourcesT;

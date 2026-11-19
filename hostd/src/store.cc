@@ -11,9 +11,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS identifiers(scope TEXT NOT NULL, id TEXT "
       "NOT NULL, PRIMARY KEY(scope,id))");
   db.exec(
-      "CREATE TABLE IF NOT EXISTS project_trust(path TEXT PRIMARY KEY, "
-      "device INTEGER NOT NULL, inode INTEGER NOT NULL, "
-      "decision INTEGER NOT NULL)");
+      "CREATE TABLE IF NOT EXISTS skill_trust(path TEXT NOT NULL, "
+      "recursive INTEGER NOT NULL, device INTEGER NOT NULL, "
+      "inode INTEGER NOT NULL, decision INTEGER NOT NULL, "
+      "PRIMARY KEY(path,recursive))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, endpoint "
       "TEXT NOT NULL, token TEXT NOT NULL, title TEXT NOT NULL);"

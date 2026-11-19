@@ -4,7 +4,6 @@
 
 #include "agent/wire.hh"
 #include "host/failure.hh"
-#include "host/settings.hh"
 #include "host/skills.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/util/json_object.hh"
@@ -14,8 +13,7 @@ namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 namespace {}  // namespace
-SkillsService::SkillsService(sql::Db& db, Settings& settings)
-    : db(db), settings(settings) {}
+SkillsService::SkillsService(sql::Db& db) : db(db) {}
 
 auto SkillsService::Handle(const RequestIn& request, bool human,
                            std::unique_lock<std::recursive_mutex>& lock)
@@ -32,11 +30,7 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
     if (trust->decision() != H::ProjectTrustDecision::Unknown) {
       SetProjectTrust(db, path, trust->decision());
     }
-    H::ProjectTrustT result;
-    const auto folders = settings.TrustedFolders();
-    result.decision = ProjectTrust(db, path, folders);
-    result.trusted_folder = TrustedParent(path, folders);
-    return wire::HostReply(request.request_id, std::move(result));
+    return wire::HostReply(request.request_id, ProjectTrust(db, path));
   }
   const auto* p = r->value_as_SkillsListRequest();
   std::vector<std::string> folders;
@@ -58,7 +52,7 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
         .bind(3, json::Encode(encoded))
         .run();
   }
-  const auto trusted = ProjectTrusted(db, path, settings.TrustedFolders());
+  const auto trusted = ProjectTrusted(db, path);
   lock.unlock();
   return wire::HostReply(request.request_id,
                          host::ListSkills(path, folders, trusted));

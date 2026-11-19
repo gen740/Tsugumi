@@ -19,6 +19,7 @@
 #include "agent/wire.hh"
 #include "host/credentials.hh"
 #include "host/models.hh"
+#include "host/skills.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sqlite.hh"
 
@@ -325,7 +326,11 @@ struct Settings::State {
     return values;
   }
   auto Get(const std::string& surface) -> H::SettingsT {
-    const auto values = Values(surface);
+    auto values = Values(surface);
+    std::vector<std::string> roots;
+    for (const auto& path : host::TrustedFolders(db))
+      roots.push_back(j::Quote(path));
+    values["agent.trustedFolders"] = j::Encode(roots);
     H::SettingsT out;
     out.revision = Revision();
     for (const auto& [k, v] : values) {
@@ -771,30 +776,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "en")
               throw std::runtime_error("Unknown language");
             if (key == "agent.trustedFolders") {
-              const auto previous = j::Array(j::Get(values, key, "[]"));
               std::vector<std::string> folders;
-              for (const auto& raw : j::Array(value)) {
-                const auto path = std::filesystem::path(j::String(raw));
-                const auto registered = std::any_of(
-                    previous.begin(), previous.end(), [&](const auto& old) {
-                      return j::String(old) == path.string();
-                    });
-                if (!path.is_absolute() ||
-                    (!registered && !std::filesystem::is_directory(path)))
-                  throw std::runtime_error(
-                      "Choose an existing absolute folder");
-                // Preserve existing canonical registrations even if a folder
-                // is missing or replaced by a link while another entry is
-                // edited.
-                const auto canonical =
-                    registered ? path.string()
-                               : std::filesystem::canonical(path).string();
-                const auto encoded = j::Quote(canonical);
-                if (std::find(folders.begin(), folders.end(), encoded) ==
-                    folders.end())
-                  folders.push_back(encoded);
-              }
-              value = j::Encode(folders);
+              for (const auto& raw : j::Array(value))
+                folders.push_back(j::String(raw));
+              host::SetTrustedFolders(s.db, folders);
+              continue;
             }
             if (key.starts_with("vm.")) {
               const auto limits = VMResourceLimits();
@@ -1031,14 +1017,6 @@ auto Settings::AllowUnscopedHelpers() -> bool {
   return j::Bool(j::Get(values, "agent.allowUnscopedHelpers"));
 }
 
-auto Settings::TrustedFolders() -> std::vector<std::string> {
-  std::lock_guard lock(state_->mutex);
-  const auto values = state_->Values();
-  std::vector<std::string> folders;
-  for (const auto& raw : j::Array(j::Get(values, "agent.trustedFolders", "[]")))
-    folders.push_back(j::String(raw));
-  return folders;
-}
 namespace {
 auto MemoryGiB() -> uint32_t {
   const auto pages = ::sysconf(_SC_PHYS_PAGES);
