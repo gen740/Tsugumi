@@ -89,9 +89,7 @@ auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
 
 // Read the exact revision being saved; never clean up a newer client's layout.
 auto Tools::PrepareLayoutSave(const std::string& project,
-                              const std::string& args, std::stop_token stop,
-                              const host::LayoutWrite& may_write,
-                              const host::SourcePatches& patches)
+                              const std::string& args, std::stop_token stop)
     -> std::string {
   struct StaleRevision {};
   std::optional<json::Members> snapshot;
@@ -113,16 +111,6 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     if (path == "layout.json")
       return host::LayoutFile{json::Text(*snapshot, "layout_json", "{}"),
                               std::nullopt};
-    for (const auto& raw :
-         json::Array(json::Get(*snapshot, "definitions", "[]"))) {
-      const auto definition = json::Object(raw);
-      if (path ==
-          "definitions/" + json::Text(definition, "id") + "/_card.json") {
-        const auto text = json::Text(definition, "card_json");
-        return text.empty() ? std::nullopt
-                            : std::optional<host::LayoutFile>{{text, {}}};
-      }
-    }
     std::string hash;
     for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
       const auto source = json::Object(raw);
@@ -165,14 +153,7 @@ auto Tools::PrepareLayoutSave(const std::string& project,
     return host::LayoutFile{std::move(text), hash};
   };
   try {
-    (void)read("tsugumi.json");
-    std::vector<std::string> documents{"tsugumi.json"};
-    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
-      const auto path = json::Text(json::Object(raw), "path");
-      if (host::IsExternalDocument(path, "tsugumi.json"))
-        documents.push_back(path);
-    }
-    return host::PrepareLayoutSave(args, read, documents, may_write, patches);
+    return host::PrepareLayoutSave(args, read);
   } catch (const StaleRevision&) {
     return args;
   }  // Let the core issue its normal CAS receipt.
@@ -201,8 +182,8 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
 
 auto Tools::SaveProject(const std::string& project, json::Members original,
                         std::stop_token stop,
-                        const std::function<void(const host::SaveBase&)>& check,
-                        const host::LayoutWrite& may_write) -> std::string {
+                        const std::function<void(const host::SaveBase&)>& check)
+    -> std::string {
   std::lock_guard save_lock(save_mutex);
   auto read = [&](const auto& method, const auto& query) {
     const auto reply = json::Object(
@@ -234,8 +215,15 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
               db, "annotation:" + project + ":comment:" + card, "", occupied);
         },
         patches);
-    prepared.arguments = json::Object(PrepareLayoutSave(
-        project, json::Encode(prepared.arguments), stop, may_write, patches));
+    prepared.arguments = json::Object(host::PrepareLayoutSave(
+        json::Encode(prepared.arguments),
+        [&](const std::string& path) -> std::optional<host::LayoutFile> {
+          const auto file = latest.base.files.find(path);
+          if (file == latest.base.files.end()) return std::nullopt;
+          return host::LayoutFile{file->second,
+                                  crypto::sha256_hex(file->second)};
+        },
+        patches));
     Exclusions(project, stop)
         .CheckSave(prepared.arguments, latest.base, patches);
     host::RestrictAgentRequest("project_save", prepared.arguments);
@@ -1236,25 +1224,14 @@ auto Tools::ExecuteTool(const std::string& conversation,
       const auto before = HelperReader(
           conversation, stop, json::Get(args, "base_rev"), authorization);
       const auto expanded = boundary->ExpandSave(args, before);
-      const auto roots = boundary->LayoutWriteCards(before);
-      const host::LayoutWrite may_write = [roots](const auto& path,
-                                                  const auto& id) {
-        const auto prefix = path.substr(0, path.size() - 11);
-        if (!id.empty()) return roots.contains(prefix + "definitions/" + id);
-        return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
-          return root.substr(0, root.rfind("definitions/")) == prefix;
-        });
-      };
       return SaveProject(
-          project, expanded, stop,
-          [&](const host::SaveBase& latest) {
+          project, expanded, stop, [&](const host::SaveBase& latest) {
             boundary->CheckBindings(before, [&](const std::string& path) {
               const auto found = latest.files.find(path);
               return found == latest.files.end() ? std::string{}
                                                  : found->second;
             });
-          },
-          may_write);
+          });
     } catch (const Failure& failure) {
       if (failure.code != "revision_conflict") throw;
       return LayoutToolFailure("revision_conflict", failure.what());

@@ -974,16 +974,8 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                                   crypto::sha256_hex(*bytes)}}
                      : std::nullopt;
       };
-      std::vector<std::string> documents{"tsugumi.json"};
-      for (const auto& [path, ignored] : inspection.base.files) {
-        (void)ignored;
-        if (IsExternalDocument(path, "tsugumi.json")) documents.push_back(path);
-      }
       plan = Preserve(
-          json::Object(PrepareLayoutSave(
-              json::Encode(plan), layout_read, documents,
-              context.layout_scope ? context.layout_scope(inspection.base)
-                                   : LayoutWrite{})),
+          json::Object(PrepareLayoutSave(json::Encode(plan), layout_read)),
           authored);
       if (context.authorize) context.authorize(plan, inspection.base);
       plan["check_permissions"] = context.origin == "agent" ? "true" : "false";

@@ -225,7 +225,8 @@ TEST_F(AgentProjectFixture,
   });
   // Always unblock approval on an assertion failure before joining the helper.
   std::string approval;
-  // Agent save approvals are read through AccessListRequest without a push event.
+  // Agent save approvals are read through AccessListRequest without a push
+  // event.
   const auto deadline = std::chrono::steady_clock::now() + 10s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =
@@ -409,7 +410,7 @@ namespace tsugumi::test {
 namespace {
 class ScopedSourceOperation : public AgentProjectFixture,
                               public ::testing::WithParamInterface<bool> {};
-TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
+TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
   const auto root = directory.path / "project";
   const std::string graph =
       R"({"name":"Nested","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
@@ -429,7 +430,7 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
       R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
   const auto conversation = Conversation("source-only-scoped");
   Grant(conversation);
-  // A read grant never authorizes a save or its implicit placement writes.
+  // A read grant never authorizes a save.
   const auto tool = GetParam() ? "project_edit" : "project_save";
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -461,10 +462,7 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
        {std::string{}, std::string{"externals/assigned/"}}) {
     EXPECT_EQ(Read(root / prefix / "definitions/a/code.py"),
               prefix.empty() ? "print(1)" : "print(2)");
-    const auto places = json::Object(
-        json::Get(json::Object(Read(root / prefix / "layout.json")), "cards"));
-    EXPECT_EQ(places.size(), 1u);
-    EXPECT_TRUE(places.contains("a"));
+    EXPECT_EQ(Read(root / prefix / "layout.json"), "{}");
   }
   EXPECT_EQ(Read(root / "externals/unrelated/layout.json"), "{}");
 }
