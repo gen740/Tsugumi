@@ -680,20 +680,17 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
       args["offset"] = std::to_string(bytes.size());
       const auto reply = json::Object(
           RawProjectCall(project, "project_file_read", json::Encode(args), stop));
-      if (json::Text(reply, "reply") != "FileContent") {
+      if (json::Text(reply, "reply") == "Failure") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
-        if (json::Text(failure, "kind") == "revision_conflict")
-          throw Failure("revision_conflict",
-                        "The project changed; read the project again and "
-                        "re-apply your input.");
-        if (json::Text(reply, "reply") == "Failure" &&
-            json::Text(failure, "kind") == "not_found") {
+        const auto kind = json::Text(failure, "kind");
+        if (kind == "not_found") {
           cache.emplace(path, "");
           return std::string{};
         }
-        throw Failure("permission_denied",
-                      "Helper scope cannot resolve Card file " + path);
+        throw Failure(kind, json::Text(failure, "diagnostic"));
       }
+      if (json::Text(reply, "reply") != "FileContent")
+        throw Failure("internal_error", "Expected a helper file page");
       const auto value = json::Object(json::Get(reply, "value", "{}"));
       // Catalog replies expose byte vectors as UTF-8 text or base64 objects.
       const auto raw = json::Get(value, "bytes");

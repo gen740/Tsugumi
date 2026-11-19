@@ -1279,7 +1279,6 @@ auto Service::prepare_save_reply(
     notification_bytes =
         Server::notification(note, subscription, 2, type, value).size();
     check_frame(notification_bytes, "the document notification");
-    snapshot_reply(1, *delta->doc, std::nullopt, true, subscription);
   }
   return {std::move(receipt), notification_bytes};
 }
