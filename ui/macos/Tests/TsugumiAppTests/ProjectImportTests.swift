@@ -70,10 +70,13 @@ extension ChatResumeTests {
       #expect(await link.apply())
       #expect(try written(name) == "the imported graph")
       #expect(s.nodeData(k).summary == "the imported graph")
+
+      let child = try await s.addCard(template: .draft, in: [name], at: .zero)
+      #expect(s.instance(child) != nil)
+      let nested = dir.appendingPathComponent("externals/\(name)/definitions/\(path(child).last!)/_card.json")
+      #expect(FileManager.default.fileExists(atPath: nested.path))
+      await s.undo()
+      #expect(s.instance(child) == nil && !FileManager.default.fileExists(atPath: nested.path))
     }
   }
-}
-
-extension ChatResumeTests {
-
 }
