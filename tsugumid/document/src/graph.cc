@@ -6,7 +6,6 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
-#include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
 #include "tsugumi/document/nix_refs.hh"
@@ -222,12 +221,6 @@ Template template_of(const DefinitionDoc* def) {
   };
   auto it = m.find(*t);
   return it == m.end() ? Template::Code : it->second;
-}
-
-std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v) {
-  schema::v::Array<schema::v::String> a;
-  if (schema::decode(v, a)) return {};
-  return a.value();
 }
 
 const PortType* Node::input(const std::string& n) const {

@@ -138,7 +138,7 @@ it whenever `pack/` or the native runtime changes).
 
 ## First end-to-end check
 
-`demos/en/cell-count` (seven Python and Bash Cards, two forks), exported and
+`demos/en/cell-count` (seven Python and Bash Cards), exported and
 run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
 
 | | |

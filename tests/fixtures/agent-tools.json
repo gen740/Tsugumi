@@ -741,7 +741,7 @@
   {
     "name": "project_connect",
     "payloadType": "project_connect",
-    "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire. An output can feed several inputs. project_path selects an external project; omit it for root. New Card placement is part of the same save.",
+    "description": "Connect two Cards in one atomic save against current state. An output can feed several inputs. Replaces the wire at the destination input, or adds a wire to a Draft. project_path selects an external project; omit it for root.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -121,13 +121,13 @@ import TsugumiTestSupport
   }
   // A graph laid out on the canvas does not overlap here: start and two Cards feeding a Merge.
   let start = canvas(.trigger), merge = canvas(.merge, fan: 2)
-  let forked = VersionMiniMapLayout([
+  let placed = VersionMiniMapLayout([
     .init(id: "start", x: 0, y: 30, kind: .trigger),
     .init(id: "merge", x: start.size.width + 10, y: 20, kind: .merge, fan: 2),
     .init(id: "load", x: start.size.width + merge.size.width + 40, y: -30),
     .init(id: "draft", x: start.size.width + merge.size.width + 40, y: 60, kind: .draft),
   ], flow: .leftToRight, width: 284, height: 132)
-  let at = forked.cards
+  let at = placed.cards
   #expect(at["start"]!.shape == .start && at["merge"]!.shape == .merge && at["load"]!.shape == .card && at["draft"]!.shape == .card)
   #expect(at["draft"]!.draft && !at["load"]!.draft)
   let boxes = Array(at.values.map(\.box))

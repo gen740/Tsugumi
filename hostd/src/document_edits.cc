@@ -233,7 +233,7 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
   auto graph = json::Object(json::Get(project, "canvas", "{}"));
   auto definitions = json::Object(json::Get(scope, "definitions", "{}"));
   auto wires = json::Array(json::Get(graph, "connections", "[]"));
-  auto cards = json::Array(json::Get(graph, "cards", "[]"));
+  const auto cards = json::Array(json::Get(graph, "cards", "[]"));
   const auto has_card = [&](const std::string& id) {
     return std::ranges::any_of(cards, [&](const auto& raw) {
       return json::Text(json::Object(raw), "id") == id;
@@ -241,34 +241,26 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
   };
   if (!has_card(from_card) || !has_card(to_card))
     throw std::runtime_error("A wire endpoint is missing");
-  const auto document = [&](const std::string& id, const std::string& part) {
-    return json::Object(
-        json::Get(json::Object(json::Get(definitions, id, "{}")), part, "{}"));
-  };
-  const auto kind = [&](const std::string& id) {
-    return json::Text(document(id, "card"), "template");
-  };
-  const auto matches = [](const std::string& wire, const std::string& side,
-                          const std::string& card, const std::string& port) {
-    const auto end = json::Object(json::Get(json::Object(wire), side));
-    return json::Text(end, "card") == card && json::Text(end, "port") == port;
+  const auto is_draft = [&](const std::string& id) {
+    const auto definition = json::Object(json::Get(definitions, id, "{}"));
+    return json::Text(json::Object(json::Get(definition, "card", "{}")),
+                      "template") == "draft";
   };
   // Draft gestures attach to the Card itself and never declare ports.
-  const auto endpoint_port = [&](const std::string& id,
-                                 const std::string& port) {
-    if (kind(id) == "draft") return std::string{};
+  const auto endpoint_port = [](bool draft, const std::string& port) {
+    if (draft) return std::string{};
     if (port == "+")
       throw std::runtime_error("Only a Draft accepts a Card endpoint gesture");
     return port;
   };
-  const auto fp = endpoint_port(from_card, from_port);
-  const auto tp = endpoint_port(to_card, to_port);
-  // Drafts accept multiple incoming wires. Reconnecting the same endpoints
-  // leaves one wire, just as it does for a typed input.
-  std::erase_if(wires, [&](const auto& w) {
-    return matches(w, "to", to_card, tp) &&
-           (kind(to_card) != "draft" || matches(w, "from", from_card, fp));
-  });
+  const auto fp = endpoint_port(is_draft(from_card), from_port);
+  const bool to_draft = is_draft(to_card);
+  const auto tp = endpoint_port(to_draft, to_port);
+  if (!to_draft)
+    std::erase_if(wires, [&](const auto& w) {
+      const auto to = json::Object(json::Get(json::Object(w), "to"));
+      return json::Text(to, "card") == to_card && json::Text(to, "port") == tp;
+    });
   wires.push_back(json::Encode(json::Members{{"from", Endpoint(from_card, fp)},
                                              {"to", Endpoint(to_card, tp)}}));
   graph["connections"] = json::Encode(wires);
