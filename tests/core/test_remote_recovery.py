@@ -6,6 +6,7 @@ import os
 import secrets
 import signal
 import socketserver
+import sqlite3
 import struct
 import tempfile
 import threading
@@ -351,6 +352,62 @@ def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     assert record.summary.state == CardState.failed and record.summary.failure
     assert not record.outputs
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
+
+
+def test_rolled_back_remote_journal_leaves_no_gap(running_job, project):
+    gateway, _, client, run_id, job_id = running_job
+    with sqlite3.connect(project / ".tsugumi" / "runs.sqlite") as db:
+        db.execute("""
+            CREATE TRIGGER reject_invocation BEFORE INSERT ON invocations
+            BEGIN SELECT RAISE(ABORT, 'test invocation write failed'); END
+        """)
+    rolled_back = "remote journal entry that must roll back"
+    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.journal,
+                                            "text": rolled_back + "\n"}) + "\n").encode())
+    assert wait_run(client, run_id).state == RunState.failed
+
+    for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
+        journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal, **scope)
+        saved = text(journal.text)
+        entries = [json.loads(line) for line in saved.splitlines()]
+        assert rolled_back not in saved
+        assert any(entry["event"] == "failed" for entry in entries)
+        assert journal.sizeBytes == journal.nextOffset == len(saved.encode())
+
+
+def test_large_remote_build_entry_supports_small_backward_reads(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    # Put a multibyte character across the on-disk chunk boundary.
+    content = ("x" * 65535 + "雪\n" + "é\n" * 410000 + "end\n").encode()
+    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
+                                            "text": content.decode()}, ensure_ascii=False) + "\n").encode())
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
+    page = client.call("LogRangeRequest", **args, tail=True, limitBytes=11)
+    assert page.sizeBytes == len(content)
+    for _ in range(3):
+        assert page.text == content[page.offset:page.nextOffset]
+        assert page.lineNumber == content[:page.offset].count(b"\n") + 1
+        page = client.call("LogRangeRequest", **args, before=page.offset, limitBytes=11)
+    boundary = client.call("LogRangeRequest", **args, offset=65535, limitBytes=4)
+    assert boundary.text == "雪\n".encode()
+    assert boundary.lineNumber == 1
+
+
+def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
+    gateway, _, client, run_id, job_id = running_job
+    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
+                                            "text": "x" * 70000}) + "\n").encode())
+    assert wait_run(client, run_id).state == RunState.succeeded
+    with sqlite3.connect(project / ".tsugumi" / "runs.sqlite") as db:
+        db.execute("UPDATE logs SET inv_off=inv_off+10 WHERE run_id=? AND stream=? AND inv_off=65536",
+                   (run_id, LogStream.build))
+
+    with pytest.raises(RpcFailure) as error:
+        client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                    stream=LogStream.build, offset=65540, limitBytes=16)
+    assert error.value.kind == "persistence_failed"
 
 
 @pytest.mark.parametrize(("outage", "completed"), [

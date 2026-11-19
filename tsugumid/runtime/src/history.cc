@@ -477,8 +477,6 @@ void History::writer_loop() {
       ok = false;
     }
     if (!ok) {
-      // Cached log offsets may include rolled back rows.
-      log_ends_.clear();
       // Retry one by one so a single bad write does not lose the others.
       for (auto& [work, done] : batch) {
         bool one = true;
@@ -888,14 +886,7 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
   if (text.empty()) return {};
   int s = static_cast<int>(stream);
   std::string ck = key(card);
-  std::string rk = "R|" + run_id + "|" + std::to_string(s);
-  std::string kk = "C|" + run_id + "|" + ck + "|" + std::to_string(s);
-  std::string ik = "I|" + run_id + "|" + ck + "|" + std::to_string(invocation) +
-                   "|" + std::to_string(s);
-  auto load = [&](const std::string& k, const char* sql_text, bool with_card,
-                  bool with_inv) {
-    auto it = log_ends_.find(k);
-    if (it != log_ends_.end()) return it->second;
+  auto load = [&](const char* sql_text, bool with_card, bool with_inv) {
     auto st = db.prepare(sql_text);
     int i = 1;
     st.bind(i++, run_id);
@@ -904,52 +895,58 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
     st.bind(i++, s);
     return st.step() ? LogPosition{st.u64(0), st.u64(1)} : LogPosition{};
   };
-  auto r0 = load(rk,
+  auto r0 = load(
                  "SELECT run_off + length(data), run_lf + lf_count FROM logs "
                  "WHERE run_id=? AND stream=? ORDER BY run_off DESC LIMIT 1",
                  false, false);
   LogPosition c0, i0;
   if (!card.empty()) {
-    c0 = load(kk,
+    c0 = load(
               "SELECT card_off + length(data), card_lf + lf_count FROM logs "
               "WHERE run_id=? AND card=? AND stream=? "
               "ORDER BY card_off DESC LIMIT 1",
               true, false);
-    i0 = load(ik,
+    i0 = load(
               "SELECT inv_off + length(data), inv_lf + lf_count FROM logs "
               "WHERE run_id=? AND card=? AND invocation=? AND stream=? "
               "ORDER BY inv_off DESC LIMIT 1",
               true, true);
   }
-  const auto lf_count =
-      static_cast<uint64_t>(std::count(text.begin(), text.end(), '\n'));
-  db.prepare(
-        "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
-        "card_off, inv_off, run_lf, card_lf, inv_lf, lf_count, data) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(1, run_id)
-      .bind(2, ck)
-      .bind(3, invocation)
-      .bind(4, s)
-      .bind(5, r0.offset)
-      .bind(6, c0.offset)
-      .bind(7, i0.offset)
-      .bind(8, r0.newlines)
-      .bind(9, c0.newlines)
-      .bind(10, i0.newlines)
-      .bind(11, lf_count)
-      .bind_blob(12, text)
-      .run();
-  auto advance = [&](const std::string& k, LogPosition start) {
-    log_ends_[k] = {start.offset + text.size(), start.newlines + lf_count};
-    return start.offset + text.size();
-  };
-  std::vector<LogEnd> ends{
-      {run_id, std::nullopt, std::nullopt, stream, advance(rk, r0)}};
-  if (!card.empty()) {
-    advance(kk, c0);
-    ends.push_back({run_id, card, invocation, stream, advance(ik, i0)});
+  auto insert = db.prepare(
+      "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
+      "card_off, inv_off, run_lf, card_lf, inv_lf, lf_count, data) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  // Bound the extra bytes read and counted around a page boundary, even
+  // when one remote log entry is larger than the requested page.
+  constexpr size_t chunk_bytes = 64 * 1024;
+  for (std::string_view rest(text); !rest.empty();) {
+    const auto chunk = rest.substr(0, chunk_bytes);
+    const auto lf_count =
+        static_cast<uint64_t>(std::ranges::count(chunk, '\n'));
+    insert.bind(1, run_id)
+        .bind(2, ck)
+        .bind(3, invocation)
+        .bind(4, s)
+        .bind(5, r0.offset)
+        .bind(6, c0.offset)
+        .bind(7, i0.offset)
+        .bind(8, r0.newlines)
+        .bind(9, c0.newlines)
+        .bind(10, i0.newlines)
+        .bind(11, lf_count)
+        .bind_blob(12, chunk)
+        .run();
+    insert.reset();
+    for (auto* position : {&r0, &c0, &i0}) {
+      position->offset += chunk.size();
+      position->newlines += lf_count;
+    }
+    rest.remove_prefix(chunk.size());
   }
+  std::vector<LogEnd> ends{
+      {run_id, std::nullopt, std::nullopt, stream, r0.offset}};
+  if (!card.empty())
+    ends.push_back({run_id, card, invocation, stream, i0.offset});
   return ends;
 }
 
@@ -1515,9 +1512,14 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
         out.line_number += st.u64(2);
         first = false;
       }
+      if (o != buf_start + buf.size())
+        throw Failed(FailureKind::persistence_failed, "discontinuous log chunks");
       buf += d;
     }
   }
+  if (scan_from < scan_end &&
+      (buf_start > scan_from || buf_start + buf.size() < scan_end))
+    throw Failed(FailureKind::persistence_failed, "discontinuous log chunks");
   auto at = [&](uint64_t pos) -> int {
     if (pos < buf_start || pos - buf_start >= buf.size()) return -1;
     return static_cast<unsigned char>(buf[pos - buf_start]);
