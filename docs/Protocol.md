@@ -26,7 +26,6 @@ There are 47 requests.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `client_id` | `string` | yes |  |
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
 
@@ -373,7 +372,7 @@ No fields.
 | `stream` | `LogStream` |  |  |
 | `offset` | `uint64` |  |  |
 | `tail` | `bool` |  |  |
-| `limit_bytes` | `uint32` |  |  |
+| `limit_bytes` | `uint32` |  | Maximum number of bytes to read. |
 
 ### RunEnvironments
 
@@ -522,7 +521,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 
 | Request | Fields |
 | --- | --- |
-| `HelloRequest` | `token: string` (required), `client_id: string` (required) |
+| `HelloRequest` | `token: string` (required) |
 | `ConfigureRequest` | `provider: Tsugumi.Service.ProviderSelection` (required), `conversation_id: string` (required) |
 | `ConversationCreateRequest` | `conversation_id: string`, `project_id: string`, `role: string` |
 | `ConversationListRequest` | `project_id: string` |
@@ -536,7 +535,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `ToolCatalogRequest` | None |
 | `ToolCallRequest` | `conversation_id: string` (required), `project_id: string`, `name: string` (required), `arguments_json: string` (required), `op_id: string` (required) |
 | `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
-| `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [string]` |
+| `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [Tsugumi.Service.Access]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
 | `AccessListRequest` | `conversation_id: string` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
@@ -558,7 +557,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
-| `HelloRequest` | `token: string` (required), `client_id: string` (required) |
+| `HelloRequest` | `token: string` (required) |
 | `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]` |
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
