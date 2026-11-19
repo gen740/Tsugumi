@@ -65,7 +65,7 @@ assert.deepEqual(longLine.blocks.map((block) => block.first), [1, 1])
 // Exercise the request offsets as a user traverses a 128 MiB stream with
 // no line delimiters. Holding the stream itself in the test is unnecessary.
 const large = new LogWindow('terminal')
-const size = 128 << 20
+const size = 4 * (128 << 20)
 const bytes = 'z'.repeat(1 << 18)
 function load(read: LogRead) {
   const offset = read.kind === 'tail' ? size - read.limit : read.kind === 'earlier' ? Math.max(0, read.offset - read.limit) : read.offset
