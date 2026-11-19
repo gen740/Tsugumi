@@ -425,6 +425,7 @@ def test_long_terminal_redraw_is_consistent_in_forward_and_reverse_pages(running
     assert page.lineNumber == 2 and not page.startsLine
     assert page.rawSizeBytes == len(raw.encode())
     assert end == page.sizeBytes == len(expected) * 4
+    assert text(page.text) == expected[page.offset // 4:]
     while page.offset:
         previous = client.call("LogRangeRequest", **reads, before=page.offset)
         assert previous.nextOffset == page.offset
