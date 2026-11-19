@@ -174,20 +174,22 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
     require_owner(state, core);
-    state.core_life_id = core;
     if (state.state != R::JobState::Missing &&
         state.state != R::JobState::Uploading)
       throw Error(R::ErrorCode::Rejected, "job no longer accepts uploads");
     if (state.state == R::JobState::Missing) {
+      private_directory(dir / "blobs");
+      private_directory(dir / "parts");
       state.state = R::JobState::Uploading;
+      state.core_life_id = core;
+      write(dir, state);
     }
-    write(dir, state);
-    private_directory(dir / "blobs");
-    private_directory(dir / "parts");
     const auto final = dir / "blobs" / c.digest;
     if (stdfs::exists(final)) {
       if (stdfs::file_size(final) != c.total)
         throw Error(R::ErrorCode::Rejected, "blob size conflict");
+      durable_directory(dir / "blobs");
+      durable_directory(dir / "parts");
       return;
     }
     uint64_t total = 0;
@@ -202,19 +204,28 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       throw Error(R::ErrorCode::Rejected, "job upload budget exceeded");
     const auto part = dir / "parts" / c.digest;
     const auto offset = stdfs::exists(part) ? stdfs::file_size(part) : 0;
+    const auto persist = [&](int fd, bool complete) {
+      if (complete && file_digest(part) != c.digest) {
+        stdfs::remove(part);
+        throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
+      }
+      // An acknowledged prefix is resumable at its recorded file length.
+      if (::fsync(fd) != 0) throw std::runtime_error("cannot sync blob chunk");
+      if (complete) {
+        stdfs::rename(part, final);
+        durable_directory(dir / "blobs");
+      }
+      if (complete || c.offset == 0) durable_directory(dir / "parts");
+    };
     if (c.offset < offset) {
       const auto previous = fs::read_range(part, c.offset, c.bytes.size());
       if (!previous || *previous != std::string(reinterpret_cast<const char*>(
                                                     c.bytes.data()),
                                                 c.bytes.size()))
         throw Error(R::ErrorCode::Rejected, "repeated blob chunk differs");
-      if (offset == c.total) {
-        if (file_digest(part) != c.digest)
-          throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
-        stdfs::rename(part, final);
-        durable_directory(dir / "blobs");
-        durable_directory(dir / "parts");
-      }
+      Fd fd{::open(part.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW)};
+      if (fd.value < 0) throw std::runtime_error("cannot reopen staged blob");
+      persist(fd.value, offset == c.total);
       return;
     }
     if (c.offset != offset)
@@ -230,17 +241,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       if (n <= 0) throw std::runtime_error("cannot write blob chunk");
       done += static_cast<size_t>(n);
     }
-    if (::fsync(fd.value) != 0)
-      throw std::runtime_error("cannot sync blob chunk");
-    if (offset + c.bytes.size() == c.total) {
-      if (file_digest(part) != c.digest) {
-        stdfs::remove(part);
-        throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
-      }
-      stdfs::rename(part, final);
-      durable_directory(dir / "blobs");
-      durable_directory(dir / "parts");
-    }
+    persist(fd.value, offset + c.bytes.size() == c.total);
   });
 }
 auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
