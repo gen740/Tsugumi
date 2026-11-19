@@ -8,6 +8,7 @@
 #include "nix.hh"
 #include "scheduler.hh"
 #include "service.hh"
+#include "tsugumi/protocol/log_range.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
@@ -1018,8 +1019,12 @@ void Service::log_range(RequestIn& req) {
     throw Failed(FailureKind::invalid_request,
                  "tail and offset cannot be combined");
   uint32_t limit = r->limit_bytes().value_or(65536);
-  if (limit < 4 || limit > (256u << 10))
-    throw Failed(FailureKind::invalid_request, "limit_bytes must be 4..262144");
+  if (limit < protocol::kMinLogRangeBytes ||
+      limit > protocol::kMaxLogRangeBytes)
+    throw Failed(FailureKind::invalid_request,
+                 "limit_bytes must be " +
+                     std::to_string(protocol::kMinLogRangeBytes) + ".." +
+                     std::to_string(protocol::kMaxLogRangeBytes));
   auto slice = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});

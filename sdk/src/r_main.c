@@ -61,18 +61,12 @@ static SEXP json_or_null(const char* json) {
   UNPROTECT(1);
   return result;
 }
-static const char* r_string_arg(SEXP value, const char* name) {
-  if (TYPEOF(value) != STRSXP || Rf_length(value) < 1 ||
-      STRING_ELT(value, 0) == NA_STRING)
-    Rf_error("%s must be a non-empty character string", name);
-  return Rf_translateCharUTF8(STRING_ELT(value, 0));
-}
 static SEXP host_inputs(void) {
   return json_or_null(tsugumi_native_inputs());
 }
 static SEXP host_kind(SEXP port) {
   return Rf_ScalarInteger(
-      tsugumi_native_input_kind(r_string_arg(port, "port")));
+      tsugumi_native_input_kind(Rf_translateCharUTF8(STRING_ELT(port, 0))));
 }
 static SEXP host_invocation(void) {
   return Rf_ScalarReal((double)tsugumi_native_invocation());
@@ -83,7 +77,7 @@ static SEXP host_info(SEXP field) {
 }
 static SEXP host_display(SEXP json) {
   return Rf_ScalarLogical(
-      tsugumi_native_display(r_string_arg(json, "json")) == 0);
+      tsugumi_native_display(Rf_translateCharUTF8(STRING_ELT(json, 0))) == 0);
 }
 static SEXP host_cancelled(void) {
   return Rf_ScalarLogical(tsugumi_native_cancelled());
@@ -92,11 +86,11 @@ static SEXP host_remaining(void) {
   return Rf_ScalarReal((double)tsugumi_native_remaining_ms());
 }
 static SEXP host_log(SEXP message) {
-  tsugumi_native_log(r_string_arg(message, "message"));
+  tsugumi_native_log(Rf_translateCharUTF8(STRING_ELT(message, 0)));
   return R_NilValue;
 }
 static SEXP host_fail(SEXP message) {
-  tsugumi_native_fail(r_string_arg(message, "message"));
+  tsugumi_native_fail(Rf_translateCharUTF8(STRING_ELT(message, 0)));
   return R_NilValue;
 }
 /* R's registration API deliberately erases each .Call function signature;
@@ -186,8 +180,7 @@ static int invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
   SEXP result = PROTECT(R_tryEval(expr, R_GlobalEnv, &error));
   if (!error) {
     if (outputs)
-      error = TYPEOF(result) != STRSXP || Rf_length(result) < 1 ||
-              STRING_ELT(result, 0) == NA_STRING ||
+      error = TYPEOF(result) != STRSXP ||
               call->effects->outputs_json(call->host, CHAR(STRING_ELT(result, 0)), outputs);
     else
       error = Rf_asLogical(result) != TRUE;

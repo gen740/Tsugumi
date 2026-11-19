@@ -376,13 +376,8 @@ class Daemon {
         }
       }
     std::ranges::sort(pending, [](const auto& a, const auto& b) {
-      std::error_code eca, ecb;
-      const auto ta =
-          stdfs::last_write_time(a.first->job_path(a.second) / "spec.fb", eca);
-      const auto tb =
-          stdfs::last_write_time(b.first->job_path(b.second) / "spec.fb", ecb);
-      if (eca || ecb) return !eca && ecb;
-      return ta < tb;
+      return stdfs::last_write_time(a.first->job_path(a.second) / "spec.fb") <
+             stdfs::last_write_time(b.first->job_path(b.second) / "spec.fb");
     });
     active_jobs_.store(static_cast<uint32_t>(active + pending.size()));
     for (const auto& [p, job] : pending) {
@@ -640,11 +635,7 @@ auto run(Config config) -> int {
   log("listening with TLS 1.3 on unix:" + config.unix_socket.string() +
       " and tls://" + config.host + ":" + std::to_string(config.port));
   while (!stopping) {
-    try {
-      daemon.tick();
-    } catch (const std::exception& e) {
-      log(std::string("tick failed: ") + e.what());
-    }
+    daemon.tick();
     for (auto i = clients.begin(); i != clients.end();) {
       if (i->done->load()) {
         i->thread.join();

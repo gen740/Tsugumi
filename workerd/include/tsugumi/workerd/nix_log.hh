@@ -6,6 +6,8 @@
 #include <nix/util/terminal.hh>
 #include <sstream>
 
+#include "tsugumi/util/text.hh"
+
 namespace tsugumi {
 class NixLogSink final : public nix::Logger {
  public:
@@ -21,8 +23,8 @@ class NixLogSink final : public nix::Logger {
   auto set_thread(const std::function<void(const std::string&)>* sink) -> void {
     thread_sink_ = sink;
   }
-  auto log(nix::Verbosity level, std::string_view text) -> void override {
-    if (level <= nix::lvlInfo) emit(std::string(text));
+  auto log(nix::Verbosity level, std::string_view message) -> void override {
+    if (level <= nix::lvlInfo) emit(message);
   }
   auto logEI(const nix::ErrorInfo& info) -> void override {
     std::ostringstream text;
@@ -42,13 +44,17 @@ class NixLogSink final : public nix::Logger {
   }
 
  private:
-  auto emit(const std::string& text) -> void {
+  auto emit(std::string_view message) -> void {
+    auto forward = [&](const auto& sink) {
+      sink(text::replace_invalid_utf8(nix::filterANSIEscapes(message, true)) +
+           "\n");
+    };
     if (thread_sink_) {
-      (*thread_sink_)(nix::filterANSIEscapes(text, true) + "\n");
+      forward(*thread_sink_);
       return;
     }
     std::lock_guard lock(mutex_);
-    if (sink_) sink_(nix::filterANSIEscapes(text, true) + "\n");
+    if (sink_) forward(sink_);
   }
   static inline thread_local const std::function<void(const std::string&)>*
       thread_sink_ = nullptr;

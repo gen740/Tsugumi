@@ -681,7 +681,7 @@ table ArtifactReadRequest {
   limit_bytes:uint32 = null (id: 3);
 }
 
-/// -> LogSlice. Read run logs; invocation requires card. tail=true reads the end with offset=0.
+/// -> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0.
 table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -689,6 +689,7 @@ table LogRangeRequest {
   stream:Tsugumi.Data.LogStream (id: 3);
   offset:uint64 = null (id: 4);
   tail:bool = null (id: 5);
+  /// Maximum number of bytes to read.
   limit_bytes:uint32 = null (id: 6);
 }
 

@@ -103,7 +103,8 @@ let package = Package(
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
-      dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport"],
+      dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport",
+                     .product(name: "SwiftTerm", package: "SwiftTerm")],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
   ]

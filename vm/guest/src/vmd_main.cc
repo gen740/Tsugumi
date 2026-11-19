@@ -625,15 +625,7 @@ auto stop_project(const std::string& id) -> void {
   pid_t pid = it->second.pid;
   ::kill(pid, SIGTERM);
   // tsugumid records interrupted runs on SIGTERM before exiting.
-  if (!exited.wait_for(l, std::chrono::seconds(10),
-                       [&] { return !it->second.running; })) {
-    logf("project %s did not exit after SIGTERM; escalating to cgroup.kill",
-         id.c_str());
-    write_file(cgroup_dir(id) + "/cgroup.kill", "1");
-    ::kill(pid, SIGKILL);
-    exited.wait_for(l, std::chrono::seconds(5),
-                    [&] { return !it->second.running; });
-  }
+  exited.wait(l, [&] { return !it->second.running; });
 }
 
 auto forget_project(const std::string& id, bool stop) -> std::string {
@@ -957,33 +949,23 @@ void control(int conn) {
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";
-  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5)) {
-    r = valid_id(w[1]) ? start_project(w[1], w[2], std::atoi(w[3].c_str()),
-                                       w.size() == 5 ? w[4] : "")
-                       : "error invalid project id";
-  } else if (w[0] == "stop" && w.size() == 2) {
-    if (!valid_id(w[1])) {
-      r = "error invalid project id";
-    } else {
-      stop_project(w[1]);
-      r = "ok";
-    }
+  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5))
+    r = start_project(w[1], w[2], std::atoi(w[3].c_str()),
+                      w.size() == 5 ? w[4] : "");
+  else if (w[0] == "stop" && w.size() == 2) {
+    stop_project(w[1]);
+    r = "ok";
   } else if ((w[0] == "forget" || w[0] == "forget-stopped") && w.size() == 2)
-    r = valid_id(w[1]) ? forget_project(w[1], w[0] == "forget")
-                       : "error invalid project id";
+    r = forget_project(w[1], w[0] == "forget");
   else if (w[0] == "gc" && w.size() == 1)
     r = collect_garbage();
   else if (w[0] == "verify-store" && w.size() == 1)
     r = collect_garbage(true);
   else if (w[0] == "shell" && w.size() == 4) {
-    if (!valid_id(w[1])) {
-      r = "error invalid project id";
-    } else {
-      operation.unlock();
-      shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
-      ::close(conn);
-      return;
-    }
+    operation.unlock();
+    shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
+    ::close(conn);
+    return;
   } else if (w[0] == "resize" && w.size() == 4)
     r = resize(std::strtoull(w[1].c_str(), nullptr, 10),
                std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
@@ -1007,10 +989,6 @@ void control(int conn) {
 
 void rpc(int conn) {
   std::string id = read_line(conn);
-  if (!valid_id(id)) {
-    ::close(conn);
-    return;
-  }
   bool running = false;
   {
     std::lock_guard<std::mutex> l(mu);

@@ -351,9 +351,12 @@ class VMProcess final : public EnvironmentProcess {
             }
           } catch (...) {
           }
-          ::close(fd);
-          // Watch is re-established by the next explicit operation.
-          watch_fd_ = -1;
+          {
+            std::lock_guard lock(watch_mutex_);
+            // Watch is re-established by the next explicit operation.
+            watch_fd_ = -1;
+            ::close(fd);
+          }
         });
   }
   template <class T>
