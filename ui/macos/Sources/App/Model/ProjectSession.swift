@@ -89,7 +89,6 @@ struct CardRunState: Equatable {
   var state: Tsugumi_Data_CardState
   /// Number of the latest invocation in this run (1, 2, …); 0 = not run.
   var invocation: UInt64
-  var batchActivation: UInt64?
   var phase: Tsugumi_Data_Phase
   var failure: String?
   var executionState: Tsugumi_Data_RemoteExecutionState?
@@ -143,7 +142,6 @@ struct TimelineEntry: Identifiable, Hashable {
   var id: String { "\(card)#\(invocation)" }
   let card: CardKey
   let invocation: UInt64
-  var batchActivation: UInt64?
   var state: Tsugumi_Data_CardState
   var startedAt: Int64?
   var endedAt: Int64?
@@ -807,7 +805,6 @@ final class ProjectSession {
     let n = inv.invocation ?? 0
     if prev == nil || prev!.invocation <= n {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
-      next.batchActivation = inv.batchActivation
       next.executionState = inv.executionState
       if (inv.state == .running || inv.state == .preparing) && inv.transferDirection?.isEmpty == false && inv.transferDone < inv.transferTotal {
         next.transfer = String(localized: "ファイル転送: \(inv.transferName ?? "") (\(inv.transferDone)/\(inv.transferTotal) bytes)")
@@ -834,11 +831,6 @@ final class ProjectSession {
         (batch.activation == current.activation && (!current.complete || batch.complete)) else { return }
     }
     runBatches[card] = batch
-    if batch.executionList, batch.complete, !batch.failed, batch.invocationCount == 0 {
-      // Nix preparation can use a provisional invocation before it finds an empty list.
-      if cardStates[card]?.batchActivation == batch.activation { cardStates[card] = nil }
-      timeline.removeAll { $0.card == card && $0.batchActivation == batch.activation }
-    }
   }
 
   func executionBatch(_ card: CardKey) -> Tsugumi_RPC_RunBatchT? {
@@ -945,8 +937,6 @@ final class ProjectSession {
         if inv.batchActivation != nil {
           batchHistoryRevision += 1
           guard e.runId == currentRunId else { break }
-          if let batch = runBatches[key(inv.card.path)], batch.activation == inv.batchActivation,
-             batch.executionList, batch.complete, !batch.failed, batch.invocationCount == 0 { break }
         }
         if inv.executionState != .unspecified {
           remoteHistoryRevision += 1
@@ -999,7 +989,7 @@ final class ProjectSession {
       timeline[i].endedAt = inv.endedAt ?? timeline[i].endedAt
       if !stages.isEmpty { timeline[i].stages = stages }
     } else {
-      timeline.append(TimelineEntry(card: k, invocation: n, batchActivation: inv.batchActivation, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt,
+      timeline.append(TimelineEntry(card: k, invocation: n, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt,
                                     stages: stages))
     }
   }
