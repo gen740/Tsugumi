@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from harness.real_cards import bash, log
-from projects import MSG_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import MSG_FBS, card, card_in_card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -127,12 +127,10 @@ def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeyp
         # Probe holds the only input to the external project's Card. The
         # external has its own pin, so its unclaimed early build is what fetches.
         write(root, {"probe": blocked_builder("probe", builder.getsockname()[1])},
-              [card("probe", "probe"), {"id": "nested", "_inner": {
-                  "cards": [card("fetch", "probe", inputs=[{"name": "in"}])],
-                  "connections": [],
-                  "boundary": {"inputs": {"in": {"card": "fetch", "port": "in"}},
-                               "outputs": {}},
-              }}], [conn("probe", "msg", "nested", "in")])
+              [card("probe", "probe"), card_in_card(
+                  "nested", [card("fetch", "probe", inputs=[{"name": "in"}])], [],
+                  {"inputs": {"in": {"card": "fetch", "port": "in"}}, "outputs": {}},
+              )], [conn("probe", "msg", "nested", "in")])
         doc_file = external / "tsugumi.json"
         doc = json.loads(doc_file.read_text())
         revision = uuid4().hex + "cafef00d"
@@ -156,8 +154,10 @@ def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeyp
         assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
         assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
         assert stream.read(1) == b"", "the stopped evaluator still has an open fetch"
-        assert not (client.call("RunInvocationsRequest", runId=run_id,
-                                card=path("nested", "fetch")).records or [])
+        recorded = client.call("RunInvocationsRequest", runId=run_id,
+                               card=path("nested", "fetch")).records or []
+        # History can record a cancelled Card that never had an activation.
+        assert all(row.startedAt is None and row.batchActivation is None for row in recorded)
 
 
 def blocked_builder(name, port):
