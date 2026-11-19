@@ -1,4 +1,8 @@
-{ pkgs, inputs, params }:
+{
+  pkgs,
+  inputs,
+  params,
+}:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
 in

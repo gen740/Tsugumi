@@ -132,10 +132,8 @@ struct BatchOutputList {
 };
 
 struct CursorJson {
-  t::String<"d"> digest;
   t::Int64<"h"> hi;
   t::String<"a"> after;
-  t::Int64<"e"> expires;
 };
 
 struct RunJournalLine {
@@ -152,6 +150,21 @@ struct CardJournalLine {
   t::Array<"card", v::String> card;
   t::Uint64<"invocation"> invocation;
   t::String<"message"> message;
+};
+
+// One Card evaluated and built ahead of its runs (tsugumid --prepare-cards);
+// a core started with --prepared-cards uses it instead of evaluating.
+struct PreparedCard {
+  Opt<"card", v::String> card;
+  Opt<"error", v::String> error;
+  // The evaluation key, as the core would compute it again for this Card.
+  Opt<"key", v::String> key;
+  Opt<"derivation", v::String> derivation;
+  Opt<"manifest", v::String> manifest;
+  Opt<"system", v::String> system;
+  Opt<"execution_list", v::Bool> execution_list;
+  Opt<"implementations", v::Uint64> implementations;
+  Opt<"closure", v::Array<v::String>> closure;
 };
 
 struct NixpkgsPin {
@@ -173,8 +186,8 @@ struct SdkJobJson {
   t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
 };
 
-// ---- .tsugumi-history.json (a demo's versions, tsugumid/runtime/src/versions.cc) ------------
-
+// ---- .tsugumi-history.json (a demo's versions,
+// tsugumid/runtime/src/versions.cc) ------------
 
 // (A struct's fields are all required or all optional: these are optional,
 // and versions.cc checks the ones it needs.)
@@ -199,19 +212,18 @@ struct HistoryCommit {
 struct HistoryFile {
   t::Array<"commits", Obj<HistoryCommit>> commits;
   t::Mapping<"branches", v::String, v::String> branches;  // name -> commit id
-  t::String<"head"> head;                                  // a branch name
+  t::String<"head"> head;                                 // a branch name
 };
 
 // server.ready, written for the launcher into the 0700 control directory.
 struct ServerReady {
-  t::String<"endpoint"> endpoint;  // ws://host:port/rpc as seen inside the environment
+  t::String<"endpoint">
+      endpoint;  // ws://host:port/rpc as seen inside the environment
   t::String<"token"> token;
   t::Uint32<"protocol"> protocol;
   t::String<"project_id"> project_id;
-  t::String<"server_instance_id"> server_instance_id;
   t::String<"unix_socket"> unix_socket;
   t::Int64<"pid"> pid;
 };
-
 
 }  // namespace tsugumi::schema

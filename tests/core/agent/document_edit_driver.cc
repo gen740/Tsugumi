@@ -1,23 +1,23 @@
 // A socket-free host boundary for client gesture/undo tests.
+#include <algorithm>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
-#include "tsugumi/util/json_object.hh"
 #include "host/project_operations.hh"
 #include "tsugumi/util/crypto.hh"
-#include <algorithm>
-#include <map>
+#include "tsugumi/util/json_object.hh"
 
 namespace {
 namespace json = tsugumi::json;
 namespace crypto = tsugumi::crypto;
 using tsugumi::host::OperationReply;
 class ProjectFixture {
-public:
+ public:
   std::map<std::string, std::string> files;
   uint64_t saves = 0;
-  auto Call(const std::string &method, const json::Members &args)
+  auto Call(const std::string& method, const json::Members& args)
       -> OperationReply {
     std::string type;
     json::Members value;
@@ -31,9 +31,8 @@ public:
                {"layout_json", json::Quote(files.at("layout.json"))}};
       json::Members definitions;
       std::vector<std::string> sources;
-      for (const auto &[path, bytes] : files) {
-        if (path == "tsugumi.json" || path == "layout.json")
-          continue;
+      for (const auto& [path, bytes] : files) {
+        if (path == "tsugumi.json" || path == "layout.json") continue;
         if (path.starts_with("definitions/") &&
             std::count(path.begin(), path.end(), '/') == 2) {
           const auto slash = path.find('/', 12);
@@ -56,7 +55,7 @@ public:
                           {"hash", json::Quote(crypto::sha256_hex(bytes))}}));
       }
       std::vector<std::string> list;
-      for (const auto &[id, raw] : definitions) {
+      for (const auto& [id, raw] : definitions) {
         (void)id;
         list.push_back(raw);
       }
@@ -69,11 +68,10 @@ public:
                                             json::Text(args, "path"))))}})},
                {"eof", "true"}};
     } else {
-      if (method != "project_save")
-        throw std::runtime_error(method);
+      if (method != "project_save") throw std::runtime_error(method);
       if (json::UInt(args.at("base_rev")) != saves)
         throw std::runtime_error("stale fixture revision");
-      for (const auto &raw : json::Array(args.at("changes"))) {
+      for (const auto& raw : json::Array(args.at("changes"))) {
         const auto change = json::Object(raw),
                    v = json::Object(change.at("value"));
         const auto kind = json::Text(change, "value_type");
@@ -82,7 +80,7 @@ public:
               json::Text(v, "json");
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
-          for (const auto &[key, name] : {std::pair{"card_json", "_card.json"},
+          for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
                                           {"meta_json", "_meta.json"},
                                           {"link_json", "_link.json"}}) {
             const auto text = json::Text(v, key);
@@ -93,14 +91,13 @@ public:
           }
         } else if (kind == "RemoveDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
-          std::erase_if(files, [&](const auto &entry) {
+          std::erase_if(files, [&](const auto& entry) {
             return entry.first.starts_with(dir);
           });
         } else if (kind == "RemoveSource")
           files.erase(json::Text(v, "path"));
         else {
-          if (kind != "PutSource")
-            throw std::runtime_error(kind);
+          if (kind != "PutSource") throw std::runtime_error(kind);
           const auto data = json::Get(v, "bytes");
           std::string bytes;
           if (data.starts_with('"'))
@@ -121,7 +118,7 @@ public:
             {}};
   }
 };
-} // namespace
+}  // namespace
 
 auto main() -> int {
   namespace json = tsugumi::json;
@@ -131,7 +128,7 @@ auto main() -> int {
     if (request.contains("operation")) {
       ProjectFixture project;
       project.saves = json::UInt(json::Get(request, "revision", "0"));
-      for (const auto &[path, encoded] :
+      for (const auto& [path, encoded] :
            json::Object(json::Get(request, "files", "{}"))) {
         if (!tsugumi::crypto::base64_decode(json::String(encoded),
                                             project.files[path]))
@@ -143,19 +140,19 @@ auto main() -> int {
         throw std::runtime_error("invalid fixture operation");
       namespace H = Tsugumi::Host;
       flatbuffers::Verifier verifier(
-          reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
+          reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
       if (!verifier.VerifyBuffer<H::ProjectOperateRequest>(nullptr))
         throw std::runtime_error("invalid operation buffer");
       const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
           flatbuffers::GetRoot<H::ProjectOperateRequest>(bytes.data())
               ->UnPack());
       const auto result = tsugumi::host::ProjectOperations().Execute(
-          operation->project_id, *operation, {"ui", {}, {}, {}},
-          [&](const auto &method, const auto &args) {
+          *operation, {"ui", {}, {}, {}},
+          [&](const auto& method, const auto& args) {
             return project.Call(method, args);
           });
       json::Members files;
-      for (const auto &[path, content] : project.files)
+      for (const auto& [path, content] : project.files)
         files[path] = json::Quote(tsugumi::crypto::base64(content));
       std::cout << json::Encode(
           json::Members{{"files", json::Encode(files)},
@@ -164,7 +161,7 @@ auto main() -> int {
       return 0;
     }
     throw std::runtime_error("Missing project operation");
-  } catch (const std::exception &error) {
+  } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;
   }

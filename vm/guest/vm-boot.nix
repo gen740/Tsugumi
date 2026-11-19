@@ -10,9 +10,6 @@
 #   /dev/vdb    the Nix store disk (sparse file in the app's support folder),
 #               formatted on first boot and mounted as /persist; /nix is the
 #               image's store (lower) + /persist/nix (upper) as an overlay
-#   /dev/vdc    the run history disk (its own sparse file, synchronized with
-#               fsync), formatted on first boot and mounted as /history-disk:
-#               one folder per project (tsugumi-vmd)
 #   virtiofs "tsugumi-<n>" (16 slots): one per open project, with its
 #               `project` and `control` folders, at /mnt/slots/<n> (tsugumi-vmd)
 #   hvc0        console: everything here and in tsugumi-vmd is logged to it,
@@ -132,7 +129,7 @@ let
     exec </dev/console >/dev/console 2>&1
     stage() { echo "TSUGUMI-STAGE $*"; }
     # Boot failures deliberately leave the dirty marker for the next boot.
-    fail() { echo "TSUGUMI-FAILED $*"; sync; sleep 1; ${busybox}/bin/poweroff -f; }
+    fail() { echo "TSUGUMI-FAILED $*"; sync; ${busybox}/bin/poweroff -f; }
     set -u
     stage boot
     mount -t proc proc /proc
@@ -165,20 +162,17 @@ let
       echo "formatting the store disk ($(($(blockdev --getsize64 /dev/vdb) >> 30)) GiB)"
       mkfs.ext4 -q -F -L tsugumi-store /dev/vdb || fail "cannot format the store disk"
     fi
-    e2fsck -p /dev/vdb >/dev/null 2>&1 || true
     mount -t ext4 -o noatime /dev/vdb /persist || fail "cannot mount the store disk"
+    # A larger store size in Settings grows the disk file; the file system
+    # follows here, online (a no-op when it already fills the disk).
+    grown=$(resize2fs /dev/vdb 2>&1) || echo "cannot grow the store disk: $grown"
+    case "$grown" in *"is now"*) echo "grew the store disk to $(($(blockdev --getsize64 /dev/vdb) >> 30)) GiB" ;; esac
     # Mark the disk before any store writes, including image registration.
-    boot=$(sha256sum < /store-paths | cut -c1-32)
-    check_reason=$(${storeHealth} begin /persist "$boot") || fail "cannot mark the store disk"
+    check_reason=$(${storeHealth} begin /persist) || fail "cannot mark the store disk"
     ln -s ${storeHealth} /run/tsugumi/store-health
+    ln -s ${vm-system}/vmd /run/tsugumi/vmd
     df -h /persist | tail -1
-    if ! blkid -p /dev/vdc >/dev/null 2>&1; then
-      echo "formatting the run history disk ($(($(blockdev --getsize64 /dev/vdc) >> 30)) GiB)"
-      mkfs.ext4 -q -F -L tsugumi-history /dev/vdc || fail "cannot format the run history disk"
-    fi
-    e2fsck -p /dev/vdc >/dev/null 2>&1 || true
-    mount -t ext4 -o noatime,nosuid,nodev /dev/vdc /history-disk || fail "cannot mount the run history disk"
-    chmod 0700 /history-disk
+
 
     # The image's store is the lower layer; builds land on the store disk.
     stage nix
@@ -215,9 +209,10 @@ let
     nix config show substituters 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) print $i }' > /run/tsugumi-substituters
     chmod 0644 /run/tsugumi-substituters
     echo "binary caches: $(wc -l < /run/tsugumi-substituters) configured"
+    rm -f /nix/var/nix/daemon-socket/socket
     nix-daemon --daemon >/persist/nix-daemon.log 2>&1 &
-    for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
-    [ -S /nix/var/nix/daemon-socket/socket ] || fail "nix-daemon did not start (see /persist/nix-daemon.log)"
+    ${vm-system}/vmd --wait-daemon "$!" /nix/var/nix/daemon-socket/socket \
+      || fail "nix-daemon did not start (see /persist/nix-daemon.log)"
     echo "nix-daemon ready; store $(du -sh /persist/nix/upper 2>/dev/null | cut -f1) on the store disk"
 
     # Open projects: one virtiofs device each (tsugumi-<slot>), mounted by
@@ -227,10 +222,10 @@ let
     stage network
     ip() { ${busybox}/bin/ip "$@"; }
     ip link set lo up
-    ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -n -t 20 -T 1 || echo "no network (DHCP failed); Nix downloads will fail"
+    ${busybox}/bin/udhcpc -i eth0 -s ${udhcpcScript} -q -f -t 0 || echo "no network (DHCP failed); Nix downloads will fail"
 
     # No project starts before repair succeeds.
-    ${storeHealth} check /persist "$boot" "$check_reason" \
+    ${storeHealth} check /persist "$check_reason" \
       || fail "Nix store content check/repair failed; see the VM console and /persist/store-health/check.log"
 
     stage supervisor
@@ -254,7 +249,7 @@ let
 in
 runCommand "tsugumi-vm-boot-1" { nativeBuildInputs = [ erofs-utils ]; } ''
   root=$TMPDIR/root
-  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,history-disk,project,control,history,scratch,var/empty,bin,mnt}
+  mkdir -p $root/nix/store $root/{proc,sys,dev,run,tmp,root,persist,project,control,scratch,var/empty,bin,mnt}
   for p in $(cat ${registration}/store-paths); do cp -a "$p" $root/nix/store/; done
   cp ${registration}/registration $root/registration
   cp ${registration}/store-paths $root/store-paths

@@ -14,7 +14,7 @@ import { D, s as text } from '../wire/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel, PermissionHost, PermissionPrompt } from './chat'
 import { guide, OPEN_PANELS } from '../model/guide'
-import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
+import { Button, Confirm, copyText, dragResize, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
 import { Icon } from './icons'
 import { LogTimelinePanel } from './logs'
@@ -38,21 +38,15 @@ function SidePane({ side, storageKey, initial, min, max, className, children }: 
   const down = (e: React.MouseEvent) => {
     e.preventDefault()
     const x0 = e.clientX, w0 = width
+    let final = width
     const move = (m: MouseEvent) => {
       const w = Math.min(max, Math.max(min, w0 + (side === 'left' ? 1 : -1) * (m.clientX - x0)))
       setWidth(w)
-      try {
-        localStorage.setItem(storageKey, String(Math.round(w)))
-      } catch {}
+      final = w
     }
-    const up = () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-      document.body.classList.remove('resizing-h')
-    }
-    document.body.classList.add('resizing-h')
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
+    dragResize(move, () => {
+      try { localStorage.setItem(storageKey, String(Math.round(final))) } catch {}
+    })
   }
   return (
     <div className={`side-pane side-${side} ${className ?? ''}`} style={{ width }}>
@@ -159,7 +153,9 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
           <ChatPanel session={session} chat={app.chat(session)} detached={false} tab={tab} />
         </SidePane>
       )}
-      <LoadingOverlay content={loadingContent(session)} />
+      <LoadingOverlay content={loadingContent(session)} onCancel={
+        ['starting', 'reconnecting'].includes(session.environment.state) ? () => void session.stopEnvironment() : undefined
+      } />
       {onSwitchProject && <PermissionHost session={session} />}
     </div>
   )
@@ -228,7 +224,7 @@ export function hasProblem(session: ProjectSession): boolean {
 
 /** The loading card over the window, kept at least 300 ms so it never
  *  flickers, fading in quickly and out a little slower. */
-function LoadingOverlay({ content }: { content?: LoadingContent }) {
+function LoadingOverlay({ content, onCancel }: { content?: LoadingContent; onCancel?: () => void }) {
   const [shown, setShown] = useState(content)
   const [leaving, setLeaving] = useState(false)
   const since = useRef(content ? Date.now() : 0)
@@ -255,7 +251,7 @@ function LoadingOverlay({ content }: { content?: LoadingContent }) {
   if (!shown) return null
   return (
     <div className={`loading-overlay${leaving ? ' leaving' : ''}`} style={{ pointerEvents: content ? 'auto' : 'none' }}>
-      <TsugumiLoadingCard content={shown} />
+      <TsugumiLoadingCard content={shown} onCancel={onCancel} />
     </div>
   )
 }
@@ -289,12 +285,11 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   const [copied, setCopied] = useState(false)
   const env = session.environment
   const historyMismatch = env.state === 'failed' ? env.historyVersionMismatch : undefined
-  const archiveInterrupted = historyMismatch?.found === 'pending'
   let p: Problem
   if (historyMismatch) {
-    p = { icon: 'clock.arrow.circlepath', color: 'orange', title: archiveInterrupted ? L('履歴の退避が中断されました') : L('実行履歴の形式が異なります'),
-      message: archiveInterrupted ? '' : L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
-      recovery: L('互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。'),
+    p = { icon: 'clock.arrow.circlepath', color: 'orange', title: L('実行履歴の形式が異なります'),
+      message: L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
+      recovery: L('プロジェクトを閉じ、.tsugumi/runs.sqlite を別の場所に保管してから開き直してください。'),
       log: '', canStop: true }
   } else if (env.state === 'failed') {
     const log = env.log ?? ''
@@ -336,9 +331,7 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
         {session.dirty && <span className="label callout" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle" />{L('保存できていない変更は保持しています（起動すると保存します）')}</span>}
         <div className="row gap8 center">
           <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? L('再試行') : L('起動')}</Button>
-          {historyMismatch
-            ? <Button onClick={() => session.archiveHistoryAndStart()}>{archiveInterrupted ? L('履歴の退避を再開して起動') : L('履歴を退避して起動')}</Button>
-            : p.canStop && <Button onClick={() => void session.stopEnvironment()}>{L('環境を停止')}</Button>}
+          {p.canStop && <Button onClick={() => void session.stopEnvironment()}>{L('環境を停止')}</Button>}
           <span className="spacer" />
           {onSwitchProject && <Button onClick={onSwitchProject}>{L('別のプロジェクトを開く…')}</Button>}
         </div>

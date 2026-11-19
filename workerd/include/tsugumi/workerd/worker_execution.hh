@@ -12,8 +12,8 @@
 #include <utility>
 #include <vector>
 
-#include "tsugumi/workerd/worker_pool.hh"
 #include "tsugumi/workerd/staging.hh"
+#include "tsugumi/workerd/worker_pool.hh"
 
 namespace tsugumi::workerd {
 
@@ -23,9 +23,8 @@ namespace tsugumi::workerd {
 enum class OutputDelivery { local_paths, transferred_files };
 
 struct InvocationResult {
-  WorkerOutcome outcome;
-  // A carrier may return logs with the result instead of streaming them.
-  std::vector<std::pair<LogStream, std::string>> logs;
+  std::vector<Value> outputs;
+  std::optional<FailureData> failure;
   // Worker-visible out path and its caller-visible destination.
   std::optional<std::pair<std::string, std::string>> out_alias;
 };
@@ -45,13 +44,16 @@ struct Invocation {
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
   InvocationParameters params;
+  std::string input_schema;
+  std::string output_schema;
   std::string path;
   std::string worker_binary;
   std::vector<std::pair<std::string, std::string>> environment;
   std::filesystem::path output_directory;
   std::optional<std::pair<uid_t, gid_t>> output_owner;
   OutputDelivery delivery = OutputDelivery::local_paths;
-  // The remote input snapshot root. Local input copies are made by stage_inputs.
+  // The remote input snapshot root. Local input copies are made by
+  // stage_inputs.
   std::filesystem::path input_directory;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<uint64_t> timeout_ms;
@@ -63,9 +65,8 @@ struct Invocation {
   WorkerProc::DisplaySink display;
   std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
   std::function<InvocationParameters()> prepare_params;
-  std::function<void()> finish_logs;
   std::function<void(int64_t, int64_t)> on_timing;
-  std::function<void(const InvocationResult&)> validate;
+  std::function<void(InvocationResult&)> validate;
   fs::TransferProgress transfer = {};
 };
 
@@ -77,22 +78,30 @@ struct WorkerDisposition {
   std::string reason;
 };
 auto worker_disposition(bool reuse, bool alive, bool between_calls,
-                         bool validation_rejected, const std::optional<FailureData>& failure)
+                        bool validation_rejected,
+                        const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 
-// Output transfer can fail after a successful ABI call. It must not turn that
-// call into a failed Card or discard a resident. Validation is a separate step.
-auto stage_outputs(WorkerOutcome& outcome, const std::vector<types::PortType>& ports,
-                    std::span<const Value> inputs, std::span<const Value> original_inputs,
-                    int output_root, const std::string& output_alias,
-                    int input_root, const std::filesystem::path& input_directory,
-                    const std::filesystem::path& destination, OutputDelivery delivery,
-                    const std::atomic<bool>& cancel, const fs::TransferProgress& progress = {}) -> void;
+// Admit bytes from a worker process before interpreting them as port values.
+auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
+                    std::span<const types::PortType> ports)
+    -> std::vector<Value>;
 
-using ReleaseWorker = std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;
+// Output transfer can fail after a successful ABI call. Transfer failures
+// preserve resident reuse.
+auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
+                   std::span<const Value> original_inputs, int output_root,
+                   const std::string& output_alias, int input_root,
+                   const std::filesystem::path& input_directory,
+                   const std::filesystem::path& destination,
+                   OutputDelivery delivery, const std::atomic<bool>& cancel,
+                   const fs::TransferProgress& progress = {}) -> void;
 
-auto run_invocation(const ReleaseWorker& release_worker, WorkerPool::Lease& lease,
-                     bool reuse,
-                     const Invocation& invocation) -> InvocationResult;
+using ReleaseWorker =
+    std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;
+
+auto run_invocation(const ReleaseWorker& release_worker,
+                    WorkerPool::Lease& lease, bool reuse,
+                    const Invocation& invocation) -> InvocationResult;
 
 }  // namespace tsugumi::workerd

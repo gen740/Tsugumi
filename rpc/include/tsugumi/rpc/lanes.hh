@@ -3,7 +3,6 @@
 // database reads so that slow work never blocks the transport loop.
 #pragma once
 
-#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -15,12 +14,10 @@ namespace tsugumi {
 
 class Lane {
  public:
-  using Task = std::function<void(bool expired)>;
-  Lane(size_t threads, size_t capacity, std::chrono::milliseconds wait_limit);
+  using Task = std::function<void()>;
+  explicit Lane(size_t threads);
   ~Lane();
-  // Returns false when the queue is full (caller replies `busy`). A task that
-  // waited longer than wait_limit runs with expired=true and must reply
-  // `timeout` without doing the work.
+  // Returns false after shutdown.
   bool submit(Task t);
   void stop();
   size_t queued() const;
@@ -28,16 +25,10 @@ class Lane {
   auto pending() const -> size_t;
 
  private:
-  struct Item {
-    std::chrono::steady_clock::time_point enqueued;
-    Task task;
-  };
   void run();
-  size_t capacity_;
-  std::chrono::milliseconds wait_limit_;
   mutable std::mutex mu_;
   std::condition_variable cv_;
-  std::deque<Item> q_;
+  std::deque<Task> q_;
   bool stopping_ = false;
   size_t running_ = 0;
   std::vector<std::thread> threads_;

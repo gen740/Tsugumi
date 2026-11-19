@@ -7,10 +7,9 @@ framing, process ownership, value decoding and fault controls live in the harnes
 ```sh
 nix develop -c cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 nix develop -c cmake --build build --target tsugumid-mock
-nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core -q -m "not environment" --core-report
+nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core -q -m "not environment"
 ```
 
-`--core-report` prints behavior statements with `PASS`, `FAIL`, or `KNOWN BUG`.
 CTest also runs this suite as `core_rpc`:
 
 ```sh
@@ -135,7 +134,7 @@ even when ignoring cancellation. Daemon logs are attached to failing pytest repo
   the right thing. Obtain that evidence through RPC.
 - Known defects have narrow, **strict** `xfail` marks and desired-behavior
   assertions. A fix becomes an unexpected pass until its mark is removed. To see
-  the actual failures, run `pytest tests/core --runxfail --core-report` in the
+  the actual failures, run `pytest tests/core --runxfail` in the
   development environment. Do not mark a new failure expected without diagnosis.
 - Client/Agent/UI bugs are not core bugs. This suite checks the core contracts
   they consume (for example, a completed operation can contain a failure receipt).
@@ -146,7 +145,7 @@ CTest's `core_rpc` runs the deterministic suite; CI runs the environment suite
 separately with:
 
 ```sh
-nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core/integration -q --core-report
+nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core/integration -q
 ```
 
 ## Card definition evaluation
@@ -188,7 +187,7 @@ Build the real daemon/worker and updated double, then run from the checkout:
 
 ```sh
 nix build -o ./build-ci .#ci-core
-./build-ci/bin/tsugumi-test-env python3 -m pytest -q --core-report \
+./build-ci/bin/tsugumi-test-env python3 -m pytest -q \
   tests/core/test_definition_evaluation_economy.py \
   tests/core/integration/test_definition_evaluation.py
 # Diagnose strict xfails instead of hiding their assertion failures:

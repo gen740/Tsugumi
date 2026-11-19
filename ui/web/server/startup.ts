@@ -12,7 +12,6 @@ export async function startupLock(data: string): Promise<() => void> {
   const lock = path.join(data, 'startup.lock')
   // A symlink records ownership in the same atomic operation that acquires it.
   const owner = `${process.pid}-${randomUUID()}`
-  const deadline = Date.now() + 30_000
   const acquire = async (target: string): Promise<() => void> => {
     const read = () => { try { return fs.readlinkSync(target) } catch (e) { if (code(e) === 'ENOENT') return ''; throw e } }
     while (true) {
@@ -41,7 +40,7 @@ export async function startupLock(data: string): Promise<() => void> {
           try { if (read() === previous) fs.unlinkSync(target) } finally { release() }
         }
       }
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for Tsugumi startup: ${lock}`)
+      // Node cannot observe the exit of an unrelated process that leaves its symlink behind.
       await delay()
     }
   }

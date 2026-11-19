@@ -45,7 +45,7 @@ def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_fa
     """Local and project paths select the same base in root and external projects."""
     owner, segments = project_with_file(project, value, external)
     c = core_factory().connect()
-    rid, status = run_and_wait(c, segments, timeout=10)
+    rid, status = run_and_wait(c, segments)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert artifact_bytes(c, rid, segments) == expected
     # The saved run owns a copy, even when both candidate source files change.
@@ -61,7 +61,7 @@ def test_input_paths_reject_escape_and_implicit_project_paths(project, core_fact
     """A File input cannot escape its declared base or silently use the old project base."""
     _, segments = project_with_file(project, value, external)
     c = core_factory().connect()
-    _, status = run_and_wait(c, segments, timeout=10)
+    _, status = run_and_wait(c, segments)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.invalid_path
 
@@ -72,7 +72,7 @@ def test_missing_card_local_file_does_not_fall_back_to_project(project, core_fac
     owner, segments = project_with_file(project, "data/events.txt", external)
     (owner / "definitions/load/data/events.txt").unlink()
     c = core_factory().connect()
-    _, status = run_and_wait(c, segments, timeout=10)
+    _, status = run_and_wait(c, segments)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.invalid_path
 
@@ -102,11 +102,11 @@ def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(cor
     source = "definitions/load/data/events.txt"
     data = b"\x00\xff\x80\xc3(\n"
     (owner / source).write_bytes(data)
-    daemon = core_factory(history_dir=tmp_path / "history-original")
+    daemon = core_factory()
     client = daemon.connect()
 
     def recorded():
-        rid, status = run_and_wait(client, segments, timeout=10)
+        rid, status = run_and_wait(client, segments)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         outputs = client.call("RunRecordRequest", runId=rid, card=path(*segments)).record.outputs
         assert len(outputs) == 1
@@ -128,7 +128,7 @@ def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(cor
     daemon.stop()
     copied_project = tmp_path / "copied"
     shutil.copytree(project, copied_project, symlinks=True)
-    copied = core_factory(project_root=copied_project, history_dir=tmp_path / "history-copy")
+    copied = core_factory(project_root=copied_project)
     outputs = copied.connect().call("RunRecordRequest", runId=first_id, card=path(*segments)).record.outputs
     assert len(outputs) == 1
     value = outputs[0]

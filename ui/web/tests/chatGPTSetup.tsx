@@ -4,11 +4,20 @@ import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { modelErrorMessage } from '../src/i18n'
 import { api } from '../src/api'
 import { ChatGPTSignInModel, ChatGPTState, chatGPTSignInIsLocal } from '../src/model/chatgpt'
-import { ChatGPTSettings } from '../src/ui/chatgpt'
+import { ChatGPTButton, ChatGPTSettings } from '../src/ui/chatgpt'
 import { GuideSetupForm } from '../src/ui/guide'
 import { GuideController } from '../src/model/guide'
 
-const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0))
+// Track the real model operation even when its UI entry point returns void.
+function tracked(model: ChatGPTSignInModel) {
+  let pending = Promise.resolve()
+  let status: Promise<ChatGPTState>
+  const reload = model.reload.bind(model)
+  model.reload = () => (status = reload())
+  const run = model.run.bind(model)
+  model.run = operation => (pending = run(operation))
+  return Object.assign(model, { settled: () => pending, statusRead: () => status })
+}
 const account = { clientId: 'fixture', email: 'fixture@example.com', signedIn: true, planEnabled: true, active: true }
 function fixture(local = true) {
   let welcomed = false
@@ -40,7 +49,7 @@ function fixture(local = true) {
     return state
   }) as typeof api
   return { request, calls, opened, setOutcome(v: typeof outcome) { outcome = v },
-    model: () => new ChatGPTSignInModel(local, request, ((url: string) => { opened.push(url); return tab }) as never) }
+    model: () => tracked(new ChatGPTSignInModel(local, request, ((url: string) => { opened.push(url); return tab }) as never)) }
 }
 
 for (const host of ['localhost', '127.0.0.1', '[::1]', '::1']) assert.equal(chatGPTSignInIsLocal(host), true)
@@ -60,7 +69,7 @@ for (const local of [true, false]) for (const onboarding of [true, false]) {
     assert.match(html, /localhost/)
     assert.match(html, /disabled=""/)
     model.signIn()
-    await tick()
+    await model.settled()
     assert.deepEqual(f.calls, [])
     assert.deepEqual(f.opened, [])
   }
@@ -72,7 +81,7 @@ for (const local of [true, false]) for (const onboarding of [true, false]) {
   let finished = 0
   setup.onConnected = () => { finished++ }
   setup.signIn()
-  await tick()
+  await setup.settled()
   assert.equal(setup.state?.outcome?.welcome, account.clientId)
   assert.equal(finished, 0, 'welcome must remain mounted before setup finishes')
   await setup.welcomed(false)
@@ -82,7 +91,7 @@ for (const local of [true, false]) for (const onboarding of [true, false]) {
   const settings = f.model()
   settings.onConnected = () => { finished++ }
   settings.signIn(account.clientId)
-  await tick()
+  await settings.settled()
   assert.equal(settings.state?.outcome?.welcome, undefined)
   assert.equal(finished, 2)
   assert.deepEqual(f.opened, ['about:blank', 'about:blank'])
@@ -90,7 +99,7 @@ for (const local of [true, false]) for (const onboarding of [true, false]) {
 {
   const f = fixture(), model = f.model()
   model.signIn()
-  await tick()
+  await model.settled()
   await model.welcomed(true)
   assert.equal(f.opened.at(-1), model.state?.usageURL)
 }
@@ -99,7 +108,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   f.setOutcome(outcome)
   model.onConnected = () => assert.fail(`${outcome} finished setup`)
   model.signIn()
-  await tick()
+  await model.settled()
   assert.equal(model.message, outcome)
   assert.equal(model.state?.signingIn, false)
   assert.equal(model.state?.outcome?.welcome, undefined)
@@ -109,7 +118,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
     model.onConnected = () => { finished++ }
     f.setOutcome('success')
     model.signIn(account.clientId, true)
-    await tick()
+    await model.settled()
     assert.equal(model.state.outcome?.welcome, account.clientId)
     assert.equal(finished, 0)
     await model.welcomed(false)
@@ -121,7 +130,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   const f = fixture(), model = f.model()
   f.setOutcome('pending')
   model.signIn()
-  await tick()
+  await model.settled()
   const html = renderToStaticMarkup(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail()} />)
   assert.equal(model.state?.signingIn, true)
   await model.cancel()
@@ -139,7 +148,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
     }
     return f.request(path, body)
   }) as typeof api
-  const model = new ChatGPTSignInModel(true, request, (() => null) as never)
+  const model = tracked(new ChatGPTSignInModel(true, request, (() => null) as never))
   const initial = model.reload()
   model.signIn()
   await initial
@@ -148,7 +157,7 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
   assert.equal(f.calls.filter(c => c.path.endsWith('/signin')).length, 1)
   await model.cancel()
   begin({ url: 'https://fixture.invalid/authorize' })
-  await tick()
+  await model.settled()
   assert.equal(model.message, 'cancelled')
   assert.equal(model.state.signingIn, false)
 }
@@ -157,32 +166,34 @@ for (const outcome of ['no-plan', 'cancelled', 'failed'] as const) {
 for (const beginPending of [false, true]) {
   const f = fixture()
   f.setOutcome('pending')
+  const beginEntered = Promise.withResolvers<void>()
   let finishBegin!: () => void
   const request = (async (path: string, body?: unknown) => {
     const result = await f.request(path, body)
     if (path.endsWith('/signin') && beginPending) {
-      await new Promise<void>(resolve => { finishBegin = resolve })
+      await new Promise<void>(resolve => { finishBegin = resolve; beginEntered.resolve() })
     }
     return result
   }) as typeof api
   const tab = { opener: {}, location: { href: '' }, closed: false, close() { this.closed = true } }
-  const model = new ChatGPTSignInModel(true, request, (() => tab) as never)
+  const model = tracked(new ChatGPTSignInModel(true, request, (() => tab) as never))
   let mounted!: ReturnType<typeof create>
   act(() => {
     mounted = create(<ChatGPTSettings onboarding controller={model} onConnected={() => assert.fail('unmounted setup completed')} />)
   })
-  await tick()
+  await model.statusRead()
   act(() => {
     mounted.root.findByProps({ 'data-oai-siwc-button': '' }).props.onClick()
   })
-  await tick()
+  if (beginPending) await beginEntered.promise
+  else await model.settled()
   assert.equal(model.state.signingIn, true)
   act(() => { mounted.unmount() })
   if (beginPending) {
     assert.equal(f.calls.filter(c => c.path.endsWith('/cancel')).length, 0)
     finishBegin()
   }
-  await tick()
+  await model.settled()
   assert.equal(f.calls.filter(c => c.path.endsWith('/cancel')).length, 1)
   assert.equal(model.state.signingIn, false)
   if (beginPending) {
@@ -195,7 +206,7 @@ for (const beginPending of [false, true]) {
 {
   const f = fixture(), first = f.model()
   first.signIn()
-  await tick()
+  await first.settled()
   assert.equal(first.state.outcome?.welcome, account.clientId)
   const reloaded = f.model()
   await reloaded.reload()
@@ -223,9 +234,9 @@ for (const beginPending of [false, true]) {
 }
 // Begin failure must leave a retryable button rather than a permanent spinner.
 {
-  const model = new ChatGPTSignInModel(true, (async () => { throw Error('fixture begin failure') }) as typeof api, (() => null) as never)
+  const model = tracked(new ChatGPTSignInModel(true, (async () => { throw Error('fixture begin failure') }) as typeof api, (() => null) as never))
   model.signIn()
-  await tick()
+  await model.settled()
   assert.equal(model.state?.signingIn, false)
   assert.match(model.message!, /fixture begin failure/)
 }
@@ -253,20 +264,34 @@ for (const beginPending of [false, true]) {
   } finally { globalThis.fetch = original }
 }
 
-// Expired sessions expose the recovery action in both Settings and guide errors.
+// An expired registration offers sign-in for that account.
 {
-  const model = fixture().model()
+  const f = fixture()
+  f.setOutcome('pending')
+  const model = f.model()
   model.setState({ ...model.state, accounts: [{ ...account, signedIn: false }] })
-  const html = renderToStaticMarkup(<ChatGPTSettings controller={model} onConnected={() => {}} />)
-  assert.match(html, /ChatGPT にもう一度サインインしてください。/)
-  assert.equal(modelErrorMessage('Sign in to ChatGPT again'), 'ChatGPT にもう一度サインインしてください。')
-  assert.equal(modelErrorMessage('model returned HTTP 503: Capacity exhausted'), 'model returned HTTP 503: Capacity exhausted')
+  const ui = create(<ChatGPTSettings controller={model} onConnected={() => {}} />)
+  try {
+    assert.equal(model.state?.accounts.find(a => a.clientId === account.clientId)?.signedIn, false)
+    const signIn = ui.root.findAllByType(ChatGPTButton).find(button => {
+      const row = button.parent
+      return row?.findAllByType('span').length
+    })
+    assert.ok(signIn && !signIn.props.disabled)
+    signIn.props.onClick()
+    await model.settled()
+    assert.equal(f.calls.find(c => c.path === '/api/chatgpt/signin')?.body.clientId, account.clientId)
+  } finally { ui.unmount() }
+  assert.equal(modelErrorMessage('Credentials expired', 'chatgpt_sign_in_required'), 'ChatGPT にもう一度サインインしてください。')
+  const detail = 'model returned HTTP 503: Capacity exhausted'
+  assert.equal(modelErrorMessage(detail), detail)
 }
 {
   const original = globalThis.fetch
-  globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Sign in to ChatGPT again' }) })) as typeof fetch
+  globalThis.fetch = (async () => ({ ok: false, json: async () => ({ error: 'Credentials expired', code: 'chatgpt_sign_in_required' }) })) as typeof fetch
   try {
-    await assert.rejects(api('/api/settings/models'), { message: 'ChatGPT にもう一度サインインしてください。' })
+    await assert.rejects(api('/api/settings/models'), (error: Error) =>
+      error.message === modelErrorMessage('Credentials expired', 'chatgpt_sign_in_required'))
   } finally { globalThis.fetch = original }
 }
 console.log('ChatGPT first start and Settings: shared button, success, consent, cancellation, failures, non-local page and once-only welcome passed')

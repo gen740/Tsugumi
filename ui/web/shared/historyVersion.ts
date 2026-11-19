@@ -1,4 +1,4 @@
-/** A startup failure the user can resolve by archiving the incompatible history. */
+/** A startup failure with the stored and required history versions. */
 export interface HistoryVersionMismatch {
   kind: 'incompatible_history'
   found: string

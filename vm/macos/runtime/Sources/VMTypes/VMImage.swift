@@ -5,28 +5,16 @@ public struct VMImage: Sendable, Equatable {
   public let directory: URL
   public var archive: URL { directory.appendingPathComponent("tsugumi-vm.tar.gz") }
   public let version: String
-  public let sha256: String
-  public let checksums: [String: String]
 
   private struct Manifest: Decodable {
     let identity: String
-    let system: String
-    let files: [String: String]
-    let members: [String: String]
   }
 
   public init?(directory: URL) {
     guard let data = try? Data(contentsOf: directory.appendingPathComponent("vm-manifest.json")),
-          let manifest = try? JSONDecoder().decode(Manifest.self, from: data),
-          manifest.system == "aarch64-linux", !manifest.identity.isEmpty,
-          let hash = manifest.files["tsugumi-vm.tar.gz"], hash.count == 64,
-          Set(manifest.members.keys) == Set(["vmlinux", "rootfs.erofs", "vm-version"]),
-          manifest.members.values.allSatisfy({ $0.count == 64 }),
-          FileManager.default.fileExists(atPath: directory.appendingPathComponent("tsugumi-vm.tar.gz").path) else { return nil }
+          let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { return nil }
     self.directory = directory
     version = manifest.identity
-    sha256 = hash
-    checksums = manifest.members
   }
 
   public static func find(bundle: Bundle = .main) -> VMImage? {
@@ -42,18 +30,16 @@ public struct VMImage: Sendable, Equatable {
   }
 }
 
-/// Size of the shared VM (all projects share it).
+/// Size of the shared VM (all projects share it). hostd chooses it (its
+/// settings, else the defaults for this Mac) and sends it with each Boot.
 public struct VMResources: Sendable, Equatable {
   public var cpus: Int
   public var memoryGiB: Int
   public var storeGiB: Int
 
-  /// Half the Mac's memory (4–16 GiB), all but two cores (2–8).
-  public static var `default`: VMResources {
-    let mem = Int(ProcessInfo.processInfo.physicalMemory >> 30)
-    let cores = ProcessInfo.processInfo.activeProcessorCount
-    return VMResources(cpus: min(8, max(2, cores - 2)), memoryGiB: min(16, max(4, mem / 2)), storeGiB: 64)
+  public init(cpus: Int, memoryGiB: Int, storeGiB: Int) {
+    self.cpus = cpus
+    self.memoryGiB = memoryGiB
+    self.storeGiB = storeGiB
   }
 }
-
-

@@ -22,9 +22,10 @@ class RemoteExecutionService final : public ExecutionService {
  public:
   RemoteExecutionService(Service& service, RemoteJobClient& client);
 
-  // Every activation transfers its derivation closure for the remote worker to realise.
-  auto reuses_builds() const -> bool override { return false; }
-  auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  // Every activation transfers its derivation closure for the remote worker to
+  // realise.
+  auto prepare(const Node& node, const std::filesystem::path& directory,
+               BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;
 
   // Retries cancellation/release acknowledgements, never result retrieval.
@@ -37,7 +38,9 @@ class RemoteExecutionService final : public ExecutionService {
 
 // Copies an output of a remote job into the run's artifacts, under an id
 // derived from the job's id.
-auto prepare_remote_artifact(const std::filesystem::path& run_dir, const std::filesystem::path& out_dir,
-                             const InvocationSummaryData& inv, Value& value) -> ArtifactData;
+auto prepare_remote_artifact(const std::filesystem::path& run_dir,
+                             const std::filesystem::path& out_dir,
+                             const InvocationSummaryData& inv, Value& value)
+    -> ArtifactData;
 
 }  // namespace tsugumi

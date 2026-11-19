@@ -8,10 +8,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 from tsugumi_client import Client
+
+from .file_events import process_file
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
@@ -28,7 +29,6 @@ FAULTS = {
     "save_during_apply": "partial_apply",
     "invocation_record": "history_invocation",
     "run_acceptance": "run_acceptance",
-    "archive_after_main_move": "history_archive_after_main",
     "save_exception": "save_throws",
     "transfer_gate": "transfer_gate",
 }
@@ -53,14 +53,13 @@ class StartupFailure(RuntimeError):
 
 class Daemon:
     def __init__(self, project: Path, *, mocked_builds=False, worker=None, fault=None,
-                 history_dir=None, args=None):
+                 args=None, env=None):
         self.project = project
+        self.env = env or {}
         self.binary = MOCK_DAEMON if mocked_builds else DAEMON
         self.worker = Path(worker or WORKER)
         self.fault = fault
         self.args = list(args or [])
-        if history_dir is not None:
-            self.args += ["--history-dir", str(history_dir)]
         self.directory = Path(tempfile.mkdtemp(prefix="tsugumi-rpc-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.directory / "rpc")
         self.control = self.directory / "control"
@@ -71,11 +70,9 @@ class Daemon:
         self.proc = None
         self.clients = []
 
-    def start(self, timeout=20):
+    def start(self, expect_exit=False):
         if self.proc and self.proc.poll() is None:
             raise RuntimeError("daemon already running")
-        if not self.binary.is_file():
-            raise FileNotFoundError(f"build the test targets first: {self.binary}")
         ready = self.control / "server.ready"
         ready.unlink(missing_ok=True)
         env = dict(os.environ)
@@ -84,6 +81,7 @@ class Daemon:
         env["TSUGUMI_MOCK_CONTROL"] = str(self.gates)
         if self.fault:
             env.update(TSUGUMI_ENABLE_FAULTS="1", TSUGUMI_FAULT=FAULTS[self.fault])
+        env.update(self.env)
         args = [str(self.binary), "--scratch-dir", str(self.directory / "scratch"),
                 "--run-scratch-dir", str(self.directory / "run-scratch"),
                 "--project", str(self.project), "--unix", self.unix,
@@ -92,21 +90,21 @@ class Daemon:
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]
         args += self.args
         try:
+            if not self.binary.is_file():
+                raise FileNotFoundError(f"build the test targets first: {self.binary}")
             with self.log.open("ab") as log:
                 self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=log)
-            end = time.monotonic() + timeout
-            while time.monotonic() < end:
-                if self.proc.poll() is not None:
-                    record_path = self.control / "server.startup-error.json"
-                    record = json.loads(record_path.read_text()) if record_path.exists() else {}
-                    raise StartupFailure(self.proc.returncode, record, self.diagnostics())
-                if ready.exists():
-                    self.ready = json.loads(ready.read_text())
-                    return self
-                time.sleep(0.01)
-            raise TimeoutError(f"daemon startup timed out:\n{self.diagnostics()}")
+            if process_file(self.proc, ready) is not None:
+                self.ready = json.loads(ready.read_text())
+                return self
+            status = self.proc.wait()
+            if expect_exit:
+                return self
+            record_path = self.control / "server.startup-error.json"
+            record = json.loads(record_path.read_text()) if record_path.exists() else {}
+            raise StartupFailure(status, record, self.diagnostics())
         except BaseException:
-            self.stop()
+            self.close()
             raise
 
     def connect(self, *, websocket=False, unix=None):
@@ -127,11 +125,12 @@ class Daemon:
         self.clients.clear()
         if self.proc and self.proc.poll() is None:
             self.proc.send_signal(signal.SIGKILL if crash else signal.SIGTERM)
+            # An unresponsive service must not prevent cleanup of later fixtures.
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                self.proc.wait(timeout=5)
+                self.proc.wait()
 
     def restart(self, *, fault=None, crash=False):
         self.stop(crash=crash)

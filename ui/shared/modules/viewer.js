@@ -41,11 +41,13 @@ function runtime() {
         await module.initialise(root, currentData, size())
         initialised = true
       } else {
-        currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
-        await module.update(currentData)
+        if (message.json !== undefined) {
+          currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
+          await module.update(currentData)
+        }
         await module.resize(size())
       }
-      await new Promise(resolve => setTimeout(resolve, 30))
+      if (message.snapshot) await new Promise(resolve => setTimeout(resolve, 30))
       if (viewError) throw viewError
       let image
       if (message.snapshot) {
@@ -116,10 +118,10 @@ window.tsugumiRender = async message => {
   await ready
   preview = message.interactive === false
   const requestId = message.requestId ?? ++sequence
-  const blobs = Object.fromEntries(Object.entries(message.blobs ?? {}).map(([name, value]) => [name,
-    typeof value === 'string' ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) : value.slice()]))
+  const blobs = message.blobs && Object.fromEntries(Object.entries(message.blobs).map(([name, value]) => [name,
+    typeof value === 'string' ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) : value]))
   const promise = new Promise(resolve => waiting.set(requestId, resolve))
-  frame.contentWindow.postMessage({ ...message, blobs, visible: message.interactive === false || (message.visible !== false && visibility()), tsugumi: 'render', requestId }, '*', Object.values(blobs).map(b => b.buffer))
+  frame.contentWindow.postMessage({ ...message, blobs, visible: message.interactive === false || (message.visible !== false && visibility()), tsugumi: 'render', requestId }, '*')
   return await promise
 }
 addEventListener('message', event => {

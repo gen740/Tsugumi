@@ -37,14 +37,17 @@ version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
 vm="$dist/tsugumi-vm"
-[ "$channel" != release ] || export TSUGUMI_VM_ARTIFACT_ONLY=1
-"$repo/vm/guest/build-image.sh" --vm
+# The guest image from its artifact (nix/guest-image.nix); a release takes
+# only the one built for HEAD.
+guest_args=()
+[ "$channel" != release ] || guest_args=(--release)
+(cd "$repo" && nix run .#guest-image -- ${guest_args[@]+"${guest_args[@]}"})
 
 # The native host service and RPC client are shared by both UI frontends.
 "$repo/hostd/tools/build-macos.sh"
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
-flatc_bin="$("$repo/ui/macos/tools/flatc-bin.sh")"
+flatc_bin="$(cd "$repo" && nix build --no-link --print-out-paths .#flatc)/bin"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
 # runner), for Apple silicon only (the shared VM is arm64): its Bundle.module finds the packages' resource bundles in
@@ -92,17 +95,6 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
 cp "$repo/ui/shared/modules/viewer.html" "$repo/ui/shared/modules/viewer.js" "$mods/"
-# Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
-# what they use (Sources/App/Explainer/ExplainerWindow.swift).
-(cd "$repo" && nix run .#build-doc)
-bash "$repo/ui/macos/tools/bundle-docs.sh" "$app/Contents/Resources/explainer"
-# Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
-# each demo and the images it names, without what only builds that data.
-thumbs="$app/Contents/Resources/player-data"
-mkdir -p "$thumbs/assets"
-player="$(cd "$repo" && nix build .#site-player --no-link --print-out-paths)"
-find "$player/player-data" -maxdepth 1 -name '*.json' ! -name index.json -exec cp {} "$thumbs/" \;
-find "$player/player-data/assets" -type f ! -name '*.json' -exec cp {} "$thumbs/assets/" \;
 # UI strings: Japanese source strings, English table generated from tools/en_strings.py.
 python3 "$repo/ui/macos/Resources/tools/en_strings.py" >/dev/null
 cp -R "$repo/ui/macos/Resources/ja.lproj" "$repo/ui/macos/Resources/en.lproj" "$app/Contents/Resources/"

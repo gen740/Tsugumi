@@ -2,6 +2,12 @@
 part, and no path of the build machine (#filePath) outside debug builds."""
 import pathlib
 import re
+import os
+import plistlib
+import shlex
+import subprocess
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -9,28 +15,69 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 def test_every_part_takes_the_version_from_one_file():
     version = (ROOT / "VERSION").read_text().strip()
     assert re.fullmatch(r"\d+\.\d+\.\d+", version)
-    assert 'file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TSUGUMI_VERSION' in (ROOT / "CMakeLists.txt").read_text()
-    assert "version = lib.fileContents ../VERSION;" in (ROOT / "nix/core.nix").read_text()
-    assert "VERSION" in (ROOT / "ui/macos/build-app.sh").read_text()
 
 
-def test_the_app_finds_its_resources_on_any_mac():
-    # the native build system's Bundle.module looks in the build folder, not in Contents/Resources
-    script = (ROOT / "ui/macos/build-app.sh").read_text()
-    assert "build_opts=(-c release --build-system swiftbuild --arch arm64)" in script
-    assert 'grep -F "$repo/"' in script
-
-
-def test_the_dev_build_can_be_signed_with_your_certificate_and_the_release_never_is():
-    script = (ROOT / "ui/macos/build-app.sh").read_text()
-    # ad-hoc unless a dev build is given an identity
-    assert "\nidentity=-\n" in script
-    assert 'if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then' in script
-    assert 'identity="$TSUGUMI_CODESIGN_IDENTITY"' in script
-    # the helpers and the app are signed alike, and nothing is signed ad-hoc by a fixed "-"
-    assert 'codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-hostd"' in script
-    assert 'codesign --force --sign "$identity" --entitlements' in script
-    assert "--sign -" not in script
+@pytest.mark.parametrize('release,identity,expected', [(False, '', '-'), (False, 'Development fixture', 'Development fixture'), (True, 'Development fixture', '-')])
+def test_app_packaging_uses_the_version_resources_and_signing_policy(tmp_path, release, identity, expected):
+    """Execute the packaging script with build/signing command doubles."""
+    root = tmp_path / 'project with spaces'
+    def write(name, value='fixture', executable=False):
+        file = root / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(value)
+        if executable: file.chmod(0o755)
+    write('VERSION', (ROOT / 'VERSION').read_text())
+    write('ui/macos/build-app.sh', (ROOT / 'ui/macos/build-app.sh').read_text())
+    write('hostd/tools/build-macos.sh', '#!/bin/sh\nexit 0\n', True)
+    (root / 'vm/macos/runtime').mkdir(parents=True)
+    binaries = root / 'built'
+    for name in ['built/Tsugumi', 'built/tsugumi-vmhost', 'build-host/hostd/tsugumi-hostd',
+                 'build-host/Frameworks/library.dylib', 'build-host/generated/bfbs/agent.bfbs', 'build-host/generated/bfbs/host.bfbs',
+                 'build-host/Resources/formatters/formatter', 'ui/macos/Resources/AppIcon.icns',
+                 'built/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle/latinmodern-math.otf',
+                 'ui/macos/Resources/Fonts/latin-modern-math/latinmodern-math.otf',
+                 'ui/macos/Resources/Fonts/latin-modern-math/GUST-FONT-LICENSE.txt',
+                 'ui/shared/modules/viewer.html', 'ui/shared/modules/viewer.js',
+                 'dist/tsugumi-vm/tsugumi-vm.tar.gz', 'dist/tsugumi-vm/vm-manifest.json', 'demos/fixture/tsugumi.json',
+                 'ui/macos/third-party/LICENSE', 'third-party/LICENSE', 'hostd/formatters/third-party/LICENSE',
+                 'ui/macos/Sources/Grammars/TreeSitterNix/LICENSE', 'ui/macos/Sources/Grammars/TreeSitterPython/LICENSE',
+                 'ui/macos/Sources/Grammars/TreeSitterJuliaScanner/LICENSE', 'ui/macos/Sources/Grammars/LICENSE.tree-sitter',
+                 'ui/macos/Resources/ja.lproj/Localizable.strings', 'ui/macos/Resources/en.lproj/Localizable.strings']:
+        write(name)
+    write('ui/macos/Resources/tools/en_strings.py', '')
+    recording = tmp_path / 'signing'
+    # Absolute OS commands are doubles too: no app is built, signed or registered.
+    shell = r'''function /usr/bin/strip() { :; }
+function /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister() { :; }
+function strings() { :; }
+function env() { case "$*" in *--show-bin-path*) printf '%s\n' "$FIXTURE_BIN" ;; esac; }
+function codesign() { printf '%q ' "$@" >> "$SIGN_LOG"; printf '\n' >> "$SIGN_LOG"; }
+# The guest image (nix run .#guest-image) and flatc (nix build .#flatc) come from the flake.
+function nix() { printf '%s\n' "$*" >> "$NIX_LOG"; [ "$1" != build ] || printf '%s\n' "$FIXTURE_TOOLS"; }
+script=$1
+shift
+source "$script"
+'''
+    nix_log = tmp_path / 'nix'
+    environment = dict(os.environ, TSUGUMI_CODESIGN_IDENTITY=identity, FIXTURE_BIN=str(binaries), SIGN_LOG=str(recording),
+                       NIX_LOG=str(nix_log), FIXTURE_TOOLS=str(root / 'tools'))
+    command = ['bash', '-c', shell, str(root / 'ui/macos/build-app.sh'), str(root / 'ui/macos/build-app.sh')]
+    if release: command.append('--release')
+    result = subprocess.run(command, env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    # A release takes only the guest artifact of HEAD; neither builds the guest.
+    guest = [line for line in nix_log.read_text().splitlines() if line.startswith('run .#guest-image')]
+    assert guest == ['run .#guest-image -- --release' if release else 'run .#guest-image --']
+    app = root / 'dist/Tsugumi.app'
+    with (app / 'Contents/Info.plist').open('rb') as file: metadata = plistlib.load(file)
+    assert metadata['CFBundleShortVersionString'] == (ROOT / 'VERSION').read_text().strip()
+    resources = app / 'Contents/Resources'
+    assert (resources / 'modules/viewer.js').read_text() == 'fixture'
+    assert (resources / 'tsugumi-vm/tsugumi-vm.tar.gz').read_text() == 'fixture'
+    assert (resources / 'SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle/latinmodern-math.otf').is_file()
+    signed = [shlex.split(line) for line in recording.read_text().splitlines()]
+    assert all(args[args.index('--sign') + 1] == expected for args in signed)
+    assert {str(app), str(app / 'Contents/MacOS/tsugumi-hostd'), str(app / 'Contents/MacOS/tsugumi-vmhost')} <= {args[-1] for args in signed}
 
 
 def test_paths_of_the_build_machine_stay_in_debug_builds():
@@ -57,36 +104,41 @@ def test_paths_of_the_build_machine_stay_in_debug_builds():
     assert not outside
 
 
+def schema_tables(source):
+    """Read table names, field types and attributes from these FlatBuffers schemas."""
+    source = re.sub(r"//[^\n]*", "", source)
+    tables = {}
+    for name, body in re.findall(r"\btable\s+(\w+)\s*\{([^}]+)\}", source):
+        fields = {}
+        for declaration in body.split(";"):
+            field = re.match(r"\s*(\w+)\s*:\s*([\w.]+|\[[\w.]+\])", declaration)
+            if field:
+                attributes = re.findall(r"\(([^)]+)\)", declaration)
+                fields[field[1]] = (field[2], {a.strip() for group in attributes for a in group.split(",")})
+        tables[name] = fields
+    return tables
+
+
 def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_replies():
-    common = (ROOT / "protocol/service_common.fbs").read_text(encoding="utf-8")
-    host = (ROOT / "protocol/host.fbs").read_text(encoding="utf-8")
-    agent = (ROOT / "protocol/agent.fbs").read_text(encoding="utf-8")
-    selection = re.search(r"table ProviderSelection \{([^}]+)\}", common).group(1)
-    assert "profile:string (required)" in selection
-    for secret in ("api_key", "access_token", "refresh_token", "credential", "endpoint"):
-        assert secret not in selection
-    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", host).group(1)
-    assert "provider:ProviderInput" in host
-    assert "ProviderInput" not in common and "ProviderInput" not in agent
-    assert "provider:Tsugumi.Service.ProviderSelection" in agent
-    replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
-    assert "ProviderInput" not in replies and "CredentialToken" not in replies
+    common = schema_tables((ROOT / "protocol/service_common.fbs").read_text())
+    host_source = (ROOT / "protocol/host.fbs").read_text()
+    host = schema_tables(host_source)
+    agent = schema_tables((ROOT / "protocol/agent.fbs").read_text())
+    selection = common["ProviderSelection"]
+    profile_type, profile_attributes = selection["profile"]
+    assert profile_type == "string" and "required" in profile_attributes
+    assert not selection.keys() & {"api_key", "access_token", "refresh_token", "credential", "endpoint"}
+    assert host["ProviderInput"]["api_key"][0] == "string"
+    assert host["ProviderSetRequest"]["provider"][0] == "ProviderInput"
+    assert agent["ConfigureRequest"]["provider"][0] == "Tsugumi.Service.ProviderSelection"
+    assert all(kind.split(".")[-1] != "ProviderInput"
+               for fields in [*common.values(), *agent.values()] for kind, _ in fields.values())
+    reply = re.search(r"\bunion\s+ReplyPayload\s*\{([^}]+)\}", host_source)[1]
+    reply = re.sub(r"//[^\n]*", "", reply)
+    reply_types = {variant.partition("=")[0].split(":")[-1].strip().rsplit(".", 1)[-1]
+                   for variant in reply.split(",")}
+    assert not reply_types & {"ProviderInput", "CredentialToken"}
     assert "CredentialTokenRequest" not in host
-
-
-def test_guest_boot_uses_the_shipped_runtime_without_source_or_compilation():
-    boot = (ROOT / "vm/guest/vm-boot.nix").read_text()
-    assert re.search(r"runtime = \[.*?\bvm-system\b.*?\];", boot, re.S)
-    assert "exec ${vm-system}/tini -- ${vm-system}/supervisor" in boot
-    assert "nix build" not in boot
-    assert 'tsugumi-source' not in boot
-    assert not (ROOT / "vm/guest/vm-source.txt").exists()
-    assert not (ROOT / "ui/macos/tools/publish-vm.sh").exists()
-    for file in ["ui/macos/build-app.sh", "cli/package-macos.sh"]:
-        script = (ROOT / file).read_text()
-        assert '"$repo/vm/guest/build-image.sh" --vm' in script
-        assert '"$vm/tsugumi-vm.tar.gz"' in script
-        assert 'releases/download/vm-' not in script
 
 
 def test_the_core_test_package_gets_every_fixture_its_build_installs():
@@ -98,3 +150,6 @@ def test_the_core_test_package_gets_every_fixture_its_build_installs():
     listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
     missing = sorted(wanted - listed)
     assert not missing, f"add to nix/core-tests.nix: {missing}"
+    installed = ROOT / "build-ci/share/tsugumi/guide-tests/tests/fixtures"
+    if installed.is_dir():
+        assert wanted <= {entry.name for entry in installed.iterdir() if entry.is_file()}

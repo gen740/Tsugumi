@@ -4,16 +4,17 @@ import { D, uuid } from '../wire/rpc'
 import { CardKey, ProjectSession } from './session'
 import { L } from '../i18n'
 
-export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
+/** In the sidebar's order. The Nix definition is edited in Source. */
+export type CardEditorCategory = 'general' | 'source' | 'ports' | 'log' | 'dependencies' | 'executions' | 'artifacts' | 'notes'
 export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
   general: { title: L('一般'), icon: 'slider.horizontal.3' },
-  comments: { title: L('コメント'), icon: 'bubble.left' },
-  nix: { title: L('Nix 定義'), icon: 'snowflake' },
   source: { title: L('ソース'), icon: 'doc.text' },
   ports: { title: L('入出力'), icon: 'arrow.left.arrow.right' },
+  log: { title: L('ログ'), icon: 'text.alignleft' },
+  dependencies: { title: L('依存'), icon: 'shippingbox.and.arrow.backward' },
   executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   artifacts: { title: L('成果物'), icon: 'shippingbox' },
-  context: { title: L('追加コンテキスト'), icon: 'text.bubble' },
+  notes: { title: L('コメントと追加コンテキスト'), icon: 'bubble.left' },
 }
 
 /** One tab of the workbench: a scope (the root workflow or a child workflow)

@@ -8,9 +8,10 @@
 
 #include "tsugumi/sdk/abi.h"
 
-const char* tsugumi_json_decode(const char*, const char*, const uint8_t*, size_t);
-const char* tsugumi_json_error(void);
-int tsugumi_json_emit(const tsugumi_call*, const char*, const char*);
+extern const char tsugumi_ruby_card[];
+extern const char tsugumi_ruby_gemfile[];
+extern const char tsugumi_ruby_bundle_path[];
+extern const char tsugumi_ruby_bundle_config[];
 
 static const tsugumi_call* current = NULL;
 static VALUE sdk = Qnil, owner = Qnil;
@@ -18,10 +19,14 @@ static int ready = 0;
 
 static void require_call(void) {
   if (!current || rb_thread_current() != owner)
-    rb_raise(rb_eRuntimeError, "Card invocation is available only on the invocation thread during a call");
+    rb_raise(rb_eRuntimeError,
+             "Card invocation is available only on the invocation thread "
+             "during a call");
 }
 
-static VALUE string(const char* text) { return rb_utf8_str_new_cstr(text ? text : ""); }
+static VALUE string(const char* text) {
+  return rb_utf8_str_new_cstr(text ? text : "");
+}
 
 static VALUE host_info(VALUE self) {
   require_call();
@@ -39,66 +44,56 @@ static VALUE host_info(VALUE self) {
 
 static VALUE host_inputs(VALUE self) {
   require_call();
-  VALUE all = rb_ary_new();
-  for (size_t i = 0; i < current->input_count; ++i) {
-    const tsugumi_value* v = &current->inputs[i];
-    const char* json = tsugumi_json_decode("inputs", v->name, v->data, v->size);
-    if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_json_error());
-    VALUE entry = rb_ary_new_from_args(3, string(v->name), UINT2NUM(v->kind), string(json));
-    rb_ary_push(all, entry);
-  }
-  return all;
+  const char* json = current->effects->inputs_json(current->host);
+  if (!json) rb_raise(rb_eRuntimeError, "cannot decode inputs");
+  return string(json);
+}
+
+static VALUE host_input_kind(VALUE self, VALUE name) {
+  require_call();
+  return UINT2NUM(current->effects->input_kind(current->host, StringValueCStr(name)));
 }
 
 static VALUE host_params(VALUE self) {
   require_call();
-  const char* json = tsugumi_json_decode("params", "", current->params, current->params_size);
-  if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_json_error());
+  const char* json = current->effects->params_json(current->host);
+  if (!json) rb_raise(rb_eRuntimeError, "cannot decode params");
   return string(json);
-}
-
-static VALUE host_output(VALUE self, VALUE port, VALUE json) {
-  require_call();
-  const char* name = StringValueCStr(port);
-  const char* value = StringValueCStr(json);
-  if (tsugumi_json_emit(current, name, value)) rb_raise(rb_eArgError, "%s", tsugumi_json_error());
-  return Qnil;
 }
 
 static void check_display(int status) {
   if (status) rb_raise(rb_eArgError, "display was rejected by the worker");
 }
 
-static VALUE host_finish_outputs(VALUE self) {
-  require_call();
-  if (current->finish_outputs(current->host)) rb_raise(rb_eArgError, "required outputs were not emitted");
-  return Qnil;
-}
 static VALUE host_text(VALUE self, VALUE value) {
   require_call();
-  check_display(current->display_text(current->host, StringValueCStr(value)));
+  check_display(current->effects->display_text(current->host, StringValueCStr(value)));
   return Qnil;
 }
 static VALUE host_markdown(VALUE self, VALUE value) {
   require_call();
-  check_display(current->display_markdown(current->host, StringValueCStr(value)));
+  check_display(
+      current->effects->display_markdown(current->host, StringValueCStr(value)));
   return Qnil;
 }
 static VALUE host_scalar(VALUE self, VALUE value, VALUE label) {
   require_call();
-  check_display(current->display_scalar(current->host, NUM2DBL(value), StringValueCStr(label)));
+  check_display(current->effects->display_scalar(current->host, NUM2DBL(value),
+                                        StringValueCStr(label)));
   return Qnil;
 }
 static VALUE host_module(VALUE self, VALUE name, VALUE json) {
   require_call();
-  check_display(current->display_module(current->host, StringValueCStr(name), StringValueCStr(json), NULL, 0));
+  check_display(current->effects->display_module(current->host, StringValueCStr(name),
+                                        StringValueCStr(json), NULL, 0));
   return Qnil;
 }
 static VALUE host_image(VALUE self, VALUE media, VALUE bytes, VALUE alt) {
   require_call();
   StringValue(bytes);
-  check_display(current->display_image(current->host, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
-                         (size_t)RSTRING_LEN(bytes), StringValueCStr(alt)));
+  check_display(current->effects->display_image(
+      current->host, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
+      (size_t)RSTRING_LEN(bytes), StringValueCStr(alt)));
   return Qnil;
 }
 static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
@@ -117,7 +112,8 @@ static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
   for (long i = 0; i < count; ++i) {
     VALUE row = rb_ary_entry(rows, i);
     Check_Type(row, T_ARRAY);
-    if (RARRAY_LEN(row) != n) rb_raise(rb_eArgError, "table row width differs from columns");
+    if (RARRAY_LEN(row) != n)
+      rb_raise(rb_eArgError, "table row width differs from columns");
     for (long j = 0; j < n; ++j) {
       VALUE s = rb_ary_entry(row, j);
       Check_Type(s, T_STRING);
@@ -133,8 +129,10 @@ static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
   }
   for (long j = 0; j < n; ++j) names[j] = RSTRING_PTR(rb_ary_entry(columns, j));
   for (long i = 0; i < count; ++i)
-    for (long j = 0; j < n; ++j) cells[i * n + j] = RSTRING_PTR(rb_ary_entry(rb_ary_entry(rows, i), j));
-  const int status = current->display_table(current->host, names, (size_t)n, cells, (size_t)count);
+    for (long j = 0; j < n; ++j)
+      cells[i * n + j] = RSTRING_PTR(rb_ary_entry(rb_ary_entry(rows, i), j));
+  const int status = current->effects->display_table(current->host, names, (size_t)n,
+                                            cells, (size_t)count);
   free(names);
   free(cells);
   check_display(status);
@@ -146,18 +144,22 @@ static VALUE host_line_chart(VALUE self, VALUE rows) {
   require_call();
   Check_Type(rows, T_ARRAY);
   long n = RARRAY_LEN(rows);
-  if (n > 10000) rb_raise(rb_eArgError, "display line chart has too many series");
+  if (n > 10000)
+    rb_raise(rb_eArgError, "display line chart has too many series");
   size_t total = 0;
   for (long i = 0; i < n; ++i) {
     VALUE row = rb_ary_entry(rows, i);
     Check_Type(row, T_ARRAY);
-    if (RARRAY_LEN(row) != 4) rb_raise(rb_eArgError, "a series is id, label, x and y");
+    if (RARRAY_LEN(row) != 4)
+      rb_raise(rb_eArgError, "a series is id, label, x and y");
     for (long j = 0; j < 4; ++j) Check_Type(rb_ary_entry(row, j), T_STRING);
     VALUE id = rb_ary_entry(row, 0), label = rb_ary_entry(row, 1);
     StringValueCStr(id);
     StringValueCStr(label);
-    long x = RSTRING_LEN(rb_ary_entry(row, 2)), y = RSTRING_LEN(rb_ary_entry(row, 3));
-    if (x != y || x % (long)sizeof(double)) rb_raise(rb_eArgError, "series x and y differ in length");
+    long x = RSTRING_LEN(rb_ary_entry(row, 2)),
+         y = RSTRING_LEN(rb_ary_entry(row, 3));
+    if (x != y || x % (long)sizeof(double))
+      rb_raise(rb_eArgError, "series x and y differ in length");
     total += (size_t)x / sizeof(double);
   }
   tsugumi_series* series = calloc((size_t)n + 1, sizeof(tsugumi_series));
@@ -175,13 +177,16 @@ static VALUE host_line_chart(VALUE self, VALUE rows) {
     series[i].label = RSTRING_PTR(rb_ary_entry(row, 1));
     series[i].count = count;
     series[i].x = next;
-    if (count) memcpy(next, RSTRING_PTR(rb_ary_entry(row, 2)), count * sizeof(double));
+    if (count)
+      memcpy(next, RSTRING_PTR(rb_ary_entry(row, 2)), count * sizeof(double));
     next += count;
     series[i].y = next;
-    if (count) memcpy(next, RSTRING_PTR(rb_ary_entry(row, 3)), count * sizeof(double));
+    if (count)
+      memcpy(next, RSTRING_PTR(rb_ary_entry(row, 3)), count * sizeof(double));
     next += count;
   }
-  const int status = current->display_line_chart(current->host, series, (size_t)n);
+  const int status =
+      current->effects->display_line_chart(current->host, series, (size_t)n);
   free(series);
   free(numbers);
   check_display(status);
@@ -195,7 +200,8 @@ static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
   Check_Type(z, T_STRING);
   if (!NIL_P(colors)) Check_Type(colors, T_STRING);
   long bytes = RSTRING_LEN(x);
-  if (bytes % (long)sizeof(float) || RSTRING_LEN(y) != bytes || RSTRING_LEN(z) != bytes ||
+  if (bytes % (long)sizeof(float) || RSTRING_LEN(y) != bytes ||
+      RSTRING_LEN(z) != bytes ||
       (!NIL_P(colors) && RSTRING_LEN(colors) != bytes))
     rb_raise(rb_eArgError, "points need x, y, z (and colors) of one length");
   size_t count = (size_t)bytes / sizeof(float);
@@ -212,7 +218,8 @@ static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
     memcpy(p + 2 * count, RSTRING_PTR(z), (size_t)bytes);
     if (c) memcpy(c, RSTRING_PTR(colors), (size_t)bytes);
   }
-  const int status = current->display_points(current->host, p, p + count, p + 2 * count, c, count);
+  const int status = current->effects->display_points(current->host, p, p + count,
+                                             p + 2 * count, c, count);
   free(p);
   free(c);
   check_display(status);
@@ -220,31 +227,31 @@ static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
 }
 static VALUE host_log(VALUE self, VALUE message) {
   require_call();
-  current->log(current->host, StringValueCStr(message));
+  current->effects->log(current->host, StringValueCStr(message));
   return Qnil;
 }
 static VALUE host_cancelled(VALUE self) {
   require_call();
-  return current->cancelled(current->host) ? Qtrue : Qfalse;
+  return current->effects->cancelled(current->host) ? Qtrue : Qfalse;
 }
 static VALUE host_remaining(VALUE self) {
   require_call();
-  return LL2NUM(current->remaining_ms(current->host));
+  return LL2NUM(current->effects->remaining_ms(current->host));
 }
 static VALUE host_fail(VALUE self, VALUE kind, VALUE message) {
   require_call();
-  current->fail(current->host, StringValueCStr(kind), StringValueCStr(message));
+  current->effects->fail(current->host, StringValueCStr(kind), StringValueCStr(message));
   return Qnil;
 }
 
 static VALUE initialize(VALUE ignored) {
   VALUE host = rb_define_module("TsugumiHost");
-#define METHOD(name, function, count) rb_define_singleton_method(host, name, function, count)
+#define METHOD(name, function, count) \
+  rb_define_singleton_method(host, name, function, count)
   METHOD("info", host_info, 0);
   METHOD("inputs", host_inputs, 0);
   METHOD("params", host_params, 0);
-  METHOD("output", host_output, 2);
-  METHOD("finish_outputs", host_finish_outputs, 0);
+  METHOD("input_kind", host_input_kind, 1);
   METHOD("display_text", host_text, 1);
   METHOD("display_markdown", host_markdown, 1);
   METHOD("display_scalar", host_scalar, 2);
@@ -283,10 +290,10 @@ static int ensure_ruby(void) {
    * only the gems that come with this Ruby. */
   setenv("GEM_HOME", TSUGUMI_RUBY_GEMS, 1);
   setenv("GEM_PATH", TSUGUMI_RUBY_GEMS, 1);
-  if (TSUGUMI_RUBY_BUNDLE[0]) {
-    setenv("BUNDLE_GEMFILE", TSUGUMI_RUBY_BUNDLE "/Gemfile", 1);
-    setenv("BUNDLE_PATH", TSUGUMI_RUBY_BUNDLE "/installed", 1);
-    setenv("BUNDLE_APP_CONFIG", TSUGUMI_RUBY_BUNDLE "/no-config", 1);
+  if (tsugumi_ruby_gemfile[0]) {
+    setenv("BUNDLE_GEMFILE", tsugumi_ruby_gemfile, 1);
+    setenv("BUNDLE_PATH", tsugumi_ruby_bundle_path, 1);
+    setenv("BUNDLE_APP_CONFIG", tsugumi_ruby_bundle_config, 1);
     setenv("BUNDLE_FROZEN", "true", 1);
     setenv("BUNDLE_FORCE_RUBY_PLATFORM", "true", 1);
     setenv("BUNDLE_DISABLE_VERSION_CHECK", "true", 1);
@@ -306,7 +313,9 @@ static int ensure_ruby(void) {
   char* options[] = {option_name, option_eval, option_code, NULL};
   void* program = ruby_options(3, options);
   int exit_status = 0;
-  if (!ruby_executable_node(program, &exit_status) || ruby_exec_node(program) != 0) return 0;
+  if (!ruby_executable_node(program, &exit_status) ||
+      ruby_exec_node(program) != 0)
+    return 0;
   ruby_script("tsugumi-card");
   rb_enc_set_default_external(rb_enc_from_encoding(rb_utf8_encoding()));
   int state = 0;
@@ -326,33 +335,31 @@ static int ensure_ruby(void) {
 
 static VALUE invoke(VALUE name) { return rb_funcall(sdk, SYM2ID(name), 0); }
 
-static int call_ruby(const tsugumi_call* call, const char* method) {
+static int call_ruby(const tsugumi_call* call, const char* method, tsugumi_buffer* outputs) {
   current = call;
-  if (!ensure_ruby()) {
-    if (call) call->fail(call->host, "worker_failed", "cannot initialize Ruby Card (see stderr)");
-    current = NULL;
-    return 1;
-  }
-  if (!method) {
-    current = NULL;
-    return 0;
-  }
   int state = 0;
   VALUE result = rb_protect(invoke, ID2SYM(rb_intern(method)), &state);
   if (state) {
     rb_set_errinfo(Qnil);
-    if (call) call->fail(call->host, "worker_failed", "Ruby host bridge raised an exception");
+    if (call)
+      call->effects->fail(call->host, "worker_failed",
+                 "Ruby host bridge raised an exception");
+  }
+  int rc = state || result == Qfalse;
+  if (!rc && outputs) {
+    rc = !RB_TYPE_P(result, T_STRING) ||
+         current->effects->outputs_json(current->host, RSTRING_PTR(result), outputs);
+    RB_GC_GUARD(result);
   }
   current = NULL;
-  return state || result == Qfalse;
+  return rc;
 }
 
-int tsugumi_prepare(void) { return call_ruby(NULL, NULL); }
 static VALUE load_card(VALUE ignored) {
-  if (TSUGUMI_RUBY_BUNDLE[0]) rb_require("bundler/setup");
-  return rb_funcall(sdk, rb_intern("_load"), 1, string(TSUGUMI_RUBY_CARD));
+  if (tsugumi_ruby_gemfile[0]) rb_require("bundler/setup");
+  return rb_funcall(sdk, rb_intern("_load"), 1, string(tsugumi_ruby_card));
 }
-int tsugumi_load(const tsugumi_call* call) {
+static int load(const tsugumi_call* call) {
   current = call;
   int state = 0;
   VALUE result = rb_protect(load_card, Qnil, &state);
@@ -364,5 +371,12 @@ int tsugumi_load(const tsugumi_call* call) {
   current = NULL;
   return state || result == Qfalse;
 }
-int tsugumi_main(const tsugumi_call* call) { return call_ruby(call, "_invoke"); }
-int tsugumi_run_start(const tsugumi_call* call) { return call_ruby(call, "_run_start"); }
+int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+  switch (call->phase) {
+    case TSUGUMI_PREPARE: return ensure_ruby() ? 0 : 1;
+    case TSUGUMI_LOAD: return load(call);
+    case TSUGUMI_RUN_START: return call_ruby(call, "_run_start", NULL);
+    case TSUGUMI_RUN: return call_ruby(call, "_invoke", outputs);
+  }
+  return 1;
+}

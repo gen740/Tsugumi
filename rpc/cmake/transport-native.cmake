@@ -12,6 +12,6 @@ endif()
 find_package(Threads REQUIRED)
 add_library(tsugumi_client_transport STATIC src/transport_native.cc)
 target_include_directories(tsugumi_client_transport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(tsugumi_client_transport PRIVATE CURL::libcurl Threads::Threads)
+target_link_libraries(tsugumi_client_transport PRIVATE tsugumi_crypto CURL::libcurl Threads::Threads)
 
 install(TARGETS tsugumi_client_transport ARCHIVE DESTINATION lib)

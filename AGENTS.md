@@ -26,6 +26,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [hostd/agent/](hostd/agent/) | Agent implementation, prompts, tool descriptions and guide scripts |
 | [ui/web/](ui/web/) | Browser UI, host server and platform adapters |
 | [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
+| [pack/](pack/) | `tsugumi-pack`: exports a Project as a standalone Mac app ([design](pack/README.md)) |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
 | [nix/](nix/) | Runtime, SDK, remote worker and CLI packages; flake outputs, checks and development shell |
 | [demos/](demos/) | Matching Japanese and English demos and Drafts (`ja/`, `en/`): change both |
@@ -48,6 +49,12 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 
 - **Launching:** use [ui/macos/tools/run-ui.sh](ui/macos/tools/run-ui.sh) (it opens the app in the background with `open -g`, and capturing works as it is). To launch directly, use `open -g -n --env TSUGUMI_UI_SCRIPT=<absolute path> <Tsugumi.app>`; never run the executable directly.
 - **Building:** sign with `TSUGUMI_CODESIGN_IDENTITY="Apple Development" ui/macos/build-app.sh`. An ad hoc signed build is treated as a different app on every rebuild, and reading the API key shows a password dialog ("Signing development builds" in [RELEASING.md](RELEASING.md)). Where there is no certificate (`security find-identity -v -p codesigning`), build as it is.
+
+### Where commands live
+
+- What is built from a definition (programs, the guest, packages) is built by CMake or Nix.
+- Commands for working on the repository are flake apps: `nix run .#guest-image` (the guest image from its CI artifact; `--build` builds it here), `nix run .#release`, and the documentation's `.#dev-doc` / `.#build-doc` / `.#test-doc`. CI steps call the same commands, so `tests/ci-local.sh` can run them too.
+- Shell scripts remain only where the host is needed: Apple's toolchain, `codesign`, `xcrun` (`ui/macos/build-app.sh`, `hostd/tools/build-macos.sh`, `vm/macos/tools/build-vmctl.sh`, `cli/package-*.sh`, `ui/macos/tools/run-ui.sh`).
 
 ### Checks before merging
 

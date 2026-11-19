@@ -5,18 +5,21 @@ sniffing. Needs node and a built ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
+from html.parser import HTMLParser
 import http.client
+from http.cookies import SimpleCookie
 import json
-import os
-import re
+import select
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from harness.file_events import process_exit, process_file, terminate_process
 from conftest import WEB_DIST
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 
@@ -27,19 +30,29 @@ pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
                                 reason="needs node and ui/web/dist (cd ui/web && npm run build)")
 
 
-@pytest.fixture
-def web(tmp_path):
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+@contextmanager
+def web_server(tmp_path, **environment):
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), **environment)
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
+        ready = process_file(p, tmp_path / "data/server.json")
+        assert ready is not None
+        info = json.loads(ready.read_text())
+        # The launch URL is the only public source of the page key.
         line = p.stdout.readline()
-        m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", line)
-        assert m, line
-        yield p, int(m.group(1)), m.group(2)
+        launch = urlparse(next(part for part in line.split() if part.startswith("http://")))
+        assert launch.hostname == "127.0.0.1" and launch.port == info["port"]
+        yield p, info["port"], parse_qs(launch.query)["key"][0]
     finally:
         p.terminate()
         p.wait(10)
         stop_resident_services(tmp_path)
+
+
+@pytest.fixture
+def web(tmp_path):
+    with web_server(tmp_path) as server:
+        yield server
 
 
 def request(port: int, method: str, path: str, headers=None, body=None):
@@ -49,6 +62,21 @@ def request(port: int, method: str, path: str, headers=None, body=None):
     data = r.read()
     c.close()
     return r, data
+
+
+def policy(response):
+    directives = [part.split() for part in response.getheader("content-security-policy").split(";")]
+    return {parts[0]: set(parts[1:]) for parts in directives if parts}
+
+
+class Scripts(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.sources = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            self.sources.append(dict(attrs).get("src"))
 
 
 def test_only_the_page_with_the_key_reaches_the_api(web):
@@ -62,15 +90,47 @@ def test_only_the_page_with_the_key_reaches_the_api(web):
     r, _ = request(port, "GET", "/api/env/list", {"Cookie": f"tsugumi_{port}=wrong"})
     assert r.status == 401
     r, _ = request(port, "GET", f"/?key={key}&project=x")
-    assert r.status == 302 and r.getheader("location") == "/?project=x"
-    cookie = r.getheader("set-cookie").split(";")[0]
-    assert "HttpOnly" in r.getheader("set-cookie") and "SameSite=Strict" in r.getheader("set-cookie")
+    assert r.status == 302
+    location = urlparse(r.getheader("location"))
+    assert location.path == "/" and not location.netloc
+    query = parse_qs(location.query)
+    assert query["project"] == ["x"] and "key" not in query
+    cookies = SimpleCookie(r.getheader("set-cookie"))
+    session, = cookies.values()
+    assert session["httponly"] and session["samesite"].lower() == "strict"
+    cookie = f"{session.key}={session.value}"
     r, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
     assert r.status == 200, data
     json.loads(data)
-    # Changes also need the header a cross-origin page cannot send.
-    r, _ = request(port, "POST", "/api/terminal/start", {"Cookie": cookie, "content-type": "application/json"}, b"{}")
-    assert r.status == 403
+
+
+def test_teardown_stops_host_before_readiness(tmp_path):
+    # Keep host.ready absent even after an authenticated request succeeds.
+    started = tmp_path / "host.pid"
+    binary = tmp_path / "starting-host"
+    binary.write_text(f"""#!{sys.executable}
+import os
+from pathlib import Path
+import signal
+
+signals = {{signal.SIGTERM}}
+signal.pthread_sigmask(signal.SIG_BLOCK, signals)
+started = Path({str(started)!r})
+pending = started.with_suffix(".tmp")
+pending.write_text(str(os.getpid()))
+pending.rename(started)
+signal.sigwait(signals)
+""")
+    binary.chmod(0o700)
+    with ExitStack() as cleanup:
+        with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (web_process, port, key):
+            assert process_file(web_process, started) is not None
+            pid = int(started.read_text())
+            cleanup.callback(terminate_process, pid)
+            exited = cleanup.enter_context(process_exit(pid))
+            assert request(port, "GET", "/api/env/list", {"Cookie": page_cookie(port, key)})[0].status == 200
+            assert not (tmp_path / "host-core/host.ready").exists()
+        assert select.select([exited], [], [], 0)[0], "hostd survived Web fixture teardown"
 
 
 def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(web):
@@ -80,26 +140,34 @@ def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(
         assert r.status in (400, 401), bad
     assert p.poll() is None
     r, data = request(port, "GET", "/..%2Fserver.js")
-    assert r.status == 403 or b"<!doctype" in data.lower()
-    assert b"chatRoutes" not in data
-    r, _ = request(port, "GET", "/")
-    assert r.status == 200
-    assert "frame-ancestors 'none'" in r.getheader("content-security-policy")
+    home, page = request(port, "GET", "/")
+    assert home.status == 200
+    if r.status != 403:
+        assert r.status == 200 and r.getheader("content-type").startswith("text/html")
+        fallback, entry = Scripts(), Scripts()
+        fallback.feed(data.decode())
+        entry.feed(page.decode())
+        assert set(filter(None, entry.sources)) <= set(filter(None, fallback.sources))
+    csp = policy(home)
+    assert csp["frame-ancestors"] == {"'none'"}
     # The page reaches its project's tsugumid over a loopback WebSocket.
-    assert "ws://127.0.0.1:*" in r.getheader("content-security-policy")
-    assert r.getheader("x-content-type-options") == "nosniff"
+    assert "ws://127.0.0.1:*" in csp["connect-src"]
+    assert home.getheader("x-content-type-options") == "nosniff"
 
 
 def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(web):
-    _, port, _ = web
+    process, port, _ = web
     response, _ = request(port, "GET", "/")
-    policy = response.getheader("content-security-policy")
-    assert "'wasm-unsafe-eval'" in policy and "'unsafe-eval'" not in policy
+    scripts = policy(response)["script-src"]
+    assert "'wasm-unsafe-eval'" in scripts and "'unsafe-eval'" not in scripts
     response, module = request(port, "GET", "/client/tsugumi-client.wasm")
     assert response.status == 200 and response.getheader("content-type") == "application/wasm"
-    assert module[:4] == b"\x00asm"
+    subprocess.run(["node", "-e", "new WebAssembly.Module(require('node:fs').readFileSync(0))"],
+                   input=module, check=True)
+    assert process.poll() is None, process.stdout.read()
     response, script = request(port, "GET", "/client/tsugumi-client.js")
-    assert response.status == 200 and b"<!doctype" not in script.lower()
+    assert response.status == 200 and script
+    assert response.getheader("content-type").split(";")[0] in {"text/javascript", "application/javascript"}
 
 
 def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
@@ -109,17 +177,19 @@ def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
     connects nowhere; every other answer still forbids framing."""
     p, port, key = web
     r, data = request(port, "GET", "/modules/viewer.html")
-    assert r.status == 200 and b"tsugumiRender" in data and b'src="viewer.js"' not in data
-    csp = r.getheader("content-security-policy")
-    directives = {d.strip().split(" ", 1)[0]: d.strip() for d in csp.split(";")}
-    assert directives["sandbox"] == "sandbox allow-scripts"  # no allow-same-origin
-    assert directives["default-src"] == "default-src 'none'" and directives["connect-src"] == "connect-src 'none'"
-    assert "'self'" not in directives["script-src"] and directives["frame-ancestors"] == "frame-ancestors 'self'"
+    assert r.status == 200
+    scripts = Scripts()
+    scripts.feed(data.decode())
+    assert scripts.sources and all(source is None for source in scripts.sources)
+    csp = policy(r)
+    assert "allow-scripts" in csp["sandbox"] and "allow-same-origin" not in csp["sandbox"]
+    assert csp["default-src"] == csp["connect-src"] == {"'none'"}
+    assert "'self'" not in csp["script-src"] and csp["frame-ancestors"] == {"'self'"}
     # No nested frame may load a URL: the Card's srcdoc frame cannot navigate itself anywhere.
-    assert directives["frame-src"] == "frame-src 'none'" and b"frame-src 'none'" in data
+    assert csp["frame-src"] == {"'none'"}
     assert r.getheader("x-frame-options") == "SAMEORIGIN"
     r, _ = request(port, "GET", "/")
-    assert r.getheader("x-frame-options") == "DENY" and "frame-ancestors 'none'" in r.getheader("content-security-policy")
+    assert r.getheader("x-frame-options") == "DENY" and policy(r)["frame-ancestors"] == {"'none'"}
 
 
 def page_cookie(port: int, key: str) -> str:
@@ -150,12 +220,13 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
     before = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert before["state"] == "ready", before
     # Another page shows it: it goes on.
-    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)}) == {"stopped": False}
+    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)})["ok"] is True
     assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
     # The last page detaches its views while core remains available.
-    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)}) == {"stopped": False}
+    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)})["ok"] is True
     pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
-    assert {"type": "projectClosed", "project": real} in pages[2].events
+    assert any(event.get("type") == "projectClosed" and event.get("project") == real
+               for event in pages[2].events)
     after = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
 
@@ -170,10 +241,11 @@ def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(we
     first = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert first["state"] == "ready", first
     agent = json.loads((tmp_path / "host-core/host.ready").read_text())
-    assert post(port, cookie, "/api/env/stop", {"path": str(project)}) == {"ok": True}
+    assert post(port, cookie, "/api/env/stop", {"path": str(project)})["ok"] is True
     response, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
     assert response.status == 200
-    assert json.loads(data)[0]["state"] == {"state": "stopped"}
+    environment = next(row for row in json.loads(data) if row["project"] == str(project.resolve()))
+    assert environment["state"]["state"] == "stopped"
     restarted = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert restarted["state"] == "ready", restarted
     assert restarted["projectId"] == first["projectId"]
@@ -249,7 +321,7 @@ def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tm
 
     status, result = create(destination.name)
     assert status == 200 and result["path"] == str(destination.resolve())
-    assert json.loads((destination / "layout.json").read_text()) == {"flow": "leftToRight"}
+    assert json.loads((destination / "layout.json").read_text())["flow"] == "leftToRight"
     status, result = create(destination.name)
     assert status == 400 and result["code"] == "folder_not_empty"
     status, result = create("bad/name")

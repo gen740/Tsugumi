@@ -17,16 +17,10 @@ import sys
 import traceback
 
 
-def _plain(value):
-    if isinstance(value, bytes):
-        return value.decode('utf-8')
-    if isinstance(value, (list, tuple)):
-        return [_plain(v) for v in value]
-    if hasattr(value, 'tolist'):
-        return _plain(value.tolist())
-    if hasattr(value, '__dict__'):
-        return {k: _plain(v) for k, v in vars(value).items()}
-    return value
+if __package__:
+    from .plain import plain as _plain
+else:
+    from plain import plain as _plain
 
 
 def bindings(inputs, mapping):
@@ -34,17 +28,26 @@ def bindings(inputs, mapping):
     from tsugumi import Failure, contract
     if not isinstance(mapping, dict):
         raise Failure('validation_failed', 'bindings must be a JSON object mapping variable names to inputs/param paths')
-    values = {
-        'inputs': {port['name']: _plain(contract.input_object(inputs, port['name'])) for port in contract.ports()},
-        'param': _plain(contract.params_object(inputs)),
-    }
+    values = {}
     result = {}
     for name, path in mapping.items():
         if not name.isidentifier() or keyword.iskeyword(name) or not isinstance(path, str):
             raise Failure('validation_failed', 'Bindings must map Python variable names to inputs/param paths')
-        value = values
         try:
-            for field in path.split('.'):
+            root, *fields = path.split('.')
+            if root == 'inputs' and fields:
+                port, *fields = fields
+                key = ('inputs', port)
+                if key not in values:
+                    values[key] = _plain(contract.input_object(inputs, port))
+            elif root == 'param':
+                key = ('param',)
+                if key not in values:
+                    values[key] = _plain(contract.params_object(inputs))
+            else:
+                raise KeyError(root)
+            value = values[key]
+            for field in fields:
                 value = value[field]
         except (KeyError, TypeError):
             raise Failure('validation_failed', f'Notebook binding {name!r} has no source {path!r}') from None
@@ -128,7 +131,6 @@ def _fragment(value, assets, index):
         png = io.BytesIO()
         value.savefig(png, format='png', dpi=120)
         data = png.getvalue()
-        (assets / f'cell-{index}.png').write_bytes(data)
         return '<img alt="Cell figure" src="data:image/png;base64,' + base64.b64encode(data).decode() + '">'
     if hasattr(value, '_repr_html_'):
         markup = value._repr_html_()

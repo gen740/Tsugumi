@@ -4,15 +4,16 @@
 
 #include "agent/context.hh"
 #include "agent/helper_scope.hh"
-#include "tsugumi/util/json_object.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
+#include "agent/text.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 using host::Failure;
@@ -64,8 +65,7 @@ auto Helpers::HelperResult(const std::string& output,
       {"conversation_id", json::Quote(conversation)},
       {"call_id", json::Quote(call)},
       {"task", std::to_string(task)},
-      {"error",
-       json::Quote(Turns::Excerpt(json::Text(value, "error"), 0, 1024))},
+      {"error", json::Quote(Excerpt(json::Text(value, "error"), 0, 1024))},
       {"report", json::Quote(report)}});
 }
 
@@ -135,11 +135,10 @@ auto Helpers::RunHelper(const std::string& conversation,
                                      : std::vector<std::string>{authorization};
       messages.push_back(
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
-      auto insert =
-          conversations->ConversationDatabase(conversation)
-              .prepare(
-                  "INSERT INTO helpers "
-                  "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
+      auto insert = conversations->ConversationDatabase(conversation)
+                        .prepare(
+                            "INSERT INTO helpers "
+                            "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
@@ -149,12 +148,10 @@ auto Helpers::RunHelper(const std::string& conversation,
           .bind(
               7,
               static_cast<int>(
-                  json::Array(
-                      json::Get(
-                          json::Object(conversations->ConversationJson(
-                              conversations->GetConversation(conversation))),
-                          "archive", "[]"))
-                      .size() +
+                  conversations
+                      ->ConversationData(
+                          conversations->GetConversation(conversation))
+                      .archive.size() +
                   std::ranges::count_if(
                       ParseMessages(conversations->GetConversation(conversation)
                                         .messages),
@@ -213,6 +210,7 @@ auto Helpers::RunHelper(const std::string& conversation,
                           {"kind", json::Quote(e.kind)},
                           {"text", json::Quote(e.text)},
                           {"message", json::Quote(e.text)},
+                          {"code", json::Quote(e.code)},
                           {"input", json::Quote(e.text)},
                           {"id", json::Quote(e.id)},
                           {"name", json::Quote(e.name)},

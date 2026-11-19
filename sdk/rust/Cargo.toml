@@ -3,5 +3,7 @@ name = "tsugumi"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[target.'cfg(any())'.dependencies]
+# Keep the FlatBuffers dependency in Cargo.lock. The language layer supplies
+# the compiled crate for every target.
 flatbuffers = { path = "flatbuffers" }

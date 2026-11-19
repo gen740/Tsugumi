@@ -1,7 +1,5 @@
 #include "agent/runtime.hh"
 
-#include "tsugumi/util/json_object.hh"
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -13,6 +11,7 @@
 
 #include "agent/context.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
 auto EstimateTextTokens(std::string_view text) -> uint64_t {
@@ -43,14 +42,16 @@ auto EstimateMessageTokens(const Message& message) -> uint64_t {
 namespace {
 // Only a typed service failure is terminal; ordinary tool text may start with
 // arbitrary or incomplete JSON and must remain a normal tool result.
-auto InternalToolFailure(const ToolResult& output) -> std::optional<std::string> {
+auto InternalToolFailure(const ToolResult& output)
+    -> std::optional<std::string> {
   if (!output.is_error) return {};
   try {
     const auto envelope = json::Object(output.text);
     if (json::Text(envelope, "reply") != "Failure") return {};
     const auto failure = json::Object(json::Get(envelope, "value", "{}"));
     if (json::Text(failure, "kind") == "internal_error")
-      return json::Text(failure, "diagnostic", "Internal service error; retrying will not help.");
+      return json::Text(failure, "diagnostic",
+                        "Internal service error; retrying will not help.");
   } catch (const std::exception&) {
   }
   return {};
@@ -135,16 +136,6 @@ auto AddUsage(Usage& total, const Usage& next) -> void {
   total.cache_write_tokens += next.cache_write_tokens;
 }
 
-auto Resources(const std::vector<Message>& messages)
-    -> std::vector<std::string> {
-  std::set<std::string> ids;
-  for (const auto& message : messages) {
-    for (const auto& block : message.content)
-      ids.insert(block.resource_ids.begin(), block.resource_ids.end());
-  }
-  return {ids.begin(), ids.end()};
-}
-
 auto ContextOverflow(std::string reason) -> bool {
   std::transform(reason.begin(), reason.end(), reason.begin(),
                  [](unsigned char c) { return std::tolower(c); });
@@ -158,12 +149,12 @@ auto ContextOverflow(std::string reason) -> bool {
 
 auto IsResults(const Message& message) -> bool;
 
-auto CannotFit() -> std::runtime_error {
-  // Local fitting and a provider context refusal have the same terminal
-  // error. Clients recognize it to offer starting a new conversation.
-  return std::runtime_error(
-      "the conversation no longer fits the model's context");
-}
+class ContextFull final : public std::runtime_error {
+ public:
+  ContextFull()
+      : std::runtime_error(
+            "the conversation no longer fits the model's context") {}
+};
 
 // Never split a tool exchange, or the provider-only thinking/signature blocks
 // carried with its assistant message. Parallel calls may have separate results.
@@ -301,8 +292,7 @@ auto Reconcile(std::vector<Message>& messages, const RuntimeHooks& hooks,
 auto ModelTurn(const ProviderConfig& config, std::string_view system,
                std::vector<Message>& messages,
                const std::vector<ToolSpec>& tools, std::stop_token stop,
-               const RuntimeHooks& hooks, uint32_t max_retries,
-               bool persist_changes = true) -> ModelReply {
+               const RuntimeHooks& hooks) -> ModelReply {
   for (uint32_t attempt = 0;; ++attempt) {
     CheckCancelled(stop);
     // Recheck on every retry: a user's revocation can happen during backoff.
@@ -311,7 +301,7 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
     try {
       auto reply = StreamReply(
           config, system, messages, tools, stop,
-          [&](const ModelEvent &model) {
+          [&](const ModelEvent& model) {
             CheckCancelled(stop);
             RuntimeEvent event;
             event.kind = model.kind;
@@ -344,7 +334,6 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
           }
         }
         if (removed) {
-          if (persist_changes) Save(hooks, messages);
           if (streamed) Emit(hooks, {"discardText", {}, {}, {}, true, 0, {}});
           Emit(hooks, {"retrying",
                        "The model rejected a tool image; continuing without it",
@@ -356,12 +345,11 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
           continue;
         }
       }
-      if (!error.retryable || attempt >= max_retries) throw;
+      if (!error.retryable) throw;
       if (streamed) Emit(hooks, {"discardText", {}, {}, {}, true, 0, {}});
-      const auto delay = std::min(
-          std::chrono::milliseconds(120000),
+      const auto delay =
           std::max(error.retry_after,
-                   std::chrono::milliseconds(1000u << std::min(attempt, 6u))));
+                   std::chrono::milliseconds(1000u << std::min(attempt, 6u)));
       Emit(hooks, {"retrying",
                    std::string(error.what()) + "; retry " +
                        std::to_string(attempt + 1),
@@ -383,6 +371,13 @@ auto ValidateHooks(const RuntimeHooks& hooks) -> void {
 }
 
 }  // namespace
+
+auto RuntimeErrorCode(const std::exception& error) -> std::string {
+  if (dynamic_cast<const ContextFull*>(&error)) return "context_full";
+  if (const auto* provider = dynamic_cast<const ProviderError*>(&error))
+    return provider->reason_code();
+  return {};
+}
 
 auto Runtime::Run(const ProviderConfig& config, std::string_view system,
                   std::vector<Message>& messages,
@@ -426,7 +421,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           const auto after =
               InputTokens(config, system, request_messages, tools, *context);
           if (after >= config.context_limit_tokens && after >= before)
-            throw CannotFit();
+            throw ContextFull();
         } catch (const ProviderError&) {
           // An optional summary failure must not prevent a request that can
           // still fit. A provider context refusal below triggers forced
@@ -447,13 +442,12 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       request_context.omitted_before = context->omitted_before;
       request_context.result_limit = context->result_limit;
       try {
-        reply = ModelTurn(config, system, request_messages, tools, stop, hooks,
-                          options_.max_retries, false);
+        reply = ModelTurn(config, system, request_messages, tools, stop, hooks);
         context_refusals = 0;
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
-        if (!options_.compact || ++context_refusals > 3)
-          throw CannotFit();
+        // Bound attempts that already failed the provider’s context budget.
+        if (!options_.compact || ++context_refusals > 3) throw ContextFull();
         context->input_tokens = 0;
         context->result_limit =
             std::max(size_t{1024}, context->result_limit / 2);
@@ -474,11 +468,11 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
           throw std::runtime_error(
               "model replies repeatedly exceeded the output limit");
         std::string argument_sizes;
-        for (const auto &block : reply.message.content)
+        for (const auto& block : reply.message.content)
           if (block.type == "tool_use")
             argument_sizes += block.name + "=" +
                               std::to_string(block.input.size()) + " bytes; ";
-        std::erase_if(reply.message.content, [](const auto &block) {
+        std::erase_if(reply.message.content, [](const auto& block) {
           return block.type == "tool_use";
         });
         reply.message.provider_content.clear();
@@ -585,6 +579,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
                      result.usage});
       }
       CheckCancelled(stop);
+      // Bound the tokens spent repairing repeated invalid tool arguments.
       if (invalid && ++invalid_replies > 3)
         throw std::runtime_error(
             "model repeatedly returned malformed tool arguments");
@@ -597,7 +592,8 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
   } catch (const std::exception& error) {
     result.outcome = RunOutcome::Failed;
     result.error = error.what();
-    Emit(hooks, {"error", result.error, {}, {}, false, 0, result.usage});
+    Emit(hooks, {"error", result.error, {}, {}, false, 0, result.usage,
+                 RuntimeErrorCode(error)});
   }
   return result;
 }
@@ -620,7 +616,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
     for (const auto& message : summary_input)
       if (fixed_tokens + EstimateMessageTokens(message) >=
           config.context_limit_tokens)
-        throw CannotFit();
+        throw ContextFull();
   uint64_t total = 0;
   for (const auto& message : summary_input)
     total += EstimateMessageTokens(message);
@@ -678,7 +674,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
       if (!fits_prefix) break;
       fitting_cut = i + 1;
     }
-    if (!fitting_cut) throw CannotFit();
+    if (!fitting_cut) throw ContextFull();
     cut = fitting_cut;
     bounded_input.assign(
         summary_input.begin(),
@@ -693,7 +689,7 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
   auto silent_hooks = hooks;
   silent_hooks.event = {};
   auto reply = ModelTurn(compact_config, system, bounded_input, tools, stop,
-                         silent_hooks, options_.max_retries, false);
+                         silent_hooks);
   if (reply.stop_reason == "max_tokens" || reply.stop_reason == "tool_use")
     throw ProviderError("model did not complete the conversation summary");
   std::string text;

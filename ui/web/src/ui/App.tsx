@@ -24,7 +24,6 @@ const isTextInput = (el: Element | null) =>
   !!el && (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button'].includes(el.type)) ||
     (el as HTMLElement).isContentEditable || el instanceof HTMLSelectElement)
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function App() {
   useObserve(app)
@@ -113,7 +112,6 @@ export function App() {
   /** Opens another project, once the current one has been left (saved first when needed). */
   const openReplacing = async (dir: string) => {
     if (workspace.session && !(await leaveProject())) return
-    for (let i = 0; i < 50 && workspace.session; i++) await sleep(100)
     if (!workspace.session) await open(dir)
   }
 

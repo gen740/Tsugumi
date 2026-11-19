@@ -1,5 +1,5 @@
-#include "tsugumi/util/json_object.hh"
 #include "project_fixture.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -11,7 +11,9 @@ TEST_F(AgentProjectFixture,
   Write(
       directory.path / "project/definitions/plan/_meta.json",
       R"({"description":"Plan","content":"Keep these words","comments":[{"id":"c1","text":"Ask","author":"user"}]})");
-  StartProject(false, R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  StartProject(
+      false,
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -139,11 +141,12 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
   EXPECT_EQ(JsonString(JsonString(refused.View(), "/text"), "/value/kind"),
             "revision_conflict");
-  EXPECT_NE(JsonString(refused.View(), "/text").find("read the project again"),
-            std::string::npos);
+  const auto replay = Tool(conversation, "project_save", input, "stale");
+  ASSERT_TRUE(replay.Code().empty()) << replay.View();
+  EXPECT_TRUE(JsonBool(replay.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(replay.View(), "/text"), "/value/kind"),
+            "revision_conflict");
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
-  EXPECT_EQ(Tool(conversation, "project_save", input, "stale").View(),
-            refused.View());
 }
 
 TEST_F(AgentProjectFixture,
@@ -222,6 +225,7 @@ TEST_F(AgentProjectFixture,
   });
   // Always unblock approval on an assertion failure before joining the helper.
   std::string approval;
+  // Agent save approvals are read through AccessListRequest without a push event.
   const auto deadline = std::chrono::steady_clock::now() + 10s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =
@@ -285,8 +289,7 @@ TEST_F(AgentProjectFixture,
     const auto envelope = json::Object(raw);
     if (json::Text(envelope, "reply") != "Failure") continue;
     const auto failure = json::Object(json::Get(envelope, "value", "{}"));
-    if (json::Text(failure, "kind") == "permission_denied")
-      scope_denied = true;
+    if (json::Text(failure, "kind") == "permission_denied") scope_denied = true;
   }
   EXPECT_TRUE(scope_denied) << history.View();
   EXPECT_EQ(Read(source), "original\n");

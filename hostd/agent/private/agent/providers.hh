@@ -2,9 +2,9 @@
 
 #include <string>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/provider.hh"
 #include "host/state_gate.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::host {

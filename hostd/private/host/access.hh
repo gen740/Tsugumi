@@ -10,8 +10,8 @@
 #include "agent/runtime.hh"
 #include "host/registry.hh"
 #include "host/state_gate.hh"
-#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/protocol/agent_generated.h"
+#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::agent {
@@ -34,7 +34,7 @@ struct Access {
       -> std::string;
   auto AccessDescriptions(const std::string& id, const std::string& project,
                           Tsugumi::Service::Access needed,
-                          const std::string& reason)
+                          const std::string& reason, bool per_call)
       -> std::vector<std::string>;
   auto RequestAccess(const std::string& project,
                      const std::string& conversation,

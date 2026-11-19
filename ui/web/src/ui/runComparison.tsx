@@ -6,7 +6,7 @@ import { Button, Empty, Select, Spinner } from './controls'
 import { DisplayContent } from './display'
 import { L } from '../i18n'
 import { environmentChange } from '../model/environments'
-import { EnvironmentComparison } from './environments'
+import { EnvironmentComparison, EnvironmentReadScope } from './environments'
 import { runMark } from '../model/runMark'
 
 export function RunComparisonView({ session, runs, initial, onClose }: { session: ProjectSession; runs: R.RunSummaryT[]; initial?: string; onClose: () => void }) {
@@ -36,7 +36,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
     return () => { alive = false }
   }, [session.rpc, from, to, attempt])
   const options = runs.map(r => ({ value: s(r.status?.runId), label: `${formatMillis(r.status?.acceptedAt)} · ${runState(r.status!.state).label} · ${s(r.status?.runId).slice(0, 8)}${runMark(r) ? ` · ${runMark(r)}` : ''}` }))
-  return <div className="run-comparison col">
+  return <EnvironmentReadScope key={`${left}:${right}:${attempt}`} rpc={session.rpc}><div className="run-comparison col">
     <div className="row center gap8 pad10 border-bottom"><b>{L('実行を比較')}</b><span className="spacer" /><Button onClick={onClose}>{L('閉じる')}</Button></div>
     <div className="comparison-pair pad10 border-bottom">
       <Select label={L('左の実行')} value={left} onChange={setLeft} options={options} />
@@ -53,7 +53,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
           {rows.map(row => <ComparedCardView key={row.card} row={row} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}`} session={session} left={{ run: left, id: s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId) }} right={{ run: right, id: s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />)}
         </>}
     </div>
-  </div>
+  </div></EnvironmentReadScope>
 }
 
 /** The code and settings between the two runs' versions. A run without a recorded

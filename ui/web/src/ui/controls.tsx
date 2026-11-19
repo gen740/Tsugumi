@@ -146,14 +146,29 @@ export function Divider({ vertical }: { vertical?: boolean }) {
 export function Form({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <div className="form" style={style}>{children}</div>
 }
-export function Section({ title, children, footer }: { title?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+/** A section; `info` is its explanation, behind an (i) button beside the title. */
+export function Section({ title, children, footer, info }: { title?: ReactNode; children: ReactNode; footer?: ReactNode; info?: ReactNode }) {
   return (
     <section className="form-section">
-      {title && <div className="form-section-title">{title}</div>}
+      {(title || info) && <div className="form-section-title">{title}{info && <InfoButton>{info}</InfoButton>}</div>}
       <div className="form-box">{children}</div>
       {footer && <div className="form-footer">{footer}</div>}
     </section>
   )
+}
+
+/** A small (i) button showing an explanation in a popover when clicked. */
+export function InfoButton({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLButtonElement>(null)
+  return <>
+    <button ref={anchor} type="button" className="info-button" aria-label={L('説明')} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <Icon name="info.circle" />
+    </button>
+    <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} width={320}>
+      <div className="pad10 caption selectable info-text">{children}</div>
+    </Popover>
+  </>
 }
 export function Row({ label, children, help }: { label?: ReactNode; children?: ReactNode; help?: string }) {
   return (
@@ -386,6 +401,20 @@ export function Prompt({ title, initial, placeholder, confirm, onConfirm, onCanc
 }
 
 /** Horizontal split with draggable dividers (HSplitView). */
+export function dragResize(move: (event: MouseEvent) => void, finish: () => void) {
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    window.removeEventListener('blur', up)
+    document.body.classList.remove('resizing-h')
+    finish()
+  }
+  document.body.classList.add('resizing-h')
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+  window.addEventListener('blur', up)
+}
+
 export function HSplit({ children, sizes, min, onResize, storageKey }: {
   children: ReactNode[]; sizes: (number | null)[]; min?: number[]; onResize?: (s: (number | null)[]) => void; storageKey?: string
 }) {
@@ -413,24 +442,20 @@ export function HSplit({ children, sizes, min, onResize, storageKey }: {
               const sign = target === i ? 1 : -1
               const pane = (e.currentTarget.parentElement?.parentElement?.children[target] as HTMLElement)
               const start = pane?.getBoundingClientRect().width ?? 200
+              let final = w
               const move = (m: MouseEvent) => {
                 const nw = Math.max(min?.[target] ?? 120, start + sign * (m.clientX - startX))
                 setW((old) => {
                   const n = [...old]
                   n[target] = nw
                   onResize?.(n)
-                  if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(n)) } catch {}
+                  final = n
                   return n
                 })
               }
-              const up = () => {
-                window.removeEventListener('mousemove', move)
-                window.removeEventListener('mouseup', up)
-                document.body.classList.remove('resizing-h')
-              }
-              document.body.classList.add('resizing-h')
-              window.addEventListener('mousemove', move)
-              window.addEventListener('mouseup', up)
+              dragResize(move, () => {
+                if (storageKey) try { localStorage.setItem(storageKey, JSON.stringify(final)) } catch {}
+              })
             }} />
           )}
         </SplitPane>
@@ -457,8 +482,8 @@ export async function copyText(t: string) {
 }
 
 /** Saves bytes as a download (the core never receives a local path). */
-export function download(name: string, data: Uint8Array | string, type = 'application/octet-stream') {
-  const blob = new Blob([data as BlobPart], { type })
+export function download(name: string, data: Blob | Uint8Array | string, type = 'application/octet-stream') {
+  const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

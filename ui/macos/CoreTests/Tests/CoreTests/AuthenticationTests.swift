@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import TsugumiAgentClient
 import TsugumiRPC
+import TsugumiTestSupport
 
 /// Native browser opening and polling use the Host contract. OAuth validation,
 /// credential storage and rotation are exercised in tests/core.
@@ -64,7 +65,7 @@ import TsugumiRPC
 
 private final class AuthenticationFixture {
   let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("auth-\(UUID().uuidString.prefix(8))")
-  let port: Int
+  private(set) var port = 0
   private let provider = Process()
   private let daemon = Process()
   private let previousState: String?
@@ -75,7 +76,6 @@ private final class AuthenticationFixture {
       .appendingPathComponent("../../../../..").standardizedFileURL
     let build = ProcessInfo.processInfo.environment["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
       ?? root.appendingPathComponent("build")
-    port = Self.freePort()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let state = directory.appendingPathComponent("state")
     setenv("TSUGUMI_HOST_STATE", state.path, 1)
@@ -95,28 +95,26 @@ private final class AuthenticationFixture {
     daemon.standardOutput = FileHandle.nullDevice
     daemon.standardError = FileHandle.nullDevice
     provider.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    provider.arguments = ["python3", root.appendingPathComponent("tests/fixtures/model_fixture.py").path, "--port", "\(port)"]
-    provider.standardOutput = FileHandle.nullDevice
+    provider.arguments = ["python3", root.appendingPathComponent("tests/fixtures/model_fixture.py").path, "--port", "0"]
+    let output = Pipe()
+    provider.standardOutput = output
     provider.standardError = FileHandle.nullDevice
     do {
       try daemon.run()
       try provider.run()
-      let deadline = Date().addingTimeInterval(15)
-      while Date() < deadline {
-        if FileManager.default.fileExists(atPath: state.appendingPathComponent("host.ready").path),
-           Self.accepts(port), provider.isRunning, daemon.isRunning { return }
-        usleep(20_000)
-      }
-      throw FixtureError.startup
+      let line = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
+      port = try #require(line.split(separator: ":").last.flatMap {
+        Int($0.trimmingCharacters(in: .whitespacesAndNewlines))
+      })
+      try #require(try fixtureReadiness(state.appendingPathComponent("host.ready"), pid: daemon.processIdentifier) {
+        FileManager.default.fileExists(atPath: state.appendingPathComponent("host.ready").path) ? true : nil
+      } == true)
     } catch { stop(); throw error }
   }
 
   func stop() {
     for process in [provider, daemon] where process.isRunning {
-      process.terminate()
-      let deadline = Date().addingTimeInterval(5)
-      while process.isRunning && Date() < deadline { usleep(20_000) }
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      try? finishFixtureProcess(process.processIdentifier, signal: SIGTERM)
       process.waitUntilExit()
     }
     if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }
@@ -124,35 +122,4 @@ private final class AuthenticationFixture {
     try? FileManager.default.removeItem(at: directory)
   }
 
-  private enum FixtureError: Error { case startup }
-
-  private static func freePort() -> Int {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    defer { close(fd) }
-    var address = sockaddr_in()
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_addr.s_addr = inet_addr("127.0.0.1")
-    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-    _ = withUnsafeMutablePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, length) }
-    }
-    _ = withUnsafeMutablePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
-    }
-    return Int(UInt16(bigEndian: address.sin_port))
-  }
-
-  private static func accepts(_ port: Int) -> Bool {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    defer { close(fd) }
-    var address = sockaddr_in()
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_addr.s_addr = inet_addr("127.0.0.1")
-    address.sin_port = UInt16(port).bigEndian
-    return withUnsafePointer(to: &address) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-      }
-    } == 0
-  }
 }

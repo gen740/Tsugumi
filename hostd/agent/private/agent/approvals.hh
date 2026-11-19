@@ -7,10 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/runtime.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/protocol/agent_generated.h"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::host {

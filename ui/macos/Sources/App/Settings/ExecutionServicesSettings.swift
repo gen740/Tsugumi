@@ -14,14 +14,14 @@ struct ExecutionServicesSettings: View {
 
   var body: some View {
     Form {
-      Section("このホストの公開鍵") {
+      Section {
         Text(hostPublicKey).monospaced().textSelection(.enabled)
         Button("公開鍵をコピー") {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(hostPublicKey, forType: .string)
         }.disabled(hostPublicKey.isEmpty)
-        Text("ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。")
-          .font(.caption).foregroundStyle(.secondary)
+      } header: {
+        InfoHeader("このホストの公開鍵", info: "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。")
       }
       Section("実行サービス") {
         ForEach(entries) { entry in
@@ -43,11 +43,6 @@ struct ExecutionServicesSettings: View {
             .disabled(entry.id == "local").monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
           TextField("実行デーモンの公開鍵", text: field(\.workerPublicKey))
             .disabled(entry.id == "local").monospaced().help("公開鍵は ed25519: で始まる SPKI 形式です。")
-          TextField("ハートビート間隔（秒）", value: numberField(\.heartbeatIntervalSeconds), format: .number.grouping(.never))
-            .help("1〜4294967295 秒で指定してください。")
-          TextField("停止までの連続未受信回数", value: numberField(\.missedHeartbeats), format: .number.grouping(.never))
-          Text("0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。")
-            .font(.caption).foregroundStyle(.secondary)
           if let caps = saved?.capabilities, !caps.serverId.isEmpty {
             LabeledContent("CPU アーキテクチャ", value: caps.systems.joined(separator: ", "))
             LabeledContent("隔離方式", value: String(localized: "PID 名前空間"))
@@ -112,8 +107,6 @@ struct ExecutionServicesSettings: View {
       next.name = entry.name
       next.endpoint = entry.endpoint
       next.workerPublicKey = entry.workerPublicKey
-      next.heartbeatIntervalSeconds = entry.heartbeatIntervalSeconds
-      next.missedHeartbeats = entry.missedHeartbeats
       next.grade = entry.grade
     }
     draft = next
@@ -139,7 +132,7 @@ struct ExecutionServicesSettings: View {
     guard [entry.id, entry.name].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
     let hex = entry.grade.lowercased().hasPrefix("0x")
     guard UInt64(hex ? String(entry.grade.dropFirst(2)) : entry.grade, radix: hex ? 16 : 10) != nil else { return false }
-    return entry.heartbeatIntervalSeconds >= 1 && (entry.id == "local" || (!entry.endpoint.isEmpty && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+    return (entry.id == "local" || (!entry.endpoint.isEmpty && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
   }
 
   private func adopt(_ result: ExecutionServicesState) {

@@ -1,10 +1,9 @@
 """The C# SDK's handwritten mirror of the Card ABI stays the ABI.
 
-sdk/csharp/InvocationScope.cs declares NativeValue, NativeSeries and NativeCall by
-hand, in the field order of sdk/include/tsugumi/sdk/abi.h. When a C# Card
+sdk/csharp/InvocationScope.cs declares the native structs by hand, in the field order of sdk/include/tsugumi/sdk/abi.h. When a C# Card
 loads, sdk/csharp/host.cc passes the compiler's offsetof/sizeof of every abi.h
 field and sdk/csharp/Layout.cs compares them with the managed layout (a drift
-fails tsugumi_load). These checks need no .NET: they read the sources and
+fails the load phase). These checks need no .NET: they read the sources and
 compare field order, field types and callback signatures, and that the two
 layout tables (host.cc, Layout.cs) name every field. Appending a callback to
 abi.h without the C# side fails here.
@@ -23,7 +22,7 @@ HOST = ROOT / "sdk/csharp/host.cc"
 LAYOUT = ROOT / "sdk/csharp/Layout.cs"
 
 # Every struct the worker hands to a C# Card, with its managed mirror.
-MIRRORS = {"tsugumi_value": "NativeValue", "tsugumi_blob": "NativeBlob", "tsugumi_series": "NativeSeries", "tsugumi_call": "NativeCall"}
+MIRRORS = {'tsugumi_buffer': 'NativeBuffer', 'tsugumi_blob': 'NativeBlob', 'tsugumi_series': 'NativeSeries', 'tsugumi_call': 'NativeCall', 'tsugumi_host': 'NativeHost'}
 # C scalar types and their blittable C# types (LP64 and LLP64 alike).
 SCALARS = {"void": "void", "char": "byte", "uint8_t": "byte", "uint32_t": "uint", "uint64_t": "ulong",
            "int64_t": "long", "int": "int", "size_t": "nuint", "double": "double", "float": "float", **MIRRORS}
@@ -47,8 +46,7 @@ def c_structs(source: str) -> dict[str, list[tuple[str, str]]]:
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     source = re.sub(r"//[^\n]*", "", source)
     structs = {}
-    for name, body, alias in re.findall(r"typedef\s+struct\s+(\w+)\s*\{(.*?)\}\s*(\w+)\s*;", source, re.S):
-        assert name == alias, name
+    for body, alias in re.findall(r"typedef\s+struct(?:\s+\w+)?\s*\{(.*?)\}\s*(\w+)\s*;", source, re.S):
         fields = []
         for decl in (d.strip() for d in body.split(";")):
             if not decl:
@@ -63,19 +61,19 @@ def c_structs(source: str) -> dict[str, list[tuple[str, str]]]:
                 data = re.fullmatch(r"(.+?)\b(\w+)", decl, re.S)
                 assert data, decl
                 fields.append((data[2], c_type(data[1])))
-        structs[name] = fields
+        structs[alias] = fields
     return structs
 
 
 def cs_structs(source: str) -> dict[str, list[tuple[str, str]]]:
     """name -> [(field, normalized type)] in declaration order."""
     structs = {}
-    for name, body in re.findall(r"\[StructLayout\(LayoutKind\.Sequential\)\]\s*internal\s+unsafe\s+struct\s+(\w+)\s*\{(.*?)\n\}", source, re.S):
+    for name, body in re.findall(r"\[StructLayout\(LayoutKind\.Sequential\)\]\s*(?:(?:internal|public|unsafe)\s+)*struct\s+(\w+)\s*\{(.*?)\n\}", source, re.S):
         fields = []
         for decl in (d.strip() for d in body.split(";")):
             if not decl:
                 continue
-            field = re.fullmatch(r"internal\s+(.+?)\s+(\w+)", decl, re.S)
+            field = re.fullmatch(r"(?:(?:internal|public|private|unsafe)\s+)*(.+?)\s+(\w+)", decl, re.S)
             assert field, decl
             kind = re.sub(r"\s+", " ", field[1]).replace(" *", "*")
             fields.append((field[2], kind))
@@ -108,22 +106,17 @@ def test_managed_structs_mirror_abi_h():
 
 
 def test_load_time_layout_tables_name_every_field():
-    """host.cc's k_layout and Layout.cs list the same fields as abi.h, in its
-    order, and Layout.cs measures each one at the managed field of the same
-    position."""
+    """Both probes measure every native field under the name used to compare it."""
     native, managed = c_structs(ABI.read_text()), cs_structs(CONTEXT.read_text())
-    expected = []
-    for c_name in MIRRORS:
-        expected += [c_name] + [f"{c_name}.{field}" for field, _ in native[c_name]]
-    host = []
-    for kind, args in re.findall(r"TSUGUMI_(STRUCT|FIELD)\(([^)]*)\),", HOST.read_text()):
-        parts = [p.strip() for p in args.split(",")]
-        host.append(".".join(parts))
+    expected = MIRRORS.keys() | {f"{c_name}.{field}" for c_name in MIRRORS for field, _ in native[c_name]}
+    host = {".".join(part.strip() for part in args.split(","))
+            for args in re.findall(r"TSUGUMI_(?:STRUCT|FIELD)\s*\(([^)]*)\)\s*,", HOST.read_text())}
     assert host == expected
 
     layout = LAYOUT.read_text()
-    listed = re.findall(r'list\.Add\(\("(\w+)", 0,|Add\("([\w.]+)", \w+, &\w+->(\w+),', layout)
-    names = [whole or field for whole, field, _ in listed]
+    listed = re.findall(r'list\s*\.\s*Add\s*\(\s*\(\s*"(\w+)"\s*,\s*0\s*,|'
+                        r'Add\s*\(\s*"([\w.]+)"\s*,\s*\w+\s*,\s*&\s*\w+\s*->\s*(\w+)\s*,', layout)
+    names = {whole or field for whole, field, _ in listed}
     assert names == expected
     for whole, field, member in listed:
         if field:

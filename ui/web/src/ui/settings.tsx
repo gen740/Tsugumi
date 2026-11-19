@@ -2,7 +2,7 @@ import { agentAppearance } from '../model/agentAppearance'
 // App-wide settings; the category on the left switches the content. While a
 // project is open its own settings follow the app's (kept in the project).
 import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, onServerEvent } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
@@ -13,10 +13,10 @@ import {
   SEND_KEY_LABELS, SendKey, SHORTCUT_ACTIONS, SHORTCUT_TITLES, ShortcutAction, Theme, THEME_LABELS,
 } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
-import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Stepper, TextField, Toggle } from './controls'
+import { Button, copyText, Empty, Form, InfoButton, Row, Section, Segmented, Select, Stepper, TextField, Toggle } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
-import { ProjectSettingsContent } from './projectViews'
+import { PROJECT_SETTINGS_PANES, type ProjectSettingsPane, ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ChatGPTSettings } from './chatgpt'
@@ -36,17 +36,12 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
-export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache'
-const PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
-  { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' }, { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
-  { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' }, { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
-]
 function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
     case 'general': return L('このプロジェクト（{0}/tsugumi.json）', name)
     case 'canvas': return L('このプロジェクト（{0}/layout.json）', name)
-    case 'history': return L('このプロジェクトの実行環境（書き出しは {0}/.tsugumi/runs.sqlite）', name)
+    case 'history': return L('このプロジェクトの実行環境（{0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')
   }
 }
@@ -76,7 +71,7 @@ export function ApplicationSettings() {
   }
   const projects = [...app.sessions.values()].sort((a, b) => a.scopeName([]).localeCompare(b.scopeName([])))
   const project = projects.find((s) => s.dir === projectPath) ?? projects[0]
-  const pane = stored.startsWith('project.') && project ? PANES.find((p) => 'project.' + p.id === stored) : undefined
+  const pane = stored.startsWith('project.') && project ? PROJECT_SETTINGS_PANES.find((p) => 'project.' + p.id === stored) : undefined
   const category = CATS.find((c) => c.id === stored) ?? CATS[0]
   const current = pane ? 'project.' + pane.id : category.id
 
@@ -102,7 +97,7 @@ export function ApplicationSettings() {
                 </>
               )}
             </div>
-            {PANES.map((p) => (
+            {PROJECT_SETTINGS_PANES.map((p) => (
               <button key={p.id} type="button" className={`nav-row${current === 'project.' + p.id ? ' selected' : ''}`} onClick={() => select('project.' + p.id)}>
                 <Icon name={p.icon} />{p.title}
               </button>
@@ -155,9 +150,60 @@ function GeneralSettings() {
         </Row>
       </Section>
       <TrustedFoldersSettings />
+      <VMResourceSettings />
       <RuntimeResetSettings />
     </Form>
   )
+}
+
+interface VMSize { cpus?: number; memoryGib?: number; storeGib?: number }
+interface VMRuntime { vmState: string; vmDefaultResources?: VMSize; vmLimits?: VMSize; storeDiskGib?: number }
+type VMKey = 'vmCpus' | 'vmMemoryGiB' | 'vmStoreGiB'
+
+/** The shared VM's size, kept by hostd and used from the VM's next start. */
+function VMResourceSettings() {
+  const [runtime, setRuntime] = useState<VMRuntime>()
+  const [settings, setSettings] = useState<Record<VMKey, number> & { revision: Record<string, number> }>()
+  const [error, setError] = useState<string>()
+  const [saving, setSaving] = useState(false)
+  const load = async () => {
+    setRuntime(await api<VMRuntime>('/api/runtime'))
+    setSettings(await api('/api/settings'))
+  }
+  useEffect(() => {
+    const refresh = () => void load().catch(e => setError(errorText(e)))
+    refresh()
+    return onServerEvent(e => { if (e.type === 'settingsChanged') refresh() })
+  }, [])
+  if (!runtime || runtime.vmState === 'unavailable' || !settings) return null
+  const defaults = runtime.vmDefaultResources ?? {}, limits = runtime.vmLimits ?? {}
+  const save = async (change: Partial<Record<VMKey, number>>) => {
+    setSaving(true)
+    try {
+      await api('/api/settings', { revision: settings.revision, ...change })
+      setError(undefined)
+    } catch (e) { setError(errorText(e)) }
+    finally {
+      try { await load() } catch (e) { setError(errorText(e)) }
+      setSaving(false)
+    }
+  }
+  // 0 follows this machine's default; choosing the default value stores 0 again.
+  const row = (key: VMKey, fallback: number, min: number, max: number, step: number, label: (n: number) => string) => {
+    const value = settings[key] || fallback
+    return <Row><Stepper label={label(value) + (settings[key] ? '' : L('（既定）'))} value={value} min={min} max={max} step={step}
+      onChange={(v) => { if (!saving) void save({ [key]: v === fallback ? 0 : v }) }} /></Row>
+  }
+  const store = settings.vmStoreGiB || (defaults.storeGib ?? 64)
+  const disk = runtime.storeDiskGib ?? 0
+  return <Section title={L('VM のサイズ')} info={L('全プロジェクト共通の VM のサイズです。変更は次に VM を起動したときから使われます（実行中の VM は今のサイズのままです）。')}>
+    {row('vmCpus', defaults.cpus ?? 2, 1, limits.cpus ?? 8, 1, (n) => L('CPU: {0} 個', n))}
+    {row('vmMemoryGiB', defaults.memoryGib ?? 4, 2, limits.memoryGib ?? 16, 1, (n) => L('メモリ: {0} GiB', n))}
+    {row('vmStoreGiB', defaults.storeGib ?? 64, 16, limits.storeGib ?? 2048, 16, (n) => L('Nix store: 最大 {0} GiB', n))}
+    {disk > store && <Row><span className="caption secondary">{L('store のディスクは今 {0} GiB です。小さくするには「すべての実行環境を初期化…」で store を作り直します（それまでは今の大きさのままです）。', disk)}</span></Row>}
+    <Row><Button disabled={saving || (!settings.vmCpus && !settings.vmMemoryGiB && !settings.vmStoreGiB)} onClick={() => void save({ vmCpus: 0, vmMemoryGiB: 0, vmStoreGiB: 0 })}>{L('既定に戻す')}</Button></Row>
+    {error && <Row><span className="error">{error}</span></Row>}
+  </Section>
 }
 
 /** The host supplies the confirmation from the policy it sends to the helper. */
@@ -325,7 +371,7 @@ function EditorSettings() {
           options={[{ value: 'python', label: 'Python' }, { value: 'cpp', label: 'C++' }, { value: 'nix', label: 'Nix' }]} />
         {/* The same editor as Card settings: what you see here is what you get there. */}
         <CodeEditor key={`${prefs.editorFontSize}-${prefs.indentWidth}-${prefs.showIndentGuides}-${prefs.editorTheme}`} text={sample} onChange={setSample} language={language} style={{ height: 300 }} />
-        <div className="caption secondary">{L('サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。')}</div>
+        <div className="row"><InfoButton>{L('サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。')}</InfoButton></div>
       </div>
     </div>
   )
@@ -378,7 +424,7 @@ function ShortcutSettings() {
           )
         })}
       </div>
-      <div className="caption secondary">{L('変更はメニューにすぐ反映されます。ほかに ⌘Z / ⇧⌘Z（取り消す・やり直す）、Delete（選択の削除）、⌘,（アプリ設定）が使えます。ブラウザが予約しているキー（⌘W・⌘T・⌘N・⌘Q など）は割り当てても届きません。')}</div>
+      <div className="row"><InfoButton>{L('変更はメニューにすぐ反映されます。ほかに ⌘Z / ⇧⌘Z（取り消す・やり直す）、Delete（選択の削除）、⌘,（アプリ設定）が使えます。ブラウザが予約しているキー（⌘W・⌘T・⌘N・⌘Q など）は割り当てても届きません。')}</InfoButton></div>
     </div>
   )
 }
@@ -426,7 +472,7 @@ function SkillSettings() {
   const shown = found.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
   return (
     <div className="col gap8 pad16 fill">
-      <div className="callout secondary">{L('チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。')}</div>
+      <div className="row"><InfoButton>{L('チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。')}</InfoButton></div>
       <div className="groupbox col gap4">
         <div className="headline">{L('フォルダ')}</div>
         {folders && !folders.length && <div className="secondary">{L('フォルダはありません')}</div>}
@@ -512,7 +558,7 @@ function APISettings() {
   return (
     <Form>
       {/* Every connection can be set up; this picks the one the chat and Tsugumi use (the chat's model menu switches it too). */}
-      <Section>
+      <Section info={<>{L('API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。')}<br />{L('チャットは任意機能です。通常の操作はすべて UI から行えます。')}</>}>
         <Row label={L('使う接続先')}>
           <Select<ProviderId> value={s.provider} onChange={(v) => update({ provider: v })} options={[
             { value: 'anthropic', label: L('Anthropic API（API キー）') }, { value: 'openai', label: L('OpenAI API（API キー）') },
@@ -528,35 +574,30 @@ function APISettings() {
             <Row><span className="caption mono selectable">起動: python3 tests/fixtures/model_fixture.py --port {s.fixturePort}</span></Row>
           </>
         )}
-        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。')}</span></Row>
       </Section>
       <KeySection id="anthropic" s={s} reload={reload} update={update} />
       <KeySection id="openai" s={s} reload={reload} update={update} />
       <ChatGPTSettings onConnected={() => refreshChats(true)} onChanged={() => refreshChats()} model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
       <ProjectPermissionSettings />
-      <Section title={L('Agent が確認なしに Card に与えてよい権限')}>
+      <Section info={L('オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。')} title={L('Agent が確認なしに Card に与えてよい権限')}>
         {permissionCatalog.kinds.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
             <Toggle checked={s.allowedPermissions.includes(p.kind)}
               onChange={(on) => update({ allowedPermissions: on ? [...s.allowedPermissions, p.kind] : s.allowedPermissions.filter((k) => k !== p.kind) })} />
           </Row>
         ))}
-        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。')}</span></Row>
       </Section>
-      <Section title={L('ヘルパー')}>
+      <Section info={L('オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。')} title={L('ヘルパー')}>
         <Row label={L('範囲を指定しないヘルパーを許可する')}>
           <Toggle checked={s.allowUnscopedHelpers} onChange={(v) => update({ allowUnscopedHelpers: v })} />
         </Row>
-        <Row><span className="caption secondary">{L('オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。')}</span></Row>
       </Section>
-      <Section title={L('Web 検索')}>
-        <Row label={L('Agent が自分の判断で Web を検索する')}><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>
-        <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{s.provider === 'fixture'
+      <Section title={L('Web 検索')} info={s.provider === 'fixture'
           ? L('ローカル fixture には検索がないため、オンでも使えません。')
-          : L('オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。')}</span></Row>
+          : L('オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。')}>
+        <Row label={L('Agent が自分の判断で Web を検索する')}><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>
       </Section>
       <GuideSettings />
-      <div className="caption secondary">{L('チャットは任意機能です。通常の操作はすべて UI から行えます。')}</div>
     </Form>
   )
 }
@@ -565,12 +606,11 @@ function APISettings() {
 function GuideSettings() {
   useObserve(guide)
   return (
-    <Section title={L('ガイドのツグミ')}>
+    <Section info={L('ガイドは上の接続先とキーを使います。キーがあると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。')} title={L('ガイドのツグミ')}>
       <Row label={L('状態')}><span className="secondary">{guide.connected ? L('右下に表示中') : L('API キーが未設定のため、決まったデモの案内だけをしています')}</span></Row>
       {/* Pressed, it says what happens next and waits until it has happened. */}
       <Row><Button disabled={guide.offersDemo} onClick={() => void guide.resetIntroduction()}>{L('初回の案内（デモの勧誘）をもう一度表示')}</Button></Row>
       {guide.offersDemo && <Row><span className="label callout" style={{ color: 'var(--green)', whiteSpace: 'normal' }}><Icon name="checkmark.circle.fill" />{L('設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。')}</span></Row>}
-      <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('ガイドは上の接続先とキーを使います。キーがあると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。')}</span></Row>
     </Section>
   )
 }
@@ -637,7 +677,7 @@ function ConnectionSettings() {
   }, [])
   return (
     <div className="col gap8 pad16 fill">
-      <div className="callout secondary">{L('開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。')}</div>
+      <div className="row"><InfoButton>{L('開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。')}</InfoButton></div>
       <div className="list bordered flex1">
         {list.map((e) => (
           <div key={e.key} className="list-row col-start gap4">
@@ -681,8 +721,7 @@ export function ProjectPermissionSettings() {
     finally { setBusy(false) }
   }
   useEffect(() => { void request() }, [])
-  return <Section title={L('Agent のプロジェクト権限')}>
-    <Row><span className="caption secondary">{L('プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。')}</span></Row>
+  return <Section info={L('プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。')} title={L('Agent のプロジェクト権限')}>
     {projects.map(project => <div key={project.project_id}>
       <Row label={project.title || project.path || project.project_id}><span className="caption secondary selectable">{project.path}</span></Row>
       {project.permissions.map(permission => <Row key={`${permission.resource_id}:${permission.access}`}

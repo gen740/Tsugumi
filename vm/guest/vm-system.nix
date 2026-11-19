@@ -21,6 +21,7 @@
   tsugumid,
   tini,
   bashInteractive,
+  busybox,
   cacert,
   coreutils,
   findutils,
@@ -83,15 +84,18 @@ let
     if [ -L /etc/nix ]; then target=$(readlink -f /etc/nix); rm /etc/nix; mkdir /etc/nix; cp -L "$target"/* /etc/nix/; fi
     rm -f /etc/nix/nix.conf
     printf '%s\nextra-platforms = x86_64-linux\nextra-sandbox-paths = %s\n' "$conf" "$sandbox" > /etc/nix/nix.conf
-    for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = nix-daemon ] && kill "''${p#/proc/}"; done
-    for i in $(seq 50); do [ -S /nix/var/nix/daemon-socket/socket ] || break; sleep 0.1; done
+    ${tsugumid}/bin/tsugumi-vmd --stop-nix || exit 1
     rm -f /nix/var/nix/daemon-socket/socket
     nix-daemon --daemon >>/persist/nix-daemon.log 2>&1 &
-    for i in $(seq 100); do [ -S /nix/var/nix/daemon-socket/socket ] && break; sleep 0.1; done
+    ${tsugumid}/bin/tsugumi-vmd --wait-daemon "$!" /nix/var/nix/daemon-socket/socket || exit 1
     echo "x86_64-linux: $mode ($interpreter)"
   '';
   supervisor = writeShellScript "tsugumi-supervisor" ''
-    ${x86}
+    ${x86} || {
+      echo "TSUGUMI-FAILED x86 Nix daemon restart failed"
+      sync
+      exec ${busybox}/bin/poweroff -f
+    }
     exec ${tsugumid}/bin/tsugumi-vmd \
       --tsugumid ${tsugumid}/bin/tsugumid --tini ${tini}/bin/tini --bash ${bashInteractive}/bin/bash \
       --path ${lib.makeBinPath projectTools} --cert-file ${cacert}/etc/ssl/certs/ca-bundle.crt
@@ -101,4 +105,5 @@ runCommand "tsugumi-vm-system-${tsugumid.version}" { } ''
   mkdir -p $out
   ln -s ${supervisor} $out/supervisor
   ln -s ${tini}/bin/tini $out/tini
+  ln -s ${tsugumid}/bin/tsugumi-vmd $out/vmd
 ''

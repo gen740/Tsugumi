@@ -1,6 +1,12 @@
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
-in {
+{
+  pkgs,
+  inputs,
+  params,
+}:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
+in
+{
   run = inputs.tsugumi.csharpCard {
     inherit sdk;
     src = ./src;

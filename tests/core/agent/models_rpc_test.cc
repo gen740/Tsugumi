@@ -27,10 +27,9 @@ class ModelsFixture : public AgentFixture {
             return H::CreateProviderSetRequest(
                        b,
                        b.CreateString(key_profile.empty() ? "desktop"
-                                                         : key_profile),
+                                                          : key_profile),
                        b.CreateString(id),
-                       Tsugumi::Host::ProviderInput::Pack(b, &key), false,
-                       true)
+                       Tsugumi::Host::ProviderInput::Pack(b, &key), false, true)
                 .Union();
           });
       if (!provisioned.Code().empty())

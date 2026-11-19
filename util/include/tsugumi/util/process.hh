@@ -15,7 +15,8 @@ namespace tsugumi::proc {
 
 struct Spec {
   std::vector<std::string> argv;
-  std::vector<std::string> env;  // "K=V"; the parent environment is never inherited
+  std::vector<std::string>
+      env;  // "K=V"; the parent environment is never inherited
   std::string cwd;
   // Extra descriptors mapped into the child: {child_fd, parent_fd}.
   std::vector<std::pair<int, int>> fds;

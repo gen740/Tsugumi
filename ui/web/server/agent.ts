@@ -1,37 +1,23 @@
 import type { ChatRow, AccessGroup } from '../shared/chatPresentation'
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../shared/bfbs'
-import { AGENT } from '../shared/agentShared'
 
 export interface ToolSpec {
   name: string
-  payloadType: number
   object: number
   description: string
   inputSchema: Record<string, unknown>
-  mutating: boolean
-  /** Run by the model provider (web search): it has no tool_use of ours. */
-  server?: boolean
 }
-
-export const DEFAULT_REQUESTS = AGENT.requests
-/** Filled by the Agent, never by the model. */
-const AGENT_FIELDS = new Set(AGENT.agentFields)
-/** Fields of a request that the apps use and the model is not offered. */
-const NOT_FOR_MODELS: Record<string, string[]> = AGENT.notForModels
-
 
 export const toolName = (r: string) => r.replace('Request', '').replace(/(?<!^)([A-Z])/g, '_$1').toLowerCase()
 
 export class ToolCatalog {
   readonly tools: ToolSpec[]
-  readonly replyNames = new Map<number, string>()
 
-  constructor(readonly schema: BFBS, requests = DEFAULT_REQUESTS, namespace = 'Tsugumi.RPC') {
+  constructor(readonly schema: BFBS, requests: string[]) {
+    const namespace = 'Tsugumi.Agent'
     const union = schema.enums.find((e) => e.name === `${namespace}.RequestPayload`)
     if (!union) throw new Error('RequestPayload union not found')
-    const reply = schema.enums.find((e) => e.name === `${namespace}.ReplyPayload`)
-    for (const v of reply?.values ?? []) this.replyNames.set(v.value, v.name)
     this.tools = requests.map((r) => {
       const index = schema.object(`${namespace}.${r}`)
       const v = union.values.find((x) => x.unionType?.index === index)
@@ -39,25 +25,20 @@ export class ToolCatalog {
       const obj = schema.objects[index]
       const doc = obj.documentation.join(' ').trim()
       return {
-        name: toolName(r), payloadType: v.value, object: index,
+        name: toolName(r), object: index,
         description: `${r.replace('Request', '')}: ${doc}`,
-        inputSchema: this.objectSchema(index, 0, namespace === 'Tsugumi.RPC' ? new Set([...AGENT_FIELDS, ...(NOT_FOR_MODELS[r] ?? [])]) : new Set()),
-        mutating: obj.fields.some((f) => f.name === 'op_id'),
+        inputSchema: this.objectSchema(index, 0),
       }
     })
   }
 
-  tool(name: string) {
-    return this.tools.find((t) => t.name === name)
-  }
-
-  private objectSchema(index: number, depth: number, skip = new Set<string>()): Record<string, unknown> {
+  private objectSchema(index: number, depth: number): Record<string, unknown> {
     if (depth >= 8) return { type: 'object' }
     const obj = this.schema.objects[index]
     const props: Record<string, unknown> = {}
     const required: string[] = []
     for (const f of obj.fields) {
-      if (skip.has(f.name) || f.type.base === BaseType.utype) continue
+      if (f.type.base === BaseType.utype) continue
       const p = this.typeSchema(f, depth)
       if (f.documentation.length) p.description = f.documentation.join(' ')
       if (f.type.base === BaseType.union) {
@@ -170,7 +151,8 @@ export type AgentEvent =
   | { kind: 'retrying'; message: string }
   /** The text streamed so far in this reply is dropped: it is asked again. */
   | { kind: 'discardText' }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
+  | { kind: 'cancelled' }
   | { kind: 'finished' }
   /** What a helper started by `delegate` does (its own events). */
   | { kind: 'helperStarted'; text: string }

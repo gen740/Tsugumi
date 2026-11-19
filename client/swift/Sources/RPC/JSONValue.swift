@@ -88,13 +88,14 @@ public indirect enum JSONValue: Equatable, Sendable {
       case UInt8(ascii: "{"):
         i += 1
         var o: [(String, JSONValue)] = []
+        var keys = Set<String>()
         skip()
         if i < bytes.count, bytes[i] == UInt8(ascii: "}") { i += 1; return .object(o) }
         while true {
           skip()
           guard i < bytes.count, bytes[i] == UInt8(ascii: "\"") else { throw ParseError(message: "expected key", offset: i) }
           let k = try string()
-          if o.contains(where: { $0.0 == k }) { throw ParseError(message: "duplicate key \(k)", offset: i) }
+          if !keys.insert(k).inserted { throw ParseError(message: "duplicate key \(k)", offset: i) }
           skip()
           guard i < bytes.count, bytes[i] == UInt8(ascii: ":") else { throw ParseError(message: "expected ':'", offset: i) }
           i += 1

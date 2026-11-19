@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+
 #include "tsugumi/document/definition_values.hh"
 #include "tsugumi/document/types.hh"
 namespace tsugumi {
@@ -27,8 +28,9 @@ struct FailureData {
   std::optional<uint64_t> current_rev;
   std::optional<uint32_t> retry_after_ms;
 
-  static FailureData make(FailureKind k, std::string diag = {},
-                          std::vector<std::pair<std::string, std::string>> args = {});
+  static FailureData make(
+      FailureKind k, std::string diag = {},
+      std::vector<std::pair<std::string, std::string>> args = {});
   // Standalone Failure FlatBuffer (persistence format). Implemented in wire.cc.
   std::string to_bytes() const;
   static std::optional<FailureData> from_bytes(const std::string& s);
@@ -45,7 +47,8 @@ class Failed : public std::exception {
          std::vector<std::pair<std::string, std::string>> args = {})
       : failure(FailureData::make(k, std::move(diag), std::move(args))) {}
   const char* what() const noexcept override {
-    return failure.diagnostic ? failure.diagnostic->c_str() : failure_kind_name(failure.kind);
+    return failure.diagnostic ? failure.diagnostic->c_str()
+                              : failure_kind_name(failure.kind);
   }
   FailureData failure;
 };

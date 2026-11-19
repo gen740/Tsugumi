@@ -1,12 +1,13 @@
 #include "host/skills.hh"
 
+#include <sys/stat.h>
+
 #include <algorithm>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <set>
 #include <sstream>
-#include <sys/stat.h>
 
 #include "agent/helper_scope.hh"
 #include "tsugumi/util/fs.hh"
@@ -36,12 +37,12 @@ namespace fs = std::filesystem;
 
 #ifdef __APPLE__
 struct Release {
-  auto operator()(const void *p) const -> void { CFRelease(p); }
+  auto operator()(const void* p) const -> void { CFRelease(p); }
 };
 using String = std::unique_ptr<const __CFString, Release>;
 auto Unicode(std::string_view text) -> String {
   return String(CFStringCreateWithBytes(
-      nullptr, reinterpret_cast<const UInt8 *>(text.data()), text.size(),
+      nullptr, reinterpret_cast<const UInt8*>(text.data()), text.size(),
       kCFStringEncodingUTF8, false));
 }
 auto UTF8(CFStringRef s) -> std::string {
@@ -55,8 +56,7 @@ auto UTF8(CFStringRef s) -> std::string {
 }
 auto Normalize(std::string_view s) -> std::string {
   const auto text = Unicode(s);
-  if (!text)
-    return std::string(s);
+  if (!text) return std::string(s);
   auto copy = CFStringCreateMutableCopy(nullptr, 0, text.get());
   CFStringNormalize(copy, kCFStringNormalizationFormC);
   auto result = UTF8(copy);
@@ -65,8 +65,7 @@ auto Normalize(std::string_view s) -> std::string {
 }
 auto CleanName(std::string_view s) -> std::string {
   const auto text = Unicode(s);
-  if (!text)
-    return "";
+  if (!text) return "";
   std::string out;
   for (CFIndex i = 0; i < CFStringGetLength(text.get());) {
     const auto range =
@@ -103,7 +102,7 @@ auto CleanName(std::string_view s) -> std::string {
 #else
 auto Normalize(std::string_view s) -> std::string {
   UErrorCode error = U_ZERO_ERROR;
-  const auto *normalizer = icu::Normalizer2::getNFCInstance(error);
+  const auto* normalizer = icu::Normalizer2::getNFCInstance(error);
   icu::UnicodeString normalized;
   normalizer->normalize(icu::UnicodeString::fromUTF8(s), normalized, error);
   std::string out;
@@ -189,7 +188,7 @@ auto TrimWhitespace(std::string s) -> std::string {
   size_t begin = 0, end = s.size();
   for (bool found = true; found && begin < end;) {
     found = false;
-    for (const auto &space : spaces)
+    for (const auto& space : spaces)
       if (s.compare(begin, space.size(), space) == 0) {
         begin += space.size();
         found = true;
@@ -198,7 +197,7 @@ auto TrimWhitespace(std::string s) -> std::string {
   }
   for (bool found = true; found && begin < end;) {
     found = false;
-    for (const auto &space : spaces)
+    for (const auto& space : spaces)
       if (end - begin >= space.size() &&
           s.compare(end - space.size(), space.size(), space) == 0) {
         end -= space.size();
@@ -216,7 +215,7 @@ auto Trim(std::string s, std::string_view chars) -> std::string {
              : s.substr(begin, s.find_last_not_of(chars) - begin + 1);
 }
 
-auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
+auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
   auto source = std::make_unique<H::SkillFolderT>();
   source->path = folder.string();
   source->status = "ready";
@@ -229,19 +228,17 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
   }
   std::vector<fs::directory_entry> entries;
   for (const fs::directory_iterator end; it != end; it.increment(error)) {
-    if (error)
-      break;
+    if (error) break;
     entries.push_back(*it);
   }
-  if (error)
-    source->status = "unreadable";
+  if (error) source->status = "unreadable";
   out.folders.push_back(std::move(source));
   std::stable_sort(entries.begin(), entries.end(),
-                   [](const auto &a, const auto &b) {
+                   [](const auto& a, const auto& b) {
                      return Normalize(a.path().filename().string()) <
                             Normalize(b.path().filename().string());
                    });
-  for (const auto &item : entries) {
+  for (const auto& item : entries) {
     auto file = item.path();
     auto name = file.stem().string();
     // URLResourceValues.isDirectory does not follow directory symlinks.
@@ -252,8 +249,7 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
       auto extension = file.extension().string();
       std::transform(extension.begin(), extension.end(), extension.begin(),
                      [](unsigned char c) { return std::tolower(c); });
-      if (extension != ".md")
-        continue;
+      if (extension != ".md") continue;
     }
     auto skill = std::make_unique<H::SkillT>();
     skill->name = Normalize(CleanName(RepairUTF8(name)));
@@ -288,7 +284,7 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
               skill->scoped = true;
               skill->scope = *scope;
             }
-          } catch (const std::exception &error) {
+          } catch (const std::exception& error) {
             skill->status = "invalid_scope";
             scope_error = error.what();
           }
@@ -315,29 +311,25 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
                 break;
               }
           }
-          if (!scope_error.empty())
-            skill->description = scope_error;
+          if (!scope_error.empty()) skill->description = scope_error;
         }
       }
     }
     out.skills.push_back(std::move(skill));
   }
 }
-} // namespace
+}  // namespace
 
 auto SkillScope(std::string_view text)
     -> std::optional<std::vector<std::string>> {
   std::istringstream input{std::string(text)};
   std::string line;
   auto next = [&] {
-    if (!std::getline(input, line))
-      return false;
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
+    if (!std::getline(input, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
     return true;
   };
-  if (!next() || line != "---")
-    return std::nullopt;
+  if (!next() || line != "---") return std::nullopt;
   std::optional<std::vector<std::string>> result;
   bool always = false;
   while (next()) {
@@ -350,10 +342,8 @@ auto SkillScope(std::string_view text)
     }
     if (line.starts_with("always:"))
       always = TrimWhitespace(line.substr(7)) == "true";
-    if (!line.starts_with("scope:"))
-      continue;
-    if (result)
-      throw std::runtime_error("Duplicate Skill scope declaration");
+    if (!line.starts_with("scope:")) continue;
+    if (result) throw std::runtime_error("Duplicate Skill scope declaration");
     auto value = Trim(line.substr(6), " \t");
     if (value.size() < 2 || value.front() != '[' || value.back() != ']')
       throw std::runtime_error("Skill scope must be an inline access list");
@@ -371,21 +361,22 @@ auto SkillScope(std::string_view text)
   throw std::runtime_error("Unclosed Skill front matter");
 }
 
-auto ScopedSkillTask(std::string_view text, const std::string &name,
-                     const std::vector<std::string> &cards,
-                     const std::string &instruction) -> ::tsugumi::json::Members {
+auto ScopedSkillTask(std::string_view text, const std::string& name,
+                     const std::vector<std::string>& cards,
+                     const std::string& instruction)
+    -> ::tsugumi::json::Members {
   const auto scope = SkillScope(text);
   if (!scope || cards.empty())
     throw std::runtime_error(
         "A scoped helper requires a declared Skill and selected Cards");
   std::vector<std::string> selected;
-  for (const auto &card : cards)
+  for (const auto& card : cards)
     selected.push_back(::tsugumi::json::Quote(card));
   ::tsugumi::json::Members task{
       {"name", ::tsugumi::json::Quote(name)},
       {"instruction",
        ::tsugumi::json::Quote(instruction + "\n" + std::string(text))}};
-  for (const auto *access : {"read", "write", "run"})
+  for (const auto* access : {"read", "write", "run"})
     task[std::string(access) + "_cards"] =
         std::find(scope->begin(), scope->end(), access) == scope->end()
             ? "[]"
@@ -394,27 +385,25 @@ auto ScopedSkillTask(std::string_view text, const std::string &name,
   return task;
 }
 
-auto SelectScopedSkill(const H::SkillsListT &catalog,
-                       const std::vector<std::string> &names,
-                       const std::string &explicit_name,
-                       const std::vector<std::string> &cards,
-                       const std::string &instruction)
+auto SelectScopedSkill(const H::SkillsListT& catalog,
+                       const std::vector<std::string>& names,
+                       const std::string& explicit_name,
+                       const std::vector<std::string>& cards,
+                       const std::string& instruction)
     -> std::optional<::tsugumi::json::Members> {
   std::set<std::string> selected;
-  for (const auto &name : names)
-    selected.insert(SkillNameKey(name));
-  std::vector<const H::SkillT *> matches;
-  for (const auto &skill : catalog.skills)
+  for (const auto& name : names) selected.insert(SkillNameKey(name));
+  std::vector<const H::SkillT*> matches;
+  for (const auto& skill : catalog.skills)
     if ((!explicit_name.empty() && skill->name == explicit_name) ||
         (selected.contains(skill->name) && skill->scoped))
       matches.push_back(skill.get());
-  if (matches.empty() && explicit_name.empty())
-    return std::nullopt;
+  if (matches.empty() && explicit_name.empty()) return std::nullopt;
   if (matches.size() != 1 || selected.size() > 1 ||
       matches.front()->status != "ready" || !matches.front()->scoped)
     throw std::runtime_error(
         "Select exactly one unambiguous Skill with a valid scope declaration");
-  const auto &skill = *matches.front();
+  const auto& skill = *matches.front();
   const auto bytes = skill.path.starts_with("builtin:")
                          ? BundledSkill(skill.path)
                          : ReadSkill(skill.source_folder, skill.path);
@@ -423,7 +412,7 @@ auto SelectScopedSkill(const H::SkillsListT &catalog,
   return task;
 }
 
-auto BundledSkill(const std::string &path) -> std::string {
+auto BundledSkill(const std::string& path) -> std::string {
   if (path == "builtin:helpers")
     return {reinterpret_cast<const char*>(tsugumi_agent_helpers_skill),
             tsugumi_agent_helpers_skill_size};
@@ -431,15 +420,15 @@ auto BundledSkill(const std::string &path) -> std::string {
     return {reinterpret_cast<const char*>(tsugumi_agent_demo_skill),
             tsugumi_agent_demo_skill_size};
   if (path == "builtin:review")
-    return {reinterpret_cast<const char *>(tsugumi_agent_review_skill),
+    return {reinterpret_cast<const char*>(tsugumi_agent_review_skill),
             tsugumi_agent_review_skill_size};
   if (path == "builtin:rerun-compare")
-    return {reinterpret_cast<const char *>(tsugumi_agent_rerun_compare_skill),
+    return {reinterpret_cast<const char*>(tsugumi_agent_rerun_compare_skill),
             tsugumi_agent_rerun_compare_skill_size};
   return {};
 }
 
-auto ReadSkill(const fs::path &root, const fs::path &file) -> std::string {
+auto ReadSkill(const fs::path& root, const fs::path& file) -> std::string {
   // Resolve permitted symlinks, then open every component beneath the resolved
   // root without following links. A replacement after resolution cannot escape.
   const auto base = fs::canonical(root);
@@ -484,8 +473,7 @@ auto TrustedParent(const fs::path& path,
 auto ProjectTrust(sql::Db& db, const fs::path& path,
                   const std::vector<std::string>& folders)
     -> H::ProjectTrustDecision {
-  if (path.empty())
-    return H::ProjectTrustDecision::Unknown;
+  if (path.empty()) return H::ProjectTrustDecision::Unknown;
   if (!TrustedParent(path, folders).empty())
     return H::ProjectTrustDecision::Trusted;
   const auto canonical = fs::weakly_canonical(path);
@@ -493,8 +481,7 @@ auto ProjectTrust(sql::Db& db, const fs::path& path,
   auto query = db.prepare(
       "SELECT device,inode,decision FROM project_trust WHERE path=?");
   query.bind(1, canonical.string());
-  if (!query.step())
-    return H::ProjectTrustDecision::Unknown;
+  if (!query.step()) return H::ProjectTrustDecision::Unknown;
   if (::stat(canonical.c_str(), &folder) == 0 && S_ISDIR(folder.st_mode) &&
       query.u64(0) == static_cast<uint64_t>(folder.st_dev) &&
       query.u64(1) == static_cast<uint64_t>(folder.st_ino))
@@ -506,7 +493,7 @@ auto ProjectTrust(sql::Db& db, const fs::path& path,
   return H::ProjectTrustDecision::Unknown;
 }
 
-auto SetProjectTrust(sql::Db &db, const fs::path &path,
+auto SetProjectTrust(sql::Db& db, const fs::path& path,
                      H::ProjectTrustDecision decision) -> void {
   const auto canonical = fs::canonical(path);
   struct stat folder{};
@@ -532,7 +519,7 @@ auto ListSkills(const fs::path& project,
     demo->path = "builtin:demo";
     demo->status = "ready";
     out.skills.push_back(std::move(demo));
-    for (const auto *name : {"review", "rerun-compare"}) {
+    for (const auto* name : {"review", "rerun-compare"}) {
       auto skill = std::make_unique<H::SkillT>();
       skill->name = name;
       skill->path = std::string("builtin:") + name;
@@ -551,7 +538,7 @@ auto ListSkills(const fs::path& project,
     out.skills.push_back(std::move(helpers));
   }
   if (!project.empty()) Scan(project / "skills", out);
-  for (const auto &folder : folders)
+  for (const auto& folder : folders)
     Scan(fs::path(folder).lexically_normal(), out);
   // Registered folders are ordered; the last matching source wins. Project
   // sources outrank registered sources, which outrank built-ins.
@@ -581,7 +568,7 @@ auto ListSkills(const fs::path& project,
     return builtins.contains(skill->name) && (!in_project || trusted) &&
            winners[skill->name] != skill->path;
   });
-  for (auto &skill : out.skills) {
+  for (auto& skill : out.skills) {
     const bool in_project =
         !project.empty() &&
         skill->source_folder == (project / "skills").string();
@@ -593,10 +580,8 @@ auto ListSkills(const fs::path& project,
           "An automatically applied Skill cannot declare scope; select target "
           "Cards to run a scoped Skill";
     }
-    if (in_project && !trusted)
-      skill->always = false;
-    if (skill->path.starts_with("builtin:"))
-      continue;
+    if (in_project && !trusted) skill->always = false;
+    if (skill->path.starts_with("builtin:")) continue;
     if (project.empty() ||
         !tsugumi::fs::valid_relative_path(
             fs::path(skill->path).lexically_relative(project).string()))
@@ -604,4 +589,4 @@ auto ListSkills(const fs::path& project,
   }
   return out;
 }
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

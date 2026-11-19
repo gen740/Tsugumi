@@ -1,10 +1,19 @@
-{ pkgs, inputs, params }:
+{
+  pkgs,
+  inputs,
+  params,
+}:
 # MNIST is fixed like a package: fetched once by its hash, then every run reads
 # the same files from the Nix store. No network during a run.
 let
   sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
   mirror = "https://ossci-datasets.s3.amazonaws.com/mnist";
-  fetch = name: hash: pkgs.fetchurl { url = "${mirror}/${name}.gz"; inherit hash; };
+  fetch =
+    name: hash:
+    pkgs.fetchurl {
+      url = "${mirror}/${name}.gz";
+      inherit hash;
+    };
   mnist = pkgs.runCommand "mnist-idx" { } ''
     mkdir $out
     gunzip -c ${fetch "train-images-idx3-ubyte" "sha256-RA/Kv3PMVG+iFHXoHqNwJlYF9WviEKQCTSyo8gNSNgk="} > $out/train-images-idx3-ubyte
@@ -25,6 +34,9 @@ in
 {
   run = inputs.tsugumi.pythonCard {
     inherit sdk src;
-    packages = ps: [ ps.numpy ps.matplotlib ];
+    packages = ps: [
+      ps.numpy
+      ps.matplotlib
+    ];
   };
 }

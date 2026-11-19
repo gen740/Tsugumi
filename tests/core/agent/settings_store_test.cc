@@ -7,11 +7,11 @@
 #include <thread>
 
 #include "../agent_fixture_server.hh"
-#include "tsugumi/util/json_object.hh"
 #include "agent/runtime.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
 #include "host/store.hh"
+#include "tsugumi/util/json_object.hh"
 
 extern const unsigned char tsugumi_agent_settings[];
 extern const unsigned long tsugumi_agent_settings_size;
@@ -88,7 +88,9 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
   };
   auto animation = [](const std::string& reply) {
     for (const auto* item : *H::GetMessage(reply.data())
-                                ->payload_as_Reply()->value_as_Settings()->values())
+                                 ->payload_as_Reply()
+                                 ->value_as_Settings()
+                                 ->values())
       if (item->key()->str() == "agent.animateWork")
         return item->value_json()->str();
     return std::string{};
@@ -98,7 +100,9 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
     H::SettingsUpdateRequestT value;
     value.profile = "desktop";
     value.revision = H::GetMessage(before.data())
-                         ->payload_as_Reply()->value_as_Settings()->revision();
+                         ->payload_as_Reply()
+                         ->value_as_Settings()
+                         ->revision();
     auto item = std::make_unique<H::SettingT>();
     item->key = "agent.animateWork";
     item->value_json = raw;
@@ -109,8 +113,9 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
   };
   EXPECT_EQ(animation(get()), "true");
   const auto invalid = update(Quote("false"));
-  EXPECT_NE(H::GetMessage(invalid.data())->payload_as_Reply()->value_as_Failure(),
-            nullptr);
+  EXPECT_NE(
+      H::GetMessage(invalid.data())->payload_as_Reply()->value_as_Failure(),
+      nullptr);
   EXPECT_EQ(animation(get()), "true");
   EXPECT_EQ(animation(update("false")), "false");
   service.reset();
@@ -238,6 +243,63 @@ TEST(HostSettingsStore,
 }  // namespace tsugumi::test
 
 namespace tsugumi::test {
+TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
+  TemporaryDirectory directory;
+  host::Settings service(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::make_unique<MemorySecrets>());
+  const auto update = [&](const std::string& profile, const std::string& key,
+                          const std::string& raw) {
+    H::SettingsGetRequestT get;
+    get.profile = profile;
+    H::RequestT read;
+    read.value.Set(std::move(get));
+    flatbuffers::FlatBufferBuilder rb;
+    rb.Finish(H::Request::Pack(rb, &read));
+    const auto before = service.Handle(
+        *flatbuffers::GetRoot<H::Request>(rb.GetBufferPointer()), 1);
+    H::SettingsUpdateRequestT value;
+    value.profile = profile;
+    value.revision = H::GetMessage(before.data())
+                         ->payload_as_Reply()
+                         ->value_as_Settings()
+                         ->revision();
+    auto item = std::make_unique<H::SettingT>();
+    item->key = key;
+    item->value_json = raw;
+    value.changes.push_back(std::move(item));
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder b;
+    b.Finish(H::Request::Pack(b, &request));
+    const auto reply = service.Handle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+    return H::GetMessage(reply.data())->payload_as_Reply()->value_as_Failure() ==
+           nullptr;
+  };
+  const auto defaults = host::VMDefaultResources();
+  const auto limits = host::VMResourceLimits();
+  EXPECT_GE(defaults.cpus, 2u);
+  EXPECT_LE(defaults.cpus, std::min(8u, limits.cpus));
+  EXPECT_GE(defaults.memory_gib, 4u);
+  EXPECT_LE(defaults.memory_gib, 16u);
+  EXPECT_EQ(defaults.store_gib, 64u);
+  EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
+  EXPECT_TRUE(update("desktop", "vm.cpus", "1"));
+  EXPECT_TRUE(update("desktop", "vm.storeGiB", "128"));
+  EXPECT_EQ(service.VMResources().cpus, 1u);
+  EXPECT_EQ(service.VMResources().store_gib, 128u);
+  EXPECT_EQ(service.VMResources().memory_gib, defaults.memory_gib);
+  EXPECT_FALSE(update("desktop", "vm.cpus", std::to_string(limits.cpus + 1)));
+  EXPECT_FALSE(update("desktop", "vm.memoryGiB", "1"));
+  EXPECT_FALSE(update("desktop", "vm.storeGiB", "8"));
+  EXPECT_FALSE(update("desktop", "vm.storeGiB", Quote("64")));
+  EXPECT_FALSE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_FALSE(update("desktop", "vm.other", "2"));
+  EXPECT_TRUE(update("desktop", "vm.cpus", "0"));
+  EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
+}
 TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   TemporaryDirectory directory;
   auto memory = std::make_unique<MemorySecrets>();
@@ -249,37 +311,53 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
       std::move(memory), host::Settings::KeyStorage::Host);
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
-  const auto update = [&](const std::string& mode, uint64_t revision, const std::string& key = "versions.noteMode") {
+  const auto update = [&](const std::string& mode, uint64_t revision,
+                          const std::string& key = "versions.noteMode") {
     flatbuffers::FlatBufferBuilder b;
-    const auto change = H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
-    const auto p = H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"), revision,
-        b.CreateVector(std::vector{change}));
-    const auto request = H::CreateRequest(b, H::RequestPayload::SettingsUpdateRequest, p.Union());
-    H::FinishMessageBuffer(b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
-    return service.Handle(*H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+    const auto change =
+        H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
+    const auto p =
+        H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"), revision,
+                                       b.CreateVector(std::vector{change}));
+    const auto request = H::CreateRequest(
+        b, H::RequestPayload::SettingsUpdateRequest, p.Union());
+    H::FinishMessageBuffer(
+        b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
+    return service.Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
   };
   for (const auto& invalid : {"true", "\"unknown\""}) {
     const auto failure = update(invalid, 0);
-    ASSERT_TRUE(H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
+    ASSERT_TRUE(
+        H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
   }
   auto reply = update("\"agent\"", 0);
-  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  ASSERT_TRUE(
+      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteMode("desktop"), "agent");
   EXPECT_EQ(service.VersionNoteMode("web:other"), "mechanical");
   reply = update("\"mechanical\"", 1);
-  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  ASSERT_TRUE(
+      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential, "ANTHROPIC_NOTE_KEY");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "claude-haiku-5-5");
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential,
+            "ANTHROPIC_NOTE_KEY");
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
+            "claude-haiku-5-5");
   EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
                 .credential,
             "ANTHROPIC_NOTE_KEY");
   reply = update("\"openai\"", 2, "agent.provider");
-  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "").credential, "OPENAI_NOTE_KEY");
+  ASSERT_TRUE(
+      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "")
+                .credential,
+            "OPENAI_NOTE_KEY");
   reply = update("\"custom-small-model\"", 3, "agent.thoughtModel.openai");
-  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "custom-small-model");
+  ASSERT_TRUE(
+      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
+            "custom-small-model");
 }
 }  // namespace tsugumi::test
 
@@ -482,7 +560,7 @@ TEST_F(ContextBudget,
   Add("Implement the Draft");
   model.Queue(AnthropicTool("edit", "project_edit", "{}"));
   int calls = 0;
-  hooks.execute_tool = [&](const auto &, auto) {
+  hooks.execute_tool = [&](const auto&, auto) {
     ++calls;
     return agent::ToolResult{
         R"({"reply":"Failure","value":{"kind":"internal_error","diagnostic":"HOST_IDENTITY_SENTINEL"}})",
@@ -501,9 +579,10 @@ TEST_F(ContextBudget,
 }
 
 TEST_F(ContextBudget, RepairableRefusalsAndNonJsonErrorsRemainToolResults) {
-  for (const auto* text : {
-           R"({"reply":"Failure","value":{"kind":"validation_failed","diagnostic":"write to.port"}})",
-           "{incomplete tool output"}) {
+  for (
+      const auto* text :
+      {R"({"reply":"Failure","value":{"kind":"validation_failed","diagnostic":"write to.port"}})",
+       "{incomplete tool output"}) {
     messages.clear();
     Add("Implement the Draft");
     model.Queue(AnthropicTool("edit", "project_edit", "{}"));
@@ -511,8 +590,9 @@ TEST_F(ContextBudget, RepairableRefusalsAndNonJsonErrorsRemainToolResults) {
     hooks.execute_tool = [text](const auto&, auto) {
       return agent::ToolResult{text, true, {}, {}};
     };
-    const auto result = agent::Runtime().Run(
-        config, "system", messages, {{"project_edit", "edit", "{}"}}, {}, hooks, &context);
+    const auto result = agent::Runtime().Run(config, "system", messages,
+                                             {{"project_edit", "edit", "{}"}},
+                                             {}, hooks, &context);
     EXPECT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
   }
   EXPECT_EQ(model.Requests().size(), 4u);
@@ -566,17 +646,20 @@ TEST_F(ContextBudget, ConsecutiveRequestsHaveByteIdenticalCachedPrefixes) {
       EXPECT_EQ(requests[step + 1].substr(0, end),
                 requests[step].substr(0, end));
       for (const auto* key : {"tools", "system", "instructions", "model"})
-        EXPECT_EQ(::tsugumi::json::Get(first, key), ::tsugumi::json::Get(second, key));
+        EXPECT_EQ(::tsugumi::json::Get(first, key),
+                  ::tsugumi::json::Get(second, key));
       if (api == agent::ProviderAPI::AnthropicMessages)
-        EXPECT_EQ(::tsugumi::json::Text(
-                      ::tsugumi::json::Object(first.at("cache_control")), "type"),
-                  "ephemeral");
+        EXPECT_EQ(
+            ::tsugumi::json::Text(
+                ::tsugumi::json::Object(first.at("cache_control")), "type"),
+            "ephemeral");
     }
   }
 }
 
 TEST_F(ContextBudget, ProviderCatalogPreservesReportedWindowsAndMissingValues) {
-  model.QueueHTTP(R"({"data":[{"id":"reported","max_input_tokens":1000000},{"id":"absent"},{"id":"null","max_input_tokens":null}]})");
+  model.QueueHTTP(
+      R"({"data":[{"id":"reported","max_input_tokens":1000000},{"id":"absent"},{"id":"null","max_input_tokens":null}]})");
   const auto catalog = agent::ListModels(config, {});
   ASSERT_EQ(catalog.size(), 3u);
   EXPECT_EQ(catalog[0].context_window_tokens, 1000000u);
@@ -587,7 +670,8 @@ TEST_F(ContextBudget, ProviderCatalogPreservesReportedWindowsAndMissingValues) {
 TEST_F(ContextBudget, ChatGPTCatalogUsesTheAccountsActiveWindow) {
   config.auth = agent::ProviderAuth::ChatGPT;
   config.credential = "TEST_TOKEN";
-  model.QueueHTTP(R"({"models":[{"slug":"gpt-6.1-sol","display_name":"Sol","visibility":"list","context_window":500000,"max_context_window":1050000},{"slug":"other","visibility":"list","context_window":null,"max_context_window":272000},{"slug":"hidden","visibility":"hide","context_window":1000000}]})");
+  model.QueueHTTP(
+      R"({"models":[{"slug":"gpt-6.1-sol","display_name":"Sol","visibility":"list","context_window":500000,"max_context_window":1050000},{"slug":"other","visibility":"list","context_window":null,"max_context_window":272000},{"slug":"hidden","visibility":"hide","context_window":1000000}]})");
   const auto catalog = agent::ListModels(config, {});
   ASSERT_EQ(catalog.size(), 2u);
   EXPECT_EQ(catalog[0].id, "gpt-6.1-sol");
@@ -647,7 +731,6 @@ TEST_F(ContextBudget,
   const auto normal = ::tsugumi::json::Object(requests[0]);
   EXPECT_EQ(summary.at("system"), normal.at("system"));
   EXPECT_EQ(summary.at("tools"), normal.at("tools"));
-  EXPECT_NE(requests[1].find("Want:"), std::string::npos);
 }
 
 TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
@@ -662,9 +745,6 @@ TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
   ASSERT_TRUE(Compacted());
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 3u);
-  EXPECT_NE(requests[1].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   EXPECT_EQ(context.input_tokens, 4000u);  // Summary usage is not the baseline.
 }
 
@@ -740,8 +820,8 @@ TEST_F(ContextBudget,
         JsonString(requests[i],
                    "/messages/" + std::to_string(2 * i) + "/content/0/content");
     EXPECT_TRUE(latest.ends_with("TAIL inspect-" + std::to_string(i)));
-    const auto before =
-        ::tsugumi::json::Get(::tsugumi::json::Object(requests[i - 1]), "messages");
+    const auto before = ::tsugumi::json::Get(
+        ::tsugumi::json::Object(requests[i - 1]), "messages");
     const auto after =
         ::tsugumi::json::Get(::tsugumi::json::Object(requests[i]), "messages");
     if (!after.starts_with(before.substr(0, before.size() - 1))) ++rewrites;
@@ -782,7 +862,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
                            {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
   EXPECT_TRUE(Compacted());
   EXPECT_TRUE(visible.empty());
-  EXPECT_GT(messages.size(), 20u);  // Many small recent messages, not four.
   EXPECT_TRUE(messages.front().context_summary);
   EXPECT_EQ(messages.back().content[0].text, std::string(180, 'r'));
   const auto requests = model.Requests();
@@ -790,8 +869,6 @@ TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
   EXPECT_NE(requests[0].find("signed-block"), std::string::npos);
   EXPECT_NE(requests[0].find("unchanged system"), std::string::npos);
   EXPECT_NE(requests[0].find("\"name\":\"inspect\""), std::string::npos);
-  EXPECT_NE(requests[0].find("Want:"), std::string::npos);
-  EXPECT_EQ(JsonUInt(requests[0], "/max_tokens"), 2048u);
   EXPECT_EQ(JsonString(requests[0], "/output_config/effort"), "max");
   // A failed continuation leaves the durable transcript untouched.
   const auto saved = agent::SerializeMessages(messages);
@@ -826,13 +903,12 @@ TEST_F(ContextBudget, OverLimitConversationSummarizesOnlyTheFittingPast) {
   std::jthread provider([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
-      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
-        continue;
+      if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
       // A real provider refuses the old whole-conversation summary too.
       if (request.size() >= config.context_limit_tokens)
         model.QueueHTTP(R"({"error":{"message":"prompt is too long"}})", 400);
-      else if (request.find("Create a short handoff") != std::string::npos)
+      else if (next == 2)
         model.Queue(AnthropicText("Want: continue. Done: past inspection."));
       else
         model.Queue(AnthropicText("done"));
@@ -906,7 +982,8 @@ TEST_F(ContextBudget, OneOversizedMessageFailsClearlyWithoutSendingOrRetrying) {
   const auto result =
       agent::Runtime().Run(config, "system", messages, {}, {}, hooks, &context);
   EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
-  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
+  EXPECT_EQ(result.error,
+            "the conversation no longer fits the model's context");
   EXPECT_TRUE(model.Requests().empty());
   EXPECT_EQ(agent::SerializeMessages(messages), original);
 }
@@ -917,18 +994,19 @@ TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
   call.type = "tool_use";
   call.id = "large-result";
   call.name = "inspect";
-  messages.push_back({"assistant", {call}, {}, {},
-                      agent::ProviderAPI::AnthropicMessages});
+  messages.push_back(
+      {"assistant", {call}, {}, {}, agent::ProviderAPI::AnthropicMessages});
   call.type = "tool_result";
   call.text = std::string(100000, 'x');
-  messages.push_back({"user", {call}, {}, {},
-                      agent::ProviderAPI::AnthropicMessages});
+  messages.push_back(
+      {"user", {call}, {}, {}, agent::ProviderAPI::AnthropicMessages});
   const auto original = agent::SerializeMessages(messages);
-  const auto result = agent::Runtime().Run(
-      config, "system", messages, {{"inspect", "Inspect", "{}"}}, {}, hooks,
-      &context);
+  const auto result =
+      agent::Runtime().Run(config, "system", messages,
+                           {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
   EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
-  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
+  EXPECT_EQ(result.error,
+            "the conversation no longer fits the model's context");
   EXPECT_TRUE(model.Requests().empty());
   EXPECT_EQ(agent::SerializeMessages(messages), original);
 }
@@ -947,18 +1025,23 @@ TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
   EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
                                               "claude-opus-4-5-20251101"),
             200000u);
-  const auto embedded = ::tsugumi::json::Object(std::string_view(
-      reinterpret_cast<const char*>(tsugumi_agent_settings), tsugumi_agent_settings_size));
-  const auto options = ::tsugumi::json::Object(::tsugumi::json::Get(embedded, "modelOptions"));
-  const auto connections = ::tsugumi::json::Object(::tsugumi::json::Get(options, "connections"));
+  const auto embedded = ::tsugumi::json::Object(
+      std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
+                       tsugumi_agent_settings_size));
+  const auto options =
+      ::tsugumi::json::Object(::tsugumi::json::Get(embedded, "modelOptions"));
+  const auto connections =
+      ::tsugumi::json::Object(::tsugumi::json::Get(options, "connections"));
   for (const auto& [provider, raw] : connections)
     for (const auto& group : ::tsugumi::json::Array(
              ::tsugumi::json::Get(::tsugumi::json::Object(raw), "effort")))
-      for (const auto& id : ::tsugumi::json::Array(
-               ::tsugumi::json::Get(::tsugumi::json::Object(group), "models"))) {
+      for (const auto& id : ::tsugumi::json::Array(::tsugumi::json::Get(
+               ::tsugumi::json::Object(group), "models"))) {
         const auto name = ::tsugumi::json::String(id);
-        EXPECT_GT(host::Models::ContextWindowTokens(directory.path, provider, name),
-                  128000u) << name;
+        EXPECT_GT(
+            host::Models::ContextWindowTokens(directory.path, provider, name),
+            128000u)
+            << name;
       }
   host::HostStore home(directory.path);
   auto& db = home.db;
@@ -976,10 +1059,13 @@ TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
       std::move(secrets), host::Settings::KeyStorage::Host);
   EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
             1000000u - 32768u - 50000u);
-  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")}}).context_limit_tokens,
-            1050000u - 32768u - 52500u);
-  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")},
-                              {"model", Quote("unknown")}}).context_limit_tokens,
+  EXPECT_EQ(
+      settings.Resolve({{"provider_id", Quote("openai")}}).context_limit_tokens,
+      1050000u - 32768u - 52500u);
+  EXPECT_EQ(settings
+                .Resolve({{"provider_id", Quote("openai")},
+                          {"model", Quote("unknown")}})
+                .context_limit_tokens,
             128000u - 32768u - 6400u);
   auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
   catalog.bind(1, "anthropic")

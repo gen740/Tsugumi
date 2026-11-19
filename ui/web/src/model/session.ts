@@ -344,7 +344,6 @@ export const errorText = (e: unknown): string => {
   return e instanceof Error ? e.message : String(e)
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /** A failure to reach the tsugumid, as opposed to one while reading the project. */
 class Unreached extends Error {
   constructor(readonly cause: unknown) {
@@ -383,10 +382,9 @@ export class ProjectSession extends Observable {
   /** The last connection failed before the project could be read (tsugumid was not reached), not while reading it. */
   connectionFailed = false
   /** Opens the transport to a tsugumid (the tests give their own). */
-  openTransport: (url: string) => Promise<Transport> = webSocketTransport
-  /** The waits between tries to reach a tsugumid that has just started (ms). */
-  connectRetryDelays = [200, 400, 800, 1600, 2000]
+  openTransport: (url: string, signal?: AbortSignal) => Promise<Transport> = webSocketTransport
   private connectionEpoch?: symbol
+  private connecting?: AbortController
   private client?: RPCClient
   private subscription?: string
   private lastSeq = 0n
@@ -431,8 +429,6 @@ export class ProjectSession extends Observable {
   /** Edits wait for the run to end (the core keeps Card changes back while it runs). */
   /** Last user-facing problem of an action (run refused, import failed, ...). */
   cacheUsage?: R.ProjectCacheUsageResultT
-  private cacheUsageTimer?: ReturnType<typeof setTimeout>
-  private cacheNoticeShown = false
   notice?: string
 
   private readonly documentRevisions = new DocumentRevisions()
@@ -594,25 +590,23 @@ export class ProjectSession extends Observable {
     void this.openConnection()
   }
 
-  archiveHistoryAndStart() {
-    if (this.closed || this.environment.state !== 'failed' || !this.environment.historyVersionMismatch) return
-    this.environment = { state: 'starting', message: '' }
-    void this.openConnection('/api/env/archive-history')
-  }
 
-  private async openConnection(route: '/api/env/start' | '/api/env/archive-history' = '/api/env/start') {
+
+  private async openConnection() {
     if (this.closed) return
     const epoch = this.connectionEpoch = Symbol()
+    this.connecting?.abort()
+    const connection = this.connecting = new AbortController()
     this.connectionMessage = undefined
     this.changed()
     try {
       await this.refreshProjectTrust()
-      const env = await api<EnvPublicState>(route, { path: this.dir })
+      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir }, connection.signal)
       if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
-      const c = await this.reach(env.endpoint!, env.token)
+      const c = await this.reach(env.endpoint!, env.token, connection.signal)
       this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
       if (this.closed || epoch !== this.connectionEpoch) {
@@ -627,7 +621,6 @@ export class ProjectSession extends Observable {
       this.subscription = s(opened.subscriptionId)
       this.lastSeq = opened.seq ?? 1n
       this.connected = true
-      void this.refreshCacheUsage()
       this.listen(c)
       c.onClose = () => {
         if (this.client !== c) return
@@ -649,24 +642,27 @@ export class ProjectSession extends Observable {
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
       this.changed()
+    } finally {
+      if (this.connecting === connection) this.connecting = undefined
     }
   }
 
-  /** Connects to a tsugumid that has just started. Its port may not be
-   *  reachable at once (WSL2 forwards a new port to Windows a moment later),
-   *  so a connection that cannot be made is tried again for a few seconds. */
-  private async reach(endpoint: string, token: string | undefined): Promise<RPCClient> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const c = new RPCClient(await this.openTransport(endpoint))
-        registerModuleClient(c)
-        await c.connect(token)
-        return c
-      } catch (e) {
-        if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
-        if (this.closed || attempt >= this.connectRetryDelays.length) throw new Unreached(e)
-        await sleep(this.connectRetryDelays[attempt])
-      }
+  private async reach(endpoint: string, token: string | undefined, signal: AbortSignal): Promise<RPCClient> {
+    let client: RPCClient | undefined
+    try {
+      client = new RPCClient(await this.openTransport(endpoint, signal))
+      signal.throwIfAborted()
+      const provisional = client
+      const cancel = () => provisional.close()
+      signal.addEventListener('abort', cancel, { once: true })
+      try { await client.connect(token) }
+      finally { signal.removeEventListener('abort', cancel) }
+      registerModuleClient(client)
+      return client
+    } catch (e) {
+      client?.close()
+      if (e instanceof RPCError && e.code === 'disconnected') throw new Unreached(e)
+      throw e
     }
   }
 
@@ -720,7 +716,7 @@ export class ProjectSession extends Observable {
   /** The project was left: no more connections, whatever is under way. */
   close() {
     this.closed = true
-    clearTimeout(this.cacheUsageTimer)
+    this.connecting?.abort()
     this.offEvents?.()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
@@ -730,6 +726,8 @@ export class ProjectSession extends Observable {
   }
 
   async stopEnvironment() {
+    this.connectionEpoch = Symbol()
+    this.connecting?.abort()
     const c = this.client
     this.client = undefined
     c?.close()
@@ -1574,17 +1572,25 @@ export class ProjectSession extends Observable {
       setTimeout(() => this.client && this.refreshExternals(), 0)
       return
     }
+    const definitionIds = new Map<string, Set<string>>()
+    for (const p of paths) {
+      const split = p.lastIndexOf('/definitions/')
+      if (split < 0) continue
+      const [id, file, extra] = p.slice(split + '/definitions/'.length).split('/')
+      if (extra || !['_card.json', '_link.json'].includes(file)) continue
+      const prefix = p.slice(0, split + 1)
+      const ids = definitionIds.get(prefix) ?? new Set<string>()
+      ids.add(id); definitionIds.set(prefix, ids)
+    }
     const atRev = this.rev
     const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
     this.externalsTask = (async () => {
       const found = new Map<string, ExternalProject>()
-      const read = new Map<string, string>()
       const doc = async (rel: string): Promise<J | undefined> => {
         const h = hashes.get(rel)
         if (!h) return undefined
         try {
           const d = await client.readFile(rel, atRev)
-          read.set(rel, h)
           return tryParse(new TextDecoder().decode(d))
         } catch {
           return undefined
@@ -1596,25 +1602,15 @@ export class ProjectSession extends Observable {
         // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
         const parts = prefix.split('/').filter(Boolean)
         if (parts.length < 2 || parts.length % 2 !== 0 || parts[parts.length - 2] !== 'externals') continue
-        const proj = await doc(p)
+        const [proj, layout] = await Promise.all([doc(p), doc(prefix + 'layout.json')])
         if (proj === undefined) continue
-        const ext: ExternalProject = { project: proj, layout: (await doc(prefix + 'layout.json')) ?? obj(), definitions: new Map() }
-        // Every definition folder of the external (placed or not).
-        const ids = new Set<string>()
-        for (const q of paths) {
-          if (!q.startsWith(prefix + 'definitions/')) continue
-          const rest = q.slice((prefix + 'definitions/').length).split('/')
-          if (rest.length === 2 && ['_card.json', '_link.json'].includes(rest[1])) ids.add(rest[0])
-        }
+        const ext: ExternalProject = { project: proj, layout: layout ?? obj(), definitions: new Map() }
+        const ids = definitionIds.get(prefix) ?? new Set<string>()
         for (const id of [...ids].sort()) {
           const dir = `${prefix}definitions/${id}/`
-          const meta = await doc(dir + '_meta.json')
-          const l = await doc(dir + '_link.json')
+          const [meta, l, card] = await Promise.all(['_meta.json', '_link.json', '_card.json'].map(file => doc(dir + file)))
           if (l !== undefined) ext.definitions.set(id, { card: obj(), meta, link: l })
-          else {
-            const c = await doc(dir + '_card.json')
-            if (c !== undefined) ext.definitions.set(id, { card: c, meta })
-          }
+          else if (card !== undefined) ext.definitions.set(id, { card, meta })
         }
         found.set(prefix, ext)
       }
@@ -2172,18 +2168,13 @@ export class ProjectSession extends Observable {
   }
 
   async refreshCacheUsage() {
-    clearTimeout(this.cacheUsageTimer)
     if (this.closed || !this.connected || !this.client) return
     try {
+      await api('/api/runtime/cache-usage', {})
       const usage = await this.client.cacheUsage()
       this.cacheUsage = usage
-      if (usage.large && !this.cacheNoticeShown && !this.notice) {
-        this.notice = L('ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。')
-        this.cacheNoticeShown = true
-      } else if (!usage.large && usage.buildBytes !== null) this.cacheNoticeShown = false
       this.changed()
     } catch { /* A failed measurement never interrupts execution. */ }
-    if (!this.closed && this.connected) this.cacheUsageTimer = setTimeout(() => void this.refreshCacheUsage(), 15000)
   }
 
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {
@@ -2298,7 +2289,6 @@ export class ProjectSession extends Observable {
    *  run from there opens a branch, and nothing later is lost. */
   async startFrom(commit: string) {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    if (this.runActive) throw new Error(L('実行中は別の版に移れません。'))
     if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()

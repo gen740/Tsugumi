@@ -4,15 +4,17 @@
 
 #include <algorithm>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/providers.hh"
+#include "agent/text.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 extern const unsigned char tsugumi_agent_system_prompt[];
 extern const unsigned long tsugumi_agent_system_prompt_size;
@@ -26,15 +28,8 @@ namespace A = Tsugumi::Agent;
 namespace S = Tsugumi::Service;
 using host::Failure;
 namespace {
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
-auto Human(bool human) -> void {
-  if (!human)
-    throw Failure("permission_denied",
-                  "This operation requires the authenticated user");
-}
-
+using host::Human;
+using host::Text;
 const char* kSystem =
     "You are Tsugumi, a scientific workflow assistant. Work "
     "through the core's public tools. "
@@ -78,19 +73,6 @@ auto Turns::System(bool guide) -> std::string {
                           : tsugumi_agent_system_prompt_size;
   return std::string(reinterpret_cast<const char*>(bytes), size) + "\n" +
          kSystem;
-}
-
-auto Turns::Excerpt(std::string_view text, size_t position, size_t limit)
-    -> std::string {
-  size_t begin = position > limit / 3 ? position - limit / 3 : 0;
-  while (begin && (static_cast<unsigned char>(text[begin]) & 0xc0) == 0x80)
-    --begin;
-  size_t end = std::min(text.size(), begin + limit);
-  while (end < text.size() && end > begin &&
-         (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80)
-    --end;
-  return (begin ? "…" : "") + std::string(text.substr(begin, end - begin)) +
-         (end < text.size() ? "…" : "");
 }
 
 Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
@@ -163,11 +145,10 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   const bool busy = running.contains(c.id);
   const bool resumable = !busy && state == "interrupted";
   const bool continuable =
-      !busy && (resumable || state == "cancelled" ||
-                state == "failed");
+      !busy && (resumable || state == "cancelled" || state == "failed");
   A::ConversationResultT result;
-  result.conversation = std::make_unique<A::ConversationT>(
-      wire::Conversation(conversations->ConversationJson(c)));
+  result.conversation =
+      std::make_unique<A::ConversationT>(conversations->ConversationData(c));
   result.busy = busy;
   result.resumable = resumable;
   result.continuable = continuable;
@@ -239,7 +220,8 @@ auto Turns::SkillContent(const std::string& id,
   ContentBlock result;
   for (const auto& skill : catalog.skills) {
     if (automatic ? !skill->always : !selected.contains(skill->name)) continue;
-    if (!skill->path.starts_with("builtin:") && dependencies.excluded && dependencies.excluded(c.project, skill->path, stop)) {
+    if (!skill->path.starts_with("builtin:") && dependencies.excluded &&
+        dependencies.excluded(c.project, skill->path, stop)) {
       if (!automatic) throw Failure("not_found", "Skill not found");
       continue;
     }
@@ -249,11 +231,10 @@ auto Turns::SkillContent(const std::string& id,
             (std::filesystem::path(path) / "skills").string())
       *trusted_project = path;
     if (skill->status != "ready")
-      throw Failure("unavailable",
-                    "The selected Skill is " + skill->status +
-                        (skill->status == "invalid_scope"
-                             ? ": " + skill->description
-                             : ""));
+      throw Failure("unavailable", "The selected Skill is " + skill->status +
+                                       (skill->status == "invalid_scope"
+                                            ? ": " + skill->description
+                                            : ""));
     std::string bytes;
     if (skill->path.starts_with("builtin:")) {
       bytes = host::BundledSkill(skill->path);
@@ -279,9 +260,6 @@ auto Turns::SkillContent(const std::string& id,
       bytes = host::ReadSkill(in_project ? path : skill->source_folder,
                               skill->path);
       lock.lock();
-      if (!access_service.HasGrant(resource, id, S::Access::Read))
-        throw Failure("permission_denied",
-                      "Skill access was revoked while reading");
       result.resource_ids.push_back(resource);
     }
     result.text += "\n[Skill " + skill->name + "]\n" + bytes;
@@ -304,9 +282,9 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                         std::string& authorization) -> ContentBlock {
   std::unique_lock lock(mutex);
   auto require = [&](const std::string& resource,
-                     const std::string& conversation, Tsugumi::Service::Access access,
-                     bool wait, std::stop_token token,
-                     const std::string& reason) {
+                     const std::string& conversation,
+                     Tsugumi::Service::Access access, bool wait,
+                     std::stop_token token, const std::string& reason) {
     lock.unlock();
     access_service.Require(resource, conversation, access, wait, token, reason);
     lock.lock();
@@ -340,7 +318,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     if (selected) {
       task = json::Encode(*selected);
       const auto reason =
-          "helper_scope\n" +
           json::Encode(json::Members{
               {"task", task}, {"turn", json::Quote(p->turn_id()->str())}});
       const auto request = access_service.RequestAccess(
@@ -401,10 +378,12 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                   .project)
         throw Failure("permission_denied",
                       "Attached resource is not registered for this project");
-      if (dependencies.excluded && dependencies.excluded(c.project, folder.text(1), stop))
+      if (dependencies.excluded &&
+          dependencies.excluded(c.project, folder.text(1), stop))
         throw Failure("not_found", "Folder not found");
-      require(resource->str(), p->conversation_id()->str(), Tsugumi::Service::Access::Read,
-              true, stop, "Read the attached folder");
+      require(resource->str(), p->conversation_id()->str(),
+              Tsugumi::Service::Access::Read, true, stop,
+              "Read the attached folder");
       resources.push_back(resource->str());
       text += "\n[User-authorized attached folder] " + folder.text(1);
     }
@@ -539,138 +518,138 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   if (!context) context = std::make_shared<ContextUsage>();
   running.insert(id);
   ThoughtsFor(id)->TurnStarted();
-  jobs[id] = std::make_shared<std::jthread>(
-      [this, id, turn = active_turn, config, context, role = c.role,
-       messages = std::move(messages), pending_frame = std::move(pending_frame),
-       pending_index, action](std::stop_token stop) mutable {
-        std::string final_state = "finished";
-        try {
-          std::string task, authorization;
-          if (!pending_frame.empty()) {
-            flatbuffers::Verifier verifier(
-                reinterpret_cast<const uint8_t*>(pending_frame.data()),
-                pending_frame.size());
-            if (!A::VerifyMessageBuffer(verifier) ||
-                pending_index >= messages.size())
-              throw Failure("invalid_request",
-                            "The pending message is damaged");
-            const auto* request =
-                A::GetMessage(pending_frame.data())->payload_as_Request();
-            if (!request || !request->value_as_ConversationSendRequest())
-              throw Failure("invalid_request",
-                            "The pending message has an invalid operation");
-            auto block =
-                PrepareSend(request->value_as_ConversationSendRequest(), stop,
-                            task, authorization);
-            if (stop.stop_requested()) throw Cancelled();
-            messages[pending_index].content = {std::move(block)};
-            std::lock_guard lock(mutex);
-            sql::Transaction tx(conversations->ConversationDatabase(id));
-            conversations->SaveMessages(
-                id, messages, ConversationStore::SaveMode::PrepareSend);
-            auto pending = conversations->ConversationDatabase(id).prepare(
-                "DELETE FROM pending_sends WHERE conversation=?");
-            if (task.empty()) pending.bind(1, id).run();
-            tx.commit();
-          }
-          RecordOperation(id,
-                          action == A::Action::Compact ? "compact" : "model");
-          auto hooks = dependencies.hooks(id);
-          std::string trusted_project;
-          const auto automatic =
-              SkillContent(id, {}, true, stop, &trusted_project);
-          const auto authorize = hooks.authorize_context;
-          hooks.authorize_context = [this, authorize, automatic,
-                                     trusted_project](const auto& context) {
-            RequireSkillTrust(trusted_project);
-            auto with_skills = context;
-            with_skills.push_back(
-                {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-            authorize(with_skills);
-          };
-          const auto system = System(role == "guide") + automatic.text;
-          if (!task.empty()) {
-            dependencies.event(id, json::Encode(json::Members{
-                                       {"kind", json::Quote("helperStarted")},
-                                       {"text", task}}));
-            dependencies.run_helper(id, turn, 0, task, stop, authorization);
-            {
-              std::lock_guard lock(mutex);
-              auto saved = conversations->ConversationDatabase(id).prepare(
-                  "SELECT messages FROM helpers WHERE conversation=? AND "
-                  "parent_call=? AND task=0");
-              saved.bind(1, id).bind(2, turn);
-              if (saved.step()) {
-                const auto trace = ParseMessages(saved.text(0));
-                for (auto it = trace.rbegin(); it != trace.rend(); ++it) {
-                  if (it->role != "assistant") continue;
-                  Message answer = *it;
-                  answer.provider_content.clear();
-                  std::erase_if(answer.content, [](const auto& block) {
-                    return block.type != "text";
-                  });
-                  if (answer.content.empty()) continue;
-                  for (auto& block : answer.content)
-                    block.resource_ids = {authorization};
-                  messages.push_back(std::move(answer));
-                  conversations->SaveMessages(id, messages);
-                  break;
-                }
-              }
-            }
-            if (!stop.stop_requested()) {
-              std::lock_guard lock(mutex);
-              auto pending = conversations->ConversationDatabase(id).prepare(
-                  "DELETE FROM pending_sends WHERE conversation=?");
-              pending.bind(1, id).run();
-            }
-          } else if (action == A::Action::Compact) {
-            Runtime().Compact(config, system, messages,
-                              dependencies.specs(role == "guide"), stop, hooks,
-                              context.get());
-            *context = {};
-          } else {
-            const auto result = Runtime().Run(
-                config, system, messages, dependencies.specs(role == "guide"),
-                stop, hooks, context.get());
-            if (result.outcome == RunOutcome::Cancelled)
-              final_state = "cancelled";
-            else if (result.outcome == RunOutcome::Failed)
-              final_state = "failed";
-            AddUsage(id, result.usage);
-          }
-        } catch (const std::exception& error) {
-          final_state = "failed";
-          dependencies.event(id, json::Encode(json::Members{
-                                     {"kind", json::Quote("error")},
-                                     {"message", json::Quote(error.what())}}));
-        }
+  jobs[id] = std::make_shared<std::jthread>([this, id, turn = active_turn,
+                                             config, context, role = c.role,
+                                             messages = std::move(messages),
+                                             pending_frame =
+                                                 std::move(pending_frame),
+                                             pending_index, action](
+                                                std::stop_token stop) mutable {
+    std::string final_state = "finished";
+    try {
+      std::string task, authorization;
+      if (!pending_frame.empty()) {
+        flatbuffers::Verifier verifier(
+            reinterpret_cast<const uint8_t*>(pending_frame.data()),
+            pending_frame.size());
+        if (!A::VerifyMessageBuffer(verifier) ||
+            pending_index >= messages.size())
+          throw Failure("invalid_request", "The pending message is damaged");
+        const auto* request =
+            A::GetMessage(pending_frame.data())->payload_as_Request();
+        if (!request || !request->value_as_ConversationSendRequest())
+          throw Failure("invalid_request",
+                        "The pending message has an invalid operation");
+        auto block = PrepareSend(request->value_as_ConversationSendRequest(),
+                                 stop, task, authorization);
+        if (stop.stop_requested()) throw Cancelled();
+        messages[pending_index].content = {std::move(block)};
         std::lock_guard lock(mutex);
-        if (stop.stop_requested()) {
-          auto previous = conversations->ConversationDatabase(id).prepare(
-              "SELECT state FROM turns WHERE conversation=? AND id=?");
-          previous.bind(1, id).bind(2, turn);
-          const bool explicitly_cancelled =
-              previous.step() && previous.text(0) == "cancelled";
-          final_state =
-              stopping && !explicitly_cancelled ? "interrupted" : "cancelled";
+        sql::Transaction tx(conversations->ConversationDatabase(id));
+        conversations->SaveMessages(id, messages,
+                                    ConversationStore::SaveMode::PrepareSend);
+        auto pending = conversations->ConversationDatabase(id).prepare(
+            "DELETE FROM pending_sends WHERE conversation=?");
+        if (task.empty()) pending.bind(1, id).run();
+        tx.commit();
+      }
+      RecordOperation(id, action == A::Action::Compact ? "compact" : "model");
+      auto hooks = dependencies.hooks(id);
+      std::string trusted_project;
+      const auto automatic = SkillContent(id, {}, true, stop, &trusted_project);
+      const auto authorize = hooks.authorize_context;
+      hooks.authorize_context = [this, authorize, automatic,
+                                 trusted_project](const auto& context) {
+        RequireSkillTrust(trusted_project);
+        auto with_skills = context;
+        with_skills.push_back(
+            {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+        authorize(with_skills);
+      };
+      const auto system = System(role == "guide") + automatic.text;
+      if (!task.empty()) {
+        dependencies.event(
+            id, json::Encode(json::Members{
+                    {"kind", json::Quote("helperStarted")}, {"text", task}}));
+        dependencies.run_helper(id, turn, 0, task, stop, authorization);
+        {
+          std::lock_guard lock(mutex);
+          auto saved = conversations->ConversationDatabase(id).prepare(
+              "SELECT messages FROM helpers WHERE conversation=? AND "
+              "parent_call=? AND task=0");
+          saved.bind(1, id).bind(2, turn);
+          if (saved.step()) {
+            const auto trace = ParseMessages(saved.text(0));
+            for (auto it = trace.rbegin(); it != trace.rend(); ++it) {
+              if (it->role != "assistant") continue;
+              Message answer = *it;
+              answer.provider_content.clear();
+              std::erase_if(answer.content, [](const auto& block) {
+                return block.type != "text";
+              });
+              if (answer.content.empty()) continue;
+              for (auto& block : answer.content)
+                block.resource_ids = {authorization};
+              messages.push_back(std::move(answer));
+              conversations->SaveMessages(id, messages);
+              break;
+            }
+          }
         }
-        if (!turn.empty()) {
-          auto q = conversations->ConversationDatabase(id).prepare(
-              "UPDATE turns SET state=? WHERE conversation=? AND id=?");
-          q.bind(1, final_state).bind(2, id).bind(3, turn).run();
+        if (!stop.stop_requested()) {
+          std::lock_guard lock(mutex);
+          auto pending = conversations->ConversationDatabase(id).prepare(
+              "DELETE FROM pending_sends WHERE conversation=?");
+          pending.bind(1, id).run();
         }
-        dependencies.event(id, R"({"kind":"finished"})");
-        running.erase(id);
-      });
+      } else if (action == A::Action::Compact) {
+        Runtime().Compact(config, system, messages,
+                          dependencies.specs(role == "guide"), stop, hooks,
+                          context.get());
+        *context = {};
+      } else {
+        const auto result = Runtime().Run(config, system, messages,
+                                          dependencies.specs(role == "guide"),
+                                          stop, hooks, context.get());
+        if (result.outcome == RunOutcome::Cancelled)
+          final_state = "cancelled";
+        else if (result.outcome == RunOutcome::Failed)
+          final_state = "failed";
+        AddUsage(id, result.usage);
+      }
+    } catch (const std::exception& error) {
+      final_state = "failed";
+      dependencies.event(id, json::Encode(json::Members{
+                                 {"kind", json::Quote("error")},
+                                 {"code", json::Quote(RuntimeErrorCode(error))},
+                                 {"message", json::Quote(error.what())}}));
+    }
+    std::lock_guard lock(mutex);
+    if (stop.stop_requested()) {
+      auto previous = conversations->ConversationDatabase(id).prepare(
+          "SELECT state FROM turns WHERE conversation=? AND id=?");
+      previous.bind(1, id).bind(2, turn);
+      const bool explicitly_cancelled =
+          previous.step() && previous.text(0) == "cancelled";
+      final_state =
+          stopping && !explicitly_cancelled ? "interrupted" : "cancelled";
+    }
+    if (!turn.empty()) {
+      auto q = conversations->ConversationDatabase(id).prepare(
+          "UPDATE turns SET state=? WHERE conversation=? AND id=?");
+      q.bind(1, final_state).bind(2, id).bind(3, turn).run();
+    }
+    dependencies.event(id, R"({"kind":"finished"})");
+    running.erase(id);
+  });
 }
 
 auto Turns::SummaryReply(uint64_t id, std::string_view raw) -> std::string {
   const auto o = json::Object(raw);
   Tsugumi::Service::TextResultT result;
   result.text = dependencies.scrub(json::Text(o, "text"));
-  result.usage =
-      std::make_unique<Tsugumi::Service::UsageT>(wire::Usage(json::Get(o, "usage", "{}")));
+  result.usage = std::make_unique<Tsugumi::Service::UsageT>(
+      wire::Usage(json::Get(o, "usage", "{}")));
   return wire::AgentReply(id, std::move(result));
 }
 
@@ -751,22 +730,25 @@ auto Turns::Handle(const RequestIn& request, bool human,
       auto p = r->value_as_ConversationSummarizeRequest();
       const auto id = p->conversation_id()->str();
       auto c = conversations->GetConversation(id);
-      auto selection = p->provider()
-                           ? json::Object(wire::SelectionJson(*p->provider()))
-                           : json::Members{};
-      if (!p->provider()) {
-        selection = providers->Selection(id);
-      }
-      selection["purpose"] = json::Quote("summary");
-      auto config = host_settings->Resolve(selection);
-      auto messages = ParseMessages(c.messages);
       const auto thought = ThoughtsFor(id);
-      if (config.auth == ProviderAuth::None ||
-          !thought->Begin(running.contains(id)))
+      if (!thought->Begin(running.contains(id)))
         return SummaryReply(request.request_id, R"({"text":"","usage":{}})");
-      config.max_tokens = 120;
-      lock.unlock();
       try {
+        auto selection = p->provider()
+                             ? json::Object(wire::SelectionJson(*p->provider()))
+                             : json::Members{};
+        if (!p->provider()) {
+          selection = providers->Selection(id);
+        }
+        selection["purpose"] = json::Quote("summary");
+        auto config = host_settings->Resolve(selection);
+        auto messages = ParseMessages(c.messages);
+        if (config.auth == ProviderAuth::None) {
+          thought->End();
+          return SummaryReply(request.request_id, R"({"text":"","usage":{}})");
+        }
+        config.max_tokens = 120;
+        lock.unlock();
         auto result = Summarize(
             id, config,
             "Describe the current work in one short, concrete sentence. Do not "
@@ -776,7 +758,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
         thought->End();
         return SummaryReply(request.request_id, result);
       } catch (...) {
-        lock.lock();
+        if (!lock.owns_lock()) lock.lock();
         thought->End();
         throw;
       }

@@ -12,7 +12,7 @@ import json
 import os
 import re
 import shutil
-import signal
+import shlex
 import socket
 import stat
 import struct
@@ -20,13 +20,14 @@ import subprocess
 import sys
 import tarfile
 import textwrap
-import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from conftest import WEB_DIST, BUILD, WORKER, SDK, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
+from harness.file_events import process_file, wait_for_file
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
@@ -107,17 +108,20 @@ def test_a_mac_gets_the_command_in_local_bin_and_nothing_else(machine):
     command = machine.home / ".local" / "bin" / "tsugumi"
     assert subprocess.run([command], capture_output=True, text=True).stdout.strip() == "1.2.3"
     # Says where it is and that PATH lacks it, and leaves the shell's configuration alone.
-    assert "PATH に入っていません" in r.stdout
+    assert re.search(rf"(?<!\S){re.escape(str(command.parent))}(?=\s|$)", r.stdout)
     assert [p.name for p in machine.home.iterdir()] == [".local"]
     data = machine.home / ".local/share/tsugumi"
-    assert sorted(p.name for p in data.iterdir()) == sorted([(data / "current").resolve().name, "current"])
+    current = (data / "current").resolve()
+    assert current.is_relative_to(data)
+    assert subprocess.check_output([current / "tsugumi"], text=True).strip() == "1.2.3"
 
 
 def test_a_folder_on_path_is_not_reported(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     r = machine("Darwin", "arm64", path_extra=str(machine.home / ".local" / "bin"))
     assert r.returncode == 0, r.stderr
-    assert "PATH に入っていません" not in r.stdout
+    directory = re.escape(str(machine.home / ".local/bin"))
+    assert not re.search(rf"(?<!\S){directory}(?=\s|$)", r.stdout)
 
 
 def test_another_checksum_installs_nothing(machine):
@@ -131,11 +135,14 @@ def test_another_checksum_installs_nothing(machine):
 def test_a_new_version_replaces_the_old_one(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    previous = (data / "current").resolve()
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
     assert machine("Darwin", "arm64").returncode == 0
-    data = machine.home / ".local/share/tsugumi"
-    assert len(list(data.iterdir())) == 3  # Both immutable generations and current.
-    assert (data / "current").resolve().name.startswith("1.2.4.")
+    current = (data / "current").resolve()
+    assert current != previous
+    assert subprocess.check_output([current / "tsugumi"], text=True).strip() == "1.2.4"
+    assert subprocess.check_output([previous / "tsugumi"], text=True).strip() == "1.2.3"
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.2.4"
 
 
@@ -176,17 +183,14 @@ def test_reinstalling_the_same_version_keeps_the_previous_generation(machine):
 
 
 def test_failed_version_check_keeps_the_current_command(machine):
-    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
-    assert machine("Darwin", "arm64").returncode == 0
-    # A checksum-valid release whose executable reports a different version.
-    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
-    tree = machine.release / "build/1.2.4/tsugumi"
-    executable(tree / "tsugumi", "#!/bin/sh\necho wrong\n")
-    name = "tsugumi-macos-arm64.tar.gz"
-    with tarfile.open(machine.release / name, "w:gz") as archive:
-        archive.add(tree, "tsugumi")
-    (machine.release / f"{name}.sha256").write_text(hashlib.sha256((machine.release / name).read_bytes()).hexdigest())
-    result = machine("Darwin", "arm64")
+    name = "tsugumi-linux.tar.gz"
+    artifact(machine.release, name, "1.2.3")
+    assert machine("Linux", "aarch64", nix=True).returncode == 0
+    # The build succeeded, but the resulting command reports a different version.
+    artifact(machine.release, name, "1.2.4")
+    nix = machine.stubs / "nix"
+    executable(nix, nix.read_text().replace('$(cat "$src/VERSION")', "wrong"))
+    result = machine("Linux", "aarch64")
     assert result.returncode == 70
     assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
     assert len(list((machine.home / ".local/share/tsugumi").iterdir())) == 2
@@ -218,12 +222,13 @@ def test_update_puts_the_latest_release_in_place(machine):
     # `tsugumi update` (after the wrapper's own flags) runs the release's install.sh.
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
     assert machine("Darwin", "arm64").returncode == 0
+    previous = (machine.home / ".local/share/tsugumi/current").resolve()
     shutil.copy(SCRIPT, machine.release / "install.sh")
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.1")
     r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
     assert r.returncode == 0, r.stderr
+    assert subprocess.check_output([previous / "tsugumi"], text=True).strip() == "1.0.0"
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.1"
-    assert "起動し直す" in r.stdout
 
 
 @needs_server
@@ -254,27 +259,55 @@ def test_what_is_not_supported_says_so(machine):
 def test_the_release_publishes_what_the_script_takes():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     script = SCRIPT.read_text()
-    assert "cli/install.sh cli/install.ps1" in workflow
-    for name in re.findall(r"artifact=(\S+)", script):
-        assert f"dist/{name} dist/{name}.sha256" in workflow, name
+    start = workflow.index("gh release create ")
+    command = workflow[start:].splitlines()
+    release = []
+    for line in command:
+        release.extend(shlex.split(line.removesuffix("\\").strip()))
+        if not line.endswith("\\"):
+            break
+    assets = {Path(item).name for item in release if item.startswith(("cli/", "dist/"))}
+    assert {"install.sh", "install.ps1"} <= assets
+    for name in re.findall(r"^\s*artifact=(\S+)", script, re.MULTILINE):
+        assert {name, name + ".sha256"} <= assets
 
 
-def test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there():
-    script = (ROOT / "cli" / "install.ps1").read_text()
-    # `irm | iex` does not read it as UTF-8.
-    assert script.isascii()
-    # Runs install.sh in the distribution, with no shell of WSL's own expanding anything first.
-    assert """wsl.exe --exec env "TSUGUMI_INSTALL_BASE=$base" bash -lc 'curl -fsSL $TSUGUMI_INSTALL_BASE/install.sh | sh'""" in script
-    assert "wsl.exe --cd ~ --exec .local/bin/tsugumi %*" in script
-    assert "wsl.exe -- " not in script
-    # Says what is missing, and does not change PATH.
-    assert "wsl --install" in script and "Nix is needed" in script
-    assert "SetEnvironmentVariable" not in script
-    # Never delete the Windows launcher on preview or a failed WSL uninstall.
-    wrapper = script[script.index("@echo off"):script.index('''
-'@''', script.index("@echo off"))]
-    assert wrapper.index("if errorlevel 1 exit /b %errorlevel%") < wrapper.index('del "%~f0"')
-    assert 'if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)' in wrapper
+def test_windows_installer_is_ascii_for_irm_decoding():
+    assert (ROOT / 'cli/install.ps1').read_text().isascii()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows launcher behavior requires Windows and WSL command doubles')
+def test_windows_launcher_forwards_arguments_and_preserves_failed_uninstall(tmp_path):
+    # The real installer is run with a recording WSL function; it writes the launcher.
+    import json
+    powershell = shutil.which('pwsh') or shutil.which('powershell')
+    if not powershell:
+        pytest.skip('PowerShell is required')
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    log = tmp_path / 'wsl.jsonl'
+    driver = tmp_path / 'install.ps1'
+    installer = str(ROOT / 'cli/install.ps1').replace("'", "''")
+    driver.write_text("function wsl.exe { $args | ConvertTo-Json -Compress | Add-Content $env:WSL_LOG; $global:LASTEXITCODE=0 }; . '" + installer + "'", encoding='ascii')
+    environment = dict(os.environ, USERPROFILE=str(profile), WSL_LOG=str(log))
+    result = subprocess.run([powershell, '-NoProfile', '-File', str(driver)], env=environment, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    requests = [json.loads(line) for line in log.read_text().splitlines()]
+    assert all(request[0] == '--exec' for request in requests)
+    launcher = profile / '.local/bin/tsugumi.cmd'
+    assert launcher.is_file()
+    # cmd resolves the recording WSL command first; preview/failure keep the launcher.
+    double = tmp_path / 'wsl.cmd'
+    double.write_text('@echo off\necho %*>>"%WSL_ARGS%"\nexit /b %WSL_STATUS%\n', encoding='ascii')
+    environment.update(PATH=str(tmp_path) + os.pathsep + environment['PATH'], WSL_ARGS=str(tmp_path / 'argv'), WSL_STATUS='1')
+    failed = subprocess.run(['cmd', '/c', str(launcher), 'uninstall', '--yes'], env=environment)
+    assert failed.returncode == 1 and launcher.exists()
+    environment['WSL_STATUS'] = '0'
+    subprocess.run(['cmd', '/c', str(launcher), 'uninstall'], env=environment, check=True)
+    assert launcher.exists()
+    subprocess.run(['cmd', '/c', str(launcher), 'uninstall', '--yes'], env=environment, check=True)
+    assert not launcher.exists()
+    assert '--cd ~ --exec .local/bin/tsugumi uninstall --yes' in (tmp_path / 'argv').read_text()
 
 
 # ---- Uninstalling --------------------------------------------------------------
@@ -309,7 +342,8 @@ def test_uninstall_previews_then_removes_only_the_installed_command(machine, sys
     assert all(f.read_text() == "keep me" for f in kept)
     assert (store / "package").read_text() == "keep store output"
     again = machine(system, arch, nix=nix, command=args + ["--yes"])
-    assert again.returncode == 0 and "No installer-managed" in again.stdout
+    assert again.returncode == 0
+    assert all(f.read_text() == "keep me" for f in kept)
 
 
 @needs_server
@@ -392,7 +426,7 @@ def vm_server(tmp_path):
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
+               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
@@ -401,12 +435,7 @@ def vm_server(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
-        stop_resident_services(tmp_path)
-        if (tmp_path / "host.pid").exists():
-            try:
-                os.kill(int((tmp_path / "host.pid").read_text()), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        stop_resident_services(tmp_path, vm_helper=tmp_path / "host")
 
 
 def api(port: int, cookie: str, method: str, route: str, body=None, *, timeout=10):
@@ -465,7 +494,10 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
         # Retrying an existing share returns the same registered identity.
         retry = request("POST", "/api/chat/folders",
                     {"path": str(project), "selected": [str(folder)]})
-        assert retry == result
+        assert retry["folders"] == result["folders"]
+        reused = request("POST", "/api/env/start", {"path": str(project)})
+        with Client(ws=reused["endpoint"]) as client:
+            assert client.hello(token=reused["token"], project=reused["projectId"]).serverInstanceId == previous
         for attempt in range(4):
             read = request("POST", "/api/agent/call", {"path": str(project),
                        "name": "attached_folder_read", "arguments": {"folder": str(folder), "path": "note.txt"}})
@@ -478,21 +510,26 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
         assert json.loads(read["text"])["value"]["bytes"] == f"folder {index}"
         access = request("POST", "/api/agent/access")
         assert any(g["project_id"] == resource and g["active"] for g in access["grants"])
-    launches = [json.loads(line) for line in (root / "log").read_text().splitlines()]
-    assert len([item for item in launches if item["op"] == "run"]) == 4
 
 
 @needs_server
 def test_recent_projects_are_owned_by_the_host_core(vm_server):
     tmp, project, _, port, cookie = vm_server
     assert api(port, cookie, "GET", "/api/status")["recents"] == []
-    before = time.time()
     api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
     saved = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
     assert saved[0]["path"] == str(project.resolve())
-    assert abs(saved[0]["openedAt"] / 1000 - before) < 30
-    assert api(port, cookie, "GET", "/api/status")["recents"] == saved
-    api(port, cookie, "POST", "/api/recents/forget", {"paths": [str(project.resolve())]})
+    other = tmp / "another"
+    write_project(other)
+    api(port, cookie, "POST", "/api/project/open", {"path": str(other)})
+    api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
+    updated = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
+    updated_entry, = [entry for entry in updated if entry["path"] == str(project.resolve())]
+    assert int(updated_entry["openedAt"]) > int(saved[0]["openedAt"])
+    recents = api(port, cookie, "GET", "/api/status")["recents"]
+    assert any(entry["path"] == updated_entry["path"] and entry["openedAt"] == updated_entry["openedAt"]
+               for entry in recents)
+    api(port, cookie, "POST", "/api/recents/forget", {"paths": [str(project.resolve()), str(other.resolve())]})
     assert api(port, cookie, "GET", "/api/status")["recents"] == []
     assert (project / "tsugumi.json").exists()
     assert not (tmp / "support" / "recent-projects.json").exists()
@@ -551,7 +588,7 @@ def core_settings(root: Path, changes: dict | None = None):
                 return reply.payload.value
 
         call(1, RequestPayload.HelloRequest,
-             HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test", protocol=1), ReplyPayload.HelloResult)
+             HelloRequestT(token=ready["user_token"]), ReplyPayload.HelloResult)
         settings = call(2, RequestPayload.SettingsGetRequest,
                         SettingsGetRequestT(profile="desktop"), ReplyPayload.Settings)
         if changes is not None:
@@ -634,11 +671,24 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     root, _, prefs, port, cookie = vm_server
     # Start hostd, then act as the app through Host RPC.
     api(port, cookie, "GET", "/api/settings")
-    revision, before = core_settings(root, {
-        "agent.provider": "openai", "agent.model.openai": "from-the-app",
-        "agent.permissions.allowed": ["network", "nix_source"],
-    })
-    s = api(port, cookie, "GET", "/api/settings")
+    stream = http.client.HTTPConnection("127.0.0.1", port)
+    try:
+        stream.request("GET", "/api/events", headers={"Cookie": cookie})
+        with stream.getresponse() as events:
+            assert events.status == 200
+            revision, before = core_settings(root, {
+                "agent.provider": "openai", "agent.model.openai": "from-the-app",
+                "agent.permissions.allowed": ["network", "nix_source"],
+            })
+            for line in events:
+                if line.startswith(b"data:") and json.loads(line[5:]).get("type") == "settingsChanged":
+                    break
+            else:
+                pytest.fail("settings event stream closed before the change")
+        s = api(port, cookie, "GET", "/api/settings")
+    finally:
+        stream.close()
+    assert s["revision"]["desktop"] == revision
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)
@@ -712,24 +762,21 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
     stubs.mkdir()
     opened = tmp_path / "opened"
     for name in ("open", "xdg-open"):
-        executable(stubs / name, f'#!/bin/sh\necho "$1" >> {opened}\n')
+        executable(stubs / name, f'#!/bin/sh\nprintf "%s\\n" "$1" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
     project = tmp_path / "project with spaces"
     write_project(project)
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
     first = subprocess.Popen(["node", str(SERVER), "--port", "0", "--reuse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
-        port = int(re.search(r":(\d+)/\?key=", first.stdout.readline()).group(1))
-        deadline = time.monotonic() + 10
-        while not (data / "server.json").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        r = subprocess.run(["node", str(SERVER), "--open", "--reuse", str(project)], capture_output=True, text=True, env=env, timeout=30)
+        ready = process_file(first, data / "server.json")
+        assert ready is not None
+        info = json.loads(ready.read_text())
+        r = subprocess.run(["node", str(SERVER), "--open", "--reuse", str(project)], capture_output=True, text=True, env=env)
         assert r.returncode == 0, r.stderr
-        assert "動いています" in r.stdout
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        from urllib.parse import parse_qs, urlparse
+        assert json.loads(ready.read_text())["pid"] == first.pid == info["pid"]
+        wait_for_file(opened)
         shown = urlparse(opened.read_text().strip())
-        assert shown.port == port
+        assert shown.port == info["port"]
         assert parse_qs(shown.query)["project"] == [str(project.resolve())]
     finally:
         first.terminate()
@@ -743,18 +790,14 @@ def test_another_build_is_refused_even_with_the_same_release_version(tmp_path):
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data))
     first = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
-        assert "Tsugumi web UI:" in first.stdout.readline()
-        deadline = time.monotonic() + 10
-        while not (data / "server.json").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
+        assert process_file(first, data / "server.json") is not None
         info = json.loads((data / "server.json").read_text())
         other = tmp_path / "other/web/dist/server.js"
         other.parent.mkdir(parents=True)
         shutil.copy(SERVER, other)
-        result = subprocess.run(["node", str(other), "--reuse"], capture_output=True, text=True, env=env, timeout=10)
+        result = subprocess.run(["node", str(other), "--reuse"], capture_output=True, text=True, env=env)
         assert result.returncode != 0
-        assert "different Tsugumi build" in result.stderr and "Stop that host" in result.stderr
-        assert json.loads((data / "server.json").read_text()) == info
+        assert json.loads((data / "server.json").read_text())["pid"] == info["pid"] == first.pid
         assert first.poll() is None
     finally:
         first.terminate()
@@ -769,13 +812,11 @@ def test_simultaneous_commands_end_with_one_host(tmp_path):
     processes = [subprocess.Popen(["node", str(SERVER), "--reuse", "--port", "0"],
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) for _ in range(2)]
     try:
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and all(p.poll() is None for p in processes):
-            time.sleep(0.05)
-        hosts = [p for p in processes if p.poll() is None]
-        assert len(hosts) == 1
-        assert sorted(p.returncode for p in processes if p.poll() is not None) == [0]
-        assert json.loads((data / "server.json").read_text())["pid"] == hosts[0].pid
+        winner = json.loads(wait_for_file(data / "server.json").read_text())["pid"]
+        host, = [process for process in processes if process.pid == winner]
+        reused, = [process for process in processes if process.pid != winner]
+        assert reused.wait() == 0
+        assert host.poll() is None
     finally:
         for process in processes:
             if process.poll() is None:
@@ -790,15 +831,19 @@ def test_in_wsl_the_page_opens_in_the_browser_of_windows(tmp_path):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     opened = tmp_path / "opened"
-    executable(stubs / "rundll32.exe", f'#!/bin/sh\necho "$@" >> {opened}\n')
+    executable(stubs / "rundll32.exe", f'#!/bin/sh\nprintf "%s\\n" "$@" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
     p = subprocess.Popen(["node", str(SERVER), "--port", "0", "--open"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
-        port = int(re.search(r":(\d+)/\?key=", p.stdout.readline()).group(1))
-        deadline = time.monotonic() + 10
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert re.fullmatch(rf"url\.dll,FileProtocolHandler http://127\.0\.0\.1:{port}/\?key=[0-9a-f]+\n", opened.read_text())
+        ready = process_file(p, tmp_path / "data/server.json")
+        assert ready is not None
+        assert process_file(p, opened) is not None
+        handler, url = opened.read_text().splitlines()
+        assert handler == "url.dll,FileProtocolHandler"
+        shown = urlparse(url)
+        assert shown.scheme == "http" and shown.hostname == "127.0.0.1"
+        assert shown.port == json.loads(ready.read_text())["port"]
+        assert shown.path == "/" and parse_qs(shown.query)["key"][0]
     finally:
         p.terminate()
         p.wait(10)

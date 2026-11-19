@@ -4,7 +4,6 @@
 { pkgs }:
 let
   inherit (pkgs) lib;
-  source = ../views/wasm;
   # This is the remote port pinned by Emscripten 6.0.9 in our nixpkgs. Fetch it
   # through Nix, never through the compiler's network-enabled port downloader.
   portArchive = pkgs.fetchurl {
@@ -35,17 +34,17 @@ let
         mkdir -p $out
         # MAIN_MODULE=1 deliberately retains libc/C++ and the full WebGPU binding:
         # a new Card must never require a differently tree-shaken shared template.
-        em++ ${source}/runtime.cc -std=c++20 -O2 -fPIC -Wall -Wextra -Werror \
+        em++ ${../views/wasm/runtime.cc} -std=c++20 -O2 -fPIC -Wall -Wextra -Werror \
           -I${headers}/include -c -o runtime.o
         em++ runtime.o -O2 --no-entry \
           --use-port=${port}/emdawnwebgpu.port.py:cpp_bindings=false \
-          --js-library=${source}/library.js \
+          --js-library=${../views/wasm/library.js} \
           -sMAIN_MODULE=1 -sALLOW_MEMORY_GROWTH=1 \
           -sMODULARIZE=1 -sEXPORT_ES6=1 -sSINGLE_FILE=1 -sENVIRONMENT=web \
           -sEXPORTED_FUNCTIONS='["_tsugumi_host_pointer","_tsugumi_host_wheel","_tsugumi_host_frame","_tsugumi_host_format","_tsugumi_host_configure","_tsugumi_host_device","_tsugumi_host_surface","_wgpuSurfaceRelease","_wgpuDeviceRelease","_malloc","_free"]' \
           -sEXPORTED_RUNTIME_METHODS='["loadWebAssemblyModule","HEAPU8"]' \
           -o runtime.js
-        cp ${source}/index.js index.js
+        cp ${../views/wasm/index.js} index.js
         esbuild index.js --bundle --format=esm --platform=browser --target=es2022 \
           --minify --legal-comments=none --outfile=$out/index.js
       '';

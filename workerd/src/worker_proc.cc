@@ -4,14 +4,14 @@
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
-#include <sys/wait.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
-#include <stdexcept>
 #include <fstream>
+#include <stdexcept>
 #include <system_error>
 #ifdef __APPLE__
 #include <libproc.h>
@@ -19,12 +19,12 @@
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/workerd/staging.hh"
-#include "tsugumi/util/text.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
-#include "tsugumi/workerd/value_wire.hh"
+#include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/frame.hh"
+#include "tsugumi/workerd/staging.hh"
+#include "tsugumi/workerd/value_wire.hh"
 
 #ifndef TSUGUMI_BWRAP
 #define TSUGUMI_BWRAP ""
@@ -43,16 +43,32 @@ std::string Utf8Decoder::feed(std::string_view bytes) {
   while (i < in.size()) {
     unsigned char c = in[i];
     size_t n;
-    if (c < 0x80) { out += static_cast<char>(c); ++i; continue; }
-    if ((c & 0xE0) == 0xC0) n = 2;
-    else if ((c & 0xF0) == 0xE0) n = 3;
-    else if ((c & 0xF8) == 0xF0) n = 4;
-    else { out += "\xEF\xBF\xBD"; ++i; continue; }
+    if (c < 0x80) {
+      out += static_cast<char>(c);
+      ++i;
+      continue;
+    }
+    if ((c & 0xE0) == 0xC0)
+      n = 2;
+    else if ((c & 0xF0) == 0xE0)
+      n = 3;
+    else if ((c & 0xF8) == 0xF0)
+      n = 4;
+    else {
+      out += "\xEF\xBF\xBD";
+      ++i;
+      continue;
+    }
     if (i + n > in.size()) {
-      // Possibly an incomplete character at the chunk end: keep it if it could still be valid.
+      // Possibly an incomplete character at the chunk end: keep it if it could
+      // still be valid.
       bool ok = true;
-      for (size_t k = 1; i + k < in.size(); ++k) ok &= (static_cast<unsigned char>(in[i + k]) & 0xC0) == 0x80;
-      if (ok) { pending_ = in.substr(i); break; }
+      for (size_t k = 1; i + k < in.size(); ++k)
+        ok &= (static_cast<unsigned char>(in[i + k]) & 0xC0) == 0x80;
+      if (ok) {
+        pending_ = in.substr(i);
+        break;
+      }
       out += "\xEF\xBF\xBD";
       ++i;
       continue;
@@ -82,8 +98,10 @@ void close_fd(int& fd) {
   fd = -1;
 }
 
-auto send_frame(int fd, const std::string& frame, const std::atomic<bool>* cancel,
-                std::optional<std::chrono::steady_clock::time_point> deadline) -> void {
+auto send_frame(int fd, const std::string& frame,
+                const std::atomic<bool>* cancel,
+                std::optional<std::chrono::steady_clock::time_point> deadline)
+    -> void {
   uint32_t len = static_cast<uint32_t>(frame.size());
   std::string buf(reinterpret_cast<const char*>(&len), sizeof len);
   buf += frame;
@@ -98,7 +116,8 @@ auto send_frame(int fd, const std::string& frame, const std::atomic<bool>* cance
 #else
     constexpr int flags = MSG_DONTWAIT;  // SO_NOSIGPIPE on macOS
 #endif
-    const auto count = ::send(fd, buf.data() + offset, buf.size() - offset, flags);
+    const auto count =
+        ::send(fd, buf.data() + offset, buf.size() - offset, flags);
     if (count > 0) {
       offset += static_cast<size_t>(count);
       continue;
@@ -120,7 +139,8 @@ auto send_frame(int fd, const std::string& frame, const std::atomic<bool>* cance
 // only to the worker's own folder (scripts excepted) and to the output
 // staging folder of the current call (copied to the run afterwards). Paths
 // are matched after symlink resolution (/tmp -> /private/tmp).
-std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, const std::string& scripts) {
+std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
+                             const std::string& scripts) {
   auto real = [](const std::string& p) {
     std::error_code ec;
     auto c = std::filesystem::weakly_canonical(p, ec);
@@ -134,20 +154,32 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
     }
     return out + "\"";
   };
-  std::string read = "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") (subpath \"/usr/share\")"
-                     " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") (subpath \"/private/etc\")"
-                     " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
-  read += " (literal " + quote(sp.worker_binary) + ") (subpath " + quote(scratch) + ")";
+  std::string read =
+      "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") "
+      "(subpath \"/usr/share\")"
+      " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") "
+      "(subpath \"/private/etc\")"
+      " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+  read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
+          quote(scratch) + ")";
   if (!sp.bash.empty()) read += " (literal " + quote(sp.bash) + ")";
-  std::string write = "(literal \"/dev/null\") (literal \"/dev/tty\") (subpath " + quote(scratch) + ")";
+  std::string write =
+      "(literal \"/dev/null\") (literal \"/dev/tty\") (subpath " +
+      quote(scratch) + ")";
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
   }
   return "(version 1)\n(deny default)\n"
-         "(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n"
-         "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n"
-         "(allow file-read* " + read + ")\n(allow file-write* " + write + ")\n"
-         "(deny file-write* (subpath " + quote(scripts) + ") (subpath " + quote(scratch + "/inputs") + "))\n"
+         "(allow process-fork)\n(allow process-exec)\n(allow signal (target "
+         "same-sandbox))\n"
+         "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow "
+         "file-read-metadata)\n"
+         "(allow file-read* " +
+         read + ")\n(allow file-write* " + write +
+         ")\n"
+         "(deny file-write* (subpath " +
+         quote(scripts) + ") (subpath " + quote(scratch + "/inputs") +
+         "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
@@ -159,10 +191,12 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
          // denial. Of the Mach services only trustd: Security.framework (Go,
          // NSURLSession) verifies certificates through it. The others are the
          // user's session: the clipboard, LaunchServices, Apple events.
-         (sp.network ? "(allow network*)\n(allow mach-lookup (global-name \"com.apple.trustd.agent\"))\n"
+         (sp.network ? "(allow network*)\n(allow mach-lookup (global-name "
+                       "\"com.apple.trustd.agent\"))\n"
                        "(deny network-outbound (remote ip \"localhost:*\"))\n"
                        "(deny network-outbound (remote unix-socket))\n"
-                       "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n"
+                       "(allow network-outbound (remote unix-socket "
+                       "(path-literal \"/private/var/run/mDNSResponder\")))\n"
                      : "");
 }
 #endif
@@ -183,8 +217,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   int control[2];
   int out[2];
   int err[2];
-  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 ||
-      ::pipe(out) != 0 || ::pipe(err) != 0)
+  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 ||
+      ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 || ::pipe(out) != 0 ||
+      ::pipe(err) != 0)
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
@@ -198,36 +233,43 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     if (parent != AT_FDCWD) {
       char path[PATH_MAX];
       if (::fcntl(parent, F_GETPATH, path) != 0)
-        throw std::system_error(errno, std::generic_category(), "cannot locate staging directory");
+        throw std::system_error(errno, std::generic_category(),
+                                "cannot locate staging directory");
       target = std::filesystem::path(path) / name;
     }
     proc::Spec repair;
     repair.cwd = "/";
     if (sp.sandbox)
-      repair.argv = {"/usr/bin/sandbox-exec", "-p", seatbelt_profile(sp, sp.scratch, scripts.string())};
-    repair.argv.insert(repair.argv.end(), {"/bin/chmod", "-h", "u+rwx", target.string()});
+      repair.argv = {"/usr/bin/sandbox-exec", "-p",
+                     seatbelt_profile(sp, sp.scratch, scripts.string())};
+    repair.argv.insert(repair.argv.end(),
+                       {"/bin/chmod", "-h", "u+rwx", target.string()});
     repair.uid = sp.uid;
     repair.gid = sp.gid;
-    const auto result = proc::run(repair, nullptr,
-        std::chrono::steady_clock::now() + std::chrono::seconds(5), {});
+    const auto result = proc::run(repair, nullptr, std::nullopt, {});
     if (!proc::exited_ok(result.status))
-      throw std::system_error(EACCES, std::generic_category(),
-                              "cannot restore staging directory permissions: " + target.string());
+      throw std::system_error(
+          EACCES, std::generic_category(),
+          "cannot restore staging directory permissions: " + target.string());
   };
 #endif
-  for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
+  for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"})
+    std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
     for (const char* d : {"work", "tmp", "out", "home"}) {
       const auto path = scratch_ + "/" + d;
       if (::chown(path.c_str(), *sp.uid, sp.gid.value_or(*sp.uid)) != 0) {
         const int error = errno;
-        for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1], err[0], err[1]}) ::close(fd);
+        for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1],
+                       err[0], err[1]})
+          ::close(fd);
         throw Failed(FailureKind::worker_failed,
                      "chown " + path + ": " + std::strerror(error));
       }
     }
   std::vector<std::string> args;
-  auto script = [&](const char* flag, const std::string& text, const char* name) {
+  auto script = [&](const char* flag, const std::string& text,
+                    const char* name) {
     if (text.empty()) return;
     auto path = scripts / name;
     std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
@@ -237,7 +279,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   script("--pre", sp.program.pre_run, "pre.sh");
   if (sp.program.bash) script("--run", *sp.program.bash, "run.sh");
   script("--post", sp.program.post_run, "post.sh");
-  if (!sp.program.views.empty()) args.insert(args.end(), {"--views", sp.program.views});
+  if (!sp.program.views.empty())
+    args.insert(args.end(), {"--views", sp.program.views});
   if (sp.program.package) {
     args.push_back("--package");
     args.push_back(*sp.program.package);
@@ -247,59 +290,89 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 
   proc::Spec spec;
   auto own = [&](std::vector<std::string>& argv) {
-    for (const auto& p : sp.ro_paths) argv.insert(argv.end(), {"--ro-bind", p, p});
-    argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string(),
-                                           "--ro-bind", inputs_dir(), inputs_dir()});
-    for (const auto& b : sp.binds) argv.insert(argv.end(), {b.write ? "--bind" : "--ro-bind", b.source, b.target});
+    for (const auto& p : sp.ro_paths)
+      argv.insert(argv.end(), {"--ro-bind", p, p});
+    argv.insert(argv.end(),
+                {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(),
+                 scripts.string(), "--ro-bind", inputs_dir(), inputs_dir()});
+    for (const auto& b : sp.binds)
+      argv.insert(argv.end(),
+                  {b.write ? "--bind" : "--ro-bind", b.source, b.target});
     if (sp.network && sp.sandbox)
       // Name resolution and the CA bundle of the environment (a sandbox
       // starts without /etc; unsandboxed, the real one is there).
-      for (const char* f : {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
+      for (const char* f :
+           {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
         argv.insert(argv.end(), {"--ro-bind-try", f, f});
   };
   if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
-    throw Failed(FailureKind::unsupported, "folders of the Mac need the shared VM (bubblewrap)");
+    throw Failed(FailureKind::unsupported,
+                 "folders of the Mac need the shared VM (bubblewrap)");
   if (sp.sandbox) {
 #ifdef __APPLE__
     if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
-                   "sandbox: true needs /usr/bin/sandbox-exec, which this host does not provide; refusing to run unsandboxed");
-    spec.argv = {"/usr/bin/sandbox-exec", "-p", seatbelt_profile(sp, scratch_, scripts.string()), sp.worker_binary};
+                   "sandbox: true needs /usr/bin/sandbox-exec, which this host "
+                   "does not provide; refusing to run unsandboxed");
+    spec.argv = {"/usr/bin/sandbox-exec", "-p",
+                 seatbelt_profile(sp, scratch_, scripts.string()),
+                 sp.worker_binary};
     spec.uid = sp.uid;
     spec.gid = sp.gid;
 #else
     std::string bwrap = TSUGUMI_BWRAP;
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
-                   "sandbox: true needs bubblewrap, which this environment does not provide; refusing to run unsandboxed");
-    spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
-                 "--ro-bind", sp.store_path, "/nix/store", "--proc", "/proc", "--dev", "/dev",
-                 "--tmpfs", "/tmp"};
+                   "sandbox: true needs bubblewrap, which this environment "
+                   "does not provide; refusing to run unsandboxed");
+    spec.argv = {bwrap,           "--unshare-all", "--die-with-parent",
+                 "--new-session", "--cap-drop",    "ALL",
+                 "--ro-bind",     sp.store_path,   "/nix/store",
+                 "--proc",        "/proc",         "--dev",
+                 "/dev",          "--tmpfs",       "/tmp"};
     // A development build's worker lives outside /nix/store: that one file is
-    // shown read-only, as the Seatbelt profile allows it (the image's is in the store).
+    // shown read-only, as the Seatbelt profile allows it (the image's is in the
+    // store).
     if (!sp.worker_binary.starts_with("/nix/store/"))
-      spec.argv.insert(spec.argv.end(), {"--ro-bind", sp.worker_binary, sp.worker_binary});
+      spec.argv.insert(spec.argv.end(),
+                       {"--ro-bind", sp.worker_binary, sp.worker_binary});
     // popen and system(3) run /bin/sh by that name (R needs it to start).
-    if (!sp.bash.empty()) spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
+    if (!sp.bash.empty())
+      spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
     if (sp.network) spec.argv.push_back("--share-net");
     if (sp.uid) {
-      spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
+      spec.argv.insert(spec.argv.end(),
+                       {"--uid", std::to_string(*sp.uid), "--gid",
+                        std::to_string(sp.gid.value_or(*sp.uid))});
     }
     own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
 #endif
-  } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
+  } else if (std::string bwrap = TSUGUMI_BWRAP;
+             !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
     // sandbox: false lifts the file access limits only. The worker still gets
     // its own PID namespace, so every descendant ends with it, and its own
     // network namespace (no network) unless the Card allows the network.
-    spec.argv = {bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--die-with-parent",
-                 "--new-session", "--dev-bind", "/", "/", "--proc", "/proc"};
+    spec.argv = {bwrap,
+                 "--unshare-user",
+                 "--unshare-pid",
+                 "--unshare-ipc",
+                 "--die-with-parent",
+                 "--new-session",
+                 "--dev-bind",
+                 "/",
+                 "/",
+                 "--proc",
+                 "/proc"};
     if (!sp.network) spec.argv.push_back("--unshare-net");
     if (sp.uid)
-      spec.argv.insert(spec.argv.end(), {"--uid", std::to_string(*sp.uid), "--gid", std::to_string(sp.gid.value_or(*sp.uid))});
+      spec.argv.insert(spec.argv.end(),
+                       {"--uid", std::to_string(*sp.uid), "--gid",
+                        std::to_string(sp.gid.value_or(*sp.uid))});
     // Shared folders (virtiofs) show every file as owned by whoever looks, so
     // file modes cannot keep the token from the Card: the folders are hidden.
-    for (const auto& p : sp.hidden_paths) spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
+    for (const auto& p : sp.hidden_paths)
+      spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
     own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
   } else {
@@ -313,11 +386,16 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   // or caches there (astropy, matplotlib, ...) work during runtime preparation
   // and during invocations.
   std::string home = scratch_ + "/home";
-  spec.env = {"PATH=/var/empty", "LANG=C.UTF-8", "HOME=" + home, "XDG_CONFIG_HOME=" + home + "/.config",
-              "XDG_CACHE_HOME=" + home + "/.cache", "MPLCONFIGDIR=" + home + "/.matplotlib"};
+  spec.env = {"PATH=/var/empty",
+              "LANG=C.UTF-8",
+              "HOME=" + home,
+              "XDG_CONFIG_HOME=" + home + "/.config",
+              "XDG_CACHE_HOME=" + home + "/.cache",
+              "MPLCONFIGDIR=" + home + "/.matplotlib"};
   if (sp.network)
     for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-      if (const char* x = std::getenv(v)) spec.env.push_back(std::string(v) + "=" + x);
+      if (const char* x = std::getenv(v))
+        spec.env.push_back(std::string(v) + "=" + x);
   // Not where tsugumid runs, which the sandbox does not let it read (getcwd
   // fails): libraries ask for the current directory while they are imported.
   spec.cwd = work_dir();
@@ -327,7 +405,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   try {
     pid_ = proc::spawn(spec);
   } catch (const std::exception& e) {
-    for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1], err[0], err[1]}) ::close(fd);
+    for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1],
+                   err[0], err[1]})
+      ::close(fd);
     throw Failed(FailureKind::worker_failed, e.what());
   }
   ::close(data[1]);
@@ -342,7 +422,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   ::fcntl(control_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(out_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(err_fd_, F_SETFL, O_NONBLOCK);
-  for (int fd : {data_fd_, control_fd_, out_fd_, err_fd_}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  for (int fd : {data_fd_, control_fd_, out_fd_, err_fd_})
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
 #ifdef SO_NOSIGPIPE
   int one = 1;
   ::setsockopt(data_fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
@@ -353,23 +434,32 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 }
 
 WorkerProc::WorkerProc(Borrowed borrowed)
-    : data_fd_(borrowed.descriptors[0]), control_fd_(borrowed.descriptors[1]),
-      out_fd_(borrowed.descriptors[2]), err_fd_(borrowed.descriptors[3]),
-      alive_(true), scratch_(std::move(borrowed.scratch)), call_id_(borrowed.call_id),
-      borrowed_(true), lease_id_(borrowed.lease),
-      borrowed_clear_(std::move(borrowed.clear)), borrowed_terminate_(std::move(borrowed.terminate)),
+    : data_fd_(borrowed.descriptors[0]),
+      control_fd_(borrowed.descriptors[1]),
+      out_fd_(borrowed.descriptors[2]),
+      err_fd_(borrowed.descriptors[3]),
+      alive_(true),
+      scratch_(std::move(borrowed.scratch)),
+      call_id_(borrowed.call_id),
+      borrowed_(true),
+      lease_id_(borrowed.lease),
+      borrowed_clear_(std::move(borrowed.clear)),
+      borrowed_terminate_(std::move(borrowed.terminate)),
       borrowed_abandon_(std::move(borrowed.abandon)) {
   resume_logs();
 }
 
 auto WorkerProc::resume_logs() -> void {
   if (log_thread_.joinable()) return;
-  if (::pipe(log_wake_.data()) != 0) throw std::runtime_error("cannot create log wake pipe");
+  if (::pipe(log_wake_.data()) != 0)
+    throw std::runtime_error("cannot create log wake pipe");
   for (int fd : log_wake_) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
   stop_logs_ = false;
   log_thread_ = std::thread([this] {
     while (!stop_logs_) {
-      pollfd fds[3] = {{out_fd_, POLLIN, 0}, {err_fd_, POLLIN, 0}, {log_wake_[0], POLLIN, 0}};
+      pollfd fds[3] = {{out_fd_, POLLIN, 0},
+                       {err_fd_, POLLIN, 0},
+                       {log_wake_[0], POLLIN, 0}};
       ::poll(fds, 3, -1);
       read_logs(false);
     }
@@ -381,7 +471,8 @@ auto WorkerProc::stop_log_reader() -> void {
   if (log_thread_.joinable()) {
     const char byte = 0;
     const auto written = ::write(log_wake_[1], &byte, 1);
-    if (written < 0 && errno != EPIPE) log::warn("cannot wake worker log reader");
+    if (written < 0 && errno != EPIPE)
+      log::warn("cannot wake worker log reader");
     log_thread_.join();
   }
   for (auto& fd : log_wake_) close_fd(fd);
@@ -395,11 +486,15 @@ auto WorkerProc::hand_over() -> std::array<int, 4> {
 WorkerProc::~WorkerProc() {
   if (borrowed_) {
     stop_log_reader();
-    for (auto* fd : {&data_fd_, &control_fd_, &out_fd_, &err_fd_}) close_fd(*fd);
+    for (auto* fd : {&data_fd_, &control_fd_, &out_fd_, &err_fd_})
+      close_fd(*fd);
     // Exceptions during cleanup must not leave an active lease in workerd.
     if (borrowed_abandon_) {
-      try { borrowed_abandon_(); }
-      catch (const std::exception& error) { log::warn(error.what()); }
+      try {
+        borrowed_abandon_();
+      } catch (const std::exception& error) {
+        log::warn(error.what());
+      }
     }
     return;
   }
@@ -410,8 +505,9 @@ WorkerProc::~WorkerProc() {
       // Also covers failed/dead and remote workers, and lifetime home data.
       fs::clear_staging(scratch_, recover_permissions_);
       std::filesystem::remove(scratch_, ec);
-      if (ec) log::warn("cannot remove worker scratch " + scratch_ +
-                        " (errno " + std::to_string(ec.value()) + "): " + ec.message());
+      if (ec)
+        log::warn("cannot remove worker scratch " + scratch_ + " (errno " +
+                  std::to_string(ec.value()) + "): " + ec.message());
     } catch (const std::system_error& error) {
       log::warn("cannot clear worker scratch: " + std::string(error.what()));
     }
@@ -422,11 +518,15 @@ bool WorkerProc::alive() const {
   if (borrowed_) {
     if (!alive_ || data_fd_ < 0) return false;
     pollfd state{data_fd_, 0, 0};
-    return ::poll(&state, 1, 0) >= 0 && !(state.revents & (POLLHUP | POLLERR | POLLNVAL));
+    return ::poll(&state, 1, 0) >= 0 &&
+           !(state.revents & (POLLHUP | POLLERR | POLLNVAL));
   }
   if (!alive_ || pid_ <= 0) return false;
   siginfo_t si{};
-  if (::waitid(P_PID, static_cast<id_t>(pid_), &si, WEXITED | WNOHANG | WNOWAIT) == 0 && si.si_pid == pid_) return false;
+  if (::waitid(P_PID, static_cast<id_t>(pid_), &si,
+               WEXITED | WNOHANG | WNOWAIT) == 0 &&
+      si.si_pid == pid_)
+    return false;
   return true;
 }
 
@@ -446,7 +546,8 @@ void WorkerProc::clear_scratch() {
       fs::clear_staging(d, recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,
-                 "cannot clear the worker's invocation staging: " + std::string(error.what()));
+                 "cannot clear the worker's invocation staging: " +
+                     std::string(error.what()));
   }
 }
 
@@ -454,7 +555,9 @@ std::optional<uint64_t> WorkerProc::rss_bytes() const {
   if (pid_ <= 0) return std::nullopt;
 #ifdef __APPLE__
   rusage_info_v2 ri{};
-  if (proc_pid_rusage(pid_, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ri)) != 0) return std::nullopt;
+  if (proc_pid_rusage(pid_, RUSAGE_INFO_V2,
+                      reinterpret_cast<rusage_info_t*>(&ri)) != 0)
+    return std::nullopt;
   return ri.ri_resident_size;
 #else
   // Under bubblewrap the worker is a descendant of pid_: sum the whole tree.
@@ -470,7 +573,8 @@ std::optional<uint64_t> WorkerProc::rss_bytes() const {
         total += std::stoull(line.substr(6)) * 1024;
         any = true;
       }
-    std::ifstream ch("/proc/" + std::to_string(p) + "/task/" + std::to_string(p) + "/children");
+    std::ifstream ch("/proc/" + std::to_string(p) + "/task/" +
+                     std::to_string(p) + "/children");
     for (pid_t c; ch >> c;) todo.push_back(c);
   }
   if (!any) return std::nullopt;
@@ -506,13 +610,15 @@ void WorkerProc::terminate(bool force) {
 void WorkerProc::read_logs(bool drain) {
   std::lock_guard<std::mutex> l(log_mu_);
   char buf[16384];
-  for (auto [fd, stream] : {std::pair{out_fd_, LogStream::standard_output}, std::pair{err_fd_, LogStream::standard_error}}) {
+  for (auto [fd, stream] : {std::pair{out_fd_, LogStream::standard_output},
+                            std::pair{err_fd_, LogStream::standard_error}}) {
     if (fd < 0) continue;
     auto& dec = stream == LogStream::standard_output ? out_dec_ : err_dec_;
     while (true) {
       ssize_t r = ::read(fd, buf, sizeof buf);
       if (r <= 0) break;
-      std::string text = dec.feed(std::string_view(buf, static_cast<size_t>(r)));
+      std::string text =
+          dec.feed(std::string_view(buf, static_cast<size_t>(r)));
       if (!text.empty() && logs_) logs_(stream, text);
     }
     if (drain) {
@@ -525,13 +631,14 @@ void WorkerProc::read_logs(bool drain) {
 void WorkerProc::send(int fd, const std::string& frame) {
   // A stopped worker may also stop draining control messages. Never let the
   // cancellation notification delay escalation to killing the process group.
-  send_frame(fd, frame, nullptr, std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
+  send_frame(fd, frame, nullptr,
+             std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
 }
 
-WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
-                               const std::atomic<bool>* cancel,
-                               std::optional<std::chrono::steady_clock::time_point> deadline,
-                               const DisplaySink& display) {
+WorkerOutcome WorkerProc::call(
+    const std::string& frame, uint64_t call_id, const std::atomic<bool>* cancel,
+    std::optional<std::chrono::steady_clock::time_point> deadline,
+    const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
     send_frame(data_fd_, frame, cancel, deadline);
@@ -549,7 +656,8 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
     pollfd p{data_fd_, POLLIN, 0};
     ::poll(&p, 1, 20);
     auto now = std::chrono::steady_clock::now();
-    if (!cancel_sent && ((cancel && cancel->load()) || (deadline && now >= *deadline))) {
+    if (!cancel_sent &&
+        ((cancel && cancel->load()) || (deadline && now >= *deadline))) {
       timed_out = !(cancel && cancel->load());
       flatbuffers::FlatBufferBuilder b;
       auto wc = W::CreateWorkerCancel(b);
@@ -559,29 +667,42 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
       mb.add_value(wc.Union());
       W::FinishWorkerMessageBuffer(b, mb.Finish());
       try {
-        send(control_fd_, std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()));
+        send(control_fd_,
+             std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                         b.GetSize()));
       } catch (const Failed&) {
       }
       cancel_sent = true;
+      // A worker can ignore cancellation and otherwise never exit.
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {
       terminate(true);
       read_logs(true);
-      outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
-                                  : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");
+      outcome.failure =
+          timed_out ? FailureData::make(FailureKind::timeout,
+                                        "the Card exceeded timeoutSeconds")
+                    : FailureData::make(FailureKind::cancelled,
+                                        "the invocation was cancelled");
       return outcome;
     }
     if (!(p.revents & (POLLIN | POLLHUP | POLLERR))) continue;
     char buf[65536];
     ssize_t r = ::read(data_fd_, buf, sizeof buf);
-    if (r < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    if (r < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+      continue;
     if (r <= 0) {
       terminate();
       if (cancel_sent)
-        outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
-                                    : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");
-      else outcome.failure = FailureData::make(FailureKind::worker_failed, "the worker exited before returning a result");
+        outcome.failure =
+            timed_out ? FailureData::make(FailureKind::timeout,
+                                          "the Card exceeded timeoutSeconds")
+                      : FailureData::make(FailureKind::cancelled,
+                                          "the invocation was cancelled");
+      else
+        outcome.failure =
+            FailureData::make(FailureKind::worker_failed,
+                              "the worker exited before returning a result");
       return outcome;
     }
     rbuf.append(buf, static_cast<size_t>(r));
@@ -590,55 +711,78 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
       std::memcpy(&len, rbuf.data(), 4);
       if (len == 0 || len > workerd::kMaxWorkerFrameBytes) {
         terminate();
-        outcome.failure = FailureData::make(FailureKind::worker_failed, "corrupt frame from worker");
+        outcome.failure = FailureData::make(FailureKind::worker_failed,
+                                            "corrupt frame from worker");
         return outcome;
       }
       if (rbuf.size() < 4 + size_t(len)) break;
       std::string msg = rbuf.substr(4, len);
       rbuf.erase(0, 4 + size_t(len));
-      flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(msg.data()), msg.size());
+      flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(msg.data()),
+                              msg.size());
       if (!W::VerifyWorkerMessageBuffer(v)) {
         terminate();
-        outcome.failure = FailureData::make(FailureKind::worker_failed, "worker sent a buffer that does not verify");
+        outcome.failure =
+            FailureData::make(FailureKind::worker_failed,
+                              "worker sent a buffer that does not verify");
         return outcome;
       }
       const auto* m = W::GetWorkerMessage(msg.data());
       if (!m->call_id() || *m->call_id() != call_id) {
         terminate();
-        outcome.failure = FailureData::make(FailureKind::worker_failed, "worker answered an unknown call_id");
+        outcome.failure = FailureData::make(
+            FailureKind::worker_failed, "worker answered an unknown call_id");
         return outcome;
       }
       switch (m->value_type()) {
         case W::WorkerPayload::WorkerDisplay:
-          try {
-            if (display) display(wire::display(m->value_as_WorkerDisplay()->display(), msg));
-          } catch (const Failed&) {
-            // Presentation cannot fail the invocation.
+          if (display) {
+            auto presentation =
+                wire::display(m->value_as_WorkerDisplay()->display(), msg);
+            try {
+              display(presentation);
+            } catch (const Failed&) {
+              // Presentation sinks cannot fail the invocation.
+            }
           }
           break;
         case W::WorkerPayload::WorkerResult: {
           for (const auto* o : *m->value_as_WorkerResult()->outputs())
-            outcome.outputs.emplace_back(o->name()->str(),
-                                         std::string(reinterpret_cast<const char*>(o->bytes()->data()), o->bytes()->size()));
+            outcome.outputs.emplace_back(
+                o->name()->str(),
+                std::string(reinterpret_cast<const char*>(o->bytes()->data()),
+                            o->bytes()->size()));
           read_logs(false);
           if (cancel_sent && !outcome.failure)
-            outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
-                                        : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");
+            outcome.failure =
+                timed_out
+                    ? FailureData::make(FailureKind::timeout,
+                                        "the Card exceeded timeoutSeconds")
+                    : FailureData::make(FailureKind::cancelled,
+                                        "the invocation was cancelled");
           return outcome;
         }
         case W::WorkerPayload::WorkerFailure:
           if (!outcome.failure) {
-            auto reported = wire::failure(m->value_as_WorkerFailure()->failure());
+            auto reported =
+                wire::failure(m->value_as_WorkerFailure()->failure());
             if (cancel_sent) {
               // The host knows why it stopped the call, just as for
               // WorkerResult: a cooperative SDK reports "cancelled" for a
               // deadline too. A different failure that arrives after the
               // request keeps its text, so it is not lost behind the reason.
-              std::string why = timed_out ? "the Card exceeded timeoutSeconds" : "the invocation was cancelled";
-              if (reported.kind != FailureKind::cancelled && reported.kind != FailureKind::timeout)
-                why += std::string("; the worker then reported ") + failure_kind_name(reported.kind) +
-                       (reported.diagnostic && !reported.diagnostic->empty() ? ": " + *reported.diagnostic : "");
-              outcome.failure = FailureData::make(timed_out ? FailureKind::timeout : FailureKind::cancelled, why);
+              std::string why = timed_out ? "the Card exceeded timeoutSeconds"
+                                          : "the invocation was cancelled";
+              if (reported.kind != FailureKind::cancelled &&
+                  reported.kind != FailureKind::timeout)
+                why += std::string("; the worker then reported ") +
+                       failure_kind_name(reported.kind) +
+                       (reported.diagnostic && !reported.diagnostic->empty()
+                            ? ": " + *reported.diagnostic
+                            : "");
+              outcome.failure = FailureData::make(
+                  timed_out ? FailureKind::timeout : FailureKind::cancelled,
+                  why);
             } else {
               outcome.failure = std::move(reported);
             }
@@ -647,34 +791,44 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
           return outcome;
         default:
           terminate();
-          outcome.failure = FailureData::make(FailureKind::worker_failed, "unexpected message from worker");
+          outcome.failure = FailureData::make(FailureKind::worker_failed,
+                                              "unexpected message from worker");
           return outcome;
       }
     }
   }
 }
 
-std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const CardPath& card,
-                              uint64_t invocation, std::span<const Value> inputs,
-                              const std::string& params_bfbs, const std::string& params_root,
-                              const std::string& params, const std::vector<types::PortType>& outputs,
-                              const std::string& work, const std::string& tmp, const std::string& out,
-                              const std::vector<std::pair<std::string, std::string>>& env,
-                              std::optional<uint64_t> deadline_ms) {
+std::string worker_call_frame(
+    uint64_t call_id, const std::string& run_id, const CardPath& card,
+    uint64_t invocation, std::span<const Value> inputs,
+    const std::string& params_bfbs, const std::string& params_root,
+    const std::string& params, const std::vector<types::PortType>& outputs,
+    const std::string& work, const std::string& tmp, const std::string& out,
+    const std::vector<std::pair<std::string, std::string>>& env,
+    std::optional<uint64_t> deadline_ms, const std::string& input_schema,
+    const std::string& output_schema) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
-  auto bytes = [&](const std::string& s) { return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size()); };
+  auto bytes = [&](const std::string& s) {
+    return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+  };
   std::vector<flatbuffers::Offset<W::WorkerInput>> ins;
   for (const auto& v : inputs) {
-    auto data = D::CreateFlatBufferData(b, bytes(v.type->bfbs), b.CreateString(v.type->root_type), bytes(v.bytes));
-    ins.push_back(W::CreateWorkerInput(b, b.CreateString(v.name), v.kind, data));
+    auto data = D::CreateFlatBufferData(b, bytes(v.type->bfbs),
+                                        b.CreateString(v.type->root_type),
+                                        bytes(v.bytes));
+    ins.push_back(
+        W::CreateWorkerInput(b, b.CreateString(v.name), v.kind, data));
   }
   auto insv = b.CreateVector(ins);
-  auto pdata = D::CreateFlatBufferData(b, bytes(params_bfbs), b.CreateString(params_root), bytes(params));
+  auto pdata = D::CreateFlatBufferData(
+      b, bytes(params_bfbs), b.CreateString(params_root), bytes(params));
   std::vector<flatbuffers::Offset<D::Port>> outs;
   for (const auto& p : outputs) outs.push_back(wire::port(b, p));
   auto outsv = b.CreateVector(outs);
   std::vector<flatbuffers::Offset<W::EnvVar>> ev;
-  for (const auto& [k, v] : env) ev.push_back(W::CreateEnvVar(b, b.CreateString(k), b.CreateString(v)));
+  for (const auto& [k, v] : env)
+    ev.push_back(W::CreateEnvVar(b, b.CreateString(k), b.CreateString(v)));
   auto evv = b.CreateVector(ev);
   auto run = b.CreateString(run_id);
   auto cp = wire::path(b, card);
@@ -682,6 +836,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
+  auto input_catalog = b.CreateString(input_schema);
+  auto output_catalog = b.CreateString(output_schema);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -693,6 +849,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   cb.add_temporary_directory(t);
   if (!out.empty()) cb.add_output_directory(o);
   cb.add_environment(evv);
+  cb.add_input_schema(input_catalog);
+  cb.add_output_schema(output_catalog);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);
@@ -702,7 +860,8 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   W::FinishWorkerMessageBuffer(b, mb.Finish());
   if (b.GetSize() > workerd::kMaxWorkerFrameBytes)
     throw Failed(FailureKind::resource_limit, "the worker call exceeds 16 MiB");
-  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                     b.GetSize());
 }
 
 }  // namespace tsugumi

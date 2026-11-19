@@ -11,25 +11,18 @@ namespace {
 auto Text(const flatbuffers::String* value) -> std::string {
   return value ? value->str() : "";
 }
-auto ValidateIdentity(const std::string& project,
-                      const std::filesystem::path& path) -> void {
-  const auto identity = fs::read_file(path / ".tsugumi/project-id");
-  if (!identity || *identity != project)
-    throw Failure(
-        "stale_project",
-        "This folder's project identity changed or was removed. Close and "
-        "reopen this project to register its current identity. Conversation "
-        "records have not been deleted.");
-}
 }  // namespace
 ProjectRegistry::ProjectRegistry(StateGate& g, sql::Db& database,
                                  ConversationPath opened)
     : gate(g), db(database), conversation_path(std::move(opened)) {}
 
 auto ProjectRegistry::ValidateLocation(const std::string& project,
-                                       const std::filesystem::path& folder)
+                                       const std::filesystem::path& path)
     -> void {
-  const auto path = std::filesystem::canonical(folder);
+  for (const auto& [id, location] : pending_)
+    if ((id == project) != (location.folder == path))
+      throw Failure("conflict",
+                    "This project identity or folder is being started");
   if (auto opened = conversation_path(project);
       opened && *opened != path / ".tsugumi")
     throw Failure(
@@ -41,11 +34,22 @@ auto ProjectRegistry::ValidateLocation(const std::string& project,
       std::filesystem::canonical(old.text(0)) != path)
     throw Failure("conflict",
                   "This project identity is registered in another folder");
-  ValidateIdentity(project, path);
 }
-auto ProjectRegistry::Lookup(const std::string& id)
-    -> ProjectRegistry::Project {
-  Location(id);
+auto ProjectRegistry::ReserveLocation(const std::string& project,
+                                      const std::filesystem::path& folder)
+    -> std::function<void()> {
+  ValidateLocation(project, folder);
+  std::function<void()> release = [this, project] {
+    std::lock_guard lock(gate.mutex);
+    const auto found = pending_.find(project);
+    if (--found->second.starts == 0) pending_.erase(found);
+  };
+  auto& pending =
+      pending_.try_emplace(project, PendingLocation{folder}).first->second;
+  ++pending.starts;
+  return release;
+}
+auto ProjectRegistry::Lookup(std::string_view id) -> ProjectRegistry::Project {
   auto q = db.prepare("SELECT endpoint,token FROM projects WHERE id=?");
   q.bind(1, id);
   if (!q.step())
@@ -59,9 +63,6 @@ auto ProjectRegistry::Location(const std::string& project)
   q.bind(1, project);
   if (!q.step()) return std::nullopt;
   const std::filesystem::path path(q.text(0));
-  // Offline folders remain registered; a readable folder with a different
-  // identity is stale and must never route RPC or conversation writes.
-  if (std::filesystem::is_directory(path)) ValidateIdentity(project, path);
   return path;
 }
 auto ProjectRegistry::Locations() -> std::vector<std::string> {
@@ -117,7 +118,8 @@ auto ProjectRegistry::RegisterProject(
       !endpoint.starts_with("wss://"))
     throw Failure("invalid_request", "Unsupported project transport");
   if (request.path() && !request.path()->str().empty())
-    ValidateLocation(request.project_id()->str(), request.path()->str());
+    ValidateLocation(request.project_id()->str(),
+                     std::filesystem::canonical(request.path()->str()));
   sql::Transaction transaction(db);
   auto managed = db.prepare("DELETE FROM environment_projects WHERE project=?");
   managed.bind(1, request.project_id()->str()).run();
@@ -136,42 +138,52 @@ auto ProjectRegistry::RegisterProject(
 }
 auto ProjectRegistry::RegisterFolder(
     const Tsugumi::Host::RegisterFolderRequest& request) -> void {
-  Lookup(request.project_id()->str());
   if (!request.resource_id()->str().starts_with("folder:") ||
       request.folder()->str().empty())
     throw Failure("invalid_request",
                   "A folder resource needs a folder: ID and a path");
+  AttachFolder(request.project_id()->string_view(),
+               request.resource_id()->string_view(),
+               request.folder()->string_view(), Text(request.title()));
+}
+auto ProjectRegistry::AttachFolder(std::string_view project,
+                                   std::string_view resource,
+                                   std::string_view folder,
+                                   std::string_view title) -> void {
+  Lookup(project);
   auto old = db.prepare("SELECT project,path FROM folders WHERE id=?");
-  old.bind(1, request.resource_id()->str());
-  if (old.step() && (old.text(0) != request.project_id()->str() ||
-                     old.text(1) != request.folder()->str()))
+  old.bind(1, resource);
+  if (old.step() && (old.text(0) != project || old.text(1) != folder))
     throw Failure(
         "conflict",
         "A granted folder identity cannot be rebound to another path");
   auto q = db.prepare("INSERT OR IGNORE INTO folders VALUES(?,?,?,?)");
-  q.bind(1, request.resource_id()->str())
-      .bind(2, request.project_id()->str())
-      .bind(3, request.folder()->str())
-      .bind(4, Text(request.title()))
-      .run();
+  q.bind(1, resource).bind(2, project).bind(3, folder).bind(4, title).run();
 }
-auto ProjectRegistry::AttachedRoot(const std::string& project, const std::string& folder) -> std::string {
+auto ProjectRegistry::AttachedRoot(const std::string& project,
+                                   const std::string& folder) -> std::string {
   // Explicit registrations are local. Managed environments have an exact map,
   // persisted with the endpoint so a hostd restart cannot select a guest's
   // same-named directory before the environment is observed again.
-  auto managed = db.prepare("SELECT 1 FROM environment_projects WHERE project=?");
+  auto managed =
+      db.prepare("SELECT 1 FROM environment_projects WHERE project=?");
   managed.bind(1, project);
   if (!managed.step()) return folder;
   auto root = db.prepare(
-      "SELECT execution_path FROM project_attached_roots WHERE project=? AND path=?");
+      "SELECT execution_path FROM project_attached_roots "
+      "WHERE project=? AND path=?");
   root.bind(1, project).bind(2, folder);
   if (!root.step())
-    throw Failure("unavailable", "Attached folder is not mounted; restart the project environment");
+    throw Failure(
+        "unavailable",
+        "Attached folder is not mounted; restart the project environment");
   return root.text(0);
 }
 auto ProjectRegistry::RegisterReady(
     const Tsugumi::Host::EnvironmentStateT& state) -> void {
-  ValidateLocation(state.project_id, state.project);
+  const auto pending = pending_.find(state.project_id);
+  if (pending == pending_.end() || pending->second.folder != state.project)
+    ValidateLocation(state.project_id, state.project);
   sql::Transaction transaction(db);
   auto environment =
       db.prepare("INSERT OR REPLACE INTO environment_projects VALUES(?,?)");
@@ -188,8 +200,12 @@ auto ProjectRegistry::RegisterReady(
   auto clear = db.prepare("DELETE FROM project_attached_roots WHERE project=?");
   clear.bind(1, state.project_id).run();
   for (const auto& root : state.attached_roots) {
-    auto insert = db.prepare("INSERT INTO project_attached_roots VALUES(?,?,?)");
-    insert.bind(1, state.project_id).bind(2, root->host_path).bind(3, root->execution_path).run();
+    auto insert =
+        db.prepare("INSERT INTO project_attached_roots VALUES(?,?,?)");
+    insert.bind(1, state.project_id)
+        .bind(2, root->host_path)
+        .bind(3, root->execution_path)
+        .run();
   }
   transaction.commit();
 }

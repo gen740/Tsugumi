@@ -61,14 +61,21 @@ TEST(SourceTransfer, StreamsFixedChunksAndDiscardsAnInterruptedImport) {
             4096u);
   change.path = "definitions/data/cancelled.csv";
   auto cancelled = store.stage({change}, crypto::uuid4(), "agent");
-  const auto journal_size = std::filesystem::file_size(root / ".tsugumi/document.journal");
+  const auto journal_size =
+      std::filesystem::file_size(root / ".tsugumi/document.journal");
   size_t checks = 0;
-  EXPECT_THROW(store.commit(cancelled, "save", "cancelled",
-      [](const Delta*) { return "cancelled receipt"; }, [&] {
-        if (++checks == 2) throw std::runtime_error("cancelled before durable intent");
-      }), std::runtime_error);
+  EXPECT_THROW(
+      store.commit(
+          cancelled, "save", "cancelled",
+          [](const Delta*) { return "cancelled receipt"; },
+          [&] {
+            if (++checks == 2)
+              throw std::runtime_error("cancelled before durable intent");
+          }),
+      std::runtime_error);
   EXPECT_EQ(checks, 2u);
-  EXPECT_EQ(std::filesystem::file_size(root / ".tsugumi/document.journal"), journal_size);
+  EXPECT_EQ(std::filesystem::file_size(root / ".tsugumi/document.journal"),
+            journal_size);
   EXPECT_EQ(store.current()->rev, 1u);
   EXPECT_FALSE(std::filesystem::exists(root / change.path));
   EXPECT_FALSE(change.file->journaled);

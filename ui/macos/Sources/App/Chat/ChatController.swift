@@ -6,15 +6,14 @@ import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 
-/// Registers the selected project endpoint with core's Agent service.
+/// Supplies the selected project identity to the Agent service.
 struct RPCToolTransport: ToolTransport {
   let session: ProjectSession
   @MainActor func project() async throws -> AgentProject? {
     let endpoint: Endpoint
     if let override = session.endpointOverride { endpoint = override }
     else { endpoint = try await session.environments.start(session.identity) }
-    return AgentProject(id: endpoint.projectId, endpoint: endpoint.url.absoluteString, token: endpoint.token,
-                        title: session.identity.url.lastPathComponent, path: session.identity.url.standardizedFileURL.path)
+    return AgentProject(id: endpoint.projectId)
   }
 }
 
@@ -111,6 +110,26 @@ final class ChatController {
   func showSample(question: String, answer: String) {
     items.append(Item(role: "user", text: question))
     items.append(Item(role: "assistant", text: answer))
+  }
+
+  /// A step with a failed tool call, as the host presents one (UI scripts).
+  func showFailureSample() {
+    let result = #"{"reply":"Failure","value":{"kind":"build_failed","args":[{"key":"card","value":"compare"}],"diagnostic":"compare.cc:12:5: error: use of undeclared identifier 'sequnce'\n   12 |     sequnce.push_back(n);\n      |     ^~~~~~~\n1 error generated.\nninja: build stopped: subcommand failed."}}"#
+    func row(_ v: [String: Any]) -> ChatRow? {
+      var all: [String: Any] = ["id": UUID().uuidString, "kind": "", "role": "", "text": "", "name": "", "arguments": "", "result": "",
+                                "state": "", "archived": false, "summaryJa": "", "summaryEn": "", "scopeJa": "", "scopeEn": "",
+                                "instruction": "", "failed": 0, "recovered": 0, "links": [], "children": []]
+      all.merge(v) { $1 }
+      return (try? JSONSerialization.data(withJSONObject: all)).flatMap { try? JSONDecoder().decode(ChatRow.self, from: $0) }
+    }
+    guard let tool = row(["kind": "tool", "name": "run", "state": "failed", "arguments": #"{"card":"compare"}"#, "result": result,
+                          "summaryJa": "run · compare · 失敗（build failed）: compare.cc:12:5: error: use of undeclared identifier 'sequnce'…",
+                          "summaryEn": "run · compare · failed (build failed): compare.cc:12:5: error: use of undeclared identifier 'sequnce'…"]),
+          let toolDict = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(tool)),
+          let step = row(["kind": "step", "state": "failed", "failed": 1, "summaryJa": "1 件の操作・1 件失敗", "summaryEn": "1 operation; 1 failed",
+                          "children": [toolDict]])
+    else { return }
+    items.append(Item(role: "step", text: "", presentation: step))
   }
   private var displayedId = ""
   var ready: Bool { !loading && !currentId.isEmpty && displayedId == currentId }
@@ -230,7 +249,6 @@ final class ChatController {
 
   // MARK: - Sessions
 
-  private func url(_ id: String) -> URL { dir.appendingPathComponent("sessions/\(id).json") }
 
   /// Conversations are listed from core and are independent of UI sessions.
   func refreshSessions() {
@@ -353,9 +371,7 @@ final class ChatController {
     Task {
       do {
         guard let project = try await RPCToolTransport(session: session).project() else { return }
-        let reply = try await CoreHostClient.shared.call("ConversationCreateRequest", ["project_id": project.id])
-        guard let conversation = reply["conversation"] as? Tsugumi_Agent_ConversationT else { return }
-        select(conversation.id)
+        select(try await CoreHostClient.shared.createConversation(projectID: project.id))
         refreshSessions()
       } catch { status = String(describing: error) }
     }
@@ -527,7 +543,7 @@ final class ChatController {
     var groups: [Tsugumi_Agent_AccessGroupT] = []
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: String? {
-      guard let request = raw.first(where: { $0.contains("operation_approval\n") }),
+      guard let request = raw.first(where: { $0.hasPrefix("project_access operation_approval\n") }),
             let marker = request.range(of: "operation_approval\n") else { return nil }
       return request[marker.upperBound...].components(separatedBy: "\n").map { line in
         guard let data = line.data(using: .utf8),
@@ -717,8 +733,10 @@ final class ChatController {
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
     case .finished:
       bird.turnEnded(.done)
-    case .error(let s):
-      bird.turnEnded(s == "cancelled" ? .stopped : .failed)
+    case .cancelled:
+      bird.turnEnded(.stopped)
+    case .error:
+      bird.turnEnded(.failed)
     default:
       break
     }
@@ -730,6 +748,14 @@ final class ChatController {
   @ObservationIgnored private(set) var answer = 0
   @ObservationIgnored private var contentRevision = 0
   @ObservationIgnored private var turnAccepted = false
+
+  private func endFailedOrCancelledTurn(_ outcome: AgentPresence.Outcome) {
+    loading = false
+    GuideController.shared.chatTurnEnded(self, reply: lastReply)
+    busy = false
+    session.presence.turnEnded(outcome)
+    refreshAfterTurn()
+  }
 
   func handle(_ e: AgentEvent, of number: Int) {
     guard number == answer else { return }
@@ -782,24 +808,26 @@ final class ChatController {
     case .retrying(let s):
       // The reply is asked again from its beginning.
       session.presence.toolInputEnded(ok: false)
-      status = String(localized: "再試行中: \(ChatGPTError.localizedMessage(s))")
+      status = String(localized: "再試行中: \(s)")
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       session.presence.toolInputEnded(ok: false)
-    case .error(let s):
-      loading = false
-      GuideController.shared.chatTurnEnded(self, reply: lastReply)
-      if s == "cancelled" { notes = [] }
-      busy = false
-      session.presence.turnEnded(s == "cancelled" ? .stopped : .failed)
-      failed = s != "cancelled"
-      usageLimited = s == ChatGPTError.usageLimitText
-      contextFull = s == Agent.contextFullText
-      status = s == "cancelled" ? String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
-        : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+    case .cancelled:
+      canContinue = true
+      notes = []
+      failed = false
+      usageLimited = false
+      contextFull = false
+      status = String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
+      endFailedOrCancelledTurn(.stopped)
+    case .error(let message, let code):
+      failed = true
+      usageLimited = code == "subscription_sharing_usage_limit_exceeded"
+      contextFull = code == "context_full"
+      status = usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
-        : String(localized: "エラー: \(ChatGPTError.localizedMessage(s))")
-      refreshAfterTurn()
+        : String(localized: "エラー: \(ChatGPTError.localizedMessage(message, code: code))")
+      endFailedOrCancelledTurn(.failed)
     case .interrupted:
       busy = false
       session.presence.turnEnded(.stopped)

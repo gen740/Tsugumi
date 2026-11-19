@@ -35,20 +35,7 @@ A pending CLI/plug-in call loses its service connection when the Mac app quits;
 its run is stopped, not handed over. A later client request may start a host
 again. No new command-only lifetime manager is supplied.
 
-Vmhost gives the guest 40 seconds, then forces a stop; its second signal forces
-immediately. A 42-second process deadline also bounds a stuck framework callback.
-Hostd has a 45-second deadline. Vmd stops project groups concurrently, syncs,
-and requires read-only remounts of the history disk and Nix overlay. It then
-flushes the backing store disk with `sync -f /persist`, clears
-`/persist/store-health/running`, and syncs that unlink. The store disk itself
-stays writable: the mounted overlay holds its upper/work directories open for
-writing, so remounting that backing filesystem read-only fails even after a
-normal stop. Requiring that remount restored the dirty marker on every stop.
-The read-only overlay prevents further store writes; the completed backing
-filesystem sync makes them durable before the marker is removed.
-A failed history/overlay remount or pre-unlink backing sync keeps the marker.
-SIGKILL, power loss and an expired shutdown
-deadline cannot be made orderly; they cause a content check on the next boot.
+Vmhost waits for the guest to power off. A repeated stop signal forces it off. Vmd stops project groups concurrently and ends the Nix daemons. Once all writers have stopped, it flushes the backing store disk with `sync -f /persist`, clears `/persist/store-health/running`, and syncs that unlink. The store disk stays writable because its mounted overlay holds the upper/work directories open. A failed flush or a surviving daemon retains the dirty marker for the next boot.
 
 Boot writes and syncs the marker before store registration. A dirty marker,
 a missing health version (including **existing disks on the first new image
@@ -65,14 +52,14 @@ No run history or artifacts are deleted by these checks.
 Rebuild the boot image; rebuilding only the C++/Swift source is insufficient:
 
 ```sh
-TSUGUMI_VM_BUILD=1 vm/guest/build-image.sh --vm
+nix run .#guest-image -- --build
 TSUGUMI_CODESIGN_IDENTITY="Apple Development" ui/macos/build-app.sh
 ```
 
 The first command writes the verified artifact set to `dist/tsugumi-vm`; the
 second bundles its single guest archive and manifest. `SharedVM.installImage`
 extracts the kernel/rootfs in private support when the manifest identity changes
-or extracted contents are incomplete, retaining `store.img` and `history.img`.
+or extracted contents are incomplete, retaining `store.img`.
 The image already contains vm-system; the guest starts it after store checks. For a development session that still
 runs the **old** helper, use the existing runtime Shutdown (or vmctl `quit`)
 first; do not kill that old helper directly. Then end its host service and

@@ -7,6 +7,7 @@
 #include <iosfwd>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -25,8 +26,6 @@ struct RemoteTarget {
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;
-  uint32_t heartbeat_interval_seconds = 15;
-  uint32_t missed_heartbeats = 0;
   uint64_t grade = 0;
   std::string unavailable_reason;
 };
@@ -38,12 +37,12 @@ struct RemoteJobState {
   std::string error;
   std::string transfer_name = {};
   uint64_t transfer_done = 0, transfer_total = 0;
+  bool log_truncated = false;
 };
 
 struct RemoteProbe {
   std::string native_system;
   std::string instance;
-  std::string server_id;
   std::vector<std::string> systems;
   bool resource_limits;
   uint32_t max_jobs = 0, active_jobs = 0;
@@ -73,30 +72,37 @@ class RemoteJobClient {
   auto enabled() const -> bool { return !endpoint_.empty(); }
   auto stop() -> void { stopped_.store(true); }
   auto catalog() const -> std::vector<RemoteTarget>;
-  auto probe(std::string_view service, std::string_view registered_server,
-             uint32_t heartbeat_interval_seconds) const -> RemoteProbe;
-  auto put_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest, uint64_t size,
-                std::istream& contents, const std::atomic<bool>* cancel = nullptr, const TransferProgress& progress = {}) const -> void;
-  auto get_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest,
-                std::ostream& destination, uint64_t limit, const std::atomic<bool>* stop = nullptr, const TransferProgress& progress = {}) const -> void;
-  auto submit(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
-              std::string_view spec) const -> RemoteJobState;
-  auto status(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id) const -> RemoteJobState;
-  auto cancel(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
-              std::string_view fingerprint) const -> RemoteJobState;
+  auto probe(std::string_view service, std::string_view registered_server) const
+      -> RemoteProbe;
+  auto put_blob(std::string_view service, std::string_view instance,
+                std::string_view job_id, std::string_view digest, uint64_t size,
+                std::istream& contents,
+                const std::atomic<bool>* cancel = nullptr,
+                const TransferProgress& progress = {}) const -> void;
+  auto get_blob(std::string_view service, std::string_view instance,
+                std::string_view job_id, std::string_view digest,
+                std::ostream& destination, uint64_t limit,
+                std::optional<uint64_t> expected_size,
+                const std::atomic<bool>* stop = nullptr,
+                const TransferProgress& progress = {}) const -> void;
+  auto submit(std::string_view service, std::string_view instance,
+              std::string_view job_id, std::string_view spec) const
+      -> RemoteJobState;
+  auto status(std::string_view service, std::string_view instance,
+              std::string_view job_id) const -> RemoteJobState;
+  auto cancel(std::string_view service, std::string_view instance,
+              std::string_view job_id, std::string_view fingerprint) const
+      -> RemoteJobState;
 
-  auto release(std::string_view service, std::string_view server_id, std::string_view instance,
-               std::string_view job_id, std::string_view fingerprint) const -> void;
+  auto release(std::string_view service, std::string_view instance,
+               std::string_view job_id, std::string_view fingerprint) const
+      -> void;
 
  private:
-  auto request(Tsugumi::RemoteWorker::RequestT message, const std::atomic<bool>* cancel = nullptr) const
+  auto request(Tsugumi::RemoteWorker::RequestT message,
+               const std::atomic<bool>* cancel = nullptr) const
       -> Tsugumi::RemoteWorker::ReplyT;
-  auto keep_alive(std::string_view service, std::string_view server,
-                  uint32_t interval) const
-      -> void;
   const std::string core_life_id_;
-  mutable std::mutex heartbeat_mutex_;
-  mutable std::map<std::string, std::jthread> heartbeats_;
   std::string endpoint_;
   std::filesystem::path capability_file_;
   std::atomic<bool> stopped_{false};

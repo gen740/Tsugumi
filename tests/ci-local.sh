@@ -25,7 +25,8 @@ export NIX_CONFIG="${NIX_CONFIG:-}
 extra-substituters = https://tsugumi.cachix.org
 extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI="
 step() { printf '\n== %s\n' "$1"; }
-core_run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
+export CORE_TEST_ENV="$root/build-ci/bin/tsugumi-test-env"
+core_run() { "$CORE_TEST_ENV" "$@"; }
 system_name() { nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem; }
 agent_checks() { bash tests/ci/run-suite.sh agent "$(system_name)"; }
 core_checks() { bash tests/ci/run-suite.sh core "$(system_name)"; }
@@ -49,7 +50,6 @@ linux_job() {
   core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
   sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
-  core_run "$sdk_python/bin/python3" -c 'import matplotlib, plotly, altair'
   bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
   bash tests/ci/run-suite.sh adapters "$system"
   if [[ "${TSUGUMI_LOCAL_REMOTE:-1}" == 1 ]]; then

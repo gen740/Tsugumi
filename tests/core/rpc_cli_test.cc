@@ -10,6 +10,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -46,10 +48,14 @@ class RpcCli : public ::testing::TestWithParam<bool> {
 
   auto Run(const std::string& input, const std::string& endpoint,
            const std::string& schema) -> CliResult {
-    const auto stdout_path = directory.path / "cli.output";
     const auto stderr_path = directory.path / "cli.error";
-    int input_pipe[2];
+    int input_pipe[2], output_pipe[2];
     if (::pipe(input_pipe)) throw std::runtime_error("cannot create CLI input");
+    if (::pipe(output_pipe)) {
+      ::close(input_pipe[0]);
+      ::close(input_pipe[1]);
+      throw std::runtime_error("cannot create CLI output");
+    }
     const std::vector<std::string> arguments{
         TSUGUMI_RPC_BINARY, "--endpoint", endpoint, "--schema", schema,
         "--timeout-ms",     "3000"};
@@ -58,9 +64,9 @@ class RpcCli : public ::testing::TestWithParam<bool> {
     posix_spawn_file_actions_adddup2(&actions, input_pipe[0], STDIN_FILENO);
     posix_spawn_file_actions_addclose(&actions, input_pipe[0]);
     posix_spawn_file_actions_addclose(&actions, input_pipe[1]);
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
-                                     stdout_path.c_str(),
-                                     O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    posix_spawn_file_actions_adddup2(&actions, output_pipe[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, output_pipe[0]);
+    posix_spawn_file_actions_addclose(&actions, output_pipe[1]);
     posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
                                      stderr_path.c_str(),
                                      O_CREAT | O_WRONLY | O_TRUNC, 0600);
@@ -73,56 +79,59 @@ class RpcCli : public ::testing::TestWithParam<bool> {
                                     argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
     ::close(input_pipe[0]);
+    ::close(output_pipe[1]);
     if (result) {
       ::close(input_pipe[1]);
+      ::close(output_pipe[0]);
       throw std::runtime_error("cannot start CLI: " +
                                std::string(std::strerror(result)));
     }
-    const auto deadline = std::chrono::steady_clock::now() + 6s;
     int status = 0;
     size_t position = 0;
-    size_t sent = 0;
-    while (true) {
-      const auto waited = ::waitpid(pid, &status, WNOHANG);
-      if (waited == pid) break;
-      if (waited < 0 && errno != EINTR)
-        throw std::runtime_error("cannot wait for CLI");
-      if (std::chrono::steady_clock::now() >= deadline) {
-        ::kill(pid, SIGKILL);
-        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-        }
-        throw std::runtime_error("CLI did not finish: " + Read(stderr_path));
+    std::vector<std::string> replies;
+    auto* stream = ::fdopen(output_pipe[0], "r");
+    if (!stream) {
+      ::close(input_pipe[1]);
+      ::close(output_pipe[0]);
+      while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
       }
-      const auto output = Read(stdout_path);
-      // A project Hello must be acknowledged before another operation. Each
-      // following operation likewise observes the preceding public reply.
-      if (position < input.size() &&
-          static_cast<size_t>(std::count(output.begin(), output.end(), '\n')) >=
-              sent) {
-        const auto newline = input.find('\n', position);
-        const auto end =
-            newline == std::string::npos ? input.size() : newline + 1;
-        while (position < end) {
-          const auto count =
-              ::write(input_pipe[1], input.data() + position, end - position);
-          if (count < 0 && errno == EINTR) continue;
-          if (count <= 0) throw std::runtime_error("cannot write CLI input");
-          position += static_cast<size_t>(count);
-        }
-        ++sent;
-      }
-      if (position == input.size() && input_pipe[1] != -1) {
-        ::close(input_pipe[1]);
-        input_pipe[1] = -1;
-      }
-      std::this_thread::sleep_for(5ms);
+      throw std::runtime_error("cannot open CLI output stream");
     }
-    if (input_pipe[1] != -1) ::close(input_pipe[1]);
+    char* line = nullptr;
+    size_t capacity = 0;
+    const auto read_reply = [&] {
+      const auto count = ::getline(&line, &capacity, stream);
+      if (count < 0) return false;
+      if (count > 1) replies.emplace_back(line, count - 1);
+      return true;
+    };
+    while (position < input.size()) {
+      const auto newline = input.find('\n', position);
+      const auto end =
+          newline == std::string::npos ? input.size() : newline + 1;
+      // The first request is Hello, and every subsequent request must
+      // observe the preceding reply before it is sent.
+      while (position < end) {
+        const auto count =
+            ::write(input_pipe[1], input.data() + position, end - position);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        position += static_cast<size_t>(count);
+      }
+      if (position != end) break;
+      if (position < input.size() && !read_reply()) break;
+    }
+    ::close(input_pipe[1]);
+    while (read_reply()) {
+    }
+    std::free(line);
+    ::fclose(stream);
+    while (::waitpid(pid, &status, 0) < 0) {
+      if (errno != EINTR) throw std::runtime_error("cannot wait for CLI");
+    }
     CliResult output{
-        WIFEXITED(status) ? WEXITSTATUS(status) : -1, Read(stderr_path), {}};
-    std::istringstream lines(Read(stdout_path));
-    for (std::string line; std::getline(lines, line);)
-      if (!line.empty()) output.replies.push_back(std::move(line));
+        WIFEXITED(status) ? WEXITSTATUS(status) : -1, Read(stderr_path),
+        std::move(replies)};
     if (output.status)
       for (const auto& reply : output.replies) output.error += reply + '\n';
     return output;
@@ -137,9 +146,9 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       directory.path / "project/tsugumi.json",
       R"({"name":"Before","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   Write(directory.path / "project/layout.json", "{}");
-  project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir", (directory.path / "scratch").string(),
-                                  "--run-scratch-dir", (directory.path / "run-scratch").string(),
-                                  "--project",
+  project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir",
+                 (directory.path / "scratch").string(), "--run-scratch-dir",
+                 (directory.path / "run-scratch").string(), "--project",
                  (directory.path / "project").string(), "--unix",
                  (directory.path / "project.sock").string(), "--listen",
                  "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
@@ -149,10 +158,9 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   const auto server =
       Readiness(project, directory.path / "project-control/server.ready",
                 directory.path / "project.log");
-  const auto hello = Request(1, "SessionHelloRequest",
-                             "{\"protocol\":1,\"client_id\":\"1a363cee-72b1-"
-                             "4713-8e1c-251354239be5\",\"token\":" +
-                                 Quote(JsonString(server, "/token")) + "}");
+  const auto hello =
+      Request(1, "SessionHelloRequest",
+              "{\"token\":" + Quote(JsonString(server, "/token")) + "}");
   const auto inspect = Run(hello + Request(2, "ProjectInspectRequest", "{}"),
                            Endpoint(server), TSUGUMI_PROJECT_SCHEMA);
   ASSERT_EQ(inspect.status, 0) << inspect.error;

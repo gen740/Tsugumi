@@ -1,9 +1,9 @@
 // Shared authentication, access and result vocabulary for the Host and Agent services.
 namespace Tsugumi.Service;
-table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }
-table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
+table HelloRequest { token:string (required); }
+table HelloResult { server_id:string (required); principal:string (required); }
 table Failure { code:string (required); message:string (required); request_id:string; }
-table Acknowledgement { accepted:bool; revoked:bool; }
+table Acknowledgement { accepted:bool; }
 // Ordinary calls identify a stored provider and a conversation's model choice.
 // purpose: guide/summary asks the host to choose provider/model from settings;
 // model and use_choices are then ignored. key_profile names platform memory keys.

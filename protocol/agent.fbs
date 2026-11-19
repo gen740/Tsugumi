@@ -35,7 +35,7 @@ table EventsRequest { conversation_id:string (required); after_seq:ulong; limit:
 table ToolCatalogRequest {}
 // Reserve a durable conversation call number before dispatch, so connection
 // retries and approval retries can reuse it. Not exposed as a model tool.
-table CallIdRequest { conversation_id:string (required); }
+table CallIdRequest { conversation_id:string (required); name:string; arguments_json:string; }
 table CallId { id:string (required); }
 table ToolCallRequest { conversation_id:string (required); project_id:string; name:string (required); arguments_json:string (required); op_id:string (required); }
 // Cancels only this connection's in-flight ToolCallRequest, including a queued
@@ -43,8 +43,8 @@ table ToolCallRequest { conversation_id:string (required); project_id:string; na
 table ToolCallCancelRequest { request_id:ulong; }
 table AccessRequest { project_id:string (required); conversation_id:string; access:Tsugumi.Service.Access; reason:string; }
 // Resolving/revoking grants requires the human principal, including over Unix.
-// allow answers the access needed now; also_allow explicitly opts into other listed accesses.
-table AccessResolveRequest { request_id:string (required); allow:bool; also_allow:[Tsugumi.Service.Access]; }
+// The host applies the selected offered permissions; omission uses the needed access.
+table AccessResolveRequest { request_id:string (required); allow:bool; selected:[Tsugumi.Service.Access]; }
 table AccessRevokeRequest { grant_id:string (required); }
 table AccessListRequest { conversation_id:string; }
 
@@ -58,7 +58,7 @@ table Request { value:RequestPayload; }
 
 // Content blocks are the provider/model's open-ended JSON data, not envelopes.
 table ModelMessage { role:string; content_json:string; display:string; context_summary:bool; provider_content_json:string; provider_api:string; }
-table ToolRecord { id:string; name:string; arguments_json:string; op_id:string; state:string; result_json:string; is_error:bool; }
+table ToolRecord { id:string; name:string; arguments_json:string; state:string; result_json:string; is_error:bool; }
 table Helper { call_id:string; task:uint; spec_json:string; anchor:uint; messages:[ModelMessage]; result_json:string; state:string; }
 // Host-built presentation shared by live observation and restored history.
 // A row is text (role), step, tool or helper. Children preserve causal order.
@@ -92,7 +92,7 @@ table SearchResult { matches:[SearchMatch]; }
 table Event {
   kind:string (required); text:string; message:string; input_json:string;
   id:string; name:string; ok:bool = true; index:uint;
-  asked:[string]; groups:[AccessGroup]; event:Event;
+  asked:[string]; groups:[AccessGroup]; event:Event; code:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
 table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }

@@ -1012,7 +1012,7 @@ struct CardNodeView: View {
     .frame(width: size.width, height: size.height, alignment: .topLeading)
     // The outline and the ports: a port sits on the edge, and the half of it
     // outside the outline must still start a wire.
-    .contentShape(hitShape(g, outline: path))
+    .contentShape(Self.hitShape(data, flow: flow, zoom: zoom, newPorts: onPortDrag != nil && paramsEditable))
     .accessibilityElement(children: .contain)
     .accessibilityLabel(accessibilityText)
   }
@@ -1037,23 +1037,30 @@ struct CardNodeView: View {
     .alignmentGuide(.top) { $0.height / 2 - outline.minY }
   }
 
-  func hitShape(_ g: CardGeometry, outline: Path) -> Path {
+  /// What of a Card takes the mouse, in its view's own units at `zoom`: the
+  /// outline, the ports (with the new-port handles of a Draft) and the
+  /// comments badge. The debug panel draws the same shape.
+  static func hitShape(_ data: CardNodeData, flow: FlowDirection, zoom: Double, newPorts: Bool) -> Path {
+    let g = CardGeometry(data, flow: flow)
+    let z = CGFloat(zoom)
+    let o = g.outlineRect
+    let outline = g.outline(in: CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z))
     // A rotated outline can wind opposite to a port rectangle. Appending
     // subpaths would then cut holes in their overlap, so take their union.
     var p = outline
     if data.openComments > 0 {
       // The badge sits half outside the outline and must still take the click.
-      let badge = max(16, s(18))
+      let badge = max(16, 18 * z)
       p = p.union(Path(CGRect(x: outline.boundingRect.maxX - badge, y: outline.boundingRect.minY - badge / 2, width: badge * 1.4, height: badge)))
     }
     let hit = g.portHitSize(zoom: z)
     for (list, output) in [(data.inputs, false), (data.outputs, true)] {
       for port in list {
         let pt = g.port(port.name, output: output)
-        p = p.union(Path(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit)))
+        p = p.union(Path(CGRect(x: pt.x * z - hit / 2, y: pt.y * z - hit / 2, width: hit, height: hit)))
       }
-      if onPortDrag != nil, paramsEditable, let pt = g.newPortPoint(output: output) {
-        p = p.union(Path(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit)))
+      if newPorts, let pt = g.newPortPoint(output: output) {
+        p = p.union(Path(CGRect(x: pt.x * z - hit / 2, y: pt.y * z - hit / 2, width: hit, height: hit)))
       }
     }
     return p

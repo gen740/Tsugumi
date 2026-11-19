@@ -18,7 +18,6 @@ class BrowserTransport final : public Transport {
     int interval = 0;
     bool opened = false;
     bool closed = false;
-    std::chrono::steady_clock::time_point deadline;
 
     auto End(Error error) -> void {
       if (closed) return;
@@ -100,17 +99,10 @@ class BrowserTransport final : public Transport {
           current->End({ErrorCode::Closed, "WebSocket connection closed"});
           return true;
         });
-    state->deadline =
-        std::chrono::steady_clock::now() + state->options.connect_timeout;
     state->interval = emscripten_set_interval(
         +[](void* context) {
           auto current = static_cast<State*>(context)->shared_from_this();
-          if (!current->opened &&
-              std::chrono::steady_clock::now() >= current->deadline)
-            current->End(
-                {ErrorCode::Timeout, "WebSocket connection timed out"});
-          else if (!current->closed && current->events.tick)
-            current->events.tick();
+          if (!current->closed && current->events.tick) current->events.tick();
         },
         20, state.get());
   }
@@ -120,12 +112,6 @@ class BrowserTransport final : public Transport {
       return {ErrorCode::Closed, "WebSocket is not open"};
     if (bytes.empty() || bytes.size() > state_->options.max_frame_bytes)
       return {ErrorCode::InvalidArgument, "RPC message exceeds its limit"};
-    size_t buffered = 0;
-    if (emscripten_websocket_get_buffered_amount(state_->socket, &buffered) !=
-        EMSCRIPTEN_RESULT_SUCCESS)
-      return {ErrorCode::Transport, "cannot inspect WebSocket outbox"};
-    if (buffered + bytes.size() > state_->options.max_queued_bytes)
-      return {ErrorCode::Backpressure, "WebSocket outbox is full"};
     if (emscripten_websocket_send_binary(state_->socket, bytes.data(),
                                          static_cast<uint32_t>(bytes.size())) !=
         EMSCRIPTEN_RESULT_SUCCESS)
@@ -144,14 +130,11 @@ class BrowserTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport> {
   if (!options.endpoint.starts_with("ws://") &&
       !options.endpoint.starts_with("wss://"))
     throw std::invalid_argument("browser RPC requires a WebSocket endpoint");
-  if (!options.max_frame_bytes || options.max_frame_bytes > UINT32_MAX ||
-      options.max_queued_bytes < options.max_frame_bytes ||
-      options.connect_timeout.count() <= 0)
-    throw std::invalid_argument("invalid RPC transport limits");
   return std::make_shared<BrowserTransport>(options);
 }
 

@@ -36,10 +36,12 @@ std::optional<std::string> read_file(const stdfs::path& p);
 std::string read_file_or_throw(const stdfs::path& p);
 // `size` bytes from `offset` (fewer at the end of the file); nullopt when
 // the file does not exist.
-std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset, uint64_t size);
+std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset,
+                                      uint64_t size);
 // SHA-256 (hex) of a file's content, read in parts.
 std::string sha256_file(const stdfs::path& p);
-void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode = 0644);
+void write_atomic(const stdfs::path& p, std::string_view data,
+                  unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
 void remove_file_durable(const stdfs::path& p);
 std::optional<std::string> file_sha256(const stdfs::path& p);
@@ -64,14 +66,19 @@ Listing list_tree(const stdfs::path& root);
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel);
 // A complete regular-file transfer: reject EOF before the size observed at
 // open, rather than presenting a truncated stream as a successful transfer.
-auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
-                    const std::function<void(std::string_view)>& consume) -> uint64_t;
+auto stream_beneath(const stdfs::path& root, const stdfs::path& rel,
+                    uint64_t limit,
+                    const std::function<void(std::string_view)>& consume)
+    -> uint64_t;
 // Copy a regular file below root into a destination owned by the caller.
-auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::path& destination,
-                  const std::function<void(std::string_view)>& on_chunk) -> uint64_t;
-Listing list_beneath(const stdfs::path& root, const stdfs::path& rel, size_t max_entries = SIZE_MAX);
+auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
+                  const stdfs::path& destination,
+                  const std::function<void(std::string_view)>& on_chunk)
+    -> uint64_t;
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
+                     size_t max_entries = SIZE_MAX);
 
-// Exclusive non blocking advisory lock held for the lifetime of the object.
+// Exclusive advisory lock held for the lifetime of the object.
 class FileLock {
  public:
   FileLock() = default;
@@ -79,13 +86,14 @@ class FileLock {
   FileLock& operator=(const FileLock&) = delete;
   FileLock(FileLock&& o) noexcept : fd_(o.fd_) { o.fd_ = -1; }
   ~FileLock();
+  static FileLock acquire(const stdfs::path& p);
   // Returns nullopt when another process holds the lock.
   static std::optional<FileLock> try_acquire(const stdfs::path& p);
 
  private:
+  static std::optional<FileLock> open(const stdfs::path& p, bool wait);
   int fd_ = -1;
 };
-
 
 uint64_t directory_size(const stdfs::path& p);
 

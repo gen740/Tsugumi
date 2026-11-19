@@ -133,7 +133,7 @@ def test_a_project_copy_keeps_recorded_invocation_details(core_factory, project,
     when the project folder is copied and opened with an empty history disk,
     then the restored record has the same execution service, parameters and digest.
     """
-    original = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history-original")
+    original = core_factory(mocked_builds=True, mocked_worker=True)
     client = original.connect()
     graph = Project(project)
     add_worker(graph, "work", tmp_path / "package", [
@@ -151,8 +151,7 @@ def test_a_project_copy_keeps_recorded_invocation_details(core_factory, project,
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     assert (copied_project / ".tsugumi" / "runs.sqlite").exists()
-    copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
-                          history_dir=tmp_path / "history-copy")
+    copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True)
     result, params = recorded_params(copied.connect(), run_id, "work")
     assert params == {"boundary": 1650}, "the parameters of the run, not of the copied document"
     assert text(result.record.outputs[0].contentHash) == digest

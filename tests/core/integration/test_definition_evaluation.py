@@ -18,6 +18,7 @@ from harness.real_cards import nix_string
 from harness.scenario import Project, run, wait_run
 from projects import card, conn, write
 from tsugumi_client import path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 
@@ -162,9 +163,9 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
         pkgsPath=SECOND_PIN.split("#")[0] + "#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="))
     reload_project(client)
     failed = run(client)
-    status = wait_run(client, failed, timeout=1800)
+    status = wait_run(client, failed)
     assert status.state == RunState.failed
-    assert "hash" in text(status.failure.diagnostic).lower()
+    assert status.failure.kind == FailureKind.nix_failed
     assert not text(client.call("RunRecordRequest", runId=failed, card=path("work")).record.summary.environmentId)
     project_file.write_bytes(original)
     reload_project(client)
@@ -226,10 +227,15 @@ def test_sdk_deployment_changes_the_next_definition(core_factory, project, tmp_p
     # Installed Nix SDK files are read-only; edit only this private copy.
     target.chmod(target.stat().st_mode | 0o200)
     if sdk_input == "nix/default.nix":
-        content = target.read_text()
-        needle = '{ bash = run; }'
-        assert content.count(needle) == 1
-        target.write_text(content.replace(needle, '{ bash = run + "\\necho sdk-updated"; }'))
+        upstream = target.read_text()
+        target.write_text("args:\nlet sdk = (\n" + upstream + r'''
+) args;
+in sdk // {
+  manifestFor = remote: card: sdk.manifestFor remote (card // {
+    run = card.run + "\necho sdk-updated";
+  });
+}
+''')
     else:
         with (sdk / sdk_input).open("a") as file:
             file.write('\nexport const evaluationRevision = "updated";\n')
@@ -341,8 +347,8 @@ def test_impure_file_read_cannot_fall_back_to_an_old_definition(core_factory, pr
         "builtins.readFile (/. + " + nix_string(str(outside.resolve())) + ")"))
     reload_project(client)
     run_id = run(client)
-    status = wait_run(client, run_id, timeout=1800)
+    status = wait_run(client, run_id)
     assert status.state == RunState.failed
-    assert "forbidden" in text(status.failure.diagnostic).lower()
+    assert status.failure.kind == FailureKind.nix_failed
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert not text(record.summary.environmentId)

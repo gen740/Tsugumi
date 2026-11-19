@@ -4,6 +4,7 @@ import type { AccessGroup } from '../shared/chatPresentation'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { modelChoices } from '../shared/agentShared'
+import type { Access } from '../shared/gen/tsugumi/service/access'
 import { type AgentEvent, type ProviderConfig } from './agent'
 import { CoreHost, CoreHostError, RemoteAgent } from './coreHost'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
@@ -64,6 +65,10 @@ interface Settings {
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
   language: Language
+  /** The shared VM's CPUs, memory and store size (GiB) from its next start; 0 is this machine's default. */
+  vmCpus: number
+  vmMemoryGiB: number
+  vmStoreGiB: number
 }
 
 // The host keeps presentation snapshots only; persistence and validation are RPC.
@@ -73,7 +78,7 @@ const SHARED_KEYS: Record<string, string> = {
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
-const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders' }
+const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
@@ -172,11 +177,18 @@ async function providerInfo() {
            modelNames: p.auth === 'chatgpt' ? (await modelCatalogs()).modelNames : {} }
 }
 
+function providerConnectionMessage(code?: string): string | undefined {
+  switch (code) {
+    case 'chatgpt_sign_in_required': return L('ChatGPT にもう一度サインインしてください。')
+    case 'chatgpt_plan_disabled': return L('このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。')
+  }
+}
+
 /** The ChatGPT accounts and the sign-in for the settings page (never a token). */
 async function chatGPTState() {
-  const status = await core.user.call<{ message?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
+  const status = await core.user.call<{ code?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
   return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL,
-    connectionMessage: status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined }
+    connectionMessage: providerConnectionMessage(status.code) }
 }
 
 // ---- The guide -----------------------------------------------------------------
@@ -201,7 +213,7 @@ async function guide(): Promise<RemoteAgent> {
     guideAgent = await new RemoteAgent(core, 'guide', guideProject, 'guide').open()
   }
   await core.configure(await guideProvider(), 'guide')
-  guideAgent.observe(guideEvents)
+  guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
   await guideAgent.refresh()
   return guideAgent
 }
@@ -216,10 +228,10 @@ async function guideProvider(): Promise<ProviderConfig> { return purposeProvider
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
  *  signed-in ChatGPT plan, or the local fixture. */
-async function guideAvailability(): Promise<{ configured: boolean; message?: string }> {
+async function guideAvailability(): Promise<{ configured: boolean; code?: string }> {
   const p = await guideProvider()
   const selected = await core.provider(p)
-  const status = await core.user.call<{ configured: boolean; message?: string }>('ProviderStatusRequest', {
+  const status = await core.user.call<{ configured: boolean; code?: string }>('ProviderStatusRequest', {
     profile: p.auth === 'chatgpt' ? selected.account_profile ?? selected.profile : selected.profile,
     id: selected.provider_id, key_profile: selected.key_profile,
   })
@@ -231,7 +243,7 @@ const guideSession = () => `web:${ctx.support}`
 async function guideState() {
   const status = await guideAvailability()
   const available = status.configured
-  const connectionMessage = status.message === 'Sign in to ChatGPT again' ? L('ChatGPT にもう一度サインインしてください。') : undefined
+  const connectionMessage = providerConnectionMessage(status.code)
   const progress = await core.user.call('GuideAdvanceRequest', { session_id: guideSession(), language: settings().language,
     event: { kind: 'connection', connected: available } })
   return { available, connectionMessage, ...progress }
@@ -271,22 +283,11 @@ interface PermissionWait {
 const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
-async function answerPermission(id: string, allow: boolean, selected?: string[]) {
-  const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
-  const asked = access.requests.find(r => r.id === id)?.asked ?? []
-  let neededAllowed = allow
-  const additional: string[] = []
-  for (const request of asked) {
-    if (!request.startsWith('project_access ') || request.includes('operation_approval\n')) continue
-    const item = JSON.parse(request.slice('project_access '.length))
-    const checked = allow && (selected ? selected.includes(request) : item.needed_now === true)
-    if (item.needed_now === true) neededAllowed = checked
-    else if (checked) additional.push(item.access)
-  }
-  await core.user.call('AccessResolveRequest', { request_id: id, allow: neededAllowed, also_allow: additional })
+async function answerPermission(id: string, allow: boolean, selected?: Access[]) {
+  const result = await core.user.call<{ accepted: boolean }>('AccessResolveRequest', { request_id: id, allow, selected })
   const waiting = permissionWaits.get(id)
   permissionWaits.delete(id)
-  waiting?.resolve(neededAllowed)
+  waiting?.resolve(result.accepted)
   if (waiting) ctx.broadcast({ type: 'chat', project: waiting.project, session: waiting.session,
     event: { kind: 'permissionAnswered', id } })
 }
@@ -328,7 +329,7 @@ class ChatHost {
         }
       }
     }
-    a.observe(this.events(id))
+    a.observe(this.events(id), () => ctx.listeners() > 0)
     await a.refresh()
     return a
   }
@@ -352,6 +353,8 @@ class ChatHost {
     return (event: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event })
   }
 
+  resume() { for (const [id, conversation] of this.conversations) conversation.observe(this.events(id), () => ctx.listeners() > 0) }
+
   detach() { for (const conversation of this.conversations.values()) conversation.close() }
 
   async sessions() {
@@ -374,7 +377,7 @@ class ChatHost {
     await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
       if (!(error instanceof CoreHostError) || error.code !== 'permission_denied') throw error
     })
-    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id })).id
+    const op = (await core.external.call<{ id: string }>('CallIdRequest', { conversation_id: id, name, arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}) })).id
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
         arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op }, signal)
@@ -397,6 +400,11 @@ function chatFor(dir: string): ChatHost {
 }
 
 /** A disconnected page does not own the lifetime of a core conversation. */
+export function resumeChats() {
+  for (const host of chats.values()) host.resume()
+  if (guideAgent) guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
+}
+
 export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
@@ -451,8 +459,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
-    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) c.broadcast({ type: 'settingsChanged' })
+    if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) {
+      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }))
+    }
   })
+  const initialSettings = loadSettings()
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
@@ -583,7 +594,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
       scoped_skill: b.scopedSkill ? String(b.scopedSkill) : undefined,
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
     }))
-      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))
+      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
     return { ok: true }
   },
   'POST /api/chat/thoughts': async (b) => {
@@ -622,17 +633,13 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
   'POST /api/chat/folders': async (b) => {
-    if (!Array.isArray(b.selected) || !b.selected.length) throw ctx.httpError(400, 'Select at least one folder.')
+    if (!Array.isArray(b.selected)) throw ctx.httpError(400, 'Select at least one folder.')
     const folders = b.selected.map(String)
     const host = chatFor(projectDir(b.path))
     return { folders: await host.attachFolders(folders) }
   },
   'POST /api/chat/folder/detach': async (b) => {
     const project = projectDir(b.path)
-    const access = await core.user.call<{ grants: { id: string; project_id: string; active: boolean }[] }>('AccessListRequest')
-    for (const grant of access.grants.filter((g) => g.active && g.project_id === String(b.resource))) {
-      await core.user.call('AccessRevokeRequest', { grant_id: grant.id })
-    }
     await chatFor(project).detachFolder(String(b.folder))
     return { ok: true }
   },
@@ -681,19 +688,17 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/guide/send': async (b) => {
     const status = await guideAvailability()
-    if (!status.configured) throw ctx.httpError(409, status.message === 'Sign in to ChatGPT again'
-      ? L('ChatGPT にもう一度サインインしてください。') : L('ガイドに使える API キーがありません。'))
+    if (!status.configured) throw ctx.httpError(409, providerConnectionMessage(status.code) ?? L('ガイドに使える API キーがありません。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
     const a = await guide()
-    if (a.busy) throw ctx.httpError(409, L('ツグミはまだ答えています。'))
     const turn = randomUUID()
     void withAccess(guideProject ?? '', 'guide', () => a.send(String(b.text ?? ''), guideEvents, turn))
-      .catch((e) => guideEvents({ kind: 'error', message: e.message }))
+      .catch((e) => guideEvents({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
     return { ok: true }
   },
   'POST /api/guide/retry': async () => {
     const a = await guide()
-    if (!a.busy) await a.action('Retry', guideEvents)
+    await a.action('Retry', guideEvents)
     return { ok: true }
   },
   'POST /api/guide/cancel': async () => {
@@ -708,9 +713,5 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
-  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL, signal?: AbortSignal) => {
-    await loadSettings()
-    signal?.throwIfAborted()
-    return handler(body, url, signal)
-  }]))
+  return Object.fromEntries(Object.entries(routes).map(([key, route]) => [key, async (body, url, signal) => { await initialSettings; return route(body, url, signal) }]))
 }

@@ -31,7 +31,9 @@ class Sha256 {
 std::string sha256_hex(std::string_view data);
 std::array<uint8_t, 20> sha1(std::string_view data);
 std::string base64(const void* data, size_t size);
-inline std::string base64(std::string_view s) { return base64(s.data(), s.size()); }
+inline std::string base64(std::string_view s) {
+  return base64(s.data(), s.size());
+}
 // Returns false on malformed input.
 bool base64_decode(std::string_view in, std::string& out);
 uint32_t crc32(const void* data, size_t size);
@@ -46,8 +48,9 @@ auto short_id() -> std::string;
 auto is_short_id(std::string_view value) -> bool;
 auto is_run_id(std::string_view value) -> bool;
 auto is_operation_id(std::string_view value) -> bool;
-auto unique_short_id(const std::function<bool(const std::string &)> &exists,
-                     const std::function<std::string()> &generate = short_id)
+// The generator returns a valid short ID.
+auto unique_short_id(const std::function<bool(const std::string&)>& exists,
+                     const std::function<std::string()>& generate = short_id)
     -> std::string;
 std::string random_token(size_t bytes);
 bool is_uuid(std::string_view s);

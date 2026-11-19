@@ -38,7 +38,6 @@ from Tsugumi.RPC.Request import RequestT  # noqa: E402
 
 
 FAILURE_NAMES = {v: k for k, v in vars(FailureKind).items() if not k.startswith("_")}
-REPLY_NAMES = {v: k for k, v in vars(ReplyPayload).items() if not k.startswith("_")}
 
 
 def new_id() -> str:
@@ -121,6 +120,7 @@ class Client:
         self._cv = threading.Condition(self._lock)
         self._replies: dict[int, MessageT] = {}
         self.notifications: deque = deque()
+        self.subscribed = False
         self.closed = False
         self.reader_error: Exception | None = None
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
@@ -128,43 +128,12 @@ class Client:
 
     # -- transport ---------------------------------------------------------
 
-    def _send_payload(self, payload: bytes, deadline: float) -> None:
-        left = deadline - time.monotonic()
-        if left <= 0 or not self._send_lock.acquire(timeout=left):
-            raise TimeoutError("RPC send lock deadline exceeded")
-        try:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                raise TimeoutError("RPC send deadline exceeded")
-            expired = threading.Event()
-
-            def abort_send():
-                expired.set()
-                self._close_socket()
-
-            # Changing the socket timeout would also affect the reader. Closing
-            # it interrupts both Unix sendall and WebSocket's blocking send.
-            watchdog = threading.Timer(left, abort_send)
-            watchdog.daemon = True
-            watchdog.start()
-            try:
-                try:
-                    if self._sock:
-                        self._sock.sendall(struct.pack("<I", len(payload)) + payload)
-                    else:
-                        self._ws.send(payload)
-                finally:
-                    watchdog.cancel()
-                    # Finish any racing callback before the next sender enters.
-                    watchdog.join()
-            except Exception as error:
-                if expired.is_set():
-                    raise TimeoutError("RPC send deadline exceeded") from error
-                raise
-            if expired.is_set():
-                raise TimeoutError("RPC send deadline exceeded")
-        finally:
-            self._send_lock.release()
+    def _send_payload(self, payload: bytes) -> None:
+        with self._send_lock:
+            if self._sock:
+                self._sock.sendall(struct.pack("<I", len(payload)) + payload)
+            else:
+                self._ws.send(payload)
 
     def _close_socket(self) -> None:
         sock = self._sock if self._sock is not None else self._ws.socket
@@ -186,8 +155,6 @@ class Client:
                     return None
                 head += chunk
             (n,) = struct.unpack("<I", head)
-            if not 0 < n <= 16 << 20:
-                raise ValueError(f"invalid RPC frame size: {n}")
             body = bytearray()
             while len(body) < n:
                 chunk = self._sock.recv(min(1 << 20, n - len(body)))
@@ -230,13 +197,12 @@ class Client:
         except OSError:
             pass
         if threading.current_thread() is not self._reader:
-            self._reader.join(timeout=2)
+            self._reader.join()
 
-    def wait_closed(self, timeout: float = 60.0) -> None:
+    def wait_closed(self) -> None:
         """Wait for transport EOF, not an assumed process settling delay."""
         with self._cv:
-            if not self._cv.wait_for(lambda: self.closed, timeout):
-                raise TimeoutError("connection did not close")
+            self._cv.wait_for(lambda: self.closed)
 
     def __enter__(self):
         return self
@@ -246,42 +212,33 @@ class Client:
 
     # -- requests ------------------------------------------------------------
 
-    def send(self, name: str, obj: Any, request_id: Optional[int] = None,
-             timeout: float = 30.0) -> int:
-        return self._send_request(name, obj, request_id, time.monotonic() + timeout)
-
-    def _send_request(self, name: str, obj: Any, request_id: Optional[int], deadline: float) -> int:
+    def send(self, name: str, obj: Any, request_id: Optional[int] = None) -> int:
         with self._lock:
             rid = request_id if request_id is not None else self._next
             self._next = max(self._next, rid) + 1
-        self._send_payload(encode_request(rid, name, obj), deadline)
+        self._send_payload(encode_request(rid, name, obj))
         return rid
 
-    def wait_reply(self, rid: int, timeout: float = 30.0) -> Any:
-        return self._wait_reply(rid, time.monotonic() + timeout)
-
-    def _wait_reply(self, rid: int, deadline: float) -> Any:
+    def has_reply(self, rid: int) -> bool:
         with self._cv:
-            while rid not in self._replies:
-                if self.closed:
-                    raise ConnectionError(f"connection closed: {self.reader_error or 'EOF'}") from self.reader_error
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise TimeoutError(f"no reply to request {rid}")
-                self._cv.wait(left)
+            return rid in self._replies
+
+    def wait_reply(self, rid: int) -> Any:
+        with self._cv:
+            self._cv.wait_for(lambda: rid in self._replies or self.closed)
+            if rid not in self._replies:
+                raise ConnectionError(f"connection closed: {self.reader_error or 'EOF'}") from self.reader_error
             msg = self._replies.pop(rid)
         reply = msg.payload
         if reply.valueType == ReplyPayload.Failure:
             raise RpcFailure(reply.value)
         return reply.value
 
-    def call(self, name: str, /, timeout: float = 30.0, **fields: Any) -> Any:
-        deadline = time.monotonic() + timeout
-        rid = self._send_request(name, make(name, **fields), None, deadline)
-        return self._wait_reply(rid, deadline)
+    def call(self, name: str, /, **fields: Any) -> Any:
+        return self.wait_reply(self.send(name, make(name, **fields)))
 
-    def wait_notification(self, pred: Callable[[Any], bool], timeout: float = 30.0) -> Any:
-        deadline = time.monotonic() + timeout
+    def wait_notification(self, pred: Callable[[Any], bool], timeout: float | None = None) -> Any:
+        deadline = None if timeout is None else time.monotonic() + timeout
         with self._cv:
             while True:
                 for i, n in enumerate(self.notifications):
@@ -290,19 +247,25 @@ class Client:
                         return n
                 if self.closed:
                     raise ConnectionError(f"connection closed: {self.reader_error or 'EOF'}") from self.reader_error
-                left = deadline - time.monotonic()
-                if left <= 0:
+                left = None if deadline is None else deadline - time.monotonic()
+                if left is not None and left <= 0:
                     raise TimeoutError("notification not received")
                 self._cv.wait(left)
 
     # -- conveniences ------------------------------------------------------------
 
     def hello(self, token: Optional[str] = None, project: Optional[str] = None):
-        return self.call("SessionHelloRequest", protocol=1, clientId=new_id(), token=token,
+        return self.call("SessionHelloRequest", token=token,
                          expectedProjectId=project)
 
     def open(self, view_id: Optional[str] = None):
-        return self.call("ProjectOpenRequest", viewId=view_id)
+        opened = self.call("ProjectOpenRequest", viewId=view_id)
+        self.subscribed = True
+        return opened
+
+    def ensure_subscription(self):
+        if not self.subscribed:
+            self.open()
 
 
 def change(kind: str, **fields: Any):
@@ -328,7 +291,6 @@ def line_chart_series(value):
     import json
     import struct
     from types import SimpleNamespace
-    assert text(value.module).endswith("-tsugumi-view-line-chart")
     config = json.loads(text(value.configJson))
     blobs = {text(b.name): bytes(b.data) for b in value.blobs}
     x = struct.unpack("<" + "d" * (len(blobs["x"]) // 8), blobs["x"])

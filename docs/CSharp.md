@@ -43,7 +43,7 @@ The exact types come from the resolved Card contract: `inputs.<port>.<namespace>
 
 Implement an instance `ICard.RunAsync` returning exactly `ValueTask<Tsugumi.Outputs>`, using this Card's generated types. Trailing roles may be omitted, but requesting `Run` requires `(Inputs inputs, Report report, Run run)`. A method with a different signature can compile without implementing the interface's entry point; the runtime diagnostic lists the candidates and why they were rejected.
 
-`inputs.Input(port)` exposes an owned `Google.FlatBuffers.ByteBuffer` for direct generated-table access. Return typed properties on `Outputs`, or finished bytes in its dictionary (`new Outputs { ["port"] = builder.SizedByteArray() }`). The adapter emits the returned result after awaiting `RunAsync`. For repeated or incremental results, return `Outputs.Stream(IAsyncEnumerable<Outputs>)`; each yielded batch is sent before advancing the iterator. File/Directory properties contain their path messages, including files written beneath `run.OutputDirectory`.
+Use the generated input properties to read owned messages. `inputs.HasInput(port)` checks presence, and `inputs.InputKind(port)` gives the kind of a present port. Set typed properties on `Outputs` and return it from `RunAsync`. The adapter packs all properties into one FlatBuffer after awaiting the function. File and Directory properties carry paths, including paths to files written beneath `run.OutputDirectory`.
 
 
 C# Cards use the Card's own system; `csharpCard` rejects another `system` under emulation. External NuGet dependencies require an explicit lock and hash, and their native libraries are used as published. [NuGet packages](#nuget-packages)
@@ -54,17 +54,17 @@ The worker waits for the `ValueTask` returned by `RunAsync`. Await every operati
 
 Pass `run.CancellationToken` to cancellable asynchronous work. The SDK polls the worker cancellation flag and deadline; the worker remains the final enforcement boundary for code that ignores cancellation. `RemainingMilliseconds` is `-1` without a deadline. Exceptions become structured worker failures; `new Failure(kind, message)` chooses a `FailureKind` name, and cancelled Tasks report cancellation or timeout. Exceptions do not cross the native ABI.
 
-One `Card` instance and one .NET runtime live for the resident worker's lifetime. `OnRunStartAsync(Inputs inputs, Report report, Run run)` runs once at each run's start, before that run's invocations. Use it to reset run-local state. `reuseWorker: false` starts a fresh process/runtime per invocation. Process exit frees the CLR; the SDK does not attempt to unload it. After failed or cancelled invocations, the scheduler's existing worker policy applies.
+One `Card` instance and one .NET runtime live for the resident worker's lifetime. `OnRunStartAsync(Inputs inputs, Report report, Run run)` runs once at each run's start, before that run's invocations. Return `ValueTask` from the hook and use it to reset run-local state. `reuseWorker: false` starts a fresh process/runtime per invocation. Process exit frees the CLR; the SDK does not attempt to unload it. After failed or cancelled invocations, the scheduler's existing worker policy applies.
 
 ## Files, logs and displays
 
-File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `run.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `run.WorkingDirectory` and `run.TemporaryDirectory` are worker-local scratch areas cleared between invocations. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
+File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `run.OutputDirectory` and return the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `run.WorkingDirectory` and `run.TemporaryDirectory` are worker-local scratch areas cleared between invocations. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
 
 The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineChart`, `Points` and `Module`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
 
 ## The native boundary
 
-`sdk/csharp/InvocationScope.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. During source loading in the first invocation, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
+`sdk/csharp/InvocationScope.cs` mirrors the native ABI structs in `sdk/include/tsugumi/sdk/abi.h`, including `tsugumi_call`, `tsugumi_buffer` and the separate `tsugumi_host` callback table. During source loading, the C++ host passes its compiler's `offsetof` and `sizeof` values and the managed SDK checks them before calling the Card. Layout errors name the field in the Card's log. `tests/static/test_csharp_abi.py` checks the mirrors without .NET.
 
 ## NuGet packages
 
@@ -110,6 +110,6 @@ Nothing makes the lock for you. To add or update packages, deliberately:
 
 ## Why runtime hosting
 
-The package's `lib/tsugumi-runtime` names a separately built SDK adapter, which exports `tsugumi_prepare`, `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start`. Inside the first invocation, preparation loads `hostfxr` and initializes the pinned runtime, then `tsugumi_load` loads the separate managed assembly and its `[UnmanagedCallersOnly]` entry points. `tsugumi_load` receives the current `tsugumi_call`. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
+The SDK builds the .NET host and shared managed types once per SDK and .NET version. Each Card links the shared entry with its assembly paths into `lib/main.so`, which exports `tsugumi_main`. The prepare phase loads `hostfxr` and initializes the pinned runtime. The load phase loads the managed assembly and its `[UnmanagedCallersOnly]` entry points. Both phases run inside the first invocation. CLR diagnostics sockets are disabled. The worker still captures logs and structured failures.
 
 The documented platform constraints are in Microsoft's [runtime hosting tutorial](https://learn.microsoft.com/en-us/dotnet/core/tutorials/netcore-hosting). FlatBuffers' [language support matrix](https://flatbuffers.dev/support/) describes the generated C# object API.

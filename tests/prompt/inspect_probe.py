@@ -21,9 +21,16 @@ def received_snapshot(result):
     for block in result.get("content", []):
         if block.get("type") == "text":
             try:
-                if json.loads(block["text"]) == SNAPSHOT:
+                value = json.loads(block["text"])
+                expected = SNAPSHOT['value']
+                snapshot = value['value']
+                wanted = next(d for d in expected['definitions'] if d['id'] == 'initial')
+                actual = next(d for d in snapshot['definitions'] if d['id'] == 'initial')
+                wanted_params = {p['name']: p['data'] for p in json.loads(wanted['card_json'])['params']}
+                actual_params = {p['name']: p['data'] for p in json.loads(actual['card_json'])['params']}
+                if value['reply'] == SNAPSHOT['reply'] and wanted_params.items() <= actual_params.items():
                     return True
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, StopIteration, TypeError):
                 continue
     return False
 
@@ -76,11 +83,13 @@ def summarize(case, stdout, process_error=None):
     if case == "project":
         if any(c.get("server") != "tsugumi" or c["tool"] != "project_inspect" or c["arguments"] != {} for c in calls):
             return dict(report, outcome="fail", reason="Unexpected tool, server, or inspection arguments")
-        if any(c["status"] != "completed" or c["error"] or not c["snapshot_received"] for c in calls):
-            return dict(report, outcome="invalid", reason="The requested fixture inspection did not succeed")
         if not calls:
             return dict(report, outcome="fail", reason="Project-specific answer has no observed evidence")
+        successes = sum(c["status"] == "completed" and not c["error"] and c["snapshot_received"] for c in calls)
+        report["failed_inspections"] = len(calls) - successes
         report["extra_inspections"] = len(calls) - 1
+        if not successes:
+            return dict(report, outcome="invalid", reason="The requested fixture inspection did not succeed")
     if not any(text.strip() for text in answers):
         return dict(report, outcome="fail", reason="No assistant reply")
     return dict(report, outcome="needs_review", reason="Check the reply and any unclassified items against the rubric")

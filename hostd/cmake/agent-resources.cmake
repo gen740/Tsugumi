@@ -4,8 +4,12 @@ set(_agent_prompts "")
 foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill helpers-skill)
   string(REPLACE "-" "_" symbol ${prompt})
   set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
+  set(prompt_options "")
+  if(prompt STREQUAL "system-prompt")
+    set(prompt_options "-DSTRIP_LINE=<!-- End of shared MCP rules -->")
+  endif()
   add_custom_command(OUTPUT ${output}
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${PROJECT_SOURCE_DIR}/hostd/agent/Shared/${prompt}.md
+    COMMAND ${CMAKE_COMMAND} ${prompt_options} -DINPUT=${PROJECT_SOURCE_DIR}/hostd/agent/Shared/${prompt}.md
       -DOUTPUT=${output} -DSYMBOL=tsugumi_agent_${symbol}
       -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
     DEPENDS ${PROJECT_SOURCE_DIR}/hostd/agent/Shared/${prompt}.md ${PROJECT_SOURCE_DIR}/cmake/embed.cmake

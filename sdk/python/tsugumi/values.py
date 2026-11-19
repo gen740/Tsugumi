@@ -6,7 +6,7 @@ scalars, sequences, NumPy arrays or data frames, including nested messages.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from functools import cache
+from functools import cache, partialmethod
 import importlib
 import json
 from pathlib import Path
@@ -123,25 +123,81 @@ def _object(schema, index, value):
     return result
 
 
-def encode(port, value):
-    from tsugumi import contract
-    import flatbuffers
-    found = contract.port(port, "outputs")
-    if found is None:
-        raise Failure("output_invalid", f"unknown output port {port}")
-    if found["kind"] in ("file", "directory") and isinstance(value, (str, Path)):
-        value = {"value": str(value)}
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value)
-    if hasattr(value, "Pack") or hasattr(value, "Output"):
-        from tsugumi import message
-        return message(value)
-    schema = _schema()
+def _accessor(name):
+    field = _camel(name)
+    return field[:1].upper() + field[1:]
+
+
+def _is_struct_array(type_):
+    return type_["base_type"] == "Array" and type_["element"] == "Obj"
+
+
+def _struct_args(objects, index, value):
+    for field in sorted(objects[index]["fields"], key=lambda field: field["id"]):
+        item = getattr(value, _camel(field["name"]))
+        type_ = field["type"]
+        if type_["base_type"] == "Obj":
+            yield from _struct_args(objects, type_["index"], item)
+        elif _is_struct_array(type_):
+            yield from zip(*(_struct_args(objects, type_["index"], member) for member in item), strict=True)
+        else:
+            yield item
+
+
+def _pack_struct(value, builder, create, objects, index):
+    return create(builder, *_struct_args(objects, index, value))
+
+
+@cache
+def _fix_struct_array_packing():
+    # flatc 25.12.19's Python Pack reads each field directly from the
+    # list of structs. Create expects one array per flattened leaf field.
+    objects = _schema()["objects"]
+
+    def has_struct_array(index):
+        return any(_is_struct_array(type_) or
+                   (type_["base_type"] == "Obj" and has_struct_array(type_["index"]))
+                   for type_ in (field["type"] for field in objects[index]["fields"]))
+
+    for index, object_ in enumerate(objects):
+        if object_["is_struct"] and has_struct_array(index):
+            name = object_["name"].rsplit(".", 1)[-1]
+            module = importlib.import_module(object_["name"])
+            cls = getattr(module, name + "T")
+            cls.Pack = partialmethod(_pack_struct, create=getattr(module, "Create" + name),
+                                     objects=objects, index=index)
+
+
+def encode_outputs(value):
+    from tsugumi import contract, message
+    from outputs.Outputs import OutputsT
+
+    if value is None:
+        value = {}
+    if not isinstance(value, Mapping):
+        raise Failure("output_invalid", "return a mapping by output port")
+    result = OutputsT()
+    for port, item in value.items():
+        found = contract.port(port, "outputs")
+        if found is None:
+            raise Failure("output_invalid", f"unknown output port {port}")
+        if found["kind"] in ("file", "directory") and isinstance(item, (str, Path)):
+            item = {"value": str(item)}
+        try:
+            if isinstance(item, (bytes, bytearray, memoryview)) or hasattr(item, "Output"):
+                module = importlib.import_module(found["type"])
+                cls = getattr(module, found["type"].rsplit(".", 1)[1] + "T")
+                item = cls.InitFromPackedBuf(bytes(item) if not hasattr(item, "Output") else message(item))
+            elif not hasattr(item, "Pack"):
+                schema = _schema()
+                index = next(i for i, obj in enumerate(schema["objects"]) if obj["name"] == found["type"])
+                item = _object(schema, index, item)
+            setattr(result, _camel(port), item)
+        except Exception as error:
+            raise Failure("output_invalid", f"output {port}: {error}") from error
     try:
-        index = next(i for i, item in enumerate(schema["objects"]) if item["name"] == found["type"])
-        result = _object(schema, index, value)
-        builder = flatbuffers.Builder(1024)
-        builder.Finish(result.Pack(builder))
-        return bytes(builder.Output())
+        if value:
+            _fix_struct_array_packing()
+        return message(result)
     except Exception as error:
-        raise Failure("output_invalid", f"output {port}: {error}") from error
+        raise Failure("output_invalid", f"cannot pack Outputs: {error}") from error

@@ -44,6 +44,28 @@ class InspectProbeTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "needs_review")
         self.assertEqual(report["extra_inspections"], 1)
 
+    def test_failed_retry_does_not_erase_observed_evidence(self):
+        report = summarize("project", transcript(tool(status="failed"), tool(id="t2")))
+        self.assertEqual(report["outcome"], "needs_review")
+        self.assertEqual(report["extra_inspections"], 1)
+        self.assertEqual(report["failed_inspections"], 1)
+
+    def test_evidence_allows_extra_metadata_and_rejects_a_wrong_parameter(self):
+        result = tool()
+        block = result["result"]["content"][0]
+        body = json.loads(block["text"])
+        body["optional_metadata"] = {"anything": True}
+        card = body["value"]["definitions"][0]
+        definition = json.loads(card["card_json"])
+        definition["params"].append({"name": "extra", "data": 7})
+        card["card_json"] = json.dumps(definition)
+        block["text"] = json.dumps(body)
+        self.assertEqual(summarize("project", transcript(result))["outcome"], "needs_review")
+        definition["params"][0]["data"] = 27
+        card["card_json"] = json.dumps(definition)
+        block["text"] = json.dumps(body)
+        self.assertEqual(summarize("project", transcript(result))["outcome"], "invalid")
+
     def test_failed_required_inspection_or_incomplete_turn_is_invalid(self):
         for text in [transcript(tool(status="failed")), transcript(tool(result={"isError": True})),
                      transcript(tool(result={"content": [{"type": "text", "text": "unexpected reply"}]})),

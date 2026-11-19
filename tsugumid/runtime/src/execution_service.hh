@@ -17,10 +17,10 @@
 #include <vector>
 
 #include "model.hh"
-#include "log_policy.hh"
 #include "nix.hh"
-#include "tsugumi/workerd/worker_execution.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/log_limits.hh"
+#include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
 
@@ -30,7 +30,12 @@ namespace sql {
 class Db;
 }
 
-using ExecutionResult = workerd::InvocationResult;
+struct ExecutionResult {
+  std::vector<Value> outputs;
+  std::optional<FailureData> failure;
+  std::vector<std::pair<LogStream, std::string>> logs;
+  bool log_truncated = false;
+};
 
 // One invocation handed to a backend.
 struct ExecutionRequest {
@@ -64,9 +69,13 @@ struct ExecutionRequest {
   std::function<void()> publish;
   // Native residents are reusable only after the scheduler accepts all
   // required outputs, their types and their paths. Throws Failed on rejection.
-  std::function<void(const ExecutionResult&)> validate = {};
+  std::function<void(workerd::InvocationResult&)> validate = {};
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
-  std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)> transfer = {};
+  std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)>
+      transfer = {};
+  // First omission reported by a remote worker, before its logs are imported.
+  std::function<void()> log_truncated = {};
+  std::function<void(int64_t, int64_t)> on_remote_validation = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.
@@ -87,13 +96,11 @@ class PreparedExecution {
 class ExecutionService {
  public:
   virtual ~ExecutionService() = default;
-  // Whether a build made earlier in the run for a Card serves its later
-  // invocations.
-  virtual auto reuses_builds() const -> bool = 0;
   // Checks that the invocation can run here and configures the backend's
   // part of `build` (worker kind, target system and closure transport). Called
   // before the Card is evaluated, for every activation.
-  virtual auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  virtual auto prepare(const Node& node, const std::filesystem::path& directory,
+                       BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> = 0;
 };
 
@@ -101,8 +108,8 @@ class LocalExecutionService final : public ExecutionService {
  public:
   LocalExecutionService(Service& service, std::filesystem::path scratch_root);
 
-  auto reuses_builds() const -> bool override { return true; }
-  auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  auto prepare(const Node& node, const std::filesystem::path& directory,
+               BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> override;
   // Runs the invocation directly on the connection workerd lends this Card.
   auto run(const ExecutionRequest& request) -> ExecutionResult;

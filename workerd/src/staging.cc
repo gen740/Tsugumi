@@ -1,7 +1,5 @@
 #include "tsugumi/workerd/staging.hh"
 
-#include "tsugumi/util/sparse.hh"
-
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -18,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "tsugumi/util/sparse.hh"
+
 namespace tsugumi::fs {
 namespace {
 
@@ -31,7 +31,9 @@ namespace {
 
 // Pin Linux directories without requiring read permission. Darwin has no
 // equivalent: its caller supplies permission recovery with Card authority.
-auto pin_directory(int parent, const char* name, const std::function<void(int, const char*)>& recover) -> int {
+auto pin_directory(int parent, const char* name,
+                   const std::function<void(int, const char*)>& recover)
+    -> int {
 #ifdef __APPLE__
   constexpr int access = O_RDONLY;
 #else
@@ -50,7 +52,9 @@ auto pin_directory(int parent, const char* name, const std::function<void(int, c
   return fd;
 }
 
-auto clear_directory(int source, const std::filesystem::path& path, const std::function<void(int, const char*)>& recover) -> void {
+auto clear_directory(int source, const std::filesystem::path& path,
+                     const std::function<void(int, const char*)>& recover)
+    -> void {
   struct stat status{};
   if (::fstat(source, &status) != 0) failed("fstat", path);
   // Unlinking a read-only file is allowed, but requires write/search permission
@@ -248,8 +252,7 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
                 const std::filesystem::path& label,
                 const std::filesystem::path& destination,
                 const std::atomic<bool>& cancel, std::vector<Inode>& ancestors,
-                const TransferProgress& progress)
-    -> void {
+                const TransferProgress& progress) -> void {
   check_copy_cancel(cancel);
   const auto st = status_of(source, label);
   if (S_ISREG(st.st_mode)) {
@@ -263,11 +266,12 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
     uint64_t done = 0;
     const auto total = static_cast<uint64_t>(st.st_size);
     if (progress) progress(label, 0, total);
-    copy_sparse_file(source, fd, label, destination, [&](std::string_view chunk) {
-      check_copy_cancel(cancel);
-      done += chunk.size();
-      if (progress) progress(label, done, total);
-    });
+    copy_sparse_file(source, fd, label, destination,
+                     [&](std::string_view chunk) {
+                       check_copy_cancel(cancel);
+                       done += chunk.size();
+                       if (progress) progress(label, done, total);
+                     });
     return;
   }
   if (!S_ISDIR(st.st_mode))
@@ -309,7 +313,9 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
 
 }  // namespace
 
-auto clear_staging(const std::filesystem::path& path, const std::function<void(int, const char*)>& recover) -> void {
+auto clear_staging(const std::filesystem::path& path,
+                   const std::function<void(int, const char*)>& recover)
+    -> void {
   const int directory = pin_directory(AT_FDCWD, path.c_str(), recover);
   if (directory < 0) failed("open", path);
   try {
@@ -324,8 +330,7 @@ auto clear_staging(const std::filesystem::path& path, const std::function<void(i
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
                          bool directory, const std::atomic<bool>& cancel,
-                         const TransferProgress& progress)
-    -> void {
+                         const TransferProgress& progress) -> void {
   if (relative.empty() || relative.is_absolute())
     reject(relative, "output path", "expected a path relative to staging");
   std::vector<Handle> parents;
@@ -346,7 +351,8 @@ auto copy_staging_output(int staging, const std::filesystem::path& relative,
         directory ? "expected a Directory output" : "expected a File output");
   std::filesystem::create_directories(destination.parent_path());
   std::vector<Inode> ancestors;
-  copy_entry(source, source, {}, relative, destination, cancel, ancestors, progress);
+  copy_entry(source, source, {}, relative, destination, cancel, ancestors,
+             progress);
 }
 
 }  // namespace tsugumi::fs

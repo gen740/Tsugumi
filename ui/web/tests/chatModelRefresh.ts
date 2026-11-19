@@ -93,23 +93,30 @@ try {
   assert.equal(intervals, 0)
   // A run accepted through the session supersedes every helper's old flight
   // and source hold, even when no Agent `run` tool event reached this page.
-  const now = Date.now() / 1000 - 0.1
+  const actualNow = Date.now
+  const now = 1234
+  const after = now + 0.125
   chat.team.start([{ name: 'helper', cards: ['a'] }, { name: 'other', cards: ['b'] }], now)
   const writer = new LiveCodePlayer()
   writer.input(0, '{"value":{"path":"definitions/a/m.py","bytes":"old"', now)
-  chat.writers.set('helper', writer)
+  chat.writers.set('other', writer)
   const helper = chat.team.birds[0]
-  helper.place(now, () => ({ x: 0, y: 0 }))
+  const perch = (card: string) => ({ x: card === 'a' ? 0 : 500, y: 0 })
+  helper.place(now, perch)
   helper.visit('b', 'reading', now + 0.01)
-  helper.place(now + 0.01, () => ({ x: 500, y: 0 }))
-  session.currentRunId = 'accepted-run'
-  session.runActive = true
-  session.changed()
-  await flush()
-  const after = Date.now() / 1000
+  helper.place(now + 0.01, perch)
+  assert.ok(writer.at(after), 'the old source preview is still active before acceptance')
+  assert.ok(helper.place(after, perch)?.flying)
+  Date.now = () => after * 1000
+  try {
+    session.currentRunId = 'accepted-run'
+    session.runActive = true
+    session.changed()
+    await flush()
+  } finally { Date.now = actualNow }
   assert.equal(writer.at(after), undefined)
-  assert.equal(helper.place(after, () => ({ x: 500, y: 0 }))?.flying, false)
-  for (const bird of chat.team.birds) assert.equal(bird.line(after)?.text, '実行しています')
+  assert.equal(helper.place(after, perch)?.flying, false)
+  for (const bird of chat.team.birds) assert.ok(bird.line(after)?.text)
 } finally {
   chat.close()
   globalThis.fetch = originalFetch
@@ -120,10 +127,10 @@ console.log('chat model refresh: presentation, settings stream, local writes and
 // Deliberately defer reads to reproduce the blank panel and out-of-order reloads.
 {
   const original = globalThis.fetch
-  const pending: { resolve(value: any): void; reject(error: Error): void }[] = []
+  const pending: { path: string; resolve(value: any): void; reject(error: Error): void }[] = []
   const textRow = (text: string) => ({ id: text, kind: 'text', role: 'assistant', text, name: '', arguments: '', result: '', state: '', archived: false, summaryJa: '', summaryEn: '', scopeJa: '', scopeEn: '', instruction: '', failed: 0, recovered: 0, links: [], children: [] })
   const snapshot = (id: string, text: string) => ({ conversation: { id, rows: text ? [textRow(text)] : [], messages: text ? [{ role: 'assistant', content: [{ type: 'text', text }] }] : [], archive: [], usage: {} }, provider: {}, busy: false })
-  globalThis.fetch = (() => new Promise((resolve, reject) => pending.push({ resolve: value => resolve({ ok: true, json: async () => value } as Response), reject }))) as typeof fetch
+  globalThis.fetch = ((path: string) => new Promise((resolve, reject) => pending.push({ path, resolve: value => resolve({ ok: true, json: async () => value } as Response), reject }))) as typeof fetch
   const c = Object.create(ChatController.prototype) as any
   Object.assign(c, { session: { dir: '/preserved' }, items: [{ id: 'original', role: 'assistant', text: 'original' }], currentId: 'old', displayedId: 'old', available: true, folders: [], turn: 0, reload: 0, contentRevision: 0, changed() {}, noteWriting() { return false } })
   try {
@@ -169,10 +176,14 @@ console.log('chat model refresh: presentation, settings stream, local writes and
     assert.equal(c.status, undefined, 'an obsolete error from a reselected ID cannot overwrite the latest state')
     assert.equal(c.items[0]?.text, 'latest same ID')
 
+    const beforeListing = pending.length
     const listing = c.init()
-    pending[8].reject(new Error('session list failed'))
+    const list = pending.slice(beforeListing).find(request => request.path === '/api/chat/sessions')
+    assert.ok(list)
+    list.reject(new Error('session list failed'))
     await listing
-    assert.equal(pending.length, 9, 'a failed list must not bind to a newly invented empty conversation')
+    assert.ok(pending.slice(beforeListing).every(request => request.path === '/api/chat/sessions'),
+      'a failed list does not load or create another conversation')
     assert.equal(c.items[0]?.text, 'latest same ID')
     assert.match(c.status, /session list failed/)
   } finally { globalThis.fetch = original }

@@ -18,10 +18,14 @@ target_compile_definitions(tsugumi_host_settings_tests PRIVATE
 if(TSUGUMI_INSTALLED_CORE)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../hostd/tools/test-binary-cache.py
     DESTINATION share/tsugumi/guide-tests/hostd/tools)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
+  install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/layout-invalid.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/layout-scenes.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/wire-routes.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
     DESTINATION share/tsugumi/guide-tests/tests/fixtures)
 endif()
-target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="tests/fixtures")
+target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="${_test_guide_root}/tests/fixtures")
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_host_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST

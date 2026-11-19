@@ -8,6 +8,12 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#else
+#include <sys/inotify.h>
+#include <sys/syscall.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -26,6 +32,75 @@ extern char** environ;
 
 namespace tsugumi::test {
 namespace {
+
+struct Descriptor {
+  int fd;
+  ~Descriptor() {
+    if (fd >= 0) ::close(fd);
+  }
+};
+
+auto WaitForEvent(const std::filesystem::path& directory, int pid,
+                  const std::function<bool()>& done, int timeout = -1) -> bool {
+#ifdef __APPLE__
+  Descriptor queue{::kqueue()};
+  Descriptor watched{directory.empty()
+                         ? -1
+                         : ::open(directory.c_str(), O_EVTONLY | O_CLOEXEC)};
+  if (queue.fd < 0 || (!directory.empty() && watched.fd < 0))
+    throw std::runtime_error("cannot open fixture event sources");
+  struct kevent registrations[2];
+  int count = 0;
+  if (watched.fd >= 0) {
+    EV_SET(&registrations[count], watched.fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+           NOTE_WRITE | NOTE_RENAME | NOTE_DELETE, 0, nullptr);
+    ++count;
+  }
+  if (pid > 0) {
+    EV_SET(&registrations[count], pid, EVFILT_PROC, EV_ADD | EV_ONESHOT,
+           NOTE_EXIT, 0, nullptr);
+    ++count;
+  }
+  if (::kevent(queue.fd, registrations, count, nullptr, 0, nullptr) < 0) {
+    if (errno == ESRCH) return done();
+    throw std::runtime_error("cannot register fixture events");
+  }
+  const timespec limit{timeout / 1000, (timeout % 1000) * 1000000L};
+  while (!done()) {
+    struct kevent event{};
+    const auto received = ::kevent(queue.fd, nullptr, 0, &event, 1,
+                                   timeout < 0 ? nullptr : &limit);
+    if (received < 0 && errno == EINTR) continue;
+    if (received < 0) throw std::runtime_error("cannot read fixture event");
+    if (received == 0 || event.filter == EVFILT_PROC) return done();
+  }
+#else
+  Descriptor process{pid > 0 ? static_cast<int>(::syscall(SYS_pidfd_open, pid, 0))
+                             : -1};
+  if (pid > 0 && process.fd < 0) {
+    if (errno == ESRCH) return done();
+    throw std::runtime_error("cannot watch fixture process");
+  }
+  Descriptor files{directory.empty() ? -1 : ::inotify_init1(IN_CLOEXEC)};
+  if (!directory.empty() &&
+      (files.fd < 0 ||
+       ::inotify_add_watch(files.fd, directory.c_str(),
+                           IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE |
+                               IN_DELETE | IN_MOVED_FROM) < 0))
+    throw std::runtime_error("cannot watch fixture directory");
+  pollfd fds[]{{process.fd, POLLIN, 0}, {files.fd, POLLIN, 0}};
+  while (!done()) {
+    const auto received = ::poll(fds, 2, timeout);
+    if (received < 0 && errno == EINTR) continue;
+    if (received < 0) throw std::runtime_error("cannot read fixture event");
+    if (received == 0 || fds[0].revents) return done();
+    char bytes[4096];
+    if (::read(files.fd, bytes, sizeof bytes) < 0 && errno != EINTR)
+      throw std::runtime_error("cannot read fixture file event");
+  }
+#endif
+  return true;
+}
 
 auto Parse(std::string_view text) -> hosq::json::GenericDom<> {
   hosq::json::GenericDom<> json;
@@ -97,10 +172,14 @@ auto ChildProcess::Alive() -> bool {
 auto ChildProcess::Stop(bool crash) -> void {
   if (!Alive()) return;
   ::kill(pid_, crash ? SIGKILL : SIGTERM);
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (Alive() && std::chrono::steady_clock::now() < deadline)
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  if (!crash) {
+    // Escalate if a broken fixture does not honor graceful shutdown.
+    try {
+      (void)WaitForEvent({}, pid_, [&] { return !Alive(); }, 5000);
+    } catch (const std::exception&) {
+      // The destructor still owns this process if the OS cannot watch it.
+    }
+  }
   if (pid_ != -1) {
     ::kill(pid_, SIGKILL);
     int status = 0;
@@ -141,17 +220,30 @@ auto Read(const std::filesystem::path& path) -> std::string {
           std::istreambuf_iterator<char>()};
 }
 
+auto WaitForPath(const std::filesystem::path& path,
+                 const std::function<bool()>& ready, int pid) -> bool {
+  auto directory = path.parent_path();
+  while (!std::filesystem::exists(directory)) directory = directory.parent_path();
+  while (true) {
+    auto next = directory;
+    const auto done = [&] {
+      if (ready()) return true;
+      next = path.parent_path();
+      while (!std::filesystem::exists(next)) next = next.parent_path();
+      return next != directory;
+    };
+    if (!WaitForEvent(directory, pid, done)) return false;
+    if (next == directory) return true;
+    directory = std::move(next);
+  }
+}
+
 auto Readiness(ChildProcess& process, const std::filesystem::path& path,
                const std::filesystem::path& log) -> std::string {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  do {
-    if (std::filesystem::is_regular_file(path)) return Read(path);
-    if (!process.Alive())
-      throw std::runtime_error("daemon exited during startup:\n" + Read(log));
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  } while (std::chrono::steady_clock::now() < deadline);
-  throw std::runtime_error("daemon did not become ready:\n" + Read(log));
+  if (WaitForPath(path, [&] { return std::filesystem::is_regular_file(path); },
+                  process.Pid()))
+    return Read(path);
+  throw std::runtime_error("daemon exited during startup:\n" + Read(log));
 }
 
 ModelServer::ModelServer() {
@@ -159,6 +251,7 @@ ModelServer::ModelServer() {
   if (socket_ < 0)
     throw std::runtime_error("cannot create model fixture socket");
   ::fcntl(socket_, F_SETFD, FD_CLOEXEC);
+  ::fcntl(socket_, F_SETFL, O_NONBLOCK);
   sockaddr_in address{};
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -176,7 +269,10 @@ ModelServer::ModelServer() {
 ModelServer::~ModelServer() {
   thread_.request_stop();
   changed_.notify_all();
-  ::shutdown(socket_, SHUT_RDWR);
+  {
+    std::lock_guard lock(mutex_);
+    if (peer_ >= 0) ::shutdown(peer_, SHUT_RDWR);
+  }
   if (thread_.joinable()) thread_.join();
   ::close(socket_);
 }
@@ -198,6 +294,13 @@ auto ModelServer::QueueHTTP(std::string body, int status) -> void {
   changed_.notify_all();
 }
 
+auto ModelServer::WaitForRequests(size_t count, std::stop_token stop) -> bool {
+  std::unique_lock lock(mutex_);
+  return changed_.wait(lock, stop, [&] { return requests_.size() >= count; });
+}
+
+// A negative assertion has no provider-side arrival event to wait for.
+// Allow an unexpected asynchronous request to reach the provider double.
 auto ModelServer::WaitForRequests(size_t count,
                                   std::chrono::milliseconds timeout) -> bool {
   std::unique_lock lock(mutex_);
@@ -222,12 +325,32 @@ auto ModelServer::Release() -> void {
 }
 
 auto ModelServer::Serve(std::stop_token stop) -> void {
+  int wake[2];
+  if (::pipe(wake) != 0) throw std::runtime_error("cannot create model stop pipe");
+  Descriptor stopped{wake[0]}, signal{wake[1]};
+  for (const auto fd : wake) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  // Darwin cannot shut down a listening socket to interrupt accept.
+  const std::stop_callback canceled(stop, [&] {
+    const char byte = 0;
+    (void)::write(signal.fd, &byte, 1);
+  });
   while (!stop.stop_requested()) {
-    pollfd readable{socket_, POLLIN, 0};
-    if (::poll(&readable, 1, 100) <= 0) continue;
+    pollfd sources[]{{socket_, POLLIN, 0}, {stopped.fd, POLLIN, 0}};
+    const auto ready = ::poll(sources, 2, -1);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0 || sources[1].revents) return;
     const auto socket = ::accept(socket_, nullptr, nullptr);
     if (socket < 0) continue;
+    {
+      std::lock_guard lock(mutex_);
+      if (stop.stop_requested()) {
+        ::close(socket);
+        return;
+      }
+      peer_ = socket;
+    }
     ::fcntl(socket, F_SETFD, FD_CLOEXEC);
+    ::fcntl(socket, F_SETFL, 0);
 #ifdef SO_NOSIGPIPE
     int yes = 1;
     ::setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
@@ -236,6 +359,8 @@ auto ModelServer::Serve(std::stop_token stop) -> void {
       Handle(socket, stop);
     } catch (...) {
     }
+    std::lock_guard lock(mutex_);
+    peer_ = -1;
     ::close(socket);
   }
 }
@@ -245,10 +370,9 @@ auto ModelServer::Handle(int socket, std::stop_token stop) -> void {
   size_t body_start = std::string::npos;
   size_t body_size = 0;
   while (!stop.stop_requested()) {
-    pollfd readable{socket, POLLIN, 0};
-    if (::poll(&readable, 1, 100) <= 0) continue;
     char bytes[8192];
     const auto count = ::recv(socket, bytes, sizeof bytes, 0);
+    if (count < 0 && errno == EINTR) continue;
     if (count <= 0) return;
     request.append(bytes, static_cast<size_t>(count));
     if (request.size() > (16u << 20)) return;
@@ -268,6 +392,7 @@ auto ModelServer::Handle(int socket, std::stop_token stop) -> void {
     }
     if (request.size() >= body_start + body_size) break;
   }
+  if (stop.stop_requested()) return;
   Response response;
   {
     std::unique_lock lock(mutex_);
@@ -371,9 +496,10 @@ auto AnthropicTool(std::string_view id, std::string_view name,
 auto AnthropicFamilyTool(std::string_view id, std::string_view family,
                          std::string_view action, std::string_view arguments)
     -> std::string {
-  return AnthropicTool(id, "tools", "{\"family\":" + Quote(family) +
-      ",\"action\":" + Quote(action) + ",\"arguments\":" +
-      std::string(arguments) + "}");
+  return AnthropicTool(id, "tools",
+                       "{\"family\":" + Quote(family) +
+                           ",\"action\":" + Quote(action) +
+                           ",\"arguments\":" + std::string(arguments) + "}");
 }
 
 auto ResponsesText(std::string_view text) -> std::string {

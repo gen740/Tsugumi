@@ -12,6 +12,7 @@ struct RecordedStorePath: View {
 }
 
 struct RecordedDependencyPaths: View {
+  var source: EnvironmentHistorySource? = nil
   let session: ProjectSession
   let identity: RecordedEnvironmentIdentity
   var excluding: RecordedEnvironmentIdentity?
@@ -49,7 +50,7 @@ struct RecordedDependencyPaths: View {
       page = nil; error = nil
       guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
       do {
-        let result = try await EnvironmentHistorySource(rpc: rpc).paths(identity, offset: offsets.last ?? 0, query: query, excluding: excluding)
+        let result = try await (source ?? EnvironmentHistorySource(rpc: rpc)).paths(identity, offset: offsets.last ?? 0, query: query, excluding: excluding)
         try Task.checkCancellation()
         page = result
       } catch { if !Task.isCancelled { self.error = String(describing: error) } }
@@ -131,63 +132,8 @@ struct RecordedEnvironmentView: View {
   }
 }
 
-private struct RecordedRunEnvironments: View {
-  let session: ProjectSession
-  let runId: String
-  @State var selected: String
-  @State private var offsets: [UInt64] = [0]
-  @State private var page: Tsugumi_RPC_BuildEnvironmentPageT?
-  @State private var error: String?
-  @State private var attempt = 0
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 10) {
-        Text("この実行の共有環境").font(.headline)
-        if let error { Text(error).foregroundStyle(.red); Button("再試行") { attempt += 1 } }
-        if let page {
-          ForEach(page.environments.compactMap { $0 }, id: \.id) { environment in
-            Button { selected = environment.id } label: {
-              Text("\(recordedStoreName(environment.manifest)) · \(environment.system) · \(environment.id.prefix(8))")
-                .fontWeight(selected == environment.id ? .bold : .regular)
-            }
-          }
-        } else if error == nil { ProgressView() }
-        HStack {
-          Button("前へ") { offsets.removeLast() }.disabled(page == nil || offsets.count == 1)
-          Text(String(offsets.count))
-          Button("次へ") { if let next = page?.nextOffset { offsets.append(next) } }.disabled(page == nil || page?.nextOffset == nil)
-        }
-        Divider()
-        RecordedEnvironmentView(session: session, runId: runId, environmentId: selected).id(runId + ":" + selected)
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-    }.task(id: "\(offsets.last ?? 0):\(attempt)") {
-      page = nil; error = nil
-      guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
-      do {
-        let result = try await EnvironmentHistorySource(rpc: rpc).page(run: runId, offset: offsets.last ?? 0)
-        try Task.checkCancellation()
-        page = result
-      } catch { if !Task.isCancelled { self.error = String(describing: error) } }
-    }
-  }
-}
-
-struct InvocationPackagesView: View {
-  let session: ProjectSession
-  let runId: String
-  let environmentId: String
-  var body: some View {
-    if environmentId.isEmpty {
-      ContentUnavailableView("この呼び出しの環境は記録されていません", systemImage: "shippingbox",
-                             description: Text("依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。"))
-    } else {
-      RecordedRunEnvironments(session: session, runId: runId, selected: environmentId).id(runId + ":" + environmentId)
-    }
-  }
-}
-
 struct RecordedEnvironmentComparison: View {
+  var source: EnvironmentHistorySource? = nil
   let session: ProjectSession
   let left: RecordedEnvironmentIdentity
   let right: RecordedEnvironmentIdentity
@@ -206,11 +152,11 @@ struct RecordedEnvironmentComparison: View {
         HStack(alignment: .top, spacing: 12) {
           VStack(alignment: .leading) {
             Text("削除された実行時の依存パス").bold()
-            RecordedDependencyPaths(session: session, identity: left, excluding: right)
+            RecordedDependencyPaths(source: source, session: session, identity: left, excluding: right)
           }.frame(maxWidth: .infinity, alignment: .leading)
           VStack(alignment: .leading) {
             Text("追加された実行時の依存パス").bold()
-            RecordedDependencyPaths(session: session, identity: right, excluding: left)
+            RecordedDependencyPaths(source: source, session: session, identity: right, excluding: left)
           }.frame(maxWidth: .infinity, alignment: .leading)
         }
       }

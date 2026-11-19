@@ -42,11 +42,11 @@ listener = socket.socket(socket.AF_UNIX)
 listener.bind(str(endpoint))
 endpoint.chmod(0o600)
 listener.listen()
-Path(os.environ["HOST_PID"]).write_text(str(os.getpid()))
 broker_endpoint = ""
 processes = {}
 controls = {}
 mutex = threading.Lock()
+stopping = False
 # The host starts this helper with the system temporary folder, not the test run's.
 sockets = Path(tempfile.mkdtemp(prefix="vh-", dir=socket_root))
 
@@ -96,11 +96,13 @@ def serve(peer):
             request = message.payload.value
             kind = message.payload.valueType
             with mutex:
+                if stopping:
+                    return
                 value, tag = AcknowledgementT(), ReplyPayload.Acknowledgement
                 if kind == RequestPayload.Run:
                     key = text(request.key)
                     with open(os.environ["HOST_LOG"], "a") as log:
-                        log.write(json.dumps({"op": "run", "origins": [text(v) for v in request.origins or []], "archive": request.archiveIncompatibleHistory}) + "\n")
+                        log.write(json.dumps({"op": "run", "origins": [text(v) for v in request.origins or []]}) + "\n")
                     if Path(os.environ["HOST_BUSY"]).exists():
                         value, tag = FailureT(), ReplyPayload.Failure
                         value.message, value.recovery = "fixture VM failed", "Retry the virtual machine"
@@ -114,13 +116,11 @@ def serve(peer):
                                      "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
                         for origin in request.origins or []:
                             arguments.extend(["--allow-origin", text(origin)])
-                        if request.archiveIncompatibleHistory:
-                            arguments.append("--archive-incompatible-history")
                         environment = dict(os.environ, TSUGUMI_EXECUTION_BROKER=broker_endpoint, TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=str(mounts["control"] / "execution-broker-capability"))
                         processes[key] = subprocess.Popen(arguments, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         value, tag = status(key), ReplyPayload.Process
                 elif kind == RequestPayload.Boot:
-                    broker_endpoint = text(request.brokerEndpoint)
+                    broker_endpoint = "unix:" + text(request.brokerSocket)
                 elif kind == RequestPayload.ProcessRequest:
                     key = text(request.key)
                     if request.action == 1 and status(key).running:
@@ -133,9 +133,13 @@ def serve(peer):
                 send(peer, message.requestId, value, tag)
 
 def finish(_sig, _frame):
-    for child in processes.values():
-        if child.poll() is None:
-            child.terminate()
+    global stopping
+    with mutex:
+        stopping = True
+        for child in processes.values():
+            if child.poll() is None:
+                child.terminate()
+            child.wait()
     endpoint.unlink(missing_ok=True)
     sys.exit(0)
 

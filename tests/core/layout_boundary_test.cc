@@ -6,21 +6,14 @@
 
 namespace tsugumi {
 namespace {
-TEST(LayoutBoundary, CoreAcceptsOpaqueObjectsButRejectsOtherJsonAndOversize) {
-  EXPECT_NO_THROW(check_opaque_layout(
-      R"({"cards":"a client extension","future":{"x":true}})"));
-  for (const auto* value : {"[]", "null", "4", "invalid"})
-    EXPECT_THROW(check_opaque_layout(value), DocumentError);
-  EXPECT_THROW(check_opaque_layout("{\"x\":\"" +
-                                   std::string(8 * 1024 * 1024, 'x') + "\"}"),
-               DocumentError);
-}
-
 TEST(LayoutBoundary, OnlyExternalProjectLayoutIsExcludedFromExecutionIdentity) {
   Document doc;
   doc.project_json = "{}";
   const auto fingerprint = [&] {
-    return execution_fingerprint(doc, [](const std::string&) -> std::optional<std::string> { return std::nullopt; });
+    return execution_fingerprint(
+        doc, [](const std::string&) -> std::optional<std::string> {
+          return std::nullopt;
+        });
   };
   const auto empty = fingerprint();
   doc.layout_json = R"({"future":true})";

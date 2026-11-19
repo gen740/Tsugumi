@@ -8,7 +8,7 @@
 #
 # Started by a tag v<major.minor.patch> or v<major.minor.patch>-rc.<number>.
 # The numeric version must match VERSION. An RC tag publishes a prerelease.
-# (cli/release.sh makes and pushes one), or by hand with a version:
+# (`nix run .#release -- <version>` makes and pushes one), or by hand with a version:
 # VERSION on main must already be that version; it is tagged here.
 name: Release
 on:
@@ -47,7 +47,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # main takes changes only through pull requests.
-          [ "$(cat VERSION)" = "$v" ] || { echo "VERSION on main is $(cat VERSION), not $v: set it with a pull request first (cli/release.sh $v opens one)" >&2; exit 1; }
+          [ "$(cat VERSION)" = "$v" ] || { echo "VERSION on main is $(cat VERSION), not $v: set it with a pull request first (nix run .#release -- $v opens one)" >&2; exit 1; }
           git tag -a "v$v" -m "Tsugumi $v"
           git push origin "refs/tags/v$v"
           echo "TAG=v$v" >> "$GITHUB_ENV"
@@ -74,10 +74,8 @@ jobs:
     name: Build and package the app (macOS)
     needs: [resolve, image]
     runs-on: macos-26
-    timeout-minutes: 120
     env:
       PACKAGE_VERSION: ${{ needs.resolve.outputs.version }}
-      TSUGUMI_VM_ARTIFACT_ONLY: '1'
     steps:
       - uses: actions/checkout@v4
         with:

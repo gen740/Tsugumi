@@ -30,7 +30,6 @@ struct ProviderConfig {
   uint32_t max_tokens = 16384;
   // Maximum input tokens, after reserving reply tokens and a safety margin.
   uint32_t context_limit_tokens = 100000;
-  uint32_t timeout_seconds = 600;
   bool web_search = false;
   bool fast = false;
 };
@@ -118,15 +117,16 @@ class ProviderError final : public std::runtime_error {
   std::string code;
   int curl_code;
   bool sign_in_required = false;
+  auto reason_code() const -> std::string;
 };
 
 // Runs one HTTP streaming request on the caller's worker thread. The callback
 // is synchronous and may throw; no exception crosses a libcurl C callback.
-auto StreamReply(const ProviderConfig &config, std::string_view system,
-                 const std::vector<Message> &messages,
-                 const std::vector<ToolSpec> &tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent &)> &event,
-                 const std::function<std::string()> &allocate_call = {})
+auto StreamReply(const ProviderConfig& config, std::string_view system,
+                 const std::vector<Message>& messages,
+                 const std::vector<ToolSpec>& tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent&)>& event,
+                 const std::function<std::string()>& allocate_call = {})
     -> ModelReply;
 
 struct ModelInfo {

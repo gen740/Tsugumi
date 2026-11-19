@@ -21,9 +21,12 @@ public enum AppChannel: String, Sendable {
 
   public var supportFolderName: String { self == .release ? "Tsugumi" : "Tsugumi-dev" }
 
-  /// `~/Library/Application Support/<supportFolderName>`.
+  /// `~/Library/Application Support/<supportFolderName>`, or `TSUGUMI_SUPPORT_DIR`
+  /// (as for hostd's state and the command line): checks run beside other
+  /// dev builds with a VM of their own.
   public var supportDirectory: URL {
-    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    if let path = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"] { return URL(fileURLWithPath: path, isDirectory: true) }
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent(supportFolderName, isDirectory: true)
   }
 }

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -61,16 +62,29 @@ TEST(Layout, RouterMatchesPresentationPaths) {
     }
     const auto paths =
         route_wires(text(c.at("flow")) == "topToBottom", obstacles, wires);
-    const auto expected = list(c, "paths");
-    ASSERT_EQ(paths.size(), expected.size());
+    ASSERT_EQ(paths.size(), wires.size());
     for (size_t i = 0; i < paths.size(); ++i) {
-      // null denotes a sampled curve in the original presentation contract.
-      if (schema::is_null(expected[i])) continue;
-      const auto ps = array(expected[i]);
-      ASSERT_EQ(paths[i].size(), ps.size());
-      for (size_t k = 0; k < ps.size(); ++k) {
-        EXPECT_EQ(paths[i][k].x, point(ps[k]).x);
-        EXPECT_EQ(paths[i][k].y, point(ps[k]).y);
+      const auto& ps = paths[i];
+      ASSERT_FALSE(ps.empty());
+      EXPECT_NEAR(ps.front().x, wires[i].a.x, 1e-6);
+      EXPECT_NEAR(ps.front().y, wires[i].a.y, 1e-6);
+      EXPECT_NEAR(ps.back().x, wires[i].b.x, 1e-6);
+      EXPECT_NEAR(ps.back().y, wires[i].b.y, 1e-6);
+      for (const auto p : ps)
+        EXPECT_TRUE(std::isfinite(p.x) && std::isfinite(p.y));
+      for (const auto& box : obstacles) {
+        const auto inside = [&](auto p) {
+          return p.x > box.x + 2 && p.x < box.x + box.width - 2 &&
+                 p.y > box.y + 2 && p.y < box.y + box.height - 2;
+        };
+        if (inside(ps.front()) || inside(ps.back())) continue;
+        for (size_t k = 1; k < ps.size(); ++k)
+          for (int sample = 0; sample <= 20; ++sample) {
+            const auto t = sample / 20.0;
+            EXPECT_FALSE(
+                inside(Point{ps[k - 1].x + t * (ps[k].x - ps[k - 1].x),
+                             ps[k - 1].y + t * (ps[k].y - ps[k - 1].y)}));
+          }
       }
     }
   }

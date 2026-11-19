@@ -26,7 +26,7 @@ From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you wan
 
 ### Automatic updates
 
-Releases check GitHub's latest release after starting and every six hours. If there is a new version, it is downloaded, its checksum, signature, bundle id and version number are checked, and it replaces the app **the next time you quit** (the resident execution environment continues independently of the app). To update at once, choose "Restart to Update" on the home screen or "Restart to update to …" in the application menu. Under "General" → "Updates" in the settings you can see the current version, check by hand and turn automatic checks on or off.
+Use **Check for Updates…** in the application menu or **General → Updates** in Settings to check GitHub and download a newer release. Its checksum, signature, bundle ID and version are verified. Choose **Restart to Update** to install it after orderly runtime shutdown. Checks and installation do not run automatically.
 
 - The folder the app is in (usually `/Applications`) must be writable. An app opened with the quarantine attribute still on (running from elsewhere through App Translocation) cannot update; move it to `/Applications` and remove the quarantine attribute.
 - The ad hoc signature changes with each version, so the first time an updated version uses an API key, macOS asks once for access to the keychain (choose "Always Allow" and that version will not ask again).
@@ -109,23 +109,25 @@ On Linux, the same CMake build also produces the remote listener `build/workerd/
 The shared VM's release-built guest contains a kernel, read-only rootfs, Tsugumi,
 the worker and project tools in one `dist/tsugumi-vm/tsugumi-vm.tar.gz` payload.
 The resolver evaluates the full guest definition and verifies local artifacts
-before reuse; otherwise it downloads an exact-identity artifact from successful
-Actions runs with `gh`, or builds the same output locally with Nix/Apple container.
+before reuse; otherwise it downloads the artifact of that exact identity from
+Actions with `gh`. When there is neither, it stops: `--build` builds the same
+output here with Nix (Linux) or an Apple container (Mac).
 First boot registers the shipped store and starts the prebuilt supervisor,
 without a source share or Tsugumi compilation:
 
 ```bash
-vm/guest/build-image.sh --vm
+nix run .#guest-image
 ```
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
 `ui/macos/build-app.sh` packages the app into `dist/Tsugumi.app`, including the shared
 module host, demos, guest archive/manifest, then
-signs it. It resolves the current guest on every build. Set `TSUGUMI_VM_BUILD=1`
-to force a local guest build, or `TSUGUMI_VM_NIX_BUILDERS` to use a configured
-Linux builder. For release artifact requirements and signing, see
-[Releasing](../RELEASING.md). `--check` and `--kernel` remain local builder tools.
+signs it. It resolves the current guest on every build (`nix run .#guest-image`).
+Build the guest here first with `nix run .#guest-image -- --build`
+(`TSUGUMI_VM_NIX_BUILDERS` uses a configured Linux builder). For release
+artifact requirements and signing, see [Releasing](../RELEASING.md).
+`--check` and `--kernel` build locally too.
 
 Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `ui/macos/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `vm/macos/tools/build-vmctl.sh`.
 

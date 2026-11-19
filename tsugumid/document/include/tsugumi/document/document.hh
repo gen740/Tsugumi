@@ -7,8 +7,8 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -17,11 +17,10 @@
 #include <string>
 #include <vector>
 
-#include "tsugumi/document/schema.hh"
 #include "tsugumi/document/definition_values.hh"
+#include "tsugumi/document/schema.hh"
 
 namespace tsugumi {
-
 
 std::string path_key(const CardPath& p);  // "a/b"
 CardPath path_from_key(const std::string& key);
@@ -70,12 +69,11 @@ struct Document {
 
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
+  enum class SourcePath { Invalid, Protected, Source };
+  static auto classify_source_path(const std::string& rel) -> SourcePath;
   static bool is_source_area(const std::string& rel);
   // Version opt-ins never name internal state or Git metadata, at any depth.
   static auto valid_version_path(const std::string& rel) -> bool;
-
-  const std::string& pkgs_path() const { return project.pkgs_path->value(); }
-  bool save_run_history() const { return project.save_run_history->value_or(true); }
 };
 using DocumentPtr = std::shared_ptr<const Document>;
 
@@ -85,23 +83,27 @@ class DocumentError : public std::runtime_error {
  public:
   DocumentError(std::string code, const std::string& message,
                 std::map<std::string, std::string> args = {})
-      : std::runtime_error(message), code(std::move(code)), args(std::move(args)) {}
+      : std::runtime_error(message),
+        code(std::move(code)),
+        args(std::move(args)) {}
   std::string code;  // FailureKind name
   std::map<std::string, std::string> args;
 };
 
 // The initial tsugumi.json, available before a project daemon exists.
-auto initial_project_json(const std::string &name) -> std::string;
+auto initial_project_json(const std::string& name) -> std::string;
 
 // Strictly decodes and shape-checks one document part. Throws
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
-auto check_opaque_layout(const std::string& text) -> void;
-schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
+schema::CardDefinition parse_card_json(const std::string& id,
+                                       const std::string& text);
 void check_meta_json(const std::string& text);
-schema::CardLink parse_link_json(const std::string& id, const std::string& text);
+schema::CardLink parse_link_json(const std::string& id,
+                                 const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
-schema::Project parse_external_project(const std::string& rel, const std::string& text);
+schema::Project parse_external_project(const std::string& rel,
+                                       const std::string& text);
 
 // Hard structural checks over the whole (final) document: unique ids, a
 // definition for every card, connections between existing cards.
@@ -111,7 +113,9 @@ void check_structure(const Document& doc);
 std::shared_ptr<Document> load_from_disk(const std::filesystem::path& root);
 
 // Fingerprint of everything that influences computation (not layout).
-std::string execution_fingerprint(const Document& doc, const std::function<std::optional<std::string>(const std::string&)>& read);
+std::string execution_fingerprint(
+    const Document& doc,
+    const std::function<std::optional<std::string>(const std::string&)>& read);
 
 constexpr const char* kEmptyLayout = "{}";
 
@@ -127,7 +131,7 @@ struct SourceFile {
 };
 
 struct FileOp {
-  std::string path;                    // project relative
+  std::string path;  // project relative
   std::optional<std::string> content;
   std::shared_ptr<SourceFile> file = {};  // neither content nor file = delete
 };

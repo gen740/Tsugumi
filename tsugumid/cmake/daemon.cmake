@@ -22,6 +22,7 @@ add_library(tsugumi_core STATIC
   ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src/service.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src/service_run.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src/service_shell.cc
+  ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src/service_prepare.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src/daemon.cc
 )
 target_include_directories(tsugumi_core

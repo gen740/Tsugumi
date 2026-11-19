@@ -209,13 +209,13 @@ A Card receives read-only `inputs`, returns its output ports, and publishes pres
 
 | Language | Entry point and result |
 | --- | --- |
-| Python | `main(inputs[, report[, run]])` returns a mapping by port, or a generator yielding mappings |
+| Python | `main(inputs[, report[, run]])` returns a mapping by port |
 | C++ | `auto run(const Card::Inputs& inputs[, tsugumi::Report& report[, const tsugumi::Run& run]]) -> Card::Output` |
 | R | `main <- function(inputs, report, run)` returns a named list; omit unused trailing arguments |
 | Julia | `main(inputs, report, run)` returns a `Dict`; omit unused trailing arguments |
 | Go | `func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run) (tsugumi.Output, error)`; omit unused trailing arguments |
 | Rust | `fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &Run<'_>) -> Result<Output>` |
-| Ruby | `def main(inputs, report, run)` returns a Hash or Enumerator; omit unused trailing arguments |
+| Ruby | `def main(inputs, report, run)` returns a Hash; omit unused trailing arguments |
 | C# | `ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run)`; omit unused trailing arguments |
 | Bash | Input files `$JSON_<PORT>`, paths `$FILE_<PORT>` / `$DIR_<PORT>` and `$TSUGUMI_PARAMS_JSON`; result JSON to `$TSUGUMI_OUTPUT`; presentation JSON to `$TSUGUMI_REPORT` |
 
@@ -227,19 +227,15 @@ Inputs do not expose emission or presentation callbacks. C++ takes a const objec
 
 Python returns generated output `TableT` objects directly: `return {"result": result}`. A finished builder or bytes can also be a mapping value. `tsugumi.builder()` constructs a FlatBuffers builder; `tsugumi.message(builder, root)` finishes it and owns its bytes. `tsugumi.message(builder)` copies a builder already finished by the Card. This also allows building several roots in one builder, snapshotting each result before reusing the builder.
 
-C++, Go and Rust keep their generated owned `Output` object. Set an optional field for each produced port and return it. The adapter packs it after the function succeeds (and after Go's managed tasks finish). Each port may be produced once per invocation. The low-level C ABI is an adapter implementation detail.
+C++, Go and Rust return a generated `Output` object. Set a field for each produced port. Go waits for managed tasks to finish before packing the result.
 
-R lists, Julia Dicts and Ruby Hashes carry messages checked by the JSON face against each port's FlatBuffers schema. C# returns generated `Outputs` properties, or uses its byte dictionary for finished buffers: `new Outputs { ["result"] = builder.SizedByteArray() }`. The adapter packs each typed property after awaiting the function.
+R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts the complete returned mapping to the Card's FlatBuffers type. C# returns an `Outputs` object with one generated property per port. The adapter packs it after awaiting `RunAsync`.
 
-Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The interpreter JSON face uses `NaN`, `Infinity` and `-Infinity`, with conversion in the common SDK boundary. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
+Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The worker uses `NaN`, `Infinity` and `-Infinity` in its JSON conversion. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
 
-Output bytes are checked against their declared type and the combined 16 MiB result-frame limit when emitted. The SDK checks required ports when the main function's result stream ends; a missing required result fails before `postRun` sees `TSUGUMI_FAILED`. Report calls validate presentation in the worker and return an error at the call; a client that receives malformed presentation shows it as unavailable without changing the invocation's result.
+The worker validates the returned Outputs buffer, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
 
 File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time. Python, R and Julia cancellation/deadline callbacks expire with their invocation; retaining a Run does not give it access to a later invocation.
-
-### Results during a long invocation
-
-Python generators yield mappings incrementally; a final returned mapping is emitted too. Each port may be produced once per invocation; a repeated port in a later batch fails with `output_invalid`. Use `yield from helper(...)` when a helper returns a stream. Ruby returns an Enumerator which yields Hashes. Julia returns an iterator of Dicts (a Channel can produce them incrementally). R returns a zero-argument closure yielding the next named list, then `NULL` at end. C# returns `Outputs.Stream(IAsyncEnumerable<Outputs>)`; the adapter awaits and emits each batch before advancing the iterator. These streams let those SDKs build successive port batches without putting a write method on any role object. The worker buffers port results until the invocation completes; an error after an earlier batch still fails the invocation. Report displays publish live.
 
 ### Presentation and hooks
 
@@ -247,7 +243,7 @@ Report methods are `text`, `markdown`, `scalar`, `line_chart`, `table`, `image`,
 
 Python uses `report.figure(fig)` for Matplotlib, Plotly or Altair. `report.figure()` renders open Matplotlib figures, drives animations until they finish or the run stops, then closes them. `report.figure(wait=seconds)` publishes live frames and drives timers for that interval. Drawing, `plt.show()` and leaving a figure open do not publish on their own; invocation cleanup closes open figures. R uses `report$figure(expr)` for base graphics or ggplot. Third-party libraries can still write their own diagnostic stdout/stderr; Card-authored presentation and log lines should use Report.
 
-`on_run_start`, C++/Go `onRunStart` and C# `OnRunStartAsync` receive the same three roles as the main function, using the first invocation's inputs and params. They run before the first invocation of each run. Python, R, Julia, Ruby and C# hooks may return results using their main-function result form; typed C++/Go/Rust hooks remain initialization-only. No role is supplied at source-loading time. A resident worker keeps language state only when `reuseWorker` is enabled.
+`on_run_start`, C++/Go `onRunStart` and C# `OnRunStartAsync` receive the same three roles as the main function, using the first invocation's inputs and params. They run before the first invocation of each run. Use the hook for initialization and report calls. Only the main function returns outputs. The C# hook returns `ValueTask`. No role is supplied at source-loading time. A resident worker keeps language state only when `reuseWorker` is enabled.
 
 Rust selects arity explicitly: `export!(run, inputs)` for inputs only, `export!(run)` for inputs and report, `export!(run, with_run)` for all three. Add the hook as the last macro argument; the hook receives all three roles and returns `Result<()>`.
 
@@ -456,8 +452,7 @@ against the FlatBuffers schema. The instance can retain state between invocation
 
 ```nix
 { pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
-in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+{ run = inputs.tsugumi.rubyCard { src = ./src; }; }
 ```
 
 `definitions/multiply/src/main.rb` (Ruby)
@@ -473,11 +468,21 @@ end
 
 See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks.
 
+### Native Card ABI
+
+Every package provides `lib/main.so` with one exported entry, `tsugumi_main`.
+ABI 7 passes the generated `_inputs.fbs` and `_params.fbs` FlatBuffers to that
+entry. File and Directory inputs carry paths. The run phase returns one
+`_outputs.fbs` FlatBuffer. The worker's separate function table provides
+presentation, logging, cancellation, deadlines, structured failures and typed
+JSON conversion. The same entry handles interpreter preparation, source
+loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
+
 ## Worker state
 
 Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call always discards its resident worker in every language; the next invocation starts fresh and logs the reason, as it does after a crash or definition change. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 
-Standby preparation starts only the worker executable. The SDK builds language adapters separately from Card source or assemblies and names the runtime artifact explicitly. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A filename such as `runtime.so` never authorizes execution before a call. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
+Standby preparation starts only the worker executable. The SDK compiles interpreter startup code once per language version and links it into each Card's `lib/main.so` with the Card's source or assembly paths. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
 
 ```python
 import os
@@ -536,7 +541,7 @@ The generated `Inputs` accessors return owned snapshots to FlatBuffers object AP
 `inputs.Number().Value`, not a raw message buffer. Missing optional inputs are nil.
 Every input/param buffer is copied to Go memory. Accessors unpack fresh snapshots,
 which may be retained and edited without changing the received inputs. Outputs own objects; an alias `Output<Port>` (for example
-`OutputOut`) identifies each output's type. A non-nil field emits that port;
+`OutputOut`) identifies each output's type. A non-nil field includes that port in the result;
 required outputs are still checked by the host. Optional scalar params are
 pointers, such as `params.Factor`. Use native `int64`/`uint64` without a float
 conversion for full integer precision.
@@ -600,10 +605,10 @@ let sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };
 in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
 ```
 
-`src/Cargo.toml` declares a `cdylib` and `tsugumi = { path = "tsugumi" }`.
+`src/Cargo.toml` declares a `staticlib` and `tsugumi = { path = "tsugumi" }`.
 That path is reserved for the crate generated from the Card's contract. The
-SDK includes the Rust runtime source of the same FlatBuffers version as
-`flatc`. A Card without a lock builds offline using the SDK's own crates.
+SDK builds its Rust runtime and the FlatBuffers crate matching `flatc`
+once per toolchain. A Card without a lock builds offline using the SDK's own crates.
 
 To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
 use the human Terminal panel with Cargo on PATH. Build the FlatBuffers source from
@@ -642,7 +647,7 @@ tsugumi::export!(run);
 API types, aliased by port under `tsugumi::outputs` (for example `Out`). Construct
 them with `Default` and assign fields: generated types are non-exhaustive.
 Input/output namespaces differ, so explicitly construct an output object rather
-than returning an input's owned object. `Some` emits a port; `None` omits it and
+than returning an input's owned object. `Some` includes a port in the result; `None` omits it and
 normal required-output validation still applies. Integers remain native `i64`/
 `u64`, including values outside a double's exact range.
 
@@ -766,7 +771,7 @@ views.points = inputs.tsugumi.wasmViewModule {
 
 The processing Card and `report.module("points", config, blobs)` are unchanged.
 The builder compiles C11 or C++20 with Emscripten as a Wasm side module. Its
-output contains `view.wasm`, a byte-count file and an `index.js` symlink to
+output contains `view.wasm` and an `index.js` symlink to
 `inputs.tsugumi.wasmViewTemplate`, one shared Nix output independent of every
 Card's source. `inputs.tsugumi.wasmViewHeaders` supplies the headers separately.
 The standard `<webgpu/webgpu.h>` is the webgpu-headers snapshot from the pinned
@@ -985,12 +990,11 @@ with whichever member arrived (`inputs.arrival.value.type` says which port). Pyt
 
 ### Ruby API
 
-`_card.json`: `{"language": "ruby", ...}`. Use the typed SDK and MRI package:
+`_card.json`: `{"language": "ruby", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
 
 ```nix
 { pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
-in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+{ run = inputs.tsugumi.rubyCard { src = ./src; }; }
 ```
 
 ```ruby
@@ -1011,7 +1015,7 @@ input is `nil`; a message field may be `nil`, but a returned nil output message 
 port to leave an optional output unproduced. FlatBuffers checks the port schema.
 
 `inputs.path('file')` reads a File / Directory input path. Write artifacts under `run.output_directory`
-and emit `{value: path}`. `run.temporary_directory`, `run.run_id`, `run.card`, `run.invocation` and
+and return `{value: path}` for the port. `run.temporary_directory`, `run.run_id`, `run.card`, `run.invocation` and
 `run.working_directory` are also available. `report.log(text)` writes a log line. Interpreter stdout/stderr are also captured for diagnostics.
 Displays: `text`, `markdown`, `scalar(value, label)`,
 `table(columns, rows)`, `image(binary_string, media_type: 'image/png', alt: '')`,

@@ -20,8 +20,8 @@ TEST(HostSaveInspection, WriterBetweenSnapshotAndExternalReadsRestartsCapture) {
        R"([{"path":"externals/storage/layout.json","hash":"before"}])"}};
   int inspections = 0, reads = 0;
   const auto inspection =
-      InspectForSave([&](const std::string &method,
-                         const json::Members &args) -> json::Members {
+      InspectForSave([&](const std::string& method,
+                         const json::Members& args) -> json::Members {
         if (method == "project_inspect") {
           ++inspections;
           return snapshot;
@@ -63,14 +63,14 @@ TEST(HostSaveInspection, WriterBetweenSnapshotAndExternalReadsRestartsCapture) {
 TEST(HostSaveInspection, NonRevisionFailureIsNotRetriedOrErased) {
   int reads = 0;
   try {
-    (void)InspectForSave([&](const auto &, const auto &) -> json::Members {
+    (void)InspectForSave([&](const auto&, const auto&) -> json::Members {
       ++reads;
       throw Failure(
           "external_change",
           "externals/storage/layout.json differs from the confirmed document");
     });
     FAIL() << "Expected the read failure";
-  } catch (const Failure &error) {
+  } catch (const Failure& error) {
     EXPECT_EQ(error.code, "external_change");
     EXPECT_NE(std::string(error.what()).find("externals/storage/layout.json"),
               std::string::npos);
@@ -81,16 +81,16 @@ TEST(HostSaveInspection, NonRevisionFailureIsNotRetriedOrErased) {
 TEST(HostSaveInspection, ContinuousWritersProduceAnExplainedBoundedFailure) {
   int reads = 0;
   try {
-    (void)InspectForSave([&](const auto &, const auto &) -> json::Members {
+    (void)InspectForSave([&](const auto&, const auto&) -> json::Members {
       ++reads;
       throw Failure("revision_conflict", "the document is at another revision");
     });
     FAIL() << "Expected the inspection to stop retrying";
-  } catch (const Failure &error) {
+  } catch (const Failure& error) {
     EXPECT_EQ(error.code, "revision_conflict");
     EXPECT_NE(std::string(error.what()).find("inspection"), std::string::npos);
   }
   EXPECT_EQ(reads, 8);
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host

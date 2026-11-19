@@ -7,7 +7,7 @@ struct TrustedFoldersSettings: View {
   @State private var settings = CorePreferences.shared
 
   var body: some View {
-    Section("信頼するフォルダ") {
+    Section {
       ForEach(folders, id: \.self) { folder in
         HStack {
           Text(folder).textSelection(.enabled)
@@ -23,9 +23,9 @@ struct TrustedFoldersSettings: View {
           folders.append(url.path)
         }
       }
-      Text("このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。")
-        .font(.caption).foregroundStyle(.secondary)
       if let error = settings.error { Text(error).foregroundStyle(.red) }
+    } header: {
+      InfoHeader("信頼するフォルダ", info: "このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。")
     }
     .task(id: folders) {
       await settings.reload()

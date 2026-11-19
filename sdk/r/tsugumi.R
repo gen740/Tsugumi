@@ -38,7 +38,6 @@
     x
   }
   to_json <- function(x) jsonlite::toJSON(order_unions(x), auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "string")
-  .tsugumi_json <<- to_json
   from_json <- .tsugumi_from_json
 
   show <- function(member) {
@@ -56,10 +55,8 @@
     remaining_ms = function() { check(); .Call("tsugumi_remaining") }
   )
   class(run) <- "Run"
-  read <- function(port) {
-    value <- .Call("tsugumi_input", as.character(port))
-    if (is.null(value)) NULL else from_json(value)
-  }
+  values <- from_json(.Call("tsugumi_inputs"))
+  read <- function(port) values[[port, exact = TRUE]]
   inputs <- structure(list(params = from_json(.Call("tsugumi_params")), read = read), class = "TsugumiInputs")
   report <- list(
     text = function(text) show(list(text = paste(text, collapse = "\n"))),
@@ -91,7 +88,7 @@
     log = function(message) { .Call("tsugumi_log", as.character(message)); invisible(NULL) }
   )
   class(report) <- "Report"
-  list(inputs, report, run)
+  list(roles = list(inputs, report, run), to_json = to_json)
 }
 
 `$.TsugumiInputs` <- function(x, name) {
@@ -107,22 +104,6 @@
 }
 `$<-.TsugumiInputs` <- function(x, name, value) stop("inputs are read-only")
 
-.tsugumi_outputs <- function(result) {
-  if (is.function(result)) {
-    repeat { batch <- result(); if (is.null(batch)) break; .tsugumi_outputs(batch) }
-    return(invisible(NULL))
-  }
-  if (!is.null(result)) {
-    if (is.list(result) && length(result) == 0L) return(invisible(NULL))
-    if (!is.list(result) || is.null(names(result))) stop("return a named list of output ports")
-    for (port in names(result)) {
-      message <- result[[port]]
-      if (!.Call("tsugumi_output", port, as.character(.tsugumi_json(message)))) stop("output was rejected: ", port)
-    }
-  }
-  invisible(NULL)
-}
-
 .tsugumi_invoke <- function(hook) {
   scope <- new.env(parent = emptyenv())
   scope$active <- TRUE
@@ -132,13 +113,16 @@
     function_ <- if (hook) {
       if (exists("on_run_start", envir = .GlobalEnv, inherits = FALSE)) on_run_start else NULL
     } else main
+    result <- NULL
     if (!is.null(function_)) {
       count <- length(formals(function_))
       if (!(count %in% 1:3)) stop("Card functions take inputs, optionally report and run")
-      .tsugumi_outputs(do.call(function_, arguments[seq_len(count)]))
+      result <- do.call(function_, arguments$roles[seq_len(count)])
     }
-    if (!hook && !.Call("tsugumi_finish_outputs")) stop("required outputs were not emitted")
-    TRUE
+    if (hook) return(TRUE)
+    if (is.null(result) || (is.list(result) && !length(result))) return("{}")
+    if (!is.list(result) || is.null(names(result))) stop("return a named list of output ports")
+    as.character(arguments$to_json(result))
   }, error = function(error) {
     .Call("tsugumi_fail", conditionMessage(error))
     FALSE

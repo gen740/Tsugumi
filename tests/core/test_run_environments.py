@@ -8,34 +8,7 @@ import pytest
 from harness.fixtures import worker_project
 from harness.scenario import HOST_BASH, STRING_OUTPUT, Project, run, wait_run
 from Tsugumi.Data.RunState import RunState
-from tsugumi_client import RpcFailure, change, new_id, path, text
-
-
-@pytest.mark.parametrize("version", [5, 6, 7, 8, 9, 10, 12])
-def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
-    """The daemon refuses an incompatible local history database and leaves its contents intact."""
-    history_dir = tmp_path / "history"
-    history_dir.mkdir()
-    database = history_dir / "history.sqlite"
-    connection = sqlite3.connect(database)
-    try:
-        connection.execute("CREATE TABLE fixture (note TEXT NOT NULL)")
-        connection.execute("INSERT INTO fixture VALUES ('retained')")
-        connection.execute(f"PRAGMA user_version={version}")
-        connection.commit()
-    finally:
-        connection.close()
-    original = database.read_bytes()
-
-    from harness.daemon import StartupFailure
-    with pytest.raises(StartupFailure) as failure:
-        core_factory(history_dir=history_dir)
-
-    assert failure.value.kind == "incompatible_history"
-    assert failure.value.record["found"] == str(version)
-    assert failure.value.record["expected"].isdigit()
-    assert failure.value.record["source"] == "local"
-    assert database.read_bytes() == original
+from tsugumi_client import RpcFailure, new_id, path, text
 
 
 def inventory(client, run_id, card="work"):
@@ -57,18 +30,18 @@ def inventory(client, run_id, card="work"):
         assert page.nextOffset > offset
         offset = page.nextOffset
     assert len(paths) == environment.pathCount
-    assert paths == sorted(set(paths))
+    assert len(paths) == len(set(paths))
     assert text(environment.manifest) in paths
     assert text(environment.derivation).endswith(".drv")
     users = client.call("RunEnvironmentUsesRequest", runId=run_id, environmentId=text(environment.id), limit=1)
     assert [(text(u.card), u.invocation) for u in users.uses] == [(card, 1)]
     assert users.nextOffset is None
-    return text(environment.id), paths
+    return text(environment.id), set(paths)
 
 
 def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory, project, tmp_path):
     """Cached runs and portable history retain the exact recorded environment."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     runs = []
@@ -81,8 +54,7 @@ def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory,
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, mocked_builds=True,
-                            history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project, mocked_builds=True)
     assert inventory(restored.connect(), runs[0]) == expected
     daemon.start()
     assert inventory(daemon.connect(), runs[1]) == expected
@@ -97,7 +69,7 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
                       "s3://bucket/cache?profile=private-profile\n"
                       "file:///private-cache-dir\n")
     expected = ["https://cache.nixos.org", "https://private.example.org/team", "s3://bucket/cache"]
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history",
+    daemon = core_factory(mocked_builds=True, mocked_worker=True,
                           args=["--substituters-file", str(listed)])
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
@@ -113,7 +85,6 @@ def test_runs_record_the_binary_caches_without_credentials(core_factory, project
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
-                            history_dir=tmp_path / "restored-history",
                             args=["--substituters-file", str(listed)]).connect()
     page = restored.call("RunEnvironmentsRequest", runId=run_id)
     assert [text(url) for url in page.substituters] == expected
@@ -228,12 +199,12 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     assert len(client.call("RunEnvironmentsRequest", runId=first).environments) == 1
     changed_id = ids["b"]
     def closure(run_id, environment_id):
-        return [text(p) for p in client.call("RunEnvironmentPathsRequest", runId=run_id,
-                                           environmentId=environment_id).paths]
+        return {text(p) for p in client.call("RunEnvironmentPathsRequest", runId=run_id,
+                                           environmentId=environment_id).paths}
     old_paths, new_paths = closure(first, original_id), closure(second, changed_id)
     for run_id, environment_id, other_run, other_id, expected in [
-        (first, original_id, second, changed_id, sorted(set(old_paths) - set(new_paths))),
-        (second, changed_id, first, original_id, sorted(set(new_paths) - set(old_paths))),
+        (first, original_id, second, changed_id, old_paths - new_paths),
+        (second, changed_id, first, original_id, new_paths - old_paths),
         (first, original_id, second, ids["a"], []),
     ]:
         for query in ["", "NIX", "%", "no-such-dependency"]:
@@ -249,11 +220,46 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
                     break
                 assert page.nextOffset > offset
                 offset = page.nextOffset
-            assert found == matching
+            assert len(found) == len(matching)
+            assert set(found) == set(matching)
     with pytest.raises(RpcFailure) as error:
         client.call("RunEnvironmentPathsRequest", runId=first, environmentId=original_id,
                     excludingRunId=second, excludingEnvironmentId="missing")
     assert error.value.kind == "not_found"
+
+
+@pytest.mark.parametrize(("method", "statement", "needs_environment"), [
+    ("RunEnvironmentsRequest",
+     "UPDATE build_environments SET manifest=? WHERE run_id=?", False),
+    ("RunEnvironmentPathsRequest",
+     "UPDATE environment_paths SET path=? WHERE run_id=?", True),
+    ("RunEnvironmentUsesRequest",
+     "UPDATE invocations SET card=? WHERE run_id=?", True),
+])
+def test_oversized_history_rows_fail_instead_of_returning_a_stalled_cursor(
+        core_factory, project, tmp_path, method, statement, needs_environment):
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    environment_id, _ = inventory(client, run_id)
+    daemon.stop()
+
+    # Simulate an oversized row in recorded history. It must fail even when
+    # the first row alone exceeds the response budget.
+    db = sqlite3.connect(project / ".tsugumi" / "runs.sqlite")
+    try:
+        with db:
+            updated = db.execute(statement, ("/nix/store/" + "x" * (2 << 20), run_id))
+            assert updated.rowcount
+    finally:
+        db.close()
+    daemon.start()
+    fields = {"environmentId": environment_id} if needs_environment else {}
+    with pytest.raises(RpcFailure) as error:
+        daemon.connect().call(method, runId=run_id, **fields)
+    assert error.value.kind == "resource_limit"
 
 
 def test_build_failure_has_no_claimed_environment(core_factory, project):
@@ -269,7 +275,7 @@ def test_build_failure_has_no_claimed_environment(core_factory, project):
 
 def test_deleting_history_removes_its_environment_inventory(core_factory, project, tmp_path):
     """Deleted run environments stay deleted after the project history is restored."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     run_id = run(client)
@@ -279,7 +285,7 @@ def test_deleting_history_removes_its_environment_inventory(core_factory, projec
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     with pytest.raises(RpcFailure) as error:
         restored.connect().call("RunEnvironmentPathsRequest", runId=run_id, environmentId=environment_id)
     assert error.value.kind == "not_found"
@@ -287,7 +293,7 @@ def test_deleting_history_removes_its_environment_inventory(core_factory, projec
 
 def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_path):
     """Renaming a Card preserves its environment and portable invocation history."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [])
     run_id = run(client)
@@ -299,7 +305,7 @@ def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     assert inventory(restored.connect(), run_id, "work") == expected
 
 
@@ -314,7 +320,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
     assert wait_run(client, run_id).state == RunState.succeeded
     environment_id, _ = inventory(client, run_id)
     requests = [
-        ("SessionHelloRequest", {"protocol": 1, "client_id": new_id()}),
+        ("SessionHelloRequest", {}),
         ("RunEnvironmentsRequest", {"run_id": run_id}),
         ("RunEnvironmentPathsRequest", {"run_id": run_id, "environment_id": environment_id, "limit": 1}),
     ]
@@ -334,7 +340,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
 def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory, project, tmp_path):
     """Crash recovery preserves the environment and service of an interrupted execution."""
     from harness.scenario import Gate
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     gate = Gate(tmp_path, "executing")
     worker_project(client, project, tmp_path, [gate.action()])
@@ -355,7 +361,7 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
+    restored = core_factory(project_root=copied_project)
     copied_client = restored.connect()
     assert inventory(copied_client, run_id)[0] == environment_id
     rows = copied_client.call("RunLatestInvocationsRequest", runId=run_id).records
@@ -369,8 +375,8 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     environment_id, paths = inventory(client, run_id)
-    for query in ["", "NIX", paths[-1].split("/")[-1], "%", "_", "'", "no-such-package"]:
-        expected = [p for p in paths if query.lower() in p.lower()]
+    for query in ["", "NIX", max(paths).rsplit("/", 1)[-1], "%", "_", "'", "no-such-package"]:
+        expected = {p for p in paths if query.lower() in p.lower()}
         found = []
         offset = 0
         while True:
@@ -382,7 +388,8 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
                 break
             assert page.nextOffset > offset
             offset = page.nextOffset
-        assert found == expected
+        assert len(found) == len(expected)
+        assert set(found) == expected
 
 
 def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_path):

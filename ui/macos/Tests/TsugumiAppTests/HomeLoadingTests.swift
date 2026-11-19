@@ -60,17 +60,6 @@ import Testing
   #expect(!model.setupNeeded)
 }
 
-@MainActor @Test func homeShowsHostStateRecoveryInsteadOfAGenericProjectError() async {
-  let message = "The host state folder /private/tmp/host-core was written by another version of Tsugumi. Move or rename this folder, then start Tsugumi again."
-  let model = AppModel(refreshOnInit: false, requestHome: { _, _ in
-    throw CoreHostFailure(code: "state_format", message: message, requestID: nil)
-  })
-  await model.refreshHome()
-  #expect(model.recentsError == message)
-  #expect(model.demosError == message)
-  #expect(model.error == message)
-}
-
 @Test func conversationIdentityFailureExplainsHowToPreserveHistory() {
   let failure = CoreHostFailure(code: "conversation_identity_mismatch", message: "internal diagnostic", requestID: nil)
   #expect(failure.description.contains(".tsugumi"))

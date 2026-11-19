@@ -332,8 +332,6 @@ final class ProjectSession {
   var saving: Bool { dirty }
   /// Last user-facing problem of an action (run refused, import failed, ...).
   var cacheUsage: Tsugumi_RPC_ProjectCacheUsageResultT?
-  @ObservationIgnored private var cacheUsageTask: Task<Void, Never>?
-  @ObservationIgnored private var cacheNoticeShown = false
   var notice: String?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
@@ -446,15 +444,19 @@ final class ProjectSession {
 
   // MARK: - Connection
 
+  @ObservationIgnored private var startTask: Task<Void, Never>?
+
   func start() {
+    guard startTask == nil else { return }
     // Shown as starting at once: the loading card, never a "stopped" page
     // for the moment before the environment reports its state.
     switch environment {
     case .stopped, .incompatibleHistory: environment = .starting("")
     default: break
     }
-    Task { [weak self] in
+    startTask = Task { [weak self] in
       guard let self else { return }
+      defer { startTask = nil }
       if observerToken == nil, endpointOverride == nil {
         observerToken = await environments.observe(identity) { [weak self] s in
           Task { @MainActor in
@@ -463,7 +465,7 @@ final class ProjectSession {
           }
         }
       }
-      await connect()
+      if !Task.isCancelled { await connect() }
     }
   }
 
@@ -471,12 +473,10 @@ final class ProjectSession {
   func refreshCacheUsage() async {
     guard let rpc else { return }
     do {
+      let request = Tsugumi_Host_HostRuntimeRequestT(); request.action = .command; request.command = "cache-usage"
+      let _: Tsugumi_Host_HostRuntimeT = try await CoreHostClient.shared.hostCall(.hostruntimerequest, request)
       let usage = try await rpc.cacheUsage()
       cacheUsage = usage
-      if usage.large && !cacheNoticeShown && notice == nil {
-        notice = String(localized: "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。")
-        cacheNoticeShown = true
-      } else if !usage.large && usage.buildBytes != nil { cacheNoticeShown = false }
     } catch { /* A failed measurement never interrupts execution. */ }
   }
 
@@ -490,7 +490,7 @@ final class ProjectSession {
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
-    cacheUsageTask?.cancel()
+    startTask?.cancel()
     terminals.closeAll()
     listenTask?.cancel()
     reconnectTask?.cancel()
@@ -510,18 +510,10 @@ final class ProjectSession {
   @ObservationIgnored var endpointOverride: Endpoint?
   /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
   var connectionFailed = false
-  /// The waits between tries to reach a tsugumid that has just started (seconds).
-  @ObservationIgnored var connectRetryDelays: [Double] = [0.2, 0.4, 0.8, 1.6, 2.0]
-
-  func archiveHistoryAndStart() {
-    guard !closed, case .incompatibleHistory = environment else { return }
-    environment = .starting(EnvironmentStage.startingDaemon.rawValue)
-    Task { [weak self] in await self?.connect(archiveIncompatibleHistory: true) }
-  }
 
   var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
 
-  private func connect(archiveIncompatibleHistory: Bool = false, endpoint: Endpoint? = nil) async {
+  private func connect(endpoint: Endpoint? = nil) async {
     guard !closed else { return }
     connectionMessage = nil
     do {
@@ -530,12 +522,12 @@ final class ProjectSession {
       if let o = endpoint ?? endpointOverride {
         ep = o
       } else {
-        ep = try await environments.start(identity, archiveIncompatibleHistory: archiveIncompatibleHistory)
+        ep = try await environments.start(identity)
       }
       try Task.checkCancellation()
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
-      displayGeometries = try await CoreHostClient.shared.layoutCall(
+      displayGeometries = try await CoreHostClient.shared.hostCall(
         .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
@@ -544,14 +536,6 @@ final class ProjectSession {
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
-      cacheUsageTask?.cancel()
-      cacheUsageTask = Task { [weak self] in
-        while !Task.isCancelled {
-          guard let self, self.connected, !self.closed else { return }
-          await self.refreshCacheUsage()
-          try? await Task.sleep(for: .seconds(15))
-        }
-      }
       listen(c)
       if makeRepositoryOnConnect {
         makeRepositoryOnConnect = false
@@ -560,6 +544,7 @@ final class ProjectSession {
       await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
+      guard !Task.isCancelled, !closed else { return }
       setConnected(false)
       connectionFailed = error is Unreached
       connectionMessage = "\(error)"
@@ -575,22 +560,17 @@ final class ProjectSession {
     var description: String { "\(underlying)" }
   }
 
-  /// Connects to a tsugumid that has just started. Its port may not be
-  /// reachable at once, so a connection that cannot be made is tried again for
-  /// a few seconds (the web page does the same: WSL2 forwards a new port late).
   private func reach(_ ep: Endpoint) async throws -> RPCClient {
-    var attempt = 0
-    while true {
-      let c = RPCClient(endpoint: ep.url)
-      do {
-        _ = try await c.connect(token: ep.token, clientId: UUID(), expectedProjectId: nil)
-        return c
-      } catch where Self.unreachable(error) {
-        await c.close()
-        guard !closed, attempt < connectRetryDelays.count else { throw Unreached(underlying: error) }
-        try? await Task.sleep(for: .seconds(connectRetryDelays[attempt]))
-        attempt += 1
-      }
+    let c = RPCClient(endpoint: ep.url)
+    do {
+      _ = try await withTaskCancellationHandler {
+        try await c.connect(token: ep.token, expectedProjectId: nil)
+      } onCancel: { Task { await c.close() } }
+      return c
+    } catch {
+      await c.close()
+      if Self.unreachable(error) { throw Unreached(underlying: error) }
+      throw error
     }
   }
 
@@ -616,8 +596,7 @@ final class ProjectSession {
       client = nil
       setConnected(false)
       // Hostd's Start waits for the current environment transition, including
-      // a guest restart caused by another chat or client. Only reach() retries
-      // the socket after hostd has confirmed readiness.
+      // a guest restart caused by another chat or client.
       if Task.isCancelled { return }
       await connect()
       if connected || Task.isCancelled { return }
@@ -679,13 +658,14 @@ final class ProjectSession {
   /// queued behind that work. Nothing here waits.
   func endForQuit() {
     closed = true
-    cacheUsageTask?.cancel()
+    startTask?.cancel()
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil
   }
 
   func stopEnvironment() {
+    startTask?.cancel()
     // A stopped environment stays stopped: its connection's end is not a
     // loss to reconnect from (that would start it again).
     listenTask?.cancel()
@@ -1610,38 +1590,41 @@ final class ProjectSession {
       guard let client else { throw RPCError.disconnected }
       return try await client.readFile(path: path, atRev: revision)
     }
+    var definitionIds: [String: Set<String>] = [:]
+    for p in paths {
+      guard let split = p.range(of: "/definitions/", options: .backwards) else { continue }
+      let parts = p[split.upperBound...].split(separator: "/")
+      if parts.count == 2, ["_card.json", "_link.json"].contains(String(parts[1])) {
+        definitionIds[String(p[..<split.lowerBound]) + "/", default: []].insert(String(parts[0]))
+      }
+    }
     let atRev = rev
     let hashes = sources.mapValues(\.hash)
     externalsGeneration += 1
     externalsTask = Task { @MainActor in
       var found: [String: ExternalProject] = [:]
-      var read: [String: String] = [:]
       for p in paths where p.hasSuffix("/tsugumi.json") {
         let prefix = String(p.dropLast("tsugumi.json".count))
         // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
         let parts = prefix.split(separator: "/")
         guard parts.count >= 2, parts.count % 2 == 0, parts[parts.count - 2] == "externals" else { continue }
-        func doc(_ rel: String) async -> JSONValue? {
-          guard let h = hashes[rel], let d = try? await readFile(rel, atRev) else { return nil }
-          read[rel] = h
+        @Sendable func doc(_ rel: String) async -> JSONValue? {
+          guard hashes[rel] != nil, let d = try? await readFile(rel, atRev) else { return nil }
           return try? JSONValue.parse(String(decoding: d, as: UTF8.self))
         }
-        guard let proj = await doc(p) else { continue }
-        var ext = ExternalProject(project: proj, layout: await doc(prefix + "layout.json") ?? .object([]), definitions: [:])
-        // Every definition folder of the external (placed or not).
-        var ids = Set<String>()
-        for q in paths where q.hasPrefix(prefix + "definitions/") {
-          let rest = q.dropFirst((prefix + "definitions/").count).split(separator: "/")
-          if rest.count == 2, ["_card.json", "_link.json"].contains(rest[1]) { ids.insert(String(rest[0])) }
-        }
+        async let projectRead = doc(p)
+        async let layoutRead = doc(prefix + "layout.json")
+        guard let proj = await projectRead else { continue }
+        var ext = ExternalProject(project: proj, layout: await layoutRead ?? .object([]), definitions: [:])
+        let ids = definitionIds[prefix] ?? []
         for id in ids.sorted() {
           let dir = prefix + "definitions/\(id)/"
-          let meta = await doc(dir + "_meta.json")
-          if let l = await doc(dir + "_link.json") {
-            ext.definitions[id] = DefinitionDraft(card: .object([]), meta: meta, link: l)
-          } else if let card = await doc(dir + "_card.json") {
-            ext.definitions[id] = DefinitionDraft(card: card, meta: meta)
-          }
+          async let metaRead = doc(dir + "_meta.json")
+          async let linkRead = doc(dir + "_link.json")
+          async let cardRead = doc(dir + "_card.json")
+          let (meta, link, card) = await (metaRead, linkRead, cardRead)
+          if let link { ext.definitions[id] = DefinitionDraft(card: .object([]), meta: meta, link: link) }
+          else if let card { ext.definitions[id] = DefinitionDraft(card: card, meta: meta) }
         }
         found[prefix] = ext
       }

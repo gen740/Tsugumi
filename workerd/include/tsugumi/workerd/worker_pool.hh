@@ -6,8 +6,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
-#include <future>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,9 +20,8 @@
 namespace tsugumi {
 
 struct WorkerLimits {
-  std::chrono::seconds idle{600};            // a standby worker unused this long ends
-  uint64_t max_rss_bytes = 2ull << 30;       // larger standby workers end
-  size_t max_standby = 32;                   // idle and pending fresh workers
+  uint64_t max_rss_bytes = 2ull << 30;  // larger standby workers end
+  size_t max_standby = 32;              // idle and pending fresh workers
 };
 
 // Remote supervised jobs acquire exactly one worker at the existing scratch
@@ -37,7 +36,7 @@ class WorkerPool {
 
   struct Lease {
     std::unique_ptr<WorkerProc> worker;
-    bool reused = false;  // a resident worker that served an earlier call
+    bool reused = false;   // a resident worker that served an earlier call
     std::string replaced;  // why previously held state was lost
   };
 
@@ -45,10 +44,12 @@ class WorkerPool {
   // spawn spec without its scratch folder): lease an idle resident worker
   // only when reuse is enabled. Otherwise take a fresh standby or start one.
   // Residents of this Card end when reuse is disabled or the key changes.
-  Lease acquire(const std::string& card, const std::string& key, const WorkerSpawn& spawn, bool reuse);
+  Lease acquire(const std::string& card, const std::string& key,
+                const WorkerSpawn& spawn, bool reuse);
   // Retain only successful living residents; remember why a bad call ended
   // its worker so the next acquisition can report fresh state.
-  void release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker, bool keep,
+  void release(const std::string& card, const std::string& key,
+               std::unique_ptr<WorkerProc> worker, bool keep,
                const std::string& reason = {});
   // Ends every worker of the project (definitions reloaded, cache cleared).
   void clear(bool residents = true);
@@ -58,7 +59,6 @@ class WorkerPool {
     std::string card;
     std::string key;
     std::unique_ptr<WorkerProc> worker;
-    std::chrono::steady_clock::time_point since;
   };
   std::unique_ptr<WorkerProc> spawn(WorkerSpawn spawn);
   void refill(const std::string& key, WorkerSpawn spawn);
@@ -70,15 +70,18 @@ class WorkerPool {
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<Idle> resident_;
-  std::map<std::string, std::string> resident_keys_;  // also remembers workers that died during a call
+  std::map<std::string, std::string>
+      resident_keys_;  // also remembers workers that died during a call
   std::map<std::string, std::string> resident_replacements_;
   std::map<std::string, Idle> standby_;  // one per key
   std::map<std::string, bool> refilling_;
-  std::deque<std::pair<std::string, WorkerSpawn>> pending_;  // standby workers to start
-  std::deque<std::packaged_task<std::unique_ptr<WorkerProc>()>> spawns_;  // workers a call waits for
+  std::deque<std::pair<std::string, WorkerSpawn>>
+      pending_;  // standby workers to start
+  std::deque<std::packaged_task<std::unique_ptr<WorkerProc>()>>
+      spawns_;  // workers a call waits for
   uint64_t seq_ = 0;
   bool stopping_ = false;
-  std::thread reaper_;  // starts standby workers, ends idle ones
+  std::thread reaper_;  // starts standby workers, ends dead or oversized ones
 };
 
 }  // namespace tsugumi

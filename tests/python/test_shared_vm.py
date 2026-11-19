@@ -6,13 +6,12 @@ another's run."""
 from __future__ import annotations
 
 import os
-import time
 
 import pytest
 
 from conftest import SharedVM, VMEnv
 from projects import card
-from projects import run_and_wait, wait_run, write
+from projects import run_and_wait, start_run, wait_for_log, wait_run, write
 from test_cards_container import bash, log
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -24,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 
 def project(root, script, name):
     write(root, {"trigger": {"template": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
-    return VMEnv(root, name).start()
+    return VMEnv(root).start()
 
 
 def test_projects_share_the_store_but_not_users_views_or_processes(tmp_path):
@@ -82,19 +81,12 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
     other = project(tmp_path / "other", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "other")
     try:
         c = slow.client()
-        snap = c.call("ProjectInspectRequest")
-        acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"))
-        run_id = text(acc.run.runId)
-        # The worker cannot finish by racing a six-second settling window.
-        deadline = time.monotonic() + 600
-        while "HOLDING" not in log(c, run_id, "step", 1):
-            assert time.monotonic() < deadline, "the Card never started"
-            assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded)
-            time.sleep(0.05)
+        run_id = start_run(c, "start")
+        wait_for_log(c, run_id, "step", 1, lambda log: "HOLDING" in text(log.text or b""))
         other.stop()
         assert c.call("RunStatusRequest", runId=run_id).state not in (RunState.failed, RunState.succeeded, RunState.cancelled)
         c.call("RunCancelRequest", runId=run_id)
-        assert wait_run(c, run_id, timeout=60).state == RunState.cancelled
+        assert wait_run(c, run_id).state == RunState.cancelled
         # The stopped project starts again in the same VM.
         other.start()
         _, st = run_and_wait(other.client(), "start")
@@ -143,7 +135,7 @@ in
     write(root, {"trigger": {"template": "trigger"}, "one": {"language": "cpp", "_outputs": NUM, "_nix": nix}},
          [c_("start", "trigger"), c_("one", "one")], [])
     put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
-    p = VMEnv(root, "P").start()
+    p = VMEnv(root).start()
     copy = None
     try:
         rid, st = run_and_wait(p.client(), "start")
@@ -168,7 +160,7 @@ in
         p.stop()
         import shutil
         shutil.copytree(root, tmp_path / "P2", symlinks=True)
-        copy = VMEnv(tmp_path / "P2", "P2").start()
+        copy = VMEnv(tmp_path / "P2").start()
         rid, st = run_and_wait(copy.client(), "start")
         assert build_outcome(copy.client(), rid, "one")[Phase.build] == 3
         assert "tsugumi-card.json" in copy.exec(f"ls /nix/var/nix/gcroots/tsugumi/projects/{copy.id}")
@@ -217,7 +209,7 @@ def test_closed_projects_give_their_slot_back(tmp_path):
     for i in range(18):  # more than the 16 slots
         root = tmp_path / f"p{i}"
         builtin_project(root)
-        env = VMEnv(root, f"slot-{i}").start()
+        env = VMEnv(root).start()
         try:
             c = env.client()
             assert c.call("ProjectInspectRequest").rev >= 0
@@ -232,7 +224,7 @@ def test_a_crashed_tsugumid_is_started_again_with_its_documents(tmp_path):
     from projects import builtin_project
     root = tmp_path / "p"
     builtin_project(root)
-    env = VMEnv(root, "crash").start()
+    env = VMEnv(root).start()
     try:
         rev = env.client().call("ProjectInspectRequest").rev
         env.crash()
@@ -248,7 +240,7 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
     keeps serving, the running project included, and starts another."""
     from projects import builtin_project
     builtin_project(tmp_path / "a")
-    a = VMEnv(tmp_path / "a", "before-bad").start()
+    a = VMEnv(tmp_path / "a").start()
     try:
         vm = a.vm
         bad = ["start ../x 1 /tmp 3", "start a/b 1 /tmp 3", "start x", "stop ../../etc", "stop", "forget ..",
@@ -260,7 +252,7 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
         assert vm.command("vm ping")[-1].strip() == "ok"
         assert a.client().call("ProjectInspectRequest").rev >= 0
         builtin_project(tmp_path / "b")
-        b = VMEnv(tmp_path / "b", "after-bad").start()
+        b = VMEnv(tmp_path / "b").start()
         try:
             assert b.client().call("ProjectInspectRequest").rev >= 0
         finally:

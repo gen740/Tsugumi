@@ -6,7 +6,6 @@ import json
 import os
 import queue
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -38,75 +37,25 @@ def write_project(root: Path, project: dict | None = None, layout: dict | None =
     (root / "layout.json").write_text(json.dumps(layout or {}))
 
 
-class Daemon:
+from harness.daemon import Daemon as CoreDaemon
+
+
+class Daemon(CoreDaemon):
     def __init__(self, project: Path, env: dict | None = None, args: list | None = None):
-        self.project = project
-        self.args = list(args or [])
-        # Unix socket paths are short-limited; keep them under /tmp-like dirs.
-        self.sock_dir = Path(tempfile.mkdtemp(prefix="tsugumi-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
-        self.unix = str(self.sock_dir / "s")
-        self.control = self.sock_dir / "control"
-        self.env = env or {}
-        self.proc: subprocess.Popen | None = None
-        self.ready: dict = {}
-
-    def start(self, expect_exit: bool = False, timeout: float = 20.0) -> "Daemon":
-        try:
-            return self._start(expect_exit, timeout)
-        except BaseException:
-            self.cleanup()
-            raise
-
-    def _start(self, expect_exit: bool = False, timeout: float = 20.0) -> "Daemon":
-        args = [str(TSUGUMID), "--scratch-dir", str(self.sock_dir / "scratch"),
-                "--run-scratch-dir", str(self.sock_dir / "run-scratch"),
-                "--project", str(self.project), "--unix", self.unix,
-                "--control-dir", str(self.control), "--worker", str(WORKER),
-                "--sdk-dir", str(SDK), "--allow-missing-origin"]
-        args += self.args
-        env = dict(os.environ)
-        env.update(self.env)
-        ready = self.control / "server.ready"
-        if ready.exists():
-            ready.unlink()
-        # Its output goes to a file (a pipe nobody reads would stop it once full).
-        self.log = self.sock_dir / "tsugumid.log"
-        with open(self.log, "ab") as log:
-            self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=subprocess.STDOUT)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                if expect_exit:
-                    return self
-                raise RuntimeError("tsugumid exited: " + self.log.read_text(errors="replace")[-4000:])
-            if ready.exists():
-                self.ready = json.loads(ready.read_text())
-                return self
-            time.sleep(0.02)
-        raise TimeoutError("tsugumid did not become ready")
-
-    def stop(self, sig: int = signal.SIGTERM) -> int:
-        if self.proc and self.proc.poll() is None:
-            self.proc.send_signal(sig)
-            try:
-                self.proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait()
-        return self.proc.returncode if self.proc else 0
+        super().__init__(project, env=env, args=["--allow-missing-origin", *(args or [])])
+        self.binary = TSUGUMID
 
     def client(self):
         from tsugumi_client import Client
-        return Client(unix=self.unix)
+        client = Client(unix=self.unix)
+        self.clients.append(client)
+        return client
 
     def crash(self):
-        """Abnormal termination of the owner process."""
-        self.proc.kill()
-        self.proc.wait()
+        self.stop(crash=True)
 
-    def cleanup(self) -> None:
-        self.stop()
-        shutil.rmtree(self.sock_dir, ignore_errors=True)
+    def cleanup(self):
+        self.close()
 
 
 @pytest.fixture
@@ -144,7 +93,7 @@ class SharedVM:
         with self.console.open("a") as log:
             self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
                                          stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1, env=env)
-        # Its answers are read by a thread so that every wait has a deadline.
+        # Queue replies and EOF so callers wait for the console protocol.
         self.lines: queue.Queue = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
         atexit.register(self.quit)
@@ -161,18 +110,18 @@ class SharedVM:
             cls._instance = SharedVM()
         return cls._instance
 
-    def command(self, line: str, until=lambda l: True, timeout: float = 900.0) -> list[str]:
+    def command(self, line: str, until=lambda l: True, timeout: float | None = None) -> list[str]:
         """Sends one command and reads its answer up to the line `until` accepts.
-        A vmctl that does not answer in time is ended (the next test starts a
-        new one) and the test fails with where to look."""
+        Quit has a grace period so fixture cleanup can proceed if VM shutdown stalls."""
         self.proc.stdin.write(line + '''
 ''')
         self.proc.stdin.flush()
         out = []
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             try:
-                l = self.lines.get(timeout=max(0.0, deadline - time.monotonic()))
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                l = self.lines.get(timeout=remaining)
             except queue.Empty:
                 self.proc.terminate()
                 try:
@@ -213,9 +162,8 @@ class SharedVM:
 class VMEnv:
     """Runs a project in the app's shared VM (the reference configuration)."""
 
-    def __init__(self, project: Path, name: str = ""):
+    def __init__(self, project: Path):
         self.project = project
-        self.name = name
         self.vm = SharedVM.get()
         self.port = None
         self.ready: dict = {}
@@ -266,9 +214,9 @@ class VMEnv:
         self.stop()
 
 
-def real_environment(project: Path, name: str):
+def real_environment(project: Path):
     """The real execution environment: the shared VM."""
-    return VMEnv(project, name).start()
+    return VMEnv(project).start()
 
 
 def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja"):
@@ -281,7 +229,7 @@ def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja")
         edit(dst)
     if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":
         # The one shared store of the VM keeps Nix downloads.
-        return real_environment(dst, f"tsugumi-test-{demo}")
+        return real_environment(dst)
     # Every Card's own definition, also inside its Cards in Card (externals).
     for f in dst.rglob("definitions/*/_card.json"):
         card = json.loads(f.read_text())

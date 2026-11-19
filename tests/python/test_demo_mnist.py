@@ -19,7 +19,7 @@ import pytest
 
 from conftest import ROOT, demo_environment
 from projects import start_run, wait_run
-from test_demos import connect, display_text, edit_card, set_param, stderr
+from test_demos import connect, display_text, edit_card, set_param
 from harness.observations import read_pages
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -45,7 +45,7 @@ def mnist(tmp_path):
 
 
 def succeeded(c, run_id):
-    st = wait_run(c, run_id, timeout=3000)
+    st = wait_run(c, run_id)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
 
 
@@ -85,7 +85,7 @@ def test_mnist_classifiers(mnist):
     first = start_run(c, ["start"], concurrency=8)
     succeeded(c, first)
     for m in MODELS:
-        assert not stderr(c, first, m).strip().startswith("Traceback"), stderr(c, first, m)
+        assert ran(c, first, m)
 
     # The real MNIST: the table prepare shows carries the published counts.
     shown = display_text(c, first, "prepare")
@@ -116,11 +116,19 @@ def test_mnist_classifiers(mnist):
     # The views downstream of compare really drew.
     for card in ("load", "recall", "hard"):
         image = c.call("RunRecordRequest", runId=first, card=path(card)).record.display.value
-        assert bytes(image.data[:4]) == b"\x89PNG" and len(image.data) > 10000
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(bytes(image.data))) as decoded:
+            assert decoded.format == "PNG"
+            decoded.load()
+            assert decoded.width > 0 and decoded.height > 0
     module = c.call("RunRecordRequest", runId=first, card=path("tradeoff")).record.display.value
     figure = json.loads(text(module.configJson))
     assert text(module.name) == "plotly"
-    assert [sorted(t["text"]) for t in figure["data"] if t.get("mode") == "markers+text"] == [sorted(MODELS)] * 2
+    annotated = [trace for trace in figure["data"] if trace.get("text")]
+    assert {label for trace in annotated for label in trace["text"]} >= set(MODELS)
+    for model in MODELS:
+        assert sum(model in trace["text"] for trace in annotated) >= 2
 
     # A second run gives the same numbers: seeds fixed, one thread.
     again = start_run(c, ["share"], concurrency=8)

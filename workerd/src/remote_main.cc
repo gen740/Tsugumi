@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -33,10 +34,10 @@
 #include <vector>
 
 #include "journal.hh"
-#include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/workerd/invocation.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
@@ -131,16 +132,8 @@ auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
   const auto quota = std::to_string(spec.cpu_millis * 1000) + " 1000000";
   cgroup_write(path / "cpu.max", quota);
   cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
-  auto cpu = fs::read_file_or_throw(path / "cpu.max");
-  auto memory = fs::read_file_or_throw(path / "memory.max");
-  if (cpu != quota + "\n" ||
-      std::stoull(memory) !=
-          spec.memory_bytes / static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)) *
-              static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)))
-    throw std::runtime_error("kernel did not apply the requested job limits");
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
-  check_id(job);
   return ::open((journal.root() / "locks" / (job + ".supervisor")).c_str(),
                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 }
@@ -188,21 +181,12 @@ auto check_namespace(const std::string& self) -> void {
   posix_spawn_file_actions_destroy(&actions);
   if (rc != 0)
     throw std::runtime_error("cannot start the unshare namespace launcher");
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
   int status = 0;
-  for (;;) {
-    const auto done = ::waitpid(pid, &status, WNOHANG);
-    if (done == pid) break;
-    if (done < 0 && errno != EINTR)
-      throw std::runtime_error("cannot wait for namespace check");
-    if (std::chrono::steady_clock::now() >= deadline) {
-      ::kill(pid, SIGKILL);
-      while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
-      }
-      throw std::runtime_error("namespace startup check timed out");
-    }
-    std::this_thread::sleep_for(10ms);
-  }
+  pid_t done;
+  do {
+    done = ::waitpid(pid, &status, 0);
+  } while (done < 0 && errno == EINTR);
+  if (done < 0) throw std::runtime_error("cannot wait for namespace check");
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     throw std::runtime_error(
         "remote worker requires unprivileged user, mount and PID namespaces");
@@ -242,7 +226,6 @@ class Daemon {
     return c;
   }
   auto project(const std::string& scope) -> std::shared_ptr<Journal> {
-    check_id(scope);
     std::lock_guard guard(project_mutex_);
     auto& entry = projects_[scope];
     if (!entry)
@@ -250,9 +233,6 @@ class Daemon {
     return entry;
   }
   auto handle(const R::RequestT& q) -> R::MessageT {
-    if (!q.server_id.empty() && q.server_id != server_)
-      throw Error(R::ErrorCode::InstanceChanged,
-                  "endpoint now serves a different worker");
     if (q.body.type == R::RequestBody::NONE ||
         q.body.type == R::RequestBody::CatalogRequest)
       throw Error(R::ErrorCode::Invalid, "invalid remote request");
@@ -262,32 +242,33 @@ class Daemon {
                     "host-authorized project scope required");
       return reply(capabilities());
     }
-    if (q.server_id.empty())
-      throw Error(R::ErrorCode::Rejected, "pinned server identity required");
     const auto journal = project(q.project_scope);
     if ((!q.instance_id.empty() && q.instance_id != journal->instance()) ||
         (q.body.type != R::RequestBody::ProbeRequest && q.instance_id.empty()))
       throw Error(R::ErrorCode::InstanceChanged,
                   "project journal identity changed");
     if (q.body.type == R::RequestBody::ProbeRequest) {
-      journal->touch_core(q.core_life_id);
       return reply(capabilities(journal->instance()));
     }
-    check_id(q.job_id);
-    if (q.body.type != R::RequestBody::CancelRequest &&
-        q.body.type != R::RequestBody::ReleaseRequest)
-      journal->require_owner(q.job_id, q.core_life_id);
+    const auto with_log_status = [&](R::JobStatusT status) {
+      std::error_code ec;
+      status.log_truncated = std::filesystem::is_regular_file(
+          journal->job_path(q.job_id) / "work/log-truncated", ec);
+      return status;
+    };
     switch (q.body.type) {
       case R::RequestBody::PutBlobRequest:
         journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
         return reply(R::AckT{});
       case R::RequestBody::GetBlobRequest:
-        return reply(journal->get(q.job_id, *q.body.AsGetBlobRequest()));
+        return reply(
+            journal->get(q.job_id, *q.body.AsGetBlobRequest(), q.core_life_id));
       case R::RequestBody::SubmitRequest: {
         const auto& bytes = q.body.AsSubmitRequest()->spec;
         const std::string_view data(reinterpret_cast<const char*>(bytes.data()),
                                     bytes.size());
         const auto spec = parse_spec(data);
+        validate_log_limit(*spec);
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
@@ -298,12 +279,15 @@ class Daemon {
           throw Error(R::ErrorCode::Rejected,
                       "hard limits require a delegated cgroup v2 subtree and "
                       "at least one page of memory");
-        return reply(journal->submit(q.job_id, data, q.core_life_id).status());
+        return reply(
+            journal->submit(q.job_id, data, *spec, q.core_life_id).status());
       }
       case R::RequestBody::StatusRequest: {
-        auto status = journal->status(q.job_id).status();
+        auto status =
+            with_log_status(journal->status(q.job_id, q.core_life_id).status());
         if (status.state == R::JobState::Running) {
-          const auto bytes = fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
+          const auto bytes =
+              fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
           remote::TransferJson progress;
           if (bytes && !schema::decode(*bytes, progress)) {
             status.transfer_name = *progress.name;
@@ -314,9 +298,9 @@ class Daemon {
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest:
-        return reply(
+        return reply(with_log_status(
             journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint)
-                .status());
+                .status()));
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
         return reply(R::AckT{});
@@ -360,7 +344,6 @@ class Daemon {
           Fd lock(supervisor_lock(*p, job));
           if (lock.value < 0)
             throw std::runtime_error("cannot open supervisor lock");
-          p->expire_core(job);
           auto state = p->status(job);
           if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
             ++active;
@@ -368,6 +351,7 @@ class Daemon {
             if (state.state == R::JobState::Cancelling &&
                 !cancelling_.contains(key))
               cancelling_[key] = now_ms();
+            // A cancelled sandbox may ignore its stop and retain a worker slot.
             if (cancelling_.contains(key) &&
                 now_ms() > cancelling_[key] + 15000)
               verified_kill(state);
@@ -383,7 +367,7 @@ class Daemon {
           if (terminal(state.state)) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
           }
-          p->expire(job);
+          p->clean_released(job);
           if (p->status(job).state == R::JobState::Queued)
             pending.emplace_back(p, job);
         } catch (const std::exception& e) {
@@ -485,8 +469,9 @@ auto supervise(const std::string& self, const stdfs::path& root,
   try {
     journal.supervisor_identity(job, static_cast<uint64_t>(::getpid()),
                                 process_start(::getpid()), boot());
-    const auto spec = parse_spec(journal.spec(job));
-    fs::write_atomic(work / "spec.fb", journal.spec(job), 0600);
+    const auto bytes = journal.spec(job);
+    const auto spec = parse_spec(bytes);
+    fs::write_atomic(work / "spec.fb", bytes, 0600);
     if (spec->cpu_millis) {
       if (cgroup_root.empty())
         throw std::runtime_error("resource limits require a delegated cgroup");
@@ -516,7 +501,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
     int status = 0;
     for (;;) {
-      journal.expire_core(job);
       const auto current = journal.status(job);
       if (current.state == R::JobState::Cancelling)
         throw std::runtime_error("cancelled");
@@ -537,7 +521,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
       throw std::runtime_error("worker failed: " + diagnostic);
     }
     result = journal.import_results(job);
-    journal.expire_core(job);
     outcome = R::JobState::Succeeded;
   } catch (const std::exception& e) {
     diagnostic = e.what();
@@ -558,8 +541,10 @@ auto unix_listener(const stdfs::path& path) -> int {
   sockaddr_un address{};
   const auto text = path.string();
   if (!path.is_absolute() || text.size() >= sizeof address.sun_path)
-    throw std::runtime_error("Unix socket path must be absolute and shorter than " +
-                             std::to_string(sizeof address.sun_path) + " bytes (choose one with --socket): " + text);
+    throw std::runtime_error(
+        "Unix socket path must be absolute and shorter than " +
+        std::to_string(sizeof address.sun_path) +
+        " bytes (choose one with --socket): " + text);
   // The singleton lock owns this private endpoint; never unlink arbitrary
   // files.
   struct stat st{};
@@ -635,7 +620,8 @@ auto run(Config config) -> int {
   Fd tcpfd(tcp_listener(config));
   fs::write_atomic(config.root / "worker.ready.json",
                    "{\"port\":" + std::to_string(config.port) +
-                       ",\"pid\":" + std::to_string(::getpid()) + "}", 0600);
+                       ",\"pid\":" + std::to_string(::getpid()) + "}",
+                   0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);
@@ -672,7 +658,7 @@ auto run(Config config) -> int {
         clients.push_back({std::thread([&, fd, done] {
                              Fd connection(fd);
                              try {
-                               peer_tls::ConfigureSocket(fd, 15);
+                               peer_tls::ConfigureSocket(fd);
                                peer_tls::Stream stream(tls, fd, true);
                                daemon.serve_stream(stream);
                              } catch (const std::exception&) {

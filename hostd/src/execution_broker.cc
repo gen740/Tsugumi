@@ -24,12 +24,12 @@
 #include <thread>
 
 #include "agent/wire.hh"
-#include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/sqlite.hh"
 #include "tsugumi/util/text.hh"
+#include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
@@ -74,7 +74,7 @@ auto Write(int fd, R::MessageT message) -> void {
   Exact(fd, prefix, true);
   Exact(fd, bytes, true);
 }
-auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd, 60); }
+auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd); }
 auto ValidId(const std::string& id) -> bool {
   return id != "local" && id != "auto" &&
          std::regex_match(id, std::regex("[a-z][a-z0-9-]{0,31}"));
@@ -85,8 +85,6 @@ struct Address {
 };
 auto ParseEndpoint(const std::string& endpoint, bool resolve = true)
     -> Address {
-  Require(endpoint.size() <= 2048 && endpoint.find('\0') == std::string::npos,
-          "Invalid worker endpoint");
   Address result;
   if (endpoint.starts_with("unix:/")) {
     auto* address = reinterpret_cast<sockaddr_un*>(&result.storage);
@@ -104,8 +102,6 @@ auto ParseEndpoint(const std::string& endpoint, bool resolve = true)
             std::regex(
                 R"(tls://(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):([0-9]{1,5}))")),
         "Enter tls://worker.example:8765");
-    const auto port = std::stoul(match[2]);
-    Require(port > 0 && port <= 65535, "Invalid worker port");
     auto host = match[1].str();
     if (host.front() == '[') host = host.substr(1, host.size() - 2);
     if (!resolve) return result;
@@ -121,8 +117,6 @@ auto ParseEndpoint(const std::string& endpoint, bool resolve = true)
       addrinfo* p;
       ~Free() { ::freeaddrinfo(p); }
     } free{addresses};
-    Require(addresses->ai_addrlen <= sizeof result.storage,
-            "Invalid worker address");
     std::memcpy(&result.storage, addresses->ai_addr, addresses->ai_addrlen);
     result.size = static_cast<socklen_t>(addresses->ai_addrlen);
   }
@@ -191,8 +185,6 @@ auto ProjectIdentity(const std::string& path) -> std::string {
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
-  uint32_t heartbeat_interval_seconds = 15;
-  uint32_t missed_heartbeats = 0;
   uint64_t grade = 0;
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
@@ -204,8 +196,6 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   value->name = entry.name;
   value->endpoint = entry.endpoint;
   value->worker_public_key = entry.worker_public_key;
-  value->heartbeat_interval_seconds = entry.heartbeat_interval_seconds;
-  value->missed_heartbeats = entry.missed_heartbeats;
   value->grade = entry.grade;
   auto& c = value->capabilities = std::make_unique<H::ExecutionCapabilitiesT>();
   c->isolation = "pid_namespace";
@@ -217,18 +207,15 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   c->worker_contract = entry.capabilities.worker_contract;
   return value;
 }
-auto CheckCapabilities(const R::CapabilitiesT* c) -> void {
-  Require(
-      c && crypto::is_sha256_hex(c->server_id) && c->max_jobs &&
-          c->worker_contract == W::kContract &&
-          std::ranges::find(c->systems, c->native_system) != c->systems.end() &&
-          std::ranges::all_of(c->systems,
-                              [](const auto& s) {
-                                return s == "aarch64-linux" ||
-                                       s == "x86_64-linux";
-                              }),
-      "Rebuild the remote worker with this Tsugumi revision (invalid "
-      "capabilities)");
+auto VerifiedCapabilities(const R::ReplyT& reply) -> const R::CapabilitiesT& {
+  const auto* capabilities = reply.body.AsCapabilities();
+  if (!capabilities || capabilities->worker_contract != W::kContract ||
+      !crypto::is_sha256_hex(capabilities->server_id) ||
+      !capabilities->max_jobs)
+    throw W::Error(R::ErrorCode::Rejected,
+                   "Rebuild the remote worker with this Tsugumi revision "
+                   "(invalid capabilities)");
+  return *capabilities;
 }
 }  // namespace
 
@@ -255,13 +242,13 @@ struct ExecutionBroker::State {
         "NULL,"
         "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
         "BLOB NOT "
-        "NULL,heartbeat_interval_seconds INTEGER NOT NULL,missed_heartbeats "
-        "INTEGER NOT NULL,grade TEXT NOT NULL,generation TEXT NOT NULL);"
+        "NULL,grade TEXT NOT NULL,generation TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
         "NOT NULL,"
         "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
         "CREATE TABLE IF NOT EXISTS project_services(project TEXT NOT NULL,"
-        "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY KEY(project,service))");
+        "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY "
+        "KEY(project,service))");
     const auto file = state / "execution-scope-key";
     key = ReadKey(file);
     if (key.empty()) {
@@ -310,18 +297,20 @@ struct ExecutionBroker::State {
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
-        "heartbeat_interval_seconds,missed_heartbeats,grade,generation FROM services "
+        "grade,generation FROM services "
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
-      auto message = W::decode(q.blob(4));
+      const auto bytes = q.blob(4);
+      Require(bytes.size() <= W::kMaxFrame,
+              "Invalid stored worker capabilities");
+      auto message = W::decode(bytes);
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
       entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
-                         *reply->body.AsCapabilities(),
-                         static_cast<uint32_t>(q.u64(5)),
-                         static_cast<uint32_t>(q.u64(6)), std::stoull(q.text(7)), q.text(8)});
+                         *reply->body.AsCapabilities(), std::stoull(q.text(5)),
+                         q.text(6)});
     }
     if (std::ranges::find(entries, "local", &Entry::id) == entries.end()) {
       Entry local;
@@ -367,8 +356,12 @@ struct ExecutionBroker::State {
       pollfd p{peer.fd, POLLOUT, 0};
       int error = 0;
       socklen_t size = sizeof error;
+      int ready;
+      do {
+        ready = ::poll(&p, 1, -1);
+      } while (ready < 0 && errno == EINTR);
       connected =
-          ::poll(&p, 1, 10000) > 0 &&
+          ready > 0 &&
           ::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
           !error;
     }
@@ -393,14 +386,13 @@ struct ExecutionBroker::State {
     auto message = Read(fd);
     try {
       auto* broker = message->payload.AsBrokerRequest();
-      Require(broker && broker->request, "Expected a private broker envelope");
+      Require(broker, "Expected a private broker envelope");
       auto* request = broker->request.get();
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
       {
         std::lock_guard lock(mutex);
-        auto q = db.prepare(
-            "SELECT scope,id FROM projects WHERE capability=?");
+        auto q = db.prepare("SELECT scope,id FROM projects WHERE capability=?");
         q.bind(1, broker->capability);
         if (!q.step())
           throw W::Error(R::ErrorCode::Unauthorized,
@@ -412,18 +404,19 @@ struct ExecutionBroker::State {
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            target->heartbeat_interval_seconds = e.heartbeat_interval_seconds;
-            target->missed_heartbeats = e.missed_heartbeats;
             target->grade = e.grade;
-            auto grant = db.prepare("SELECT generation FROM project_services "
-                                    "WHERE project=? AND service=?");
+            auto grant = db.prepare(
+                "SELECT generation FROM project_services "
+                "WHERE project=? AND service=?");
             grant.bind(1, q.text(1)).bind(2, e.id);
-            const bool approved = e.id == "local" ||
+            const bool approved =
+                e.id == "local" ||
                 (grant.step() && grant.text(0) == e.generation);
             target->available = e.id == "local" ||
-                (approved && !e.capabilities.server_id.empty());
+                                (approved && !e.capabilities.server_id.empty());
             if (!target->available)
-              target->unavailable_reason = "Worker " + e.id +
+              target->unavailable_reason =
+                  "Worker " + e.id +
                   (approved ? " needs its registration verified in settings"
                             : " needs a person's approval for this project");
             target->capabilities =
@@ -434,20 +427,20 @@ struct ExecutionBroker::State {
         } else {
           const auto found =
               std::ranges::find(entries, request->service, &Entry::id);
-          if (found == entries.end() || found->id == "local" || found->capabilities.server_id.empty() ||
-              found->capabilities.server_id != request->server_id)
+          if (found == entries.end() || found->id == "local" ||
+              found->capabilities.server_id.empty())
             throw W::Error(
                 R::ErrorCode::RegistrationChanged,
                 "Verify the execution service registration in settings");
-          auto grant = db.prepare("SELECT generation FROM project_services WHERE project=? AND service=?");
+          auto grant = db.prepare(
+              "SELECT generation FROM project_services "
+              "WHERE project=? AND service=?");
           grant.bind(1, q.text(1)).bind(2, found->id);
           if (!grant.step() || grant.text(0) != found->generation)
             throw W::Error(R::ErrorCode::RegistrationChanged,
-                           "Execution service registration changed; reauthorize this project");
-          Require(request->body.type != R::RequestBody::NONE,
-                  "Missing worker request");
+                           "Execution service registration changed; "
+                           "reauthorize this project");
           entry = *found;
-          request->server_id = entry.capabilities.server_id;
         }
       }
       if (catalog_reply) {
@@ -458,14 +451,25 @@ struct ExecutionBroker::State {
       const bool probing = request->body.AsProbeRequest() != nullptr;
       auto response = Remote(entry, std::move(*request));
       if (probing) {
-        if (const auto* live = response.payload.AsReply()->body.AsCapabilities()) {
-          if (live->server_id != entry.capabilities.server_id)
-            throw W::Error(R::ErrorCode::RegistrationChanged, "Remote worker identity changed");
-          auto cached = *live;
+        const auto& reply = *response.payload.AsReply();
+        if (!reply.body.AsFailure()) {
+          auto cached = VerifiedCapabilities(reply);
+          if (cached.server_id != entry.capabilities.server_id)
+            throw W::Error(R::ErrorCode::Rejected,
+                           "The remote worker's server ID changed. Verify the "
+                           "registered endpoint.");
+          if (!crypto::is_sha256_hex(cached.instance_id))
+            throw W::Error(
+                R::ErrorCode::Rejected,
+                "The remote worker did not identify its project journal");
           cached.instance_id.clear();
           std::lock_guard lock(mutex);
-          auto update = db.prepare("UPDATE services SET capabilities=? WHERE id=? AND generation=?");
-          update.bind_blob(1, W::encode(W::reply(std::move(cached)))).bind(2, entry.id).bind(3, entry.generation).run();
+          auto update = db.prepare(
+              "UPDATE services SET capabilities=? WHERE id=? AND generation=?");
+          update.bind_blob(1, W::encode(W::reply(std::move(cached))))
+              .bind(2, entry.id)
+              .bind(3, entry.generation)
+              .run();
         }
       }
       Write(fd, std::move(response));
@@ -496,12 +500,12 @@ ExecutionBroker::ExecutionBroker(std::filesystem::path state,
     : state_(std::make_unique<State>(std::move(state), std::move(socket))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
-auto ExecutionBroker::endpoint() const -> std::string {
-  return "unix:" + state_->socket;
+auto ExecutionBroker::socket_path() const -> const std::string& {
+  return state_->socket;
 }
-auto ExecutionBroker::Authorize(const std::string &project,
-                                const std::filesystem::path &path,
-                                const std::filesystem::path &control,
+auto ExecutionBroker::Authorize(const std::string& project,
+                                const std::filesystem::path& path,
+                                const std::filesystem::path& control,
                                 bool guest) -> H::ExecutionAuthorizationT {
   std::lock_guard lock(state_->mutex);
   const auto identity = ProjectIdentity(path.string());
@@ -511,40 +515,50 @@ auto ExecutionBroker::Authorize(const std::string &project,
   if (identity.empty()) {
     auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
     q.bind(1, project).run();
-    state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
+    state_->db.prepare("DELETE FROM project_services WHERE project=?")
+        .bind(1, project)
+        .run();
     fs::remove_file_durable(control / "execution-broker-capability");
     H::ExecutionAuthorizationT result;
-    result.endpoint = endpoint();
+    result.endpoint = "unix:" + socket_path();
     result.capability_file = "";
     return result;
   }
   const auto scope = Tag(state_->key, std::string("project\0", 8) + identity);
   auto capability = crypto::random_token(32);
   sql::Transaction transaction(state_->db);
-  auto previous = state_->db.prepare("SELECT capability,identity FROM projects WHERE id=?");
+  auto previous =
+      state_->db.prepare("SELECT capability,identity FROM projects WHERE id=?");
   previous.bind(1, project);
-  if (previous.step() && previous.text(1) == identity) capability = previous.text(0);
-  auto q = state_->db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
+  if (previous.step() && previous.text(1) == identity)
+    capability = previous.text(0);
+  auto q =
+      state_->db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
   q.bind(1, project).bind(2, identity).bind(3, scope).bind(4, capability).run();
-  state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
+  state_->db.prepare("DELETE FROM project_services WHERE project=?")
+      .bind(1, project)
+      .run();
   for (const auto& entry : state_->Entries()) {
-    auto grant = state_->db.prepare("INSERT INTO project_services VALUES(?,?,?)");
+    auto grant =
+        state_->db.prepare("INSERT INTO project_services VALUES(?,?,?)");
     grant.bind(1, project).bind(2, entry.id).bind(3, entry.generation).run();
   }
   transaction.commit();
   fs::write_atomic(control / "execution-broker-capability", capability,
                    guest ? 0644 : 0600);
   H::ExecutionAuthorizationT result;
-  result.endpoint = endpoint();
+  result.endpoint = "unix:" + socket_path();
   result.capability_file = (control / "execution-broker-capability").string();
   result.available = true;
   return result;
 }
-auto ExecutionBroker::Revoke(const std::string &project) -> void {
+auto ExecutionBroker::Revoke(const std::string& project) -> void {
   std::lock_guard lock(state_->mutex);
   auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
   q.bind(1, project).run();
-  state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
+  state_->db.prepare("DELETE FROM project_services WHERE project=?")
+      .bind(1, project)
+      .run();
 }
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
   return type == H::RequestPayload::ExecutionServicesRequest ||
@@ -557,8 +571,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
     -> std::string {
   try {
     if (const auto* p = request.value_as_ExecutionProjectAuthorizeRequest())
-      return agent::wire::HostReply(id, Authorize(p->project_id()->str(),
-          p->path()->str(), p->control_dir()->str(), p->guest()));
+      return agent::wire::HostReply(
+          id, Authorize(p->project_id()->str(), p->path()->str(),
+                        p->control_dir()->str(), p->guest()));
     if (const auto* p = request.value_as_ExecutionProjectRevokeRequest()) {
       Revoke(p->project_id()->str());
       return agent::wire::HostReply(id, Tsugumi::Service::AcknowledgementT{});
@@ -569,10 +584,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   p->endpoint()->str(),
                   p->worker_public_key()->str(),
                   {},
-                  p->heartbeat_interval_seconds(),
-                  p->missed_heartbeats(), p->grade(), crypto::random_token(32)};
-      Require(entry.heartbeat_interval_seconds >= 1,
-              "Heartbeat interval must be at least 1 second");
+                  p->grade(),
+                  crypto::random_token(32)};
       Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -585,7 +598,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   entry.name,
                   [](unsigned char c) { return c < 32 || c == 127; }),
           "Enter a service name of up to 80 characters");
-      Require(entry.id != "local" || (entry.endpoint.empty() && entry.worker_public_key.empty()),
+      Require(entry.id != "local" ||
+                  (entry.endpoint.empty() && entry.worker_public_key.empty()),
               "The local worker has no endpoint or public key");
       if (entry.id != "local") ParseEndpoint(entry.endpoint, false);
       std::string previous;
@@ -593,9 +607,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         std::lock_guard lock(state_->mutex);
         for (const auto& e : state_->Entries())
           if (e.id == entry.id) {
-            previous = e.generation + e.endpoint + e.worker_public_key + e.name + "\n" +
-                       std::to_string(e.heartbeat_interval_seconds) + ":" +
-                       std::to_string(e.missed_heartbeats) + ":" + std::to_string(e.grade);
+            previous = e.generation + e.endpoint + e.worker_public_key +
+                       e.name + "\n" + std::to_string(e.grade);
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
@@ -611,8 +624,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         if (reply->body.AsFailure())
           throw std::runtime_error(
               "The remote worker rejected the registration");
-        CheckCapabilities(reply->body.AsCapabilities());
-        entry.capabilities = *reply->body.AsCapabilities();
+        entry.capabilities = VerifiedCapabilities(*reply);
         entry.capabilities.instance_id.clear();
       }
       std::lock_guard lock(state_->mutex);
@@ -620,9 +632,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       for (const auto& e : state_->Entries())
         if (e.id == entry.id) {
           current = e.generation + e.endpoint + e.worker_public_key + e.name +
-                    "\n" + std::to_string(e.heartbeat_interval_seconds) + ":" +
-                    std::to_string(e.missed_heartbeats) + ":" + std::to_string(e.grade);
-          if (e.endpoint != entry.endpoint || e.worker_public_key != entry.worker_public_key ||
+                    "\n" + std::to_string(e.grade);
+          if (e.endpoint != entry.endpoint ||
+              e.worker_public_key != entry.worker_public_key ||
               e.capabilities.server_id != entry.capabilities.server_id)
             entry.generation = crypto::random_token(32);
           else if (!p->verify())
@@ -633,16 +645,18 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
               "Registration changed while verifying; reopen settings");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare(
-          "INSERT INTO services VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,endpoint=excluded.endpoint,worker_public_key=excluded.worker_public_key,capabilities=excluded.capabilities,heartbeat_interval_seconds=excluded.heartbeat_interval_seconds,missed_heartbeats=excluded.missed_heartbeats,grade=excluded.grade,generation=excluded.generation");
+          "INSERT INTO services VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO "
+          "UPDATE SET "
+          "name=excluded.name,endpoint=excluded.endpoint,worker_public_key="
+          "excluded.worker_public_key,capabilities=excluded.capabilities,grade="
+          "excluded.grade,generation=excluded.generation");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
           .bind(4, entry.worker_public_key)
           .bind_blob(5, caps)
-          .bind(6, static_cast<int64_t>(entry.heartbeat_interval_seconds))
-          .bind(7, static_cast<int64_t>(entry.missed_heartbeats))
-          .bind(8, std::to_string(entry.grade))
-          .bind(9, entry.generation)
+          .bind(6, std::to_string(entry.grade))
+          .bind(7, entry.generation)
           .run();
       transaction.commit();
       return agent::wire::HostReply(id, state_->List());

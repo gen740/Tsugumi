@@ -19,8 +19,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   useEffect(() => { void api<ExecutionServicesState>(route).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
   function choose(entry: ExecutionServiceRegistration, id?: string) {
-    const { name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats, grade, id: serviceId } = entry
-    setEdit({ id: serviceId, name, endpoint, workerPublicKey, heartbeatIntervalSeconds, missedHeartbeats, grade })
+    const { name, endpoint, workerPublicKey, grade, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint, workerPublicKey, grade })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
@@ -45,21 +45,18 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   const caps = sameEndpoint && saved.capabilities.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
     && /^(0x[0-9a-f]+|[0-9]+)$/i.test(edit.grade) && BigInt(edit.grade) <= 0xffffffffffffffffn
-    && Number.isInteger(edit.heartbeatIntervalSeconds) && edit.heartbeatIntervalSeconds >= 1 && edit.heartbeatIntervalSeconds <= 0xffffffff
-    && Number.isInteger(edit.missedHeartbeats) && edit.missedHeartbeats >= 0 && edit.missedHeartbeats <= 0xffffffff
 
   return <Form>
-    <Section title={L('このホストの公開鍵')}>
+    <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
       <Row><code className="selectable">{hostPublicKey}</code>
         <Button disabled={!hostPublicKey} onClick={() => void perform(async () => { await navigator.clipboard.writeText(hostPublicKey) })}>{L('公開鍵をコピー')}</Button></Row>
-      <Row><span className="caption">{L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}</span></Row>
     </Section>
     <Section title={L('実行サービス')}>
       {entries.map((entry) => <Row key={entry.id}>
         <Button kind="borderless" disabled={busy} onClick={() => choose(entry, entry.id)}>{entry.name} ({entry.id})</Button>
         <span className="secondary">{entry.capabilities.nativeSystem}</span>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', heartbeatIntervalSeconds: 15, missedHeartbeats: 0, grade: '1' })}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', grade: '1' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
@@ -70,14 +67,6 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       </Row>
       <Row label={L('実行デーモンの公開鍵')} help={L('公開鍵は ed25519: で始まる SPKI 形式です。')}>
         <TextField value={edit.workerPublicKey} mono disabled={busy || edit.id === 'local'} onChange={(value) => update('workerPublicKey', value)} />
-      </Row>
-      <Row label={L('ハートビート間隔（秒）')} help={L('1〜4294967295 秒で指定してください。')}>
-        <input className="field" type="number" min={1} max={0xffffffff} step={1} value={Number.isNaN(edit.heartbeatIntervalSeconds) ? '' : edit.heartbeatIntervalSeconds} disabled={busy}
-          onChange={(event) => update('heartbeatIntervalSeconds', event.target.valueAsNumber)} />
-      </Row>
-      <Row label={L('停止までの連続未受信回数')} help={L('0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。')}>
-        <input className="field" type="number" min={0} max={0xffffffff} step={1} value={Number.isNaN(edit.missedHeartbeats) ? '' : edit.missedHeartbeats} disabled={busy}
-          onChange={(event) => update('missedHeartbeats', event.target.valueAsNumber)} />
       </Row>
       {caps && <>
         <Value label={L('CPU アーキテクチャ')} value={caps.systems.join(', ')} />

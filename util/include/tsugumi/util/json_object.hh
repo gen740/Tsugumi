@@ -20,8 +20,7 @@ inline auto Quote(std::string_view value) -> std::string {
 inline auto String(std::string_view raw, std::string fallback = {})
     -> std::string {
   schema::v::String v;
-  if (schema::decode(raw, v))
-    return fallback;
+  if (schema::decode(raw, v)) return fallback;
   return v.value();
 }
 
@@ -39,7 +38,7 @@ inline auto Object(std::string_view raw, std::string path = "$") -> Members {
   if (auto error = schema::decode(raw, v))
     throw DecodeFailure(std::move(path), "object", error->message);
   Members out;
-  for (const auto &[key, value] : v.value())
+  for (const auto& [key, value] : v.value())
     out.emplace(key, schema::text(value));
   return out;
 }
@@ -50,38 +49,35 @@ inline auto Array(std::string_view raw, std::string path = "$")
   if (auto error = schema::decode(raw, v))
     throw DecodeFailure(std::move(path), "array", error->message);
   std::vector<std::string> out;
-  for (const auto &value : v.value())
-    out.push_back(schema::text(value));
+  for (const auto& value : v.value()) out.push_back(schema::text(value));
   return out;
 }
 
-inline auto Encode(const Members &values) -> std::string {
+inline auto Encode(const Members& values) -> std::string {
   std::string out = "{";
-  for (const auto &[key, value] : values) {
-    if (out.size() > 1)
-      out += ',';
+  for (const auto& [key, value] : values) {
+    if (out.size() > 1) out += ',';
     out += Quote(key) + ':' + value;
   }
   return out + '}';
 }
 
-inline auto Encode(const std::vector<std::string> &values) -> std::string {
+inline auto Encode(const std::vector<std::string>& values) -> std::string {
   std::string out = "[";
-  for (const auto &value : values) {
-    if (out.size() > 1)
-      out += ',';
+  for (const auto& value : values) {
+    if (out.size() > 1) out += ',';
     out += value;
   }
   return out + ']';
 }
 
-inline auto Get(const Members &values, std::string_view key,
+inline auto Get(const Members& values, std::string_view key,
                 std::string fallback = "null") -> std::string {
   auto found = values.find(std::string(key));
   return found == values.end() ? fallback : found->second;
 }
 
-inline auto Text(const Members &values, std::string_view key,
+inline auto Text(const Members& values, std::string_view key,
                  std::string fallback = {}) -> std::string {
   return String(Get(values, key), std::move(fallback));
 }
@@ -96,4 +92,4 @@ inline auto UInt(std::string_view raw, uint64_t fallback = 0) -> uint64_t {
   return schema::decode(raw, value) ? fallback : value.value();
 }
 
-} // namespace tsugumi::json
+}  // namespace tsugumi::json

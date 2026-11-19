@@ -1,5 +1,4 @@
 #include "host/service.hh"
-#include "host/binary_caches.hh"
 
 #include <flatbuffers/flatbuffers.h>
 
@@ -18,6 +17,7 @@
 #include "agent/turns.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"
+#include "host/binary_caches.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
@@ -39,6 +39,7 @@
 #include "host/store.hh"
 #include "host/templates.hh"
 #include "host/versions.hh"
+#include "host/wire_helpers.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/crypto.hh"
 
@@ -57,9 +58,6 @@ using agent::Tools;
 using agent::Turns;
 namespace {
 
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
 using host::Failure;
 auto Failed(uint64_t id, std::string_view code, std::string_view message,
             std::string_view request = {}) -> std::string {
@@ -97,10 +95,12 @@ struct Service::State {
         host_projects(options.state_dir, options.demos_dir, &db),
         demo_references(options.demos_dir),
         guide(options.state_dir, options.demos_dir),
-        requests(4, 128, std::chrono::seconds(30)),
-        tool_requests(4, 128, std::chrono::seconds(30)),
-        wait_requests(4, 128, std::chrono::seconds(30)),
-        terminal_requests(1, 128, std::chrono::seconds(30)) {
+        requests(4),
+        tool_requests(4),
+        wait_requests(4),
+        terminal_requests(1),
+        terminal_closes(1),
+        environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir,
         [this](const std::string& id, const json::Members& values) {
@@ -113,7 +113,7 @@ struct Service::State {
         nullptr, host::Settings::kKeyStorage,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](const std::string& profile) {
-          requests.submit([this, profile](bool) {
+          requests.submit([this, profile]() {
             std::lock_guard lock(mutex);
             H::ProviderChangedT event;
             event.profile = profile;
@@ -166,9 +166,11 @@ struct Service::State {
                   for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
                 },
-            .excluded = [this](const auto& project, const auto& path, auto stop) {
-              return !project.empty() && tools->Exclusions(project, stop).Contains(path);
-            }});
+            .excluded =
+                [this](const auto& project, const auto& path, auto stop) {
+                  return !project.empty() &&
+                         tools->Exclusions(project, stop).Contains(path);
+                }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,
@@ -213,7 +215,7 @@ struct Service::State {
         db, registry, *host_settings, *tools, *turns,
         [this](std::string raw) { return Scrub(std::move(raw)); });
     events = std::make_unique<host::HostEvents>(
-        state_gate, terminal_requests, [this](uint64_t session) {
+        state_gate, terminal_closes, [this](uint64_t session) {
           H::HostTerminalRequestT close;
           close.action = H::TerminalAction::Close;
           close.session = session;
@@ -223,7 +225,8 @@ struct Service::State {
       execution_broker = std::make_unique<host::ExecutionBroker>(
           options.state_dir, options.broker_socket);
     if (!options.vm.binary.empty()) {
-      options.vm.broker_endpoint = execution_broker->endpoint();
+      options.vm.broker_socket = execution_broker->socket_path();
+      options.vm.resources = [this] { return host_settings->VMResources(); };
       options.vm.progress = [this](const Tsugumi::VMHost::ProgressT& value) {
         H::EnvironmentProgressT progress;
         progress.project = "";
@@ -250,30 +253,32 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
-    options.environment.prepare_project_identity =
-        [this](const std::filesystem::path &root) {
+    options.environment.reserve_project_identity =
+        [this](const std::filesystem::path& root) {
           std::lock_guard lock(mutex);
           const auto file = root / ".tsugumi/project-id";
-          if (const auto id = fs::read_file(file)) {
-            if (!crypto::is_short_id(*id))
-              throw Failure("invalid_project",
-                            "Recreate this development project for the new "
-                            "identifier format");
-            registry.ValidateLocation(*id, root);
+          if (const auto id = fs::read_file(file);
+              id && crypto::is_short_id(*id)) {
             db.prepare("INSERT OR IGNORE INTO identifiers VALUES('project',?)")
                 .bind(1, *id)
                 .run();
-            return;
+            return registry.ReserveLocation(*id, root);
           }
           std::string id;
           for (;;) {
             id = host::AllocateId(db, "project");
             auto known = db.prepare("SELECT 1 FROM projects WHERE id=?");
             known.bind(1, id);
-            if (!known.step())
-              break;
+            if (!known.step()) break;
           }
-          fs::write_atomic(file, id, 0600);
+          auto release = registry.ReserveLocation(id, root);
+          try {
+            fs::write_atomic(file, id, 0600);
+          } catch (...) {
+            release();
+            throw;
+          }
+          return release;
         };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
@@ -357,6 +362,9 @@ struct Service::State {
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::stop_source>>
       tool_stops;
   Lane terminal_requests;
+  // A close must wake an input blocked by terminal backpressure.
+  Lane terminal_closes;
+  Lane environment_stops;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
@@ -374,20 +382,9 @@ struct Service::State {
       events->Publish(wire::HostEvent(std::move(stopped)));
     }
   }
-  auto Human(bool human) -> void {
-    if (!human)
-      throw Failure("permission_denied",
-                    "This operation requires the authenticated user");
-  }
   auto Scrub(std::string raw) -> std::string {
     std::lock_guard guard(mutex);
-    std::vector<std::string> secrets{options.user_token,
-                                     options.external_token};
-    auto endpoints = db.prepare("SELECT token FROM projects");
-    while (endpoints.step()) secrets.push_back(endpoints.text(0));
-    const auto credential_secrets = credentials.Secrets();
-    secrets.insert(secrets.end(), credential_secrets.begin(),
-                   credential_secrets.end());
+    const auto secrets = credentials.Secrets();
     auto plain = [&](std::string text) {
       if (host_settings) text = host_settings->Redact(std::move(text));
       for (const auto& secret : secrets)
@@ -543,13 +540,20 @@ struct Service::State {
     if (const auto* input = r->value_as_InputTypesRequest()) {
       const auto project = input->project()->str();
       std::vector<std::string> segments;
-      for (const auto* part : *input->card()->segments()) segments.push_back(json::Quote(part->str()));
-      json::Members args{{"card", json::Encode(json::Members{{"segments", json::Encode(segments)}})}};
-      if (input->output_port()) args["output_port"] = json::Quote(input->output_port()->str());
-      if (input->language()) args["language"] = json::Quote(input->language()->str());
-      if (input->at_rev()) args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
+      for (const auto* part : *input->card()->segments())
+        segments.push_back(json::Quote(part->str()));
+      json::Members args{{"card", json::Encode(json::Members{
+                                      {"segments", json::Encode(segments)}})}};
+      if (input->output_port())
+        args["output_port"] = json::Quote(input->output_port()->str());
+      if (input->language())
+        args["language"] = json::Quote(input->language()->str());
+      if (input->at_rev())
+        args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
       lock.unlock();
-      return wire::HostReply(request.request_id, tools->InputTypesQuery(project, std::move(args), shutdown.get_token()));
+      return wire::HostReply(request.request_id,
+                             tools->InputTypesQuery(project, std::move(args),
+                                                    shutdown.get_token()));
     }
     if (r->value_as_HostVersionGraphRequest() ||
         r->value_as_HostVersionDiffRequest())
@@ -570,18 +574,9 @@ struct Service::State {
               item->folder = folder;
               item->resource = "folder:" + ready.project_id + ":" +
                                crypto::sha256_hex(folder);
-              H::RegisterFolderRequestT registration;
-              registration.project_id = ready.project_id;
-              registration.resource_id = item->resource;
-              registration.folder = folder;
-              registration.title =
-                  std::filesystem::path(folder).filename().string();
-              flatbuffers::FlatBufferBuilder builder;
-              builder.Finish(
-                  H::RegisterFolderRequest::Pack(builder, &registration));
-              registry.RegisterFolder(
-                  *flatbuffers::GetRoot<H::RegisterFolderRequest>(
-                      builder.GetBufferPointer()));
+              registry.AttachFolder(
+                  ready.project_id, item->resource, folder,
+                  std::filesystem::path(folder).filename().string());
               result.folders.push_back(std::move(item));
             }
             transaction.commit();
@@ -590,6 +585,20 @@ struct Service::State {
       return wire::HostReply(request.request_id, result);
     }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
+      if (environment->action() == H::EnvironmentAction::RemoveFolders &&
+          environment->folders()) {
+        for (const auto* folder : *environment->folders()) {
+          auto resource = db.prepare(
+              "SELECT f.id FROM folders f JOIN project_paths p ON "
+              "p.id=f.project WHERE p.path=? AND f.path=?");
+          resource
+              .bind(1, std::filesystem::canonical(environment->project()->str())
+                           .string())
+              .bind(2, folder->str());
+          if (resource.step())
+            access->Revoke(resource.text(0), S::Access::Read);
+        }
+      }
       auto input =
           std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());
       lock.unlock();
@@ -603,7 +612,16 @@ struct Service::State {
         throw Failure("unavailable", "Environment service is not running");
       auto input = std::unique_ptr<H::HostRuntimeRequestT>(
           r->value_as_HostRuntimeRequest()->UnPack());
-      return wire::HostReply(request.request_id, environments->Runtime(*input));
+      auto result = environments->Runtime(*input);
+      if (!options.vm.binary.empty()) {
+        result.vm_resources =
+            std::make_unique<H::VMResourcesT>(host_settings->VMResources());
+        result.vm_default_resources =
+            std::make_unique<H::VMResourcesT>(host::VMDefaultResources());
+        result.vm_limits =
+            std::make_unique<H::VMResourcesT>(host::VMResourceLimits());
+      }
+      return wire::HostReply(request.request_id, std::move(result));
     }
     if (const auto* terminal = r->value_as_HostTerminalRequest()) {
       auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());
@@ -631,11 +649,16 @@ struct Service::State {
     if (r->value_type() == H::RequestPayload::BinaryCachesGetRequest ||
         r->value_type() == H::RequestPayload::BinaryCachesPutRequest) {
       Human(human);
-      const auto support = options.vm.support.empty() ? options.state_dir.parent_path() : options.vm.support;
-      if (const auto* put = r->value_as_BinaryCachesPutRequest())
-        host::SaveBinaryCaches(support, put->caches_json()->string_view());
+      const auto support = options.vm.support.empty()
+                               ? options.state_dir.parent_path()
+                               : options.vm.support;
       H::BinaryCachesT result;
-      result.caches_json = host::LoadBinaryCaches(support);
+      if (const auto* put = r->value_as_BinaryCachesPutRequest()) {
+        result.caches_json = put->caches_json()->str();
+        host::SaveBinaryCaches(support, result.caches_json);
+      } else {
+        result.caches_json = host::LoadBinaryCaches(support);
+      }
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (r->value_type() == H::RequestPayload::ProjectPermissionsRequest ||
@@ -673,26 +696,27 @@ struct Service::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
-    case H::RequestPayload::IdentifierReserveRequest: {
-      const auto *input = r->value_as_IdentifierReserveRequest();
-      const auto project = input->project_id()->str(),
-                 kind = input->kind()->str();
-      registry.Lookup(project);
-      if (kind != "note" && kind != "group" && kind != "comment")
-        throw Failure("invalid_request", "Unknown annotation kind");
-      const auto scope = input->scope() ? input->scope()->str() : "";
-      if ((kind == "comment") != !scope.empty())
-        throw Failure("invalid_request", "Only comments require a Card scope");
-      std::vector<std::string> occupied;
-      if (input->occupied())
-        for (const auto *id : *input->occupied())
-          occupied.push_back(id->str());
-      H::IdentifierT result;
-      result.id = host::ReserveOrdinal(
-          db, "annotation:" + project + ":" + kind + ":" + scope,
-          kind == "comment" ? "" : kind + "-", occupied);
-      return wire::HostReply(request.request_id, std::move(result));
-    }
+      case H::RequestPayload::IdentifierReserveRequest: {
+        const auto* input = r->value_as_IdentifierReserveRequest();
+        const auto project = input->project_id()->str(),
+                   kind = input->kind()->str();
+        registry.Lookup(project);
+        if (kind != "note" && kind != "group" && kind != "comment")
+          throw Failure("invalid_request", "Unknown annotation kind");
+        const auto scope = input->scope() ? input->scope()->str() : "";
+        if ((kind == "comment") != !scope.empty())
+          throw Failure("invalid_request",
+                        "Only comments require a Card scope");
+        std::vector<std::string> occupied;
+        if (input->occupied())
+          for (const auto* id : *input->occupied())
+            occupied.push_back(id->str());
+        H::IdentifierT result;
+        result.id = host::ReserveOrdinal(
+            db, "annotation:" + project + ":" + kind + ":" + scope,
+            kind == "comment" ? "" : kind + "-", occupied);
+        return wire::HostReply(request.request_id, std::move(result));
+      }
       case H::RequestPayload::DemoListRequest: {
         H::DemoPathsT result;
         for (const auto& path : json::Array(demo_references.ListFiles()))
@@ -717,10 +741,9 @@ struct Service::State {
         Human(human);
         const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
             r->value_as_ProjectOperateRequest()->UnPack());
-        const auto project = operation->project_id;
         lock.unlock();
-        const auto reply = tools->OperateProject(
-            project, *operation, {"ui", {}, {}, {}}, shutdown.get_token());
+        const auto reply = tools->OperateProject(*operation, {"ui", {}, {}, {}},
+                                                 shutdown.get_token());
         if (reply.wire.empty())
           throw Failure("unavailable", "operation returned no typed outcome");
         H::ProjectOperationResultT result;
@@ -756,7 +779,8 @@ struct Service::State {
 Service::Service(HostOptions options)
     : state_(std::make_unique<State>(std::move(options))) {}
 Service::~Service() { Shutdown(); }
-auto Service::Attach(TransportServer* server, TransportServer* host_server) -> void {
+auto Service::Attach(TransportServer* server, TransportServer* host_server)
+    -> void {
   state_->server = server;
   state_->events->host_server = host_server;
 }
@@ -780,6 +804,8 @@ auto Service::Shutdown() -> void {
   state_->tool_requests.stop();
   state_->wait_requests.stop();
   state_->terminal_requests.stop();
+  state_->terminal_closes.stop();
+  state_->environment_stops.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
   state_->host_settings.reset();
@@ -798,10 +824,6 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
   const bool external =
       !host &&
       crypto::equal_secret(p->token()->str(), state_->options.external_token);
-  if (p->protocol() != 1)
-    return {fail(request.request_id, "protocol_mismatch",
-                 "Service protocol 1 is required", {}),
-            false};
   if (!human && !external)
     return {
         fail(request.request_id, host ? "permission_denied" : "unauthenticated",
@@ -859,8 +881,7 @@ auto Service::dispatch(RequestIn request) -> void {
   }
   auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
-  auto task = [this, request, human, host, server, fail,
-               tool_stop](bool expired) {
+  auto task = [this, request, human, host, server, fail, tool_stop]() {
     std::stop_callback disconnected(request.connection_stop, [tool_stop] {
       if (tool_stop) tool_stop->request_stop();
     });
@@ -869,7 +890,6 @@ auto Service::dispatch(RequestIn request) -> void {
     std::string bytes;
     try {
       if (tool_stop && tool_stop->stop_requested()) throw Cancelled();
-      if (expired) throw Failure("timeout", "Service request queue timed out");
       bytes = host ? state_->HandleHost(invocation)
                    : state_->Handle(invocation, human);
     } catch (const Cancelled&) {
@@ -880,6 +900,10 @@ auto Service::dispatch(RequestIn request) -> void {
     } catch (const Failure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);
+    } catch (const agent::ProviderError& e) {
+      const auto code = e.reason_code();
+      bytes = fail(request.request_id, code.empty() ? "invalid_request" : code,
+                   state_->Scrub(e.what()), {});
     } catch (const std::exception& e) {
       bytes = fail(request.request_id, "invalid_request",
                    state_->Scrub(e.what()), {});
@@ -890,14 +914,22 @@ auto Service::dispatch(RequestIn request) -> void {
     }
     server->reply(request.conn, std::move(bytes));
   };
-  const bool terminal =
-      host && H::GetMessage(request.frame->data())
-                      ->payload_as_Request()
-                      ->value_type() == H::RequestPayload::HostTerminalRequest;
-  auto& lane = terminal  ? state_->terminal_requests
-               : waiting ? state_->wait_requests
-               : tool    ? state_->tool_requests
-                         : state_->requests;
+  const auto* host_request =
+      host ? H::GetMessage(request.frame->data())->payload_as_Request()
+           : nullptr;
+  const auto* terminal =
+      host_request ? host_request->value_as_HostTerminalRequest() : nullptr;
+  const auto* environment =
+      host_request ? host_request->value_as_EnvironmentRequest() : nullptr;
+  auto& lane =
+      environment && environment->action() == H::EnvironmentAction::Stop
+          ? state_->environment_stops
+      : terminal && terminal->action() == H::TerminalAction::Close
+          ? state_->terminal_closes
+      : terminal ? state_->terminal_requests
+      : waiting  ? state_->wait_requests
+      : tool     ? state_->tool_requests
+                 : state_->requests;
   if (!lane.submit(task)) {
     if (tool_stop) {
       std::lock_guard lock(state_->mutex);

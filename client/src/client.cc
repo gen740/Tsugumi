@@ -26,6 +26,60 @@ auto KnownPayload(Tag tag) -> bool {
   return tag > Tag::NONE && tag <= Tag::MAX;
 }
 
+template <class Message>
+auto RequestReply(const Message* message) -> std::optional<Envelope> {
+  const auto id = message->request_id();
+  if (id && message->payload_as_Request() &&
+      KnownPayload(message->payload_as_Request()->value_type()))
+    return Envelope{Kind::Request, id};
+  if (id && message->payload_as_Reply() &&
+      KnownPayload(message->payload_as_Reply()->value_type()))
+    return Envelope{Kind::Reply, id};
+  return std::nullopt;
+}
+
+template <class Message>
+class RequestEnvelope : private flatbuffers::Table {
+ public:
+  auto Verify(flatbuffers::Verifier& verifier) const -> bool {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, Message::VT_REQUEST_ID, 8) &&
+           VerifyField<uint8_t>(verifier, Message::VT_PAYLOAD_TYPE, 1) &&
+           verifier.EndTable();
+  }
+
+  template <class Payload>
+  static auto Read(std::span<const uint8_t> bytes, const char* file_id,
+                   Payload request_tag) -> uint64_t {
+    flatbuffers::Verifier verifier(bytes.data(), bytes.size());
+    if (!verifier.VerifyBuffer<RequestEnvelope>(file_id))
+      throw std::runtime_error("invalid RPC request envelope");
+    const auto* envelope = flatbuffers::GetRoot<RequestEnvelope>(bytes.data());
+    if (envelope->template GetField<uint8_t>(Message::VT_PAYLOAD_TYPE, 0) !=
+        static_cast<uint8_t>(request_tag))
+      throw std::runtime_error("expected RPC request");
+    return envelope->template GetField<uint64_t>(Message::VT_REQUEST_ID, 0);
+  }
+};
+
+auto RequestId(Protocol protocol, std::span<const uint8_t> bytes) -> uint64_t {
+  switch (protocol) {
+    case Protocol::Project:
+      return RequestEnvelope<Tsugumi::RPC::Message>::Read(
+          bytes, Tsugumi::RPC::MessageIdentifier(),
+          Tsugumi::RPC::Payload::Request);
+    case Protocol::Agent:
+      return RequestEnvelope<Tsugumi::Agent::Message>::Read(
+          bytes, Tsugumi::Agent::MessageIdentifier(),
+          Tsugumi::Agent::Payload::Request);
+    case Protocol::Host:
+      return RequestEnvelope<Tsugumi::Host::Message>::Read(
+          bytes, Tsugumi::Host::MessageIdentifier(),
+          Tsugumi::Host::Payload::Request);
+  }
+  throw std::runtime_error("invalid RPC protocol");
+}
+
 auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
   flatbuffers::Verifier verifier(bytes.data(), bytes.size());
   if (protocol == Protocol::Project) {
@@ -58,46 +112,16 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Agent RPC buffer");
     const auto* message = A::GetMessage(bytes.data());
-    const auto id = message->request_id();
-    switch (message->payload_type()) {
-      case A::Payload::Request:
-        if (id && message->payload_as_Request() &&
-            KnownPayload(message->payload_as_Request()->value_type()))
-          return {Kind::Request, id};
-        break;
-      case A::Payload::Reply:
-        if (id && message->payload_as_Reply() &&
-            KnownPayload(message->payload_as_Reply()->value_type()))
-          return {Kind::Reply, id};
-        break;
-      default:
-        break;
-      }
+    if (auto envelope = RequestReply(message)) return *envelope;
   } else if (protocol == Protocol::Host) {
     namespace A = Tsugumi::Host;
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Host RPC buffer");
-    const auto *message = A::GetMessage(bytes.data());
-    const auto id = message->request_id();
-    switch (message->payload_type()) {
-    case A::Payload::Request:
-      if (id && message->payload_as_Request() &&
-          KnownPayload(message->payload_as_Request()->value_type()))
-        return {Kind::Request, id};
-      break;
-    case A::Payload::Reply:
-      if (id && message->payload_as_Reply() &&
-          KnownPayload(message->payload_as_Reply()->value_type()))
-        return {Kind::Reply, id};
-      break;
-    case A::Payload::Event:
-      if (!id && message->payload_as_Event() &&
-          KnownPayload(message->payload_as_Event()->value_type()))
-        return {Kind::Event, 0};
-      break;
-    default:
-      break;
-    }
+    const auto* message = A::GetMessage(bytes.data());
+    if (auto envelope = RequestReply(message)) return *envelope;
+    if (!message->request_id() && message->payload_as_Event() &&
+        KnownPayload(message->payload_as_Event()->value_type()))
+      return {Kind::Event, 0};
   }
   throw std::runtime_error("invalid RPC envelope");
 }
@@ -111,7 +135,7 @@ auto Invoke(const Connection::Completion& callback, Result result) -> void {
 struct Connection::State {
   struct Pending {
     Completion callback;
-    std::chrono::steady_clock::time_point deadline;
+    std::optional<std::chrono::steady_clock::time_point> deadline;
   };
   explicit State(Options value) : options(std::move(value)) {}
   Options options;
@@ -155,13 +179,22 @@ struct Connection::State {
     if (callback) callback({});
   }
 
+  auto Deadline() -> std::optional<std::chrono::steady_clock::time_point> {
+    std::lock_guard lock(mutex);
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    for (const auto& [id, request] : pending)
+      if (request.deadline && (!deadline || *request.deadline < *deadline))
+        deadline = request.deadline;
+    return deadline;
+  }
+
   auto Tick() -> void {
     std::vector<Completion> expired;
     const auto now = std::chrono::steady_clock::now();
     {
       std::lock_guard lock(mutex);
       for (auto it = pending.begin(); it != pending.end();) {
-        if (it->second.deadline > now) {
+        if (!it->second.deadline || *it->second.deadline > now) {
           ++it;
           continue;
         }
@@ -176,8 +209,6 @@ struct Connection::State {
   auto Receive(Bytes bytes) -> void {
     Envelope envelope;
     try {
-      if (bytes.size() > options.max_frame_bytes)
-        throw std::runtime_error("RPC message too large");
       envelope = Inspect(options.protocol, bytes);
       if (envelope.kind == Kind::Request)
         throw std::runtime_error("server sent a request");
@@ -224,28 +255,28 @@ struct Connection::State {
       std::lock_guard lock(mutex);
       if (closed || !opened)
         error = {ErrorCode::Closed, "RPC transport is not open"};
-      else if (timeout.count() <= 0)
-        error = {ErrorCode::InvalidArgument, "timeout must be positive"};
-      else if (pending.size() >= options.max_pending_requests)
-        error = {ErrorCode::Backpressure, "too many pending RPC requests"};
+      else if (timeout.count() < 0)
+        error = {ErrorCode::InvalidArgument, "timeout cannot be negative"};
       else {
         try {
           id = next_id;
           if (!id || id == UINT64_MAX)
             throw std::runtime_error("request IDs exhausted; reconnect");
           frame = supplied ? std::move(*supplied) : build(id);
-          if (frame.size() > options.max_frame_bytes)
-            throw std::runtime_error("RPC request too large");
-          const auto envelope = Inspect(options.protocol, frame);
-          if (envelope.kind != Kind::Request || envelope.id < next_id ||
-              (!supplied && envelope.id != id) || envelope.id == UINT64_MAX)
-            throw std::runtime_error(
-                "request ID must be nonzero and strictly increasing");
-          id = envelope.id;
+          if (supplied) {
+            const auto supplied_id = RequestId(options.protocol, frame);
+            if (supplied_id < next_id || supplied_id == UINT64_MAX)
+              throw std::runtime_error(
+                  "request ID must be nonzero and strictly increasing");
+            id = supplied_id;
+          }
           next_id = id + 1;
           pending.emplace(
-              id,
-              Pending{completion, std::chrono::steady_clock::now() + timeout});
+              id, Pending{completion,
+                          timeout.count() == 0
+                              ? std::nullopt
+                              : std::optional{std::chrono::steady_clock::now() +
+                                              timeout}});
           // Assignment and enqueue share the lock: concurrent callers cannot
           // put request 2 on the wire before request 1.
           if (auto current = transport.lock())
@@ -271,8 +302,10 @@ namespace {
 auto TransportConfiguration(const Options& options) -> TransportOptions {
   auto result = static_cast<const TransportOptions&>(options);
   if (result.subprotocol.empty())
-    result.subprotocol = options.protocol == Protocol::Agent ? "tsugumi.agent.v1" :
-                         options.protocol == Protocol::Host ? "tsugumi.host.v1" : "tsugumi.rpc.v1";
+    result.subprotocol =
+        options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
+        : options.protocol == Protocol::Host ? "tsugumi.host.v1"
+                                             : "tsugumi.rpc.v1";
   return result;
 }
 }  // namespace
@@ -303,20 +336,23 @@ auto Connection::Start(std::function<void(Error)> completion) -> void {
   }
   const std::weak_ptr<State> weak = state_;
   try {
-    transport_->Start({[weak] {
-                         if (auto state = weak.lock()) state->Opened();
-                       },
-                       [weak](Bytes bytes) {
-                         if (auto state = weak.lock())
-                           state->Receive(std::move(bytes));
-                       },
-                       [weak](Error error) {
-                         if (auto state = weak.lock())
-                           state->End(std::move(error));
-                       },
-                       [weak] {
-                         if (auto state = weak.lock()) state->Tick();
-                       }});
+    transport_->Start(
+        {[weak] {
+           if (auto state = weak.lock()) state->Opened();
+         },
+         [weak](Bytes bytes) {
+           if (auto state = weak.lock()) state->Receive(std::move(bytes));
+         },
+         [weak](Error error) {
+           if (auto state = weak.lock()) state->End(std::move(error));
+         },
+         [weak] {
+           if (auto state = weak.lock()) state->Tick();
+         },
+         [weak] {
+           if (auto state = weak.lock()) return state->Deadline();
+           return std::optional<std::chrono::steady_clock::time_point>{};
+         }});
   } catch (const std::exception& error) {
     state_->End({ErrorCode::Transport, error.what()});
   }

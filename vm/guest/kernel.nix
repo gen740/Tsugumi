@@ -11,7 +11,17 @@
 # and with unprivileged BPF off by default (BPF_UNPRIV_DEFAULT_OFF) and Yama
 # (ptrace of descendants only). BPF JIT and userfaultfd are not built in. The
 # rest of the hardening is sysctls set by the VM's /init (vm-boot.nix).
-{ stdenv, fetchurl, flex, bison, bc, perl, openssl, elfutils, python3 }:
+{
+  stdenv,
+  fetchurl,
+  flex,
+  bison,
+  bc,
+  perl,
+  openssl,
+  elfutils,
+  python3,
+}:
 stdenv.mkDerivation rec {
   pname = "tsugumi-guest-kernel";
   version = "6.12.115";
@@ -19,11 +29,24 @@ stdenv.mkDerivation rec {
     url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${version}.tar.xz";
     hash = "sha256-DskP5LIEIrG2ZLd+bS3eIrQL1B5+ssrYrIc5pHScsbs=";
   };
-  nativeBuildInputs = [ flex bison bc perl openssl elfutils python3 ];
+  nativeBuildInputs = [
+    flex
+    bison
+    bc
+    perl
+    openssl
+    elfutils
+    python3
+  ];
   enableParallelBuilding = true;
   hardeningDisable = [ "all" ];
   postPatch = "patchShebangs scripts";
-  makeFlags = [ "ARCH=arm64" "LOCALVERSION=-tsugumi" "KBUILD_BUILD_USER=tsugumi" "KBUILD_BUILD_HOST=nix" ];
+  makeFlags = [
+    "ARCH=arm64"
+    "LOCALVERSION=-tsugumi"
+    "KBUILD_BUILD_USER=tsugumi"
+    "KBUILD_BUILD_HOST=nix"
+  ];
   configurePhase = ''
     runHook preConfigure
     cp ${./kernel/base-6.12.28.config} .config

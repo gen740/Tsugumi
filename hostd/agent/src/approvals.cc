@@ -34,7 +34,7 @@ auto Approvals::ApproveOperation(
           : crypto::sha256_hex(digest + "\n" + json::Encode(permissions));
   auto describe = [&] {
     if (!permissions.empty())
-      return std::string("operation_approval\n") + call.name + "\n" +
+      return call.name + "\n" +
              json::Encode(
                  json::Members{{"project", json::Quote(project)},
                                {"arguments_digest", json::Quote(digest)},
@@ -68,9 +68,6 @@ auto Approvals::ApproveOperation(
     lock.unlock();
     preview = describe();
     lock.lock();
-    if (!access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Read))
-      throw Failure("permission_denied",
-                    "Access was revoked while reading approval targets");
     conversations->RememberResource(conversation, project);
     // Another connection can submit the same call while targets are read.
     auto raced = db.prepare(
@@ -99,29 +96,26 @@ auto Approvals::ApproveOperation(
           .run();
     }
   }
-  for (;;) {
+  changed.wait(lock, stop, [&] {
     auto state = db.prepare("SELECT state FROM access_requests WHERE id=?");
     state.bind(1, request);
     if (!state.step() || state.text(0) == "denied")
       throw Failure("permission_denied",
                     "The user declined this operation. Nothing was changed; "
                     "continue without retrying it.");
-    if (state.text(0) == "allowed") break;
+    if (state.text(0) == "allowed") return true;
     if (state.text(0) != "pending")
       throw Failure(
           "outcome_unknown",
           "This approval was already consumed; consult the recorded outcome");
     if (!wait) throw Failure("grant_required", preview, request);
     if (stop.stop_requested() || stopping) throw Cancelled();
-    changed.wait_for(lock, std::chrono::milliseconds(100));
-  }
+    return false;
+  });
+  if (stop.stop_requested()) throw Cancelled();
   lock.unlock();
   const auto current = describe();
   lock.lock();
-  if (!access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Read) ||
-      !access_service.HasGrant(project, conversation, Tsugumi::Service::Access::Write))
-    throw Failure("permission_denied",
-                  "Project access was revoked before approval could be used");
   if (current != preview) {
     auto stale = db.prepare(
         "UPDATE access_requests SET state='stale' WHERE id=? AND "

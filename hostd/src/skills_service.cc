@@ -2,26 +2,18 @@
 
 #include <filesystem>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
+#include "host/wire_helpers.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
-namespace {
-auto Text(const flatbuffers::String* value) -> std::string {
-  return value ? value->str() : "";
-}
-auto Human(bool human) -> void {
-  if (!human)
-    throw Failure("permission_denied",
-                  "This operation requires the authenticated user");
-}
-}  // namespace
+namespace {}  // namespace
 SkillsService::SkillsService(sql::Db& db, Settings& settings)
     : db(db), settings(settings) {}
 

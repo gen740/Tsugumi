@@ -58,7 +58,8 @@ struct ConversationStore {
   auto AuthorizeHistory(const std::string& id) -> void;
   auto SaveMessages(const std::string& id, const std::vector<Message>& messages,
                     SaveMode mode = SaveMode::Checkpoint) -> void;
-  auto ConversationJson(const Conversation& conversation) -> std::string;
+  auto ConversationData(const Conversation& conversation)
+      -> Tsugumi::Agent::ConversationT;
   auto Create(const Tsugumi::Agent::ConversationCreateRequest& request,
               bool human) -> Conversation;
   auto List(const Tsugumi::Agent::ConversationListRequest& request, bool human)
@@ -70,6 +71,12 @@ struct ConversationStore {
       -> Tsugumi::Agent::EventsPageT;
   auto RecordEvent(const std::string& id, const std::string& raw) -> void;
 
+  struct PresentationState {
+    std::vector<std::unique_ptr<Tsugumi::Agent::ChatRowT>> rows;
+    std::string streaming_row;
+    size_t next_message = 0;
+  };
+  std::map<std::string, PresentationState> presentation;
   struct ProjectStore;
   host::StateGate& gate;
   sql::Db& db;

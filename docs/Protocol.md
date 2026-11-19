@@ -11,7 +11,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 
 Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
 
-A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew contact at the registered heartbeat interval; reconnecting within the configured missed-heartbeat allowance resumes existing work. A count of zero means never expire for silence. Finite expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
+A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
 There are 47 requests.
 
@@ -19,18 +19,16 @@ There are 47 requests.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. `protocol` is the newest version the client speaks and `min_protocol` the oldest (default: protocol); the server answers with the newest version both speak (HelloResult.protocol), or protocol_mismatch. |
+| [`SessionHello`](#sessionhello) | HelloResult | token is required on WebSocket. Project mismatch is permission_denied. Must be the first request, within 5 s of connecting. |
 | [`ProjectActivity`](#projectactivity) | ProjectActivity | Observe active runs and queued/running requests, across all connections. Does not stop work or restrict connections. |
 
 ### SessionHello
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `protocol` | `uint32` |  |  |
 | `client_id` | `string` | yes |  |
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
-| `min_protocol` | `uint32` |  |  |
 
 ### ProjectActivity
 
@@ -49,7 +47,7 @@ No fields.
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Run a command in a staged Card source workspace; successful source edits save atomically. Attached folders are at attached/<SHA-256(path)[0:16]>; scratch/ persists. timeout_ms defaults to 10000 (1..30000). Returns exit status, bounded stdout/stderr and full-output paths. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Clear this project's build cache. |
-| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Read cached build and scratch usage measurements. |
+| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Measure build and scratch usage. |
 | [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Delete paths selected from the scratch usage report. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
@@ -524,7 +522,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 
 | Request | Fields |
 | --- | --- |
-| `HelloRequest` | `token: string` (required), `client_id: string` (required), `protocol: uint` |
+| `HelloRequest` | `token: string` (required), `client_id: string` (required) |
 | `ConfigureRequest` | `provider: Tsugumi.Service.ProviderSelection` (required), `conversation_id: string` (required) |
 | `ConversationCreateRequest` | `conversation_id: string`, `project_id: string`, `role: string` |
 | `ConversationListRequest` | `project_id: string` |
@@ -538,12 +536,12 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `ToolCatalogRequest` | None |
 | `ToolCallRequest` | `conversation_id: string` (required), `project_id: string`, `name: string` (required), `arguments_json: string` (required), `op_id: string` (required) |
 | `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
-| `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `also_allow: [Tsugumi.Service.Access]` |
+| `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [string]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
 | `AccessListRequest` | `conversation_id: string` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
-| `CallIdRequest` | `conversation_id: string` (required) |
+| `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
 
 Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`.
 
@@ -560,8 +558,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
-| `HelloRequest` | `token: string` (required), `client_id: string` (required), `protocol: uint` |
-| `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]`, `archive_incompatible_history: bool` |
+| `HelloRequest` | `token: string` (required), `client_id: string` (required) |
+| `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]` |
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
@@ -572,7 +570,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
 | `ExecutionServicesRequest` | None |
-| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `heartbeat_interval_seconds: uint`, `missed_heartbeats: uint`, `grade: ulong` |
+| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `grade: ulong` |
 | `ExecutionServiceRemoveRequest` | `id: string` (required) |
 | `ExecutionProjectAuthorizeRequest` | `project_id: string` (required), `path: string` (required), `control_dir: string` (required), `guest: bool` |
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |

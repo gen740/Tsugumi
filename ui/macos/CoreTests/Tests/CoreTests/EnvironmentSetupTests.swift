@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import TsugumiRPC
 @testable import TsugumiAgentClient
 @testable import TsugumiLauncher
 
@@ -15,7 +16,7 @@ final class EnvironmentSetupTests: XCTestCase {
 
   func testConfirmedNegativeChecksRemainDistinctFromFailure() async {
     let status = await EnvironmentManager.SetupStatus.query {
-      ["virtualization_supported": false, "image_available": false]
+      Tsugumi_Host_HostRuntimeT()
     }
     XCTAssertEqual(status, .checked(virtualizationSupported: false, imageAvailable: false, imageVersion: nil))
     XCTAssertFalse(status.ready)
@@ -23,52 +24,13 @@ final class EnvironmentSetupTests: XCTestCase {
 
   func testSuccessfulRuntimeReplyKeepsBothChecksAndVersion() async {
     let status = await EnvironmentManager.SetupStatus.query {
-      ["virtualization_supported": true, "image_available": true, "image_version": "bundled-image"]
+      let reply = Tsugumi_Host_HostRuntimeT()
+      reply.virtualizationSupported = true
+      reply.imageAvailable = true
+      reply.imageVersion = "bundled-image"
+      return reply
     }
     XCTAssertEqual(status, .checked(virtualizationSupported: true, imageAvailable: true, imageVersion: "bundled-image"))
     XCTAssertTrue(status.ready)
-  }
-
-  func testMalformedReplyIsAFailureRatherThanMissingImage() async {
-    let status = await EnvironmentManager.SetupStatus.query { ["virtualization_supported": true] }
-    guard case .failed(let message) = status else { return XCTFail("Missing fields are not negative answers") }
-    XCTAssertFalse(message.isEmpty)
-  }
-
-  func testLockLoserWaitsForTheWinningDaemonToPublishReadiness() async throws {
-    var reads = 0
-    var pauses = 0
-    let ready = try await HostReadiness.wait(read: {
-      reads += 1
-      return reads == 1 ? nil : ["host_socket": "winner.host"]
-    }, exitStatus: { 4 }, log: URL(fileURLWithPath: "/unused/host.log"), pause: { pauses += 1 })
-    XCTAssertEqual(ready["host_socket"] as? String, "winner.host")
-    XCTAssertEqual(pauses, 1)
-  }
-
-  func testIncompatibleHostStateReportsTheFolderAndRecoveryWithoutWaiting() async {
-    let state = URL(fileURLWithPath: "/private/tmp/host-state-format-fixture/host-core")
-    do {
-      _ = try await HostReadiness.wait(read: { nil }, exitStatus: { 5 },
-        log: URL(fileURLWithPath: "/startup/host.log"), state: state,
-        pause: { XCTFail("Format refusal must not become a readiness timeout") })
-      XCTFail("Incompatible state must be refused")
-    } catch let error as CoreHostFailure {
-      XCTAssertEqual(error.code, "state_format")
-      XCTAssertTrue(error.message.contains(state.path))
-      XCTAssertTrue(error.message.contains("Tsugumi"))
-      XCTAssertFalse(error.message.contains("did not become ready"))
-    } catch { XCTFail("Unexpected error: \(error)") }
-  }
-
-  func testOtherStartupFailuresAreStillReported() async {
-    do {
-      _ = try await HostReadiness.wait(read: { nil }, exitStatus: { 1 }, log: URL(fileURLWithPath: "/unused/host.log"),
-                                       pause: { XCTFail("An actual startup failure must not wait") })
-      XCTFail("The failed launch must be reported")
-    } catch let error as CoreHostFailure {
-      XCTAssertEqual(error.code, "unavailable")
-      XCTAssertTrue(error.message.contains("/unused/host.log"))
-    } catch { XCTFail("Unexpected error: \(error)") }
   }
 }

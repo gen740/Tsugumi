@@ -1,10 +1,13 @@
 #include "tsugumi/workerd/authorized_keys.hh"
-#include "tsugumi/rpc/peer_tls.hh"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #include <cerrno>
 #include <sstream>
+
+#include "tsugumi/rpc/peer_tls.hh"
 namespace tsugumi::workerd {
 auto Authorized(const std::filesystem::path& file, std::string_view key)
     -> bool {

@@ -8,6 +8,12 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#else
+#include <sys/inotify.h>
+#include <sys/syscall.h>
+#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -35,14 +41,14 @@ class NativeProcess final : public EnvironmentProcess {
     return terminals_.Handle(request);
   }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    std::vector<char *> arguments;
-    for (const auto &argument : launch.arguments)
-      arguments.push_back(const_cast<char *>(argument.c_str()));
+    std::vector<char*> arguments;
+    for (const auto& argument : launch.arguments)
+      arguments.push_back(const_cast<char*>(argument.c_str()));
     arguments.push_back(nullptr);
     // Project runtime values come from the OS and fixed installation paths.
     // The VM helper additionally receives only its named startup options.
     passwd user{};
-    passwd *found = nullptr;
+    passwd* found = nullptr;
     std::vector<char> buffer(16384);
     if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
         !found)
@@ -55,19 +61,20 @@ class NativeProcess final : public EnvironmentProcess {
             "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
     // These are filesystem locations, not credentials. Preserve the host's
     // explicit XDG storage layout when starting a project or VM helper.
-    for (const auto* name : {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
+    for (const auto* name :
+         {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
       if (const auto* value = std::getenv(name))
         environment.push_back(std::string(name) + "=" + value);
     if (launch.vm_helper) {
-      for (const auto *name :
+      for (const auto* name :
            {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
             "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
-            "HOST_BUSY", "HOST_PID", "TSUGUMI_SOCKET_DIR"}) {
-        if (const auto *value = std::getenv(name))
+            "HOST_BUSY", "TSUGUMI_SOCKET_DIR"}) {
+        if (const auto* value = std::getenv(name))
           environment.push_back(std::string(name) + "=" + value);
       }
     }
-    for (const auto *certificate :
+    for (const auto* certificate :
          {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
           "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
       if (::access(certificate, R_OK) == 0) {
@@ -82,9 +89,8 @@ class NativeProcess final : public EnvironmentProcess {
       environment.push_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=" +
                             launch.authorization.capability_file);
     }
-    std::vector<char *> env;
-    for (auto &value : environment)
-      env.push_back(value.data());
+    std::vector<char*> env;
+    for (auto& value : environment) env.push_back(value.data());
     env.push_back(nullptr);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -136,6 +142,21 @@ class NativeProcess final : public EnvironmentProcess {
     }
     return ::kill(pid, 0) == 0 ? std::nullopt : std::optional<int>(-1);
   }
+  auto WaitForReady(const std::filesystem::path& file, int64_t pid,
+                    std::stop_token stop, const std::function<bool()>& done)
+      -> void override {
+    WaitForNativeReadiness(file, pid, stop, done);
+  }
+  auto WaitForExit(int64_t pid, bool child) -> void override {
+    if (child) {
+      while (::waitpid(static_cast<pid_t>(pid), nullptr, 0) < 0 &&
+             errno == EINTR) {
+      }
+      return;
+    }
+    WaitForNativeReadiness({}, pid, {},
+                           [&] { return Poll(pid, false).has_value(); });
+  }
   auto Signal(int64_t pid, int signal) -> void override {
     if (pid > 0 && ::kill(static_cast<pid_t>(pid), signal) != 0 &&
         errno != ESRCH)
@@ -144,44 +165,6 @@ class NativeProcess final : public EnvironmentProcess {
   }
   auto Verify(const Tsugumi::Host::EnvironmentStateT& ready) -> bool override {
     try {
-      // A stale readiness file must never make an unrelated reused PID ours.
-      struct stat metadata{};
-      if (::lstat(ready.unix_socket.c_str(), &metadata) ||
-          !S_ISSOCK(metadata.st_mode) || metadata.st_uid != ::getuid() ||
-          (metadata.st_mode & 0077))
-        return false;
-      sockaddr_un address{};
-      address.sun_family = AF_UNIX;
-      if (ready.unix_socket.size() >= sizeof(address.sun_path)) return false;
-      std::memcpy(address.sun_path, ready.unix_socket.c_str(),
-                  ready.unix_socket.size() + 1);
-      const auto fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-      if (fd < 0) return false;
-      struct Close {
-        int fd;
-        ~Close() { ::close(fd); }
-      } close{fd};
-      ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-      ::fcntl(fd, F_SETFL, O_NONBLOCK);
-      if (::connect(fd, reinterpret_cast<sockaddr*>(&address),
-                    sizeof(address)) &&
-          errno != EINPROGRESS)
-        return false;
-      pollfd poll{fd, POLLOUT, 0};
-      if (::poll(&poll, 1, 500) <= 0) return false;
-#if defined(__linux__)
-      ucred peer{};
-      socklen_t size = sizeof(peer);
-      if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &size) ||
-          peer.pid != ready.pid || peer.uid != ::getuid())
-        return false;
-#elif defined(LOCAL_PEERPID)
-      pid_t peer = -1;
-      socklen_t size = sizeof(peer);
-      if (::getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &peer, &size) ||
-          peer != ready.pid)
-        return false;
-#endif
       return VerifyEnvironmentEndpoint(ready);
     } catch (const std::exception&) {
       return false;
@@ -190,24 +173,103 @@ class NativeProcess final : public EnvironmentProcess {
 };
 }  // namespace
 
+auto WaitForNativeReadiness(const std::filesystem::path& file, int64_t pid,
+                            std::stop_token stop,
+                            const std::function<bool()>& done) -> void {
+  struct Descriptor {
+    int fd;
+    ~Descriptor() {
+      if (fd >= 0) ::close(fd);
+    }
+  };
+  int wake[2];
+  if (::pipe(wake) != 0) throw std::runtime_error("Cannot open readiness pipe");
+  Descriptor reader{wake[0]}, writer{wake[1]};
+  for (const auto fd : wake) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  std::stop_callback cancelled(stop, [&] { (void)::write(writer.fd, "x", 1); });
+#ifdef __APPLE__
+  Descriptor events{::kqueue()};
+  Descriptor directory{
+      file.empty() ? -1
+                   : ::open(file.parent_path().c_str(), O_EVTONLY | O_CLOEXEC)};
+  struct kevent changes[3];
+  int count = 0;
+  if (directory.fd >= 0) {
+    EV_SET(&changes[count], directory.fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+           NOTE_WRITE | NOTE_RENAME | NOTE_DELETE, 0, nullptr);
+    ++count;
+  }
+  if (!file.empty() && directory.fd < 0)
+    throw std::runtime_error("Cannot watch readiness directory");
+  EV_SET(&changes[count], reader.fd, EVFILT_READ, EV_ADD, 0, 0, nullptr);
+  ++count;
+  EV_SET(&changes[count], pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0,
+         nullptr);
+  ++count;
+  if (::kevent(events.fd, changes, count, nullptr, 0, nullptr) < 0) {
+    if (errno == ESRCH && done()) return;
+    throw std::runtime_error("Cannot watch environment readiness");
+  }
+  while (!stop.stop_requested() && !done()) {
+    struct kevent event{};
+    if (::kevent(events.fd, nullptr, 0, &event, 1, nullptr) < 0 &&
+        errno != EINTR)
+      throw std::runtime_error("Cannot wait for environment readiness");
+    if (event.filter == EVFILT_PROC) {
+      (void)done();
+      return;
+    }
+  }
+#else
+  Descriptor process{static_cast<int>(::syscall(SYS_pidfd_open, pid, 0))};
+  Descriptor events{file.empty() ? -1 : ::inotify_init1(IN_CLOEXEC)};
+  if (!file.empty() &&
+      (events.fd < 0 ||
+       ::inotify_add_watch(events.fd, file.parent_path().c_str(),
+                           IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE |
+                               IN_DELETE_SELF | IN_MOVE_SELF) < 0))
+    throw std::runtime_error("Cannot watch readiness directory");
+  if (process.fd < 0) {
+    if (errno == ESRCH && done()) return;
+    throw std::runtime_error("Cannot watch environment process");
+  }
+  pollfd fds[] = {
+      {reader.fd, POLLIN, 0}, {process.fd, POLLIN, 0}, {events.fd, POLLIN, 0}};
+  while (!stop.stop_requested() && !done()) {
+    const auto ready = ::poll(fds, 3, -1);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready < 0)
+      throw std::runtime_error("Cannot wait for environment readiness");
+    if (fds[1].revents) {
+      (void)done();
+      return;
+    }
+    if (fds[2].revents & POLLIN) {
+      char buffer[4096];
+      if (::read(events.fd, buffer, sizeof buffer) <= 0)
+        throw std::runtime_error("Cannot read environment readiness event");
+    }
+  }
+#endif
+}
+
 namespace {
 auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
     -> std::unique_ptr<client::Connection> {
   namespace R = Tsugumi::RPC;
   client::Options options;
-  options.endpoint = ready.unix_socket.empty() ? ready.endpoint
-                                               : "unix:" + ready.unix_socket;
-  options.connect_timeout = 500ms;
+  options.endpoint =
+      ready.unix_socket.empty() ? ready.endpoint : "unix:" + ready.unix_socket;
   auto connection = std::make_unique<client::Connection>(options);
-  if (connection->Start().get()) throw std::runtime_error("Cannot connect to project core");
+  if (connection->Start().get())
+    throw std::runtime_error("Cannot connect to project core");
   auto response =
       connection
           ->Call(
               [&](uint64_t id) {
                 flatbuffers::FlatBufferBuilder b;
                 auto hello = R::CreateSessionHelloRequest(
-                    b, 1, b.CreateString(crypto::uuid4()),
-                    b.CreateString(ready.project_id),
+                    b, b.CreateString(ready.project_id),
                     b.CreateString(ready.token));
                 auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());
@@ -216,61 +278,78 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
                                         request.Union()));
                 return client::Bytes(b.GetBufferPointer(),
                                      b.GetBufferPointer() + b.GetSize());
-              },
-              500ms)
+              })
           .get();
   if (response.error) throw std::runtime_error("Project handshake failed");
-  const auto* reply =
-      R::GetMessage(response.bytes.data())->payload_as_Reply();
-  const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
-  if (!hello || hello->project_id()->str() != ready.project_id ||
-      hello->server_instance_id()->str() != ready.server_instance_id)
-    throw std::runtime_error("Project identity changed");
   return connection;
 }
 auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
-  auto result = connection->Call([](uint64_t id) {
-    flatbuffers::FlatBufferBuilder b;
-    auto value = R::CreateProjectHostRequirementsRequest(b);
-    auto request = R::CreateRequest(b, R::RequestPayload::ProjectHostRequirementsRequest, value.Union());
-    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
-    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
-  }, 500ms).get();
-  if (result.error) throw std::runtime_error("Cannot read project host requirements");
+  auto result =
+      connection
+          ->Call(
+              [](uint64_t id) {
+                flatbuffers::FlatBufferBuilder b;
+                auto value = R::CreateProjectHostRequirementsRequest(b);
+                auto request = R::CreateRequest(
+                    b, R::RequestPayload::ProjectHostRequirementsRequest,
+                    value.Union());
+                R::FinishMessageBuffer(
+                    b, R::CreateMessage(b, id, R::Payload::Request,
+                                        request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              })
+          .get();
+  if (result.error)
+    throw std::runtime_error("Cannot read project host requirements");
   const auto* value = R::GetMessage(result.bytes.data())->payload_as_Reply();
-  const auto* requirements = value ? value->value_as_ProjectHostRequirements() : nullptr;
-  if (!requirements) throw std::runtime_error("Missing project host requirements");
+  const auto* requirements =
+      value ? value->value_as_ProjectHostRequirements() : nullptr;
+  if (!requirements)
+    throw std::runtime_error("Missing project host requirements");
   Tsugumi::RPC::ProjectHostRequirementsT out;
   requirements->UnPackTo(&out);
   return out;
 }
 }  // namespace
-auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> bool {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
-  auto result = connection->Call([](uint64_t id) {
-    flatbuffers::FlatBufferBuilder b;
-    auto value = R::CreateProjectActivityRequest(b);
-    auto request = R::CreateRequest(b, R::RequestPayload::ProjectActivityRequest, value.Union());
-    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
-    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
-  }, 500ms).get();
+  auto result =
+      connection
+          ->Call(
+              [](uint64_t id) {
+                flatbuffers::FlatBufferBuilder b;
+                auto value = R::CreateProjectActivityRequest(b);
+                auto request = R::CreateRequest(
+                    b, R::RequestPayload::ProjectActivityRequest,
+                    value.Union());
+                R::FinishMessageBuffer(
+                    b, R::CreateMessage(b, id, R::Payload::Request,
+                                        request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              })
+          .get();
   if (result.error) throw std::runtime_error("Cannot read project activity");
   const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();
   const auto* activity = reply ? reply->value_as_ProjectActivity() : nullptr;
   if (!activity) throw std::runtime_error("Missing project activity");
   return activity->busy();
 }
-auto EnvironmentProcess::Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
+auto EnvironmentProcess::Requirements(
+    const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   return ReadProjectRequirements(ready);
 }
-auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
+auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> bool {
   try {
-    ReadProjectRequirements(ready);
+    ProjectConnection(ready);
     return true;
   } catch (...) {
     return false;

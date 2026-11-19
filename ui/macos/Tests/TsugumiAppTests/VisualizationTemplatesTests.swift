@@ -3,6 +3,6 @@ import Testing
 
 @Test func visualizationTemplatesAreOfferedByTheCanvas() {
   let templates = DefinitionTemplate.allCases.filter(\.isVisualization)
-  #expect(templates.count == 3)
-  #expect(templates.allSatisfy { BuiltinCardItems.visualizations.contains($0) })
+  #expect(!templates.isEmpty)
+  #expect(Set(templates) == Set(BuiltinCardItems.visualizations))
 }

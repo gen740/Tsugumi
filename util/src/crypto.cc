@@ -80,11 +80,14 @@ struct Sha256::State {
 };
 
 Sha256::Sha256() : s_(std::make_unique<State>()) {
-  if (!s_->ctx || EVP_DigestInit_ex(s_->ctx, EVP_sha256(), nullptr) != 1) throw std::runtime_error("SHA-256 unavailable");
+  if (!s_->ctx || EVP_DigestInit_ex(s_->ctx, EVP_sha256(), nullptr) != 1)
+    throw std::runtime_error("SHA-256 unavailable");
 }
 Sha256::~Sha256() = default;
 
-void Sha256::update(const void* data, size_t size) { EVP_DigestUpdate(s_->ctx, data, size); }
+void Sha256::update(const void* data, size_t size) {
+  EVP_DigestUpdate(s_->ctx, data, size);
+}
 
 std::array<uint8_t, 32> Sha256::finish() {
   std::array<uint8_t, 32> out;
@@ -96,7 +99,9 @@ std::array<uint8_t, 32> Sha256::finish() {
 std::array<uint8_t, 20> sha1(std::string_view data) {
   std::array<uint8_t, 20> out;
   unsigned int n = 0;
-  if (EVP_Digest(data.data(), data.size(), out.data(), &n, EVP_sha1(), nullptr) != 1) throw std::runtime_error("SHA-1 unavailable");
+  if (EVP_Digest(data.data(), data.size(), out.data(), &n, EVP_sha1(),
+                 nullptr) != 1)
+    throw std::runtime_error("SHA-1 unavailable");
   return out;
 }
 #endif
@@ -113,7 +118,8 @@ std::string sha256_hex(std::string_view data) {
 }
 
 std::string base64(const void* data, size_t size) {
-  static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  static const char* tbl =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const auto* p = static_cast<const uint8_t*>(data);
   std::string out;
   out.reserve((size + 2) / 3 * 4);
@@ -156,7 +162,8 @@ bool base64_decode(std::string_view in, std::string& out) {
         if (v[k] < 0) return false;
       }
     }
-    uint32_t n = (uint32_t(v[0]) << 18) | (uint32_t(v[1]) << 12) | (uint32_t(v[2]) << 6) | uint32_t(v[3]);
+    uint32_t n = (uint32_t(v[0]) << 18) | (uint32_t(v[1]) << 12) |
+                 (uint32_t(v[2]) << 6) | uint32_t(v[3]);
     out += static_cast<char>(n >> 16);
     if (pad < 2) out += static_cast<char>((n >> 8) & 0xFF);
     if (pad < 1) out += static_cast<char>(n & 0xFF);
@@ -198,8 +205,7 @@ auto short_id() -> std::string {
   while (value.size() < 6) {
     uint8_t byte;
     random_bytes(&byte, 1);
-    if (byte < 248)
-      value += kShortAlphabet[byte % kShortAlphabet.size()];
+    if (byte < 248) value += kShortAlphabet[byte % kShortAlphabet.size()];
   }
   return value;
 }
@@ -216,18 +222,16 @@ auto is_run_id(std::string_view value) -> bool {
 auto is_operation_id(std::string_view value) -> bool {
   return !value.empty() && value.size() <= 128 && value != "." &&
          value != ".." &&
-         value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
-                                 "TUVWXYZ0123456789-_.") == value.npos;
+         value.find_first_not_of(
+             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
+             "TUVWXYZ0123456789-_.") == value.npos;
 }
-auto unique_short_id(const std::function<bool(const std::string &)> &exists,
-                     const std::function<std::string()> &generate)
+auto unique_short_id(const std::function<bool(const std::string&)>& exists,
+                     const std::function<std::string()>& generate)
     -> std::string {
   for (;;) {
     auto value = generate();
-    if (!is_short_id(value))
-      throw std::runtime_error("invalid short identifier generator");
-    if (!exists(value))
-      return value;
+    if (!exists(value)) return value;
   }
 }
 
@@ -237,8 +241,8 @@ std::string uuid4() {
   b[6] = (b[6] & 0x0F) | 0x40;
   b[8] = (b[8] & 0x3F) | 0x80;
   std::string h = hex(b, sizeof b);
-  return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) +
-         "-" + h.substr(20, 12);
+  return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" +
+         h.substr(16, 4) + "-" + h.substr(20, 12);
 }
 
 std::string random_token(size_t bytes) {
@@ -253,7 +257,8 @@ bool is_uuid(std::string_view s) {
     char c = s[i];
     if (i == 8 || i == 13 || i == 18 || i == 23) {
       if (c != '-') return false;
-    } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+    } else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                 (c >= 'A' && c <= 'F'))) {
       return false;
     }
   }
@@ -270,7 +275,8 @@ bool is_sha256_hex(std::string_view s) {
 bool equal_secret(std::string_view a, std::string_view b) {
   if (a.size() != b.size()) return false;
   unsigned char diff = 0;
-  for (size_t i = 0; i < a.size(); ++i) diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+  for (size_t i = 0; i < a.size(); ++i)
+    diff |= static_cast<unsigned char>(a[i] ^ b[i]);
   return diff == 0;
 }
 

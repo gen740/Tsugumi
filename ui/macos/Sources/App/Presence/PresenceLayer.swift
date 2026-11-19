@@ -52,7 +52,6 @@ struct AvatarPose {
 enum BirdMetrics {
   static let scale: CGFloat = 0.075
   static let feetToCenter = CGVector(dx: (500 - 508) * scale, dy: (480 - 706) * scale)
-  static let beakToCenter = CGVector(dx: (500 - 776) * scale, dy: (480 - 394) * scale)
 }
 
 private func + (p: CGPoint, v: CGVector) -> CGPoint { CGPoint(x: p.x + v.dx, y: p.y + v.dy) }

@@ -14,24 +14,13 @@ public sealed class Failure : Exception {
     public Failure(string kind, string message) : base(message) => Kind = kind;
 }
 
-public interface ICard {
-    ValueTask<Outputs> RunAsync(Inputs inputs) => throw Entry.MissingRunAsync(this);
-    ValueTask<Outputs> RunAsync(Inputs inputs, Report report) => RunAsync(inputs);
-    ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) => RunAsync(inputs, report);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs) => ValueTask.FromResult(new Outputs());
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
-    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
-}
-
 public enum PortKind : uint { File = 1, Directory = 2, FlatBuffer = 3 }
 
-// NativeValue, NativeSeries and NativeCall mirror sdk/include/tsugumi/sdk/abi.h
+// The native structs mirror sdk/include/tsugumi/sdk/abi.h
 // field by field, in its order. Layout.cs checks them against the compiled
 // abi.h when the Card loads; a new abi.h field is added in all three places.
 [StructLayout(LayoutKind.Sequential)]
-internal unsafe struct NativeValue {
-    internal byte* Name;
-    internal uint Kind;
+internal unsafe struct NativeBuffer {
     internal byte* Data;
     internal nuint Size;
 }
@@ -57,18 +46,23 @@ public sealed record Series(string Id, string Label, double[] X, double[] Y);
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct NativeCall {
     internal uint AbiVersion;
+    internal uint Phase;
     internal byte* RunId;
     internal byte* Card;
     internal ulong Invocation;
-    internal NativeValue* Inputs;
-    internal nuint InputCount;
+    internal byte* Inputs;
+    internal nuint InputsSize;
     internal byte* Params;
     internal nuint ParamsSize;
     internal byte* Work;
     internal byte* Temp;
     internal byte* Output;
     internal void* Host;
-    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, nuint, int> Emit;
+    internal NativeHost* Effects;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeHost {
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> Text;
     internal delegate* unmanaged[Cdecl]<void*, double, byte*, int> Scalar;
     internal delegate* unmanaged[Cdecl]<void*, NativeSeries*, nuint, int> LineChart;
@@ -81,11 +75,11 @@ internal unsafe struct NativeCall {
     internal delegate* unmanaged[Cdecl]<void*, float*, float*, float*, uint*, nuint, int> Points;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, NativeBlob*, nuint, int> Module;
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> Markdown;
-    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*> InputJson;
+    internal delegate* unmanaged[Cdecl]<void*, byte*> InputsJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*> ParamsJson;
-    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, int> EmitJson;
+    internal delegate* unmanaged[Cdecl]<void*, byte*, uint> InputKind;
+    internal delegate* unmanaged[Cdecl]<void*, byte*, NativeBuffer*, int> OutputsJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> DisplayJson;
-    internal delegate* unmanaged[Cdecl]<void*, int> FinishOutputs;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, byte*, uint, byte*, void> FailAt;
 }
 
@@ -94,7 +88,7 @@ internal unsafe struct NativeCall {
 internal sealed class InvocationScope {
     private readonly NativeCall call;
     private readonly object gate = new();
-    private readonly Dictionary<string, (PortKind Kind, byte[] Bytes)> inputs = new();
+    private readonly byte[] inputs;
     private readonly byte[] parameters;
     private readonly CancellationTokenSource cancellation = new();
     private readonly CancellationTokenSource watcherStop = new();
@@ -114,10 +108,7 @@ internal sealed class InvocationScope {
         RunId = String(call.RunId); Card = String(call.Card); Invocation = call.Invocation;
         WorkingDirectory = String(call.Work); TemporaryDirectory = String(call.Temp); OutputDirectory = String(call.Output);
         parameters = Copy(call.Params, call.ParamsSize);
-        for (nuint i = 0; i < call.InputCount; i++) {
-            var input = call.Inputs[i];
-            inputs.Add(String(input.Name), ((PortKind)input.Kind, Copy(input.Data, input.Size)));
-        }
+        inputs = Copy(call.Inputs, call.InputsSize);
         watcher = WatchAsync();
     }
     private static unsafe string String(byte* value) => Marshal.PtrToStringUTF8((nint)value) ?? "";
@@ -131,15 +122,13 @@ internal sealed class InvocationScope {
         return new UTF8Encoding(false, true).GetBytes(value + '\0');
     }
     private void CheckActive() { if (!active) throw new ObjectDisposedException(nameof(InvocationScope)); }
-    public bool HasInput(string port) => inputs.ContainsKey(port);
-    public PortKind InputKind(string port) => inputs[port].Kind;
-    public ByteBuffer Input(string port) => new(inputs.TryGetValue(port, out var value) ? (byte[])value.Bytes.Clone() : throw new Failure("validation_failed", $"Input {port} is absent"));
+    public ByteBuffer InputBuffer => new(inputs);
     public ByteBuffer Params => new((byte[])parameters.Clone());
     public unsafe long RemainingMilliseconds {
-        get { lock (gate) { CheckActive(); return call.Remaining(call.Host); } }
+        get { lock (gate) { CheckActive(); return call.Effects->Remaining(call.Host); } }
     }
     public unsafe bool IsCancelled {
-        get { lock (gate) { CheckActive(); return call.Cancelled(call.Host) != 0; } }
+        get { lock (gate) { CheckActive(); return call.Effects->Cancelled(call.Host) != 0; } }
     }
     private async Task WatchAsync() {
         try {
@@ -149,33 +138,19 @@ internal sealed class InvocationScope {
             }
         } catch (OperationCanceledException) when (watcherStop.IsCancellationRequested) { }
     }
-    public unsafe void Output(string port, FlatBufferBuilder builder) => OutputBytes(port, builder.SizedByteArray());
-    public unsafe void OutputBytes(string port, byte[] data) {
-        lock (gate) {
-            CheckActive();
-            fixed (byte* name = Utf8(port), bytes = data)
-                if (call.Emit(call.Host, name, bytes, (nuint)data.Length) != 0) throw new Failure("output_invalid", $"Output {port} was rejected");
-        }
-    }
-    public unsafe void FinishOutputs() {
-        lock (gate) {
-            CheckActive();
-            if (call.FinishOutputs(call.Host) != 0) throw new Failure("output_invalid", "Required outputs were not emitted");
-        }
-    }
-    public unsafe void Log(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) call.Log(call.Host, text); } }
-    public unsafe void Text(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Text(call.Host, text)); } }
-    public unsafe void Markdown(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Markdown(call.Host, text)); } }
-    public unsafe void Scalar(double value, string label) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(label)) CheckDisplay(call.Scalar(call.Host, value, text)); } }
+    public unsafe void Log(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) call.Effects->Log(call.Host, text); } }
+    public unsafe void Text(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Effects->Text(call.Host, text)); } }
+    public unsafe void Markdown(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Effects->Markdown(call.Host, text)); } }
+    public unsafe void Scalar(double value, string label) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(label)) CheckDisplay(call.Effects->Scalar(call.Host, value, text)); } }
     public unsafe void Image(byte[] data, string mediaType = "image/png", string alt = "") {
-        lock (gate) { CheckActive(); fixed (byte* bytes = data, type = Utf8(mediaType), text = Utf8(alt)) CheckDisplay(call.Image(call.Host, type, bytes, (nuint)data.Length, text)); }
+        lock (gate) { CheckActive(); fixed (byte* bytes = data, type = Utf8(mediaType), text = Utf8(alt)) CheckDisplay(call.Effects->Image(call.Host, type, bytes, (nuint)data.Length, text)); }
     }
-    public unsafe void Module(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Module(call.Host, n, data, null, 0)); } }
+    public unsafe void Module(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Effects->Module(call.Host, n, data, null, 0)); } }
     public unsafe void Points(float[] x, float[] y, float[] z, uint[]? colors = null) {
         if (x.Length != y.Length || x.Length != z.Length || (colors != null && colors.Length != x.Length))
             throw new ArgumentException("Point arrays must have equal lengths");
         lock (gate) { CheckActive(); fixed (float* a = x, b = y, c = z) fixed (uint* d = colors)
-            CheckDisplay(call.Points(call.Host, a, b, c, d, (nuint)x.Length)); }
+            CheckDisplay(call.Effects->Points(call.Host, a, b, c, d, (nuint)x.Length)); }
     }
     public unsafe void LineChart(params Series[] series) {
         var pins = new List<GCHandle>();
@@ -188,7 +163,7 @@ internal sealed class InvocationScope {
                 values[i] = new NativeSeries { Id = (byte*)Pin(Utf8(item.Id)), Label = (byte*)Pin(Utf8(item.Label)),
                     X = (double*)Pin(item.X), Y = (double*)Pin(item.Y), Count = (nuint)item.X.Length };
             }
-            lock (gate) { CheckActive(); fixed (NativeSeries* data = values) CheckDisplay(call.LineChart(call.Host, data, (nuint)values.Length)); }
+            lock (gate) { CheckActive(); fixed (NativeSeries* data = values) CheckDisplay(call.Effects->LineChart(call.Host, data, (nuint)values.Length)); }
         } finally { foreach (var pin in pins) pin.Free(); }
     }
     private static void CheckDisplay(int status) {
@@ -205,12 +180,12 @@ internal sealed class InvocationScope {
                 foreach (var value in row) cells.Add(Pin(value));
             }
             var array = cells.ToArray();
-            lock (gate) { CheckActive(); fixed (nint* n = names, v = array) CheckDisplay(call.Table(call.Host, (byte**)n, (nuint)names.Length, (byte**)v, (nuint)rows.Length)); }
+            lock (gate) { CheckActive(); fixed (nint* n = names, v = array) CheckDisplay(call.Effects->Table(call.Host, (byte**)n, (nuint)names.Length, (byte**)v, (nuint)rows.Length)); }
         } finally { foreach (var pin in pins) pin.Free(); }
     }
     internal unsafe void ReportFailure(string kind, string message) {
         // Entry may report a finalization error after disabling user callbacks.
-        lock (gate) { fixed (byte* k = Utf8(kind), text = Utf8(message)) call.Fail(call.Host, k, text); }
+        lock (gate) { fixed (byte* k = Utf8(kind), text = Utf8(message)) call.Effects->Fail(call.Host, k, text); }
     }
     internal void Dispose() {
         watcherStop.Cancel();

@@ -62,11 +62,11 @@ enum SyntaxHighlighter {
 
   /// Applies colors to the whole text storage (texts here are Card sized):
   /// Tree-sitter for the languages it knows, the rules above otherwise.
-  static func apply(_ storage: NSTextStorage, language: String, theme: EditorTheme, font: NSFont) {
+  static func apply(_ storage: NSTextStorage, language: String, theme: EditorTheme, font: NSFont, spans: [(NSRange, SyntaxToken)]? = nil) {
     let full = NSRange(location: 0, length: storage.length)
     storage.beginEditing()
     storage.setAttributes([.font: font, .foregroundColor: theme.color(.plain)], range: full)
-    if storage.length < 400_000, let spans = TreeSitterHighlighter.spans(storage.string, language: language) {
+    if storage.length < 400_000, let spans = spans ?? TreeSitterHighlighter.spans(storage.string, language: language) {
       for (range, token) in spans where range.upperBound <= storage.length {
         storage.addAttribute(.foregroundColor, value: theme.color(token), range: range)
       }
@@ -214,8 +214,14 @@ struct CodeEditor: NSViewRepresentable {
     tv.indentWidth = prefs.indentWidth
     tv.showGuides = prefs.showIndentGuides
     tv.markerRanges = markers.map { characterRange(of: $0.offset, in: tv.string) }
-    if let storage = tv.textStorage {
-      SyntaxHighlighter.apply(storage, language: language, theme: prefs.editorTheme, font: font)
+    let inputs = GuideTextView.HighlightInputs(text: tv.string, language: language, theme: prefs.editorTheme,
+                                               fontSize: font.pointSize, markers: markers)
+    if tv.highlighted != inputs, let storage = tv.textStorage {
+      if tv.highlighted?.text != inputs.text || tv.highlighted?.language != language {
+        tv.syntaxSpans = TreeSitterHighlighter.spans(tv.string, language: language)
+      }
+      tv.highlighted = inputs
+      SyntaxHighlighter.apply(storage, language: language, theme: prefs.editorTheme, font: font, spans: tv.syntaxSpans)
       for r in tv.markerRanges where r.location != NSNotFound {
         storage.addAttributes([.underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue,
                                .underlineColor: NSColor.systemRed], range: r)
@@ -282,6 +288,15 @@ struct CodeEditor: NSViewRepresentable {
 
 /// Draws indentation guides and the background of lines with problems.
 final class GuideTextView: NSTextView {
+  struct HighlightInputs: Equatable {
+    let text: String
+    let language: String
+    let theme: EditorTheme
+    let fontSize: CGFloat
+    let markers: [EditorMarker]
+  }
+  var highlighted: HighlightInputs?
+  var syntaxSpans: [(NSRange, SyntaxToken)]?
   var indentWidth = 4
   var showGuides = true
   var markerRanges: [NSRange] = []

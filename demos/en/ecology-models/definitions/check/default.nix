@@ -1,3 +1,8 @@
-{ pkgs, inputs, params }: {
+{
+  pkgs,
+  inputs,
+  params,
+}:
+{
   run = inputs.tsugumi.juliaCard { src = ./src; };
 }

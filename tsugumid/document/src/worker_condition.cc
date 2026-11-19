@@ -150,8 +150,10 @@ class Parser {
 
   auto parse() -> std::unique_ptr<const Condition> {
     const auto result = expression(1, 0);
-    if (token_.op != Op::kEnd) fail(Code::UnexpectedToken, "Unexpected token", token_.position);
-    if (!result.boolean) fail(Code::BooleanRequired, "Condition must be boolean", result.position);
+    if (token_.op != Op::kEnd)
+      fail(Code::UnexpectedToken, "Unexpected token", token_.position);
+    if (!result.boolean)
+      fail(Code::BooleanRequired, "Condition must be boolean", result.position);
     return std::make_unique<SimpleCondition>(std::move(code_));
   }
 
@@ -162,8 +164,8 @@ class Parser {
     std::size_t position;
   };
 
-  [[noreturn]] static auto fail(Code code, std::string message, std::size_t position)
-      -> void {
+  [[noreturn]] static auto fail(Code code, std::string message,
+                                std::size_t position) -> void {
     throw Diagnostic{code, std::move(message), position};
   }
 
@@ -248,11 +250,13 @@ class Parser {
     if (token.op != Op::kOpen && token.op != Op::kNot &&
         token.op != Op::kInvert)
       fail(Code::ExpressionExpected, "Expected expression", token.position);
-    if (nesting == kMaxNesting) fail(Code::NestingLimit, "Nesting exceeds 64", token.position);
+    if (nesting == kMaxNesting)
+      fail(Code::NestingLimit, "Nesting exceeds 64", token.position);
     advance();
     if (token.op == Op::kOpen) {
       auto value = expression(1, nesting + 1);
-      if (token_.op != Op::kClose) fail(Code::CloseExpected, "Expected ')'", token_.position);
+      if (token_.op != Op::kClose)
+        fail(Code::CloseExpected, "Expected ')'", token_.position);
       advance();
       return value;
     }
@@ -277,12 +281,14 @@ class Parser {
       const auto right = expression(priority + 1, nesting);
       const bool logical = priority <= 2;
       if (left.boolean != logical || right.boolean != logical)
-        fail(logical ? Code::BooleanOperand : Code::IntegerOperand,
+        fail(
+            logical ? Code::BooleanOperand : Code::IntegerOperand,
             logical ? "Expected boolean operands" : "Expected integer operands",
             token.position);
       if ((token.op == Op::kShiftLeft || token.op == Op::kShiftRight) &&
           right.literal && *right.literal >= 64)
-        fail(Code::ShiftLimit, "Literal shift count must be less than 64", right.position);
+        fail(Code::ShiftLimit, "Literal shift count must be less than 64",
+             right.position);
       code_.push_back({token.op});
       left.boolean = priority <= 3;
       left.literal.reset();
@@ -298,7 +304,8 @@ class Parser {
 
 auto compile_simple(std::string_view expression) -> CompileResult {
   if (expression.size() > kMaxBytes)
-    return Diagnostic{Code::SizeLimit, "Condition exceeds 4096 bytes", kMaxBytes};
+    return Diagnostic{Code::SizeLimit, "Condition exceeds 4096 bytes",
+                      kMaxBytes};
   try {
     return Parser(expression).parse();
   } catch (Diagnostic& diagnostic) {

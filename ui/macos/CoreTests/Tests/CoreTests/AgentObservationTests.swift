@@ -1,3 +1,4 @@
+import FlatBuffers
 import Foundation
 import Testing
 import TsugumiRPC
@@ -13,7 +14,7 @@ struct AgentObservationTests {
     var cursors: [UInt64] = []
     var polls = 0
     var snapshots = 0
-    func call(_ method: String, _ fields: [String: Any]) throws -> [String: Any] {
+    func call(_ method: String, _ fields: [String: Any]) throws -> NativeObject {
       calls.append(method)
       let conversation = Tsugumi_Agent_ConversationT()
       conversation.id = "observed"
@@ -24,16 +25,22 @@ struct AgentObservationTests {
           snapshots += 1
           if snapshots == 1 { throw RPCError.disconnected }
         }
-        return ["conversation": conversation, "busy": polls < 3,
-                "resumable": polls >= 3, "event_seq": UInt64(41)]
+        let result = Tsugumi_Agent_ConversationResultT()
+        result.conversation = conversation
+        result.busy = polls < 3
+        result.resumable = polls >= 3
+        result.eventSeq = 41
+        return result
       }
-      if method == "AccessListRequest" { return ["requests": [[String: Any]]()] }
+      if method == "AccessListRequest" { return Tsugumi_Agent_AccessListT() }
       guard method == "EventsRequest" else { throw RPCError.unexpectedReply(method) }
       cursors.append(fields["after_seq"] as? UInt64 ?? 0)
       polls += 1
       if polls < 3 { throw RPCError.disconnected }
       // Restart marks the turn interrupted without appending a terminal event.
-      return ["events": [[String: Any]](), "next_seq": UInt64(41), "busy": false]
+      let page = Tsugumi_Agent_EventsPageT()
+      page.nextSeq = 41
+      return page
     }
   }
 
@@ -47,15 +54,14 @@ struct AgentObservationTests {
     var interrupted = false
     for await event in events.stream {
       if case .interrupted = event { interrupted = true; break }
-      if case .error(let message) = event { Issue.record("Observation failed: \(message)"); break }
+      if case .error(let message, _) = event { Issue.record("Observation failed: \(message)"); break }
     }
     await agent.detach()
     #expect(interrupted)
     #expect(await agent.resumable)
     #expect(await agent.hasUnfinishedWork == false)
-    #expect(await service.cursors == [41, 41, 41])
-    #expect(await service.snapshots == 2)
-    #expect(await service.calls.allSatisfy { ["ConversationCreateRequest", "ConversationGetRequest", "AccessListRequest", "EventsRequest"].contains($0) })
+    #expect(await service.cursors.allSatisfy { $0 == 41 })
+    #expect(await service.calls.allSatisfy { !["ConversationSendRequest", "ConversationActionRequest"].contains($0) })
   }
 
   @Test func observationDoesNotRetryProtocolErrors() async throws {

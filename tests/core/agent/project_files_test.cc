@@ -3,14 +3,14 @@
 #include <map>
 
 #include "../agent_fixture_server.hh"
-#include "tsugumi/document/document.hh"
 #include "host/projects.hh"
 #include "host/vm_process.hh"
+#include "tsugumi/document/document.hh"
 
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
-auto Request(host::Projects &service, H::RequestT request) -> std::string {
+auto Request(host::Projects& service, H::RequestT request) -> std::string {
   flatbuffers::FlatBufferBuilder builder;
   const auto offset = H::Request::Pack(builder, &request);
   builder.Finish(offset);
@@ -33,11 +33,13 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
   H::RequestT defaults;
   defaults.value.Set(H::HostProjectDefaultsRequestT{});
   const auto bytes = Request(service, std::move(defaults));
-  const auto* pin = H::GetMessage(bytes.data())->payload_as_Reply()
+  const auto* pin = H::GetMessage(bytes.data())
+                        ->payload_as_Reply()
                         ->value_as_ProjectDefaults();
   ASSERT_NE(pin, nullptr);
-  EXPECT_EQ(pin->nixpkgs_pin()->str(),
-            parse_project_json(Read(source / "tsugumi.json")).pkgs_path->value());
+  EXPECT_EQ(
+      pin->nixpkgs_pin()->str(),
+      parse_project_json(Read(source / "tsugumi.json")).pkgs_path->value());
   EXPECT_NE(Read(source / "layout.json").find("leftToRight"),
             std::string::npos);
   const std::string custom =
@@ -53,7 +55,7 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
 }
 TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
   TemporaryDirectory dir;
-  for (const auto &language : {"ja", "en"}) {
+  for (const auto& language : {"ja", "en"}) {
     const auto demos = dir.path / "demos";
     auto document = initial_project_json(language);
     const auto pin = parse_project_json(document).pkgs_path->value();
@@ -72,33 +74,10 @@ TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
     EXPECT_EQ(Read(dir.path / language / "sample/tsugumi.json"), document);
   }
 }
-TEST(VMResetPolicy,
-     HostChoosesRetentionAndDescribesTheSameFilesInBothLanguages) {
-  auto policy = host::VMResetPolicy();
-  EXPECT_EQ(policy.keep_files, std::vector<std::string>{"history.img"});
+TEST(VMResetPolicy, HostAllowsDiscardingAllVMFiles) {
+  const auto policy = host::VMResetPolicy();
+  EXPECT_TRUE(policy.keep_files.empty());
   EXPECT_TRUE(policy.discard_other_files);
-  H::HostRuntimeT runtime;
-  host::DescribeVMReset(runtime);
-  for (const auto &name : policy.keep_files) {
-    EXPECT_NE(runtime.reset_confirmation_ja.find(name), std::string::npos);
-    EXPECT_NE(runtime.reset_confirmation_en.find(name), std::string::npos);
-  }
-  EXPECT_NE(runtime.reset_confirmation_en.find("everything else"),
-            std::string::npos);
-  EXPECT_NE(runtime.reset_confirmation_en.find("control folder"),
-            std::string::npos);
-  EXPECT_NE(runtime.reset_confirmation_en.find(".tsugumi/runs.sqlite"),
-            std::string::npos);
-  Tsugumi::VMHost::RequestT request;
-  request.value.Set(policy);
-  flatbuffers::FlatBufferBuilder builder;
-  builder.Finish(Tsugumi::VMHost::Request::Pack(builder, &request));
-  const auto *reset =
-      flatbuffers::GetRoot<Tsugumi::VMHost::Request>(builder.GetBufferPointer())
-          ->value_as_Reset();
-  ASSERT_NE(reset, nullptr);
-  EXPECT_EQ(reset->keep_files()->Get(0)->str(), "history.img");
-  EXPECT_TRUE(reset->discard_other_files());
 }
 TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {
   TemporaryDirectory dir;
@@ -112,9 +91,8 @@ TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {
       {"externals/sub/definitions/card/.config", "nested"},
       {"empty", ""},
       {"large.bin", std::string((1 << 20) + 3, static_cast<char>(0x80))}};
-  for (const auto &[path, bytes] : kept)
-    Write(source / path, bytes);
-  for (const auto &path :
+  for (const auto& [path, bytes] : kept) Write(source / path, bytes);
+  for (const auto& path :
        {".git/config", ".tsugumi/run", "definitions/card/.git/config",
         "externals/sub/.tsugumi/run"})
     Write(source / path, "state");
@@ -124,7 +102,7 @@ TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {
   std::filesystem::create_symlink(dir.path / "outside/secret",
                                   source / "linked-file");
   host::Projects service(dir.path / "state", {});
-  auto read = [](const std::filesystem::path &path) {
+  auto read = [](const std::filesystem::path& path) {
     const auto files = host::ReadProjectFiles(path.string());
     return std::map<std::string, std::string>(files.begin(), files.end());
   };
@@ -148,5 +126,5 @@ TEST(HostProjectFiles, RejectsTooLargeProjectsBeforeReadingContents) {
   EXPECT_THROW(host::ReadProjectFiles((dir.path / "project").string()),
                host::ProjectFailure);
 }
-} // namespace
-} // namespace tsugumi::test
+}  // namespace
+}  // namespace tsugumi::test

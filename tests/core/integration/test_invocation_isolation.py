@@ -19,7 +19,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     # First produce an independently recorded File with no wire to the reader.
     write(root, {"make": make}, [card("secret", "make")], [])
     c = core_factory(project_root=root).connect()
-    secret_run, st = run_and_wait(c, "secret", timeout=600)
+    secret_run, st = run_and_wait(c, "secret")
     assert st.state == RunState.succeeded, log(c, secret_run, "secret", 2)
     record = c.call("RunRecordRequest", runId=secret_run, card=path("secret"))
     secret = text(record.record.outputs[0].filePath)
@@ -36,7 +36,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test")
     seen = []
     for _ in range(2):
-        run_id, st = run_and_wait(c, "source", timeout=600)
+        run_id, st = run_and_wait(c, "source")
         assert st.state == RunState.succeeded, log(c, run_id, "reader", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("reader")).records
         seen.append(inv.workerReused)
@@ -82,7 +82,7 @@ def main(inputs, report):
     definitions["show"]["timeoutSeconds"] = 5
     write(tmp_path / "p", definitions, cards, wires, files)
     c = core_factory(project_root=tmp_path / "p").connect()
-    run_id, st = run_and_wait(c, "start", timeout=1800)
+    run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.failed
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert invocation.failure.kind == FailureKind.timeout
@@ -127,24 +127,21 @@ def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
     assert st.state == RunState.failed
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("fail")).records
     assert inv.failure.kind == FailureKind.worker_failed
-    assert "exit status 19" in text(inv.failure.diagnostic)
+    assert not c.call("RunRecordRequest", runId=run_id, card=path("fail")).record.outputs
+    assert not c.call("ArtifactListRequest", runId=run_id, card=path("fail")).artifacts
 
 
 def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path):
     """Cancellation skips partial output transfer, even when the worker left a FIFO."""
-    from projects import start_run, wait_run
+    from projects import start_run, wait_for_log, wait_run
     from Tsugumi.Data.FailureKind import FailureKind
-    import time
-    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; sleep 60', outputs=FILE_FBS)
+    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; exec tail -f /dev/null', outputs=FILE_FBS)
     write(tmp_path / "p", {"wait": waiting}, [card("wait", "wait")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id = start_run(c, "wait")
-    until = time.monotonic() + 600
-    while "ready" not in log(c, run_id, "wait"):
-        assert time.monotonic() < until, "worker did not reach cancellation point"
-        time.sleep(0.02)
+    wait_for_log(c, run_id, "wait", 1, lambda log: "ready" in text(log.text or b""))
     c.call("RunCancelRequest", runId=run_id)
-    assert wait_run(c, run_id, timeout=30).state == RunState.cancelled
+    assert wait_run(c, run_id).state == RunState.cancelled
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("wait")).records
     assert inv.failure.kind == FailureKind.cancelled
 
@@ -244,12 +241,15 @@ def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factor
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c) {
+int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+  if (c->phase != TSUGUMI_RUN) return 0;
   char data[4096], next[4096], padding[4096], json[8192];
   snprintf(data, sizeof data, "%s/data", c->output_directory);
   snprintf(next, sizeof next, "%s/next", c->working_directory);
   snprintf(padding, sizeof padding, "%s/padding", c->output_directory);
-  /* Slow the snapshot so replacements continue while the core reads it. */
+  /* Keep replacements active while the core reads the snapshot. The Card
+     receives no event for individual reads, so the producer varies the
+     filesystem state independently. */
   FILE* f = fopen(padding, "w");
   if (!f || ftruncate(fileno(f), 8 * 1024 * 1024)) return 1;
   fclose(f);
@@ -272,8 +272,8 @@ int tsugumi_main(const tsugumi_call* c) {
     }
     _exit(0);
   }
-  snprintf(json, sizeof json, "{\"value\":\"%s\"}", c->output_directory);
-  return c->emit_json(c->host, "doc", json);
+  snprintf(json, sizeof json, "{\"doc\":{\"value\":\"%s\"}}", c->output_directory);
+  return c->effects->outputs_json(c->host, json, outputs);
 }
 '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = {

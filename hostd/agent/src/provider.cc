@@ -14,11 +14,13 @@
 #include <set>
 #include <utility>
 
-#include "tsugumi/util/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::agent {
 namespace {
+using json::Encode;
+using json::Quote;
 
 using Json = hosq::json::GenericDom<>;
 using Object = std::map<std::string, std::string>;
@@ -26,12 +28,6 @@ constexpr size_t kMaxResponseBytes = 64u << 20;
 constexpr size_t kMaxEventBytes = 16u << 20;
 
 auto Parse(std::string_view text) -> Json { return schema::capture(text); }
-
-auto Quote(std::string_view text) -> std::string {
-  schema::v::String value;
-  value.value() = text;
-  return schema::encode(value);
-}
 
 auto FormEscape(std::string_view value) -> std::string {
   constexpr char hex[] = "0123456789ABCDEF";
@@ -108,29 +104,11 @@ auto Members(const Json& json) -> Object {
   return result;
 }
 
-auto Encode(const Object& object) -> std::string {
-  std::string text = "{";
-  for (const auto& [key, value] : object) {
-    if (text.size() > 1) text += ',';
-    text += Quote(key) + ':' + value;
-  }
-  return text + '}';
-}
-
-auto Array(const std::vector<std::string>& values) -> std::string {
-  std::string text = "[";
-  for (const auto& value : values) {
-    if (text.size() > 1) text += ',';
-    text += value;
-  }
-  return text + ']';
-}
-
 auto Strings(const std::vector<std::string>& values) -> std::string {
   std::vector<std::string> strings;
   strings.reserve(values.size());
   for (const auto& value : values) strings.push_back(Quote(value));
-  return Array(strings);
+  return json::Encode(strings);
 }
 
 // Diagnostic text is never a raw response. Remove request strings, including
@@ -202,19 +180,20 @@ auto LogFailure(std::string_view operation, const ProviderConfig& config,
 }
 
 auto TextBlock(std::string_view text) -> std::string {
-  return Encode({{"type", Quote("text")}, {"text", Quote(text)}});
+  return Encode(Object{{"type", Quote("text")}, {"text", Quote(text)}});
 }
 
 auto ImageBlock(const Image& image, bool responses) -> std::string {
   if (responses) {
-    return Encode({{"type", Quote("input_image")},
-                   {"image_url", Quote("data:" + image.media_type + ";base64," +
-                                       image.data)}});
+    return Encode(Object{{"type", Quote("input_image")},
+                         {"image_url", Quote("data:" + image.media_type +
+                                             ";base64," + image.data)}});
   }
-  return Encode({{"type", Quote("image")},
-                 {"source", Encode({{"type", Quote("base64")},
-                                    {"media_type", Quote(image.media_type)},
-                                    {"data", Quote(image.data)}})}});
+  return Encode(
+      Object{{"type", Quote("image")},
+             {"source", Encode(Object{{"type", Quote("base64")},
+                                      {"media_type", Quote(image.media_type)},
+                                      {"data", Quote(image.data)}})}});
 }
 
 auto SearchText(const ContentBlock& block) -> std::string {
@@ -239,11 +218,11 @@ auto AnthropicBlock(const ContentBlock& block) -> std::string {
     std::vector<std::string> content{TextBlock(block.text)};
     for (const auto& image : block.images)
       content.push_back(ImageBlock(image, false));
-    return Encode(
-        {{"type", Quote("tool_result")},
-         {"tool_use_id", Quote(block.id)},
-         {"content", block.images.empty() ? Quote(block.text) : Array(content)},
-         {"is_error", block.is_error ? "true" : "false"}});
+    return Encode({{"type", Quote("tool_result")},
+                   {"tool_use_id", Quote(block.id)},
+                   {"content", block.images.empty() ? Quote(block.text)
+                                                    : json::Encode(content)},
+                   {"is_error", block.is_error ? "true" : "false"}});
   }
   return TextBlock(block.type == "web_search" ? SearchText(block) : block.text);
 }
@@ -264,8 +243,8 @@ auto MessagesBody(const ProviderConfig& config, std::string_view system,
         content.push_back(AnthropicBlock(block));
     }
     if (content.empty()) content.push_back(TextBlock("[empty message]"));
-    wired.push_back(
-        Encode({{"role", Quote(message.role)}, {"content", Array(content)}}));
+    wired.push_back(Encode(Object{{"role", Quote(message.role)},
+                                  {"content", json::Encode(content)}}));
   }
   // Automatic caching covers messages too. Together with the two stable
   // explicit breakpoints below this uses three of the API's four slots.
@@ -275,22 +254,23 @@ auto MessagesBody(const ProviderConfig& config, std::string_view system,
       {"model", Quote(config.model)},
       {"max_tokens", std::to_string(config.max_tokens)},
       {"stream", "true"},
-      {"messages", Array(wired)},
-      {"system",
-       Array({Encode({{"type", Quote("text")},
-                      {"text", Quote(system)},
-                      {"cache_control", "{\"type\":\"ephemeral\"}"}})})}};
+      {"messages", json::Encode(wired)},
+      {"system", json::Encode(std::vector<std::string>{Encode(
+                     Object{{"type", Quote("text")},
+                            {"text", Quote(system)},
+                            {"cache_control", "{\"type\":\"ephemeral\"}"}})})}};
   if (!config.effort.empty())
-    body["output_config"] = Encode({{"effort", Quote(config.effort)}});
+    body["output_config"] = Encode(Object{{"effort", Quote(config.effort)}});
   if (config.fast) body["speed"] = Quote("fast");
   std::vector<std::string> definitions;
   for (const auto& tool : tools) {
     if (!ValidToolArguments(tool.input_schema))
       throw std::runtime_error("invalid tool input schema");
-    definitions.push_back(Encode({{"name", Quote(tool.name)},
-                                  {"description", Quote(tool.description)},
-                                  {"input_schema", tool.input_schema},
-                                  {"eager_input_streaming", "true"}}));
+    definitions.push_back(
+        Encode(Object{{"name", Quote(tool.name)},
+                      {"description", Quote(tool.description)},
+                      {"input_schema", tool.input_schema},
+                      {"eager_input_streaming", "true"}}));
   }
   if (config.web_search && config.auth != ProviderAuth::None) {
     definitions.push_back(
@@ -301,7 +281,7 @@ auto MessagesBody(const ProviderConfig& config, std::string_view system,
     auto last = Members(Parse(definitions.back()));
     last["cache_control"] = "{\"type\":\"ephemeral\"}";
     definitions.back() = Encode(last);
-    body["tools"] = Array(definitions);
+    body["tools"] = json::Encode(definitions);
   }
   return Encode(body);
 }
@@ -319,8 +299,8 @@ auto ResponsesInput(const std::vector<Message>& messages, bool plan)
     std::vector<std::string> text;
     auto flush = [&] {
       if (text.empty()) return;
-      input.push_back(
-          Encode({{"role", Quote(message.role)}, {"content", Array(text)}}));
+      input.push_back(Encode(Object{{"role", Quote(message.role)},
+                                    {"content", json::Encode(text)}}));
       text.clear();
     };
     for (const auto& block : message.content) {
@@ -340,11 +320,11 @@ auto ResponsesInput(const std::vector<Message>& messages, bool plan)
             {{"type", Quote("input_text")}, {"text", Quote(block.text)}})};
         for (const auto& image : block.images)
           output.push_back(ImageBlock(image, true));
-        input.push_back(
-            Encode({{"type", Quote("function_call_output")},
-                    {"call_id", Quote(block.id)},
-                    {"output", block.images.empty() ? Quote(block.text)
-                                                    : Array(output)}}));
+        input.push_back(Encode(
+            Object{{"type", Quote("function_call_output")},
+                   {"call_id", Quote(block.id)},
+                   {"output", block.images.empty() ? Quote(block.text)
+                                                   : json::Encode(output)}}));
       } else {
         text.push_back(Encode(
             {{"type", Quote(message.role == "assistant" ? "output_text"
@@ -355,7 +335,7 @@ auto ResponsesInput(const std::vector<Message>& messages, bool plan)
     }
     flush();
   }
-  return Array(input);
+  return json::Encode(input);
 }
 
 auto ResponsesBody(const ProviderConfig& config, std::string_view system,
@@ -369,25 +349,25 @@ auto ResponsesBody(const ProviderConfig& config, std::string_view system,
               {"store", "false"}};
   if (!plan) body["max_output_tokens"] = std::to_string(config.max_tokens);
   if (!config.effort.empty())
-    body["reasoning"] = Encode({{"effort", Quote(config.effort)}});
+    body["reasoning"] = Encode(Object{{"effort", Quote(config.effort)}});
   if (config.fast) body["service_tier"] = Quote("fast");
   std::vector<std::string> functions;
   for (const auto& tool : tools) {
     if (!ValidToolArguments(tool.input_schema))
       throw std::runtime_error("invalid tool input schema");
-    functions.push_back(Encode({{"type", Quote("function")},
-                                {"name", Quote(tool.name)},
-                                {"description", Quote(tool.description)},
-                                {"parameters", tool.input_schema},
-                                {"strict", "false"}}));
+    functions.push_back(Encode(Object{{"type", Quote("function")},
+                                      {"name", Quote(tool.name)},
+                                      {"description", Quote(tool.description)},
+                                      {"parameters", tool.input_schema},
+                                      {"strict", "false"}}));
   }
   std::vector<std::string> definitions;
   if (plan && !functions.empty()) {
     definitions.push_back(
-        Encode({{"type", Quote("namespace")},
-                {"name", Quote("tsugumi")},
-                {"description", Quote("Authorized Tsugumi operations.")},
-                {"tools", Array(functions)}}));
+        Encode(Object{{"type", Quote("namespace")},
+                      {"name", Quote("tsugumi")},
+                      {"description", Quote("Authorized Tsugumi operations.")},
+                      {"tools", json::Encode(functions)}}));
   } else {
     definitions = std::move(functions);
   }
@@ -395,7 +375,7 @@ auto ResponsesBody(const ProviderConfig& config, std::string_view system,
     definitions.push_back("{\"type\":\"web_search\"}");
     if (!plan) body["include"] = "[\"web_search_call.action.sources\"]";
   }
-  if (!definitions.empty()) body["tools"] = Array(definitions);
+  if (!definitions.empty()) body["tools"] = json::Encode(definitions);
   return Encode(body);
 }
 
@@ -532,10 +512,16 @@ struct Transfer {
           uint64_t delay = 0;
           if (std::from_chars(value.data(), value.data() + value.size(), delay)
                   .ec == std::errc{}) {
-            if (line.substr(0, colon) == "retry-after")
-              delay = std::min(delay, uint64_t{120}) * 1000;
-            self.retry_after =
-                std::chrono::milliseconds(std::min(delay, uint64_t{120000}));
+            const uint64_t units =
+                line.substr(0, colon) == "retry-after" ? 1000 : 1;
+            // Leave room to add the server's interval to the monotonic clock.
+            const auto max_delay =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::duration::max() / 2)
+                    .count();
+            self.retry_after = std::chrono::milliseconds(
+                std::min(delay, static_cast<uint64_t>(max_delay) / units) *
+                units);
           }
         }
       }
@@ -605,9 +591,8 @@ auto Request(const ProviderConfig& config, std::string_view path,
   curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
   curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
   curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-  curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT,
-                   static_cast<long>(config.timeout_seconds));
+  // libcurl still reports connection and transport failures.
+  curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 0L);
   curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_LIMIT, 1L);
   curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_TIME, 60L);
   curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, &Transfer::Write);
@@ -732,7 +717,7 @@ struct ModelStream {
   std::map<uint32_t, ContentBlock> calls;
   std::string text;
   bool finished = false;
-  const std::function<std::string()> &allocate_call;
+  const std::function<std::string()>& allocate_call;
   std::vector<std::pair<std::string, size_t>> event_types;
   std::vector<std::string> output_items;
   bool terminal_output = false;
@@ -752,8 +737,8 @@ struct ModelStream {
   auto Summary() const -> std::string {
     std::vector<std::string> events;
     for (const auto& [type, count] : event_types)
-      events.push_back(
-          Encode({{"type", Quote(type)}, {"count", std::to_string(count)}}));
+      events.push_back(Encode(
+          Object{{"type", Quote(type)}, {"count", std::to_string(count)}}));
     size_t completed_call_count = 0;
     for (const auto& [index, item] : output) {
       (void)index;
@@ -761,8 +746,8 @@ struct ModelStream {
         ++completed_call_count;
     }
     return Encode(
-        {{"events", Array(events)},
-         {"items", Array(output_items)},
+        {{"events", json::Encode(events)},
+         {"items", json::Encode(output_items)},
          {"streamed_calls", std::to_string(calls.size())},
          {"completed_calls", std::to_string(completed_call_count)},
          {"terminal_output", terminal_output ? "true" : "false"},
@@ -852,7 +837,7 @@ struct ModelStream {
         std::vector<std::string> items;
         for (const auto& item : citations) items.push_back(schema::text(item));
         items.push_back(Raw(json, "/delta/citation", "{}"));
-        block.value["citations"] = Array(items);
+        block.value["citations"] = json::Encode(items);
         Emit({"citation",
               String(json, "/delta/citation/url"),
               {},
@@ -1114,7 +1099,8 @@ struct ModelStream {
       if (!completed_calls.empty() && reply.stop_reason == "end_turn")
         reply.stop_reason = "tool_use";
     }
-    if (!original.empty()) reply.message.provider_content = Array(original);
+    if (!original.empty())
+      reply.message.provider_content = json::Encode(original);
     std::set<std::string> ids;
     for (const auto& block : reply.message.content) {
       if (block.type == "tool_use" && (block.id.empty() || block.name.empty() ||
@@ -1126,26 +1112,24 @@ struct ModelStream {
       auto original_blocks = Items(Parse(reply.message.provider_content));
       std::vector<std::string> encoded;
       size_t next = 0;
-      for (auto &block : reply.message.content) {
-        if (block.type != "tool_use")
-          continue;
+      for (auto& block : reply.message.content) {
+        if (block.type != "tool_use") continue;
         block.id = allocate_call();
         while (next < original_blocks.size()) {
           auto item = Members(original_blocks[next]);
           const auto kind = String(original_blocks[next], "/type");
           if (kind == "tool_use" || kind == "function_call") {
             item[kind == "tool_use" ? "id" : "call_id"] = Quote(block.id);
-            if (kind == "function_call")
-              item.erase("id");
+            if (kind == "function_call") item.erase("id");
             original_blocks[next++] = Parse(Encode(item));
             break;
           }
           ++next;
         }
       }
-      for (const auto &item : original_blocks)
+      for (const auto& item : original_blocks)
         encoded.push_back(schema::text(item));
-      reply.message.provider_content = Array(encoded);
+      reply.message.provider_content = json::Encode(encoded);
     }
     return std::move(reply);
   }
@@ -1164,6 +1148,10 @@ ProviderError::ProviderError(std::string message, bool retryable_value,
       code(std::move(code_value)),
       curl_code(curl_code_value) {}
 
+auto ProviderError::reason_code() const -> std::string {
+  return sign_in_required ? "chatgpt_sign_in_required" : code;
+}
+
 auto ValidToolArguments(std::string_view json) -> bool {
   try {
     (void)Members(Parse(json));
@@ -1173,11 +1161,11 @@ auto ValidToolArguments(std::string_view json) -> bool {
   }
 }
 
-auto StreamReply(const ProviderConfig &config, std::string_view system,
-                 const std::vector<Message> &messages,
-                 const std::vector<ToolSpec> &tools, std::stop_token stop,
-                 const std::function<void(const ModelEvent &)> &event,
-                 const std::function<std::string()> &allocate_call)
+auto StreamReply(const ProviderConfig& config, std::string_view system,
+                 const std::vector<Message>& messages,
+                 const std::vector<ToolSpec>& tools, std::stop_token stop,
+                 const std::function<void(const ModelEvent&)>& event,
+                 const std::function<std::string()>& allocate_call)
     -> ModelReply {
   if (config.model.empty()) throw std::runtime_error("model is not configured");
   const bool anthropic = config.api == ProviderAPI::AnthropicMessages;
@@ -1254,7 +1242,8 @@ auto ListModels(const ProviderConfig& config, std::stop_token stop)
     const auto nullable_number = [&](std::string_view field) {
       return Raw(item, field) == "null" ? uint64_t{0} : Number(item, field);
     };
-    auto window = nullable_number(plan ? "/context_window" : "/max_input_tokens");
+    auto window =
+        nullable_number(plan ? "/context_window" : "/max_input_tokens");
     if (plan && !window) window = nullable_number("/max_context_window");
     if (!id.empty())
       models.push_back({id, String(item, "/display_name", id),
@@ -1278,7 +1267,6 @@ auto RefreshCredential(const CredentialRefresh& request, std::stop_token stop)
   config.api = ProviderAPI::OpenAIResponses;
   config.auth = ProviderAuth::None;
   config.base_url = request.endpoint;
-  config.timeout_seconds = 15;
   RequestStatus status;
   try {
     const auto reply =
@@ -1323,7 +1311,6 @@ auto RevokeCredential(std::string_view endpoint, std::string_view client_id,
   config.api = ProviderAPI::OpenAIResponses;
   config.auth = ProviderAuth::None;
   config.base_url = endpoint;
-  config.timeout_seconds = 15;
   const auto body =
       "token=" + FormEscape(refresh_token) +
       "&token_type_hint=refresh_token&client_id=" + FormEscape(client_id);
@@ -1358,7 +1345,7 @@ auto SerializeMessages(const std::vector<Message>& messages) -> std::string {
         for (const auto& source : block.sources)
           sources.push_back(Encode(
               {{"url", Quote(source.url)}, {"title", Quote(source.title)}}));
-        value["sources"] = Array(sources);
+        value["sources"] = json::Encode(sources);
         if (!block.error.empty()) value["error"] = Quote(block.error);
       } else {
         value["text"] = Quote(block.text);
@@ -1366,15 +1353,17 @@ auto SerializeMessages(const std::vector<Message>& messages) -> std::string {
       if (!block.images.empty()) {
         std::vector<std::string> images;
         for (const auto& image : block.images)
-          images.push_back(Encode({{"media_type", Quote(image.media_type)},
-                                   {"data", Quote(image.data)}}));
-        value["images"] = Array(images);
+          images.push_back(
+              Encode(Object{{"media_type", Quote(image.media_type)},
+                            {"data", Quote(image.data)}}));
+        value["images"] = json::Encode(images);
       }
       if (!block.resource_ids.empty())
         value["resource_ids"] = Strings(block.resource_ids);
       content.push_back(Encode(value));
     }
-    Object value{{"role", Quote(message.role)}, {"content", Array(content)}};
+    Object value{{"role", Quote(message.role)},
+                 {"content", json::Encode(content)}};
     if (!message.display.empty()) value["display"] = Quote(message.display);
     if (message.context_summary) value["contextSummary"] = "true";
     if (!message.provider_content.empty()) {
@@ -1387,7 +1376,7 @@ auto SerializeMessages(const std::vector<Message>& messages) -> std::string {
     }
     result.push_back(Encode(value));
   }
-  return Array(result);
+  return json::Encode(result);
 }
 
 auto ParseMessages(std::string_view json) -> std::vector<Message> {

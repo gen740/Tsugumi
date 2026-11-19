@@ -23,7 +23,8 @@ TEST(ThoughtScheduleTest, OnlyChangedWorkInTheCurrentTurnSpendsTokens) {
   EXPECT_FALSE(schedule.Begin(true, now + 5s));  // Still in flight.
   schedule.End();
   EXPECT_FALSE(schedule.Begin(true, now + 3999ms));
-  EXPECT_TRUE(schedule.Begin(true, now + 4s));  // Pending work survives the wait.
+  EXPECT_TRUE(
+      schedule.Begin(true, now + 4s));  // Pending work survives the wait.
   schedule.End();
   EXPECT_FALSE(schedule.Begin(true, now + 8s));
   schedule.Note("toolStarted");
@@ -35,7 +36,8 @@ TEST(ThoughtScheduleTest, OnlyChangedWorkInTheCurrentTurnSpendsTokens) {
   schedule.End();
   ThoughtSchedule other;
   other.Note("text");
-  EXPECT_TRUE(other.Begin(true, now));  // Conversations have independent budgets.
+  EXPECT_TRUE(
+      other.Begin(true, now));  // Conversations have independent budgets.
 }
 
 }  // namespace

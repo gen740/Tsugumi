@@ -5,17 +5,18 @@
 #include <map>
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "host/layout.hh"
 #include "host/layout_service.hh"
+#include "host/save.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi::host {
 namespace {
 namespace json = ::tsugumi::json;
 auto Bytes(const std::string& raw) -> std::string {
-  if (!raw.empty() && raw.front() == '"')
-    return json::String(raw);
+  if (!raw.empty() && raw.front() == '"') return json::String(raw);
   std::string text;
   if (!raw.empty() && raw.front() == '{') {
     if (!crypto::base64_decode(json::Text(json::Object(raw), "base64"), text))
@@ -23,44 +24,24 @@ auto Bytes(const std::string& raw) -> std::string {
   } else {
     for (const auto& byte : json::Array(raw)) {
       const auto n = json::UInt(byte, 256);
-      if (n > 255)
-        throw LayoutFailure("invalid layout source byte");
+      if (n > 255) throw LayoutFailure("invalid layout source byte");
       text += static_cast<char>(n);
     }
   }
   return text;
 }
-auto Integer(const std::string& raw) -> uint64_t {
-  return json::UInt(raw.front() == '"' ? json::String(raw) : raw, UINT64_MAX);
-}
-auto Patched(const LayoutFile& file, const json::Members& value)
-    -> std::string {
+auto Patched(const LayoutFile& file, const json::Members& value,
+             const SourcePatches& patches) -> std::string {
   if (!file.hash || *file.hash != json::Text(value, "base_hash"))
     throw LayoutFailure("layout source hash changed");
-  std::string out;
-  size_t cursor = 0;
-  const auto patches = json::Array(json::Get(value, "patches", "[]"));
-  if (patches.empty())
+  const auto raw = json::Array(json::Get(value, "patches", "[]"));
+  if (raw.empty())
     throw LayoutFailure("layout source patches must not be empty");
-  for (const auto& raw : patches) {
-    const auto patch = json::Object(raw);
-    const auto offset = Integer(json::Get(patch, "offset"));
-    const auto remove = Integer(json::Get(patch, "remove"));
-    if (offset < cursor || offset > file.text.size() ||
-        remove > file.text.size() - offset)
-      throw LayoutFailure("invalid layout source patch range");
-    auto boundary = [&](size_t at) {
-      return at == file.text.size() ||
-             (static_cast<unsigned char>(file.text[at]) & 0xc0) != 0x80;
-    };
-    if (!boundary(offset) || !boundary(offset + remove))
-      throw LayoutFailure("layout source patch splits UTF-8");
-    out.append(file.text, cursor, offset - cursor);
-    out += json::Text(patch, "text");
-    cursor = offset + remove;
+  try {
+    return patches.Project(file.text, raw);
+  } catch (const text::PatchRangeError& error) {
+    throw LayoutFailure(error.what());
   }
-  out.append(file.text, cursor, std::string::npos);
-  return out;
 }
 auto CardIds(const std::string& text, const std::string& path)
     -> std::set<std::string> {
@@ -81,8 +62,7 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool {
   bool external = false;
   while (path.starts_with("externals/")) {
     const auto slash = path.find('/', 10);
-    if (slash == std::string_view::npos)
-      return false;
+    if (slash == std::string_view::npos) return false;
     path.remove_prefix(slash + 1);
     external = true;
   }
@@ -90,10 +70,9 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool {
 }
 
 static auto TransformLayout(
-    const std::string &project, const std::string &text, const LayoutRead &read,
-    int action, const Tsugumi::Host::LayoutSceneT *measurements = nullptr,
-    const Tsugumi::Host::ProjectMoveT *move = nullptr) -> std::string {
-  ValidateLayout(text);
+    const std::string& project, const std::string& text, const LayoutRead& read,
+    int action, const Tsugumi::Host::LayoutSceneT* measurements = nullptr,
+    const Tsugumi::Host::ProjectMoveT* move = nullptr) -> std::string {
   auto doc = json::Object(text);
   auto positions = json::Object(json::Get(doc, "cards", "{}"));
   const auto graph =
@@ -111,8 +90,7 @@ static auto TransformLayout(
   for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
     const auto id = json::Text(json::Object(raw), "id");
     const auto position = json::Object(json::Get(positions, id, "{}"));
-    if (!positions.contains(id))
-      missing.push_back(id);
+    if (!positions.contains(id)) missing.push_back(id);
     // A host reservation is independent of a window's zoom and grid. Leave
     // room for the normal expanded Card; Arrange uses measured UI geometry.
     size_t params = 0, ports = 0;
@@ -188,8 +166,7 @@ static auto TransformLayout(
       add_ports(outgoing, scene.cards.back().outputs, true);
     }
   }
-  if (missing.empty() && action < 0)
-    return text;
+  if (missing.empty() && action < 0) return text;
   for (const auto& raw : json::Array(json::Get(graph, "connections", "[]"))) {
     const auto w = json::Object(raw);
     const auto from = json::Object(json::Get(w, "from", "{}"));
@@ -212,27 +189,24 @@ static auto TransformLayout(
   }
   if (measurements) {
     const auto measured = MeasuredScene(*measurements);
-    if (!doc.contains("flow"))
-      scene.top_to_bottom = measured.top_to_bottom;
+    if (!doc.contains("flow")) scene.top_to_bottom = measured.top_to_bottom;
     // Flow may have changed while the request travelled. Current-document
     // geometry remains the fallback for new Cards and stale measurements.
     if (measured.top_to_bottom == scene.top_to_bottom) {
       scene.grid = measured.grid;
       scene.snap = measured.snap;
-      for (auto &card : scene.cards) {
+      for (auto& card : scene.cards) {
         const auto found = std::find_if(
             measured.cards.begin(), measured.cards.end(),
-            [&](const auto &value) { return value.id == card.id; });
-        if (found == measured.cards.end())
-          continue;
-        auto covers = [](const auto &required, const auto &ports) {
-          return std::all_of(required.begin(), required.end(),
-                             [&](const auto &port) {
-                               return std::any_of(ports.begin(), ports.end(),
-                                                  [&](const auto &p) {
-                                                    return p.name == port.name;
-                                                  });
-                             });
+            [&](const auto& value) { return value.id == card.id; });
+        if (found == measured.cards.end()) continue;
+        auto covers = [](const auto& required, const auto& ports) {
+          return std::all_of(
+              required.begin(), required.end(), [&](const auto& port) {
+                return std::any_of(
+                    ports.begin(), ports.end(),
+                    [&](const auto& p) { return p.name == port.name; });
+              });
         };
         if (!covers(card.inputs, found->inputs) ||
             !covers(card.outputs, found->outputs))
@@ -241,52 +215,48 @@ static auto TransformLayout(
         card = *found;
         card.x = x;
         card.y = y;
-        auto saved_order = [&](auto &ports, const std::string &key) {
-          if (!positions.contains(card.id))
-            return;
+        auto saved_order = [&](auto& ports, const std::string& key) {
+          if (!positions.contains(card.id)) return;
           const auto entry = json::Object(positions.at(card.id));
-          if (!entry.contains(key))
-            return;
+          if (!entry.contains(key)) return;
           std::vector<std::string> names;
-          for (const auto &raw : json::Array(entry.at(key))) {
+          for (const auto& raw : json::Array(entry.at(key))) {
             const auto name = json::String(raw);
             if (std::find(names.begin(), names.end(), name) == names.end() &&
                 std::any_of(ports.begin(), ports.end(),
-                            [&](const auto &p) { return p.name == name; }))
+                            [&](const auto& p) { return p.name == name; }))
               names.push_back(name);
           }
-          for (const auto &port : ports)
+          for (const auto& port : ports)
             if (std::find(names.begin(), names.end(), port.name) == names.end())
               names.push_back(port.name);
-          for (size_t i = 0; i < ports.size(); ++i)
-            ports[i].name = names[i];
+          for (size_t i = 0; i < ports.size(); ++i) ports[i].name = names[i];
         };
         saved_order(card.inputs, "inputOrder");
         saved_order(card.outputs, "outputOrder");
       }
-      for (auto &frame : scene.frames)
-        for (const auto &size : measured.frames)
+      for (auto& frame : scene.frames)
+        for (const auto& size : measured.frames)
           if (size.id == frame.id) {
             frame.width = size.width;
             frame.height = size.height;
           }
-      for (auto &note : scene.notes)
-        for (const auto &size : measured.notes)
+      for (auto& note : scene.notes)
+        for (const auto& size : measured.notes)
           if (size.id == note.id) {
             note.width = size.width;
             note.height = size.height;
           }
       // A displayed default frame has no saved rectangle yet. Its dimensions
       // come from the UI; ownership and the current Card position come here.
-      for (const auto &frame : measured.frames) {
-        if (displays.contains(frame.id))
-          continue;
+      for (const auto& frame : measured.frames) {
+        if (displays.contains(frame.id)) continue;
         const auto card =
             std::find_if(scene.cards.begin(), scene.cards.end(),
-                         [&](const auto &c) { return c.id == frame.id; });
+                         [&](const auto& c) { return c.id == frame.id; });
         const auto old =
             std::find_if(measured.cards.begin(), measured.cards.end(),
-                         [&](const auto &c) { return c.id == frame.id; });
+                         [&](const auto& c) { return c.id == frame.id; });
         if (card != scene.cards.end() && old != measured.cards.end())
           scene.frames.push_back({frame.id, card->x + frame.x - old->x,
                                   card->y + frame.y - old->y, frame.width,
@@ -296,8 +266,8 @@ static auto TransformLayout(
     const auto boundary =
         json::Object(json::Get(json::Object(project), "boundary", "{}"));
     const auto places = json::Object(json::Get(doc, "boundary", "{}"));
-    auto bar = [&](const std::string &side, auto &destination) {
-      for (const auto &[name, raw] :
+    auto bar = [&](const std::string& side, auto& destination) {
+      for (const auto& [name, raw] :
            json::Object(json::Get(boundary, side, "{}"))) {
         const auto end = json::Object(raw);
         destination.ends.push_back(
@@ -315,7 +285,7 @@ static auto TransformLayout(
     if (!std::isfinite(move->dx) || !std::isfinite(move->dy) ||
         !std::isfinite(move->snap) || move->snap < 0)
       throw LayoutFailure("move coordinates and grid must be finite");
-    auto has = [](const auto &ids, const std::string &id) {
+    auto has = [](const auto& ids, const std::string& id) {
       return std::find(ids.begin(), ids.end(), id) != ids.end();
     };
     auto snap = [&](double value) {
@@ -325,12 +295,10 @@ static auto TransformLayout(
     const auto dx = move->cards.empty() ? move->dx : snap(move->dx);
     const auto dy = move->cards.empty() ? move->dy : snap(move->dy);
     auto frames = json::Object(json::Get(doc, "displays", "{}"));
-    for (auto &frame : scene.frames) {
-      if (!has(move->frames, frame.id))
-        continue;
+    for (auto& frame : scene.frames) {
+      if (!has(move->frames, frame.id)) continue;
       auto entry = json::Object(json::Get(frames, frame.id, "{}"));
-      if (has(move->cards, frame.id) && !entry.contains("x"))
-        continue;
+      if (has(move->cards, frame.id) && !entry.contains("x")) continue;
       frame.x = std::round(frame.x + dx);
       frame.y = std::round(frame.y + dy);
       entry["x"] = std::to_string(frame.x);
@@ -339,12 +307,11 @@ static auto TransformLayout(
       entry["height"] = std::to_string(frame.height);
       frames[frame.id] = json::Encode(entry);
     }
-    if (!move->frames.empty())
-      doc["displays"] = json::Encode(frames);
-    for (const auto &id : move->cards) {
+    if (!move->frames.empty()) doc["displays"] = json::Encode(frames);
+    for (const auto& id : move->cards) {
       auto card =
           std::find_if(scene.cards.begin(), scene.cards.end(),
-                       [&](const auto &value) { return value.id == id; });
+                       [&](const auto& value) { return value.id == id; });
       if (card == scene.cards.end())
         throw LayoutFailure("moved Card is missing: " + id);
       const auto old_x = card->x, old_y = card->y;
@@ -356,23 +323,21 @@ static auto TransformLayout(
       positions[id] = json::Encode(entry);
       if (!displays.contains(id) ||
           !json::Object(displays.at(id)).contains("x"))
-        for (auto &frame : scene.frames)
+        for (auto& frame : scene.frames)
           if (frame.id == id) {
             frame.x += card->x - old_x;
             frame.y += card->y - old_y;
           }
     }
     auto notes = json::Array(json::Get(doc, "notes", "[]"));
-    for (auto &raw : notes) {
+    for (auto& raw : notes) {
       auto note = json::Object(raw);
-      if (!has(move->notes, json::Text(note, "id")))
-        continue;
+      if (!has(move->notes, json::Text(note, "id"))) continue;
       note["x"] = std::to_string(std::round(number(note, "x", 0) + dx));
       note["y"] = std::to_string(std::round(number(note, "y", 0) + dy));
       raw = json::Encode(note);
     }
-    if (!move->notes.empty())
-      doc["notes"] = json::Encode(notes);
+    if (!move->notes.empty()) doc["notes"] = json::Encode(notes);
   }
   const auto proposal =
       action < 0 ? layout::place_missing(scene, missing)
@@ -387,14 +352,11 @@ static auto TransformLayout(
     positions[p.id] = json::Encode(position);
   }
   for (const auto& order : proposal.port_orders) {
-    if (move && move->cards.empty())
-      break;
+    if (move && move->cards.empty()) break;
     auto position = json::Object(json::Get(positions, order.id, "{}"));
     std::vector<std::string> inputs, outputs;
-    for (const auto &name : order.inputs)
-      inputs.push_back(json::Quote(name));
-    for (const auto &name : order.outputs)
-      outputs.push_back(json::Quote(name));
+    for (const auto& name : order.inputs) inputs.push_back(json::Quote(name));
+    for (const auto& name : order.outputs) outputs.push_back(json::Quote(name));
     position["inputOrder"] = json::Encode(inputs);
     position["outputOrder"] = json::Encode(outputs);
     positions[order.id] = json::Encode(position);
@@ -407,15 +369,14 @@ static auto TransformLayout(
       frame["y"] = std::to_string(p.y);
       const auto size =
           std::find_if(scene.frames.begin(), scene.frames.end(),
-                       [&](const auto &f) { return f.id == p.id; });
+                       [&](const auto& f) { return f.id == p.id; });
       if (size != scene.frames.end()) {
         frame["width"] = std::to_string(size->width);
         frame["height"] = std::to_string(size->height);
       }
       frames[p.id] = json::Encode(frame);
     }
-    if (!proposal.frames.empty())
-      doc["displays"] = json::Encode(frames);
+    if (!proposal.frames.empty()) doc["displays"] = json::Encode(frames);
     auto notes = json::Array(json::Get(doc, "notes", "[]"));
     for (auto& raw : notes) {
       auto note = json::Object(raw);
@@ -426,12 +387,10 @@ static auto TransformLayout(
         }
       raw = json::Encode(note);
     }
-    if (!proposal.notes.empty())
-      doc["notes"] = json::Encode(notes);
+    if (!proposal.notes.empty()) doc["notes"] = json::Encode(notes);
   }
   doc["cards"] = json::Encode(positions);
-  if (action == 0)
-    doc.erase("boundary");
+  if (action == 0) doc.erase("boundary");
   return json::Encode(doc);
 }
 
@@ -441,20 +400,21 @@ auto CompleteLayout(const std::string& project, const std::string& text,
 }
 auto ArrangeProjectLayout(const std::string& project, const std::string& text,
                           const LayoutRead& read, bool untangle,
-                          const Tsugumi::Host::LayoutSceneT *measurements)
+                          const Tsugumi::Host::LayoutSceneT* measurements)
     -> std::string {
   return TransformLayout(project, text, read, untangle ? 1 : 0, measurements);
 }
 
-auto MoveProjectLayout(const std::string &project, const std::string &text,
-                       const LayoutRead &read,
-                       const Tsugumi::Host::ProjectMoveT &move) -> std::string {
+auto MoveProjectLayout(const std::string& project, const std::string& text,
+                       const LayoutRead& read,
+                       const Tsugumi::Host::ProjectMoveT& move) -> std::string {
   return TransformLayout(project, text, read, 1, move.scene.get(), &move);
 }
 
 auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
                        const std::vector<std::string>& documents,
-                       const LayoutWrite& may_write) -> std::string {
+                       const LayoutWrite& may_write,
+                       const SourcePatches& patches) -> std::string {
   auto args = json::Object(arguments);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
   struct Edit {
@@ -478,7 +438,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
         pending[path] = {Bytes(json::Get(value, "bytes")), {}};
       else if (type == "PatchSource") {
         if (const auto file = read(path))
-          pending[path] = {Patched(*file, value), {}};
+          pending[path] = {Patched(*file, value, patches), {}};
       }
     }
     if (type == "SetProject")
@@ -488,31 +448,25 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     const auto path = json::Text(value, "path");
     const bool layout = IsExternalDocument(path, "layout.json");
     const bool project = IsExternalDocument(path, "tsugumi.json");
-    if (!layout && !project)
-      continue;
+    if (!layout && !project) continue;
     const auto prefix = path.substr(0, path.size() - (layout ? 11 : 12));
     if (type == "RemoveSource") {
-      if (project)
-        deleted_projects.insert(prefix);
-      if (layout)
-        layouts[prefix] = {i, "{}", true};
+      if (project) deleted_projects.insert(prefix);
+      if (layout) layouts[prefix] = {i, "{}", true};
       continue;
     }
-    if (type != "PutSource" && type != "PatchSource")
-      continue;
+    if (type != "PutSource" && type != "PatchSource") continue;
     std::string text;
     if (type == "PutSource")
       text = Bytes(json::Get(value, "bytes"));
     else {
       const auto file = read(path);
-      if (!file)
-        throw LayoutFailure("missing layout source for patch");
-      text = Patched(*file, value);
+      if (!file) throw LayoutFailure("missing layout source for patch");
+      text = Patched(*file, value, patches);
     }
     (layout ? layouts : projects)[prefix] = {i, std::move(text), true};
   }
-  for (const auto &prefix : deleted_projects)
-    layouts.erase(prefix);
+  for (const auto& prefix : deleted_projects) layouts.erase(prefix);
   // Existing unplaced Cards are materialized by the next save of any kind,
   // including a source-only edit, at every external document depth.
   for (const auto& path : documents) {
@@ -523,11 +477,9 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
       projects[prefix] = {0, file->text, !prefix.empty()};
   }
   for (const auto& [prefix, project] : projects) {
-    if (deleted_projects.contains(prefix))
-      continue;
+    if (deleted_projects.contains(prefix)) continue;
     const auto layout_path = prefix + "layout.json";
-    if (may_write && !may_write(layout_path, ""))
-      continue;
+    if (may_write && !may_write(layout_path, "")) continue;
     const auto previous = read(prefix + "tsugumi.json");
     const auto before = previous
                             ? CardIds(previous->text, prefix + "tsugumi.json")
@@ -535,8 +487,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     const auto after = CardIds(project.text, prefix + "tsugumi.json");
     std::set<std::string> removed;
     for (const auto& id : before)
-      if (!after.contains(id))
-        removed.insert(id);
+      if (!after.contains(id)) removed.insert(id);
     const auto file = read(prefix + "layout.json");
     const auto old = layouts.contains(prefix) ? layouts.at(prefix).text
                      : file                   ? file->text
@@ -544,10 +495,9 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     auto seeded = ValidateLayout(old, removed);
     if (previous) {
       const auto stored = file ? file->text : "{}";
-      const auto derived = json::Object(
-          CompleteLayout(previous->text, stored, [&](const std::string &path) {
-            return read(prefix + path);
-          }));
+      const auto derived = json::Object(CompleteLayout(
+          previous->text, stored,
+          [&](const std::string& path) { return read(prefix + path); }));
       const auto stored_positions =
           json::Object(json::Get(json::Object(stored), "cards", "{}"));
       auto doc = json::Object(seeded);
@@ -570,8 +520,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
         project.text, seeded,
         [&](const std::string& path) -> std::optional<LayoutFile> {
           const auto file = prefix + path;
-          if (pending.contains(file))
-            return pending.at(file);
+          if (pending.contains(file)) return pending.at(file);
           return read(file);
         });
     // Derive with the entire scene so filtering cannot change anyone's place.
@@ -612,13 +561,13 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     }
   }
   for (const auto& [prefix, layout] : layouts) {
-    ValidateLayout(layout.text);
     auto change = json::Object(changes.at(layout.index));
     auto value = json::Object(json::Get(change, "value"));
     if (json::Text(change, "value_type") == "RemoveSource" &&
         layout.text == "{}")
       continue;
-    value[layout.source ? "bytes" : "json"] = json::Quote(layout.text);
+    value[layout.source ? "bytes" : "json"] = json::Quote(
+        projects.contains(prefix) ? layout.text : ValidateLayout(layout.text));
     if (layout.source) {
       change["value_type"] = json::Quote("PutSource");
       value.erase("patches");

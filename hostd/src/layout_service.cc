@@ -1,15 +1,15 @@
 #include "host/layout_service.hh"
-#include "host/layout_saving.hh"
 
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "agent/wire.hh"
 #include "host/layout.hh"
+#include "host/layout_saving.hh"
 #include "host/layout_schema.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace R = Tsugumi::Host;
@@ -113,7 +113,7 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
 }
 }  // namespace
 
-auto MeasuredScene(const R::LayoutSceneT &scene) -> layout::Scene {
+auto MeasuredScene(const R::LayoutSceneT& scene) -> layout::Scene {
   flatbuffers::FlatBufferBuilder builder;
   builder.Finish(R::LayoutScene::Pack(builder, &scene));
   return scene_of(
@@ -232,15 +232,17 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
     std::string flow = "leftToRight";
   } out;
   std::map<std::string, size_t> index;
-  if (in.cards()) for (const auto* card : *in.cards()) {
-    index[card->id()->str()] = out.cards.size();
-    out.cards.push_back(
-        {card->id()->str(), 0, 0, card->kind()->str(), card->fan(), false});
-  }
-  if (in.wires()) for (const auto* wire : *in.wires())
-    if (index.contains(wire->from()->str()) &&
-        index.contains(wire->to()->str()))
-      out.wires.emplace_back(wire->from()->str(), wire->to()->str());
+  if (in.cards())
+    for (const auto* card : *in.cards()) {
+      index[card->id()->str()] = out.cards.size();
+      out.cards.push_back(
+          {card->id()->str(), 0, 0, card->kind()->str(), card->fan(), false});
+    }
+  if (in.wires())
+    for (const auto* wire : *in.wires())
+      if (index.contains(wire->from()->str()) &&
+          index.contains(wire->to()->str()))
+        out.wires.emplace_back(wire->from()->str(), wire->to()->str());
   auto place = [&]() -> void {
     // Saved positions, when every Card has one.
     std::map<std::string, layout_schema::Position> saved;
@@ -338,15 +340,15 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
         std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(false));
     return agent::wire::HostReply(id, std::move(result));
   }
-  if (const auto *v = req.value_as_LayoutCompleteRequest()) {
-    const auto definitions = ::tsugumi::json::Object(v->definitions_json()->str());
+  if (const auto* v = req.value_as_LayoutCompleteRequest()) {
+    const auto definitions =
+        ::tsugumi::json::Object(v->definitions_json()->str());
     R::LayoutValidatedT result;
     result.json = CompleteLayout(
         v->project_json()->str(), v->layout_json()->str(),
-        [&](const std::string &path) -> std::optional<LayoutFile> {
+        [&](const std::string& path) -> std::optional<LayoutFile> {
           const auto id = path.substr(12, path.size() - 23);
-          if (!definitions.contains(id))
-            return std::nullopt;
+          if (!definitions.contains(id)) return std::nullopt;
           return LayoutFile{::tsugumi::json::Text(definitions, id), {}};
         });
     return agent::wire::HostReply(id, std::move(result));

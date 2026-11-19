@@ -38,7 +38,8 @@ struct Turns {
                               const std::string&)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
-    std::function<bool(const std::string&, const std::string&, std::stop_token)> excluded = {};
+    std::function<bool(const std::string&, const std::string&, std::stop_token)>
+        excluded = {};
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
@@ -46,8 +47,6 @@ struct Turns {
         std::condition_variable_any& changed, host::Access& access,
         Dependencies dependencies);
   static auto System(bool guide = false) -> std::string;
-  static auto Excerpt(std::string_view text, size_t position = 0,
-                      size_t limit = 240) -> std::string;
   auto ThoughtsFor(const std::string& id) -> std::shared_ptr<ThoughtSchedule>;
   auto ScrubSend(const std::string& frame) -> std::string;
   auto RecordOperation(const std::string& id, const std::string& kind,

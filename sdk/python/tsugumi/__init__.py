@@ -22,12 +22,9 @@ import importlib
 import os
 import sys
 import threading
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import _tsugumi_host as _host
-
-if TYPE_CHECKING:
-    import flatbuffers
 
 __all__ = ["Inputs", "Report", "Run", "Failure", "builder", "message"]
 
@@ -139,10 +136,18 @@ def _freeze(value):
 
 
 class Inputs:
-    __slots__ = ("_values", "_params")
+    __slots__ = ("_values", "_params", "_decoded")
 
     def __init__(self) -> None:
-        object.__setattr__(self, "_values", {name: (kind, bytes(data)) for name, kind, data in _host.inputs()})
+        from inputs.Inputs import Inputs as InputTable
+        from tsugumi import contract
+        from tsugumi.values import _accessor
+        table = InputTable.GetRootAs(_host.inputs())
+        object.__setattr__(self, "_values", {
+            port["name"]: getattr(table, _accessor(port["name"]))()
+            for port in contract.ports()
+        })
+        object.__setattr__(self, "_decoded", {})
         from params.Params import ParamsT
         object.__setattr__(self, "_params", _freeze(ParamsT.InitFromPackedBuf(_host.params())))
 
@@ -158,19 +163,26 @@ class Inputs:
         port = contract.port(name)
         if port is not None and not port["required"] and not self.has_input(name):
             return None
-        return _freeze(contract.input_object(self, name))
+        if name not in self._decoded:
+            self._decoded[name] = _freeze(contract.input_object(self, name))
+        return self._decoded[name]
 
     def has_input(self, port: str) -> bool:
-        return port in self._values
+        return self._values.get(port) is not None
 
     def input_bytes(self, port: str) -> bytes:
-        if port not in self._values:
-            raise Failure("input_missing", f"input {port} was not provided")
-        return self._values[port][1]
+        from tsugumi import contract
+        return message(contract.input_object(self, port))
 
     def input(self, port: str, cls: Any) -> Any:
         """Read a FlatBuffers view when the low-level generated API is needed."""
-        return cls.GetRootAs(self.input_bytes(port), 0)
+        if not self.has_input(port):
+            raise Failure("input_missing", f"input {port} was not provided")
+        view = self._values[port]
+        value = cls()
+        value.Init(view._tab.Bytes, view._tab.Pos)
+        return value
+
 
 
 class Report:
@@ -245,28 +257,6 @@ def _call(function):
     return function(*args)
 
 
-def _outputs(result):
-    """Emit returned batches in order, including a generator's final result."""
-    from collections.abc import Mapping
-    from tsugumi.values import encode
-    if result is None:
-        return
-    if isinstance(result, Mapping):
-        for port, value in result.items():
-            if not _host.emit_output(port, encode(port, value)):
-                raise Failure("output_invalid", f"output {port} was rejected")
-        return
-    stream = iter(result)
-    while True:
-        try:
-            batch = next(stream)
-        except StopIteration as end:
-            if end.value is not None:
-                _outputs(end.value)
-            break
-        _outputs(batch)
-
-
 _card_module = None
 
 
@@ -281,19 +271,19 @@ def _adopt_environment() -> None:
             os.environb[name] = value
 
 
-def _guard(body) -> bool:
+def _guard(body):
     global _in_call, _active_scope
     _active_scope = object()
     _in_call = True
     done = False
     try:
         _adopt_environment()
-        body()
+        result = body()
         _close_figures()
         done = True
         sys.stdout.flush()
         sys.stderr.flush()
-        return True
+        return True if result is None else result
     except Failure as f:
         if f.source is None:
             _host.fail(f.kind, f.message)
@@ -334,12 +324,12 @@ def _load() -> bool:
 def _run_start() -> bool:
     """Before the first invocation of each run: card.main.on_run_start(inputs[, report[, run]]), if defined."""
     hook = getattr(_card_module, "on_run_start", None)
-    return _guard(lambda: _outputs(_call(hook))) if hook else True
-
-
-def _invoke() -> bool:
     def body():
-        _outputs(_call(_card_module.main))
-        if not _host.finish_outputs():
-            raise Failure("output_invalid", "required outputs were not emitted")
+        if hook:
+            _call(hook)
     return _guard(body)
+
+
+def _invoke():
+    from tsugumi.values import encode_outputs
+    return _guard(lambda: encode_outputs(_call(_card_module.main)))

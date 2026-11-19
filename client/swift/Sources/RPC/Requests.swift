@@ -44,26 +44,14 @@ public extension RPCClient {
     return try await call(.projectsaverequest, r)
   }
 
-  func validate(atRev: UInt64, targets: [[String]] = [], executable: Bool = true) async throws -> Tsugumi_RPC_ProjectValidateResultT {
-    let r = Tsugumi_RPC_ProjectValidateRequestT()
-    r.atRev = atRev
-    r.targets = targets.map { cardPath($0) }
-    r.mode = executable ? .executable : .structure
-    return try await call(.projectvalidaterequest, r)
-  }
 
-  func operation(_ opId: UUID) async throws -> Tsugumi_RPC_OperationResultT {
-    let r = Tsugumi_RPC_OperationGetRequestT()
-    r.opId = opId.uuidString.lowercased()
-    return try await call(.operationgetrequest, r)
-  }
 
-  /// Reads a whole file in chunks, verifying the final hash. A content hash
-  /// pins every chunk without depending on unrelated document revisions.
+
+
+  /// Reads a whole file in chunks at the selected revision or hash.
   func readFile(path: String, atRev: UInt64?, ifHash: String? = nil) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
-    var hash = ""
     while true {
       let r = Tsugumi_RPC_ProjectFileReadRequestT()
       r.path = path
@@ -73,11 +61,9 @@ public extension RPCClient {
       r.limitBytes = 1 << 20
       let c: Tsugumi_RPC_FileContentT = try await call(.projectfilereadrequest, r)
       out.append(contentsOf: c.bytes)
-      hash = c.hash
       offset = c.nextOffset ?? offset
       if c.eof == true { break }
     }
-    guard sha256Hex(out) == hash else { throw RPCFailure(kind: .integrityError, diagnostic: "hash mismatch for \(path)") }
     return out
   }
 
@@ -163,7 +149,6 @@ public extension RPCClient {
   func readArtifact(id: String, member: String?) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
-    var hash = ""
     while true {
       let r = Tsugumi_RPC_ArtifactReadRequestT()
       r.artifactId = id
@@ -171,11 +156,9 @@ public extension RPCClient {
       r.offset = offset
       let c: Tsugumi_RPC_FileContentT = try await call(.artifactreadrequest, r)
       out.append(contentsOf: c.bytes)
-      hash = c.hash
       offset = c.nextOffset ?? offset
       if c.eof == true { break }
     }
-    guard sha256Hex(out) == hash else { throw RPCFailure(kind: .integrityError, diagnostic: "artifact hash mismatch") }
     return out
   }
 
@@ -223,21 +206,21 @@ public extension RPCClient {
   func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
     let r = Tsugumi_RPC_NixSourceResolveRequestT()
     r.ref = ref
-    return try await call(.nixsourceresolverequest, r, timeout: .seconds(300))
+    return try await call(.nixsourceresolverequest, r)
   }
 
   /// Deletes the project's build caches; documents and history are kept.
   func clearCache(opId: UUID) async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     let r = Tsugumi_RPC_ProjectCacheClearRequestT()
     r.opId = opId.uuidString.lowercased()
-    return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
+    return try await call(.projectcacheclearrequest, r)
   }
 
   func deleteRunScratch(opId: UUID, paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
     let r = Tsugumi_RPC_RunScratchDeleteRequestT()
     r.opId = opId.uuidString.lowercased()
     r.paths = paths
-    return try await call(.runscratchdeleterequest, r, timeout: .seconds(300))
+    return try await call(.runscratchdeleterequest, r)
   }
 
   func cacheUsage() async throws -> Tsugumi_RPC_ProjectCacheUsageResultT {
@@ -250,17 +233,13 @@ public extension RPCClient {
     let r = Tsugumi_RPC_RunHistoryDeleteRequestT()
     r.opId = opId.uuidString.lowercased()
     r.endedBefore = endedBefore.map { Int64($0.timeIntervalSince1970 * 1000) }
-    return try await call(.runhistorydeleterequest, r, timeout: .seconds(300))
+    return try await call(.runhistorydeleterequest, r)
   }
 
   // MARK: Versions (git)
 
   /// The project's versions, newest first, with branches, tags, runs and changed Cards.
-  func versionGraph(limit: UInt32 = 500) async throws -> Tsugumi_RPC_VersionGraphT {
-    let r = Tsugumi_RPC_VersionGraphRequestT()
-    r.limit = limit
-    return try await call(.versiongraphrequest, r)
-  }
+
 
   /// A version's own Cards and wires, for a minimap.
   func versionCanvas(commit: String) async throws -> Tsugumi_RPC_VersionCanvasT {

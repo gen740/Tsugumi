@@ -36,7 +36,10 @@ struct RuntimeEvent {
   bool ok = true;
   uint32_t index = 0;
   Usage usage;
+  std::string code{};
 };
+
+auto RuntimeErrorCode(const std::exception& error) -> std::string;
 
 struct RuntimeHooks {
   // Durable service-owned sequence, including across transcript compaction.
@@ -55,7 +58,7 @@ struct RuntimeHooks {
 };
 
 struct RuntimeOptions {
-  uint32_t max_retries = 3;
+  // Bound the tokens spent continuing replies that hit the output limit.
   uint32_t max_cut_replies = 3;
   bool compact = true;
 };

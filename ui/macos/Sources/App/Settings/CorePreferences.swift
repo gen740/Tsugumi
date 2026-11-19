@@ -10,7 +10,8 @@ import TsugumiRPC
 final class CorePreferences {
   static let shared = CorePreferences()
   private var values: [String: Any] = [:]
-  private var revision: UInt64 = 0
+  private var revision: UInt64?
+  private var modelValues: [String: Any] = [:]
   private(set) var summarySelection: Tsugumi_Service_ProviderSelectionT?
   private var editGeneration = 0
   private(set) var error: String?
@@ -18,8 +19,15 @@ final class CorePreferences {
   init() {
     Task { [weak self] in
       _ = await CoreHostClient.shared.observeHost { [weak self] event in
-        guard event["type"] as? String == "SettingsChanged", event["profile"] as? String == "desktop" else { return }
-        Task { @MainActor [weak self] in await self?.reload() }
+        guard event["profile"] as? String == "desktop" else { return }
+        if event["type"] as? String == "SettingsChanged" {
+          Task { @MainActor [weak self] in await self?.reload() }
+        } else if event["type"] as? String == "ProviderChanged" {
+          Task { @MainActor [weak self] in
+            await self?.refreshProviderAvailability()
+            self?.summarySelection = try? await CoreHostClient.shared.modelSelection("summary")
+          }
+        }
       }
       await self?.reload()
     }
@@ -31,26 +39,36 @@ final class CorePreferences {
   private func loadSnapshot() async {
     do {
       let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      let firstSnapshot = revision == nil
       let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
-      revision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
+      let nextRevision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
+      if nextRevision == revision { return }
+      revision = nextRevision
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),
           let decoded = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else { return nil }
         return (key, decoded)
       })
-      summarySelection = try await CoreHostClient.shared.modelSelection("summary")
-      for config in [ProviderConfig.anthropic, .openAI, .chatGPT] {
-        _ = try await CoreHostClient.shared.usable(config)
+      let newModels = values.filter { $0.key.hasPrefix("agent.provider") || $0.key.hasPrefix("agent.model") || $0.key.hasPrefix("agent.speechModel") }
+      if summarySelection == nil || !NSDictionary(dictionary: modelValues).isEqual(to: newModels) {
+        summarySelection = try await CoreHostClient.shared.modelSelection("summary")
       }
+      modelValues = newModels
+      if firstSnapshot { await refreshProviderAvailability() }
       AppPreferences.shared.syncHostSettings()
       if previousFolders != (stringArray(forKey: "agent.trustedFolders") ?? []) {
         for session in AppModel.shared.sessions.values { try? await session.refreshProjectTrust() }
       }
     } catch { self.error = String(describing: error) }
   }
+  private func refreshProviderAvailability() async {
+    async let anthropic = try? CoreHostClient.shared.usable(.anthropic)
+    async let openAI = try? CoreHostClient.shared.usable(.openAI)
+    async let chatGPT = try? CoreHostClient.shared.usable(.chatGPT)
+    _ = await (anthropic, openAI, chatGPT)
+  }
   func string(forKey key: String) -> String? { values[key] as? String }
   func bool(forKey key: String) -> Bool { values[key] as? Bool ?? false }
-  func integer(forKey key: String) -> Int { values[key] as? Int ?? 0 }
   func stringArray(forKey key: String) -> [String]? { values[key] as? [String] }
   func data(forKey key: String) -> Data? { values[key].flatMap { try? JSONSerialization.data(withJSONObject: $0, options: .fragmentsAllowed) } }
   func value<T>(_ key: String, fallback: T) -> T { values[key] as? T ?? fallback }
@@ -65,7 +83,7 @@ final class CorePreferences {
       await previous?.value
       guard generation == editGeneration else { return }
       do {
-        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision),
+        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision ?? 0),
           "changes": [["key": key, "value_json": raw]]])
         error = nil
       } catch { editGeneration += 1; self.error = String(describing: error) }

@@ -17,19 +17,6 @@ namespace Tsugumi.RPC;
 
 table Ack {}
 
-table Limits {
-  max_frame_bytes:uint32 = null (id: 0);
-  max_connections:uint32 = null (id: 1);
-  max_inflight:uint32 = null (id: 2);
-  mutation_queue_limit:uint32 = null (id: 3);
-  queue_wait_ms:uint32 = null (id: 4);
-  outbox_messages:uint32 = null (id: 5);
-  outbox_bytes:uint64 = null (id: 6);
-  page_limit:uint32 = null (id: 7);
-  file_chunk_bytes:uint32 = null (id: 8);
-  log_chunk_bytes:uint32 = null (id: 9);
-}
-
 table SourceInfo {
   path:string (id: 0, required);
   kind:Tsugumi.Data.SourceKind (id: 1);
@@ -264,15 +251,9 @@ table OperationReceipt {
 
 /// -> HelloResult. token is required on WebSocket. Project mismatch is
 /// permission_denied. Must be the first request, within 5 s of connecting.
-/// `protocol` is the newest version the client speaks and `min_protocol`
-/// the oldest (default: protocol); the server answers with the newest
-/// version both speak (HelloResult.protocol), or protocol_mismatch.
 table SessionHelloRequest {
-  protocol:uint32 = null (id: 0);
-  client_id:string (id: 1, required);
-  expected_project_id:string (id: 2);
-  token:string (id: 3);
-  min_protocol:uint32 = null (id: 4);
+  expected_project_id:string (id: 0);
+  token:string (id: 1);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
@@ -373,7 +354,7 @@ table RunScratchUsage {
   size_unknown:bool (id: 2);
 }
 
-/// -> ProjectCacheUsageResult. Read cached build and scratch usage measurements.
+/// -> ProjectCacheUsageResult. Measure build and scratch usage.
 table ProjectCacheUsageRequest {}
 
 table ProjectCacheUsage {
@@ -395,14 +376,10 @@ table ProjectCacheUsageResult {
   store_capacity_bytes:uint64 = null (id: 2);
   store_available_bytes:uint64 = null (id: 3);
   measured_at:int64 = null (id: 4);
-  /// Suggest reviewing Build Cache settings when build cache or scratch reaches
-  /// max(1 GiB, 20% of the capacity of its disk).
-  large:bool (id: 5);
-  threshold_bytes:uint64 = null (id: 6);
-  current_project:string (id: 7);
-  error:string (id: 8);
+  current_project:string (id: 5);
+  error:string (id: 6);
   /// This project's latest run remains usable; its scratch cannot be deleted here.
-  protected_run:string (id: 9);
+  protected_run:string (id: 7);
 }
 
 /// -> NixSourceResolved. Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use.
@@ -877,11 +854,9 @@ table VersionGraph {
 }
 
 table HelloResult {
-  protocol:uint32 = null (id: 0);
-  project_id:string (id: 1, required);
-  server_instance_id:string (id: 2, required);
-  limits:Limits (id: 3, required);
-  capabilities:[string] (id: 4, required);
+  project_id:string (id: 0, required);
+  server_instance_id:string (id: 1, required);
+  capabilities:[string] (id: 2, required);
 }
 
 table OpenResult {
@@ -1005,6 +980,8 @@ table InvocationSummary {
   transfer_direction:string (id: 27);
   transfer_done:uint64 (id: 28);
   transfer_total:uint64 (id: 29);
+  /// The invocation omitted log output at this combined limit, in bytes.
+  log_truncated_at_bytes:uint64 = null (id: 30);
 }
 
 table StageTime {
@@ -1107,7 +1084,10 @@ table LogSlice {
   next_offset:uint64 = null (id: 2);
   size_bytes:uint64 = null (id: 3);
   exists:bool = null (id: 4);
+  /// More bytes exist outside this slice.
   truncated:bool = null (id: 5);
+  /// The invocation omitted log output at this combined limit, in bytes.
+  log_truncated_at_bytes:uint64 = null (id: 6);
 }
 
 table ViewSaveResult {
@@ -1192,6 +1172,8 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
+/// An absent end_offset and unspecified stream indicate invocation log
+/// metadata changed without new stream bytes.
 table LogAvailable {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);

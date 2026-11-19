@@ -1,5 +1,5 @@
 /* Tsugumi Card ABI. A Card package provides lib/main.so exporting
- * tsugumi_main. The worker owns every pointer passed in; they are valid only
+ * tsugumi_main. The worker owns the call and its data. They are valid only
  * during the call. Language runtimes stay with the resident worker.
  */
 #ifndef TSUGUMI_SDK_ABI_H
@@ -7,21 +7,32 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 6u
+#define TSUGUMI_ABI_VERSION 7u
 
-enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
+enum tsugumi_port_kind {
+  TSUGUMI_FILE = 1,
+  TSUGUMI_DIRECTORY = 2,
+  TSUGUMI_FLATBUFFER = 3
+};
 
-typedef struct tsugumi_value {
-  const char* name;      /* port name */
-  uint32_t kind;         /* tsugumi_port_kind */
-  const uint8_t* data;   /* FlatBuffer of the port message */
+typedef struct tsugumi_buffer {
+  uint8_t* data;
   size_t size;
-} tsugumi_value;
+} tsugumi_buffer;
+
+enum tsugumi_phase {
+  TSUGUMI_PREPARE,
+  TSUGUMI_LOAD,
+  TSUGUMI_RUN_START,
+  TSUGUMI_RUN
+};
 
 typedef struct tsugumi_series {
   const char* id;
@@ -37,24 +48,11 @@ typedef struct tsugumi_blob {
   size_t size;
 } tsugumi_blob;
 
-typedef struct tsugumi_call {
-  uint32_t abi_version;
-  const char* run_id;
-  const char* card;  /* full Card path joined with '/' */
-  uint64_t invocation;
-  const tsugumi_value* inputs;
-  size_t input_count;
-  const uint8_t* params; /* FlatBuffer of params.Params (_params.fbs) */
-  size_t params_size;
-  const char* working_directory;
-  const char* temporary_directory;
-  const char* output_directory;
-  void* host;
-  /* Emits one output port. Returns 0 on success. */
-  int (*emit_output)(void* host, const char* port, const uint8_t* data, size_t size);
+typedef struct tsugumi_host {
   int (*display_text)(void* host, const char* text);
   int (*display_scalar)(void* host, double value, const char* label);
-  int (*display_line_chart)(void* host, const tsugumi_series* series, size_t count);
+  int (*display_line_chart)(void* host, const tsugumi_series* series,
+                            size_t count);
   /* Writes a line to the invocation's stderr log. */
   void (*log)(void* host, const char* message);
   /* Non-zero once the invocation was cancelled. */
@@ -64,44 +62,70 @@ typedef struct tsugumi_call {
   /* Records a structured failure; tsugumi_main should then return non-zero.
    * kind is a FailureKind name such as "worker_failed" or "output_invalid". */
   void (*fail)(void* host, const char* kind, const char* message);
-  /* ABI 2. Table cells are row-major, column_count per row. */
-  int (*display_table)(void* host, const char* const* columns, size_t column_count, const char* const* cells,
+  /* Table cells are row-major, column_count per row. */
+  int (*display_table)(void* host, const char* const* columns,
+                       size_t column_count, const char* const* cells,
                        size_t row_count);
   /* PNG or JPEG bytes; media_type is "image/png" or "image/jpeg". */
-  int (*display_image)(void* host, const char* media_type, const uint8_t* data, size_t size, const char* alt);
+  int (*display_image)(void* host, const char* media_type, const uint8_t* data,
+                       size_t size, const char* alt);
   /* colors (0xRRGGBB) may be NULL. */
-  int (*display_points)(void* host, const float* x, const float* y, const float* z, const uint32_t* colors,
-                        size_t count);
-  /* Immutable view identity (or a name declared in views), config and named bytes. */
+  int (*display_points)(void* host, const float* x, const float* y,
+                        const float* z, const uint32_t* colors, size_t count);
+  /* Immutable view identity (or a name declared in views), config and named
+   * bytes. */
   int (*display_module)(void* host, const char* module, const char* config_json,
                         const tsugumi_blob* blobs, size_t blob_count);
-  /* ABI 3. Markdown text (with TeX math) shown as formatted text. */
+  /* Markdown text (with TeX math) shown as formatted text. */
   int (*display_markdown)(void* host, const char* text);
-  /* ABI 4. In-memory adapters for languages without a FlatBuffers generator.
-   * Inputs/params are decoded using their actual schema; outputs are encoded
-   * and validated as FlatBuffers. Returned strings last until the call ends.
-   * NULL means an absent input (or a conversion failure, recorded by the host).
-   * No JSON files or subprocess protocol are involved. */
-  const char* (*input_json)(void* host, const char* port);
+  /* Typed JSON conversion in memory. Strings last through the call.
+   * outputs_json fills an owned Outputs buffer
+   * with the same allocation convention as tsugumi_main. */
+  const char* (*inputs_json)(void* host);
   const char* (*params_json)(void* host);
-  int (*emit_json)(void* host, const char* port, const char* json);
+  uint32_t (*input_kind)(void* host, const char* port);
+  int (*outputs_json)(void* host, const char* json, tsugumi_buffer* outputs);
   int (*display_json)(void* host, const char* json);
-  /* End the main function's output stream (not the run-start hook).
-   * Returns non-zero when a required output is absent. SDKs raise here,
-   * before returning to the worker and before postRun observes the result. */
-  int (*finish_outputs)(void* host);
-
-  /* ABI 6. Failure at a source position. source is relative to the Card's
+  /* Failure at a source position. source is relative to the Card's
    * definition directory; line is one-based. cell may be NULL. */
   void (*fail_at)(void* host, const char* kind, const char* message,
                   const char* source, uint32_t line, const char* cell);
 
+} tsugumi_host;
+
+typedef struct tsugumi_call {
+  uint32_t abi_version;
+  uint32_t phase; /* tsugumi_phase */
+  const char* run_id;
+  const char* card; /* full Card path joined with '/' */
+  uint64_t invocation;
+  const uint8_t* inputs; /* FlatBuffer of inputs.Inputs (_inputs.fbs) */
+  size_t inputs_size;
+  const uint8_t* params; /* FlatBuffer of params.Params (_params.fbs) */
+  size_t params_size;
+  const char* working_directory;
+  const char* temporary_directory;
+  const char* output_directory;
+  void* host;
+  const tsugumi_host* effects;
 } tsugumi_call;
 
-typedef int (*tsugumi_main_fn)(const tsugumi_call* call);
+/* Returns 0 on success. TSUGUMI_RUN produces one outputs.Outputs FlatBuffer
+ * (_outputs.fbs) in outputs. Other phases leave outputs empty. The worker
+ * frees outputs->data with free() after the call, even on failure. */
+typedef int (*tsugumi_main_fn)(const tsugumi_call* call,
+                               tsugumi_buffer* outputs);
+int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs);
 
-/* Implemented by the Card. Returns 0 on success. */
-int tsugumi_main(const tsugumi_call* call);
+static inline int tsugumi_copy_outputs(tsugumi_buffer* outputs,
+                                       const void* data, size_t size) {
+  uint8_t* copy = (uint8_t*)malloc(size);
+  if (!copy) return 1;
+  memcpy(copy, data, size);
+  outputs->data = copy;
+  outputs->size = size;
+  return 0;
+}
 
 #ifdef __cplusplus
 }

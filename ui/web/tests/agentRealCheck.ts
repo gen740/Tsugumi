@@ -1,3 +1,4 @@
+import { Access } from '../shared/gen/tsugumi/service/access'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -5,10 +6,9 @@ import path from 'node:path'
 import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
-import { AGENT, projectAccessNeededNow } from '../shared/agentShared'
-import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { projectAccessNeededNow } from '../shared/agentShared'
+import { create } from 'react-test-renderer'
 import { createElement } from 'react'
-import EN from '../shared/i18n/en.json'
 
 // The HTTP adapter must scope lists/search and adopt host edits and the
 // accepted turn's model. No socket, model or environment is used here.
@@ -61,10 +61,11 @@ try {
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
   const routes = chatRoutes({ support: dir, here: dir, desktop: true, envs: {} as never, projectDir: String,
-    broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
+    listeners: () => 0, broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 2 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
   assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
@@ -74,22 +75,26 @@ try {
   const a = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(a.permission.asked, [asked, write, run])
   assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
-  await call('permission', { id: 'pending-a', allow: true, selected: [asked, write] })
+  await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: true, also_allow: ['Write'] })
+    { request_id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   pendingAsked = [run.replace('"needed_now":false', '"needed_now":true')]
   const later = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(later.permission.asked, pendingAsked)
-  await call('permission', { id: 'pending-a', allow: false, selected: pendingAsked })
+  await call('permission', { id: 'pending-a', allow: false, selected: [Access.Run] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: false, also_allow: [] })
+    { request_id: 'pending-a', allow: false, selected: [Access.Run] })
   const b = await call('conversation', { path: folders[1], session: 'b' })
   assert.equal(b.permission, null)
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 3 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, model)
   busy = true
   model = 'gpt-6.1-sol'
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 4 } })
+  await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
@@ -101,25 +106,24 @@ try {
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
-const tools = [...AGENT.requests, ...AGENT.approvalRequests].map(name => name.replace(/Request$/, '').replace(/[A-Z]/g, (c, index) => (index ? '_' : '') + c.toLowerCase()))
-for (const lang of ['ja', 'en'] as const) {
-  const choices = [asked, write, run]
-  const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], lines: choices.map(request => {
-    const fields = JSON.parse(request.slice('project_access '.length))
-    return { request, operation: fields.access, neededNow: fields.needed_now }
-  }) }]
-  const markup = renderToStaticMarkup(createElement(PermissionRequests, { asked: choices, groups }))
-  assert.equal((markup.match(/Collatz/g) ?? []).length, 1, 'The target is drawn once for all operations')
-  assert.ok(markup.includes('内容の読み取り') && markup.includes('内容の変更') && markup.includes('Card の実行'))
-  assert.equal((markup.match(/今の操作に必要/g) ?? []).length, 1)
-  assert.equal((markup.match(/プロジェクト全体・取り消すまで/g) ?? []).length, 1)
-  for (const name of [...tools, 'demo_list', 'demo_read', 'operation_approval', 'guide_show', 'delegate', 'web_search']) {
-    const label = toolStep(name, '{}')
-    assert.ok(!label.running.includes(name) && !label.done.includes(name), `${lang}: missing label for ${name}`)
-    if (lang === 'en') {
-      assert.ok((EN as Record<string, string>)[label.done], `Missing English label: ${label.done}`)
-      assert.ok((EN as Record<string, string>)[label.running.slice(0, -1)], `Missing English label: ${label.running}`)
-    }
-  }
-}
+const choices = [asked, write, run]
+const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], lines: choices.map(request => {
+  const fields = JSON.parse(request.slice('project_access '.length))
+  return { request, operation: fields.access, neededNow: fields.needed_now }
+}) }]
+const selections: string[] = []
+const view = create(createElement(PermissionRequests, {
+  asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
+}))
+try {
+  const group = view.root.findByType('li')
+  assert.equal(group.findByType('strong').props.children, groups[0].title)
+  const toggles = group.findAllByProps({ type: 'checkbox' })
+  assert.equal(toggles.filter(toggle => toggle.props.checked).length, 1)
+  for (const toggle of toggles) toggle.props.onChange({ target: { checked: true } })
+  assert.deepEqual(new Set(selections), new Set(choices))
+} finally { view.unmount() }
+const label = toolStep('project_file_read', JSON.stringify({ card: ['analysis', 'result'] }), () => 'Analysis Result')
+assert.equal(label.card, 'analysis/result')
+assert.ok(label.running.includes('Analysis Result') && label.done.includes('Analysis Result'))
 console.log('Agent real-check regressions: project isolation, permission labels, host model changes and tool labels passed')

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-
 #include <vector>
 
 namespace tsugumi::host {
@@ -15,6 +14,6 @@ struct DocumentTemplate {
 };
 
 // Returns a new definition and its text files; never writes the project.
-auto WriteTemplate(const std::string &name, const std::string &id)
+auto WriteTemplate(const std::string& name, const std::string& id)
     -> DocumentTemplate;
-} // namespace tsugumi::host
+}  // namespace tsugumi::host

@@ -9,6 +9,7 @@ import flatbuffers.number_types as flags
 import pytest
 
 from test_language_cards import JULIA_NIX, R_NIX, project, write_project
+from test_ruby_cards import RUBY_NIX
 from projects import run_and_wait
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
@@ -74,7 +75,7 @@ def sdk_card(language):
         files.update({'go.mod': (ROOT / 'sdk/go/template/go.mod').read_text(), 'go.sum': ''})
     if language == 'rust':
         files['Cargo.toml'] = (ROOT / 'sdk/rust/template/Cargo.toml').read_text()
-    nix = {'r': R_NIX, 'julia': JULIA_NIX}.get(language,
+    nix = {'r': R_NIX, 'julia': JULIA_NIX, 'ruby': RUBY_NIX}.get(language,
         '{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["' + language + '"];};in {run=inputs.tsugumi.' + helper + ' {inherit sdk;src=./src;};}')
     return {'card': {'language': language, 'inputs': [{'name': 'number'}], 'recordIO': True},
             'outputs': SCHEMA, 'src': files, 'nix': nix}
@@ -93,7 +94,7 @@ def main(inputs):
 '''}}
     write_project(root, {'make': make, 'check': sdk_card(language)}, [('make', 'out', 'check', 'number')])
     client = connect()
-    run_id, status = run_and_wait(client, 'start', timeout=1800)
+    run_id, status = run_and_wait(client, 'start')
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
         [(card, stream, text(client.call('LogRangeRequest', runId=run_id, card=path(card),
             stream=stream, limitBytes=65536).text)) for card in ('make', 'check') for stream in (2, 4)])

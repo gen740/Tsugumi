@@ -34,6 +34,20 @@ impl From<flatbuffers::InvalidFlatbuffer> for Error {
         Self::new("type_mismatch", error.to_string())
     }
 }
+/// Adapter-only helpers for dispatch and ownership across the C ABI.
+pub unsafe fn runs_card(raw: *const c_void) -> bool {
+    unsafe { tsugumi_rs_runs_card(raw) != 0 }
+}
+pub unsafe fn run_start(raw: *const c_void) -> bool {
+    unsafe { tsugumi_rs_run_start(raw) != 0 }
+}
+pub unsafe fn return_outputs(outputs: *mut c_void, bytes: &[u8]) -> Result<()> {
+    if unsafe { tsugumi_rs_return(outputs, bytes.as_ptr(), bytes.len()) } != 0 {
+        return Err(Error::new("worker_failed", "cannot allocate Outputs"));
+    }
+    Ok(())
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[link(name = "tsugumi_rust_host", kind = "static")]
@@ -56,16 +70,14 @@ unsafe extern "C" {
     ) -> c_int;
     fn tsugumi_rs_info(call: *const c_void, field: u32) -> *const c_char;
     fn tsugumi_rs_invocation(call: *const c_void) -> u64;
-    fn tsugumi_rs_finish_outputs(call: *const c_void) -> c_int;
+
+    fn tsugumi_rs_runs_card(call: *const c_void) -> c_int;
+    fn tsugumi_rs_run_start(call: *const c_void) -> c_int;
+    fn tsugumi_rs_return(outputs: *mut c_void, bytes: *const u8, size: usize) -> c_int;
     fn tsugumi_rs_check(call: *const c_void) -> c_int;
-    fn tsugumi_rs_input(call: *const c_void, name: *const c_char, size: *mut usize) -> *const u8;
+    fn tsugumi_rs_inputs(call: *const c_void, size: *mut usize) -> *const u8;
     fn tsugumi_rs_params(call: *const c_void, size: *mut usize) -> *const u8;
-    fn tsugumi_rs_emit(
-        call: *const c_void,
-        port: *const c_char,
-        bytes: *const u8,
-        size: usize,
-    ) -> c_int;
+
     fn tsugumi_rs_log(call: *const c_void, text: *const c_char);
     fn tsugumi_rs_fail(call: *const c_void, kind: *const c_char, text: *const c_char);
     fn tsugumi_rs_cancelled(call: *const c_void) -> c_int;
@@ -104,7 +116,7 @@ fn accepted(code: c_int) -> Result<()> {
 }
 
 /// Valid only within the current invocation. It cannot be sent to another thread.
-/// Input/params views borrow this call; emitted output bytes are copied by the host.
+/// Input/params views borrow this call; outputs are returned in owned storage.
 #[doc(hidden)]
 pub struct Call<'call> {
     raw: *const c_void,
@@ -112,7 +124,6 @@ pub struct Call<'call> {
     thread: PhantomData<Rc<()>>,
 }
 impl Call<'_> {
-    pub fn finish_outputs(&self) -> Result<()> { accepted(unsafe { tsugumi_rs_finish_outputs(self.raw) }) }
     fn info(&self, field: u32) -> &str {
         let value = unsafe { tsugumi_rs_info(self.raw, field) };
         if value.is_null() {
@@ -140,18 +151,12 @@ impl Call<'_> {
         unsafe { tsugumi_rs_invocation(self.raw) }
     }
 
-    pub(crate) fn input_bytes(&self, port: &str) -> Result<Option<&[u8]>> {
-        let port = string(port)?;
+    pub fn inputs_bytes(&self) -> &[u8] {
         let mut size = 0;
-        // SAFETY: Call is made only for a validated live host call; the host owns its slices.
-        let bytes = unsafe { tsugumi_rs_input(self.raw, port.as_ptr(), &mut size) };
-        Ok(if bytes.is_null() {
-            None
-        } else {
-            Some(unsafe { std::slice::from_raw_parts(bytes, size) })
-        })
+        let data = unsafe { tsugumi_rs_inputs(self.raw, &mut size) };
+        unsafe { std::slice::from_raw_parts(data, size) }
     }
-    pub(crate) fn params_bytes(&self) -> &[u8] {
+    pub fn params_bytes(&self) -> &[u8] {
         let mut size = 0;
         let bytes = unsafe { tsugumi_rs_params(self.raw, &mut size) };
         if bytes.is_null() {
@@ -171,10 +176,6 @@ impl Call<'_> {
         let text = string(text)?;
         unsafe { tsugumi_rs_log(self.raw, text.as_ptr()) };
         Ok(())
-    }
-    pub(crate) fn emit(&self, port: &str, bytes: &[u8]) -> Result<()> {
-        let port = string(port)?;
-        accepted(unsafe { tsugumi_rs_emit(self.raw, port.as_ptr(), bytes.as_ptr(), bytes.len()) })
     }
     pub fn text(&self, text: &str) -> Result<()> {
         self.send_text(text, false)
@@ -274,7 +275,7 @@ impl Call<'_> {
 /// # Safety
 /// `raw` must be the host's valid call pointer for the duration of this function.
 #[doc(hidden)]
-pub unsafe fn invoke(raw: *const c_void, body: impl FnOnce(&Call<'_>) -> Result<()>) -> c_int {
+pub unsafe fn invoke(raw: *const c_void, body: &mut dyn FnMut(&Call<'_>) -> Result<()>) -> c_int {
     // SAFETY: caller is the worker; C checks the version before accessing further fields.
     if unsafe { tsugumi_rs_check(raw) } == 0 {
         return 1;

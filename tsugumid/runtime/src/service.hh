@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <iosfwd>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -16,11 +17,11 @@
 #include <thread>
 
 #include "history.hh"
-#include "tsugumi/rpc/lanes.hh"
 #include "remote_job.hh"
-#include "tsugumi/util/json.hh"
 #include "server.hh"
 #include "store.hh"
+#include "tsugumi/rpc/lanes.hh"
+#include "tsugumi/util/json.hh"
 #include "versions.hh"
 #include "wire.hh"
 
@@ -37,14 +38,15 @@ class CacheUsage;
 
 struct ServiceOptions {
   std::filesystem::path root;
-  std::string token;                 // required on WebSocket connections
+  std::string token;  // required on WebSocket connections
   std::string server_instance_id;
-  std::filesystem::path control_dir;  // launcher-managed files hidden from workers
-  std::filesystem::path sdk_dir;      // installed SDK (share/tsugumi/sdk)
+  std::filesystem::path
+      control_dir;                // launcher-managed files hidden from workers
+  std::filesystem::path sdk_dir;  // installed SDK (share/tsugumi/sdk)
   std::filesystem::path worker_binary;
   std::filesystem::path workerd_binary;
-  std::string fault;                  // test-only fault injection point
-  uint32_t env_cpus = 2;              // execution slot limits of the environment
+  std::string fault;      // test-only fault injection point
+  uint32_t env_cpus = 2;  // execution slot limits of the environment
   // Where build results are registered as Nix GC roots. Empty: the build
   // cache in the project. The shared VM keeps them in the store
   // (/nix/var/nix/gcroots/...), visible to the one nix-daemon.
@@ -58,11 +60,6 @@ struct ServiceOptions {
   std::filesystem::path usage_scratch_dir;
   // The VM supervisor publishes one shared measurement for all projects.
   std::filesystem::path usage_file;
-  // Folder of the run history database (history.sqlite). Empty: the
-  // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
-  // runs are then also kept in the project (.tsugumi/runs.sqlite).
-  std::filesystem::path history_dir;
-  bool archive_incompatible_history = false;
   // Folders of the Mac the app shares with this project, one per path at
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
@@ -72,7 +69,11 @@ struct ServiceOptions {
   // per line, written by a launcher whose daemon reads settings this process
   // cannot see (the shared VM). Empty: this process's own Nix configuration.
   std::filesystem::path substituters_file;
-  Limits limits;
+  // Builds made ahead (--prepare-cards output). When set, no Card is
+  // evaluated: each uses its prepared build, and a Card without one, or
+  // whose definition changed since, fails.
+  std::filesystem::path prepared_cards;
+  TransportLimits limits;
 };
 
 class Service : public RequestSink {
@@ -103,22 +104,37 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
-  auto run_scratch() const -> const std::filesystem::path& { return run_scratch_; }
+  // Builds every Code Card the way a run would, without running any
+  // (tsugumid --prepare-cards): one JSON line per Card. False when one failed.
+  auto prepare_cards(std::ostream& out) -> bool;
+  auto run_scratch() const -> const std::filesystem::path& {
+    return run_scratch_;
+  }
   auto file_roots() const -> std::vector<std::filesystem::path>;
-  auto keep_file_value(const Value& value, const std::filesystem::path& directory,
+  auto keep_file_value(const Value& value,
+                       const std::filesystem::path& directory,
                        const std::atomic<bool>& stop,
-                       const std::function<void(std::string_view, uint64_t, uint64_t)>& progress = {}) -> Value;
+                       const std::function<void(std::string_view, uint64_t,
+                                                uint64_t)>& progress = {})
+      -> Value;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
-  auto prepare_execution(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
+  auto prepare_execution(const Node& node,
+                         const std::filesystem::path& directory,
+                         BuildRequest& build)
       -> std::unique_ptr<PreparedExecution>;
+  // A Card's build ahead of its activation: when the worker it would choose
+  // with every worker free is the local one, configures `build` as
+  // prepare_execution() would and returns true. Reserves no worker; the
+  // activation still chooses its own.
+  auto prepare_early_build(const Node& node, BuildRequest& build) -> bool;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
-  static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;
+  static auto execution_diagnostic(const Node& node,
+                                   const std::vector<RemoteTarget>& targets)
+      -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
-  void schedule_export();
-  auto refresh_cache_usage() -> void;
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& record_json);
 
@@ -133,6 +149,11 @@ class Service : public RequestSink {
   void save(RequestIn& req);
   auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
+  auto complete_reload(RequestIn& req, const std::string& op_id,
+                       const std::string& digest, const Document& base,
+                       Store::Staged& staged) -> void;
+  auto version_operation(RequestIn& req,
+                         const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
   void scratch_delete(RequestIn& req);
@@ -164,7 +185,8 @@ class Service : public RequestSink {
   void run_invocations(RequestIn& req);
   void run_latest_invocations(RequestIn& req);
   auto dispatch_shell(RequestIn req) -> void;
-  auto project_shell(RequestIn& req, const std::atomic<bool>& cancelled) -> void;
+  auto project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
+      -> void;
   void run_record(RequestIn& req);
   auto run_environments(RequestIn& req) -> void;
   auto run_environment_paths(RequestIn& req) -> void;
@@ -179,19 +201,20 @@ class Service : public RequestSink {
 
   // Receipt handling shared by mutating requests. Returns true when the
   // request was answered from an existing receipt (or joined a pending one).
-  bool replay_or_join(RequestIn& req, const std::string& op_id, const std::string& kind,
-                      const std::string& digest);
+  bool replay_or_join(RequestIn& req, const std::string& op_id,
+                      const std::string& kind, const std::string& digest);
   void finish_op(const std::string& op_id, const std::string& receipt_bytes);
-  std::string receipt_reply(uint64_t request_id, const std::string& receipt_bytes, bool replayed);
+  std::string receipt_reply(uint64_t request_id,
+                            const std::string& receipt_bytes, bool replayed);
   void store_failure_receipt(const std::string& op_id, const std::string& kind,
                              const std::string& digest, const FailureData& f);
 
   std::string snapshot_reply(uint64_t request_id, const Document& doc,
-                             const std::optional<std::string>& view_id, bool open,
-                             const std::string& sub_id);
-  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(flatbuffers::FlatBufferBuilder& b,
-                                                              const Document& doc,
-                                                              const std::optional<std::string>& view_id);
+                             const std::optional<std::string>& view_id,
+                             bool open, const std::string& sub_id);
+  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
+      flatbuffers::FlatBufferBuilder& b, const Document& doc,
+      const std::optional<std::string>& view_id);
   void publish_delta(const Delta& delta);
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
@@ -227,8 +250,10 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> shell_lane_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
-  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> shell_cancellations_;
-  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> save_cancellations_;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
+      shell_cancellations_;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
+      save_cancellations_;
   Server* server_ = nullptr;
 
   std::mutex ops_mu_;
@@ -242,22 +267,13 @@ class Service : public RequestSink {
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
 
   std::mutex view_mu_;
-  std::string cursor_secret_;
 
   // The project's copy of finished runs (.tsugumi/runs.sqlite), written
   // shortly after runs end when the project keeps its run history.
-  std::filesystem::path runs_copy() const { return store_->state_dir() / "runs.sqlite"; }
-  void export_loop();
-  void export_now();
-  std::mutex export_mu_;
-  std::condition_variable export_cv_;
-  std::optional<std::chrono::steady_clock::time_point> export_first_;
-  std::optional<std::chrono::steady_clock::time_point> export_last_;
-  bool export_stop_ = false;
-  std::thread exporter_;
 };
 
-// Canonical request digests (all arguments except request_id, defaults expanded).
+// Canonical request digests (all arguments except request_id, defaults
+// expanded).
 std::string request_digest(const Tsugumi::RPC::Request* req);
 
 }  // namespace tsugumi

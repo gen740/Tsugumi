@@ -3,11 +3,21 @@
 #include <algorithm>
 #include <exception>
 #include <map>
+#include <set>
 
 #include "agent/catalog.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
+auto Resources(const std::vector<Message>& messages)
+    -> std::vector<std::string> {
+  std::set<std::string> ids;
+  for (const auto& message : messages) {
+    for (const auto& block : message.content)
+      ids.insert(block.resource_ids.begin(), block.resource_ids.end());
+  }
+  return {ids.begin(), ids.end()};
+}
 namespace {
 // A `tools` call runs the family action it names, so its result has that
 // tool's shape. Anything else, including a schema listing, keeps its own name.
@@ -88,17 +98,34 @@ auto RequestMessages(const std::vector<Message>& messages,
 auto RemovedMessages(const std::vector<Message>& before,
                      const std::vector<Message>& after)
     -> std::vector<Message> {
-  const auto retains = [](const Message& old, Message candidate) {
-    if (candidate.content.size() < old.content.size()) return false;
-    candidate.content.resize(old.content.size());
-    return SerializeMessages({candidate}) == SerializeMessages({old});
+  struct Normalized {
+    json::Members fields;
+    std::vector<std::string> blocks;
+  };
+  const auto normalize = [](const auto& messages) {
+    std::vector<Normalized> result;
+    for (const auto& raw : json::Array(SerializeMessages(messages))) {
+      auto fields = json::Object(raw);
+      auto blocks = json::Array(fields.at("content"));
+      fields.erase("content");
+      result.push_back({std::move(fields), std::move(blocks)});
+    }
+    return result;
+  };
+  const auto old_values = normalize(before);
+  const auto new_values = normalize(after);
+  const auto retains = [&](size_t old, size_t candidate) {
+    const auto& a = old_values[old];
+    const auto& b = new_values[candidate];
+    return a.fields == b.fields && a.blocks.size() <= b.blocks.size() &&
+           std::equal(a.blocks.begin(), a.blocks.end(), b.blocks.begin());
   };
   // Ordinary append checkpoints (including additional parallel tool blocks)
   // retain their prefix. Match the remainder from the end: identical assistant
   // answers must correspond to the retained suffix, not an earlier occurrence.
   size_t prefix = 0;
   while (prefix < before.size() && prefix < after.size() &&
-         retains(before[prefix], after[prefix]))
+         retains(prefix, prefix))
     ++prefix;
   std::vector<bool> kept(before.size(), false);
   std::fill(kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(prefix),
@@ -107,8 +134,7 @@ auto RemovedMessages(const std::vector<Message>& before,
   for (size_t i = before.size(); i > prefix;) {
     --i;
     size_t candidate = end;
-    while (candidate > prefix && !retains(before[i], after[candidate - 1]))
-      --candidate;
+    while (candidate > prefix && !retains(i, candidate - 1)) --candidate;
     if (candidate > prefix) {
       kept[i] = true;
       end = candidate - 1;

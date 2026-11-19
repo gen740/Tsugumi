@@ -41,7 +41,7 @@ table ProviderStatusRequest { profile:string (required); id:string (required); k
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; }
+table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
 table SignInBegin { attempt_id:string (required); url:string (required); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -52,13 +52,12 @@ table SignInStatus { attempt_id:string; state:string (required); message:string;
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
-enum EnvironmentFailureCode:ubyte { None, ProcessExit, ReadinessTimeout, Cancelled, LaunchFailed }
+enum EnvironmentFailureCode:ubyte { None, ProcessExit, Cancelled, LaunchFailed }
 table EnvironmentRequest {
   project:string (required);
   action:EnvironmentAction;
   origins:[string];
   folders:[string];
-  archive_incompatible_history:bool;
 }
 // Host-selected attached roots in the running project environment.
 table AttachedRoot { host_path:string (required); execution_path:string (required); }
@@ -70,7 +69,6 @@ table EnvironmentState {
   endpoint:string;
   token:string;
   project_id:string;
-  server_instance_id:string;
   unix_socket:string;
   pid:long;
   control_dir:string;
@@ -89,27 +87,33 @@ table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command, VerifyStore }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, ForgetProject, Reset, DeleteEnvironment, Command, VerifyStore }
 // Snapshot for the app's quit confirmation, including work from other clients.
 // Connections alone are not work. This neither stops nor transfers any work.
 /// -> HostActivity. Agent turns, host requests and project-core activity.
 table HostActivityRequest {}
 table HostActivity { busy:bool; }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
-table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
 table HostTerminalRequest { project:string; action:TerminalAction; session:ulong; rows:uint = 24; cols:uint = 80; data:[ubyte]; }
 table HostTerminal { session:ulong; }
 table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
 table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
   virtualization_supported:bool; image_available:bool; image_version:string;
-  stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
-  histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
+  stage:string; message:string; console:[string];
+  environments:uint; vm_removed:bool;
   // Host-authored confirmation of the same policy sent to the VM helper.
   reset_confirmation_ja:string; reset_confirmation_en:string;
   // Actual VM-directory entries kept and discarded by the helper.
   reset_kept_files:[string]; reset_discarded_files:[string];
+  // The shared VM's size: what its next start uses (Settings, else the
+  // defaults), the defaults and the largest values for this Mac. Set by hostd.
+  vm_resources:VMResources; vm_default_resources:VMResources; vm_limits:VMResources;
+  // The store disk file now, in GiB (0 before it exists). Set by the helper.
+  store_disk_gib:uint;
 }
+/// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
+table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }
@@ -257,17 +261,15 @@ table GuideState {
 }
 
 // Execution services contain public pins only. Private TLS keys never cross RPC.
-// Heartbeat intervals are >= 1 second; missed_heartbeats = 0 means never.
-// New registrations default to 15 seconds and never expire for silence.
 table ExecutionServicesRequest {}
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; grade:ulong = 1; }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
 table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong = 1; }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); grade:ulong = 1; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 

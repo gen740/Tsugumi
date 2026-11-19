@@ -45,7 +45,6 @@ There are four boundaries, from the innermost outwards.
 | --- | --- | --- |
 | rootfs | A release-built erofs image bundled in the guest archive (Linux kernel 6.12.115, Nix, Tsugumi, the worker and project tools; `vm/guest/vm-boot.nix` and `vm-system.nix`). First boot starts the prebuilt supervisor | Read-only |
 | Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
-| Run-history disk | `~/Library/Application Support/Tsugumi/vm/history.img` (all projects' run histories, one directory per project) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
 | virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
 | virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
@@ -58,7 +57,7 @@ There are four boundaries, from the innermost outwards.
   - **Attaching a folder to the chat**: a folder for the Agent to read is shared read-only with that project.
 - Each project is given its own virtiofs device (`tsugumi-<slot>`) for sharing, so replacing one project's shares does not affect others.
 - The only entitlement given to the app is `com.apple.security.virtualization` (`vm/macos/Resources/Tsugumi.entitlements`).
-- The signed `tsugumi-vmhost` helper holds the file lock (`flock`) on `vm/vm.lock`; hostd requests VM operations through the private helper contract.
+- The signed `tsugumi-vmhost` helper holds the file lock (`flock`) on `vmhost.lock`; hostd requests VM operations through the private helper contract.
 
 ### The VM's network
 
@@ -71,10 +70,9 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
 
 - **Own uid**: each project is assigned a uid of its own (from 20001, recorded in `/persist/tsugumi/uids`), and root is given up with `setgroups(0)` → `setgid` → `setuid` before starting.
 - **Namespaces**: `CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS` are separated.
-- **Visible files**: only the paths below are bind-mounted in the mount namespace; the parent of all slots (`/mnt`), the whole store disk (`/persist`) and the whole run-history disk of all projects (`/history-disk`) are all unmounted.
+- **Visible files**: only the paths below are bind-mounted in the mount namespace; the parent of all slots (`/mnt`), the whole store disk (`/persist`) are all unmounted.
   - `/project` … its own project folder
   - `/control` … its own control folder
-  - `/history` … its own run-history folder (on the run-history disk, `nosuid,nodev`)
   - `/scratch` … its own disk-backed invocation scratch (`/persist/run-scratch/<id>`, owned by the project uid, mode 0700). The core validates scratch ownership and private parents, rejects symbolic links and, on Linux, rejects tmpfs/ramfs (`tsugumid/runtime/src/run_scratch.cc`).
   - its own `/tmp` and `/run/tsugumi` (`tmpfs`)
   - `/run/tsugumi/rpc` … the sockets `tsugumid` listens on (WebSocket, Unix socket). They actually live in `/run/tsugumi-rpc/<id>` (a 0700 folder only that project's uid can enter), and `tsugumi-vmd` relays to them. There are no ports of any project on the VM's loopback (a Card allowed the network shares the VM's network, so a port there would let it reach another project's `tsugumid`).
@@ -89,7 +87,7 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
 
 - `nix-daemon` and `/nix/store` are shared. Every path in the store is identified by the hash of its inputs, and builds happen in `nix-daemon`'s sandbox (`sandbox = true`), so one project cannot rewrite another's build results. By Nix's design, however, **which paths exist in the store is visible to every project**. Do not put secrets in the Nix store.
 
-The human-authenticated Host environment service in `tsugumi-hostd` launches native project processes and grants their execution-broker capability before reporting readiness. It authenticates the project endpoint and checks its project/server identity when reattaching a resident process. Stop and observed process death revoke that capability and remove the Agent's endpoint registration. Attached-folder withdrawal replaces the control file immediately. The native service never archives history unless the person requests it with the archive flag.
+The human-authenticated Host environment service in `tsugumi-hostd` launches native project processes and grants their execution-broker capability before reporting readiness. It authenticates the native project endpoint when reattaching a resident process. Stop and observed process death revoke that capability and remove the Agent's endpoint registration. Attached-folder withdrawal replaces the control file immediately.
 
 Native project processes receive a newly constructed environment, never hostd's environment: `HOME` from the OS account record; `TMPDIR=/tmp`; `LANG=C.UTF-8`; and `PATH` containing that account's `.nix-profile/bin`, `/nix/var/nix/profiles/default/bin`, `/run/current-system/sw/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, and `/sbin`. If a system CA bundle is readable, its path sets `SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` (searched in `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`, then `/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt`). Only the project's newly issued `TSUGUMI_EXECUTION_BROKER` and `TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE` are added for broker access. Provider credentials, shell startup hooks and arbitrary caller variables are not inherited.
 
@@ -179,9 +177,9 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 - A connection with an `Origin` header is checked against the allow list (`--allow-origin`; hostd applies the origins supplied by the client starting the environment) and refused with 403 on a mismatch. Ordinary web browsers always send an `Origin` header, so **a browser that opened a malicious web page cannot connect to Tsugumi on `127.0.0.1`** (preventing DNS rebinding and Cross-Site WebSocket Hijacking). Native clients without an `Origin` header (the app itself, the Agent, test scripts) authenticate with the token.
 - The connection is closed at once on receiving an unmasked client frame, a frame with reserved bits set, a frame over the size limit, or a FlatBuffers message with an unknown union type or an invalid length (checked in `test_transport.py` and `test_contract.py`).
 
-### Signed paging cursors
+### Paging cursors
 
-Paging cursors, for reading history and the like, carry a signature like an HMAC with a secret key generated at each start (the first 32 hex digits of `sha256(secret + payload)`), so a client cannot tamper with a cursor to read data out of range.
+Authenticated clients page through recorded history using an encoded position. Cursors have no per-start signature or expiry.
 
 ## 7. The model's API keys (Agent)
 
@@ -285,8 +283,7 @@ Helpers have separate scratch and command/output directories, including unscoped
 | Data | Where | Deleting and managing |
 | --- | --- | --- |
 | The project's documents and sources | The project folder | Manage in Finder or the like (Tsugumi never deletes the folder itself) |
-| Run history (primary) | The VM's run-history disk `vm/history.img` (`/history-disk/<id>/` inside the VM) | "Delete…" under the project's Run History settings, or "Run history in the VM" in the settings |
-| Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete…" under Run History, or stop writing it with `saveRunHistory = false` |
+| Primary run history | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete…" under Run History |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete" under Build Cache and "Clean shared store" |
 | Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
 | API keys | macOS login Keychain; hostd's owner-only `host-settings.sqlite` outside macOS; Web environment keys in memory | Settings > API registers or deletes a key |
@@ -294,13 +291,13 @@ Helpers have separate scratch and command/output directories, including unscoped
 | Home Agent conversations; host project/folder registrations, access requests and grants, provider selections and provisioned OAuth credentials | `host-core/host.sqlite` (0600) under the Mac support folder (`Tsugumi/` or `Tsugumi-dev/`), or under the Web data folder on Linux (`TSUGUMI_HOST_STATE` overrides it) | Delete Home conversations through Agent RPC; revoke access or delete credentials in settings; removing the host state does not delete project conversations |
 | ChatGPT account metadata and Skill folder settings | hostd's `host-settings.sqlite`, scoped separately for the app and each Web host | Settings > API / Skills |
 
-The host service creates `host-core/format` with one integer format number before opening any database. An existing folder with a missing or different number is refused. Move or rename the full folder named in the startup error, then start Tsugumi again and sign in again. No state is migrated, moved or deleted automatically. `host.sqlite`, `host-settings.sqlite` and `execution.sqlite` share this folder format; the process lock and log are `host.lock` and `host.log`. Project conversation and run-history databases remain outside it.
+The host service keeps `host.sqlite`, `host-settings.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
 
 `tsugumi-hostd` writes project conversations through the registered host folder, including on macOS where `tsugumid` runs in the VM. It does not open this database through the VM's shared-folder mount. SQLite uses a rollback journal with full synchronization; a lifetime exclusive lock on `.tsugumi/agent.lock` refuses a second Agent host with `busy` until the first stops. Shared filesystems must honor file locks; independent filesystem copies have separate locks, and file synchronization does not coordinate writers. Registering a second existing folder with the same project identity on one host is refused. Stop the Agent service before copying the project so the database is complete.
 
 Copy the entire project folder, including `.tsugumi/`, to carry the Agent's words, tool outcomes and evidence links with its run records. The app, Web host and plugin use the same hostd store. Listing and search read Home and the available project folders registered with this host, including stopped project environments; they do not discover other folders. A conversation stays with its original project. A moved project needs fresh access grants, including for attached host folders. Permission events record that an approval existed, but access requests, usable approvals, grants, credentials, provider selections and Skill folder registrations stay with the host. Known provisioned credentials are redacted from stored conversation text, pending messages and tool results. Treat conversation contents as project data when sharing the folder; deleting a live conversation does not delete other copies or backups.
 
-"Reset all environments" in the settings stops the VM and deletes `vm/` (except the run-history disk `vm/history.img`) and `environments/`. The documents, artifacts, `.tsugumi/runs.sqlite` and `.tsugumi/agent.sqlite` in project folders, and the run-history disk of the VM, are kept.
+"Reset all environments" in the settings stops the VM and deletes `vm/` and `environments/`. The documents, artifacts, `.tsugumi/runs.sqlite` and `.tsugumi/agent.sqlite` in project folders are kept.
 
 ## 9. Known limitations and cautions
 
@@ -310,7 +307,7 @@ Most of these spell out, as practical cautions, what lies outside the boundary i
 - **Check the permissions written in a project you received before running it.** `network`, `sandbox: false` and `hostFolders` (especially `write: true`) in `_card.json`, and `nixSources` in `tsugumi.json`, take effect without confirmation both on opening and at run time (only saves the Agent makes wait for approval; §7). Look at the Cards' icons and the Experimental items of the Cards' settings. A `sandbox: false` Card can read every Mac folder shared with that project (§4).
 - **Projects share one Linux kernel.** An exploited kernel vulnerability could reach other projects, so do not open at the same time projects you want strongly separated (§3).
 - **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Direct macOS host](#direct-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
-- **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Releasing](../RELEASING.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
+- **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and requested updates are installed after their checksum, code signature and more are checked ("Updates" in [Releasing](../RELEASING.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
 
 ## Remote worker boundary
 

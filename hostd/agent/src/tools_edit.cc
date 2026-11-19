@@ -28,8 +28,6 @@ auto Edits(const json::Members& arguments) -> H::ProjectEditsT {
         auto selector = std::make_unique<H::ProjectSelectorT>();
         selector->field = json::Text(step, "field");
         selector->match_json = json::Get(step, "match", "");
-        if (!selector->match_json.empty())
-          json::Object(selector->match_json, step_at + ".match");
         field.selector.push_back(std::move(selector));
       }
       auto value = [&](const char* key) {
@@ -55,7 +53,7 @@ auto Edits(const json::Members& arguments) -> H::ProjectEditsT {
       text.new_string = json::Text(args, "new_string");
       const auto count =
           json::UInt(json::Get(args, "expected_matches", "1"), UINT64_MAX);
-      if (count == 0 || count > UINT32_MAX)
+      if (count > UINT32_MAX)
         throw Failure("invalid_request", "invalid expected_matches");
       text.expected_matches = static_cast<uint32_t>(count);
       edit->value.Set(std::move(text));
@@ -195,12 +193,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       {
         std::lock_guard lock(mutex);
         if (boundary) RequireHelperPermission(conversation, *boundary);
-        const auto resource = authorization.empty() ? project : authorization;
-        for (const auto grant :
-             {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-          if (!access_service.HasGrant(resource, conversation, grant))
-            throw Failure("permission_denied",
-                          "project grant was revoked before commit");
       }
       if (boundary && boundary->scoped()) {
         const auto read = HelperReader(
@@ -211,7 +203,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
       if (args.contains("approved_permissions"))
         plan["approved_permissions"] = args.at("approved_permissions");
     };
-    return OperateProject(project, request, context, stop).json;
+    return OperateProject(request, context, stop).json;
   } catch (const json::DecodeFailure& error) {
     return refused("invalid_request", error.what());
   } catch (const Cancelled&) {

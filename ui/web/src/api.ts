@@ -1,23 +1,20 @@
 import { modelErrorMessage } from './i18n'
-// Calls to the host server (files, processes, the Agent). Mutating calls
-// carry a header that a cross-origin page cannot send.
+// Calls to the host server (files, processes, the Agent).
 
 import type { HistoryVersionMismatch } from '../shared/historyVersion'
 
-export class ApiError extends Error {}
-
 let settingsRevision: Record<string, number> | undefined
 
-export async function api<T = any>(path: string, body?: unknown): Promise<T> {
+export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   if (path === '/api/settings' && body !== undefined) {
     if (!settingsRevision) await api('/api/settings')
     body = { revision: settingsRevision, ...(body as object) }
   }
   const r = await fetch(path, body === undefined
-    ? { headers: { 'x-tsugumi': '1' } }
-    : { method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
+    ? { signal }
+    : { signal, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new ApiError(modelErrorMessage(v.error ?? `HTTP ${r.status}`))
+  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
@@ -39,7 +36,7 @@ export function reportPageProject(project?: string) {
   void api('/api/page', { page: page(), project }).catch(() => {})
 }
 
-/** This page left a project: its environment and chat stop unless another page shows it. */
+/** This page left a project. The last page releases chat observation and terminals. */
 export function closePageProject(project: string) {
   reported = undefined
   return api('/api/project/close', { page: page(), path: project })
@@ -99,7 +96,6 @@ export interface SetupStatus {
   sdk: { path: string; ok: boolean }
   nix: { ok: boolean }
   repo: string
-  building: { running: boolean; code?: number; log: string } | null
 }
 
 export interface Demo {

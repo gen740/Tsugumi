@@ -5,7 +5,6 @@ Missing optional language runtimes skip only that language's parse check.
 """
 import ast
 import importlib
-import json
 import os
 from pathlib import Path
 import re
@@ -110,14 +109,13 @@ def test_python_fields_and_actual_unpacked_types(description, generated, monkeyp
     assert hints['title'] == typing.Optional[bytes]
     assert type(received.title) is bytes
     assert hints['optionalInt'] == typing.Optional[int]
-    assert 'list[float]' in text
-    assert 'numpy.ndarray' in text
-    assert 'itemCount: int' in text
+    assert list(map(float, received.values)) == [1.25, 2.5]
+    assert eval(module.MessageT.sample__ChildT.__annotations__["itemCount"], module.__dict__) is int
     assert received.children[0].itemCount == 7
-    assert module.MessageT.__dataclass_fields__['children'].name == 'children'
-    # Real names, not a snake_case translation of the .fbs.
-    assert 'noise_sd:' not in text
-    assert 'def Pack' not in text and 'def Init' not in text
+    described = module.MessageT(**vars(received))
+    assert described.children[0].itemCount == 7
+    assert described.noiseSd == 0.5 and described.title == b'text'
+    assert described.optionalInt == 2
 
 
 def test_cpp_members_compile_and_match_generated_native_objects(description, generated, tmp_path):
@@ -125,26 +123,24 @@ def test_cpp_members_compile_and_match_generated_native_objects(description, gen
     compiler = shutil.which(os.environ.get('CXX', 'c++'))
     if not compiler:
         pytest.skip('C++ compiler is required')
-    text = description('cpp')
-    expected = (root / 'input_generated.h').read_text()
-    members = ['double noise_sd = 0.0;', 'std::string title{};',
-               'std::vector<std::unique_ptr<sample::ChildT>> children{};',
-               'std::unique_ptr<sample::ChildT> child{};', 'bool flag = false;',
-               'std::vector<float> values{};', 'sample::Color color = sample::Color::Red;',
-               'sample::ChoiceUnion choice{};',
-               '::flatbuffers::Optional<int32_t> optional_int = ::flatbuffers::nullopt;']
-    for member in members:
-        assert member in expected
-        assert member in text
-    assert 'Pack(' not in text and 'FlatBufferBuilder' not in text
-    source = tmp_path / 'description.cc'
-    source.write_text(text)
-    run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), source])
-    # Also typecheck the actual generated counterpart used by the SDK.
-    source.write_text('#include "input_generated.h"\n#include <type_traits>\n'
-                      'static_assert(std::is_same_v<decltype(sample::MessageT::noise_sd), double>);\n'
-                      'static_assert(std::is_same_v<decltype(sample::MessageT::title), std::string>);\n')
-    run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), '-I' + str(root), source])
+    checks = """
+#include <type_traits>
+using sample::MessageT;
+static_assert(std::is_same_v<decltype(MessageT::noise_sd), double>);
+static_assert(std::is_same_v<decltype(MessageT::title), std::string>);
+static_assert(std::is_same_v<decltype(MessageT::children), std::vector<std::unique_ptr<sample::ChildT>>>);
+static_assert(std::is_same_v<decltype(MessageT::child), std::unique_ptr<sample::ChildT>>);
+static_assert(std::is_same_v<decltype(MessageT::flag), bool>);
+static_assert(std::is_same_v<decltype(MessageT::values), std::vector<float>>);
+static_assert(std::is_same_v<decltype(MessageT::color), sample::Color>);
+static_assert(std::is_same_v<decltype(MessageT::choice), sample::ChoiceUnion>);
+static_assert(std::is_same_v<decltype(MessageT::optional_int), flatbuffers::Optional<int32_t>>);
+static_assert(std::is_same_v<decltype(MessageT::point), std::unique_ptr<sample::Point>>);
+"""
+    source = tmp_path / 'check.cc'
+    for declarations in (description('cpp'), '#include "input_generated.h"'):
+        source.write_text(declarations + '\n' + checks)
+        run([compiler, '-std=c++20', '-fsyntax-only', '-I' + str(include), '-I' + str(root), source])
 
 
 @pytest.mark.parametrize('language,filename', [('go', 'Message.go'), ('rust', None), ('csharp', 'Message.cs')])
@@ -152,19 +148,22 @@ def test_other_typed_faces_match_generated_fields(description, generated, langua
     root, _ = generated
     text = description(language)
     expected = (root / ('sample/' + filename if filename else 'input_generated.rs')).read_text()
+    compact = lambda kind: re.sub(r'\s+|@', '', kind)
     if language == 'go':
-        body = re.search(r'type MessageT struct \{(.*?)\n\}', expected, re.S)[1]
-        assert body.strip() in text
+        def fields(source):
+            body = re.search(r'type\s+MessageT\s+struct\s*\{(.*?)\n\}', source, re.S)[1]
+            return {name: compact(kind) for name, kind in re.findall(r'^\s*(\w+)\s+([^\n]+)', body, re.M)}
     elif language == 'csharp':
-        for field in re.findall(r'public [^\n]+ \{ get; set; \}', expected):
-            # The SDK's namespace escaping is applied after flatc.
-            field = re.sub(r'global::([\w.]+)', lambda m: 'global::' + '.'.join('@' + x for x in m[1].split('.')), field)
-            assert field in text
+        def fields(source):
+            body = re.search(r'class\s+MessageT\b[^{]*\{(.*?)^\s*\}', source, re.S | re.M)[1]
+            return {name: compact(kind) for kind, name in re.findall(r'public\s+([^{};]+?)\s+(\w+)\s*\{\s*get\s*;\s*set\s*;\s*\}', body)}
     else:
-        for name in ('noise_sd', 'title', 'children', 'child', 'flag', 'values', 'color', 'choice', 'optional_int'):
-            signature = re.search(r'pub fn ' + name + r'\(&self\) -> ([^\n]+) \{', expected)[1]
-            assert f'fn {name}(&self) -> {signature};' in text
-    assert 'Pack(' not in text and 'FlatBufferBuilder' not in text
+        def fields(source):
+            return {name: compact(kind) for name, kind in re.findall(r'\bfn\s+(\w+)\s*\(\s*&self\s*\)\s*->\s*([^;{\n]+)', source)}
+    described = fields(text)
+    actual = fields(expected)
+    assert described
+    assert described.items() <= actual.items()
 
 
 def test_json_faces_keep_sdk_field_names(description):

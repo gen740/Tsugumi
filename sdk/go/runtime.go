@@ -1,5 +1,5 @@
-// Package tsugumi gives a Card owned values and guarded, call-scoped host access.
-package tsugumi
+// Package host provides guarded, call-scoped access to the worker.
+package host
 
 /*
 #include "host.h"
@@ -23,12 +23,12 @@ func Fail(kind, message string) error { return &Failure{kind, message} }
 
 var ErrClosed = errors.New("the Card invocation has ended")
 
-// callScope copies share one lifetime guard, so retaining or copying a callScope
+// Scope copies share one lifetime guard, so retaining or copying a Scope
 // cannot retain a host pointer. All callbacks are serialized across goroutines.
-type callScope struct{ state *callState }
+type Scope struct{ state *callState }
 type callState struct {
- info [5]string
- invocation uint64
+	info       [5]string
+	invocation uint64
 	mu         sync.Mutex
 	raw        *C.tsugumi_call
 	done       chan struct{}
@@ -38,7 +38,7 @@ type callState struct {
 	failure    chan error
 }
 
-func (scope *callScope) host(fn func(*C.tsugumi_call) error) error {
+func (scope *Scope) host(fn func(*C.tsugumi_call) error) error {
 	if scope == nil || scope.state == nil {
 		return ErrClosed
 	}
@@ -50,7 +50,7 @@ func (scope *callScope) host(fn func(*C.tsugumi_call) error) error {
 	}
 	return fn(s.raw)
 }
-func (scope *callScope) close() {
+func (scope *Scope) close() {
 	s := scope.state
 	s.mu.Lock()
 	s.raw = nil
@@ -58,14 +58,14 @@ func (scope *callScope) close() {
 	s.mu.Unlock()
 	s.cancel.Do(func() { close(s.done) })
 }
-func (scope *callScope) RunID() string              { return scope.state.info[0] }
-func (scope *callScope) Card() string               { return scope.state.info[1] }
-func (scope *callScope) WorkingDirectory() string   { return scope.state.info[2] }
-func (scope *callScope) TemporaryDirectory() string { return scope.state.info[3] }
-func (scope *callScope) OutputDirectory() string    { return scope.state.info[4] }
-func (scope *callScope) Invocation() uint64         { return scope.state.invocation }
-func (scope *callScope) Done() <-chan struct{}      { return scope.state.done }
-func (scope *callScope) Cancelled() bool {
+func (scope *Scope) RunID() string              { return scope.state.info[0] }
+func (scope *Scope) Card() string               { return scope.state.info[1] }
+func (scope *Scope) WorkingDirectory() string   { return scope.state.info[2] }
+func (scope *Scope) TemporaryDirectory() string { return scope.state.info[3] }
+func (scope *Scope) OutputDirectory() string    { return scope.state.info[4] }
+func (scope *Scope) Invocation() uint64         { return scope.state.invocation }
+func (scope *Scope) Done() <-chan struct{}      { return scope.state.done }
+func (scope *Scope) Cancelled() bool {
 	cancelled := true
 	_ = scope.host(func(call *C.tsugumi_call) error { cancelled = C.tsugumi_go_cancelled(call) != 0; return nil })
 	select {
@@ -77,7 +77,7 @@ func (scope *callScope) Cancelled() bool {
 }
 
 // Remaining returns -1 without a deadline, and zero after the call ends.
-func (scope *callScope) Remaining() time.Duration {
+func (scope *Scope) Remaining() time.Duration {
 	var ms int64
 	_ = scope.host(func(call *C.tsugumi_call) error { ms = int64(C.tsugumi_go_remaining(call)); return nil })
 	if ms < 0 {
@@ -89,7 +89,7 @@ func (scope *callScope) Remaining() time.Duration {
 // Go starts a managed task. Its errors and panics fail the invocation; successful
 // calls wait for every task. Schedule tasks before run returns, and select on
 // Done for cancellation. An uncooperative task is stopped with its worker.
-func (scope *callScope) Go(fn func() error) error {
+func (scope *Scope) Go(fn func() error) error {
 	s := scope.state
 	s.mu.Lock()
 	if s.raw == nil || s.sealed {
@@ -110,7 +110,7 @@ func (scope *callScope) Go(fn func() error) error {
 	}()
 	return nil
 }
-func (scope *callScope) wait() error {
+func (scope *Scope) Wait() error {
 	s := scope.state
 	s.mu.Lock()
 	s.sealed = true
@@ -156,38 +156,30 @@ func accepted(value C.int) error {
 	}
 	return nil
 }
-func copied(ptr *C.uchar, n C.size_t) ([]byte, error) {
-	if uint64(n) > uint64(1<<31-1) {
-		return nil, Fail("type_mismatch", "input exceeds Go's copy limit")
-	}
+// WorkerCall bounds the input and params buffers well below the C.int limit.
+func copied(ptr *C.uchar, n C.size_t) []byte {
 	if ptr == nil {
-		return nil, nil
+		return nil
 	}
-	return C.GoBytes(unsafe.Pointer(ptr), C.int(n)), nil
+	return C.GoBytes(unsafe.Pointer(ptr), C.int(n))
 }
-func (scope *callScope) inputBytes(port string) ([]byte, error) {
-	name, err := cstring(port)
-	if err != nil {
-		return nil, err
-	}
-	defer C.free(unsafe.Pointer(name))
+func (scope *Scope) InputsBytes() ([]byte, error) {
 	var bytes []byte
-	err = scope.host(func(call *C.tsugumi_call) error {
+	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
-		p := C.tsugumi_go_input(call, name, &n)
-		bytes, err = copied(p, n)
-		return err
+		p := C.tsugumi_go_inputs(call, &n)
+		bytes = copied(p, n)
+		return nil
 	})
 	return bytes, err
 }
-func (scope *callScope) paramsBytes() ([]byte, error) {
+func (scope *Scope) ParamsBytes() ([]byte, error) {
 	var bytes []byte
-	var err error
-	err = scope.host(func(call *C.tsugumi_call) error {
+	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
 		p := C.tsugumi_go_params(call, &n)
-		bytes, err = copied(p, n)
-		return err
+		bytes = copied(p, n)
+		return nil
 	})
 	return bytes, err
 }
@@ -197,18 +189,7 @@ func bytesPointer(bytes []byte) *C.uchar {
 	}
 	return (*C.uchar)(unsafe.Pointer(&bytes[0]))
 }
-func (scope *callScope) emit(port string, bytes []byte) error {
-	name, err := cstring(port)
-	if err != nil {
-		return err
-	}
-	defer C.free(unsafe.Pointer(name))
-	// The host copies bytes synchronously; no Go pointer is retained by C.
-	return scope.host(func(call *C.tsugumi_call) error {
-		return accepted(C.tsugumi_go_emit(call, name, bytesPointer(bytes), C.size_t(len(bytes))))
-	})
-}
-func (scope *callScope) Log(text string) error {
+func (scope *Scope) Log(text string) error {
 	value, err := cstring(text)
 	if err != nil {
 		return err
@@ -216,7 +197,7 @@ func (scope *callScope) Log(text string) error {
 	defer C.free(unsafe.Pointer(value))
 	return scope.host(func(call *C.tsugumi_call) error { C.tsugumi_go_log(call, value); return nil })
 }
-func (scope *callScope) sendText(text string, markdown bool) error {
+func (scope *Scope) sendText(text string, markdown bool) error {
 	value, err := cstring(text)
 	if err != nil {
 		return err
@@ -228,9 +209,9 @@ func (scope *callScope) sendText(text string, markdown bool) error {
 	}
 	return scope.host(func(call *C.tsugumi_call) error { return accepted(C.tsugumi_go_text(call, value, flag)) })
 }
-func (scope *callScope) Text(text string) error     { return scope.sendText(text, false) }
-func (scope *callScope) Markdown(text string) error { return scope.sendText(text, true) }
-func (scope *callScope) Scalar(value float64, label string) error {
+func (scope *Scope) Text(text string) error     { return scope.sendText(text, false) }
+func (scope *Scope) Markdown(text string) error { return scope.sendText(text, true) }
+func (scope *Scope) Scalar(value float64, label string) error {
 	name, err := cstring(label)
 	if err != nil {
 		return err
@@ -238,7 +219,7 @@ func (scope *callScope) Scalar(value float64, label string) error {
 	defer C.free(unsafe.Pointer(name))
 	return scope.host(func(call *C.tsugumi_call) error { return accepted(C.tsugumi_go_scalar(call, C.double(value), name)) })
 }
-func (scope *callScope) Module(name, json string) error {
+func (scope *Scope) Module(name, json string) error {
 	a, err := cstring(name)
 	if err != nil {
 		return err
@@ -251,7 +232,7 @@ func (scope *callScope) Module(name, json string) error {
 	defer C.free(unsafe.Pointer(b))
 	return scope.host(func(call *C.tsugumi_call) error { return accepted(C.tsugumi_go_module(call, a, b)) })
 }
-func (scope *callScope) Image(media string, bytes []byte, alt string) error {
+func (scope *Scope) Image(media string, bytes []byte, alt string) error {
 	a, err := cstring(media)
 	if err != nil {
 		return err
@@ -266,7 +247,7 @@ func (scope *callScope) Image(media string, bytes []byte, alt string) error {
 		return accepted(C.tsugumi_go_image(call, a, bytesPointer(bytes), C.size_t(len(bytes)), b))
 	})
 }
-func (scope *callScope) LineChart(id, label string, x, y []float64) error {
+func (scope *Scope) LineChart(id, label string, x, y []float64) error {
 	if len(x) != len(y) {
 		return Fail("output_invalid", "line coordinates must have equal lengths")
 	}
@@ -289,7 +270,7 @@ func (scope *callScope) LineChart(id, label string, x, y []float64) error {
 		return accepted(C.tsugumi_go_line(call, a, b, px, py, C.size_t(len(x))))
 	})
 }
-func (scope *callScope) Points(x, y, z []float32, colors []uint32) error {
+func (scope *Scope) Points(x, y, z []float32, colors []uint32) error {
 	if len(x) != len(y) || len(x) != len(z) || (colors != nil && len(x) != len(colors)) {
 		return Fail("output_invalid", "point coordinates and colors must have equal lengths")
 	}
@@ -331,7 +312,7 @@ func cstrings(values []string) (**C.char, func(), error) {
 	}
 	return (**C.char)(memory), cleanup, nil
 }
-func (scope *callScope) Table(columns []string, rows [][]string) error {
+func (scope *Scope) Table(columns []string, rows [][]string) error {
 	cells := []string{}
 	for _, row := range rows {
 		if len(row) != len(columns) {
@@ -369,16 +350,18 @@ func describe(err error) (kind, message string) {
 
 // Invoke is called only by the generated C entry points. The worker guarantees
 // raw remains valid until this function returns. The call pointer never survives
-// close, even if user code keeps a callScope or starts its own goroutine.
-func Invoke(raw unsafe.Pointer, body func(*callScope) error) (result int) {
+// close, even if user code keeps a Scope or starts its own goroutine.
+func Invoke(raw unsafe.Pointer, body func(*Scope) error, packOutputs func()) (result int) {
 	call := (*C.tsugumi_call)(raw)
 	if C.tsugumi_go_check(call) == 0 {
 		return 1
 	}
 	state := &callState{raw: call, done: make(chan struct{}), failure: make(chan error, 1)}
-	scope := &callScope{state: state}
-    for i := range state.info { state.info[i] = C.GoString(C.tsugumi_go_info(call, C.uint(i))) }
-    state.invocation = uint64(C.tsugumi_go_invocation(call))
+	scope := &Scope{state: state}
+	for i := range state.info {
+		state.info[i] = C.GoString(C.tsugumi_go_info(call, C.uint(i)))
+	}
+	state.invocation = uint64(C.tsugumi_go_invocation(call))
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
@@ -401,7 +384,13 @@ func Invoke(raw unsafe.Pointer, body func(*callScope) error) (result int) {
 		if err := body(scope); err != nil {
 			return err
 		}
-		return scope.wait()
+		if err := scope.Wait(); err != nil {
+			return err
+		}
+		if packOutputs != nil {
+			packOutputs()
+		}
+		return nil
 	})
 	if err == nil {
 		return 0
@@ -416,28 +405,24 @@ func Invoke(raw unsafe.Pointer, body func(*callScope) error) (result int) {
 	return 1
 }
 
-func (scope *callScope) finishOutputs() error {
-  return scope.host(func(call *C.tsugumi_call) error {
-    if C.tsugumi_go_finish_outputs(call) != 0 { return Fail("output_invalid", "required outputs were not emitted") }
-    return nil
-  })
-}
-
 // Report publishes presentation and log side effects during the call.
-type Report struct{ scope *callScope }
+type Report struct{ scope *Scope }
 
 // Run exposes invocation facts and cooperative work through the same guard.
-type Run struct { scope *callScope }
-func (run *Run) RunID() string { return run.scope.RunID() }
-func (run *Run) Card() string { return run.scope.Card() }
-func (run *Run) Invocation() uint64 { return run.scope.Invocation() }
-func (run *Run) WorkingDirectory() string { return run.scope.WorkingDirectory() }
+type Run struct{ scope *Scope }
+
+func NewReport(scope *Scope) *Report        { return &Report{scope} }
+func NewRun(scope *Scope) *Run              { return &Run{scope} }
+func (run *Run) RunID() string              { return run.scope.RunID() }
+func (run *Run) Card() string               { return run.scope.Card() }
+func (run *Run) Invocation() uint64         { return run.scope.Invocation() }
+func (run *Run) WorkingDirectory() string   { return run.scope.WorkingDirectory() }
 func (run *Run) TemporaryDirectory() string { return run.scope.TemporaryDirectory() }
-func (run *Run) OutputDirectory() string { return run.scope.OutputDirectory() }
-func (run *Run) Done() <-chan struct{} { return run.scope.Done() }
-func (run *Run) Cancelled() bool { return run.scope.Cancelled() }
-func (run *Run) Remaining() time.Duration { return run.scope.Remaining() }
-func (run *Run) Go(fn func() error) error { return run.scope.Go(fn) }
+func (run *Run) OutputDirectory() string    { return run.scope.OutputDirectory() }
+func (run *Run) Done() <-chan struct{}      { return run.scope.Done() }
+func (run *Run) Cancelled() bool            { return run.scope.Cancelled() }
+func (run *Run) Remaining() time.Duration   { return run.scope.Remaining() }
+func (run *Run) Go(fn func() error) error   { return run.scope.Go(fn) }
 
 func (report *Report) Log(text string) error      { return report.scope.Log(text) }
 func (report *Report) Text(text string) error     { return report.scope.Text(text) }

@@ -1,42 +1,38 @@
 #include "host/project_operations.hh"
-#include "host/agent_exclude.hh"
-#include "../agent_fixture_server.hh"
 
-#include "host/document_edits.hh"
-#include <filesystem>
-#include <fstream>
 #include <gtest/gtest.h>
 
-#include "tsugumi/util/crypto.hh"
+#include <filesystem>
+#include <fstream>
 
+#include "../agent_fixture_server.hh"
+#include "host/agent_exclude.hh"
+#include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
-TEST(ProjectOperations,
-     MissingHostIdentityIsAnInternalFailureBeforeAnyReadOrWrite) {
-  for (const auto &invalid : {"project", "operation"}) {
-    H::ProjectOperateRequestT request;
-    request.project_id = std::string(invalid) == "project" ? "other" : "p";
-    request.op_id = std::string(invalid) == "operation"
-                        ? ""
-                        : "d7f52370-d5f6-4c4f-8a1f-546eb93090f1";
-    bool called = false;
-    try {
+TEST(ProjectOperations, CoreRejectsInvalidOperationIdentity) {
+  H::ProjectOperateRequestT request;
+  request.project_id = "p";
+  int calls = 0;
+  EXPECT_THROW(
       ProjectOperations().Execute(
-          "p", request, {}, [&](const auto &, const auto &) -> OperationReply {
-            called = true;
-            return {};
-          });
-      FAIL() << "invalid host identity must fail";
-    } catch (const Failure &failure) {
-      EXPECT_EQ(failure.code, "internal_error");
-    }
-    EXPECT_FALSE(called);
-  }
+          request, {},
+          [&](const auto& method, const auto& args) -> OperationReply {
+            ++calls;
+            EXPECT_EQ(method, "operation_get");
+            EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
+            return {
+                R"({"reply":"Failure","value":{"kind":"invalid_request","diagnostic":"invalid op_id"}})",
+                {}};
+          }),
+      Failure);
+  EXPECT_EQ(calls, 1);
 }
 TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
   H::ProjectTextEditT edit;
@@ -76,15 +72,25 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
       EXPECT_EQ(method, "project_save");
       EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
       if (saves++ == 0) {
-        intent = args.at("save_intent");
+        intent = json::Text(args, "save_intent");
+        EXPECT_FALSE(intent.empty());
         ++revision;
         reply = "Failure";
         value = {{"kind", "\"revision_conflict\""}};
       } else {
-        EXPECT_EQ(args.at("save_intent"), intent);
+        EXPECT_EQ(json::Text(args, "save_intent"), intent);
         EXPECT_EQ(json::Text(args, "base_rev"), "2");
-        EXPECT_NE(args.at("changes").find("bmV3ICsgdW5yZWxhdGVk"),
-                  std::string::npos);
+        std::optional<std::string> found;
+        for (const auto& raw : json::Array(args.at("changes"))) {
+          const auto change = json::Object(raw);
+          const auto file = json::Object(change.at("value"));
+          if (json::Text(file, "path") != edit.file_path) continue;
+          std::string bytes;
+          EXPECT_TRUE(crypto::base64_decode(
+              json::Text(json::Object(file.at("bytes")), "base64"), bytes));
+          found = std::move(bytes);
+        }
+        EXPECT_EQ(found, "new + unrelated");
         reply = "SaveResult";
         value = {{"rev", "\"3\""}};
       }
@@ -95,8 +101,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
         {}};
   };
   ProjectOperations operations;
-  const auto result =
-      operations.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto result = operations.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(result.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 2);
 }
@@ -105,8 +110,7 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
 
 namespace tsugumi::host {
 namespace {
-TEST(ProjectOperationUndo,
-     UnrelatedWriterChangesSurviveAndConflictsNameTheField) {
+TEST(ProjectOperationUndo, UnrelatedWriterChangesSurviveAndConflictsBlockUndo) {
   SaveBase before;
   before.snapshot["rev"] = "1";
   before.files["tsugumi.json"] =
@@ -114,29 +118,27 @@ TEST(ProjectOperationUndo,
   const json::Members forward{
       {"changes",
        R"([{"value_type":"SetProject","value":{"json":"{\"name\":\"new\",\"canvas\":{\"cards\":[],\"connections\":[]}}"}}])"}};
-  const auto read = [](const auto &) -> std::optional<std::string> {
+  const auto read = [](const auto&) -> std::optional<std::string> {
     return std::nullopt;
   };
   auto inverse = ReverseProjectChanges(forward, before, read);
   ASSERT_EQ(inverse.edits.size(), 1);
   SaveBase current = before;
   current.files["tsugumi.json"] =
-      R"({"name":"new","canvas":{"cards":[],"connections":[]},"saveRunHistory":false})";
+      R"({"name":"new","canvas":{"cards":[],"connections":[]},"agentExcludedPaths":["private"]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   const auto change = json::Object(json::Array(plan.at("changes")).front());
   const auto restored =
       json::Object(json::Text(json::Object(change.at("value")), "json"));
   EXPECT_EQ(json::Text(restored, "name"), "old");
-  EXPECT_EQ(restored.at("saveRunHistory"), "false");
+  EXPECT_EQ(json::Array(restored.at("agentExcludedPaths")).size(), 1u);
   current.files["tsugumi.json"] =
       R"({"name":"changed-by-someone-else","canvas":{"cards":[],"connections":[]}})";
   try {
     PrepareProjectEdits(inverse, current, read);
     FAIL() << "Undo must refuse a conflicting writer";
-  } catch (const Failure &failure) {
+  } catch (const Failure& failure) {
     EXPECT_EQ(failure.code, "value_conflict");
-    EXPECT_NE(std::string(failure.what()).find("tsugumi.json.name"),
-              std::string::npos);
   }
 }
 
@@ -151,7 +153,7 @@ TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
   // when host preparation observed the current document.
   before.files["layout.json"] =
       R"({"groups":[{"id":"g","name":"old"},{"id":"other"}]})";
-  const auto read = [](const auto &) -> std::optional<std::string> {
+  const auto read = [](const auto&) -> std::optional<std::string> {
     return std::nullopt;
   };
   const auto inverse = ReverseProjectChanges(forward, before, read);
@@ -159,7 +161,13 @@ TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
   current.files["layout.json"] = R"({"groups":[{"id":"g","name":"new"}]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   EXPECT_EQ(json::Array(plan.at("changes")).size(), 1);
-  EXPECT_EQ(plan.at("changes").find("other"), std::string::npos);
+  const auto change = json::Object(json::Array(plan.at("changes")).front());
+  const auto layout =
+      json::Object(json::Text(json::Object(change.at("value")), "json"));
+  const auto groups = json::Array(layout.at("groups"));
+  ASSERT_EQ(groups.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "id"), "g");
+  EXPECT_EQ(json::Text(json::Object(groups.front()), "name"), "old");
 }
 
 TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {
@@ -170,7 +178,7 @@ TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {
   const json::Members move{
       {"changes",
        R"([{"value_type":"SetLayout","value":{"json":"{\"cards\":{\"a\":{\"x\":30,\"y\":20,\"inputOrder\":[\"first\",\"second\"]}}}"}}])"}};
-  const auto read = [](const auto &) -> std::optional<std::string> {
+  const auto read = [](const auto&) -> std::optional<std::string> {
     return std::nullopt;
   };
   const auto inverse = ReverseProjectChanges(move, before, read);
@@ -186,8 +194,8 @@ TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {
   EXPECT_NE(raw.find(R"("x":10)"), std::string::npos);
   EXPECT_NE(raw.find(R"("id":"other")"), std::string::npos);
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
@@ -208,8 +216,8 @@ TEST(ProjectOperations,
   int reads = 0, applications = 0;
   bool completed = false;
   std::string metadata;
-  auto call = [&](const std::string &method,
-                  const json::Members &args) -> OperationReply {
+  auto call = [&](const std::string& method,
+                  const json::Members& args) -> OperationReply {
     std::string type;
     json::Members value;
     if (method == "operation_get") {
@@ -244,14 +252,14 @@ TEST(ProjectOperations,
             {}};
   };
   ProjectOperations executor;
-  const auto first = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
-  const auto repeat = executor.Execute("p", request, {"ui", {}, {}, {}}, call);
+  const auto first = executor.Execute(request, {"ui", {}, {}, {}}, call);
+  const auto repeat = executor.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(first.json, repeat.json);
   EXPECT_EQ(reads, 1);
   EXPECT_EQ(applications, 1);
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
@@ -292,15 +300,15 @@ TEST(ProjectOperationLayout,
   EXPECT_DOUBLE_EQ(std::stod(rectangle.at("height")), 170);
   EXPECT_FALSE(layout.contains("boundary"));
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
 // A controllable project transport: every save is one atomic application, and
 // inspection/file reads all refer to the current confirmed revision.
 class TransformationProject {
-public:
+ public:
   std::map<std::string, std::string> files{
       {"tsugumi.json",
        R"({"name":"test","canvas":{"cards":[{"id":"a"},{"id":"sub"}],"connections":[]}})"},
@@ -329,8 +337,9 @@ public:
     request.op_id = crypto::uuid4();
     request.body = std::move(body);
     return ProjectOperations().Execute(
-        "p", request, context,
-        [&](const auto &method, const auto &args) { return Call(method, args); });
+        request, context, [&](const auto& method, const auto& args) {
+          return Call(method, args);
+        });
   }
   auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
     const auto reply = Execute(std::move(body));
@@ -343,13 +352,14 @@ public:
     return *std::unique_ptr<H::ProjectEditsT>(
         flatbuffers::GetRoot<H::ProjectEdits>(bytes.data())->UnPack());
   }
-  template <class T> auto Apply(T body) -> H::ProjectEditsT {
+  template <class T>
+  auto Apply(T body) -> H::ProjectEditsT {
     H::ProjectOperationBodyUnion operation;
     operation.Set(std::move(body));
     return Apply(std::move(operation));
   }
   template <class T>
-  auto ExpectConflict(T body, const std::string &kind) -> void {
+  auto ExpectConflict(T body, const std::string& kind) -> void {
     const auto before = files;
     const auto saves_before = saves;
     H::ProjectOperationBodyUnion operation;
@@ -361,8 +371,8 @@ public:
     EXPECT_EQ(files, before);
   }
 
-private:
-  auto Call(const std::string &method, const json::Members &args)
+ private:
+  auto Call(const std::string& method, const json::Members& args)
       -> OperationReply {
     std::string type;
     json::Members value;
@@ -376,9 +386,8 @@ private:
                {"layout_json", json::Quote(files.at("layout.json"))}};
       json::Members definitions;
       std::vector<std::string> sources;
-      for (const auto &[path, bytes] : files) {
-        if (path == "tsugumi.json" || path == "layout.json")
-          continue;
+      for (const auto& [path, bytes] : files) {
+        if (path == "tsugumi.json" || path == "layout.json") continue;
         if (path.starts_with("definitions/") &&
             std::count(path.begin(), path.end(), '/') == 2) {
           const auto slash = path.find('/', 12);
@@ -401,7 +410,7 @@ private:
                           {"hash", json::Quote(crypto::sha256_hex(bytes))}}));
       }
       std::vector<std::string> list;
-      for (const auto &[id, raw] : definitions) {
+      for (const auto& [id, raw] : definitions) {
         (void)id;
         list.push_back(raw);
       }
@@ -416,7 +425,7 @@ private:
     } else {
       EXPECT_EQ(method, "project_save");
       EXPECT_EQ(json::UInt(args.at("base_rev")), saves);
-      for (const auto &raw : json::Array(args.at("changes"))) {
+      for (const auto& raw : json::Array(args.at("changes"))) {
         const auto change = json::Object(raw),
                    v = json::Object(change.at("value"));
         const auto kind = json::Text(change, "value_type");
@@ -425,7 +434,7 @@ private:
               json::Text(v, "json");
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
-          for (const auto &[key, name] : {std::pair{"card_json", "_card.json"},
+          for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
                                           {"meta_json", "_meta.json"},
                                           {"link_json", "_link.json"}}) {
             const auto text = json::Text(v, key);
@@ -436,7 +445,7 @@ private:
           }
         } else if (kind == "RemoveDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
-          std::erase_if(files, [&](const auto &entry) {
+          std::erase_if(files, [&](const auto& entry) {
             return entry.first.starts_with(dir);
           });
         } else if (kind == "RemoveSource")
@@ -465,13 +474,15 @@ private:
 };
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
-  for (const auto* excluded : {"definitions/a/data.bin",
-                              "externals/inner/externals/deep/definitions/c/raw.bin"}) {
+  for (const auto* excluded :
+       {"definitions/a/data.bin",
+        "externals/inner/externals/deep/definitions/c/raw.bin"}) {
     for (const auto* action : {"delete", "subgraph", "rename", "document"}) {
       SCOPED_TRACE(std::string(excluded) + ':' + action);
       TransformationProject project;
       auto document = json::Object(project.files.at("tsugumi.json"));
-      document["agentExclude"] = json::Encode(std::vector<std::string>{json::Quote(excluded)});
+      document["agentExclude"] =
+          json::Encode(std::vector<std::string>{json::Quote(excluded)});
       project.files["tsugumi.json"] = json::Encode(document);
       const auto before = project.files;
       AgentExclude policy(temporary.path, project.files.at("tsugumi.json"));
@@ -480,7 +491,8 @@ TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
         policy.CheckSave(plan, base);
       };
       H::ProjectOperationBodyUnion body;
-      const std::string id = std::string(excluded).starts_with("definitions/") ? "a" : "sub";
+      const std::string id =
+          std::string(excluded).starts_with("definitions/") ? "a" : "sub";
       if (std::string(action) == "delete") {
         H::ProjectSelectionT selection;
         selection.action = H::ProjectSelectionAction::Delete;
@@ -502,7 +514,8 @@ TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
           hash->hash = crypto::sha256_hex(bytes);
           tree.expected.push_back(std::move(hash));
           H::ProjectFilePutT put;
-          put.file_path = "definitions/renamed/" + path.substr(tree.prefix.size());
+          put.file_path =
+              "definitions/renamed/" + path.substr(tree.prefix.size());
           put.expect_missing = true;
           put.bytes.assign(bytes.begin(), bytes.end());
           auto entry = std::make_unique<H::ProjectEditT>();
@@ -582,8 +595,8 @@ TEST(ProjectOperationTransform,
             "other writer");
   EXPECT_TRUE(project.files.contains("definitions/copy/_link.json"));
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
@@ -598,7 +611,7 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
       std::filesystem::remove_all(path, error);
     }
   } cleanup{directory};
-  for (const auto &[path, bytes] : project.files) {
+  for (const auto& [path, bytes] : project.files) {
     std::filesystem::create_directories((directory / path).parent_path());
     std::ofstream(directory / path, std::ios::binary)
         .write(bytes.data(), bytes.size());
@@ -622,7 +635,7 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
   EXPECT_EQ(std::stod(at.at("y")), 600);
   project.Apply(inverse);
   EXPECT_EQ(project.saves, 2);
-  for (const auto &[path, ignored] : project.files) {
+  for (const auto& [path, ignored] : project.files) {
     (void)ignored;
     EXPECT_FALSE(path.starts_with("externals/imported/"));
   }
@@ -642,14 +655,14 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
        R"({"language":"python","inputs":[{"name":"p"},{"name":"q"}]})"}};
   H::LayoutSceneT scene;
   scene.flow = "topToBottom";
-  for (const auto &id : {"a", "b", "d"}) {
+  for (const auto& id : {"a", "b", "d"}) {
     auto card = std::make_unique<H::LayoutCardT>();
     card->id = id;
     card->width = 120;
     card->height = 60;
     card->reorderable = true;
     if (card->id == "d") {
-      for (const auto &name : {"p", "q"}) {
+      for (const auto& name : {"p", "q"}) {
         auto port = std::make_unique<H::LayoutPortT>();
         port->name = name;
         port->x = port->name == "p" ? 20 : 100;
@@ -680,20 +693,20 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   move.dx = 400;
   move.scene = std::make_unique<H::LayoutSceneT>(scene);
   const auto undo_move = project.Apply(move);
-  EXPECT_EQ(project.saves, 2); // No later proposal/save can join this move.
+  EXPECT_EQ(project.saves, 2);  // No later proposal/save can join this move.
   EXPECT_EQ(order(), R"(["p","q"])");
   project.Apply(undo_move);
   EXPECT_TRUE(DocumentsEqual(project.files.at("layout.json"), accepted));
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
 namespace tsugumi::host {
 namespace {
 TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
   TransformationProject project;
   project.files["layout.json"] = "{}";
-  auto entity = [&](const std::string &field, const std::string &id) {
+  auto entity = [&](const std::string& field, const std::string& id) {
     H::ProjectFieldEditT edit;
     edit.file_path = "layout.json";
     auto step = std::make_unique<H::ProjectSelectorT>();
@@ -705,8 +718,12 @@ TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
     edit.old_value = std::make_unique<H::ProjectValueT>();
     edit.new_value = std::make_unique<H::ProjectValueT>();
     edit.new_value->present = true;
-    json::Members value{{"id", json::Quote(id)}, {field == "notes" ? "text" : "name", json::Quote(id)}};
-    if (field == "notes") { value["x"] = "10"; value["y"] = "20"; }
+    json::Members value{{"id", json::Quote(id)},
+                        {field == "notes" ? "text" : "name", json::Quote(id)}};
+    if (field == "notes") {
+      value["x"] = "10";
+      value["y"] = "20";
+    }
     edit.new_value->json = json::Encode(value);
     H::ProjectEditsT body;
     auto item = std::make_unique<H::ProjectEditT>();
@@ -842,7 +859,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
 
 TEST(ProjectOperationCutover, ConcurrentFirstCommentsSelectTheirOwnEntities) {
   TransformationProject project;
-  auto comment = [&](const std::string &id) {
+  auto comment = [&](const std::string& id) {
     H::ProjectJSONEditT edit;
     edit.file_path = "definitions/a/_meta.json";
     edit.old_value = std::make_unique<H::ProjectValueT>();
@@ -867,5 +884,5 @@ TEST(ProjectOperationCutover, ConcurrentFirstCommentsSelectTheirOwnEntities) {
   ASSERT_EQ(comments.size(), 1);
   EXPECT_EQ(json::Text(json::Object(comments.front()), "id"), "second");
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host

@@ -1,5 +1,5 @@
 #include "tsugumi/workerd/manifest.hh"
-// Nix evaluation/build lane, generated Card SDK files and build cache.
+// Card evaluation and builds, generated Card SDK files and build cache.
 #pragma once
 
 #include <atomic>
@@ -14,9 +14,10 @@
 #include <thread>
 #include <vector>
 
-#include "nix_eval.hh"
-#include "tsugumi/document/graph.hh"
 #include "model.hh"
+#include "nix_eval.hh"
+#include "runtime_schema.hh"
+#include "tsugumi/document/graph.hh"
 
 namespace tsugumi {
 
@@ -24,16 +25,18 @@ class Service;
 class NixEvaluator;
 
 struct CardBuild {
-  // The body (`run`): a package with lib/main.so or lib/tsugumi-runtime naming an SDK artifact, or a bash script.
+  // The body (`run`): a package with lib/main.so, or a bash script.
   std::optional<std::string> package;
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
   // The shell of the bash steps and the PATH of the Card's processes, both
-  // from the Card's own nixpkgs (the manifest), never from this build of the core.
+  // from the Card's own nixpkgs (the manifest), never from this build of the
+  // core.
   std::string shell;
   std::string path;
-  std::string views;  // JSON mapping of the view module names the worker may show
+  std::string
+      views;  // JSON mapping of the view module names the worker may show
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.
   std::string emulator;
@@ -42,14 +45,18 @@ struct CardBuild {
   std::string worker;
   WorkerDerivation derivation;
   BuildEnvironmentData environment;
-  std::string key;      // the manifest's store path
-  uint64_t preparation_ms = 0;  // evaluation/build time, excluding closure transport
+  std::string key;  // the manifest's store path
+  uint64_t preparation_ms =
+      0;                // evaluation/build time, excluding closure transport
   bool cached = false;  // the store already had the result: nothing was built
   uint32_t implementation_index = 1;
 };
 
 struct CardBuildPlan {
   CardBuild common;
+  // What identifies the evaluation (pin, system, arguments), for builds
+  // prepared ahead of their runs.
+  std::string evaluation_key;
   std::vector<schema::ManifestRun> implementations;
   bool execution_list = false;
   auto implementation(size_t index) const -> CardBuild;
@@ -66,7 +73,8 @@ struct BuildRequest {
   const DerivationClosureTransport* transport = nullptr;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
-  std::function<void(Phase)> on_phase;          // evaluate, then build (only when the store lacks the result)
+  std::function<void(Phase)>
+      on_phase;  // evaluate, then build (only when the store lacks the result)
 };
 
 struct CacheClearOutcome {
@@ -80,7 +88,8 @@ struct SDKJob {
   CardPath card;
   uint64_t rev = 0;
   enum class State { Pending, Ready, Failed } state = State::Pending;
-  std::vector<std::tuple<std::string, std::string, uint64_t>> files;  // path, hash, size
+  std::vector<std::tuple<std::string, std::string, uint64_t>>
+      files;  // path, hash, size
   std::optional<FailureData> failure;
 };
 
@@ -89,7 +98,7 @@ class NixRunner {
   NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
-  // _inputs.fbs/_outputs.fbs/_params.fbs (+ .bfbs) and JSON parameter files.
+  // _inputs.fbs, _outputs.fbs, _params.fbs and _contract.json.
   static std::map<std::string, std::string> generate(const Node& node);
   // Builds JSON for all params (worker) and for nix:true params (Nix).
   static std::string params_json(const Node& node, bool nix_only);
@@ -106,37 +115,41 @@ class NixRunner {
   bool sdk_jobs_active();
   // Bytes of a published SDK file (".sdk/<op_id>/<name>"). With `rev`, throws
   // revision_conflict when the job was prepared for another revision.
-  std::optional<std::string> sdk_file(const std::string& path, std::optional<uint64_t> rev = std::nullopt);
+  std::optional<std::string> sdk_file(
+      const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
-  // A flake to opt in to, as the settings ask for it: a flake reference or a GitHub page's URL.
+  // A flake to opt in to, as the settings ask for it: a flake reference or a
+  // GitHub page's URL.
   FlakeInfo resolve_flake(const std::string& ref);
 
  private:
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
-  void acquire_lane(const std::atomic<bool>* cancel);
-  void release_lane();
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
-  std::string nixpkgs_pin_json(const std::string& pkgs_path) const;
   NixEvaluator& evaluator();
-  std::filesystem::path content_dir(const char* kind, const std::string& digest,
-                                    const std::function<std::map<std::string, std::string>()>& files);
+  // The prepared build of `card` (--prepared-cards), checked against the
+  // evaluation the core would run now.
+  auto prepared(const std::string& card, const std::string& key) const
+      -> NixResult;
+  std::filesystem::path content_dir(
+      const char* kind, const std::string& digest,
+      const std::function<std::map<std::string, std::string>()>& files);
 
   Service& svc_;
-  std::filesystem::path eval_dir_;  // local folder: definitions and generated files by content
+  std::filesystem::path
+      eval_dir_;  // local folder: definitions and generated files by content
   std::filesystem::path sdk_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
-  // Serialized by the Nix lane. Retain at most one evaluation per Card,
-  // capped at 256 Cards; edits replace entries, and deleted Cards are pruned.
+  // At most one evaluation per Card, capped at 256 Cards; edits replace
+  // entries, and deleted Cards are pruned.
+  std::mutex evaluations_mu_;
   std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
+  std::optional<std::map<std::string, schema::PreparedCard>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;
-  std::mutex lane_mu_;
-  std::condition_variable lane_cv_;
-  bool lane_busy_ = false;
   std::mutex sdk_mu_;
   std::map<std::string, SDKJob> sdk_jobs_;
   std::vector<std::thread> sdk_threads_;

@@ -20,6 +20,9 @@ auto RequestMessages(const std::vector<Message>& messages,
                      size_t omitted_before,
                      size_t result_limit = kToolResultBytes)
     -> std::vector<Message>;
+auto Resources(const std::vector<Message>& messages)
+    -> std::vector<std::string>;
+
 // Includes replacements at the same count, but not ordinary append checkpoints.
 auto RemovedMessages(const std::vector<Message>& before,
                      const std::vector<Message>& after) -> std::vector<Message>;

@@ -47,7 +47,10 @@ export class ModuleThumbnailQueue {
       }
       const abort = () => {
         target.waiting.delete(waiter); waiter.resolve(undefined)
-        if (!target.waiting.size && target !== this.active) this.jobs.delete(request.key)
+        if (!target.waiting.size) {
+          this.jobs.delete(request.key)
+          if (target === this.active) this.renderer.close()
+        }
       }
       target.waiting.add(waiter)
       signal.addEventListener('abort', abort, { once: true })
@@ -79,7 +82,7 @@ export class ModuleThumbnailQueue {
         for (const waiter of job.waiting) waiter.reject(error)
         this.renderer.close()
       } finally {
-        this.jobs.delete(job.request.key)
+        if (this.jobs.get(job.request.key) === job) this.jobs.delete(job.request.key)
         this.active = undefined
       }
     }
@@ -187,16 +190,23 @@ export class FigurePreview {
 }
 
 /** Content identity includes every byte, not point counts or a run's revision number. */
-export async function moduleThumbnailKey(name: string, json: string, width: number, height: number, blobs: ModuleBlobs = {}, colorScheme = 'light'): Promise<string> {
-  const pieces: Uint8Array[] = [new TextEncoder().encode(json)]
-  for (const name of Object.keys(blobs).sort()) {
-    pieces.push(new TextEncoder().encode(JSON.stringify([name, blobs[name].length])), blobs[name])
+const contentDigests = new WeakMap<ModuleBlobs, { json: string; digest: Promise<string> }>()
+const emptyBlobs: ModuleBlobs = {}
+export async function moduleThumbnailKey(name: string, json: string, width: number, height: number, blobs: ModuleBlobs = emptyBlobs, colorScheme = 'light'): Promise<string> {
+  let content = contentDigests.get(blobs)
+  if (content?.json !== json) {
+    const digest = (async () => {
+      const pieces: Uint8Array[] = [new TextEncoder().encode(json)]
+      for (const name of Object.keys(blobs).sort())
+        pieces.push(new TextEncoder().encode(JSON.stringify([name, blobs[name].length])), blobs[name])
+      const bytes = new Uint8Array(pieces.reduce((n, p) => n + p.length, 0))
+      let offset = 0
+      for (const piece of pieces) { bytes.set(piece, offset); offset += piece.length }
+      return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('')
+    })()
+    content = { json, digest }; contentDigests.set(blobs, content)
   }
-  const content = new Uint8Array(pieces.reduce((n, p) => n + p.length, 0))
-  let offset = 0
-  for (const piece of pieces) { content.set(piece, offset); offset += piece.length }
-  const digest = await crypto.subtle.digest('SHA-256', content)
-  return `${name}:${colorScheme}:${width}:${height}:` + [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('')
+  return `${name}:${colorScheme}:${width}:${height}:` + await content.digest
 }
 
 /** Preserve a preview through layout's sub-pixel rounding at any canvas zoom. */

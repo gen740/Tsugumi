@@ -24,7 +24,7 @@ def edit_json(file, edit):
 def completed_definition(client, card="work", *, start=None):
     """Return a fresh run's output, actual definition identity and invocation."""
     run_id = run(client, start or card)
-    status = wait_run(client, run_id, timeout=1800)
+    status = wait_run(client, run_id)
     logs = [text(client.call("LogRangeRequest", runId=run_id, card=path(card),
                              stream=stream, limitBytes=262144).text) for stream in (1, 2)]
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), logs)

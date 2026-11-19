@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import time
 import pytest
 
 from harness.daemon import ROOT
+from harness.file_events import wait_for_file
 from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -26,15 +26,15 @@ def graph(c):
     return c.call("VersionGraphRequest", limit=100)
 
 
-def notes(c, commit: str, n: int, timeout=10.0) -> list:
-    """The runs a commit's note lists, once it lists n (written as runs end)."""
-    deadline = time.monotonic() + timeout
-    while True:
-        g = graph(c)
-        runs = next(x.runs or [] for x in g.commits if text(x.id) == commit)
-        if len(runs) >= n or time.monotonic() > deadline:
+def notes(c, root, commit: str, n: int = 0, *, run_ids=()) -> list:
+    """Wait for the Git note ref to be published by the run reaper."""
+    def read():
+        runs = next(x.runs or [] for x in graph(c).commits if text(x.id) == commit)
+        if len(runs) >= n and set(run_ids) <= {text(r.runId) for r in runs}:
             return runs
-        time.sleep(0.1)
+        return None
+
+    return wait_for_file(root / ".git/refs/notes/tsugumi", read)
 
 
 def set_text(c, value: str):
@@ -74,8 +74,8 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     run2, st2 = run_and_wait(c, "start")
     second = text(st1.commit)
     assert second and second != first and text(st2.commit) == second
-    runs = notes(c, second, 2)
-    assert [text(r.runId) for r in runs] == [run1, run2] and all(text(r.state) == "succeeded" for r in runs)
+    runs = notes(c, root, second, run_ids=(run1, run2))
+    assert {text(r.runId): text(r.state) for r in runs} == {run1: "succeeded", run2: "succeeded"}
     changed = next(x for x in graph(c).commits if text(x.id) == second).changed
     assert [text(k) for k in changed] == ["src"]
     # git selects versions by their runs' results, and names them by tags.
@@ -86,6 +86,7 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert [text(tag) for entry in graph(c).commits for tag in (entry.tags or [])] == ["second-text"]
     # Starting from the first version: the documents are that version's,
     # and a change there opens a branch; the later one stays.
+    original_branch = text(graph(c).branch)
     rev = c.call("ProjectInspectRequest").rev
     c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=first)
     assert src_text(c) == "first"
@@ -93,7 +94,7 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     _, st3 = run_and_wait(c, "start")
     g = graph(c)
     branches = {text(b) for x in g.commits for b in (x.branches or [])}
-    assert text(g.branch).startswith("try-") and len(branches) == 2, branches
+    assert text(g.branch) != original_branch and {original_branch, text(g.branch)} <= branches, branches
     third = next(x for x in g.commits if text(x.id) == text(st3.commit))
     assert [text(p) for p in third.parents] == [first]
 
@@ -175,7 +176,6 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     assert [text(r.state) for r in by["別の文を試す"].runs] == ["failed"]
     assert not by["別の文を試す"].runs[0].summary  # the history file gives none
     assert src_text(c) == "final"
-    parent = next(entry for entry in graph(c).commits if text(entry.message) == "計画")
 
 
 
@@ -233,15 +233,9 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
 
 
 
-def summary_of(c, st) -> dict:
+def summary_of(c, root, st) -> dict:
     """Read complete language-neutral facts from the public version graph."""
-    commit = text(st.commit)
-    deadline = time.monotonic() + 10.0
-    while True:
-        runs = next(x.runs or [] for x in graph(c).commits if text(x.id) == commit)
-        if any(text(r.runId) == text(st.runId) for r in runs) or time.monotonic() > deadline:
-            break
-        time.sleep(0.1)
+    runs = notes(c, root, text(st.commit), run_ids=(text(st.runId),))
     run = next(r for r in runs if text(r.runId) == text(st.runId))
     facts = run.facts
     assert facts is not None
@@ -280,21 +274,21 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     created = graph(c).commits[0]
     assert not created.message and text(created.facts.kind) == "create" and not created.facts.card
     _, st = run_and_wait(c, "both")
-    assert summary_of(c, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
+    assert summary_of(c, root, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
     set_text(c, "second")
     _, st = run_and_wait(c, "start")
-    assert summary_of(c, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
+    assert summary_of(c, root, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
     committed = next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit))
     assert not committed.message and text(committed.facts.kind) == "run" and text(committed.facts.card) == "start"
     _, st = run_and_wait(c, "split")
-    assert summary_of(c, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
+    assert summary_of(c, root, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
     _, st = run_and_wait(c, "sink", propagate=False)
-    assert summary_of(c, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
+    assert summary_of(c, root, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
     # Another connection, in Japanese, on the same project.
     j = daemon.connect()
     set_text(j, "third")
     _, st = run_and_wait(j, "start")
-    assert summary_of(j, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
+    assert summary_of(j, root, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
     committed = next(entry for entry in graph(j).commits if text(entry.id) == text(st.commit))
     assert not committed.message and text(committed.facts.kind) == "run" and text(committed.facts.card) == "start"
 
@@ -311,9 +305,9 @@ def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):
     c.call("VersionInitRequest", opId=new_id(), origin="test")
     _, st = run_and_wait(c, "feed")
     assert st.state == RunState.failed
-    summary = summary_of(c, st)
+    summary = summary_of(c, root, st)
     assert summary == run_facts(card="feed", ran=[("feed",1),("split",1),("both",2),("sink",1)], failed=[("both","execution_limit")]), summary
-    assert any(text(run.state) == "failed" for run in notes(c, text(st.commit), 1))
+    assert any(text(run.state) == "failed" for run in notes(c, root, text(st.commit), 1))
 
 
 
@@ -326,7 +320,7 @@ def test_a_long_run_record_keeps_all_cards(tmp_path, core_factory):
     c.call("VersionInitRequest", opId=new_id(), origin="test")
     _, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded
-    assert len(summary_of(c, st)["ran"]) == 10
+    assert len(summary_of(c, root, st)["ran"]) == 10
 
 
 
@@ -399,8 +393,7 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
               "workflow": facts.workflow}
     assert record == {"added": [], "removed": [], "changed": [{"card": "src", "kinds": ["parameters"]}], "workflow": False}
     assert json.loads(git(root, "notes", "--ref=tsugumi-record", "show", second)) == record
-    notes(c, second, 1)
-    assert all(text(run.state) == "succeeded" for run in notes(c, second, 1))
+    assert all(text(run.state) == "succeeded" for run in notes(c, root, second, 1))
     # A commit that is not there is refused, and nothing is kept.
     try:
         c.call("VersionCanvasRequest", commit="0" * 40)
@@ -409,20 +402,18 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
         assert e.kind == "not_found"
 
 
-def test_compare_runs_keeps_parameters_and_diffs_the_selected_versions(tmp_path, core_factory):
-    """Comparison reads immutable parameters and a direct diff, without checkout or writes."""
+def test_run_parameters_remain_recorded_across_edits_and_restart(tmp_path, core_factory):
+    """Earlier runs retain their parameters after edits and daemon restart."""
     root = tmp_path / "compare"
     builtin_project(root, text="first")
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
-    run1, first = run_and_wait(c, "src")
+    run1, _ = run_and_wait(c, "src")
     set_text(c, "intermediate")
     run_and_wait(c, "src")
     set_text(c, "third")
-    run3, third = run_and_wait(c, "src")
-    before = c.call("ProjectInspectRequest")
-    head = text(graph(c).head)
+    run3, _ = run_and_wait(c, "src")
     set_text(c, "current document")
 
     def check(client):

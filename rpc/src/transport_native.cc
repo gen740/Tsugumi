@@ -1,4 +1,3 @@
-#include <span>
 #include <curl/curl.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -9,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <bit>
 #include <cctype>
 #include <cerrno>
 #include <cstring>
@@ -17,12 +15,14 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <utility>
 
 #include "tsugumi/rpc/client_transport.hh"
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::client {
 namespace {
@@ -37,93 +37,8 @@ auto RandomBytes(size_t count) -> Bytes {
 }
 
 auto Base64(std::span<const uint8_t> bytes) -> std::string {
-  constexpr std::string_view alphabet =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string result;
-  for (size_t i = 0; i < bytes.size(); i += 3) {
-    const auto a = bytes[i];
-    const auto b = i + 1 < bytes.size() ? bytes[i + 1] : 0;
-    const auto c = i + 2 < bytes.size() ? bytes[i + 2] : 0;
-    result += alphabet[a >> 2];
-    result += alphabet[((a & 3) << 4) | (b >> 4)];
-    result += i + 1 < bytes.size() ? alphabet[((b & 15) << 2) | (c >> 6)] : '=';
-    result += i + 2 < bytes.size() ? alphabet[c & 63] : '=';
-  }
-  return result;
+  return crypto::base64(bytes.data(), bytes.size());
 }
-
-// SHA-1 is used only for RFC 6455's handshake challenge, never for trust or
-// TLS.
-auto WebSocketAccept(std::string key) -> std::string {
-  key += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-  Bytes data(key.begin(), key.end());
-  const uint64_t bits = data.size() * 8;
-  data.push_back(0x80);
-  while (data.size() % 64 != 56) data.push_back(0);
-  for (int i = 7; i >= 0; --i)
-    data.push_back(static_cast<uint8_t>(bits >> (8 * i)));
-  std::array<uint32_t, 5> hash{0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476,
-                               0xc3d2e1f0};
-  for (size_t offset = 0; offset < data.size(); offset += 64) {
-    std::array<uint32_t, 80> words{};
-    for (size_t i = 0; i < 16; ++i)
-      for (size_t j = 0; j < 4; ++j)
-        words[i] = (words[i] << 8) | data[offset + i * 4 + j];
-    for (size_t i = 16; i < 80; ++i)
-      words[i] = std::rotl(
-          words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16], 1);
-    auto [a, b, c, d, e] = hash;
-    for (size_t i = 0; i < 80; ++i) {
-      const uint32_t f = i < 20   ? (b & c) | (~b & d)
-                         : i < 40 ? b ^ c ^ d
-                         : i < 60 ? (b & c) | (b & d) | (c & d)
-                                  : b ^ c ^ d;
-      const uint32_t k = i < 20   ? 0x5a827999
-                         : i < 40 ? 0x6ed9eba1
-                         : i < 60 ? 0x8f1bbcdc
-                                  : 0xca62c1d6;
-      const auto next = std::rotl(a, 5) + f + e + k + words[i];
-      e = d;
-      d = c;
-      c = std::rotl(b, 30);
-      b = a;
-      a = next;
-    }
-    hash[0] += a;
-    hash[1] += b;
-    hash[2] += c;
-    hash[3] += d;
-    hash[4] += e;
-  }
-  Bytes digest;
-  for (auto word : hash)
-    for (int i = 3; i >= 0; --i)
-      digest.push_back(static_cast<uint8_t>(word >> (8 * i)));
-  return Base64(digest);
-}
-
-auto Lower(std::string value) -> std::string {
-  for (auto& byte : value)
-    byte = static_cast<char>(std::tolower(static_cast<unsigned char>(byte)));
-  return value;
-}
-auto Trim(std::string value) -> std::string {
-  const auto begin = value.find_first_not_of(" \t\r\n");
-  if (begin == std::string::npos) return {};
-  return value.substr(begin, value.find_last_not_of(" \t\r\n") - begin + 1);
-}
-auto HasToken(std::string value, std::string_view wanted) -> bool {
-  value = Lower(std::move(value));
-  size_t start = 0;
-  while (start < value.size()) {
-    const auto end = value.find(',', start);
-    if (Trim(value.substr(start, end - start)) == wanted) return true;
-    if (end == std::string::npos) break;
-    start = end + 1;
-  }
-  return false;
-}
-
 auto WebSocketFrame(std::span<const uint8_t> message, uint8_t opcode = 2)
     -> Bytes {
   Bytes frame{static_cast<uint8_t>(0x80 | opcode)};
@@ -148,41 +63,62 @@ auto WebSocketFrame(std::span<const uint8_t> message, uint8_t opcode = 2)
 
 class NativeTransport final : public Transport {
   struct State {
-    explicit State(TransportOptions value) : options(std::move(value)) {}
+    explicit State(TransportOptions value) : options(std::move(value)) {
+      if (::pipe(wake) != 0)
+        throw std::runtime_error("cannot create RPC wake pipe");
+      for (auto descriptor : wake) {
+        ::fcntl(descriptor, F_SETFL, O_NONBLOCK);
+        ::fcntl(descriptor, F_SETFD, FD_CLOEXEC);
+      }
+    }
     TransportOptions options;
     TransportEvents events;
     std::atomic<bool> stopping{false};
     std::atomic<bool> opened{false};
     std::mutex mutex;
     std::deque<Bytes> outgoing;
-    size_t queued_bytes = 0;
     int fd = -1;
+    int wake[2];
     CURL* curl = nullptr;
     bool websocket = false;
     Bytes incoming;
-    Bytes fragments;
-    bool fragmenting = false;
     Bytes writing;
     size_t write_offset = 0;
 
     ~State() {
+      ::close(wake[0]);
+      ::close(wake[1]);
       if (curl)
         curl_easy_cleanup(curl);
       else if (fd >= 0)
         ::close(fd);
     }
 
-    auto Wait(short flags) -> void {
-      pollfd descriptor{fd, flags, 0};
-      const int result = ::poll(&descriptor, 1, 20);
-      if (result < 0 && errno != EINTR)
-        throw std::runtime_error("socket poll failed");
+    auto Wake() -> void {
+      const char byte = 0;
+      (void)::write(wake[1], &byte, 1);
     }
 
-    auto CheckDeadline(Clock::time_point deadline) -> void {
+    auto Wait(short flags, std::optional<Clock::time_point> deadline = {})
+        -> short {
+      pollfd descriptors[] = {{fd, flags, 0}, {wake[0], POLLIN, 0}};
+      const auto remaining =
+          deadline ? std::max<int64_t>(
+                         0, std::chrono::ceil<std::chrono::milliseconds>(
+                                *deadline - Clock::now())
+                                .count())
+                   : -1;
+      const int result = ::poll(descriptors, 2, static_cast<int>(remaining));
+      if (result < 0 && errno != EINTR)
+        throw std::runtime_error("socket poll failed");
+      char bytes[64];
+      while (::read(wake[0], bytes, sizeof bytes) > 0) {
+      }
+      return descriptors[0].revents;
+    }
+
+    auto CheckOpen() -> void {
       if (stopping) throw std::runtime_error("connection closed");
-      if (Clock::now() >= deadline)
-        throw std::runtime_error("connection timed out");
     }
 
     auto Read(uint8_t* bytes, size_t size) -> ptrdiff_t {
@@ -246,11 +182,10 @@ class NativeTransport final : public Transport {
         return;
       if (errno != EINPROGRESS)
         throw std::runtime_error("cannot connect to Unix socket");
-      const auto deadline = Clock::now() + options.connect_timeout;
       while (true) {
-        CheckDeadline(deadline);
-        pollfd descriptor{fd, POLLOUT, 0};
-        if (::poll(&descriptor, 1, 20) <= 0) continue;
+        CheckOpen();
+        if (!Wait(POLLOUT)) continue;
+        CheckOpen();
         int error = 0;
         socklen_t size = sizeof error;
         if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) != 0 || error)
@@ -303,10 +238,6 @@ class NativeTransport final : public Transport {
       curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
       curl_easy_setopt(curl, CURLOPT_HTTPPROXYTUNNEL, 1L);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-      curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
-                       static_cast<long>(options.connect_timeout.count()));
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
-                       static_cast<long>(options.connect_timeout.count()));
       curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
       curl_easy_setopt(
           curl, CURLOPT_XFERINFOFUNCTION,
@@ -329,10 +260,9 @@ class NativeTransport final : public Transport {
           "\r\nUpgrade: websocket\r\nConnection: "
           "Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " +
           key + "\r\nSec-WebSocket-Protocol: " + protocol + "\r\n\r\n";
-      const auto deadline = Clock::now() + options.connect_timeout;
       size_t offset = 0;
       while (offset < request.size()) {
-        CheckDeadline(deadline);
+        CheckOpen();
         offset +=
             Write(reinterpret_cast<const uint8_t*>(request.data()) + offset,
                   request.size() - offset);
@@ -340,7 +270,7 @@ class NativeTransport final : public Transport {
       }
       std::string response;
       while (response.find("\r\n\r\n") == std::string::npos) {
-        CheckDeadline(deadline);
+        CheckOpen();
         std::array<uint8_t, 4096> block{};
         const auto count = Read(block.data(), block.size());
         if (count == 0)
@@ -349,33 +279,14 @@ class NativeTransport final : public Transport {
           Wait(POLLIN);
           continue;
         }
+        // A peer cannot grow the HTTP header buffer indefinitely.
+        if (response.size() + static_cast<size_t>(count) > 64 * 1024)
+          throw std::runtime_error(
+              "WebSocket upgrade headers exceed their limit");
         response.append(reinterpret_cast<const char*>(block.data()),
                         static_cast<size_t>(count));
-        if (response.size() > 16384)
-          throw std::runtime_error("WebSocket handshake too large");
       }
       const auto header_end = response.find("\r\n\r\n") + 4;
-      if (!response.starts_with("HTTP/1.1 101 "))
-        throw std::runtime_error("WebSocket upgrade rejected");
-      std::map<std::string, std::string> headers;
-      size_t position = response.find("\r\n") + 2;
-      while (position + 2 < header_end) {
-        const auto end = response.find("\r\n", position);
-        const auto line = response.substr(position, end - position);
-        const auto colon = line.find(':');
-        if (colon == std::string::npos)
-          throw std::runtime_error("invalid WebSocket response header");
-        const auto name = Lower(Trim(line.substr(0, colon)));
-        if (!headers.emplace(name, Trim(line.substr(colon + 1))).second)
-          throw std::runtime_error("duplicate WebSocket response header");
-        position = end + 2;
-      }
-      if (!HasToken(headers["upgrade"], "websocket") ||
-          !HasToken(headers["connection"], "upgrade") ||
-          headers["sec-websocket-accept"] != WebSocketAccept(key) ||
-          headers["sec-websocket-protocol"] != protocol ||
-          !headers["sec-websocket-extensions"].empty())
-        throw std::runtime_error("invalid WebSocket handshake response");
       incoming.assign(response.begin() + static_cast<ptrdiff_t>(header_end),
                       response.end());
       websocket = true;
@@ -401,61 +312,28 @@ class NativeTransport final : public Transport {
           continue;
         }
         if (available < 2) break;
-        const bool final = data[0] & 0x80;
         const uint8_t opcode = data[0] & 15;
-        if ((data[0] & 0x70) || (data[1] & 0x80))
-          throw std::runtime_error("invalid WebSocket frame flags");
         uint64_t length = data[1] & 127;
         size_t header = 2;
         if (length == 126) {
           if (available < 4) break;
           length = static_cast<uint64_t>(data[2]) << 8 | data[3];
           header = 4;
-          if (length < 126)
-            throw std::runtime_error("noncanonical WebSocket frame length");
         } else if (length == 127) {
           if (available < 10) break;
-          if (data[2] & 0x80)
-            throw std::runtime_error("invalid WebSocket frame length");
           length = 0;
           for (size_t i = 2; i < 10; ++i) length = (length << 8) | data[i];
           header = 10;
-          if (length < 65536)
-            throw std::runtime_error("noncanonical WebSocket frame length");
         }
-        const bool control = opcode >= 8;
-        if (length > options.max_frame_bytes ||
-            (control && (!final || length > 125)))
+        if (length > options.max_frame_bytes)
           throw std::runtime_error("WebSocket frame exceeds its limit");
         if (available - header < length) break;
         const std::span payload(data + header, static_cast<size_t>(length));
         consumed += header + static_cast<size_t>(length);
         if (opcode == 8)
           throw std::runtime_error("WebSocket peer closed the connection");
-        if (opcode == 9) {
-          std::lock_guard lock(mutex);
-          auto pong = WebSocketFrame(payload, 10);
-          if (queued_bytes + pong.size() > options.max_queued_bytes)
-            throw std::runtime_error("WebSocket outbox is full");
-          queued_bytes += pong.size();
-          outgoing.push_back(std::move(pong));
-          continue;
-        }
-        if (opcode == 10) continue;
-        if (opcode != 0 && opcode != 2)
-          throw std::runtime_error("RPC requires binary WebSocket messages");
-        if ((opcode == 0) != fragmenting)
-          throw std::runtime_error("invalid WebSocket fragmentation");
-        if (fragments.size() + length > options.max_frame_bytes)
-          throw std::runtime_error("RPC message exceeds its limit");
-        fragments.insert(fragments.end(), payload.begin(), payload.end());
-        fragmenting = !final;
-        if (final) {
-          if (fragments.empty()) throw std::runtime_error("empty RPC message");
-          Bytes message;
-          message.swap(fragments);
-          if (events.received) events.received(std::move(message));
-        }
+        if (opcode == 2 && events.received)
+          events.received(Bytes(payload.begin(), payload.end()));
       }
       incoming.erase(incoming.begin(),
                      incoming.begin() + static_cast<ptrdiff_t>(consumed));
@@ -476,7 +354,6 @@ class NativeTransport final : public Transport {
         if (write_offset != writing.size()) return;
         {
           std::lock_guard lock(mutex);
-          queued_bytes -= writing.size();
         }
         writing.clear();
       }
@@ -492,10 +369,10 @@ class NativeTransport final : public Transport {
         if (stopping) throw std::runtime_error("connection closed");
         opened = true;
         if (events.opened) events.opened();
+        std::array<uint8_t, 65536> block;
         while (!stopping) {
           Flush();
           ParseMessages();
-          std::array<uint8_t, 65536> block{};
           for (size_t count = 0; count < 64 && !stopping; ++count) {
             const auto received = Read(block.data(), block.size());
             if (received == 0)
@@ -504,8 +381,6 @@ class NativeTransport final : public Transport {
             incoming.insert(incoming.end(), block.begin(),
                             block.begin() + received);
             ParseMessages();
-            if (incoming.size() > options.max_frame_bytes + 14)
-              throw std::runtime_error("RPC receive buffer exceeds its limit");
           }
           if (events.tick) events.tick();
           bool has_output;
@@ -514,7 +389,8 @@ class NativeTransport final : public Transport {
             has_output = !outgoing.empty();
           }
           Wait(static_cast<short>(
-              POLLIN | ((!writing.empty() || has_output) ? POLLOUT : 0)));
+                   POLLIN | ((!writing.empty() || has_output) ? POLLOUT : 0)),
+               events.deadline ? events.deadline() : std::nullopt);
         }
       } catch (const std::exception& failure) {
         if (!stopping) error = {ErrorCode::Transport, failure.what()};
@@ -561,14 +437,13 @@ class NativeTransport final : public Transport {
       framed.insert(framed.end(), bytes.begin(), bytes.end());
     }
     std::lock_guard lock(state_->mutex);
-    if (state_->queued_bytes + framed.size() > state_->options.max_queued_bytes)
-      return {ErrorCode::Backpressure, "RPC transport outbox is full"};
-    state_->queued_bytes += framed.size();
     state_->outgoing.push_back(std::move(framed));
+    state_->Wake();
     return {};
   }
   auto Close() -> void override {
     state_->stopping = true;
+    state_->Wake();
     std::thread closing;
     {
       std::lock_guard lock(lifecycle_);
@@ -590,11 +465,8 @@ class NativeTransport final : public Transport {
 
 }  // namespace
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport> {
-  if (options.max_frame_bytes == 0 || options.max_frame_bytes > UINT32_MAX ||
-      options.max_queued_bytes < options.max_frame_bytes ||
-      options.connect_timeout.count() <= 0)
-    throw std::invalid_argument("invalid RPC transport limits");
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport> {
   return std::make_shared<NativeTransport>(options);
 }
 

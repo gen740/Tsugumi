@@ -36,6 +36,10 @@ include(cmake/protocol.cmake)
 find_package(flatbuffers CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
+if(NOT EMSCRIPTEN)
+  include(cmake/crypto.cmake)
+endif()
+
 if(TSUGUMI_BUILD_CORE)
   include(cmake/native-dependencies.cmake)
   set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")

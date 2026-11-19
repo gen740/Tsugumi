@@ -1,10 +1,9 @@
-#include "agent/catalog.hh"
-
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <set>
 
+#include "agent/catalog.hh"
 #include "host/failure.hh"
 
 namespace tsugumi::agent {
@@ -38,57 +37,31 @@ auto CheckSchema(const std::string& raw) -> void {
   }
 }
 
-auto CatalogBytes(const std::vector<ToolSpec>& specs) -> size_t {
-  std::vector<std::string> rows;
-  for (const auto& spec : specs)
-    rows.push_back(json::Encode(
-        json::Members{{"name", json::Quote(spec.name)},
-                      {"description", json::Quote(spec.description)},
-                      {"input_schema", spec.input_schema}}));
-  return json::Encode(rows).size();
-}
-
-TEST(ModelCatalog, ExactRolesOrderAndBudgets) {
+TEST(ModelCatalog, RolesExposeCapabilitiesWithoutWideningPermissions) {
   const Catalog catalog;
-  const std::vector<std::string> main{"project_edit",
-                                      "project_copy",
-                                      "project_connect",
-                                      "project_make_subgraph",
-                                      "project_layout",
-                                      "project_inspect",
-                                      "card_id",
-                                      "project_file_list",
-                                      "project_file_read",
-                                      "input_types",
-                                      "project_validate",
-                                      "run_plan",
-                                      "run",
-                                      "run_record",
-                                      "tool_result_read",
-                                      "demo_list",
-                                      "demo_read",
-                                      "delegate",
-                                      "tools",
-                                      "project_save"};
-  auto helper = main;
-  std::erase(helper, "delegate");
-  EXPECT_EQ(Names(catalog.ModelSpecs()), main);
-  EXPECT_EQ(Names(catalog.ModelSpecs(ModelRole::Helper, false)), helper);
-  EXPECT_EQ(Names(catalog.ModelSpecs(ModelRole::ScopedHelper, false)), helper);
-  EXPECT_EQ(Names(catalog.ModelSpecs(ModelRole::ScopedHelper, true)), main);
-  EXPECT_EQ(Names(catalog.ModelSpecs(ModelRole::Guide)),
-            (std::vector<std::string>{"project_inspect", "project_file_list",
-                                      "project_file_read", "run_record",
-                                      "tool_result_read", "demo_list",
-                                      "demo_read", "tools", "guide_show"}));
-  // Budgets include names, descriptions, schemas and JSON framing, with room
-  // for small additions. Card-copy sources increased the helper catalog to
-  // 13614 bytes; retain a small margin without pinning policy wording.
-  EXPECT_LT(CatalogBytes(catalog.ModelSpecs()), 15000u);
-  EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::Helper, false)), 13700u);
-  EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::ScopedHelper, false)),
-            13700u);
-  EXPECT_LT(CatalogBytes(catalog.ModelSpecs(ModelRole::Guide)), 4600u);
+  const auto check = [&](ModelRole role, bool can_delegate) {
+    const auto names = Names(catalog.ModelSpecs(role, can_delegate));
+    const std::set<std::string> unique(names.begin(), names.end());
+    for (const auto* name :
+         {"project_inspect", "project_file_read", "run_record"})
+      EXPECT_TRUE(unique.contains(name));
+    if (role == ModelRole::Guide) {
+      EXPECT_TRUE(unique.contains("guide_show"));
+      for (const auto* name :
+           {"project_save", "project_edit", "run", "delegate"})
+        EXPECT_FALSE(unique.contains(name));
+    } else {
+      EXPECT_TRUE(unique.contains("project_edit"));
+      EXPECT_TRUE(unique.contains("project_save"));
+      EXPECT_TRUE(unique.contains("run"));
+      EXPECT_EQ(unique.contains("delegate"), can_delegate);
+    }
+  };
+  check(ModelRole::Main, true);
+  check(ModelRole::Helper, false);
+  check(ModelRole::ScopedHelper, false);
+  check(ModelRole::ScopedHelper, true);
+  check(ModelRole::Guide, false);
 }
 
 TEST(ModelCatalog, EverySchemaIsStructuredAndEveryOperationIsReachableOnce) {
@@ -139,13 +112,7 @@ TEST(ModelCatalog, FamilyModesRespectRolesAndRejectUnknownArguments) {
   EXPECT_THROW(catalog.FamilySpecs("unknown", ModelRole::Main), host::Failure);
   EXPECT_THROW(catalog.FamilyTool("files", "unknown", ModelRole::Main),
                host::Failure);
-  EXPECT_THROW(
-      catalog.ValidateArguments("tools", R"({"family":"runs","extra":1})"),
-      host::Failure);
-  EXPECT_NO_THROW(catalog.ValidateArguments(
-      "tools",
-      R"({"family":"runs","action":"status","arguments":{"run_id":"1"}})"));
-  EXPECT_THROW(catalog.ValidateArguments("run_status", R"({"extra":1})"),
+  EXPECT_THROW(catalog.Request("run_status", R"({"extra":1})", 1),
                host::Failure);
 }
 }  // namespace

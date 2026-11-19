@@ -1,1 +1,8 @@
-{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; }; }
+{
+  pkgs,
+  inputs,
+  params,
+}:
+{
+  run = inputs.tsugumi.rCard { src = ./src; };
+}

@@ -5,7 +5,6 @@ import hashlib
 import json
 import shutil
 import tarfile
-import tempfile
 from pathlib import Path
 
 PAYLOAD = "tsugumi-vm.tar.gz"
@@ -19,6 +18,22 @@ def digest(path):
     return value.hexdigest()
 
 
+def payload_identity(payload):
+    names = set()
+    identity = None
+    with tarfile.open(payload, mode="r|gz") as tar:
+        for entry in tar:
+            if not entry.isfile():
+                raise ValueError("unexpected VM payload contents")
+            names.add(entry.name)
+            if entry.name == "vm-version":
+                with tar.extractfile(entry) as stream:
+                    identity = stream.read().decode().strip()
+    if names != {"vmlinux", "rootfs.erofs", "vm-version"}:
+        raise ValueError("unexpected VM payload contents")
+    return identity
+
+
 def verify(directory, identity, revision=None):
     manifest = json.loads((directory / "vm-manifest.json").read_text())
     if manifest["identity"] != identity or manifest["system"] != "aarch64-linux":
@@ -28,39 +43,23 @@ def verify(directory, identity, revision=None):
     for name, checksum in manifest["files"].items():
         if Path(name).name != name or digest(directory / name) != checksum:
             raise ValueError(f"VM artifact checksum mismatch: {name}")
-    with tarfile.open(directory / PAYLOAD) as tar:
-        if set(tar.getnames()) != {"vmlinux", "rootfs.erofs", "vm-version"}:
-            raise ValueError("unexpected VM payload contents")
-        if set(manifest["members"]) != {"vmlinux", "rootfs.erofs", "vm-version"}:
-            raise ValueError("incomplete VM attachment checksums")
-        for name, expected in manifest["members"].items():
-            actual = hashlib.sha256()
-            with tar.extractfile(name) as stream:
-                while chunk := stream.read(1024 * 1024):
-                    actual.update(chunk)
-            if actual.hexdigest() != expected:
-                raise ValueError(f"VM attachment checksum mismatch: {name}")
-        if tar.extractfile("vm-version").read().decode().strip() != identity:
-            raise ValueError("VM payload identity mismatch")
+    if payload_identity(directory / PAYLOAD) != identity:
+        raise ValueError("VM payload identity mismatch")
     return manifest
 
 
 def build(args):
     destination = args.directory.resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(args.image / PAYLOAD, destination / PAYLOAD)
-    with tempfile.TemporaryDirectory() as temporary:
-        stage = Path(temporary)
-        with tarfile.open(destination / PAYLOAD) as tar:
-            tar.extractall(stage, members=[tar.getmember(n) for n in ["vmlinux", "rootfs.erofs", "vm-version"]])
-        identity = (stage / "vm-version").read_text().strip()
-        manifest = {"identity": identity, "system": "aarch64-linux", "revision": args.revision,
-                    "members": {name: digest(stage / name) for name in ["vmlinux", "rootfs.erofs", "vm-version"]},
-                    "files": {PAYLOAD: digest(destination / PAYLOAD)}}
-        (destination / "vm-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    files = [destination / name for name in manifest["files"]] + [destination / "vm-manifest.json"]
-    (destination / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in sorted(files)))
-    verify(destination, identity, args.revision)
+    payload = destination / PAYLOAD
+    shutil.copyfile(args.image / PAYLOAD, payload)
+    identity = payload_identity(payload)
+    manifest = {"identity": identity, "system": "aarch64-linux", "revision": args.revision,
+                "files": {PAYLOAD: digest(payload)}}
+    manifest_path = destination / "vm-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    hashes = {**manifest["files"], manifest_path.name: digest(manifest_path)}
+    (destination / "SHA256SUMS").write_text("".join(f"{hashes[name]}  {name}\n" for name in sorted(hashes)))
     print(identity)
 
 

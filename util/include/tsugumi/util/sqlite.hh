@@ -29,7 +29,9 @@ class Stmt {
   Stmt& bind(int i, int v) { return bind(i, static_cast<int64_t>(v)); }
   Stmt& bind(int i, bool v) { return bind(i, static_cast<int64_t>(v ? 1 : 0)); }
   Stmt& bind(int i, std::string_view v);
-  Stmt& bind(int i, const std::string& v) { return bind(i, std::string_view(v)); }
+  Stmt& bind(int i, const std::string& v) {
+    return bind(i, std::string_view(v));
+  }
   Stmt& bind(int i, const char* v) { return bind(i, std::string_view(v)); }
   Stmt& bind_blob(int i, std::string_view v);
   Stmt& bind_null(int i);
@@ -42,7 +44,8 @@ class Stmt {
   // Returns true when a row is available.
   bool step();
   void run() {
-    while (step()) {}
+    while (step()) {
+    }
   }
   void reset();
 

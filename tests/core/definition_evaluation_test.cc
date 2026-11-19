@@ -4,9 +4,9 @@
 #include <cstdlib>
 #include <fstream>
 
+#include "nix_eval.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/graph.hh"
-#include "nix_eval.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -29,10 +29,16 @@ TEST(DefinitionEvaluationKey, SeparatesAllExplicitEvaluatorArguments) {
   for (const auto& component : {"pin-url", "pin-hash", "system", "args"}) {
     auto changed = original;
     const std::string name = component;
-    if (name == "pin-url") changed.pin_url += "revision";
-    else if (name == "pin-hash") changed.pin_hash += "hash";
-    else if (name == "system") changed.system = "aarch64-linux";
-    else changed.args = "{ sdk = /sdk; card = /defs/new; gen = /gen/new; upstream = /up/new; remote = true; }";
+    if (name == "pin-url")
+      changed.pin_url += "revision";
+    else if (name == "pin-hash")
+      changed.pin_hash += "hash";
+    else if (name == "system")
+      changed.system = "aarch64-linux";
+    else
+      changed.args =
+          "{ sdk = /sdk; card = /defs/new; gen = /gen/new; upstream = /up/new; "
+          "remote = true; }";
     EXPECT_NE(key, changed.evaluation_key()) << name;
   }
   auto operational = original;
@@ -58,7 +64,8 @@ class DefinitionEvaluation : public ::testing::Test {
     call.system = native_system();
     call.args = "{ root = /. + \"" + root.string() + "/sdk\"; }";
     call.root_dir = root / "roots";
-    call.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    call.deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(120);
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
@@ -103,7 +110,6 @@ TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {
   EXPECT_EQ(first.derivation.path, eval->evaluate(call).derivation.path);
 }
 
-
 TEST_F(DefinitionEvaluation, CopiedSdkTreeInvalidatesSourceToStoreCache) {
   fs::write_atomic(root / "sdk" / "views" / "line-chart.js", "first view");
   // Interpolation copies the tree into the store, as the SDK's derivation
@@ -118,8 +124,8 @@ TEST_F(DefinitionEvaluation, CopiedSdkTreeInvalidatesSourceToStoreCache) {
   EXPECT_NE(first.derivation.path, second.derivation.path);
 }
 
-
-TEST_F(DefinitionEvaluation, TargetSystemChangesTheDerivationWithoutBuildingOutputs) {
+TEST_F(DefinitionEvaluation,
+       TargetSystemChangesTheDerivationWithoutBuildingOutputs) {
   auto eval = evaluator("pkgs.stdenv.hostPlatform.system");
   call.system = "aarch64-linux";
   const auto arm = eval->evaluate(call);
@@ -138,7 +144,8 @@ TEST_F(DefinitionEvaluation, MissingDerivationIsAMiss) {
   auto eval = evaluator(R"(builtins.readFile (args.root + "/value"))");
   auto result = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(result.evaluation_epoch, 0u);
-  result.derivation.path = "/nix/store/00000000000000000000000000000000-unavailable.drv";
+  result.derivation.path =
+      "/nix/store/00000000000000000000000000000000-unavailable.drv";
   EXPECT_FALSE(eval->reuse(call, result));
 }
 

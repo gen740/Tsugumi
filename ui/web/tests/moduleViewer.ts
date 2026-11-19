@@ -19,7 +19,7 @@ const context = vm.createContext({
   document: { createElement: () => root, body: { append() {} } }, parent,
   innerWidth: 400, innerHeight: 300, devicePixelRatio: 2,
   addEventListener: (name: string, fn: any) => listeners.set(name, fn),
-  ResizeObserver: class { observe() {} }, setTimeout, requestAnimationFrame: (fn: any) => setTimeout(fn, 0),
+  ResizeObserver: class { observe() {} }, setTimeout, requestAnimationFrame: (fn: () => void) => queueMicrotask(fn),
   Blob: class { constructor(public parts: string[]) {} },
   URL: { createObjectURL: (blob: { parts: string[] }) => 'data:text/javascript;base64,' + Buffer.from(blob.parts.join('')).toString('base64'), revokeObjectURL() {} },
 })

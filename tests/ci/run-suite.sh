@@ -36,7 +36,7 @@ case "$suite" in
     if $full; then run "$bin/tsugumi_worker_condition_tests"; fi
     # Evaluation cache invalidation reads real dependencies and filesystem state.
     run "$bin/tsugumi_definition_evaluation_tests"
-    run python3 -m pytest -q --core-report -m "$marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist load --durations=40 tests/core
+    run python3 -m pytest -q -m "$marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist load --durations=40 tests/core
     run "$bin/tsugumi_workerd_tests"
     run "$bin/tsugumi_native_contract_tests"
     run "$bin/tsugumi_execution_service_tests"

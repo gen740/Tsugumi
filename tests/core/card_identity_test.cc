@@ -1,11 +1,10 @@
-#include "store.hh"
-
 #include <gtest/gtest.h>
 
 #include <regex>
 #include <set>
 
 #include "service.hh"
+#include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -39,9 +38,12 @@ TEST(InitialDocument, LoadsAnEmptyProjectAndEscapesItsName) {
 
 TEST(CardIdentity, MetadataIsNonComputationalOnlyAtDefinitionPaths) {
   EXPECT_TRUE(Document::is_card_meta_file("definitions/card/_meta.json"));
-  EXPECT_TRUE(Document::is_card_meta_file("externals/outer/externals/inner/definitions/card/_meta.json"));
-  EXPECT_FALSE(Document::is_card_meta_file("definitions/card/src/definitions/data/_meta.json"));
-  EXPECT_FALSE(Document::is_card_meta_file("externals/outer/definitions/card/_card.json"));
+  EXPECT_TRUE(Document::is_card_meta_file(
+      "externals/outer/externals/inner/definitions/card/_meta.json"));
+  EXPECT_FALSE(Document::is_card_meta_file(
+      "definitions/card/src/definitions/data/_meta.json"));
+  EXPECT_FALSE(Document::is_card_meta_file(
+      "externals/outer/definitions/card/_card.json"));
 }
 
 TEST(CoreLifecycle, NeverRunProjectDoesNotCreateRunScratch) {
@@ -70,8 +72,10 @@ TEST(CoreLifecycle, NeverRunProjectDoesNotCreateRunScratch) {
   EXPECT_FALSE(std::filesystem::exists(options.run_scratch_dir));
 }
 
-TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes) {
-  auto root = std::filesystem::temp_directory_path() / ("card-identity-" + crypto::uuid4());
+TEST(CardIdentity,
+     CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes) {
+  auto root = std::filesystem::temp_directory_path() /
+              ("card-identity-" + crypto::uuid4());
   std::filesystem::create_directories(root);
   struct Cleanup {
     std::filesystem::path root;
@@ -79,7 +83,8 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
   } cleanup{root};
   fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "layout.json", "{}");
-  fs::write_atomic(root / "externals/child/tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "externals/child/tsugumi.json",
+                   R"({"canvas":{"cards":[],"connections":[]}})");
   fs::write_atomic(root / ".tsugumi/card-ids", "CASE\n");
   std::set<std::string> ids;
   std::regex shape("aggregate(?:-[1-9][0-9]*)?");
@@ -109,14 +114,15 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
   Store store({root, ""});
   store.open();
   EXPECT_TRUE(ids.insert(store.allocate_card_id("aggregate", "")).second);
-  EXPECT_TRUE(std::regex_match(store.allocate_card_id("aggregate", "externals/child/"), shape));
+  EXPECT_TRUE(std::regex_match(
+      store.allocate_card_id("aggregate", "externals/child/"), shape));
   EXPECT_TRUE(std::regex_match(
       store.allocate_card_id("aggregate", "externals/child/externals/inner/"),
       shape));
   auto reservations = fs::read_file(root / ".tsugumi/card-ids").value();
-  for (const auto &id : ids)
+  for (const auto& id : ids)
     EXPECT_NE(reservations.find(id + '\n'), std::string::npos);
 }
 
-} // namespace
-} // namespace tsugumi
+}  // namespace
+}  // namespace tsugumi

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,23 +27,36 @@ struct ProjectRegistry {
                   ConversationPath conversation_path);
   auto ReplacePath(const std::string& project,
                    const std::filesystem::path& folder) -> void;
-  auto Lookup(const std::string& id) -> Project;
+  auto Lookup(std::string_view id) -> Project;
   auto Location(const std::string& project)
       -> std::optional<std::filesystem::path>;
   auto Locations() -> std::vector<std::string>;
   auto Root(const std::string& project) -> std::filesystem::path;
-  auto ValidateLocation(const std::string& project,
-                        const std::filesystem::path& folder) -> void;
+  auto ReserveLocation(const std::string& project,
+                       const std::filesystem::path& folder)
+      -> std::function<void()>;
   auto RegisterProject(const Tsugumi::Host::RegisterProjectRequest& request)
       -> void;
+  auto AttachFolder(std::string_view project, std::string_view resource,
+                    std::string_view folder, std::string_view title) -> void;
   auto RegisterFolder(const Tsugumi::Host::RegisterFolderRequest& request)
       -> void;
-  auto AttachedRoot(const std::string& project, const std::string& folder) -> std::string;
+  auto AttachedRoot(const std::string& project, const std::string& folder)
+      -> std::string;
   auto RegisterReady(const Tsugumi::Host::EnvironmentStateT& state) -> void;
   auto UnregisterEnvironment(const std::string& key) -> void;
 
   StateGate& gate;
   sql::Db& db;
   ConversationPath conversation_path;
+
+ private:
+  auto ValidateLocation(const std::string& project,
+                        const std::filesystem::path& canonical_folder) -> void;
+  struct PendingLocation {
+    std::filesystem::path folder;
+    size_t starts = 0;
+  };
+  std::map<std::string, PendingLocation> pending_;
 };
 }  // namespace tsugumi::host

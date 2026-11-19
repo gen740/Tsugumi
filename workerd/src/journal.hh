@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,13 +17,10 @@ struct Record {
   std::string fingerprint;
   std::string result;
   std::string diagnostic;
-  uint64_t deadline = 0;
   uint64_t pid = 0;
   uint64_t start = 0;
   std::string boot;
   std::string core_life_id;
-  uint32_t heartbeat_interval_seconds = 15;
-  uint32_t missed_heartbeats = 0;
   auto status() const -> R::JobStatusT;
 };
 
@@ -30,7 +28,6 @@ auto now_ms() -> uint64_t;
 auto private_directory(const stdfs::path& path) -> void;
 auto identity(const stdfs::path& directory, const std::string& name)
     -> std::string;
-auto check_id(std::string_view value) -> void;
 auto discard_tree(const stdfs::path& path) -> void;
 auto file_digest(const stdfs::path& path, uint64_t limit = kMaxBlob)
     -> std::string;
@@ -44,17 +41,16 @@ class Journal {
   auto instance() const -> const std::string& { return instance_; }
   auto job_path(std::string_view job) const -> stdfs::path;
   auto jobs() const -> std::vector<std::string>;
-  auto status(std::string_view job) const -> Record;
+  auto status(std::string_view job,
+              std::optional<std::string_view> core = std::nullopt) const
+      -> Record;
   auto spec(std::string_view job) const -> std::string;
-  auto touch_core(std::string_view core, uint64_t now = now_ms()) -> void;
-  auto expire_core(std::string_view job, uint64_t now = now_ms()) -> void;
-  auto require_owner(std::string_view job, std::string_view core) const -> void;
   auto put(std::string_view job, const R::PutBlobRequestT& chunk,
            std::string_view core) -> void;
-  auto get(std::string_view job, const R::GetBlobRequestT& request) const
-      -> R::BlobChunkT;
-  auto submit(std::string_view job, std::string_view spec,
-              std::string_view core) -> Record;
+  auto get(std::string_view job, const R::GetBlobRequestT& request,
+           std::string_view core) const -> R::BlobChunkT;
+  auto submit(std::string_view job, std::string_view bytes,
+              const R::JobSpecT& spec, std::string_view core) -> Record;
   auto cancel(std::string_view job, const std::string& fingerprint) -> Record;
   auto release(std::string_view job, const std::string& fingerprint) -> void;
   auto claim(std::string_view job, uint64_t pid, uint64_t start,
@@ -63,7 +59,7 @@ class Journal {
                            const std::string& boot) -> void;
   auto finish(std::string_view job, R::JobState state,
               const std::string& result, const std::string& diagnostic) -> void;
-  auto expire(std::string_view job) -> void;
+  auto clean_released(std::string_view job) -> void;
   // Called only after the sandbox has stopped. Returns a verified manifest.
   auto import_results(std::string_view job) -> std::string;
 

@@ -1,11 +1,10 @@
 #include "host/version_text.hh"
 
-#include <git2.h>
-
 #include <algorithm>
 #include <set>
 
 #include "host/projects.hh"
+#include "tsugumi/util/git.hh"
 
 namespace tsugumi::host {
 namespace {
@@ -20,34 +19,53 @@ auto Names(const std::vector<std::string>& names, bool en) -> std::string {
 }
 }  // namespace
 
-auto CommitText(const Tsugumi::RPC::VersionCommitFactsT& record, bool en) -> std::string {
-  if (record.kind == "create") return en ? "Create the project" : "プロジェクトを作成";
-  if (record.kind == "checkout") return en ? "Changes in progress" : "作業中の変更";
+auto CommitText(const Tsugumi::RPC::VersionCommitFactsT& record, bool en)
+    -> std::string {
+  if (record.kind == "create")
+    return en ? "Create the project" : "プロジェクトを作成";
+  if (record.kind == "checkout")
+    return en ? "Changes in progress" : "作業中の変更";
   if (record.kind == "run")
-    return std::string(en ? "Run: " : "実行: ") + (record.card.empty() ? "Workflow" : record.card);
+    return std::string(en ? "Run: " : "実行: ") +
+           (record.card.empty() ? "Workflow" : record.card);
   return record.kind;
 }
-auto RunText(const Tsugumi::RPC::VersionRunFactsT& record, bool en) -> std::string {
+auto RunText(const Tsugumi::RPC::VersionRunFactsT& record, bool en)
+    -> std::string {
   std::vector<std::string> ran, failed;
   for (const auto& count : record.ran)
-    ran.push_back(count->card + (count->count > 1 ? " ×" + std::to_string(count->count) : ""));
+    ran.push_back(count->card + (count->count > 1
+                                     ? " ×" + std::to_string(count->count)
+                                     : ""));
   for (const auto& failure : record.failures)
-    failed.push_back(failure->card + (en ? " (" : "（") + failure->kind + (en ? ")" : "）"));
-  std::string out = en ? (record.whole ? "whole" : (record.propagate ? "from " : "only ") + record.card)
-                       : (record.whole ? "全体" : record.card + (record.propagate ? " から" : " だけ"));
-  if (record.saved_inputs) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
+    failed.push_back(failure->card + (en ? " (" : "（") + failure->kind +
+                     (en ? ")" : "）"));
+  std::string out =
+      en ? (record.whole ? "whole"
+                         : (record.propagate ? "from " : "only ") + record.card)
+         : (record.whole
+                ? "全体"
+                : record.card + (record.propagate ? " から" : " だけ"));
+  if (record.saved_inputs)
+    out += en ? " (with saved inputs)" : "（保存済みの入力で）";
   if (!ran.empty()) out += ": " + Names(ran, en);
-  if (!failed.empty()) out += (en ? " / failed: " : " / 失敗: ") + Names(failed, en);
-  if (!record.never.empty()) out += (en ? " / not run: " : " / 未実行: ") + Names(record.never, en);
+  if (!failed.empty())
+    out += (en ? " / failed: " : " / 失敗: ") + Names(failed, en);
+  if (!record.never.empty())
+    out += (en ? " / not run: " : " / 未実行: ") + Names(record.never, en);
   return out;
 }
-auto ChangeText(const Tsugumi::RPC::VersionChangesT& record, bool en) -> std::string {
+auto ChangeText(const Tsugumi::RPC::VersionChangesT& record, bool en)
+    -> std::string {
   std::vector<std::string> entries;
-  for (const auto& id : record.added) entries.push_back(std::string(en ? "Added " : "追加: ") + id);
-  for (const auto& id : record.removed) entries.push_back(std::string(en ? "Removed " : "削除: ") + id);
+  for (const auto& id : record.added)
+    entries.push_back(std::string(en ? "Added " : "追加: ") + id);
+  for (const auto& id : record.removed)
+    entries.push_back(std::string(en ? "Removed " : "削除: ") + id);
   for (const auto& change : record.changed) {
-    std::string entry =
-        std::string(en ? "Changed " : "変更: ") + (change->card.empty() ? "Workflow" : change->card) + " (";
+    std::string entry = std::string(en ? "Changed " : "変更: ") +
+                        (change->card.empty() ? "Workflow" : change->card) +
+                        " (";
     for (const auto& kind : change->kinds) {
       std::string label = kind;
       if (!en) {
@@ -64,9 +82,12 @@ auto ChangeText(const Tsugumi::RPC::VersionChangesT& record, bool en) -> std::st
     }
     entries.push_back(entry + ")");
   }
-  if (record.workflow) entries.push_back(en ? "Changed Workflow settings" : "Workflow の設定を変更");
+  if (record.workflow)
+    entries.push_back(en ? "Changed Workflow settings"
+                         : "Workflow の設定を変更");
   std::string out;
-  for (size_t i = 0; i < std::min(entries.size(), size_t{6}); ++i) out += (i ? "; " : "") + entries[i];
+  for (size_t i = 0; i < std::min(entries.size(), size_t{6}); ++i)
+    out += (i ? "; " : "") + entries[i];
   if (entries.size() > 6)
     out += en ? "; and " + std::to_string(entries.size() - 6) + " more"
               : " ほか " + std::to_string(entries.size() - 6) + " 件";
@@ -77,8 +98,10 @@ auto ChangeText(const Tsugumi::RPC::VersionChangesT& record, bool en) -> std::st
 }
 auto PresentGraph(Tsugumi::RPC::VersionGraphT& graph, bool en) -> void {
   for (auto& commit : graph.commits) {
-    if (commit->facts) commit->message = commit->summary = CommitText(*commit->facts, en);
-    for (auto& run : commit->runs) run->summary = run->facts ? RunText(*run->facts, en) : "";
+    if (commit->facts)
+      commit->message = commit->summary = CommitText(*commit->facts, en);
+    for (auto& run : commit->runs)
+      run->summary = run->facts ? RunText(*run->facts, en) : "";
   }
 }
 
@@ -86,57 +109,40 @@ namespace stdfs = std::filesystem;
 namespace {
 constexpr size_t kDiffLimit = 12000;
 constexpr size_t kDiffFileLimit = 4000;
-// ---- libgit2 handles ---------------------------------------------------------
+// ---- libgit2 handles
+// ---------------------------------------------------------
 
-struct Init {
-  Init() { git_libgit2_init(); }
-};
-void init_once() { static Init i; }
+using git::init_once;
+using git::Ptr;
 
-template <class T, void (*F)(T*)>
-struct Ptr {
-  T* p = nullptr;
-  Ptr() = default;
-  Ptr(const Ptr&) = delete;
-  Ptr& operator=(const Ptr&) = delete;
-  ~Ptr() {
-    if (p) F(p);
-  }
-  T** out() { return &p; }
-  T* get() const { return p; }
-  explicit operator bool() const { return p != nullptr; }
-};
 using Repo = Ptr<git_repository, git_repository_free>;
-using Index = Ptr<git_index, git_index_free>;
 using Tree = Ptr<git_tree, git_tree_free>;
 using Commit = Ptr<git_commit, git_commit_free>;
 using Sig = Ptr<git_signature, git_signature_free>;
-using Ref = Ptr<git_reference, git_reference_free>;
 using Note = Ptr<git_note, git_note_free>;
-using Walk = Ptr<git_revwalk, git_revwalk_free>;
 using Diff = Ptr<git_diff, git_diff_free>;
-using Object = Ptr<git_object, git_object_free>;
-using RefIter = Ptr<git_reference_iterator, git_reference_iterator_free>;
 using Patch = Ptr<git_patch, git_patch_free>;
-using TreeEntry = Ptr<git_tree_entry, git_tree_entry_free>;
-using Blob = Ptr<git_blob, git_blob_free>;
 
 void check(int rc, const std::string& what) {
   if (rc >= 0) return;
   const git_error* e = git_error_last();
-  throw ProjectFailure("internal_error", "git: " + what + ": " +
-                                             (e && e->message ? e->message : "error " + std::to_string(rc)));
+  throw ProjectFailure(
+      "internal_error",
+      "git: " + what + ": " +
+          (e && e->message ? e->message : "error " + std::to_string(rc)));
 }
 
 bool open(Repo& r, const stdfs::path& root) {
-  return git_repository_open_ext(r.out(), root.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0;
+  return git_repository_open_ext(r.out(), root.c_str(),
+                                 GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0;
 }
 
 auto SummaryRef(bool english) -> const char* {
-  return english ? "refs/notes/tsugumi-summary-en" : "refs/notes/tsugumi-summary-ja";
+  return english ? "refs/notes/tsugumi-summary-en"
+                 : "refs/notes/tsugumi-summary-ja";
 }
 }  // namespace
-auto ResolveVersion(const std::filesystem::path &root, const std::string &name)
+auto ResolveVersion(const std::filesystem::path& root, const std::string& name)
     -> std::string {
   init_once();
   Repo repo;
@@ -153,7 +159,8 @@ auto ResolveVersion(const std::filesystem::path &root, const std::string &name)
 }
 
 auto SummaryReads(const std::string& path) -> bool {
-  if (path == "tsugumi.json") return true;  // layout.json is where things sit, not what they do
+  if (path == "tsugumi.json")
+    return true;  // layout.json is where things sit, not what they do
   std::vector<std::string> parts;
   for (const auto& p : stdfs::path(path)) parts.push_back(p.string());
   size_t i = 0;
@@ -162,14 +169,18 @@ auto SummaryReads(const std::string& path) -> bool {
   if (i + 2 >= parts.size() || parts[i] != "definitions") return false;
   const std::string& file = parts[i + 2];
   if (i + 3 == parts.size())
-    return file == "_card.json" || file == "_meta.json" || file == "_link.json" || file == "_outputs.fbs" ||
+    return file == "_card.json" || file == "_meta.json" ||
+           file == "_link.json" || file == "_outputs.fbs" ||
            file == "default.nix";
-  static const std::set<std::string> code = {".py", ".cc",  ".cpp", ".cxx", ".c", ".h",
-                                             ".hh", ".hpp", ".nix", ".fbs", ".sh"};
-  return file == "src" && code.count(stdfs::path(path).extension().string()) > 0;
+  static const std::set<std::string> code = {".py",  ".cc",  ".cpp", ".cxx",
+                                             ".c",   ".h",   ".hh",  ".hpp",
+                                             ".nix", ".fbs", ".sh"};
+  return file == "src" &&
+         code.count(stdfs::path(path).extension().string()) > 0;
 }
 
-auto VersionDiff(const stdfs::path& root, const std::string& commit, const std::string& from_commit)
+auto VersionDiff(const stdfs::path& root, const std::string& commit,
+                 const std::string& from_commit)
     -> Tsugumi::Host::VersionDiffT {
   init_once();
   Tsugumi::Host::VersionDiffT out;
@@ -192,16 +203,20 @@ auto VersionDiff(const stdfs::path& root, const std::string& commit, const std::
     check(git_commit_tree(theirs.out(), from.get()), "base tree");
   } else if (git_commit_parentcount(c.get()) > 0) {
     Commit p;
-    if (git_commit_parent(p.out(), c.get(), 0) == 0) git_commit_tree(theirs.out(), p.get());
+    if (git_commit_parent(p.out(), c.get(), 0) == 0)
+      git_commit_tree(theirs.out(), p.get());
   }
   git_diff_options options;
   git_diff_options_init(&options, GIT_DIFF_OPTIONS_VERSION);
   options.context_lines = 2;
   Diff d;
-  check(git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(), &options), "diff");
+  check(git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(),
+                              &options),
+        "diff");
   for (size_t i = 0; i < git_diff_num_deltas(d.get()); ++i) {
     const auto* delta = git_diff_get_delta(d.get(), i);
-    const char* path = delta->new_file.path ? delta->new_file.path : delta->old_file.path;
+    const char* path =
+        delta->new_file.path ? delta->new_file.path : delta->old_file.path;
     if (!path || !SummaryReads(path)) continue;
     Patch p;
     if (git_patch_from_diff(p.out(), d.get(), i) != 0 || !p) continue;
@@ -221,22 +236,26 @@ auto VersionDiff(const stdfs::path& root, const std::string& commit, const std::
     if (out.text.back() != '\n') out.text += '\n';
   }
   // Cut inside a character at most: what a client sends stays valid text.
-  while (!out.text.empty() && (static_cast<unsigned char>(out.text.back()) & 0x80)) out.text.pop_back();
+  while (!out.text.empty() &&
+         (static_cast<unsigned char>(out.text.back()) & 0x80))
+    out.text.pop_back();
   return out;
 }
 
-auto ReadSummary(const stdfs::path& root, const std::string& commit, bool english) -> std::string {
+auto ReadSummary(const stdfs::path& root, const std::string& commit,
+                 bool english) -> std::string {
   init_once();
   Repo repo;
   git_oid oid;
   if (!open(repo, root) || git_oid_fromstr(&oid, commit.c_str()) != 0)
     throw ProjectFailure("not_found", "no version " + commit);
   Note note;
-  if (git_note_read(note.out(), repo.get(), SummaryRef(english), &oid) != 0) return "";
+  if (git_note_read(note.out(), repo.get(), SummaryRef(english), &oid) != 0)
+    return "";
   return git_note_message(note.get());
 }
-auto StoreSummary(const stdfs::path& root, const std::string& commit, bool english, const std::string& text)
-    -> void {
+auto StoreSummary(const stdfs::path& root, const std::string& commit,
+                  bool english, const std::string& text) -> void {
   init_once();
   Repo repo;
   git_oid oid;
@@ -246,10 +265,11 @@ auto StoreSummary(const stdfs::path& root, const std::string& commit, bool engli
   check(git_commit_lookup(target.out(), repo.get(), &oid), "summary target");
   Sig sig;
   if (git_signature_default(sig.out(), repo.get()) != 0)
-    check(git_signature_now(sig.out(), "Tsugumi", "tsugumi@localhost"), "signature");
+    check(git_signature_now(sig.out(), "Tsugumi", "tsugumi@localhost"),
+          "signature");
   git_oid result;
-  check(
-      git_note_create(&result, repo.get(), SummaryRef(english), sig.get(), sig.get(), &oid, text.c_str(), 1),
-      "summary");
+  check(git_note_create(&result, repo.get(), SummaryRef(english), sig.get(),
+                        sig.get(), &oid, text.c_str(), 1),
+        "summary");
 }
 }  // namespace tsugumi::host

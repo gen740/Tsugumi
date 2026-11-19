@@ -3,38 +3,25 @@ set -euo pipefail
 action=$1
 persist=$2
 health="$persist/store-health"
-version=1
 mkdir -p "$health"
 chmod 700 "$health"
 
 case "$action" in
   begin)
-    # Decide before replacing the marker. A missing version also checks every
-    # existing disk once when this protection is first installed.
     reason=""
-    if [ -e "$health/running" ]; then reason=unclean
-    elif [ "$(cat "$health/checked-version" 2>/dev/null || true)" != "$version" ]; then reason=upgrade
-    elif [ "$(cat "$health/boot-closure" 2>/dev/null || true)" != "$3" ]; then reason=image
-    fi
+    if [ -e "$health/running" ]; then reason=unclean; fi
     touch "$health/running"
     sync -f "$persist"
     printf '%s\n' "$reason"
     ;;
   check)
-    boot=$3
-    reason=$4
+    reason=$3
     [ -n "$reason" ] || exit 0
-    if [ "$reason" = unclean ]; then
-      echo 'TSUGUMI-STAGE checkingStore'
-      echo 'Checking the Nix store after an unclean stop; projects will wait.'
-    else
-      echo 'TSUGUMI-STAGE checkingStoreUpgrade'
-      echo 'Checking the Nix store contents before starting projects.'
-    fi
+    echo 'TSUGUMI-STAGE checkingStore'
+    echo 'Checking the Nix store after an unclean stop; projects will wait.'
     # Keep the full diagnostics (including paths repaired or unavailable) and
     # the actual exit status. A pipeline ending in tail hid failures before.
     touch "$health/running"
-    rm -f "$health/checked-version"
     sync -f "$persist"
     status=0
     NIX_REMOTE=local NO_COLOR=1 nix-store --verify --check-contents --repair 2>&1 | tee "$health/check.log" || status=$?
@@ -44,8 +31,6 @@ case "$action" in
       exit "$status"
     fi
     echo 'Store content check and repair completed. Repairs, if any, are listed above.'
-    printf '%s\n' "$version" > "$health/checked-version"
-    printf '%s\n' "$boot" > "$health/boot-closure"
     sync -f "$persist"
     ;;
   poweroff)
@@ -54,20 +39,8 @@ case "$action" in
     # reconfigure it), so end every daemon and wait until none is left: after
     # that nothing can change registered store data. A daemon that survives
     # keeps the dirty marker, and the next boot checks the store.
-    daemons() {
-      for p in /proc/[0-9]*; do
-        [ "$(cat "$p/comm" 2>/dev/null)" != nix-daemon ] || echo "${p##*/}"
-      done
-    }
-    for pid in $(daemons); do kill -TERM "$pid" 2>/dev/null || true; done
-    n=0
-    while [ -n "$(daemons)" ]; do
-      n=$((n + 1))
-      [ "$n" -le 50 ] || exit 1
-      sleep 0.1
-    done
+    "$3" --stop-nix
     sync
-    mount -o remount,ro /history-disk || exit 1
     # Flush the store's backing filesystem, then durably clear the marker.
     bash "$0" clean "$persist"
     ;;

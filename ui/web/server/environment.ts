@@ -1,5 +1,4 @@
 // Presentation adapter for core-owned project environments.
-import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { TextDecoder } from 'node:util'
@@ -47,28 +46,23 @@ export type EnvState =
  *  through the human-authenticated Host contract. */
 export interface Environments {
   observe(fn: (key: string, s: EnvState) => void): () => boolean
-  controlDir(key: string): string
   readonly hostArguments?: string[]
   state(dir: string): Promise<EnvState>
-  start(dir: string, archiveIncompatibleHistory?: boolean): Promise<EnvState>
+  start(dir: string): Promise<EnvState>
   stop(dir: string): Promise<void>
-  stopAll(): Promise<void[]>
   /** The folders a project's chats may read now. */
   attachFolders(dir: string, folders: string[]): Promise<{ folder: string; resource: string }[]>
   removeFolders(dir: string, folders: string[]): Promise<void>
-  attachedFolders(dir: string): Promise<string[]>
   list(): { key: string; project: string; state: EnvState }[]
 }
 
-/** Stable identity of a project folder. Aliases and renames share its inode. */
+/** The host owns execution identity; the relay indexes its views by folder. */
 export function projectKey(dir: string): { key: string; real: string } {
   const real = fs.realpathSync(dir)
-  const st = fs.statSync(real, { bigint: true })
-  const inode = `${st.dev}:${st.ino}`
-  return { key: createHash('sha256').update(inode).digest('hex').slice(0, 16), real }
+  return { key: real, real }
 }
 
-interface Env { key: string; project: string; state: EnvState; control?: string }
+interface Env { hostKey?: string; key: string; project: string; state: EnvState }
 
 export class EnvironmentManager implements Environments {
   private envs = new Map<string, Env>()
@@ -112,23 +106,23 @@ export class EnvironmentManager implements Environments {
       if (terminal) {
         if (value.data?.length) terminal.data(terminal.decoder.decode(Uint8Array.from(value.data), { stream: true }))
         if (value.closed) { terminal.exit({ exitCode: 0 }); this.terminals.delete(value.session) }
-      } else if (this.terminalOutput.size < 16) {
+      } else {
         const pending = this.terminalOutput.get(value.session) ?? { data: [], closed: false }
-        if (pending.data.length + (value.data?.length ?? 0) <= 65536) pending.data.push(...(value.data ?? []))
+        pending.data.push(...(value.data ?? []))
         pending.closed ||= !!value.closed
         this.terminalOutput.set(value.session, pending)
       }
       return
     }
     const value = event.type === 'EnvironmentStopped' ? event.value.state : event.value
-    const entry = this.envs.get(value?.key)
+    const entry = this.envs.get(value?.project) ?? [...this.envs.values()].find(e => e.hostKey === value?.key)
     if (!entry) return
     if (event.type === 'EnvironmentProgress') {
       this.show(entry, { state: 'starting', message: STAGES[value.stage] ?? value.stage, stage: value.stage, fraction: value.fraction })
     } else if (event.type === 'EnvironmentState' || event.type === 'EnvironmentStopped') this.adopt(entry, value)
   }
   private adopt(entry: Env, value: any): EnvState {
-    entry.control = value.controlDir
+    entry.hostKey = value.key
     switch (value.phase) {
       case EnvironmentPhase.Ready:
         return this.show(entry, { state: 'ready', endpoint: value.endpoint, token: value.token,
@@ -145,16 +139,15 @@ export class EnvironmentManager implements Environments {
       default: return this.show(entry, { state: 'stopped' })
     }
   }
-  private async call(dir: string, action: string, archive = false): Promise<EnvState> {
+  private async call(dir: string, action: string): Promise<EnvState> {
     const entry = this.env(dir)
     const state = await this.request('EnvironmentRequest', { project: entry.project, action,
-      origins: this.origins(), archive_incompatible_history: archive })
+      origins: this.origins() })
     return this.adopt(entry, state)
   }
   state(dir: string) { return this.call(dir, 'State') }
-  start(dir: string, archive = false) { return this.call(dir, 'Start', archive) }
+  start(dir: string) { return this.call(dir, 'Start') }
   async stop(dir: string) { await this.call(dir, 'Stop') }
-  stopAll() { return Promise.all([...this.envs.values()].map((entry) => this.stop(entry.project))) }
   async attachFolders(dir: string, folders: string[]) {
     const entry = this.env(dir)
     const reply = await this.request('AttachFoldersRequest', { project: entry.project, folders })
@@ -164,10 +157,6 @@ export class EnvironmentManager implements Environments {
   async removeFolders(dir: string, folders: string[]) {
     await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'RemoveFolders', folders })
   }
-  async attachedFolders(dir: string): Promise<string[]> {
-    return (await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'State' })).folders ?? []
-  }
-  controlDir(key: string) { return this.envs.get(key)?.control ?? path.join(this.vm?.support ?? this.support, this.vm ? 'environments' : 'env', key, 'control') }
   async terminal(dir: string, cols: number, rows: number): Promise<VMTerminal> {
     const ready = await this.start(dir)
     if (ready.state !== 'ready') throw new Error(ready.state === 'failed' ? ready.message : L('実行環境が起動していません'))

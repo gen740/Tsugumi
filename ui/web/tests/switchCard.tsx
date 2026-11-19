@@ -1,6 +1,8 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
+import TestRenderer from 'react-test-renderer'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
+import { L } from '../src/i18n'
 import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
 import { get, parse, serialize } from '../shared/json'
@@ -73,7 +75,7 @@ for (const flow of ['topToBottom', 'leftToRight'] as const) {
         inputs: kind === 'trigger' || kind === 'switch' ? [] : [{ name: 'value' }, { name: 'condition' }],
         outputs: [{ name: 'a' }, { name: 'b' }] }
       const g = new CardGeometry(data, flow)
-      const body = kind === 'trigger' ? { x: 55, y: 17 } : g.iconCenter(g.outlineRect)
+      const body = g.iconCenter(g.outlineRect)
       const hit = g.portHitSize(zoom)
       for (const output of [false, true]) {
         for (const port of output ? data.outputs : data.inputs) {
@@ -82,8 +84,21 @@ for (const flow of ['topToBottom', 'leftToRight'] as const) {
             `${kind} body is free of port targets at ${zoom}, ${flow}`)
         }
       }
-      const html = renderToStaticMarkup(<CardNodeView data={data} flow={flow} zoom={zoom} />)
-      assert.ok(html.includes(`width:${hit}px;height:${hit}px`), 'rendering uses the routing target size')
+      const started: { port: string; output: boolean }[] = []
+      let moved = false
+      const rendered = TestRenderer.create(<CardNodeView data={data} flow={flow} zoom={zoom}
+        onPortDown={(port, output) => started.push({ port, output })} onPointerDown={() => { moved = true }} />)
+      const target = rendered.root.findAll(node =>
+        node.type === 'div' && node.props.onPointerDown && node.props.title?.includes('a') &&
+        node.props.title?.startsWith(L('出力 ') + 'a'))[0]
+      assert.ok(target, `${kind} exposes an output wiring target`)
+      let stopped = false
+      target.props.onPointerDown({ button: 0, stopPropagation() { stopped = true } })
+      assert.deepEqual(started, [{ port: 'a', output: true }])
+      assert.ok(stopped, 'a wiring gesture does not start a body drag')
+      rendered.root.findByProps({ role: 'group' }).props.onPointerDown({ button: 0 })
+      assert.ok(moved, 'a Card body still starts a drag')
+      rendered.unmount()
     }
   }
 }

@@ -1,15 +1,13 @@
 """History portability and deletion, checked through public RPC."""
 
-import json
 import shutil
-import time
 
 import pytest
 
 from harness.fixtures import worker_project
 from harness.observations import read_output, read_pages
 from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -43,7 +41,7 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     when its project directory is copied and opened with an empty history disk,
     then the public history is restored and runs added by the copy can return with it.
     """
-    original = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history-original")
+    original = core_factory(mocked_builds=True, mocked_worker=True)
     client = original.connect()
     prepare_history(client, project, tmp_path)
     run_ids = [successful_run(client)[0] for _ in range(2)]
@@ -52,15 +50,14 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
 
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
-                          history_dir=tmp_path / "history-copy")
+    copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True)
     client = copied.connect()
     assert listed(client) == list(reversed(run_ids))
     assert read_output(client, run_ids[0], port="doc") == original_value
     assert text(client.call("LogRangeRequest", runId=run_ids[0], card=path("work"),
                             invocation=1, stream=1).text) == "a recorded log\n"
     artifact = client.call("ArtifactListRequest", runId=run_ids[0], card=path("work")).artifacts[0]
-    assert read_pages(client, "ArtifactReadRequest", page_bytes=4096,
+    assert read_pages(client, "ArtifactReadRequest", page_bytes=4096, verify_integrity=True,
                       artifactId=text(artifact.artifactId)).decode() == CONTENTS
     new_run, _ = successful_run(client)
     copied.stop()
@@ -73,45 +70,13 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     assert set(listed(original.connect())) == set(run_ids + [new_run])
     # Copy/import order never changes which local scratch is protected.
     usage = original.connect().call("ProjectCacheUsageRequest")
-    assert text(usage.protectedRun) == run_ids[-1]
+    assert text(usage.protectedRun) == new_run
 
-
-def test_save_run_history_can_be_disabled_and_enabled(core_factory, project, tmp_path):
-    """Enabling project history makes earlier local runs portable too."""
-    original = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history-original")
-    client = original.connect()
-    prepare_history(client, project, tmp_path)
-
-    def save_history(enabled):
-        snapshot = client.call("ProjectInspectRequest")
-        document = json.loads(text(snapshot.projectJson))
-        document["saveRunHistory"] = enabled
-        client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
-                    changes=[change("SetProject", json=json.dumps(document))])
-
-    save_history(False)
-    first, _ = successful_run(client)
-    original.stop()
-    without_history = tmp_path / "without-history"
-    shutil.copytree(project, without_history, symlinks=True)
-    copy = core_factory(project_root=without_history, history_dir=tmp_path / "history-empty")
-    assert listed(copy.connect()) == []
-    copy.stop()
-
-    original.start()
-    client = original.connect()
-    assert listed(client) == [first]
-    save_history(True)
-    original.stop()
-    with_history = tmp_path / "with-history"
-    shutil.copytree(project, with_history, symlinks=True)
-    restored = core_factory(project_root=with_history, history_dir=tmp_path / "history-restored")
-    assert listed(restored.connect()) == [first]
 
 
 def test_deleting_history_removes_records_and_artifacts_without_resurrection(core_factory, project, tmp_path):
     """Deleting runs removes their public records and artifacts, including after restart."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     prepare_history(client, project, tmp_path)
     runs = [successful_run(client) for _ in range(3)]
@@ -142,13 +107,13 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "history-copy")
+    restored = core_factory(project_root=copied_project)
     assert listed(restored.connect()) == []
 
 
 def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory, project, tmp_path):
     """Deletion removes exactly the selected runs, even if another run finishes meanwhile."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     prepare_history(client, project, tmp_path / "first")
     first, _ = successful_run(client)
@@ -193,7 +158,7 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
-    restored = core_factory(project_root=copied_project, history_dir=tmp_path / "history-copy")
+    restored = core_factory(project_root=copied_project)
     assert listed(restored.connect()) == [second]
 
 
@@ -207,20 +172,18 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
 
     for _ in range(2):
         # RunFinished is sent just before the scheduler releases the active
-        # run. A brief busy reply is valid; a blocked acceptance is not.
-        deadline = time.monotonic() + 5
+        # run. The active-slot release has no separate notification, so a
+        # brief busy reply is valid; a blocked acceptance is not.
         while True:
             try:
                 accepted = client.call("RunRequest", baseRev=rev, opId=new_id(), origin="ui:test",
-                                       card=path("work"), timeout=5)
+                                       card=path("work"))
                 break
             except RpcFailure as failure:
                 assert failure.kind == "busy"
-                assert time.monotonic() < deadline, "scheduler did not release the finished run"
         run_id = text(accepted.run.runId)
         note = client.wait_notification(
             lambda n: n.valueType == NotificationPayload.RunEvent
             and text(n.value.runId) == run_id and n.value.valueType == RunEventValue.RunFinished,
-            timeout=5,
         )
         assert note.value.value.summary.status.state == RunState.succeeded

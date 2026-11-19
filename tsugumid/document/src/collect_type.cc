@@ -21,8 +21,10 @@ table Directory {
 auto directory_type() -> types::TypeRef {
   static const types::TypeRef type = [] {
     std::string error;
-    auto compiled = types::compile(kDirectorySchema, "tsugumi.collect.Directory", &error);
-    if (!compiled) throw std::logic_error("collect Directory type failed: " + error);
+    auto compiled =
+        types::compile(kDirectorySchema, "tsugumi.collect.Directory", &error);
+    if (!compiled)
+      throw std::logic_error("collect Directory type failed: " + error);
     return *compiled;
   }();
   return type;
@@ -30,20 +32,24 @@ auto directory_type() -> types::TypeRef {
 
 }  // namespace
 
-auto collect_output_type(const types::PortType& source, std::string& error) -> types::TypeRef {
+auto collect_output_type(const types::PortType& source, std::string& error)
+    -> types::TypeRef {
   if (!source.type) {
     error = "the collected input " + source.name + " has no resolved type";
     return nullptr;
   }
   if (source.kind == types::PortKind::FlatBuffer) {
     std::string text;
-    const auto member = types::render_closure(*source.type, "tsugumi.collect.member", text, /*nested=*/true);
-    text += "namespace tsugumi.collect;\ntable Collected {\n  items:[" + member + "] (id: 0, required);\n}\n";
+    const auto member = types::render_closure(
+        *source.type, "tsugumi.collect.member", text, /*nested=*/true);
+    text += "namespace tsugumi.collect;\ntable Collected {\n  items:[" +
+            member + "] (id: 0, required);\n}\n";
     auto type = types::compile(text, "tsugumi.collect.Collected", &error);
     return type ? *type : nullptr;
   }
   if (!types::has_string_value(*source.type)) {
-    error = "the collected File/Directory input " + source.name + " needs a string `value` field";
+    error = "the collected File/Directory input " + source.name +
+            " needs a string `value` field";
     return nullptr;
   }
   try {

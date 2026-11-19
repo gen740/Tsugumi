@@ -13,7 +13,7 @@ export function nixReferences(session: Pick<ProjectSession, 'resolution'>): NixR
   return [...session.resolution].flatMap(([source, card]) => card.nixReferences.map(ref => {
     const attr = /^[A-Za-z_][A-Za-z0-9_'-]*$/.test(ref.name) ? ref.name : JSON.stringify(ref.name)
     return { id: JSON.stringify([source, ref.target, ref.name]), source, target: key(ref.target),
-      expression: `inputs.${attr}.export`, valid: ref.valid }
+      expression: `inputs.${attr}`, valid: ref.valid }
   })).sort((a, b) => a.source.localeCompare(b.source) || a.expression.localeCompare(b.expression))
 }
 
@@ -32,6 +32,15 @@ export function nixLinks(refs: NixReference[], scope: string[], visible: Set<Car
     const target = visibleNixCard(ref.target, scope, visible)
     return source && target && source !== target ? [{ ...ref, source, target }] : []
   })
+}
+
+/** How many links the canvas draws at `scope`: Cards there are the resolution's entries one level below it. */
+export function nixLinkCount(session: Pick<ProjectSession, 'resolution'>, scope: string[]): number {
+  const visible = new Set([...session.resolution.keys()].filter(k => {
+    const parts = k.split('/')
+    return parts.length === scope.length + 1 && scope.every((s, i) => parts[i] === s)
+  }))
+  return nixLinks(nixReferences(session), scope, visible).length
 }
 
 /** A hovered Card shows all of its links; otherwise the link picked on the canvas. */

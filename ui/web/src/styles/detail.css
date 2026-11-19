@@ -132,8 +132,10 @@
 .history-invocation > .select-row { flex: 1; }
 .history-invocation select { min-width: 0; width: 100%; }
 .history-invocation > button, .history-invocation > .caption { flex: none; white-space: nowrap; }
-.history-detail-header .segmented { max-width: 100%; }
-.history-detail-header .segmented button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.history-invocation { flex: 1; }
+/* Inputs and outputs a Card does not record: the section stays, greyed. */
+.history-io-off { opacity: 0.6; }
+.history-section-off { color: var(--sx-tertiary); }
 @container (max-width: 639px) {
   .execution-history > .hsplit { flex-direction: column; }
   .execution-history > .hsplit > .hsplit-pane:first-child { width: 100% !important; max-width: none; height: 35%; max-height: 160px; }

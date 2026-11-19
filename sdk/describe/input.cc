@@ -315,7 +315,7 @@ auto Rust(const Files& files) -> std::string {
   }
   return result;
 }
-// The dynamic SDKs decode the JSON face (sdk/src/json_face.cc). These are
+// R, Julia and Ruby decode typed JSON from the worker. These are
 // ordinary type prototypes, retaining JSON field names instead of flatc names.
 class Dynamic {
  public:

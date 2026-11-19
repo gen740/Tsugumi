@@ -88,7 +88,7 @@ std::string describe(const hosq::Error& e) {
     member.value() = e.path.back().name;
     std::string parent;
     for (size_t i = 0; i + 1 < e.path.size(); ++i) {
-      const auto &segment = e.path[i];
+      const auto& segment = e.path[i];
       if (segment.has_name)
         parent += (parent.empty() ? "" : ".") + segment.name;
       else
@@ -101,8 +101,10 @@ std::string describe(const hosq::Error& e) {
   if (msg.empty()) msg = "invalid value";
   std::string path;
   for (const auto& seg : e.path) {
-    if (seg.has_name) path += "." + std::string(seg.name);
-    else path += "[" + std::to_string(seg.index) + "]";
+    if (seg.has_name)
+      path += "." + std::string(seg.name);
+    else
+      path += "[" + std::to_string(seg.index) + "]";
   }
   if (!path.empty()) msg = path.substr(path[0] == '.' ? 1 : 0) + ": " + msg;
   if (e.code == hosq::ErrorCode::type_mismatch && !path.empty())
@@ -110,7 +112,8 @@ std::string describe(const hosq::Error& e) {
   return msg;
 }
 
-std::optional<DecodeError> validate(std::string_view text, hosq::json::GenericDom<>& dom) {
+std::optional<DecodeError> validate(std::string_view text,
+                                    hosq::json::GenericDom<>& dom) {
   auto e = dom.assign(std::string(text));
   if (e) return DecodeError{describe(e), e.offset};
   return std::nullopt;
@@ -118,11 +121,14 @@ std::optional<DecodeError> validate(std::string_view text, hosq::json::GenericDo
 
 }  // namespace detail
 
-std::string text(const hosq::json::GenericDom<>& value) { return std::string(value[""].source()); }
+std::string text(const hosq::json::GenericDom<>& value) {
+  return std::string(value[""].source());
+}
 
 hosq::json::GenericDom<> capture(std::string_view json_text) {
   hosq::json::GenericDom<> dom;
-  if (auto e = dom.assign(std::string(json_text))) throw std::runtime_error("invalid JSON value: " + detail::describe(e));
+  if (auto e = dom.assign(std::string(json_text)))
+    throw std::runtime_error("invalid JSON value: " + detail::describe(e));
   return dom;
 }
 
@@ -132,7 +138,9 @@ hosq::json::GenericDom<> string_value(const std::string& s) {
   return capture(encode(str));
 }
 
-std::string object_text(const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>& members) {
+std::string object_text(
+    const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>&
+        members) {
   v::Mapping<v::String, Json> m;
   for (const auto& [k, val] : members) m.value().emplace_back(k, *val);
   return encode(m);
@@ -141,7 +149,10 @@ std::string object_text(const std::vector<std::pair<std::string, const hosq::jso
 std::string pretty_text(std::string_view compact) {
   std::string out;
   size_t depth = 0;
-  auto line = [&] { out += '\n'; out.append(depth * 2, ' '); };
+  auto line = [&] {
+    out += '\n';
+    out.append(depth * 2, ' ');
+  };
   for (size_t i = 0; i < compact.size(); ++i) {
     char c = compact[i];
     switch (c) {

@@ -36,6 +36,7 @@ struct MainWindow: View {
         }
       case .settings: openSettings()
       case .explainer: openWindow(id: "explainer")
+      case .debug: openWindow(id: "debug")
       case .project(let url): model.openProject(url, from: workspace, openWindow: openWindow)
       case .newProject: model.newProject(from: workspace, openWindow: openWindow)
       }
@@ -167,7 +168,7 @@ struct EnvironmentSetupView: View {
                  detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
             step(String(localized: "実行環境の VM イメージがある"), ok: image,
                  detail: image ? String(localized: "VM イメージ \(version ?? "")")
-                               : String(localized: "アプリに VM イメージが含まれていません。開発中は vm/guest/build-image.sh --vm で作成してください。")) {
+                               : String(localized: "アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。")) {
               EmptyView()
             }
           case nil:
@@ -176,7 +177,7 @@ struct EnvironmentSetupView: View {
         }
         .padding(8)
       }
-      Text("初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（最大 \(model.environments.resources.storeGiB) GiB、使った分だけ）を作ります。")
+      Text("初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（設定のサイズまで、使った分だけ）を作ります。")
         .font(.callout).foregroundStyle(.secondary)
       HStack {
         Spacer()

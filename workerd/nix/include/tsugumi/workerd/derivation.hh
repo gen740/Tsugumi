@@ -26,12 +26,14 @@ struct WorkerDerivation {
 };
 
 // Store availability is independent of evaluation and invocation scheduling.
-// A future binary-cache transport implements this interface instead of archives.
+// A future binary-cache transport implements this interface instead of
+// archives.
 class DerivationClosureTransport {
  public:
   virtual ~DerivationClosureTransport() = default;
   virtual auto send(const WorkerDerivation& derivation) const -> void = 0;
-  virtual auto receive(nix::Store& store, const WorkerDerivation& derivation) const -> void = 0;
+  virtual auto receive(nix::Store& store,
+                       const WorkerDerivation& derivation) const -> void = 0;
 };
 
 // Native workers share the host's store paths; nothing crosses stores.
@@ -44,9 +46,11 @@ class SharedStoreDerivationTransport final : public DerivationClosureTransport {
 // The remote worker's current transport: an exported input-closure archive.
 class ArchiveDerivationTransport final : public DerivationClosureTransport {
  public:
-  explicit ArchiveDerivationTransport(std::filesystem::path archive) : archive_(std::move(archive)) {}
+  explicit ArchiveDerivationTransport(std::filesystem::path archive)
+      : archive_(std::move(archive)) {}
   auto send(const WorkerDerivation& derivation) const -> void override;
-  auto receive(nix::Store& store, const WorkerDerivation& derivation) const -> void override;
+  auto receive(nix::Store& store, const WorkerDerivation& derivation) const
+      -> void override;
 
  private:
   std::filesystem::path archive_;

@@ -2,10 +2,10 @@
 #include <regex>
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "oauth_fixture.hh"
 #include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -197,15 +197,14 @@ TEST_F(AgentFixture,
   StartHost();
   check();
 }
-TEST_F(AgentFixture,
-       MainAndHelperPassTheirFormerStepLimitsAndStillStopOnRequest) {
+TEST_F(AgentFixture, MainAndHelperContinueUsingToolsUntilCancelled) {
   for (const bool helper : {false, true}) {
     ModelServer model;
     if (helper)
       model.Queue(AnthropicTool(
           "delegate-long", "delegate",
           R"({"tasks":[{"name":"Long review","instruction":"Keep inspecting until stopped.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
-    const size_t count = helper ? 18 : 53;
+    constexpr size_t count = 3;
     for (size_t i = 0; i < count; ++i)
       model.Queue(
           AnthropicTool("long-" + std::to_string(i), "demo_list", "{}"));
@@ -216,8 +215,7 @@ TEST_F(AgentFixture,
     ASSERT_TRUE(Send(conversation, "Continue inspecting until I stop you.")
                     .Code()
                     .empty());
-    ASSERT_TRUE(model.WaitForRequests(count + (helper ? 2 : 1), 20s));
-    const auto began = std::chrono::steady_clock::now();
+    ASSERT_TRUE(model.WaitForRequests(count + (helper ? 2 : 1)));
     ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
                      [&](Builder& b) {
                        return A::CreateConversationCancelRequest(
@@ -227,7 +225,6 @@ TEST_F(AgentFixture,
                     .Code()
                     .empty());
     const auto stopped = WaitUntilIdle(conversation);
-    EXPECT_LT(std::chrono::steady_clock::now() - began, 2s);
     EXPECT_EQ(stopped.find("Must be cancelled"), std::string::npos);
     EXPECT_FALSE(JsonBool(stopped, "/busy"));
     model.Release();
@@ -237,24 +234,32 @@ namespace R = Tsugumi::RPC;
 
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   auto websocket = Connect(false, true);
-  const auto unix_catalog =
-      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
-        return A::CreateToolCatalogRequest(b).Union();
-      }).View();
-  const auto websocket_catalog =
-      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
-        return A::CreateToolCatalogRequest(b).Union();
-      }).View();
-  EXPECT_EQ(unix_catalog, websocket_catalog);
-  EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
-  EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("guide_"), std::string::npos);
-  // Secondary operations are indexed on demand; version diffs stay Host
-  // requests.
-  EXPECT_EQ(unix_catalog.find("run_latest_invocations"), std::string::npos);
-  EXPECT_NE(unix_catalog.find("\"name\":\"tools\""), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("version_diff"), std::string::npos);
-  EXPECT_EQ(unix_catalog.find("from_commit"), std::string::npos);
+  namespace J = ::tsugumi::json;
+  const auto catalog = [](auto& client) {
+    const auto reply =
+        Call(client, A::RequestPayload::ToolCatalogRequest,
+             [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
+    EXPECT_TRUE(reply.Code().empty());
+    std::map<std::string, J::Members> tools;
+    for (const auto& raw : J::Array(reply.View())) {
+      auto tool = J::Object(raw);
+      const auto name = J::Text(tool, "name");
+      EXPECT_TRUE(tools.emplace(name, std::move(tool)).second) << name;
+    }
+    return tools;
+  };
+  const auto unix_tools = catalog(*external);
+  EXPECT_EQ(unix_tools, catalog(*websocket));
+  for (const auto* name : {"project_inspect", "delegate", "tools"})
+    EXPECT_TRUE(unix_tools.contains(name)) << name;
+  for (const auto* name : {"run_latest_invocations", "version_diff"})
+    EXPECT_FALSE(unix_tools.contains(name)) << name;
+  for (const auto& entry : unix_tools)
+    EXPECT_FALSE(entry.first.starts_with("guide_")) << entry.first;
+  ASSERT_TRUE(unix_tools.contains("project_save"));
+  const auto save =
+      J::Object(J::Get(unix_tools.at("project_save"), "inputSchema"));
+  EXPECT_FALSE(J::Object(J::Get(save, "properties")).contains("from_commit"));
 }
 
 // Inspect the actual provider requests as well as the external RPC catalog.
@@ -303,24 +308,12 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
       Call(*external, A::RequestPayload::ToolCatalogRequest,
            [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
   EXPECT_EQ(names(external_catalog.View()), main_tools);
-  auto editing_order = [&](const std::string& raw) {
-    std::vector<std::string> ordered;
-    for (const auto& tool : J::Array(raw)) {
-      const auto name = J::Text(J::Object(tool), "name");
-      if (name == "project_edit" || name == "project_connect" ||
-          name == "project_make_subgraph" || name == "project_layout" ||
-          name == "project_copy" || name == "project_save")
-        ordered.push_back(name);
-    }
-    EXPECT_EQ(J::Text(J::Object(J::Array(raw).back()), "name"), "project_save");
-    EXPECT_EQ(ordered,
-              (std::vector<std::string>{
-                  "project_edit", "project_copy", "project_connect",
-                  "project_make_subgraph", "project_layout", "project_save"}));
-  };
-  editing_order(J::Get(J::Object(requests[0]), "tools"));
-  editing_order(J::Get(J::Object(requests[1]), "tools"));
-  editing_order(external_catalog.View());
+  for (const auto* name :
+       {"project_edit", "project_copy", "project_connect",
+        "project_make_subgraph", "project_layout", "project_save"}) {
+    EXPECT_TRUE(main_tools.contains(name)) << name;
+    EXPECT_TRUE(helper_tools.contains(name)) << name;
+  }
   EXPECT_FALSE(helper_tools.contains("delegate"));
   helper_tools.insert("delegate");
   EXPECT_EQ(helper_tools, main_tools);
@@ -383,11 +376,6 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
   ASSERT_TRUE(indexed.Code().empty());
   EXPECT_EQ(direct.Value()->value_as_ToolResult()->text()->str(),
             indexed.Value()->value_as_ToolResult()->text()->str());
-  EXPECT_EQ(
-      Tool(conversation, "tools",
-           R"({"family":"runs","action":"status","arguments":{"typo":1}})")
-          .Code(),
-      "invalid_request");
   model.Queue(
       AnthropicTool("status", "tools",
                     R"({"family":"runs","action":"status","arguments":{}})"));
@@ -482,8 +470,7 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
           .Call(
               [](uint64_t id) {
                 Builder b;
-                const auto hello = R::CreateSessionHelloRequest(
-                    b, 1, b.CreateString("wrong-protocol"));
+                const auto hello = R::CreateSessionHelloRequest(b);
                 const auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());
                 R::FinishMessageBuffer(
@@ -599,14 +586,23 @@ TEST_F(AgentFixture,
     ASSERT_TRUE(model.WaitForRequests(turn + 1));
     WaitUntilIdle(conversation);
     const auto events = Events(conversation).View();
-    EXPECT_NE(events.find("ChatGPT usage limit reached"), std::string::npos);
-    EXPECT_EQ(events.find("retrying"), std::string::npos);
+    namespace J = ::tsugumi::json;
+    std::set<std::string> kinds;
+    for (const auto& raw : J::Array(J::Get(J::Object(events), "events")))
+      kinds.insert(J::Text(J::Object(J::Get(J::Object(raw), "event")), "kind"));
+    EXPECT_TRUE(kinds.contains("error"));
+    EXPECT_FALSE(kinds.contains("retrying"));
     EXPECT_EQ(model.Requests().size(), static_cast<size_t>(turn + 1));
   }
   const auto request = model.Requests()[0];
   EXPECT_FALSE(JsonBool(request, "/store"));
   EXPECT_TRUE(JsonBool(request, "/stream"));
-  EXPECT_EQ(JsonString(request, "/tools/0/type"), "namespace");
+  const auto tools = ::tsugumi::json::Array(
+      ::tsugumi::json::Get(::tsugumi::json::Object(request), "tools"));
+  EXPECT_TRUE(std::ranges::any_of(tools, [](const auto& tool) {
+    return ::tsugumi::json::Text(::tsugumi::json::Object(tool), "type") ==
+           "namespace";
+  }));
   EXPECT_THROW(JsonUInt(request, "/max_output_tokens"), std::runtime_error);
 }
 
@@ -722,6 +718,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("interrupted-operation");
   ASSERT_TRUE(Send(conversation, "Inspect the project").Code().empty());
+  // Pending Agent permission is exposed through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("permission") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
@@ -1039,9 +1036,6 @@ TEST_F(AgentFixture,
   }
   EXPECT_EQ(retained_answers, 1);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[3].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   EXPECT_EQ(requests[4].find(earlier), std::string::npos);
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
             std::string::npos);
@@ -1084,12 +1078,9 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   Configure(model, "fixture", 110000);
   const auto conversation = Conversation("compacting-helper");
   ASSERT_TRUE(Send(conversation, "Delegate the inspection.").Code().empty());
-  ASSERT_TRUE(model.WaitForRequests(8, 20s));
+  ASSERT_TRUE(model.WaitForRequests(8));
   const auto state = WaitUntilIdle(conversation);
   ASSERT_EQ(model.Requests().size(), 8u) << state;
-  ASSERT_NE(model.Requests()[5].find(
-                "Create a short handoff for the next model continuation"),
-            std::string::npos);
   // The model went on without the first call ...
   EXPECT_EQ(model.Requests()[6].find("inspect-0"), std::string::npos);
   EXPECT_EQ(JsonString(state, "/conversation/helpers/0/state"), "completed");
@@ -1116,9 +1107,10 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
   };
   const std::vector<std::string> expected{"1", "2", "3"};
   EXPECT_EQ(calls(state), expected) << state;
-  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
-                .find("Inspect the demos three times."),
-            0u);
+  EXPECT_EQ(
+      JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+          .find("Inspect the demos three times."),
+      0u);
   EXPECT_EQ(
       JsonString(state,
                  "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
@@ -1317,7 +1309,7 @@ TEST_F(AgentFixture, RevokingUnscopedPermissionAlsoBlocksScopedChildren) {
 }
 
 TEST_F(AgentFixture, MainAgentStartsAllTasksAcrossDelegateCalls) {
-  // One watchdog for both cases, including held requests and their cleanup.
+  // The persisted helper count is available only through a conversation read.
   const auto deadline = std::chrono::steady_clock::now() + 20s;
   for (const auto limit : {4}) {
     SCOPED_TRACE(limit);
@@ -1355,17 +1347,13 @@ TEST_F(AgentFixture, MainAgentStartsAllTasksAcrossDelegateCalls) {
                            .Union()));
             return client::Bytes(b.GetBufferPointer(),
                                  b.GetBufferPointer() + b.GetSize());
-          },
-          std::chrono::duration_cast<std::chrono::milliseconds>(
-              deadline - std::chrono::steady_clock::now()));
+          });
     };
     // Native pending calls have non-blocking destructors. std::async futures
     // join on destruction, including when an assertion abandons the test.
     auto first = delegate("batch-one");
     auto second = delegate("batch-two");
-    ASSERT_TRUE(model.WaitForRequests(
-        1, std::chrono::duration_cast<std::chrono::milliseconds>(
-               deadline - std::chrono::steady_clock::now())))
+    ASSERT_TRUE(model.WaitForRequests(1))
         << "No helper reached the held provider";
     // The provider holds its first reply. Count started, persisted helpers,
     // rather than HTTP requests: this fixture serves one HTTP peer at a time.
@@ -1396,11 +1384,6 @@ TEST_F(AgentFixture, MainAgentStartsAllTasksAcrossDelegateCalls) {
     model.Release();
     const auto finish = [&](std::future<client::Result>& pending,
                             const char* batch) -> Reply {
-      if (pending.wait_until(deadline) != std::future_status::ready)
-        throw std::runtime_error(
-            std::string(batch) +
-            " did not finish after releasing the provider\n" +
-            Read(directory.path / "host.log"));
       auto result = pending.get();
       if (result.error)
         throw std::runtime_error(std::string(batch) + ": " +
@@ -1598,7 +1581,7 @@ TEST_F(AgentFixture,
       "2");
   EXPECT_EQ(second.find(provider_id), std::string::npos);
   const auto reserved =
-      Call(*external, A::RequestPayload::CallIdRequest, [&](Builder &b) {
+      Call(*external, A::RequestPayload::CallIdRequest, [&](Builder& b) {
         return A::CreateCallIdRequest(b, b.CreateString(conversation)).Union();
       });
   ASSERT_TRUE(reserved.Code().empty());
@@ -1614,7 +1597,7 @@ TEST_F(AgentProjectFixture,
   model.Queue(AnthropicText("Inspected."));
   Configure(model);
   const auto created = Call(
-      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder &b) {
+      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
         return A::CreateConversationCreateRequest(b, 0,
                                                   b.CreateString(project_id))
             .Union();

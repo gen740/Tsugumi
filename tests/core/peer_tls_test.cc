@@ -1,8 +1,6 @@
 #include "tsugumi/workerd/authorized_keys.hh"
 // Real TLS handshakes over socketpair: no listener or network permission
 // needed.
-#include "tsugumi/rpc/peer_tls.hh"
-
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <openssl/ssl.h>
@@ -15,6 +13,7 @@
 #include <thread>
 
 #include "agent_fixture_server.hh"
+#include "tsugumi/rpc/peer_tls.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -49,10 +48,8 @@ auto Exchange(const peer_tls::Context& server, const peer_tls::Context& client)
   });
   try {
     peer_tls::Stream stream(client, pair[1], false);
-    for (char byte : std::string("PING")) {
+    for (char byte : std::string("PING"))
       stream.Write(std::string_view(&byte, 1));
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
     result.client = stream.Read(4) == "PONG";
   } catch (...) {
   }

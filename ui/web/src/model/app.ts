@@ -11,7 +11,7 @@ import { CardKey, ProjectSession } from './session'
 import { CardEditorCategory } from './workspace'
 
 export type WindowKind =
-  | { kind: 'card'; card: CardKey; category?: CardEditorCategory }
+  | { kind: 'card'; card: CardKey; category?: CardEditorCategory; file?: 'default.nix' }
   | { kind: 'definitions'; definition?: string }
   | { kind: 'versions' }
   | { kind: 'evidence'; href: string }

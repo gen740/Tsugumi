@@ -1,14 +1,15 @@
 // The allow list is the sole source of project tools, including external MCP.
-#include <gtest/gtest.h>
+#include "agent/catalog.hh"
+
 #include <flatbuffers/reflection_generated.h>
+#include <gtest/gtest.h>
 
 #include <set>
 
 #include "agent/approval.hh"
-#include "agent/catalog.hh"
-#include "tsugumi/util/json_object.hh"
 #include "host/agent_policy.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/util/json_object.hh"
 
 extern const unsigned char tsugumi_agent_settings[];
 extern const unsigned long tsugumi_agent_settings_size;
@@ -42,18 +43,19 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
 
 TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
   const auto settings = json::Object(
-      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
+      std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));
-  const auto *requests = reflection::GetSchema(tsugumi_rpc_bfbs)
-                             ->enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
+  const auto* requests = reflection::GetSchema(tsugumi_rpc_bfbs)
+                             ->enums()
+                             ->LookupByKey("Tsugumi.RPC.RequestPayload");
   ASSERT_NE(requests, nullptr);
-  for (const auto *list : {"requests", "approvalRequests"}) {
+  for (const auto* list : {"requests", "approvalRequests"}) {
     SCOPED_TRACE(list);
-    for (const auto &entry : json::Array(json::Get(settings, list))) {
+    for (const auto& entry : json::Array(json::Get(settings, list))) {
       const auto name = json::String(entry);
       SCOPED_TRACE(name);
       bool found = false;
-      for (const auto *value : *requests->values())
+      for (const auto* value : *requests->values())
         if (value->name()->str() == name && value->value()) found = true;
       EXPECT_TRUE(found) << "invalid Agent request allow list entry: " << name;
     }
@@ -62,62 +64,52 @@ TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
 
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
   const Catalog catalog;
-  for (const auto *name : {"version_note", "version_note_store", "version_summary"}) {
+  for (const auto* name :
+       {"version_note", "version_note_store", "version_summary"}) {
     EXPECT_EQ(catalog.Find(name), nullptr);
     EXPECT_THROW(catalog.Request(name, "{}", 1), std::runtime_error);
   }
-  const auto read = EncodeProjectRequest(
-      "version_note", R"({"commit":"abc"})", 7);
+  const auto read =
+      EncodeProjectRequest("version_note", R"({"commit":"abc"})", 7);
   EXPECT_EQ(Tsugumi::RPC::GetMessage(read.data())->request_id(), 7u);
-  EXPECT_NE(Tsugumi::RPC::GetMessage(read.data())->payload_as_Request()
-                ->value_as_VersionNoteRequest(), nullptr);
-  EXPECT_THROW(EncodeProjectRequest("version_note_store", "{}", 8), std::runtime_error);
-  EXPECT_THROW(EncodeProjectRequest("project_file_format", "{}", 8), std::runtime_error);
-  EXPECT_THROW(EncodeProjectRequest("version_summary", "{}", 1), std::runtime_error);
+  EXPECT_NE(Tsugumi::RPC::GetMessage(read.data())
+                ->payload_as_Request()
+                ->value_as_VersionNoteRequest(),
+            nullptr);
+  EXPECT_THROW(EncodeProjectRequest("version_note_store", "{}", 8),
+               std::runtime_error);
+  EXPECT_THROW(EncodeProjectRequest("project_file_format", "{}", 8),
+               std::runtime_error);
+  EXPECT_THROW(EncodeProjectRequest("version_summary", "{}", 1),
+               std::runtime_error);
 }
 
-TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
-  const auto settings = json::Object(
-      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
-                       tsugumi_agent_settings_size));
-  std::set<std::string> expected;
-  for (const auto &entry : json::Array(json::Get(settings, "requests")))
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  for (const auto& entry : json::Array(json::Get(settings, "hostRequests")))
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  std::set<std::string> approval;
-  for (const auto &entry :
-       json::Array(json::Get(settings, "approvalRequests"))) {
-    ASSERT_TRUE(approval.insert(json::String(entry)).second);
-    ASSERT_TRUE(expected.insert(json::String(entry)).second);
-  }
-  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]")))
-    ASSERT_TRUE(expected.insert(json::Text(json::Object(raw), "name")).second);
-  expected.insert("FileFormatRequest");
-  ASSERT_FALSE(approval.empty());
+TEST(AgentCatalog, ExposesPublicToolsWithTheExpectedApprovalPolicy) {
   const Catalog catalog;
-  std::set<std::string> actual;
-  for (const auto &tool : catalog.tools()) {
-    actual.insert(tool.request_name);
-    EXPECT_EQ(tool.approval_required, approval.contains(tool.request_name));
+  for (const auto* name : {"project_inspect", "project_file_read"}) {
+    const auto* tool = catalog.Find(name);
+    ASSERT_NE(tool, nullptr) << name;
+    EXPECT_FALSE(tool->approval_required) << name;
   }
-  EXPECT_EQ(actual, expected);
-  EXPECT_EQ(catalog.tools().size(), expected.size());
-  for (const auto *denied : {"view_save", "view_set_visible", "project_open",
-                             "session_hello"}) {
+  const auto* guarded = catalog.Find("run_history_delete");
+  ASSERT_NE(guarded, nullptr);
+  EXPECT_TRUE(guarded->approval_required);
+  for (const auto* denied :
+       {"view_save", "view_set_visible", "project_open", "session_hello"}) {
     EXPECT_EQ(catalog.Find(denied), nullptr);
     EXPECT_THROW(catalog.Request(denied, "{}", 1), std::runtime_error);
   }
-  for (const auto *name : {"project_save", "project_reload", "project_shell"}) {
-    const auto *tool = catalog.Find(name);
+  for (const auto* name : {"project_save", "project_reload", "project_shell"}) {
+    const auto* tool = catalog.Find(name);
     ASSERT_NE(tool, nullptr);
     const auto properties = json::Object(
         json::Get(json::Object(tool->spec.input_schema), "properties"));
-    for (const auto *owned : {"origin", "op_id", "approved_permissions", "check_permissions",
-                               "read_only", "hide_credentials", "no_project_socket", "transfers", "working_directory", "writable_paths", "mounts", "output_prefix", "workspace_only", "protected_paths"})
+    for (const auto* owned :
+         {"origin", "op_id", "approved_permissions", "check_permissions",
+          "read_only", "hide_credentials", "no_project_socket", "transfers",
+          "working_directory", "writable_paths", "mounts", "output_prefix",
+          "workspace_only", "protected_paths"})
       EXPECT_FALSE(properties.contains(owned));
-    EXPECT_TRUE(tool->mutating);
-    EXPECT_EQ(tool->has_origin, std::string_view(name) != "project_shell");
   }
   const auto history = json::Object(json::Get(
       json::Object(catalog.Find("run_history_delete")->spec.input_schema),
@@ -128,26 +120,33 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
 
 TEST(AgentPolicy, SaveAndReloadAlwaysRequestPermissionComparison) {
   for (const auto* name : {"project_save", "project_reload"}) {
-    auto arguments = json::Object(R"({"origin":"ui","check_permissions":false})");
+    auto arguments =
+        json::Object(R"({"origin":"ui","check_permissions":false})");
     host::RestrictAgentRequest(name, arguments);
     EXPECT_EQ(json::Get(arguments, "check_permissions"), "true");
     arguments["op_id"] = json::Quote("operation");
     if (std::string_view(name) == "project_save") arguments["changes"] = "[]";
     const auto bytes = EncodeProjectRequest(name, json::Encode(arguments), 1);
-    const auto* request = Tsugumi::RPC::GetMessage(bytes.data())->payload_as_Request();
+    const auto* request =
+        Tsugumi::RPC::GetMessage(bytes.data())->payload_as_Request();
     if (std::string_view(name) == "project_save")
       EXPECT_TRUE(request->value_as_ProjectSaveRequest()->check_permissions());
     else
-      EXPECT_TRUE(request->value_as_ProjectReloadRequest()->check_permissions());
+      EXPECT_TRUE(
+          request->value_as_ProjectReloadRequest()->check_permissions());
   }
 }
 
 TEST(AgentPolicy, ShellAlwaysRequestsAllRestrictions) {
-  auto arguments = json::Object(R"({"op_id":"operation","command":"true","origin":"ui","read_only":false,"hide_credentials":false,"no_project_socket":false})");
+  auto arguments = json::Object(
+      R"({"op_id":"operation","command":"true","origin":"ui","read_only":false,"hide_credentials":false,"no_project_socket":false})");
   host::RestrictAgentRequest("project_shell", arguments);
   EXPECT_FALSE(arguments.contains("origin"));
-  const auto bytes = EncodeProjectRequest("project_shell", json::Encode(arguments), 1);
-  const auto* request = Tsugumi::RPC::GetMessage(bytes.data())->payload_as_Request()->value_as_ProjectShellRequest();
+  const auto bytes =
+      EncodeProjectRequest("project_shell", json::Encode(arguments), 1);
+  const auto* request = Tsugumi::RPC::GetMessage(bytes.data())
+                            ->payload_as_Request()
+                            ->value_as_ProjectShellRequest();
   ASSERT_NE(request, nullptr);
   EXPECT_TRUE(request->read_only());
   EXPECT_TRUE(request->hide_credentials());
@@ -157,7 +156,9 @@ TEST(AgentPolicy, ShellAlwaysRequestsAllRestrictions) {
 TEST(AgentCatalog, AttachedFoldersHaveNoProjectRPC) {
   const Catalog catalog;
   EXPECT_NE(catalog.Find("attached_folder_read"), nullptr);
-  EXPECT_THROW(EncodeProjectRequest("attached_folder_read", R"({"folder":"/ungranted","path":""})", 1), std::runtime_error);
+  EXPECT_THROW(EncodeProjectRequest("attached_folder_read",
+                                    R"({"folder":"/ungranted","path":""})", 1),
+               std::runtime_error);
 }
 
 TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
@@ -165,7 +166,7 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
   std::vector<std::string> run_ids;
   const auto preview = DescribeOperation(
       "run_history_delete", {{"ended_before", "\"50\""}}, "project",
-      [&](const auto &name, const auto &args) {
+      [&](const auto& name, const auto& args) {
         EXPECT_EQ(name, "run_history");
         // The public history RPC accepts at most 500 rows per page.
         EXPECT_EQ(json::Get(args, "limit"), "500");
@@ -178,21 +179,28 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
         EXPECT_EQ(json::Text(args, "cursor"), "page-two");
         return json::Object(
             R"({"runs":[{"status":{"run_id":"old","state":"failed","ended_at":"10"}}]})");
-      }, &run_ids);
+      },
+      &run_ids);
   EXPECT_EQ(calls, 2);
   EXPECT_NE(preview.find("old"), std::string::npos);
   EXPECT_EQ(preview.find("recent"), std::string::npos);
   EXPECT_EQ(preview.find("active"), std::string::npos);
-  EXPECT_NE(preview.find("\"run_count\":1"), std::string::npos);
+  EXPECT_EQ(json::UInt(json::Get(
+                json::Object(preview.substr(
+                    preview.find('{'),
+                    preview.find('\n', preview.find('{')) - preview.find('{'))),
+                "run_count")),
+            1u);
   EXPECT_EQ(run_ids, std::vector<std::string>{json::Quote("old")});
   // A run completing after the final description must not enter the RPC's
   // deletion set. Only IDs collected from that description go over the wire.
   const auto bytes = EncodeProjectRequest(
       "run_history_delete",
       json::Encode(json::Members{{"op_id", json::Quote("operation")},
-                                {"run_ids", json::Encode(run_ids)},
-                                {"restrict_to_run_ids", "true"}}), 9);
-  const auto *request = Tsugumi::RPC::GetMessage(bytes.data())
+                                 {"run_ids", json::Encode(run_ids)},
+                                 {"restrict_to_run_ids", "true"}}),
+      9);
+  const auto* request = Tsugumi::RPC::GetMessage(bytes.data())
                             ->payload_as_Request()
                             ->value_as_RunHistoryDeleteRequest();
   EXPECT_TRUE(request->restrict_to_run_ids());
@@ -203,18 +211,21 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
 
 TEST(AgentApprovalDescription, EmptyHistoryApprovalSendsAnExplicitEmptySet) {
   std::vector<std::string> run_ids{json::Quote("stale")};
-  DescribeOperation("run_history_delete", {}, "project",
-                    [](const auto &, const auto &) {
-                      return json::Object(
-                          R"({"runs":[{"status":{"run_id":"active","state":"running"}}]})");
-                    }, &run_ids);
+  DescribeOperation(
+      "run_history_delete", {}, "project",
+      [](const auto&, const auto&) {
+        return json::Object(
+            R"({"runs":[{"status":{"run_id":"active","state":"running"}}]})");
+      },
+      &run_ids);
   EXPECT_TRUE(run_ids.empty());
   const auto bytes = EncodeProjectRequest(
       "run_history_delete",
       json::Encode(json::Members{{"op_id", json::Quote("operation")},
-                                {"run_ids", json::Encode(run_ids)},
-                                {"restrict_to_run_ids", "true"}}), 10);
-  const auto *request = Tsugumi::RPC::GetMessage(bytes.data())
+                                 {"run_ids", json::Encode(run_ids)},
+                                 {"restrict_to_run_ids", "true"}}),
+      10);
+  const auto* request = Tsugumi::RPC::GetMessage(bytes.data())
                             ->payload_as_Request()
                             ->value_as_RunHistoryDeleteRequest();
   EXPECT_TRUE(request->restrict_to_run_ids());
@@ -223,7 +234,7 @@ TEST(AgentApprovalDescription, EmptyHistoryApprovalSendsAnExplicitEmptySet) {
 
 TEST(AgentApprovalDescription,
      CacheAndScratchUseOnlyTheCurrentProjectsMeasurements) {
-  auto read = [](const auto &name, const auto &) {
+  auto read = [](const auto& name, const auto&) {
     EXPECT_EQ(name, "project_cache_usage");
     return json::Object(
         R"({"current_project":"our-cache","projects":[{"project":"other-cache","build_bytes":"9999"},{"project":"our-cache","name":"Our project","build_bytes":"1234","run_scratch":[{"path":"runs/00000000-0000-4000-8000-000000000001","bytes":"75"},{"path":"runs/old","bytes":"80"}]}]})");
@@ -242,7 +253,7 @@ TEST(AgentApprovalDescription,
 
 TEST(AgentApprovalDescription,
      VersionsShowCoreIdentityAndRejectMovingReferences) {
-  auto read = [](const auto &name, const auto &) {
+  auto read = [](const auto& name, const auto&) {
     if (name == "project_inspect")
       return json::Object(
           R"({"rev":"7","project_json":"{\"name\":\"Actual project\"}"})");
@@ -251,7 +262,9 @@ TEST(AgentApprovalDescription,
         R"({"head":"0123456789abcdef0123456789abcdef01234567","enabled":true,"dirty":false,"commits":[{"id":"0123456789abcdef0123456789abcdef01234567","summary":"Actual version"}]})");
   };
   const auto checkout = DescribeOperation(
-      "version_checkout", {{"commit", "\"0123456789abcdef0123456789abcdef01234567\""}}, "project", read);
+      "version_checkout",
+      {{"commit", "\"0123456789abcdef0123456789abcdef01234567\""}}, "project",
+      read);
   EXPECT_NE(checkout.find("Actual version"), std::string::npos);
   EXPECT_NE(checkout.find("Actual project"), std::string::npos);
   EXPECT_THROW(DescribeOperation("version_checkout", {{"commit", "\"HEAD\""}},
@@ -259,8 +272,8 @@ TEST(AgentApprovalDescription,
                std::runtime_error);
 }
 
-} // namespace
-} // namespace tsugumi::agent
+}  // namespace
+}  // namespace tsugumi::agent
 
 namespace tsugumi::agent {
 TEST(AgentCatalog, RunToolsOfferTheSameHostWait) {

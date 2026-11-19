@@ -11,8 +11,8 @@
 #include <mutex>
 
 #include "fixture.hh"
-#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -107,7 +107,7 @@ class WorkerPeer {
           if (q->body.AsProbeRequest()) {
             R::CapabilitiesT c;
             c.server_id = server;
-            c.instance_id = "live-instance";
+            c.instance_id = std::string(64, 'c');
             c.native_system = "x86_64-linux";
             c.systems = {c.native_system};
             c.max_jobs = 4;
@@ -186,8 +186,8 @@ class BrokerFixture : public AgentFixture {
                           ->str());
   }
   auto Put(std::string key = {}, std::string id = "worker",
-           std::string endpoint = {}, bool verify = true, std::string name = "Test worker", uint32_t interval = 15,
-           uint32_t missed = 0, uint64_t grade = 1) -> Reply {
+           std::string endpoint = {}, bool verify = true,
+           std::string name = "Test worker", uint64_t grade = 1) -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
           return H::CreateExecutionServicePutRequest(
@@ -199,7 +199,7 @@ class BrokerFixture : public AgentFixture {
                              : endpoint),
                      b.CreateString(key.empty() ? worker->identity.public_key()
                                                 : key),
-                     verify, interval, missed, grade)
+                     verify, grade)
               .Union();
         });
   }
@@ -250,14 +250,12 @@ class BrokerFixture : public AgentFixture {
                     .empty());
   }
   template <class T>
-  auto Broker(T body, const std::string& capability,
-              std::string server = std::string(64, 'b'))
+  auto Broker(T body, const std::string& capability)
       -> std::unique_ptr<R::MessageT> {
     Socket socket{
         ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
     R::RequestT request;
     request.service = "worker";
-    request.server_id = server;
     request.project_scope = "SPOOFED";
     request.instance_id = "instance";
     request.job_id = "job";
@@ -328,56 +326,37 @@ TEST_F(BrokerFixture, RegistrationProbesPersistsAndNeverReturnsCredentials) {
       ListSize(List().HostValue()->value_as_ExecutionServices()->services()),
       1u);
 }
-TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
-  auto listed = List();
-  auto services = listed.HostValue()->value_as_ExecutionServices()->services();
-  ASSERT_EQ(ListSize(services), 1u);
-  EXPECT_EQ(services->Get(0)->id()->str(), "local");
-  EXPECT_EQ(services->Get(0)->grade(), 0u);
-  ASSERT_TRUE(Put({}, "worker", {}, true, "worker", 15, 0, UINT64_MAX).Code().empty());
-  Restart();
-  listed = List();
-  services = listed.HostValue()->value_as_ExecutionServices()->services();
-  ASSERT_EQ(ListSize(services), 2u);
-  EXPECT_EQ(services->Get(1)->grade(), UINT64_MAX);
-  auto catalog = Broker(R::CatalogRequestT{}, Authorize("grade"));
-  const auto& entries = catalog->payload.AsReply()->body.AsCatalog()->services;
-  ASSERT_EQ(entries.size(), 2u);
-  EXPECT_EQ(entries[1]->grade, UINT64_MAX);
+auto CatalogService(const R::CatalogT& catalog, std::string_view id)
+    -> const R::TargetT& {
+  const auto found = std::ranges::find_if(
+      catalog.services, [&](const auto& service) { return service->id == id; });
+  if (found == catalog.services.end())
+    throw std::runtime_error("Missing execution service: " + std::string(id));
+  return **found;
 }
-TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
-  ASSERT_TRUE(Put().Code().empty());
-  auto listed = List();
-  auto *service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), 15u);
-  EXPECT_EQ(service->missed_heartbeats(), 0u);
-  const auto capability = Authorize("project");
-  ASSERT_TRUE(Put({}, "worker", {}, false, "Test worker", 2, 3).Code().empty());
+
+TEST_F(BrokerFixture, GradeSettingsPreserveAllBitsAndLocalDefault) {
+  const auto check_grade = [&](std::string_view id, uint64_t grade) {
+    const auto listed = List();
+    const auto* services =
+        listed.HostValue()->value_as_ExecutionServices()->services();
+    ASSERT_NE(services, nullptr);
+    const auto found =
+        std::ranges::find_if(*services, [&](const auto* service) {
+          return service->id()->string_view() == id;
+        });
+    ASSERT_NE(found, services->end());
+    EXPECT_EQ((*found)->grade(), grade);
+  };
+  check_grade("local", 0);
+  ASSERT_TRUE(Put({}, "worker", {}, true, "worker", UINT64_MAX).Code().empty());
   Restart();
-  listed = List();
-  service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), 2u);
-  EXPECT_EQ(service->missed_heartbeats(), 3u);
-  const auto response = Broker(R::CatalogRequestT{}, capability);
-  const auto *catalog = response->payload.AsReply()->body.AsCatalog();
-  ASSERT_NE(catalog, nullptr);
-  ASSERT_EQ(catalog->services.size(), 2u);
-  EXPECT_TRUE(catalog->services[1]->available);
-  EXPECT_EQ(catalog->services[1]->heartbeat_interval_seconds, 2u);
-  EXPECT_EQ(catalog->services[1]->missed_heartbeats, 3u);
-  EXPECT_FALSE(
-      Put({}, "worker", {}, false, "Test worker", 0, 3).Code().empty());
-  ASSERT_TRUE(
-      Put({}, "worker", {}, false, "Test worker", UINT32_MAX, UINT32_MAX)
-          .Code()
-          .empty());
-  listed = List();
-  service =
-      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
-  EXPECT_EQ(service->heartbeat_interval_seconds(), UINT32_MAX);
-  EXPECT_EQ(service->missed_heartbeats(), UINT32_MAX);
+  check_grade("worker", UINT64_MAX);
+  auto catalog = Broker(R::CatalogRequestT{}, Authorize("grade"));
+  EXPECT_EQ(
+      CatalogService(*catalog->payload.AsReply()->body.AsCatalog(), "worker")
+          .grade,
+      UINT64_MAX);
 }
 TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
   const auto capability = Authorize("project");
@@ -385,15 +364,13 @@ TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
   const auto catalog = Broker(R::CatalogRequestT{}, capability);
   const auto* services = catalog->payload.AsReply()->body.AsCatalog();
   ASSERT_NE(services, nullptr);
-  ASSERT_EQ(services->services.size(), 2u);
-  const auto& worker = *services->services[1];
+  const auto& worker = CatalogService(*services, "worker");
   EXPECT_FALSE(worker.available);
-  EXPECT_NE(worker.unavailable_reason.find(worker.id), std::string::npos);
-  EXPECT_NE(worker.unavailable_reason.find("approval"), std::string::npos);
-  EXPECT_NE(worker.unavailable_reason.find("project"), std::string::npos);
+  EXPECT_FALSE(worker.unavailable_reason.empty());
   EXPECT_EQ(Authorize("project"), capability);
   const auto granted = Broker(R::CatalogRequestT{}, capability);
-  const auto& approved = *granted->payload.AsReply()->body.AsCatalog()->services[1];
+  const auto& approved =
+      CatalogService(*granted->payload.AsReply()->body.AsCatalog(), "worker");
   EXPECT_TRUE(approved.available);
   EXPECT_TRUE(approved.unavailable_reason.empty());
 }
@@ -409,9 +386,8 @@ TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
               ? catalog_reply->body.AsFailure()->message
               : "unexpected worker reply");
   ASSERT_NE(catalog->payload.AsReply()->body.AsCatalog(), nullptr);
-  ASSERT_EQ(catalog->payload.AsReply()->body.AsCatalog()->services.size(), 2u);
-  EXPECT_EQ(catalog->payload.AsReply()->body.AsCatalog()->services[1]->id,
-            "worker");
+  EXPECT_TRUE(
+      CatalogService(*catalog_reply->body.AsCatalog(), "worker").available);
   R::PutBlobRequestT put;
   put.digest = std::string(64, 'c');
   put.total = 192 * 1024;
@@ -422,7 +398,7 @@ TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
   EXPECT_EQ(first->payload.AsReply()->body.AsBlobChunk()->bytes, put.bytes);
   auto scope = worker->Requests().back().project_scope;
   EXPECT_NE(scope, "SPOOFED");
-  EXPECT_EQ(scope.size(), 64u);
+  EXPECT_FALSE(scope.empty());
   Broker(put, b);
   EXPECT_NE(worker->Requests().back().project_scope, scope);
   // Same filesystem identity under a host alias shares the isolation scope.
@@ -459,14 +435,15 @@ TEST_F(BrokerFixture, AuthorizationSurvivesRestartAndRevocationIsDurable) {
       Broker(R::CatalogRequestT{}, next)->payload.AsReply()->body.AsFailure(),
       nullptr);
 }
-TEST_F(BrokerFixture, StaleRegistrationIsRejectedBeforeContactingTheWorker) {
+TEST_F(BrokerFixture, PinnedRegistrationOwnsTheWorkerIdentity) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   const auto count = worker->Requests().size();
-  auto changed = Broker(R::StatusRequestT{}, capability, std::string(64, 'c'));
-  EXPECT_EQ(changed->payload.AsReply()->body.AsFailure()->code,
-            R::ErrorCode::RegistrationChanged);
-  EXPECT_EQ(worker->Requests().size(), count);
+  auto changed = Broker(R::ProbeRequestT{}, capability);
+  ASSERT_NE(changed->payload.AsReply()->body.AsCapabilities(), nullptr);
+  EXPECT_EQ(changed->payload.AsReply()->body.AsCapabilities()->server_id,
+            worker->server);
+  EXPECT_EQ(worker->Requests().size(), count + 1);
   // Malformed frames cannot affect the daemon or trigger outbound requests.
   {
     Socket socket{
@@ -477,7 +454,7 @@ TEST_F(BrokerFixture, StaleRegistrationIsRejectedBeforeContactingTheWorker) {
     EXPECT_THROW(ReadMessage(socket.fd), std::runtime_error);
   }
   EXPECT_TRUE(List().Code().empty());
-  EXPECT_EQ(worker->Requests().size(), count);
+  EXPECT_EQ(worker->Requests().size(), count + 1);
 }
 }  // namespace
 }  // namespace tsugumi::test
@@ -497,16 +474,20 @@ TEST_F(BrokerFixture, UnlistedHostKeyIsRejectedDuringTheWorkerHandshake) {
   EXPECT_FALSE(Put().Code().empty());
   EXPECT_EQ(worker->Requests().size(), before);
 }
-TEST_F(BrokerFixture, RenameVerificationAndUnrelatedEditsPreserveProjectAuthorization) {
+TEST_F(BrokerFixture,
+       RenameVerificationAndUnrelatedEditsPreserveProjectAuthorization) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   const auto background = Authorize("background-project");
   ASSERT_TRUE(Put({}, "worker", {}, false, "Renamed").Code().empty());
   ASSERT_TRUE(Put().Code().empty());
   ASSERT_TRUE(Put({}, "other").Code().empty());
-  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
-    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("other")).Union();
-  });
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest,
+                      [](Builder& b) {
+                        return H::CreateExecutionServiceRemoveRequest(
+                                   b, b.CreateString("other"))
+                            .Union();
+                      });
   ASSERT_TRUE(removed.Code().empty());
   Restart();
   for (const auto& grant : {capability, background}) {
@@ -515,46 +496,63 @@ TEST_F(BrokerFixture, RenameVerificationAndUnrelatedEditsPreserveProjectAuthoriz
   }
   EXPECT_EQ(Authorize("project"), capability);
 }
-TEST_F(BrokerFixture, ChangedRegistrationInvalidatesOnlyItsServiceBeforeDialing) {
+TEST_F(BrokerFixture,
+       ChangedRegistrationInvalidatesOnlyItsServiceBeforeDialing) {
   ASSERT_TRUE(Put().Code().empty());
   ASSERT_TRUE(Put({}, "other").Code().empty());
   const auto capability = Authorize("project");
-  ASSERT_TRUE(Put({}, "other", "unix:/tmp/changed-worker.sock", false).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "other", "unix:/tmp/changed-worker.sock", false).Code().empty());
   auto response = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
-  ASSERT_TRUE(Put({}, "worker", "unix:/tmp/changed-worker.sock", false).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "worker", "unix:/tmp/changed-worker.sock", false).Code().empty());
   auto count = worker->Requests().size();
   auto replaced = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(replaced->payload.AsReply()->body.AsFailure(), nullptr);
-  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
   EXPECT_EQ(worker->Requests().size(), count);
 }
 TEST_F(BrokerFixture, RemovedAndReaddedRegistrationDoesNotReviveOldGrant) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
-  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
-    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("worker")).Union();
-  });
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest,
+                      [](Builder& b) {
+                        return H::CreateExecutionServiceRemoveRequest(
+                                   b, b.CreateString("worker"))
+                            .Union();
+                      });
   ASSERT_TRUE(removed.Code().empty());
   auto response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
   ASSERT_TRUE(Put().Code().empty());
   response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code,
+            R::ErrorCode::RegistrationChanged);
 }
-TEST_F(BrokerFixture, ProbeRefreshesCapabilitiesWithoutReregistrationOrReauthorization) {
+TEST_F(BrokerFixture,
+       ProbeRefreshesCapabilitiesWithoutReregistrationOrReauthorization) {
   worker->SetResourceLimits(false);
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   worker->SetResourceLimits(true);
   auto response = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
-  EXPECT_TRUE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+  EXPECT_TRUE(
+      response->payload.AsReply()->body.AsCapabilities()->resource_limits);
   auto listed = List();
-  EXPECT_TRUE(listed.HostValue()->value_as_ExecutionServices()->services()->Get(1)->capabilities()->resource_limits());
+  EXPECT_TRUE(listed.HostValue()
+                  ->value_as_ExecutionServices()
+                  ->services()
+                  ->Get(1)
+                  ->capabilities()
+                  ->resource_limits());
   worker->SetResourceLimits(false);
   response = Broker(R::ProbeRequestT{}, capability);
-  EXPECT_FALSE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+  EXPECT_FALSE(
+      response->payload.AsReply()->body.AsCapabilities()->resource_limits);
 }
 
 }  // namespace

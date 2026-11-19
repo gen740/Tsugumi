@@ -611,7 +611,6 @@ class Layered {
   auto sort_layer(size_t r, bool down) -> void {
     struct Keyed {
       int id;
-      size_t k;
       double v;
     };
     std::vector<Keyed> keyed;
@@ -634,8 +633,7 @@ class Layered {
           }
         }
       }
-      keyed.push_back(
-          {id, position, count > 0 ? sum / count : n_[id].order + 0.5});
+      keyed.push_back({id, count > 0 ? sum / count : n_[id].order + 0.5});
     }
     std::stable_sort(keyed.begin(), keyed.end(),
                      [](const Keyed& a, const Keyed& b) { return a.v < b.v; });

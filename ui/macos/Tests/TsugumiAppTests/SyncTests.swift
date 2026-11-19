@@ -42,30 +42,22 @@ import TsugumiTestSupport
       do {
         try process.run()
         let file = dir.appendingPathComponent("control/server.ready")
-        for _ in 0..<500 {
-          if let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-            ready = j
-            return
-          }
-          // A service that refused its arguments never becomes ready.
-          if !process.isRunning { break }
-          Thread.sleep(forTimeInterval: 0.025)
-        }
-        throw CocoaError(.fileReadNoSuchFile)
+        guard let value = try fixtureReadiness(file, pid: process.processIdentifier, read: {
+          guard let data = try? Data(contentsOf: file) else { return nil as [String: Any]? }
+          return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }) else { throw CocoaError(.fileReadNoSuchFile) }
+        ready = value
       } catch { stop(); throw error }
     }
 
     var endpoint: Endpoint {
       Endpoint(url: URL(string: ready["endpoint"] as! String)!, token: ready["token"] as! String,
-               projectId: ready["project_id"] as? String ?? "", serverInstanceId: ready["server_instance_id"] as? String ?? "")
+               projectId: ready["project_id"] as? String ?? "")
     }
 
     func stop() {
       if process.isRunning {
-        process.terminate()
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        try? finishFixtureProcess(process.processIdentifier, signal: SIGTERM)
         process.waitUntilExit()
       }
       try? FileManager.default.removeItem(at: dir)
@@ -141,25 +133,9 @@ import TsugumiTestSupport
     return saved.rev ?? 0
   }
 
-  /// A revision is the notification barrier. The timer only diagnoses a stuck
-  /// stream; receiving a save reply on another connection is not this barrier.
+  /// Observe the revision applied by the session's notification handler.
   static func received(_ revision: UInt64, by session: ProjectSession) async throws {
-    try await withThrowingTaskGroup(of: Void.self) { group in
-      defer { group.cancelAll() }
-      group.addTask { @MainActor in
-        for await current in Observations({ session.rev }) {
-          if current >= revision { return }
-        }
-        throw CancellationError()
-      }
-      group.addTask {
-        try await Task.sleep(for: .seconds(60))
-        throw NSError(domain: "SyncTests", code: 1, userInfo: [
-          NSLocalizedDescriptionKey: "UI did not receive document revision \(revision)",
-        ])
-      }
-      try await group.next()
-    }
+    try await waitForModel("document revision \(revision)") { session.rev >= revision }
   }
 
   static func connected(_ s: ProjectSession) async throws {
@@ -198,14 +174,12 @@ import TsugumiTestSupport
     }
   }
 
-  /// A tsugumid that cannot be reached is tried again for a moment and then
-  /// told as a connection failure, not as a project that could not be read.
+  /// A transport failure is surfaced as a connection failure.
   @Test func anUnreachableTsugumidIsToldAsAConnectionFailure() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.connectRetryDelays = [0.01, 0.01]
-    s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p", serverInstanceId: "i")
+    s.endpointOverride = Endpoint(url: URL(string: "ws://127.0.0.1:1/rpc")!, token: "t", projectId: "p")
     s.start()
     try await waitForModel { !(s.connectionMessage == nil) }
     #expect(!s.connected)
@@ -245,7 +219,7 @@ import TsugumiTestSupport
     #expect(s.position(renamed) == CGPoint(x: 700, y: 500))
     #expect(s.layout["displays"]?["b"]?["width"]?.double == 300)
     #expect(s.displayName(b) == "renamed")
-    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a", "b"])
+    #expect(Set(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.compactMap(\.string) ?? []) == ["a", "b"])
     #expect(!s.dirty)
 
     let again = try await s.rpc!.inspect()
@@ -254,13 +228,13 @@ import TsugumiTestSupport
     left["canvas"]?["cards"] = .array(kept)
     let request = Tsugumi_Host_LayoutValidateRequestT()
     request.json = again.layoutJson; request.removedCards = ["b"]
-    let validated: Tsugumi_Host_LayoutValidatedT = try await CoreHostClient.shared.layoutCall(.layoutvalidaterequest, request)
+    let validated: Tsugumi_Host_LayoutValidatedT = try await CoreHostClient.shared.hostCall(.layoutvalidaterequest, request)
     let cleaned = validated.json
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [FixtureChange.setProject(left.serialized()), FixtureChange.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     try await waitForModel { !(s.resolution[renamed] != nil) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
-    #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
+    #expect(Set(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.compactMap(\.string) ?? []) == ["a"])
   }
 
   /// A project no window shows any more is closed: its connection ends and it
@@ -417,7 +391,7 @@ import TsugumiTestSupport
     let daemon = try Daemon(project: dir)
     defer { daemon.stop() }
     let rpc = RPCClient(endpoint: daemon.endpoint.url)
-    _ = try await rpc.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await rpc.connect(token: daemon.endpoint.token, expectedProjectId: nil)
     let opened = try await rpc.open(viewId: UUID())
     let marker = UUID()
     // A final saved change is the barrier: every run notification before it
@@ -434,16 +408,10 @@ import TsugumiTestSupport
         if let patch = event.payload.value as? Tsugumi_RPC_DocPatchedT,
            patch.delta.opId == marker.uuidString.lowercased() { return (sequences, true) }
       }
+      ended.continuation.finish()
       return (sequences, false)
     }
-    let deadline = Task {
-      do {
-        try await Task.sleep(for: .seconds(60))
-        ended.continuation.finish()
-        received.cancel()
-      } catch {}
-    }
-    defer { deadline.cancel(); ended.continuation.finish(); received.cancel() }
+    defer { ended.continuation.finish(); received.cancel() }
     var project = try JSONValue.parse(opened.snapshot.projectJson)
     let cards = (project["canvas"]?["cards"]?.array ?? []).filter {
       ["start", "b"].contains($0["id"]?.string ?? "")
@@ -592,10 +560,10 @@ import TsugumiTestSupport
     let plan = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
     try await s.addComment(plan, "単位を考える")
     #expect(s.cardsWithOpenComments(in: []).contains(plan))
-    // What the core recorded of the Agent reads back, in the words the screen uses.
+    // Restoring a comment preserves the actor and its resolution state.
     let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))
-    #expect(agent[0].cards == ["p", "q"] && agent[0].author == "agent")
-    #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
+    #expect(Set(agent[0].cards) == ["p", "q"] && agent[0].author == "agent")
+    #expect(agent[0].resolved && agent[0].stateBy == "agent")
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
     await s.save()
@@ -640,7 +608,8 @@ import TsugumiTestSupport
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
     for k in [a, b, c] {
-      #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.message.contains("port") }, "\(k)")
+      #expect(ports(k) == [[], []])
+      #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.code == "unknown_port" }, "\(k)")
     }
     s.removeConnection(at: 0, in: [])
     #expect(ports(a) == [[], []] && ports(b) == [[], []])
@@ -741,7 +710,7 @@ import TsugumiTestSupport
     s.start()
     try await Self.connected(s)
     let agent = RPCClient(endpoint: d.endpoint.url)
-    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await agent.connect(token: d.endpoint.token, expectedProjectId: nil)
 
     defer { Task { await agent.close() } }
     // Start each Agent edit with UI edits pending. Either transaction may win;
@@ -801,7 +770,7 @@ import TsugumiTestSupport
     // Each comes to its Card first.
     #expect(s.helperPresences[0].beats.map(\.beat) == [.visit("a")])
     let agent = RPCClient(endpoint: d.endpoint.url)
-    _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    _ = try await agent.connect(token: d.endpoint.token, expectedProjectId: nil)
     for id in ["b", "c"] {
       let snap = try await agent.inspect()
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",

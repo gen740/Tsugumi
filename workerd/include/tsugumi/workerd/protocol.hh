@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -15,11 +14,7 @@ inline constexpr uint32_t kMaxFrame = 2 << 20;
 inline constexpr uint32_t kChunkBytes = 1 << 20;
 inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
-inline constexpr uint32_t kContract = 7;
-inline constexpr auto kControlTimeout = std::chrono::seconds(30);
-inline constexpr auto kHeartbeatPollInterval = std::chrono::milliseconds(100);
-// One bounded control round trip plus the sender's scheduling granularity.
-inline constexpr auto kHeartbeatGrace = kControlTimeout + kHeartbeatPollInterval;
+inline constexpr uint32_t kContract = 9;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -41,7 +36,8 @@ auto reply(T value) -> R::MessageT {
   return message;
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT;
+// Decodes a packed spec. Apply admission policy when accepting a new job.
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT>;
-auto validate_spec(const R::JobSpecT& spec) -> void;
+auto validate_log_limit(const R::JobSpecT& spec) -> void;
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

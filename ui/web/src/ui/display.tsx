@@ -177,6 +177,7 @@ function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: s
   useObserve(prefs)
   const colorScheme = prefs.dark ? 'dark' : 'light'
   const ref = useRef<HTMLIFrameElement>(null)
+  const sent = useRef<{ name: string; json: string; blobs: ModuleBlobs }>()
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -193,7 +194,11 @@ function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: s
     // The frame has an opaque origin (sandbox): '*' is the only target that reaches it.
     let cancelled = false
     if (ready) void moduleSource(name).then(code => {
-      if (!cancelled) ref.current?.contentWindow?.postMessage({ name, json, blobs, code, colorScheme, visible: true, interactive: large }, '*')
+      if (!cancelled) {
+        const content = sent.current?.name !== name || sent.current?.json !== json || sent.current?.blobs !== blobs
+        ref.current?.contentWindow?.postMessage({ name, ...(content ? { json, blobs } : {}), ...(sent.current?.name !== name ? { code } : {}), colorScheme, visible: true, interactive: large }, '*')
+        sent.current = { name, json, blobs }
+      }
     }).catch(error => setError(String(error)))
     return () => { cancelled = true }
   }, [ready, name, json, blobs, colorScheme, large])

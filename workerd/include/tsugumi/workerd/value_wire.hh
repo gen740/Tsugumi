@@ -1,6 +1,7 @@
 // Worker value and display codecs; no project reply types.
 #pragma once
 #include <flatbuffers/flatbuffers.h>
+
 #include "tsugumi/protocol/data_generated.h"
 #include "tsugumi/workerd/values.hh"
 namespace tsugumi::wire {
@@ -21,6 +22,5 @@ DisplayData display(const D::Display* d, std::string_view buffer);
 // Standalone buffers (root = table) for persistence.
 std::string standalone_display(const DisplayData& d);
 std::optional<DisplayData> standalone_display(const std::string& bytes);
-
 
 }  // namespace tsugumi::wire

@@ -7,7 +7,8 @@
 
 namespace tsugumi {
 namespace {
-TEST(RemoteExecutionCapabilities, CachedLimitsAndSystemsCannotRefuseARunBeforeProbe) {
+TEST(RemoteExecutionCapabilities,
+     CachedLimitsAndSystemsCannotRefuseARunBeforeProbe) {
   Node node;
   node.path = {"work"};
   node.settings.execution_service = "worker";
@@ -21,7 +22,8 @@ TEST(RemoteExecutionCapabilities, CachedLimitsAndSystemsCannotRefuseARunBeforePr
   cached.resource_limits = false;
   EXPECT_FALSE(Service::execution_diagnostic(node, {cached}));
 }
-TEST(RemoteExecutionCapabilities, MissingOrRevokedRegistrationStillRefusesARun) {
+TEST(RemoteExecutionCapabilities,
+     MissingOrRevokedRegistrationStillRefusesARun) {
   Node node;
   node.path = {"work"};
   node.settings.execution_service = "worker";
@@ -37,7 +39,8 @@ TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
   node.kind = Template::Code;
   node.settings.execution_service = "auto";
   auto compiled = worker_condition::compile({"simple", "x >= 10"});
-  node.settings.worker_condition = std::move(std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  node.settings.worker_condition = std::move(
+      std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
   RemoteTarget local;
   local.id = "local";
   local.available = true;
@@ -51,7 +54,8 @@ TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
   EXPECT_EQ(diagnostic->card, node.path);
   EXPECT_EQ(diagnostic->message, remote.unavailable_reason);
   node.settings.execution_service = remote.id;
-  EXPECT_EQ(Service::execution_diagnostic(node, {local, remote})->message, remote.unavailable_reason);
+  EXPECT_EQ(Service::execution_diagnostic(node, {local, remote})->message,
+            remote.unavailable_reason);
   node.settings.execution_service = "auto";
   remote.available = true;
   EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
@@ -96,14 +100,13 @@ TEST(RemoteExecutionLifetime,
         invocation.invocation = 1;
         invocation.state = CardState::running;
         invocation.started_at = now_ms() - 1000;
-        invocation.stages.push_back(
-            {Phase::execute, StageOutcome::running, *invocation.started_at, std::nullopt});
+        invocation.stages.push_back({Phase::execute, StageOutcome::running,
+                                     *invocation.started_at, std::nullopt});
         if (id != local_run) {
           invocation.execution_service = "unreachable-worker";
           invocation.execution_job_id = crypto::sha256_hex(id);
           invocation.execution_state = RemoteExecutionState::running;
-          History::put_remote_job(db, {invocation, std::string(64, 'a'),
-                                       std::string(64, 'b'), "spec"});
+          History::put_remote_job(db, {invocation, std::string(64, 'a'), "spec"});
         }
         History::put_status(db, invocation);
       }
@@ -144,7 +147,8 @@ TEST(RemoteExecutionLifetime,
         EXPECT_FALSE(record->summary.execution_state);
     }
     EXPECT_FALSE(History::has_remote_jobs(db));
-    auto releases = db.prepare("SELECT fingerprint,delete_data FROM remote_releases");
+    auto releases =
+        db.prepare("SELECT fingerprint,delete_data FROM remote_releases");
     int count = 0;
     while (releases.step()) {
       EXPECT_EQ(releases.text(0), fingerprint);

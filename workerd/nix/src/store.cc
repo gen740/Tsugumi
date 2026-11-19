@@ -1,4 +1,5 @@
 #include "tsugumi/workerd/store.hh"
+
 #include <mutex>
 #include <nix/store/globals.hh>
 #include <nix/store/store-api.hh>
@@ -10,7 +11,8 @@ auto NixStore::init_process() -> void {
 }
 std::vector<std::string> NixStore::substituters() {
   std::vector<std::string> urls;
-  for (const auto& ref : nix::settings.getWorkerSettings().substituters.get()) urls.push_back(ref.render(false));
+  for (const auto& ref : nix::settings.getWorkerSettings().substituters.get())
+    urls.push_back(ref.render(false));
   return urls;
 }
 

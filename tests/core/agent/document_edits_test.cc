@@ -1,23 +1,24 @@
 #include "host/document_edits.hh"
-#include "host/templates.hh"
-#include <algorithm>
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
 #include <set>
 
-#include "tsugumi/util/json_object.hh"
 #include "host/permission_kinds.hh"
+#include "host/templates.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
 namespace {
 namespace json = ::tsugumi::json;
 
-auto Normalized(const std::string &value) -> std::string {
+auto Normalized(const std::string& value) -> std::string {
   const auto raw = schema::text(schema::capture(value));
   if (raw.starts_with('{')) {
     auto fields = json::Object(raw);
-    for (auto &[key, item] : fields) {
+    for (auto& [key, item] : fields) {
       (void)key;
       item = Normalized(item);
     }
@@ -25,16 +26,15 @@ auto Normalized(const std::string &value) -> std::string {
   }
   if (raw.starts_with('[')) {
     auto items = json::Array(raw);
-    for (auto &item : items)
-      item = Normalized(item);
+    for (auto& item : items) item = Normalized(item);
     return json::Encode(items);
   }
   return raw;
 }
-auto ConnectionWires(const std::string &state) -> std::set<std::string> {
+auto ConnectionWires(const std::string& state) -> std::set<std::string> {
   const auto project = json::Object(json::Object(state).at("project"));
   std::set<std::string> result;
-  for (const auto &wire :
+  for (const auto& wire :
        json::Array(json::Object(project.at("canvas")).at("connections"))) {
     const auto w = json::Object(wire), from = json::Object(w.at("from")),
                to = json::Object(w.at("to"));
@@ -107,7 +107,7 @@ TEST(DocumentTemplate,
       json::Object(WriteTemplate("draft", "new-card").definition_json);
   EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
   EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
-  for (const auto *name :
+  for (const auto* name :
        {"trigger", "fork", "branch", "collect", "merge", "input", "switch"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
@@ -122,14 +122,14 @@ TEST(DocumentTemplate,
       EXPECT_EQ(reply.files[0].text.find("@NAMESPACE@"), std::string::npos);
     }
   }
-  for (const auto *name : {"python", "go", "rust", "ruby", "cpp", "csharp"}) {
+  for (const auto* name : {"python", "go", "rust", "ruby", "cpp", "csharp"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));
     EXPECT_EQ(json::Text(card, "language"), name);
     EXPECT_EQ(json::Array(card.at("inputs")).size(), 1);
     std::set<std::string> paths;
-    for (const auto &file : reply.files) {
+    for (const auto& file : reply.files) {
       paths.insert(file.path);
       EXPECT_FALSE(file.path.starts_with('/'));
       EXPECT_EQ(file.text.find("@NAMESPACE@"), std::string::npos);
@@ -140,7 +140,7 @@ TEST(DocumentTemplate,
     EXPECT_TRUE(paths.contains("_outputs.fbs"));
     EXPECT_TRUE(paths.contains("default.nix"));
     EXPECT_TRUE(std::ranges::any_of(
-        paths, [](const auto &path) { return path.starts_with("src/"); }));
+        paths, [](const auto& path) { return path.starts_with("src/"); }));
     if (std::string_view(name) == "go") {
       EXPECT_TRUE(paths.contains("src/go.mod"));
       EXPECT_TRUE(paths.contains("src/go.sum"));
@@ -152,7 +152,7 @@ TEST(DocumentTemplate,
 }
 TEST(DocumentTemplate,
      NotebookReportsAndPlotsKeepTheirSourceAndArtifactContracts) {
-  for (const auto *name : {"marimo", "report_rmarkdown", "report_quarto",
+  for (const auto* name : {"marimo", "report_rmarkdown", "report_quarto",
                            "visualization_matplotlib", "visualization_plotly",
                            "visualization_altair"}) {
     const auto reply = WriteTemplate(name, "new-card");
@@ -162,8 +162,7 @@ TEST(DocumentTemplate,
     const bool plot = std::string_view(name).starts_with("visualization_");
     EXPECT_EQ(json::Text(card, "artifactOutput"), plot ? "figure" : "report");
     std::set<std::string> files;
-    for (const auto &file : reply.files)
-      files.insert(file.path);
+    for (const auto& file : reply.files) files.insert(file.path);
     EXPECT_TRUE(files.contains("default.nix"));
     EXPECT_TRUE(files.contains("_outputs.fbs"));
     if (std::string_view(name) == "marimo") {
@@ -173,7 +172,7 @@ TEST(DocumentTemplate,
     if (plot) {
       EXPECT_TRUE(files.contains("src/main.py"));
       const auto params = json::Array(card.at("params"));
-      EXPECT_TRUE(std::ranges::any_of(params, [](const auto &raw) {
+      EXPECT_TRUE(std::ranges::any_of(params, [](const auto& raw) {
         const auto param = json::Object(raw);
         return json::Text(param, "name") == "kind" &&
                json::Text(param, "data") == "line";
@@ -237,10 +236,13 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
             originals.at("externals/inner/"));
   EXPECT_EQ(exts.at("externals/target/externals/copy/externals/grand/"),
             originals.at("externals/inner/externals/grand/"));
-  ASSERT_EQ(edit.files.size(), 2);
-  EXPECT_EQ(edit.files[0].to, "externals/target/externals/copy/asset.bin");
-  EXPECT_EQ(edit.files[1].to,
-            "externals/target/externals/copy/externals/grand/data.bin");
+  std::set<std::string> destinations;
+  for (const auto& file : edit.files)
+    EXPECT_TRUE(destinations.insert(file.to).second);
+  EXPECT_EQ(destinations,
+            (std::set<std::string>{
+                "externals/target/externals/copy/asset.bin",
+                "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
       CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");
   EXPECT_EQ(external.files.size(), 2);
@@ -263,10 +265,10 @@ TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
 TEST(DocumentSubgraph, ClientGestureFixturesUseActualHostReplies) {
   const auto fixtures = fs::read_file(TSUGUMI_SUBGRAPH_FIXTURES);
   ASSERT_TRUE(fixtures.has_value());
-  for (const auto &raw : json::Array(*fixtures)) {
+  for (const auto& raw : json::Array(*fixtures)) {
     const auto fixture = json::Object(raw);
     std::vector<std::string> cards;
-    for (const auto &card : json::Array(fixture.at("cards")))
+    for (const auto& card : json::Array(fixture.at("cards")))
       cards.push_back(json::String(card));
     const auto edit = MakeSubgraph(json::Text(fixture, "projectJson"), cards,
                                    json::Text(fixture, "id"));
@@ -287,22 +289,34 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
              inner = json::Object(edit.external_json);
-  for (const auto *field : {"pkgsPath", "nixSources", "settings"}) {
+  for (const auto* field : {"pkgsPath", "nixSources", "settings"}) {
     EXPECT_EQ(before.at(field), inner.at(field));
     EXPECT_EQ(before.at(field), outer.at(field));
   }
-  const auto old_graph = json::Object(before.at("canvas"));
   const auto graph = json::Object(inner.at("canvas"));
   const auto cards = json::Array(graph.at("cards"));
-  const auto originals = json::Array(old_graph.at("cards"));
-  EXPECT_EQ(cards, (std::vector<std::string>{originals[0], originals[1]}));
+  std::map<std::string, json::Members> selected;
+  for (const auto& raw : cards) {
+    auto card = json::Object(raw);
+    const auto id = json::Text(card, "id");
+    EXPECT_TRUE(selected.emplace(id, std::move(card)).second);
+  }
+  ASSERT_TRUE(selected.contains("a"));
+  EXPECT_FALSE(json::Bool(
+      json::Get(json::Object(selected.at("a").at("settings")), "sandbox")));
+  const auto params = json::Array(selected.at("a").at("params"));
+  ASSERT_EQ(params.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(params.front()), "name"), "value");
+  EXPECT_EQ(json::UInt(json::Object(params.front()).at("data")), 7u);
+  EXPECT_TRUE(selected.contains("b"));
+  EXPECT_FALSE(selected.contains("c"));
   EXPECT_EQ(json::Array(graph.at("connections")).size(), 1);
   const auto boundary = json::Object(inner.at("boundary"));
   EXPECT_EQ(json::Object(boundary.at("inputs")).size(), 1);
   EXPECT_EQ(json::Object(boundary.at("outputs")).size(), 2);
   const auto outer_boundary = json::Object(outer.at("boundary"));
-  for (const auto *side : {"inputs", "outputs"})
-    for (const auto &[name, endpoint] : json::Object(outer_boundary.at(side))) {
+  for (const auto* side : {"inputs", "outputs"})
+    for (const auto& [name, endpoint] : json::Object(outer_boundary.at(side))) {
       (void)name;
       EXPECT_EQ(json::Text(json::Object(endpoint), "card"), "sub");
       const auto port = json::Text(json::Object(endpoint), "port");
@@ -339,24 +353,19 @@ TEST(DocumentSubgraph, RejectsInvalidSelectionAndIdWithoutPartialEdits) {
   EXPECT_THROW(MakeSubgraph(root, {"a"}, "../sub"), std::runtime_error);
   EXPECT_NO_THROW(MakeSubgraph(root, {"a"}, "sub"));
 }
-} // namespace
-} // namespace tsugumi::host
+}  // namespace
+}  // namespace tsugumi::host
 
-TEST(HostPermissionKinds, SuppliesIdenticalIdsAndLocalizedDescriptions) {
-  const auto ja = tsugumi::host::PermissionKinds("ja");
-  const auto en = tsugumi::host::PermissionKinds("en");
-  ASSERT_EQ(ja.kinds.size(), en.kinds.size());
-  bool execution = false;
-  for (size_t i = 0; i < ja.kinds.size(); ++i) {
-    EXPECT_EQ(ja.kinds[i]->id, en.kinds[i]->id);
-    EXPECT_EQ(ja.kinds[i]->icon, en.kinds[i]->icon);
-    EXPECT_FALSE(ja.kinds[i]->label.empty());
-    EXPECT_FALSE(en.kinds[i]->label.empty());
-    EXPECT_NE(ja.kinds[i]->label, en.kinds[i]->label);
-    if (en.kinds[i]->id == "execution_service") {
-      execution = true;
-      EXPECT_NE(en.kinds[i]->label.find("data"), std::string::npos);
+TEST(HostPermissionKinds, SuppliesLabelsForTheSamePermissionsInBothLanguages) {
+  const auto named = [](const auto& reply) {
+    std::set<std::string> ids;
+    for (const auto& kind : reply.kinds) {
+      EXPECT_FALSE(kind->label.empty()) << kind->id;
+      EXPECT_TRUE(ids.insert(kind->id).second) << kind->id;
     }
-  }
-  EXPECT_TRUE(execution);
+    return ids;
+  };
+  const auto en = named(tsugumi::host::PermissionKinds("en"));
+  EXPECT_EQ(en, named(tsugumi::host::PermissionKinds("ja")));
+  EXPECT_TRUE(en.contains("execution_service"));
 }

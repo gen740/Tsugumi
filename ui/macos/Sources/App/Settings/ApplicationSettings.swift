@@ -172,7 +172,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
-    case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
+    case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
     }
   }
@@ -232,15 +232,17 @@ private struct UpdateSettings: View {
       if let why = updater.unavailable {
         Text(why).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       } else {
-        Toggle("アップデートを自動的に確認する", isOn: $updater.automatic)
-          .help("起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。")
         HStack {
           status
           Spacer()
           if case .ready = updater.state {
             Button("再起動して更新") { updater.installAndRelaunch() }
           } else {
-            Button("今すぐ確認") { Task { await updater.check() } }.disabled(updater.busy)
+            if updater.busy {
+              Button("キャンセル") { updater.cancelTransfer() }
+            } else {
+              Button("今すぐ確認") { updater.check() }
+            }
           }
         }
       }
@@ -251,7 +253,7 @@ private struct UpdateSettings: View {
   @ViewBuilder private var status: some View {
     switch updater.state {
     case .idle:
-      if updater.automatic { Text("まもなく確認します").foregroundStyle(.secondary) } else { Text("未確認").foregroundStyle(.secondary) }
+      Text("未確認").foregroundStyle(.secondary)
     case .checking:
       HStack(spacing: 6) { ProgressView().controlSize(.small); Text("確認しています") }
     case .upToDate:
@@ -259,7 +261,7 @@ private struct UpdateSettings: View {
     case .downloading(let v):
       HStack(spacing: 6) { ProgressView().controlSize(.small); Text("\(v) をダウンロードしています") }
     case .ready(let v):
-      Text("\(v) の準備ができました。次に終了したときに更新します。")
+      Text("\(v) の準備ができました。「再起動して更新」で更新できます。")
     case .failed(let m):
       Text(m).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(3)
     }
@@ -395,8 +397,7 @@ private struct EditorSettings: View {
           .id("\(prefs.editorFontSize)-\(prefs.indentWidth)-\(prefs.showIndentGuides)-\(prefs.editorTheme.rawValue)")
           .clipShape(RoundedRectangle(cornerRadius: 6))
           .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)))
-        Text("サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoButton("サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。")
       }
       .padding(12)
     }
@@ -427,7 +428,7 @@ private struct ShortcutSettings: View {
           }
         }
       }
-      Text("変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。").font(.caption).foregroundStyle(.secondary)
+      InfoButton("変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。")
     }
     .padding()
     .background(KeyRecorder(active: recording != nil) { binding in
@@ -477,8 +478,7 @@ private struct SkillSettings: View {
   var body: some View {
     @Bindable var prefs = prefs
     VStack(alignment: .leading, spacing: 8) {
-      Text("チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。")
-        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      InfoButton("チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。")
       GroupBox("フォルダ") {
         VStack(alignment: .leading, spacing: 4) {
           if prefs.skillFolders.isEmpty {
@@ -581,9 +581,8 @@ private struct APISettings: View {
           TextField("fixture のポート", value: $port, format: .number)
           Text("起動: python3 tests/fixtures/model_fixture.py --port \(port)").font(.caption.monospaced())
         }
-      } footer: {
-        Text("API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。")
-          .font(.caption).foregroundStyle(.secondary)
+      } header: {
+        InfoHeader("接続先", info: "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。チャットは任意機能です。通常の操作はすべて UI から行えます。")
       }
       APIKeySection(id: "anthropic", config: .anthropic, model: $anthropicModel)
       APIKeySection(id: "openai", config: .openAI, model: $openAIModel)
@@ -597,28 +596,19 @@ private struct APISettings: View {
           }
         }
       } header: {
-        Text("Agent が確認なしに Card に与えてよい権限")
-      } footer: {
-        Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoHeader("Agent が確認なしに Card に与えてよい権限", info: "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
       }
       Section {
         Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
       } header: {
-        Text("ヘルパー")
-      } footer: {
-        Text("オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoHeader("ヘルパー", info: "オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。")
       }
       Section {
         Toggle("Agent が自分の判断で Web を検索する", isOn: $webSearch)
       } header: {
-        Text("Web 検索")
-      } footer: {
-        Text(provider == "fixture"
-             ? "ローカル fixture には検索がないため、オンでも使えません。"
-             : "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoHeader("Web 検索", info: provider == "fixture"
+             ? Text("ローカル fixture には検索がないため、オンでも使えません。")
+             : Text("オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。"))
       }
       Section {
         LabeledContent("状態", value: GuideController.shared.connected
@@ -632,12 +622,8 @@ private struct APISettings: View {
             .font(.callout).foregroundStyle(.green)
         }
       } header: {
-        Text("ガイドのツグミ")
-      } footer: {
-        Text("ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。")
-          .font(.caption).foregroundStyle(.secondary)
+        InfoHeader("ガイドのツグミ", info: "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。")
       }
-      Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
     }
     .formStyle(.grouped)
     .task { await PermissionCatalog.shared.load() }
@@ -728,8 +714,7 @@ private struct ConnectionSettings: View {
   var body: some View {
     let sessions = model.sessions.values.sorted { $0.scopeName([]) < $1.scopeName([]) }
     VStack(alignment: .leading, spacing: 10) {
-      Text("開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
-        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      InfoButton("開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
       List(sessions, id: \.identity.id) { s in
         VStack(alignment: .leading, spacing: 4) {
           HStack {
@@ -752,8 +737,8 @@ private struct ConnectionSettings: View {
         }
       }
       .overlay { if sessions.isEmpty { ContentUnavailableView("開いているプロジェクトはありません", systemImage: "network.slash") } }
+      VMResourceSettings()
       EnvironmentStorageSettings()
-      VMHistorySettings()
     }
     .padding()
   }
@@ -761,6 +746,57 @@ private struct ConnectionSettings: View {
   private func copy(_ s: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(s, forType: .string)
+  }
+}
+
+/// The shared VM's size, kept by hostd (0: this Mac's default) and used from
+/// the VM's next start.
+private struct VMResourceSettings: View {
+  @Environment(AppModel.self) private var model
+  @HostStorage("vm.cpus") private var cpus = 0
+  @HostStorage("vm.memoryGiB") private var memory = 0
+  @HostStorage("vm.storeGiB") private var store = 0
+  @State private var size: EnvironmentManager.VMSize?
+  @State private var error: String?
+
+  var body: some View {
+    GroupBox {
+      VStack(alignment: .leading, spacing: 8) {
+        if let size {
+          stepper($cpus, size.defaults.cpus, 1...max(1, size.limits.cpus), step: 1) { "CPU: \($0) 個" }
+          stepper($memory, size.defaults.memoryGiB, 2...max(2, size.limits.memoryGiB), step: 1) { "メモリ: \($0) GiB" }
+          stepper($store, size.defaults.storeGiB, 16...max(16, size.limits.storeGiB), step: 16) { "Nix store: 最大 \($0) GiB" }
+          if size.storeDiskGiB > (store == 0 ? size.defaults.storeGiB : store) {
+            Text("store のディスクは今 \(size.storeDiskGiB) GiB です。小さくするには「すべての実行環境を初期化…」で store を作り直します（それまでは今の大きさのままです）。")
+              .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          }
+          Button("既定に戻す") { cpus = 0; memory = 0; store = 0 }
+            .disabled(cpus == 0 && memory == 0 && store == 0)
+        } else if let error {
+          Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+        } else {
+          ProgressView().controlSize(.small)
+        }
+      }
+      .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+    } label: {
+      InfoHeader("VM のサイズ", info: "全プロジェクト共通の VM のサイズです。変更は次に VM を起動したときから使われます（実行中の VM は今のサイズのままです）。")
+    }
+    .task {
+      do { size = try await model.environments.vmSize() } catch { self.error = String(describing: error) }
+    }
+  }
+
+  /// 0 follows the default; choosing the default value stores 0 again.
+  private func stepper(_ value: Binding<Int>, _ fallback: Int, _ range: ClosedRange<Int>, step: Int,
+                       label: (Int) -> LocalizedStringKey) -> some View {
+    let shown = value.wrappedValue == 0 ? fallback : value.wrappedValue
+    return Stepper(value: Binding(get: { shown }, set: { value.wrappedValue = $0 == fallback ? 0 : $0 }), in: range, step: step) {
+      HStack(spacing: 0) {
+        Text(label(shown))
+        if value.wrappedValue == 0 { Text("（既定）").foregroundStyle(.secondary) }
+      }
+    }
   }
 }
 
@@ -778,16 +814,12 @@ private struct EnvironmentStorageSettings: View {
   @State private var confirmVerify = false
 
   var body: some View {
-    GroupBox("実行環境のデータ") {
+    GroupBox {
       VStack(alignment: .leading, spacing: 8) {
-        Text("実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Text(model.environments.support.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
           Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([model.environments.support]) }.controlSize(.small)
         }
-        Text("共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           Button("共有 store を検査・修復…") { confirmVerify = true }
             .disabled(working)
@@ -812,6 +844,8 @@ private struct EnvironmentStorageSettings: View {
         }
       }
       .padding(6)
+    } label: {
+      InfoHeader("実行環境のデータ", info: Text("実行環境（全プロジェクト共通の VM、その Nix store のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。"), Text("共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。"))
     }
     .confirmationDialog("共有 Nix store を検査・修復しますか？", isPresented: $confirmVerify) {
       Button("検査・修復") { verify() }
@@ -851,9 +885,9 @@ private struct EnvironmentStorageSettings: View {
     message = nil
     Task {
       do {
-        let r = try await model.environments.cleanupStore()
+        try await model.environments.cleanupStore()
         failed = false
-        message = String(localized: "\(r.paths) 件を削除し、\(ByteCountFormatter.string(fromByteCount: Int64(r.bytes), countStyle: .file)) を解放しました。")
+        message = String(localized: "Nix store を掃除しました。")
       } catch {
         failed = true
         message = String(localized: "掃除できませんでした: ") + "\(error)"
@@ -878,86 +912,6 @@ private struct EnvironmentStorageSettings: View {
       }
       working = false
       await model.refreshSetup()
-    }
-  }
-}
-
-/// Run histories kept in the VM, one per project id: size, last start and
-/// the folder when the app knows it. Deleting one also removes that
-/// project's build roots; a project still on disk reads its runs back from
-/// .tsugumi/runs.sqlite when it is opened again.
-private struct VMHistorySettings: View {
-  @Environment(AppModel.self) private var model
-  @State private var rows: [EnvironmentManager.VMHistory]?
-  @State private var folders: [String: String] = [:]
-  @State private var working = false
-  @State private var message: String?
-  @State private var pending: EnvironmentManager.VMHistory?
-
-  var body: some View {
-    GroupBox("VM 内の実行履歴") {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。")
-          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        if let rows {
-          if rows.isEmpty { Text("ありません。").foregroundStyle(.secondary) }
-          ForEach(rows) { r in
-            HStack {
-              VStack(alignment: .leading) {
-                Text(folders[r.id] ?? String(localized: "フォルダが見つからないプロジェクト")).lineLimit(1).truncationMode(.middle)
-                Text("\(r.id)  \(r.lastStart.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "")")
-                  .font(.caption.monospaced()).foregroundStyle(.secondary)
-              }
-              Spacer()
-              Text(ByteCountFormatter.string(fromByteCount: Int64(r.bytes), countStyle: .file)).monospacedDigit()
-              Button("削除…", role: .destructive) { pending = r }
-                .disabled(working || r.running)
-                .help(r.running ? String(localized: "開いているプロジェクトは削除できません") : "")
-            }
-          }
-        }
-        HStack {
-          Button(rows == nil ? "一覧を表示" : "再読込") { load() }.disabled(working)
-          if working { ProgressView().controlSize(.small) }
-          if let message { Text(message).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-        }
-      }
-      .padding(6)
-    }
-    .confirmationDialog("VM 内の実行履歴を削除しますか？", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
-                        presenting: pending) { r in
-      Button("削除", role: .destructive) { delete(r) }
-      Button("キャンセル", role: .cancel) {}
-    } message: { r in
-      Text(folders[r.id] != nil
-           ? String(localized: "プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。")
-           : String(localized: "このプロジェクトの実行履歴とビルドの登録を削除します。"))
-    }
-  }
-
-  private func load() {
-    working = true
-    message = nil
-    Task {
-      var known: [String: String] = [:]
-      for r in model.recents {
-        if let id = try? ProjectIdentity(url: URL(fileURLWithPath: r.path)).id { known[id] = r.path }
-      }
-      for s in model.sessions.values { known[s.identity.id] = s.identity.url.path }
-      folders = known
-      do { rows = try await model.environments.vmHistories().sorted { ($0.lastStart ?? .distantPast) > ($1.lastStart ?? .distantPast) } }
-      catch { message = String(localized: "読めませんでした: ") + "\(error)" }
-      working = false
-    }
-  }
-
-  private func delete(_ r: EnvironmentManager.VMHistory) {
-    working = true
-    message = nil
-    Task {
-      do { try await model.environments.deleteVMData(id: r.id) } catch { message = String(localized: "削除できませんでした: ") + "\(error)" }
-      working = false
-      load()
     }
   }
 }
@@ -1015,9 +969,7 @@ private struct ProjectPermissionSettings: View {
       if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
       Button("更新") { Task { await request() } }.disabled(busy)
     } header: {
-      Text("Agent のプロジェクト権限")
-    } footer: {
-      Text("プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。")
+      InfoHeader("Agent のプロジェクト権限", info: "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。")
     }
     .task { await request() }
   }

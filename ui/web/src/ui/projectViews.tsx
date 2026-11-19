@@ -8,7 +8,7 @@ import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, pat
 import { arr, bool, clone, get, isObj, J, JObj, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
-import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
+import { Button, Confirm, Empty, Form, HSplit, InfoButton, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import { L } from '../i18n'
@@ -241,7 +241,7 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   }
   const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
   return (
-    <Section title={L('外部ソース')} footer={L('追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。')}>
+    <Section title={L('外部ソース')} info={L('追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。')}>
       {sources.map((s) => {
         const name = str(get(s, 'name')) ?? ''
         const ref = str(get(s, 'ref')) ?? ''
@@ -317,7 +317,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     }}>
       <div className="scroll flex1">
         <Form>
-          <Section footer={L('このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。')}>
+          <Section info={L('このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。')}>
             <Row label={L('プロジェクト名')}><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
             <Row label={L('実行環境（Nixpkgs）')}><TextField value={pkgs} onChange={setPkgs} placeholder={pin ?? 'tsugumi:default'} style={{ width: 260 }} /></Row>
             {(!pkgs || pkgs === 'tsugumi:default') && (
@@ -327,13 +327,13 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
               <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? L('この Tsugumi の Nixpkgs に固定') : L('この Tsugumi の Nixpkgs に更新')}</Button></Row>
             )}
           </Section>
-          <Section footer={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
+          <Section info={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
             <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
-          <Section footer={L('Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。')}>
+          <Section info={L('Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。')}>
             <Row label={L('Agent から除外するパス')}><TextField value={agentExclude} onChange={setAgentExclude} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
-          <Section footer={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
+          <Section info={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
             <Row label={L('このプロジェクトを信頼する')}><Toggle checked={session.projectTrust === 1} disabled={!!session.trustedFolder} onChange={(trusted) => void session.setProjectTrust(trusted)} /></Row>
           </Section>
           <TrustedFoldersSettings />
@@ -383,20 +383,6 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   const [message, setMessage] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [confirm, setConfirm] = useState(false)
-  const [revisionEdit] = useState(() => new RevisionEdit())
-  const [pendingSaving, setPendingSaving] = useState(true)
-  useObserve(revisionEdit)
-  const baseRev = session.rev
-  const saving = bool(get(session.project, 'saveRunHistory')) ?? true
-  const setSaving = async (on: boolean, overwrite = false) => {
-    if (!overwrite) revisionEdit.reload(baseRev)
-    setPendingSaving(on)
-    const before = revisionEdit.jsonBase('tsugumi.json', session.project, overwrite)
-    const after = clone(before)
-    if (!isObj(after)) return
-    after.set('saveRunHistory', on)
-    await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))
-  }
   const del = async () => {
     setWorking(true)
     setMessage(undefined)
@@ -414,12 +400,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
-            <Row label={L('実行履歴をプロジェクトに保存する')}>
-              <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
-            </Row>
-          </Section>
-          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} info={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />
@@ -432,8 +413,6 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `saveRunHistory: ${pendingSaving}`}
-        overwrite={() => void setSaving(pendingSaving, true)} reload={() => revisionEdit.reload(session.rev)} />
       <div className="detail-foot">
         {message && <span className="callout selectable" style={{ color: failed ? 'var(--red)' : 'var(--secondary)' }}>{message}</span>}
         <span className="spacer" />
@@ -465,6 +444,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
   const [selectedScratch, setSelectedScratch] = useState<Set<string>>(() => new Set())
   const [scratchSelection, setScratchSelection] = useState<string[]>()
   const [scratchResult, setScratchResult] = useState<R.RunScratchDeleteResultT>()
+  useEffect(() => { void session.refreshCacheUsage() }, [session])
   const scratch = session.cacheUsage?.projects.find(p => s(p.project) === s(session.cacheUsage?.currentProject))?.runScratch ?? []
   const candidates = scratch.filter(p => s(p.path) !== `runs/${s(session.cacheUsage?.protectedRun)}`)
   const deleteScratch = async () => {
@@ -494,14 +474,12 @@ function CacheSettings({ session }: { session: ProjectSession }) {
   }
   return (
     <div className="col fill pad16 gap12">
-      <div>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')}</div>
-      <div className="callout secondary">{L('実行中・SDK 準備中は削除できません。')}</div>
+      <div className="row"><InfoButton>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')} {L('実行中・SDK 準備中は削除できません。')}</InfoButton></div>
       <div className="groupbox col gap8" style={{ overflow: 'auto' }}>
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />
         {session.cacheUsage?.storeAvailableBytes != null && <Value label={L('store ディスクの空き')} value={formatBytes(session.cacheUsage.storeAvailableBytes)} />}
-        {session.cacheUsage?.large && <div className="callout">{L('ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。')}</div>}
-        <div className="caption secondary">{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
+        <div className="row"><InfoButton>{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。')}</InfoButton></div>
         {session.cacheUsage?.measuredAt != null && <Value label={L('計測日時')} value={new Date(Number(session.cacheUsage.measuredAt)).toLocaleString()} />}
         {session.cacheUsage?.error && <div className="caption selectable">{s(session.cacheUsage.error)}</div>}
         {session.cacheUsage?.projects.map(p => {
@@ -517,7 +495,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
           </div>
         })}
       </div>
-      <div className="caption secondary">{L('過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。')}</div>
+      <div className="row"><InfoButton>{L('過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。')}</InfoButton></div>
       <div className="groupbox col gap4">
         <div className="headline">{L('このプロジェクトの過去の scratch')}</div>
         <ScratchRows candidates={candidates} selected={selectedScratch} disabled={working || session.runActive || !session.connected} onDelete={setScratchSelection} onSelect={(path, on) => setSelectedScratch(before => {

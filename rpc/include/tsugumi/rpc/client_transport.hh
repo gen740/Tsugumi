@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 namespace tsugumi::client {
@@ -35,9 +36,6 @@ struct TransportOptions {
   std::string endpoint;
   std::string subprotocol;
   size_t max_frame_bytes = 16u << 20;
-  size_t max_queued_bytes = 32u << 20;
-  size_t max_pending_requests = 64;
-  std::chrono::milliseconds connect_timeout{10000};
 };
 
 struct TransportEvents {
@@ -45,9 +43,12 @@ struct TransportEvents {
   std::function<void(Bytes)> received;
   std::function<void(Error)> closed;
   std::function<void()> tick;
+  std::function<std::optional<std::chrono::steady_clock::time_point>()>
+      deadline;
 };
 
-// The adapter owns framing. Callbacks deliver complete protocol messages and
+// The adapter owns framing and enforces the configured frame size on send
+// and receive. Callbacks deliver complete protocol messages and
 // must be serialized. Native adapters run them on their I/O thread; the browser
 // adapter uses its event loop. Callbacks must not block waiting for another
 // RPC. Send only enqueues data and must not invoke callbacks inline.
@@ -59,6 +60,7 @@ class Transport {
   virtual auto Close() -> void = 0;
 };
 
-auto MakeTransport(const TransportOptions& options) -> std::shared_ptr<Transport>;
+auto MakeTransport(const TransportOptions& options)
+    -> std::shared_ptr<Transport>;
 
 }  // namespace tsugumi::client

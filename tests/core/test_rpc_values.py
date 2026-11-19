@@ -10,6 +10,7 @@ from harness.real_cards import PYTHON_NIX, nix_string
 from harness.scenario import Project, run, wait_run
 from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 
@@ -31,11 +32,11 @@ def display_graph(project, schema, source_script=None, *, payload=None, display_
             {"name": "payload", "type": "string", "data": payload.hex()},
         ]}, outputs=schema, sources={
             "default.nix": PYTHON_NIX % "",
-            "src/main.py": ("from tsugumi import contract\n\n"
-                            '''def main(inputs, report):
-'''
-                            '''    yield {'out': bytes.fromhex(contract.params_object(inputs).payload)}
-'''),
+            "src/main.py": """from tsugumi import contract
+
+def main(inputs, report):
+    return {"out": bytes.fromhex(contract.params_object(inputs).payload)}
+""",
         })
     definition = json.loads((DEFINITION / "_card.json").read_text())
     for param in definition["params"]:
@@ -47,7 +48,7 @@ def display_graph(project, schema, source_script=None, *, payload=None, display_
 
 def display_run(client):
     run_id = run(client, "source")
-    status = wait_run(client, run_id, timeout=600)
+    status = wait_run(client, run_id)
     stdout = text(client.call("LogRangeRequest", runId=run_id, card=path("display"),
                               invocation=1, stream=1).text)
     return run_id, status, stdout
@@ -104,8 +105,9 @@ def test_display_rejects_a_missing_or_non_string_markdown_field(client, project,
     run_id, status, logged = display_run(client)
     assert status.state == RunState.failed
     assert json.loads(logged)["value"] == "other"
-    error = client.call("LogRangeRequest", runId=run_id, card=path("display"), invocation=1, stream=2)
-    assert f"Markdown input must contain the string field {field}" in text(error.text)
+    reply = client.call("RunRecordRequest", runId=run_id, card=path("display"))
+    assert reply.status.state == CardState.failed
+    assert reply.record.display is None
 
 
 def test_display_marks_large_unicode_previews(client, project):

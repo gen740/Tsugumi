@@ -92,6 +92,7 @@ import json
 import re
 import socketserver
 import threading
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -167,11 +168,10 @@ def asks_summary(body):
     """Detect the appended handoff instruction on the normal request prefix."""
     messages = body.get("messages", body.get("input", []))
     last = messages[-1] if messages else {}
-    continuation = any(b.get("text", "").startswith("Create a short handoff for the next model continuation")
-                       for b in blocks(last))
-    instruction = body.get("instructions", "") or system_text(body)
-    return continuation or (not body.get("tools") and
-                            re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None)
+    # These scenarios use a larger ordinary output budget. A compaction
+    # continuation uses the bounded 2048-token provider envelope instead.
+    return (body.get('max_tokens', body.get('max_output_tokens')) == 2048
+            and len(messages) > 1 and last.get('role') == 'user')
 
 
 def unanswered_tool_uses(messages):
@@ -298,86 +298,6 @@ def trigger_of(inspect_value):
     return "start"
 
 
-DELEGATE = re.compile(r"delegate the drafts ((?:[\w-]+ ?)+)", re.I)
-HELPER = re.compile(r'You are the helper "([\w-]+)".*?The Cards you own: ([\w, -]+)\.', re.S)
-
-
-def rev_of(res):
-    """The revision in a result, also when it is the Web server's whole delta or was cut to fit the context."""
-    return str(res["value"]["rev"]) if "rev" in res.get("value", {}) else re.search(r'"rev":(\d+)', str(res)).group(1)
-
-
-def last_delegate_task(messages):
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i]["role"] == "user":
-            for b in blocks(messages[i]):
-                if b.get("type") == "text" and (t := DELEGATE.search(b["text"])):
-                    return t.group(1).split(), i
-    return None, -1
-
-
-def decide_delegate(messages, cards, start):
-    results = tool_results(messages[start + 1:])
-    together = any("run them together" in b.get("text", "") for b in blocks(messages[start]))
-    if not results:
-        tasks = [{"name": c, "cards": [c], "instruction": f"Implement the Draft {c} and run it."} for c in cards]
-        return ("tool", "delegate", {"runs": "together", "tasks": tasks} if together else {"tasks": tasks})
-    name, res, is_error = results[-1]
-    value = res.get("value", {}) if isinstance(res, dict) else {}
-    # Together: the helpers have written; the one run is this Agent's.
-    if together and not is_error:
-        if name == "delegate":
-            return ("tool", "project_inspect", {})
-        if name == "project_inspect":
-            return ("tool", "run", {"base_rev": rev_of(res), "card": {"segments": [trigger_of(value)]}})
-        if name in ("run", "run_status"):
-            status = value.get("run", value)
-            if status.get("state") not in TERMINAL:
-                return ("tool", "run_status", {"run_id": status.get("run_id")})
-            return ("text", f"Ran once: {status.get('state')}.")
-    text = res.get("error", json.dumps(res)) if isinstance(res, dict) else str(res)
-    return ("text", ("Delegation failed: " if is_error else "The helpers reported. ") + text)
-
-
-def decide_helper(messages, helper, cards):
-    """A helper implements its own Draft from what the app read for it, leaves
-    base_rev to the app, runs from the trigger and reports."""
-    results = tool_results(messages)
-    own = cards[0]
-    if not results:
-        brief = next(b["text"] for b in blocks(messages[0]) if b.get("type") == "text")
-        found = re.search(rf"^## {re.escape(own)}\n_card\.json:\n(.*?)\n_meta\.json:\n(.*?)\nports: ", brief, re.S | re.M)
-        if not found:
-            return ("text", f"{helper}: the app did not give me {own}.")
-        meta = json.loads(found.group(2))
-        card, fbs, nix = implement(json.loads(found.group(1)), meta)
-        return ("tool", "project_save", {"changes": [
-            {"value_type": "PutDefinition", "value": {
-                "id": own, "card_json": json.dumps(card), "meta_json": json.dumps(completed_intent(meta))}},
-            {"value_type": "PutSource", "value": {"path": f"definitions/{own}/_outputs.fbs", "bytes": fbs}},
-            {"value_type": "PutSource", "value": {"path": f"definitions/{own}/default.nix", "bytes": nix}}]})
-    name, res, is_error = results[-1]
-    value = res.get("value", {}) if isinstance(res, dict) else {}
-    if name == "project_save":
-        if is_error:
-            return ("text", f"{helper}: saving failed: {value.get('kind')} {value.get('diagnostic')}")
-        return ("tool", "project_inspect", {})
-    if name == "project_inspect":
-        # (told to run together, it tries anyway: the app must refuse)
-        return ("tool", "run", {"card": {"segments": [trigger_of(value)]}})
-    if name in ("run", "run_status"):
-        if is_error:
-            return ("text", f"{helper}: the run could not start: {value.get('kind')} {value.get('diagnostic')}")
-        status = value.get("run", value)
-        if status.get("state") not in TERMINAL:
-            return ("tool", "run_status", {"run_id": status.get("run_id")})
-        return ("tool", "run_record", {"run_id": status.get("run_id"), "card": {"segments": [own]}})
-    if name == "run_record":
-        ok = (value.get("aggregate") or {}).get("succeeded", 0) > 0
-        return ("text", f"{helper}: {own} implemented, its run {'succeeded' if ok else 'did not succeed'}.")
-    return ("text", f"{helper}: done.")
-
-
 DRAFTS = re.compile(r"Implement these Draft Cards", re.I)
 DRAFT_LINE = re.compile(r"^- (\S+) \(definition (\S+)\)", re.M)
 
@@ -439,18 +359,16 @@ def decide_drafts(messages, text, start):
             return ("text", f"Saving failed: {value.get('diagnostic')}. The Drafts are unchanged.")
         return ("tool", "project_validate", {"at_rev": str(value["rev"])})
     if name == "project_validate":
-        problems = [d.get("message") for d in value.get("diagnostics", []) if d.get("severity") != "warning"]
         inspect = next(r for n, r, _ in tool_results(messages[start + 1:]) if n == "project_inspect")
         trigger = trigger_of(inspect["value"])
         rev = next(r for n, r, _ in reversed(results) if n == "project_save")["value"]["rev"]
-        return ("tool", "run", {"base_rev": str(rev), "card": {"segments": [trigger]}}) if True else ("text", str(problems))
+        return ("tool", "run", {"base_rev": str(rev), "card": {"segments": [trigger]}})
     if name in ("run", "run_status"):
         if is_error:
             return ("text", f"Implemented and validated; the run could not start: {value.get('diagnostic')}")
         status = value.get("run", value)
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": status.get("run_id")})
+            return ("tool", "run_status", {"run_id": status.get("run_id"), "wait_seconds": 300})
         failure = (status.get("failure") or {}).get("diagnostic", "")
         return ("text", f"Implemented the Drafts and ran the workflow: {status.get('state')} {failure}")
     return ("text", "Done.")
@@ -516,8 +434,7 @@ def decide_comments(messages, text, start):
             return ("text", f"Followed the comments; the run could not start: {value.get('diagnostic')}")
         status = value.get("run", value)
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": status.get("run_id")})
+            return ("tool", "run_status", {"run_id": status.get("run_id"), "wait_seconds": 300})
         return ("text", f"Followed the comments and ran the workflow: {status.get('state')}")
     return ("text", "Done.")
 
@@ -634,14 +551,6 @@ def decide(messages, system="", tools=()):
         return decide_broken(messages, broken, broken_start)
     if "guide_show" in tools:
         return decide_guide(messages, tools)
-    if h := HELPER.search(system):
-        return decide_helper(messages, h.group(1), [c.strip() for c in h.group(2).split(",")])
-    team, team_start = last_delegate_task(messages)
-    if team is not None:
-        return decide_delegate(messages, team, team_start)
-    # Only while it is the latest request (a note about a cut reply is none).
-    asked = [i for i, m in enumerate(messages) if m["role"] == "user" and any(
-        b.get("type") == "text" and not b["text"].startswith("Your last reply was cut") for b in blocks(m))]
     comment_text, comment_start = last_comment_task(messages)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)
@@ -686,21 +595,14 @@ def decide(messages, system="", tools=()):
             "changes": [{"value_type": "PutDefinition", "value": change}],
         })
     if name == "project_save":
-        if is_error:
-            if value_obj.get("kind") == "revision_conflict":
-                return ("tool", "project_inspect", {})
-            return ("text", f"Saving failed: {value_obj.get('diagnostic')}")
         inspect = next(r for n, r, _ in reversed(results) if n == "project_inspect")
         trigger = trigger_of(inspect["value"])
         return ("tool", "run", {"base_rev": str(value_obj["rev"]), "card": {"segments": [trigger]}})
     if name in ("run", "run_status"):
-        if is_error:
-            return ("text", f"The run could not start: {value_obj.get('diagnostic')}")
         status = value_obj.get("run", value_obj)
         run_id = status.get("run_id")
         if status.get("state") not in TERMINAL:
-            time.sleep(0.2)
-            return ("tool", "run_status", {"run_id": run_id})
+            return ("tool", "run_status", {"run_id": run_id, "wait_seconds": 300})
         if report:
             return ("tool", "run_record", {"run_id": run_id, "card": {"segments": report.split("/")}})
         return ("text", f"Run {run_id} finished: {status.get('state')}.")
@@ -721,7 +623,6 @@ RSA_E = 65537
 RSA_D = 0x94574db93d521d956fd1aa6086ce1c160c6b83286d1b5b1455d2600fceab679576da03c9fe45004872a8fd0def62d99c73f262f0fe1914a4d0386cd6e67a7712c9c5832a18905b6ca12b05f7ec693ee792ecf3e25f96b9bac796ecf3ea60e75acf7bb2eca694569b9fb9ab1ab1294949e7dd8ff05bced0bf7f8bf66585cb96464be865aada37477d67129b0343c2237869b282ba06512662888e2c0551f02309eb101bdd53b3ebf22997556b8cfdf2aca02d96ee77c3456bff5822d225b3360b5c2a1d5e9dc2effa6773d5aa9a94388774aa244cddf13cf0c6efdc406baf6c8ad65b4a65ff7612e7cbfaf0fa9606a4c1d8c6b8f7ced50c7d3cc0f097c32a5d51
 KID = "fixture-key"
 SHA256_DIGEST_INFO = bytes.fromhex("3031300d060960864801650304020105000420")
-PLAN_SCOPE = "chatgpt.tokens.use.direct"
 
 
 def b64url(b: bytes) -> str:
@@ -1305,11 +1206,7 @@ class Handler(BaseHTTPRequestHandler):
         # inspect/detach/cancel the UI without racing a wall-clock delay.
         if Handler.stream_release and (name == "response.output_text.delta" or
                 (name == "content_block_delta" and data.get("delta", {}).get("type") == "text_delta")):
-            deadline = time.monotonic() + 60
-            while not Handler.stream_release.exists():
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("model stream release was not signalled")
-                time.sleep(0.01)
+            wait_for_file(Handler.stream_release)
         if Handler.slow:
             time.sleep(Handler.slow)
 
@@ -1357,6 +1254,10 @@ def main():
     ChatGPT.expires = a.chatgpt_expires
     Handler.slow = a.slow
     Handler.stream_release = a.stream_release
+    if a.stream_release:
+        global wait_for_file
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "core"))
+        from harness.file_events import wait_for_file
     Handler.drop_once = a.drop_once
     Handler.cut_once = a.cut_once or a.window_cut_once
     if a.window_cut_once:

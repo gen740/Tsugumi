@@ -8,11 +8,12 @@
 #include <utility>
 
 #include "agent/context.hh"
-#include "tsugumi/util/json_object.hh"
+#include "agent/text.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/identifiers.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::agent {
@@ -27,19 +28,6 @@ auto Now() -> int64_t {
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
-auto Excerpt(std::string_view text, size_t position = 0, size_t limit = 240)
-    -> std::string {
-  size_t begin = position > limit / 3 ? position - limit / 3 : 0;
-  while (begin && (static_cast<unsigned char>(text[begin]) & 0xc0) == 0x80)
-    --begin;
-  size_t end = std::min(text.size(), begin + limit);
-  while (end < text.size() && end > begin &&
-         (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80)
-    --end;
-  return (begin ? "…" : "") + std::string(text.substr(begin, end - begin)) +
-         (end < text.size() ? "…" : "");
-}
-
 auto FoldAscii(std::string text) -> std::string {
   std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
@@ -49,9 +37,10 @@ auto FoldAscii(std::string text) -> std::string {
 
 // Conversation records contain no provisioning, host capabilities or settings.
 auto CreateConversationTables(sql::Db& db) -> void {
-  db.exec("CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
-          "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
-          "KEY(conversation,scope))");
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS call_counters(conversation TEXT NOT "
+      "NULL, scope TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY "
+      "KEY(conversation,scope))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
       "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
@@ -261,7 +250,8 @@ auto ConversationStore::RememberConversation(const std::string& id,
     -> void {
   if (const auto known = ConversationProject(id)) {
     if (*known != project)
-      throw Failure("conflict", "A conversation belongs to its original project");
+      throw Failure("conflict",
+                    "A conversation belongs to its original project");
     return;
   }
   auto q =
@@ -329,32 +319,30 @@ auto ConversationStore::SaveMessages(const std::string& id,
   std::optional<sql::Transaction> transaction;
   if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
   const auto previous = ParseMessages(GetConversation(id).messages);
+  presentation.erase(id);
   const auto serialized = scrub(SerializeMessages(messages));
   // Compare the same persisted representation on both sides. Scrubbing also
   // orders JSON objects in providerContent; that is not a history replacement.
   // Preparing a send expands the provisional request in place. Only runtime
   // replacements remove conversation history that belongs in the archive.
-  const auto removed = mode == SaveMode::PrepareSend
-                           ? std::vector<Message>{}
-                           : RemovedMessages(previous, ParseMessages(serialized));
+  const auto removed =
+      mode == SaveMode::PrepareSend
+          ? std::vector<Message>{}
+          : RemovedMessages(previous, ParseMessages(serialized));
   if (!removed.empty()) {
     auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();
   }
-  for (const auto& message : messages)
-    for (const auto& block : message.content)
-      for (const auto& resource : block.resource_ids)
-        RememberResource(id, resource);
+  for (const auto& resource : agent::Resources(messages))
+    RememberResource(id, resource);
   auto q = ConversationDatabase(id).prepare(
       "UPDATE conversations SET messages=?,updated=? WHERE id=?");
-  q.bind(1, serialized)
-      .bind(2, Now())
-      .bind(3, id)
-      .run();
+  q.bind(1, serialized).bind(2, Now()).bind(3, id).run();
   if (transaction) transaction->commit();
 }
 
-auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
+auto ConversationStore::ConversationData(const Conversation& c)
+    -> A::ConversationT {
   std::vector<Message> messages;
   std::string summary;
   for (auto& message : ParseMessages(c.messages)) {
@@ -463,7 +451,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
         {"state", json::Quote(approvals.text(2) == "pending" ? "pending"
                                                              : "completed")}}));
   }
-  return json::Encode(json::Members{
+  auto out = wire::Conversation(json::Members{
       {"id", json::Quote(c.id)},
       {"title", json::Quote(c.title)},
       {"updatedAt", std::to_string(c.updated)},
@@ -474,6 +462,15 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
       {"helpers", json::Encode(helpers)},
       {"streaming", json::Quote(streaming)},
       {"usage", usage_json}});
+  auto& cached = presentation[c.id];
+  cached.rows.clear();
+  for (const auto& row : out.rows)
+    cached.rows.push_back(std::make_unique<A::ChatRowT>(*row));
+  cached.next_message = out.archive.size() + out.messages.size();
+  cached.streaming_row =
+      streaming.empty() ? ""
+                        : ":" + std::to_string(cached.next_message - 1) + ":0";
+  return out;
 }
 
 auto ConversationStore::Create(const A::ConversationCreateRequest& request,
@@ -550,6 +547,7 @@ auto ConversationStore::List(const A::ConversationListRequest& request,
 }
 
 auto ConversationStore::Delete(const std::string& id) -> void {
+  presentation.erase(id);
   if (is_running(id))
     throw Failure("busy", "Cancel the conversation before deleting it");
   auto& store = ConversationDatabase(id);
@@ -667,7 +665,9 @@ auto ConversationStore::Events(const A::EventsRequest& request, bool human)
   }
   if (!result.events.empty()) {
     result.has_rows = true;
-    result.rows = wire::Conversation(ConversationJson(c)).rows;
+    if (!presentation.contains(id)) ConversationData(c);
+    for (const auto& row : presentation.at(id).rows)
+      result.rows.push_back(std::make_unique<A::ChatRowT>(*row));
   }
   return result;
 }
@@ -677,5 +677,25 @@ auto ConversationStore::RecordEvent(const std::string& id,
   auto q = (id.empty() ? db : ConversationDatabase(id))
                .prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
   q.bind(1, id).bind(2, raw).run();
+  const auto event = json::Object(raw);
+  const auto kind = json::Text(event, "kind");
+  if (auto found = presentation.find(id); found != presentation.end()) {
+    auto& cached = found->second;
+    if (kind == "text") {
+      const auto text = json::Text(event, "text");
+      if (cached.streaming_row.empty() && !text.empty()) {
+        auto row = std::make_unique<A::ChatRowT>();
+        cached.streaming_row = ":" + std::to_string(cached.next_message) + ":0";
+        row->id = cached.streaming_row;
+        row->kind = "text";
+        row->role = "assistant";
+        cached.rows.push_back(std::move(row));
+      }
+      for (auto& row : cached.rows)
+        if (row->id == cached.streaming_row) row->text += text;
+    } else if (kind != "toolInput") {
+      presentation.erase(found);
+    }
+  }
 }
 }  // namespace tsugumi::agent

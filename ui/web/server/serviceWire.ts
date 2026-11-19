@@ -32,24 +32,12 @@ import { CallIdRequestT } from '../shared/gen/tsugumi/agent/call-id-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../shared/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../shared/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../shared/gen/tsugumi/host/host-project-defaults-request'
-function workerGrade(value: unknown): bigint {
-  if (typeof value !== 'string' || !/^(0x[0-9a-f]+|[0-9]+)$/i.test(value)) throw Error('Invalid worker grade')
-  const grade = BigInt(value)
-  if (grade > 0xffffffffffffffffn) throw Error('Invalid worker grade')
-  return grade
-}
-
-function heartbeatSetting(value: unknown, fallback: number, minimum: number): number {
-  if (value === undefined) return fallback
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > 0xffffffff)
-    throw Error('Invalid heartbeat setting')
-  return value
-}
 // Binary service adapters. Only model content and open-ended tool data are JSON.
 import * as fb from 'flatbuffers'
 import { Message as AgentMessage, MessageT as AgentMessageT } from '../shared/gen/tsugumi/agent/message'
 import { RequestT as AgentRequestT } from '../shared/gen/tsugumi/agent/request'
 import { RequestPayload as AgentRequestPayload } from '../shared/gen/tsugumi/agent/request-payload'
+import { ReplyPayload as AgentReplyPayload } from '../shared/gen/tsugumi/agent/reply-payload'
 import { Payload as AgentPayload } from '../shared/gen/tsugumi/agent/payload'
 import { Message as HostMessage, MessageT as HostMessageT } from '../shared/gen/tsugumi/host/message'
 import { RequestT as HostRequestT } from '../shared/gen/tsugumi/host/request'
@@ -103,7 +91,6 @@ export class CoreHostError extends Error {
 function enumValue(e: any, value: unknown): number {
   if (value === undefined) return 0
   const n = typeof value === 'string' ? e[value] : value
-  if (typeof n !== 'number' || typeof e[n] !== 'string') throw new Error('Invalid service enum value')
   return n
 }
 function provider(v: any): ProviderSelectionT | null {
@@ -142,7 +129,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
         e.connected, e.active, e.run, e.state, e.scripted ?? true, e.expected_step))
     }
     case 'AttachFoldersRequest': return new AttachFoldersRequestT(v.project, v.folders ?? [])
-    case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [], v.archive_incompatible_history)
+    case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [])
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
     case 'ProjectPermissionsRequest': return new H.ProjectPermissionsRequestT()
@@ -155,7 +142,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0), workerGrade(v.grade ?? '1'))
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, BigInt(v.grade ?? '1'))
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
@@ -163,7 +150,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'IdentifierReserveRequest': return new H.IdentifierReserveRequestT(v.project_id, v.kind, v.scope, v.occupied)
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
-    case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
+    case 'HelloRequest': return new HHelloRequest(v.token)
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
     case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
@@ -180,7 +167,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   else switch (method) {
     case 'CallIdRequest': return new CallIdRequestT(v.conversation_id)
     case 'ToolCatalogRequest': return new AToolCatalogRequest()
-    case 'HelloRequest': return new AHelloRequest(v.token, v.client_id, v.protocol)
+    case 'HelloRequest': return new AHelloRequest(v.token)
     case 'ConfigureRequest': return new AConfigureRequest(provider(v.provider), v.conversation_id)
     case 'ConversationCreateRequest': return new AConversationCreateRequest(v.conversation_id, v.project_id, v.role)
     case 'ConversationListRequest': return new AConversationListRequest(v.project_id)
@@ -194,7 +181,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
     case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
-    case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, (v.also_allow ?? []).map((value: unknown) => enumValue(Access, value)))
+    case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
@@ -223,7 +210,6 @@ function view(value: any): any {
   if (Array.isArray(value)) return value.map(view)
   if (typeof value === 'bigint') {
     const n = Number(value)
-    if (!Number.isSafeInteger(n)) throw new Error('Service value exceeds the JSON integer range')
     return n
   }
   if (typeof value !== 'object') return value
@@ -247,16 +233,12 @@ function view(value: any): any {
   return out
 }
 export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; value: any; error?: CoreHostError; event?: { type: string; value: any } } {
-  if (bytes.length < 12) throw new Error('Truncated service reply')
   const buffer = new fb.ByteBuffer(bytes)
-  const identifier = host ? 'TSH1' : 'TSA1'
-  if (!buffer.__has_identifier(identifier)) throw new Error('Wrong service identifier')
   const message = host ? HostMessage.getRootAsMessage(buffer).unpack() : AgentMessage.getRootAsMessage(buffer).unpack()
   if (host && message.payloadType === HostPayload.Event && message.requestId === 0n && message.payload) {
     const event = message.payload as any
     return { id: 0n, value: undefined, event: { type: HostEventPayload[event.valueType], value: view(event.value) } }
   }
-  if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.
   if (host && reply.valueType === H.ReplyPayload.ProjectOperationResult) {
@@ -264,15 +246,25 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
     builder.finish(reply.value.pack(builder))
     return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
   }
-  const value = view(reply.value)
-  if (!value) throw new Error('Missing service reply value')
-  if (value.code !== undefined) return { id: message.requestId, value: undefined,
-    error: new CoreHostError(value.code, value.message, reply.value.requestId ?? undefined) }
-  if (host && reply.valueType === H.ReplyPayload.ProjectPermissionList) return { id: message.requestId, value }
-  let result = value
-  // Vector result tables keep the public API's array shape.
-  for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools', 'services']) {
-    if (Object.keys(value).length === 1 && Array.isArray(value[key])) { result = value[key]; break }
+  if (reply.valueType === (host ? H.ReplyPayload.Failure : AgentReplyPayload.Failure)) {
+    const failure = reply.value
+    return { id: message.requestId, value: undefined,
+      error: new CoreHostError(failure.code, failure.message, failure.requestId ?? undefined) }
   }
-  return { id: message.requestId, value: result }
+  let value = view(reply.value)
+  if (host) {
+    switch (reply.valueType) {
+      case H.ReplyPayload.RecentList: value = value.projects; break
+      case H.ReplyPayload.DemoList: value = value.demos; break
+      case H.ReplyPayload.ModelList: value = value.models; break
+      case H.ReplyPayload.DemoPaths: value = value.paths; break
+    }
+  } else {
+    switch (reply.valueType) {
+      case AgentReplyPayload.ConversationList: value = value.conversations; break
+      case AgentReplyPayload.SearchResult: value = value.matches; break
+      case AgentReplyPayload.ToolCatalog: value = value.tools; break
+    }
+  }
+  return { id: message.requestId, value }
 }

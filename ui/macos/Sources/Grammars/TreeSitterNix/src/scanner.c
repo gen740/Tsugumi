@@ -9,11 +9,11 @@ enum TokenType {
   INDENTED_DOLLAR_ESCAPE,
 };
 
-static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+static void advance(TSLexer* lexer) { lexer->advance(lexer, false); }
 
-static void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
+static void skip(TSLexer* lexer) { lexer->advance(lexer, true); }
 
-static bool scan_dollar_escape(TSLexer *lexer) {
+static bool scan_dollar_escape(TSLexer* lexer) {
   lexer->result_symbol = DOLLAR_ESCAPE;
   advance(lexer);
   lexer->mark_end(lexer);
@@ -24,7 +24,7 @@ static bool scan_dollar_escape(TSLexer *lexer) {
   }
 }
 
-static bool scan_indented_dollar_escape(TSLexer *lexer) {
+static bool scan_indented_dollar_escape(TSLexer* lexer) {
   lexer->result_symbol = INDENTED_DOLLAR_ESCAPE;
   advance(lexer);
   lexer->mark_end(lexer);
@@ -48,65 +48,65 @@ static bool scan_indented_dollar_escape(TSLexer *lexer) {
 //
 // The implementation is inspired by tree-sitter-javascript:
 // https://github.com/tree-sitter/tree-sitter-javascript/blob/fdeb68ac8d2bd5a78b943528bb68ceda3aade2eb/src/scanner.c#L19
-static bool scan_string_fragment(TSLexer *lexer) {
+static bool scan_string_fragment(TSLexer* lexer) {
   lexer->result_symbol = STRING_FRAGMENT;
   for (bool has_content = false;; has_content = true) {
     lexer->mark_end(lexer);
     switch (lexer->lookahead) {
-    case '"':
-    case '\\':
-      return has_content;
-    case '$':
-      advance(lexer);
-      if (lexer->lookahead == '{') {
+      case '"':
+      case '\\':
         return has_content;
-      } else if (lexer->lookahead != '"' && lexer->lookahead != '\\') {
-        // Any char following '$' other than '"', '\\' and '{' (which was
-        // handled above) should be consumed as additional string content. This
-        // means `$${` doesn't start an interpolation, but `$$${` does.
+      case '$':
         advance(lexer);
-      }
-      break;
-    // Simply give up on EOF or '\0'.
-    case '\0':
-      return false;
-    default:
-      advance(lexer);
+        if (lexer->lookahead == '{') {
+          return has_content;
+        } else if (lexer->lookahead != '"' && lexer->lookahead != '\\') {
+          // Any char following '$' other than '"', '\\' and '{' (which was
+          // handled above) should be consumed as additional string content.
+          // This means `$${` doesn't start an interpolation, but `$$${` does.
+          advance(lexer);
+        }
+        break;
+      // Simply give up on EOF or '\0'.
+      case '\0':
+        return false;
+      default:
+        advance(lexer);
     }
   }
 }
 
 // See comments of scan_string_fragment.
-static bool scan_indented_string_fragment(TSLexer *lexer) {
+static bool scan_indented_string_fragment(TSLexer* lexer) {
   lexer->result_symbol = INDENTED_STRING_FRAGMENT;
   for (bool has_content = false;; has_content = true) {
     lexer->mark_end(lexer);
     switch (lexer->lookahead) {
-    case '$':
-      advance(lexer);
-      if (lexer->lookahead == '{') {
-        return has_content;
-      } else if (lexer->lookahead != '\'') {
-        // Any char following '$' other than '\'' and '{' (which was handled
-        // above) should be consumed as additional string content. This means
-        // `$${` doesn't start an interpolation, but `$$${` does.
+      case '$':
         advance(lexer);
-      }
-      break;
-    case '\'':
-      advance(lexer);
-      if (lexer->lookahead == '\'') {
-        // Two single quotes always stop current string fragment.
-        // It can be either an end delimiter '', or escape sequences ''', ''$,
-        // ''\<any>
-        return has_content;
-      }
-      break;
-    // Simply give up on EOF or '\0'.
-    case '\0':
-      return false;
-    default:
-      advance(lexer);
+        if (lexer->lookahead == '{') {
+          return has_content;
+        } else if (lexer->lookahead != '\'') {
+          // Any char following '$' other than '\'' and '{' (which was handled
+          // above) should be consumed as additional string content. This means
+          // `$${` doesn't start an interpolation, but `$$${` does.
+          advance(lexer);
+        }
+        break;
+      case '\'':
+        advance(lexer);
+        if (lexer->lookahead == '\'') {
+          // Two single quotes always stop current string fragment.
+          // It can be either an end delimiter '', or escape sequences ''', ''$,
+          // ''\<any>
+          return has_content;
+        }
+        break;
+      // Simply give up on EOF or '\0'.
+      case '\0':
+        return false;
+      default:
+        advance(lexer);
     }
   }
 }
@@ -117,7 +117,7 @@ static bool is_path_char(int32_t c) {
          c == '.' || c == '/';
 }
 
-static bool scan_path_start(TSLexer *lexer) {
+static bool scan_path_start(TSLexer* lexer) {
   lexer->result_symbol = PATH_START;
 
   bool have_sep = false;
@@ -159,7 +159,7 @@ static bool scan_path_start(TSLexer *lexer) {
   }
 }
 
-static bool scan_path_fragment(TSLexer *lexer) {
+static bool scan_path_fragment(TSLexer* lexer) {
   lexer->result_symbol = PATH_FRAGMENT;
 
   for (bool has_content = false;; has_content = true) {
@@ -171,10 +171,10 @@ static bool scan_path_fragment(TSLexer *lexer) {
   }
 }
 
-void *tree_sitter_nix_external_scanner_create() { return NULL; }
+void* tree_sitter_nix_external_scanner_create() { return NULL; }
 
-bool tree_sitter_nix_external_scanner_scan(void *payload, TSLexer *lexer,
-                                           const bool *valid_symbols) {
+bool tree_sitter_nix_external_scanner_scan(void* payload, TSLexer* lexer,
+                                           const bool* valid_symbols) {
   // This never happens in valid grammar. Only during error recovery, everything
   // becomes valid. See: https://github.com/tree-sitter/tree-sitter/issues/1259
   //
@@ -226,13 +226,13 @@ bool tree_sitter_nix_external_scanner_scan(void *payload, TSLexer *lexer,
   return false;
 }
 
-unsigned tree_sitter_nix_external_scanner_serialize(void *payload,
-                                                    char *buffer) {
+unsigned tree_sitter_nix_external_scanner_serialize(void* payload,
+                                                    char* buffer) {
   return 0;
 }
 
-void tree_sitter_nix_external_scanner_deserialize(void *payload,
-                                                  const char *buffer,
+void tree_sitter_nix_external_scanner_deserialize(void* payload,
+                                                  const char* buffer,
                                                   unsigned length) {}
 
-void tree_sitter_nix_external_scanner_destroy(void *payload) {}
+void tree_sitter_nix_external_scanner_destroy(void* payload) {}

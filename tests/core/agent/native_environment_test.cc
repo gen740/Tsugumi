@@ -10,38 +10,38 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
   TemporaryDirectory directory;
   // Poison known credentials, an unknown future secret and shell injection.
   const std::vector<std::string> helper_names = {
-      "TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
-      "TSUGUMID",       "TSUGUMI_WORKER",     "TSUGUMI_SDK_DIR",
-      "HOST_LOG",       "HOST_BUSY",          "HOST_PID", "TSUGUMI_SOCKET_DIR"};
-  const std::vector<std::string> storage_names = {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"};
-  std::vector<std::string> names = {
-      "OPENAI_API_KEY",
-      "ANTHROPIC_API_KEY",
-      "FUTURE_PROVIDER_SECRET",
-      "TSUGUMI_FUTURE_SECRET",
-      "HOST_FUTURE_SECRET",
-      "BASH_ENV",
-      "HOME",
-      "PATH",
-      "TMPDIR",
-      "LANG",
-      "NIX_CONFIG",
-      "SSL_CERT_FILE",
-      "NIX_SSL_CERT_FILE",
-      "TSUGUMI_EXECUTION_BROKER",
-      "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE"};
+      "TSUGUMI_VM_X86",    "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
+      "TSUGUMID",          "TSUGUMI_WORKER",     "TSUGUMI_SDK_DIR",
+      "HOST_LOG",          "HOST_BUSY",          "TSUGUMI_SOCKET_DIR"};
+  const std::vector<std::string> storage_names = {
+      "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"};
+  std::vector<std::string> names = {"OPENAI_API_KEY",
+                                    "ANTHROPIC_API_KEY",
+                                    "FUTURE_PROVIDER_SECRET",
+                                    "TSUGUMI_FUTURE_SECRET",
+                                    "HOST_FUTURE_SECRET",
+                                    "BASH_ENV",
+                                    "HOME",
+                                    "PATH",
+                                    "TMPDIR",
+                                    "LANG",
+                                    "NIX_CONFIG",
+                                    "SSL_CERT_FILE",
+                                    "NIX_SSL_CERT_FILE",
+                                    "TSUGUMI_EXECUTION_BROKER",
+                                    "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE"};
   names.insert(names.end(), helper_names.begin(), helper_names.end());
   names.insert(names.end(), storage_names.begin(), storage_names.end());
   std::vector<std::optional<std::string>> previous;
-  for (const auto &name : names) {
-    const char *value = std::getenv(name.c_str());
+  for (const auto& name : names) {
+    const char* value = std::getenv(name.c_str());
     previous.push_back(value ? std::optional<std::string>(value)
                              : std::nullopt);
     ASSERT_EQ(::setenv(name.c_str(), "host-secret", 1), 0);
   }
   struct Restore {
-    const std::vector<std::string> &names;
-    const std::vector<std::optional<std::string>> &previous;
+    const std::vector<std::string>& names;
+    const std::vector<std::optional<std::string>>& previous;
     ~Restore() {
       for (size_t i = 0; i < names.size(); ++i) {
         if (previous[i])
@@ -51,7 +51,7 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
       }
     }
   } restore{names, previous};
-  for (const auto &name : helper_names)
+  for (const auto& name : helper_names)
     ASSERT_EQ(::setenv(name.c_str(), "runtime-option", 1), 0);
   for (const auto& name : storage_names)
     ASSERT_EQ(::setenv(name.c_str(), directory.path.c_str(), 1), 0);
@@ -72,7 +72,8 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
       const auto output = Read(launch.log);
       EXPECT_EQ(output.find("host-secret"), std::string::npos);
       for (const auto& name : storage_names)
-        EXPECT_NE(output.find(name + "=" + directory.path.string() + "\n"), std::string::npos);
+        EXPECT_NE(output.find(name + "=" + directory.path.string() + "\n"),
+                  std::string::npos);
       EXPECT_NE(output.find("PATH="), std::string::npos);
       EXPECT_NE(output.find("HOME="), std::string::npos);
       EXPECT_NE(output.find("LANG=C.UTF-8"), std::string::npos);
@@ -82,7 +83,7 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
       EXPECT_EQ(output.find("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=/control/"
                             "project-capability") != std::string::npos,
                 authorized);
-      for (const auto &name : helper_names)
+      for (const auto& name : helper_names)
         EXPECT_EQ(output.find(name + "=runtime-option\n") != std::string::npos,
                   helper)
             << name;
@@ -90,4 +91,4 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
     }
   }
 }
-} // namespace tsugumi::test
+}  // namespace tsugumi::test

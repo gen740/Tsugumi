@@ -30,8 +30,9 @@ def main(contract_path, out):
     contract = json.load(open(contract_path))
     os.makedirs(os.path.join(out, 'src'), exist_ok=True)
     lines = ['// Generated from this Card\'s FlatBuffers contract. Do not edit.',
-             'extern crate alloc;', 'mod runtime;', 'pub use runtime::{Report, Run, Error, Result};', 'pub use flatbuffers;',
-             '#[doc(hidden)] pub use runtime::{invoke as __invoke, Call as __Call};',
+             'extern crate alloc;', 'extern crate tsugumi_runtime as runtime;',
+             'pub use runtime::{Report, Run, Error, Result};', 'pub extern crate flatbuffers;',
+             '#[doc(hidden)] pub use runtime::{invoke as __invoke, Call as __Call, runs_card as __runs_card, run_start as __run_start, return_outputs as __return_outputs};',
              '#[allow(warnings)] #[path="_inputs_generated.rs"] pub mod input_types;',
              '#[allow(warnings)] #[path="_outputs_generated.rs"] pub mod output_types;',
              '#[allow(warnings)] #[path="_params_generated.rs"] pub mod param_types;',
@@ -47,25 +48,22 @@ def main(contract_path, out):
     lines += ['}', '/// Owned output objects; only Some ports are sent.', '#[derive(Default)]', 'pub struct Output {']
     for port in contract['outputs']:
         lines.append(f"    pub {member(port['name'])}: Option<outputs::{alias(port['name'])}>,")
-    lines += ['}', "impl<'a> Inputs<'a> {", "    pub fn read(call: &'a __Call<'_>) -> Result<Self> {", '        Ok(Self {',
-              '            params: flatbuffers::root::<Params>(call.params_bytes())?,']
+    lines += ['}', "impl<'a> Inputs<'a> {", "    pub fn read(call: &'a __Call<'_>) -> Result<Self> {"]
+    if contract['inputs']:
+        lines.append("        let inputs = flatbuffers::root::<input_types::inputs::Inputs>(call.inputs_bytes())?;")
+    lines += ['        Ok(Self {', '            params: flatbuffers::root::<Params>(call.params_bytes())?,']
     for port in contract['inputs']:
-        value = f"call.input_bytes({json.dumps(port['name'])})?"
-        if port['required']:
-            value += f'.ok_or_else(|| Error::new("input_missing", {json.dumps(port["name"])}))?'
-            value = f'flatbuffers::root::<{rust(port["type"], "input_types")}>({value})?'
-        else:
-            value += f'.map(flatbuffers::root::<{rust(port["type"], "input_types")}>) .transpose()?'
-        lines.append(f"            {member(port['name'])}: {value},")
-    lines += ['        })', '    }', '}', 'impl Output {', '    pub fn emit(self, call: &__Call<\'_>) -> Result<()> {']
+        m = member(port['name'])
+        lines.append(f"            {m}: inputs.{m}(),")
+    lines += ['        })', '    }', '}', 'impl Output {',
+              '    pub fn pack(self) -> Vec<u8> {',
+              '        let mut builder = flatbuffers::FlatBufferBuilder::new();',
+              '        let outputs = output_types::outputs::OutputsT {']
     for port in contract['outputs']:
-        lines += [f"        if let Some(value) = self.{member(port['name'])} {{",
-                  '            let mut builder = flatbuffers::FlatBufferBuilder::new();',
-                  '            let root = value.pack(&mut builder);', '            builder.finish(root, None);',
-                  f'            call.emit({json.dumps(port["name"])}, builder.finished_data())?;', '        }']
-    if not contract['outputs']:
-        lines.append('        let _ = call;')
-    lines += ['        Ok(())', '    }', '}', r'''
+        m = member(port['name'])
+        lines.append(f'            {m}: self.{m}.map(Box::new),')
+    lines += ['        };', '        let root = outputs.pack(&mut builder);',
+              '        builder.finish(root, None);', '        builder.finished_data().to_vec()', '    }', '}', r'''
 /// Export a Card function, optionally followed by an on_run_start hook.
 /// Both functions return Result; panic is caught before returning to C.
 #[macro_export]
@@ -78,23 +76,22 @@ macro_rules! export {
     ($function:path, $start:path) => { $crate::export!(@body |inputs, report, _run| $function(inputs, report), |i, p, r| $start(i, p, r)); };
     (@body |$i:ident, $p:ident, $r:ident| $body:expr, |$si:pat_param, $sp:pat_param, $sr:pat_param| $start:expr) => {
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn tsugumi_main(raw: *const std::ffi::c_void) -> std::ffi::c_int {
-            unsafe { $crate::__invoke(raw, |call| {
-                let $i = $crate::Inputs::read(call)?;
-                let $p = &$crate::Report::from_call(call);
-                let $r = &$crate::Run::from_call(call);
-                $body?.emit(call)?;
-                call.finish_outputs()
-            }) }
-        }
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn tsugumi_run_start(raw: *const std::ffi::c_void) -> std::ffi::c_int {
-            unsafe { $crate::__invoke(raw, |call| {
-                let $si = $crate::Inputs::read(call)?;
-                let $sp = &$crate::Report::from_call(call);
-                let $sr = &$crate::Run::from_call(call);
-                $start
-            }) }
+        pub unsafe extern "C" fn tsugumi_card_invoke(raw: *const std::ffi::c_void, outputs: *mut std::ffi::c_void) -> std::ffi::c_int {
+            unsafe {
+                if !$crate::__runs_card(raw) { return 0; }
+                $crate::__invoke(raw, &mut |call| {
+                    if $crate::__run_start(raw) {
+                        let $si = $crate::Inputs::read(call)?;
+                        let $sp = &$crate::Report::from_call(call);
+                        let $sr = &$crate::Run::from_call(call);
+                        return $start;
+                    }
+                    let $i = $crate::Inputs::read(call)?;
+                    let $p = &$crate::Report::from_call(call);
+                    let $r = &$crate::Run::from_call(call);
+                    $crate::__return_outputs(outputs, &$body?.pack())
+                })
+            }
         }
     };
 }

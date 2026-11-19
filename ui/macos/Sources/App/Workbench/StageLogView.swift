@@ -4,8 +4,10 @@ import TsugumiRPC
 
 /// The log of one invocation of a Card by stage, like a CI job: SDK
 /// preparation, Nix evaluation and build / execution / validation and save,
-/// each with its state, duration and what it printed, folded unless it failed
-/// or was asked for. The raw streams stay available under "By stream".
+/// each with its state and duration; the chosen one's output fills the rest.
+/// The raw streams stay available under "By stream". Only the shown stream
+/// is read, from its end and then as it grows; nothing here waits on the
+/// core before drawing.
 struct StageLogView: View {
   let session: ProjectSession
   let runId: String
@@ -13,21 +15,18 @@ struct StageLogView: View {
   let invocation: UInt64?
   /// A stage to open (a click on a stage icon).
   var focus: Stage?
-  @State private var stages: [StageRecord] = []
-  @State private var state: Tsugumi_Data_CardState?
-  @State private var failure: String?
-  @State private var shownInvocation: UInt64?
-  @State private var logs: [Tsugumi_Data_LogStream: String] = [:]
-  @State private var open: Set<String> = []
-  /// Groups opened when they started running: each once, so one the reader folds stays folded.
-  @State private var openedRunning: Set<String> = []
+  /// The invocation's record (stages and state of a past run, the latest call).
+  @State private var info: Tsugumi_RPC_RecordResultT?
+  @State private var infoError: String?
+  @State private var selected: String?
+  /// The reader picked a group: a group starting to run no longer takes over.
+  @State private var chosen = false
   @State private var rawStream: Tsugumi_Data_LogStream = .standardOutput
-  @State private var error: String?
-  @State private var loaded = false
-  /// The log opens at its end and follows it, as the chat does, until the
-  /// reader scrolls up; back at the end, it follows again.
-  @State private var follow = ChatFollow()
-  @State private var scrollPosition = ScrollPosition(edge: .bottom)
+  @State private var executeStream: Tsugumi_Data_LogStream = .standardOutput
+  @State private var terminal = LogStreamReader()
+  @State private var journal = LogStreamReader(form: .journal(["validate", "save"]))
+  @State private var exporting = false
+  @State private var exportError: String?
 
   private struct Refresh: Equatable {
     let runId: String
@@ -50,90 +49,204 @@ struct StageLogView: View {
     ]
   }
 
+  private var live: CardRunState? {
+    guard runId == session.currentRunId, let s = session.cardStates[key(card)],
+          invocation == nil || s.invocation == invocation else { return nil }
+    return s
+  }
+
+  /// The invocation shown: the one asked for, else the latest one.
+  private var shownInvocation: UInt64? { invocation ?? live?.invocation ?? info?.selectedInvocation }
+
+  private var stages: [StageRecord] {
+    if let live { return live.stages }
+    return info?.record.map { TimelineEntry.stages($0.summary.stages) } ?? []
+  }
+
+  private var state: Tsugumi_Data_CardState? { live?.state ?? info?.record?.summary.state }
+  private var failure: String? { live?.failure ?? info?.record?.summary.failure?.diagnostic }
+
+  /// The stream the chosen group shows, and how.
+  private var shownStream: (Tsugumi_Data_LogStream, journal: Bool) {
+    switch currentGroup {
+    case "build": return (.build, false)
+    case "execute": return (executeStream, false)
+    case "save": return (.journal, true)
+    default: return (rawStream, false)
+    }
+  }
+
+  private var currentGroup: String { selected ?? defaultGroup }
+
+  /// Running, else failed, else the one asked for, else the execution.
+  private var defaultGroup: String {
+    if let g = groups.first(where: { status($0).2 == String(localized: "進行中") }) { return g.id }
+    if let g = groups.first(where: { status($0).2 == String(localized: "失敗") }) { return g.id }
+    if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { return g.id }
+    return "execute"
+  }
+
+  private var reader: LogStreamReader { shownStream.journal ? journal : terminal }
+
+  private var source: LogStreamReader.Source? {
+    guard let inv = shownInvocation else { return nil }
+    return LogStreamReader.Source(runId: runId, card: card, invocation: inv, stream: shownStream.0)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
-        Text(String(localized: "\(session.displayName(key(card))) · 実行 #\(shownInvocation ?? invocation ?? 0)") + (state.map { " · " + $0.label } ?? ""))
-          .font(.callout.weight(.medium))
+        Text(String(localized: "\(session.displayName(key(card))) · \(shownInvocation ?? 0) 回目") + (state.map { " · " + $0.label } ?? ""))
+          .font(.callout.weight(.medium)).lineLimit(1)
         Spacer()
-        Button("すべて開く") { open = Set(groups.map(\.id) + ["raw"]) }.controlSize(.small)
-        Button("すべて閉じる") { open = [] }.controlSize(.small)
+        if reader.hasText, let source {
+          Button("ログを書き出す…") { export(source, size: reader.size) }.controlSize(.small).disabled(exporting)
+        }
       }
       .padding(.horizontal, 8).padding(.vertical, 5)
+      groupBar
       Divider()
-      if !loaded {
-        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if let error {
+      if let infoError, info == nil && live == nil {
         ContentUnavailableView {
           Label("ログを読み込めませんでした", systemImage: "exclamationmark.triangle")
-        } description: { Text(error) } actions: { Button("再試行") { Task { await load() } } }
-      } else if stages.isEmpty && logs.values.allSatisfy(\.isEmpty) {
-        ContentUnavailableView("この実行では、この Card はまだ動いていません", systemImage: "circle.dotted")
+        } description: { Text(infoError) } actions: { Button("再試行") { Task { await loadInfo() } } }
+      } else if info?.exists == false && live == nil {
+        ContentUnavailableView("この実行では、この Card は呼び出されていません", systemImage: "circle.dotted")
       } else {
-        ScrollView {
-          VStack(alignment: .leading, spacing: 4) {
-            ForEach(groups) { g in section(g) }
-            DisclosureGroup(isExpanded: binding("raw")) {
-              VStack(alignment: .leading, spacing: 4) {
-                Picker("", selection: $rawStream) {
-                  Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
-                  Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
-                  Text("build").tag(Tsugumi_Data_LogStream.build)
-                  Text("journal").tag(Tsugumi_Data_LogStream.journal)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
-                logText(logs[rawStream] ?? "", empty: String(localized: "この stream への出力はありません"))
-              }
-            } label: {
-              Label("stream 別（元の出力）", systemImage: "list.bullet.rectangle").font(.callout)
-            }
-            .padding(.horizontal, 8)
-          }
-          .padding(.vertical, 6)
+        streamBar
+        notices
+        LogTextView(reader: reader, placeholder: placeholder)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // At the end of the shown stream, where the output stops.
+        if let limit = reader.truncatedAt ?? info?.record?.summary.logTruncatedAtBytes {
+          Text("ログはここで切り詰めました（上限 \(limit / 1_048_576) MiB）")
+            .font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 2)
         }
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: ChatFollow.View.self) { g in
-          ChatFollow.View(top: g.visibleRect.minY, bottom: g.visibleRect.maxY, content: g.contentSize.height)
-        } action: { _, now in
-          if follow.update(now) { scrollPosition.scrollTo(edge: .bottom) }
-        }
-        .onScrollPhaseChange { _, phase in
-          follow.readerScrolling = phase == .interacting || phase == .decelerating
-          if phase == .idle, follow.following { scrollPosition.scrollTo(edge: .bottom) }
+        if let failure, status(groups.first { $0.id == currentGroup }).2 == String(localized: "失敗") {
+          Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(6)
+            .padding(.horizontal, 8).padding(.vertical, 4)
         }
       }
     }
     .onChange(of: "\(runId)|\(key(card))|\(invocation ?? 0)") {
-      openedRunning = []
-      stages = []
-      state = nil
-      failure = nil
-      logs = [:]
-      loaded = false
-      follow.restart()
-      scrollPosition.scrollTo(edge: .bottom)
+      info = nil
+      infoError = nil
+      selected = nil
+      chosen = false
+      exportError = nil
     }
+    // State changes (a stage starts or ends) read the record again; new
+    // output is read as LogAvailable announces it.
     .task(id: Refresh(runId: runId, invocation: invocation, card: card,
                       execution: ExecutionHistoryRefresh(session: session, card: key(card)))) {
-      // Read serially while this run is active. Log notifications can arrive
-      // faster than a read finishes; restarting on each one starves the view.
-      repeat {
-        await load()
-        guard !Task.isCancelled, session.runActive, runId == session.currentRunId else { return }
-        do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-      } while !Task.isCancelled
+      await loadInfo()
     }
-    .onChange(of: focus) { if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { open.insert(g.id) } }
+    .onChange(of: source, initial: true) {
+      if shownStream.journal { journal.show(source, session: session) } else { terminal.show(source, session: session) }
+    }
+    .onChange(of: state) { reader.update(session) }
+    .onChange(of: focus) { if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { selected = g.id; chosen = true } }
+    .onChange(of: defaultGroup) { if !chosen { selected = nil } }
   }
 
-  private func binding(_ id: String) -> Binding<Bool> {
-    Binding(get: { open.contains(id) }, set: { if $0 { open.insert(id) } else { open.remove(id) } })
+  private var groupBar: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 6) {
+        ForEach(groups) { g in
+          let (symbol, color, label) = status(g)
+          chip(id: g.id, help: g.title + " · " + label) {
+            Image(systemName: symbol).foregroundStyle(color)
+            Text(g.title)
+            if let s = seconds(g) { Text(formatDuration(s)).foregroundStyle(.secondary).monospacedDigit() }
+          }
+        }
+        chip(id: "raw", help: String(localized: "stream 別（元の出力）")) {
+          Image(systemName: "list.bullet.rectangle")
+          Text("stream 別")
+        }
+      }
+      .padding(.horizontal, 8).padding(.bottom, 6)
+    }
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func chip<Label: View>(id: String, help: String, @ViewBuilder label: () -> Label) -> some View {
+    Button { selected = id; chosen = true } label: {
+      HStack(spacing: 4) { label() }.font(.caption).lineLimit(1)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(currentGroup == id ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: 6))
+    }
+    .buttonStyle(.plain).help(help).accessibilityLabel(Text(help))
+    .accessibilityAddTraits(currentGroup == id ? .isSelected : [])
+  }
+
+  /// The chosen group's stages with their times, and its stream when it has several.
+  @ViewBuilder private var streamBar: some View {
+    HStack(spacing: 10) {
+      switch currentGroup {
+      case "execute":
+        Picker("", selection: $executeStream) {
+          Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
+          Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
+        }
+        .pickerStyle(.segmented).labelsHidden().fixedSize()
+      case "raw":
+        Picker("", selection: $rawStream) {
+          Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
+          Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
+          Text("build").tag(Tsugumi_Data_LogStream.build)
+          Text("journal").tag(Tsugumi_Data_LogStream.journal)
+        }
+        .pickerStyle(.segmented).labelsHidden().fixedSize()
+      default:
+        EmptyView()
+      }
+      if let g = groups.first(where: { $0.id == currentGroup }) {
+        ForEach(g.stages) { st in
+          let r = stages.last { $0.stage == st }
+          HStack(spacing: 3) {
+            Image(systemName: st.symbol)
+            Text(st.label)
+            if let r, let a = r.start, let b = r.end { Text(formatDuration(Double(b - a) / 1000)).foregroundStyle(.secondary) }
+            if let r, r.outcome == .cached { Text("cache").foregroundStyle(.blue) }
+            if let r, r.outcome == .reused { Text("再利用").foregroundStyle(.teal) }
+          }
+          .font(.caption).lineLimit(1)
+          .foregroundStyle(r == nil ? .tertiary : .primary)
+        }
+      }
+      Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 8).padding(.vertical, 4)
+  }
+
+  /// Where the shown text is not the whole log, and why.
+  @ViewBuilder private var notices: some View {
+    if reader.clipped {
+      Text("ログの末尾 \(LogStreamReader.shownBytes >> 20) MiB を表示しています。全体は「ログを書き出す…」で保存できます。")
+        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.bottom, 2)
+    }
+    if let e = reader.error ?? exportError { Text(e).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
+  }
+
+  private var placeholder: String {
+    if shownInvocation == nil || (!reader.loaded && reader.error == nil) {
+      return info == nil && live == nil ? String(localized: "読み込んでいます…") : String(localized: "この実行では、この Card はまだ動いていません")
+    }
+    switch currentGroup {
+    case "build": return String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）")
+    case "save": return String(localized: "記録された出来事はありません")
+    case "execute":
+      return executeStream == .standardError ? String(localized: "stderr への出力はありません") : String(localized: "stdout への出力はありません")
+    default: return String(localized: "この stream への出力はありません")
+    }
   }
 
   private func records(_ g: Group) -> [StageRecord] { stages.filter { g.stages.contains($0.stage) } }
 
-  private func status(_ g: Group) -> (String, Color, String) {
+  private func status(_ g: Group?) -> (String, Color, String) {
+    guard let g else { return ("circle.dashed", .secondary, "") }
     let rs = records(g)
     if rs.contains(where: { $0.outcome == .failed }) { return ("xmark.circle.fill", .red, String(localized: "失敗")) }
     if rs.contains(where: { $0.outcome == .cancelled }) { return ("stop.circle.fill", .brown, String(localized: "停止")) }
@@ -149,129 +262,29 @@ struct StageLogView: View {
     return rs.isEmpty ? nil : rs.reduce(0, +)
   }
 
-  @ViewBuilder private func section(_ g: Group) -> some View {
-    let (symbol, color, label) = status(g)
-    DisclosureGroup(isExpanded: binding(g.id)) {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 10) {
-          ForEach(g.stages) { st in
-            let r = stages.last { $0.stage == st }
-            HStack(spacing: 3) {
-              Image(systemName: st.symbol)
-              Text(st.label)
-              if let r, let a = r.start, let b = r.end { Text(formatDuration(Double(b - a) / 1000)).foregroundStyle(.secondary) }
-              if let r, r.outcome == .cached { Text("cache").foregroundStyle(.blue) }
-              if let r, r.outcome == .reused { Text("再利用").foregroundStyle(.teal) }
-            }
-            .font(.caption)
-            .foregroundStyle(r == nil ? .tertiary : .primary)
-          }
-        }
-        switch g.id {
-        case "build":
-          logText(logs[.build] ?? "", empty: String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）"))
-        case "execute":
-          Text("stdout").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.standardOutput] ?? "", empty: String(localized: "stdout への出力はありません"))
-          Text("stderr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.standardError] ?? "", empty: String(localized: "stderr への出力はありません"))
-        default:
-          logText(journal(for: ["validate", "save"]), empty: String(localized: "記録された出来事はありません"))
-          if let failure, label == String(localized: "失敗") { Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-        }
-      }
-      .padding(.leading, 4)
-    } label: {
-      HStack(spacing: 6) {
-        Image(systemName: symbol).foregroundStyle(color)
-        Text(g.title).font(.callout.weight(.medium))
-        Text(label).font(.caption).foregroundStyle(.secondary)
-        Spacer()
-        if let s = seconds(g) { Text(formatDuration(s)).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-      }
+  private func export(_ source: LogStreamReader.Source, size: UInt64) {
+    exporting = true
+    exportError = nil
+    Task {
+      defer { exporting = false }
+      do { try await exportLog(session, source, size: size) } catch { exportError = "\(error)" }
     }
-    .padding(.horizontal, 8).padding(.vertical, 3)
   }
 
-  private func logText(_ text: String, empty: String) -> some View {
-    Text(text.isEmpty ? empty : terminalText(text))
-      .font(.system(size: AppPreferences.shared.editorFontSize - 1, design: text.isEmpty ? .default : .monospaced))
-      .foregroundStyle(text.isEmpty ? .secondary : .primary)
-      .textSelection(.enabled)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(6)
-      .background(.background.secondary, in: RoundedRectangle(cornerRadius: 5))
-  }
-
-  /// Journal lines (JSON) of the given phases, as "event: message".
-  private func journal(for phases: [String]) -> String {
-    (logs[.journal] ?? "").split(separator: "\n").compactMap { line -> String? in
-      guard let v = try? JSONValue.parse(String(line)), let p = v["phase"]?.string, phases.contains(p) else { return nil }
-      return "\(p) · \(v["event"]?.string ?? ""): \(v["message"]?.string ?? "")"
-    }.joined(separator: "\n")
-  }
-
-  private func load() async {
-    defer { if !Task.isCancelled { loaded = true } }
-    guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
+  private func loadInfo() async {
+    guard let rpc = session.rpc else { infoError = String(localized: "実行環境に接続していません"); return }
     do {
-      var inv = invocation
-      if inv == nil, runId == session.currentRunId { inv = session.cardStates[key(card)]?.invocation }
-      let rec = try? await rpc.record(runId: runId, card: card, invocation: inv, followLatest: inv == nil)
-      inv = inv ?? rec?.selectedInvocation
-      var nextStages: [StageRecord] = []
-      var nextState: Tsugumi_Data_CardState?
-      var nextFailure: String?
-      if runId == session.currentRunId, let s = session.cardStates[key(card)], s.invocation == inv {
-        nextStages = s.stages
-        nextState = s.state
-        nextFailure = s.failure
-      } else if let summary = rec?.record?.summary {
-        nextStages = TimelineEntry.stages(summary.stages)
-        nextState = summary.state
-        nextFailure = summary.failure?.diagnostic
-      }
-      var out: [Tsugumi_Data_LogStream: String] = [:]
-      for stream in [Tsugumi_Data_LogStream.build, .standardOutput, .standardError, .journal] {
-        var text = "", offset: UInt64 = 0
-        while true {
-          let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream, offset: offset, limit: 256 * 1024)
-          guard !Task.isCancelled else { return }
-          text += slice.text
-          let next = slice.nextOffset ?? offset
-          if next == offset || next >= (slice.sizeBytes ?? 0) { break }
-          offset = next
-        }
-        out[stream] = text
-      }
+      let rec = try await rpc.record(runId: runId, card: card, invocation: invocation, followLatest: invocation == nil)
       guard !Task.isCancelled else { return }
-      shownInvocation = inv
-      stages = nextStages
-      state = nextState
-      failure = nextFailure
-      logs = out
-      error = nil
-      // A failed stage opens by itself; so does the one asked for.
-      if open.isEmpty {
-        for g in groups where status(g).2 == String(localized: "失敗") { open.insert(g.id) }
-        if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { open.insert(g.id) }
-      }
-      // So does the one running now, to show its output as it comes.
-      for g in groups where status(g).2 == String(localized: "進行中") && !openedRunning.contains(g.id) {
-        openedRunning.insert(g.id)
-        open.insert(g.id)
-      }
+      info = rec
+      infoError = nil
     } catch let f as RPCFailure where f.kind == .notFound {
       guard !Task.isCancelled else { return }
-      shownInvocation = nil
-      stages = []
-      state = nil
-      failure = nil
-      logs = [:]
-      error = nil
+      info = nil
+      infoError = nil
     } catch {
       guard !Task.isCancelled else { return }
-      self.error = "\(error)"
+      infoError = "\(error)"
     }
   }
 }

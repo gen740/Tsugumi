@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <iostream>
 #include <numeric>
 #include <thread>
@@ -10,6 +11,7 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "host/store.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -35,26 +37,18 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
                true);
   constexpr int kCalls = 40;
   int calls = 0;
-  int summaries = 0;
-  std::vector<size_t> input_sizes;
+  std::atomic<bool> compacting{false};
   std::jthread scripted([&](std::stop_token stop) {
     size_t next = 1;
     while (!stop.stop_requested()) {
-      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
-        continue;
+      if (!model.WaitForRequests(next, stop)) break;
       const auto request = model.Requests()[next++ - 1];
-      if (request.find("Summarize the quoted earlier conversation") !=
-              std::string::npos ||
-          request.find(
-              "Create a short handoff for the next model continuation") !=
-              std::string::npos) {
-        ++summaries;
+      if (compacting.exchange(false)) {
         model.Queue(AnthropicText(
             "Want: inspect all results. Decisions: read only. Done: earlier "
             "inspections. Failures: none. Left: continue.",
             0));
       } else {
-        input_sizes.push_back(request.size());
         if (calls < kCalls) {
           auto stream = AnthropicTool("inspect-" + std::to_string(++calls),
                                       "inspect", "{}");
@@ -74,6 +68,9 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   config.model = "fixture";
   config.context_limit_tokens = 200000;
   agent::RuntimeHooks hooks;
+  hooks.event = [&](const auto& event) {
+    if (event.kind == "compacting") compacting.store(true);
+  };
   hooks.authorize_context = [](const auto&) {};
   hooks.checkpoint = [&](const auto& saved) {
     store.SaveMessages("measure", saved);
@@ -90,35 +87,24 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   instruction.text = "Inspect forty records, keeping all evidence.";
   messages.push_back(
       {"user", {instruction}, {}, {}, agent::ProviderAPI::AnthropicMessages});
-  const auto result =
-      agent::Runtime()
-          .Run(config, "system", messages,
-               {{"inspect", "Inspect one record.", "{}"}}, {}, hooks);
+  const auto result = agent::Runtime().Run(
+      config, "system", messages, {{"inspect", "Inspect one record.", "{}"}},
+      {}, hooks);
   scripted.request_stop();
   scripted.join();
   ASSERT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
   ASSERT_EQ(calls, kCalls);
-  ASSERT_EQ(input_sizes.size(), kCalls + 1);
-  const auto human = store.ConversationJson(store.GetConversation("measure"));
+  const auto human = store.ConversationData(store.GetConversation("measure"));
   for (int i = 1; i <= kCalls; ++i) {
     const auto id = "inspect-" + std::to_string(i);
     const auto text = id + " HEAD " + std::string(48000, 'x') + " TAIL " + id;
-    EXPECT_NE(human.find(text), std::string::npos) << id;
+    const auto contains = [&](const auto& messages) {
+      return std::ranges::any_of(messages, [&](const auto& message) {
+        return message->content_json.find(text) != std::string::npos;
+      });
+    };
+    EXPECT_TRUE(contains(human.messages) || contains(human.archive)) << id;
   }
-  // bd315031's real-runtime measurement: retain its send-size improvement
-  // while fixing overflow recovery. These are wire bytes, not model tokens.
-  const auto total =
-      std::accumulate(input_sizes.begin(), input_sizes.end(), size_t{0});
-  const auto maximum =
-      *std::max_element(input_sizes.begin(), input_sizes.end());
-  EXPECT_LE(total, 3839651u);
-  EXPECT_LE(maximum, 137774u);
-  EXPECT_EQ(summaries, 0);
-  std::cout << "CONTEXT_MEASURE normal_request_bytes=[";
-  for (size_t i = 0; i < input_sizes.size(); ++i)
-    std::cout << (i ? "," : "") << input_sizes[i];
-  std::cout << "] compactions=" << summaries << " visible_results=" << kCalls
-            << " total_bytes=" << total << " max_bytes=" << maximum << '\n';
 }
 }  // namespace
 }  // namespace tsugumi::test

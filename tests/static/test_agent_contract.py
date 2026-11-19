@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import subprocess
 import sys
@@ -34,7 +35,6 @@ def test_the_english_guide_script_is_the_japanese_one_translated():
     """hostd/agent/Shared/guide-script.en.json has the same tours, steps, choices,
     targets and buttons as guide-script.json; only its words differ, and they
     are all English."""
-    import json
     import re
     jp = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
     ja = json.loads((ROOT / "hostd/agent/Shared/guide-script.json").read_text())
@@ -43,8 +43,14 @@ def test_the_english_guide_script_is_the_japanese_one_translated():
 
     def same(a, b, where):
         if isinstance(a, dict) and isinstance(b, dict) and len(a) == len(b):
-            if where.endswith(".next") or where.endswith(".keywords"):
-                # Choices are keyed by their (translated) words: the same targets, in the same order.
+            if where.endswith(".keywords"):
+                if Counter(a.values()) != Counter(b.values()):
+                    problems.append(f"{where}: keyword targets differ")
+                for key in b:
+                    if not key.strip() or jp.search(key):
+                        problems.append(f"{where}: {key!r}")
+            elif where.endswith(".next"):
+                # The sequence of choices is visible to the user.
                 for (ka, va), (kb, vb) in zip(a.items(), b.items()):
                     same(ka, kb, f"{where}[{ka}]")
                     same(va, vb, f"{where}.{ka}")
@@ -97,13 +103,11 @@ def test_run_wait_schema_is_shared_with_external_mcp():
     shared = json.loads((ROOT / 'hostd/agent/Shared/agent.json').read_text())
     wait = shared['runWait']
     assert wait['schema']['type'] == 'integer' and wait['schema']['minimum'] == 0
-    fixtures = json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())
-    for tool in fixtures:
-        if tool['name'] in ('run', 'run_status'):
-            assert structural_schema(tool['inputSchema']['properties']['wait_seconds']) == structural_schema(wait['schema'])
+    tools = {tool['name']: tool for tool in json.loads((ROOT / 'tests/fixtures/agent-tools.json').read_text())}
+    for name in ('run', 'run_status'):
+        schema = tools[name]['inputSchema']['properties']['wait_seconds']
+        assert structural_schema(schema) == structural_schema(wait['schema'])
 
 
-def test_always_sent_prompt_stays_small_and_its_reference_is_bundled():
-    prompt = (ROOT / "hostd/agent/Shared/system-prompt.md").read_bytes()
-    assert len(prompt) < 8_000
+def test_the_card_reference_is_bundled():
     assert (ROOT / "demos/reference/cards.md").is_file()

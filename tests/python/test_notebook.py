@@ -10,7 +10,12 @@ import pytest
 
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('notebook_adapter',ROOT/'sdk/python/tsugumi/notebook.py')
-notebook=importlib.util.module_from_spec(spec);spec.loader.exec_module(notebook)
+notebook=importlib.util.module_from_spec(spec)
+sys.path.insert(0, str(ROOT / 'sdk/python/tsugumi'))
+try:
+    spec.loader.exec_module(notebook)
+finally:
+    sys.path.pop(0)
 
 class Failure(Exception):
     def __init__(self,kind,message,**position):

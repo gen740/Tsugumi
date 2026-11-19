@@ -19,8 +19,9 @@
 # `hash = pkgs.lib.fakeHash`, and the Card's build log shows the hash to keep.
 {
   pkgs,
-  sdkRoot,
+  abiHeaders,
   foreign,
+  linkAdapter,
 }:
 {
   src,
@@ -34,7 +35,7 @@
 }:
 let
   inherit (pkgs) lib;
-  runtime = dotnet.runtime;
+  inherit (dotnet) runtime;
   framework = "net${lib.versions.majorMinor runtime.version}";
   system = if pkgs.stdenv.hostPlatform.isDarwin then "osx" else "linux";
   arch = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64" else "x64";
@@ -76,7 +77,7 @@ let
       ''
         mkdir -p $out
         ${lib.concatMapStrings (p: ''
-          curl --fail --silent --show-error --location --retry 3 \
+          curl --fail --silent --show-error --location \
             -o $out/${file p} https://api.nuget.org/v3-flatcontainer/${p.id}/${p.version}/${file p}
         '') resolved}
       '';
@@ -98,11 +99,10 @@ let
   '';
 
   prepared = pkgs.runCommand "tsugumi-csharp-source" { } ''
-    mkdir -p $out/Generated $out/FlatBuffers $out/Tsugumi
+    mkdir -p $out/Generated $out/Tsugumi
     cp -r ${src}/. $out/
     cp -r ${sdk.csharp}/. $out/Generated/
-    cp ${pkgs.flatbuffers.src}/net/FlatBuffers/*.cs $out/FlatBuffers/
-    cp ${sdkRoot}/csharp/*.cs $out/Tsugumi/
+    cp ${../csharp/Entry.cs} $out/Tsugumi/Entry.cs
     ${lib.optionalString (lock != null) "cp ${lock} $out/packages.lock.json"}
     cat > $out/Card.csproj <<'PROJECT'
     <Project Sdk="Microsoft.NET.Sdk">
@@ -115,6 +115,9 @@ let
         <NuGetAudit>false</NuGetAudit>
       </PropertyGroup>
       <ItemGroup>
+        <Reference Include="Tsugumi.Runtime">
+          <HintPath>${managedLayer}/Tsugumi.Runtime.dll</HintPath>
+        </Reference>
         ${lib.concatMapStringsSep "\n" (
           p: ''<PackageReference Include="${xml p.id}" Version="${xml p.requested}" />''
         ) direct}
@@ -122,15 +125,7 @@ let
     </Project>
     PROJECT
   '';
-  # Card.dll and the assemblies of its packages. The build has no network;
-  # restore reads only nugetConfig above.
-  managed = pkgs.stdenv.mkDerivation {
-    name = "${name}-managed";
-    src = prepared;
-    nativeBuildInputs = [
-      dotnet
-      pkgs.python3
-    ];
+  dotnetEnv = {
     DOTNET_CLI_TELEMETRY_OPTOUT = "1";
     DOTNET_NOLOGO = "1";
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
@@ -138,47 +133,75 @@ let
     # Integrity is the fixed-output hash and the lock's contentHash; an
     # offline build cannot check certificate revocation.
     DOTNET_NUGET_SIGNATURE_VERIFICATION = "false";
-    configurePhase = ''
-      runHook preConfigure
-      export HOME=$TMPDIR/home DOTNET_CLI_HOME=$TMPDIR/home
-      export NUGET_PACKAGES=$TMPDIR/packages NUGET_HTTP_CACHE_PATH=$TMPDIR/http-cache
-      unset NUGET_FALLBACK_PACKAGES
-      dotnet restore Card.csproj --configfile ${nugetConfig} ${
-        lib.optionalString (lock != null) "--locked-mode"
-      }
-      runHook postConfigure
-    '';
-    buildPhase = ''
-      runHook preBuild
-      dotnet publish Card.csproj --no-restore --configuration Release \
-        -p:Deterministic=true -p:ContinuousIntegrationBuild=true \
-        -p:DebugType=None -p:DebugSymbols=false -p:GenerateDocumentationFile=false \
-        -p:PublishReferencesDocumentationFiles=false --output $out
-      python3 ${sdkRoot}/codegen/trim_packages.py $out
-      runHook postBuild
-    '';
-    dontInstall = true;
-    dontFixup = true;
   };
-  adapter = pkgs.stdenv.mkDerivation {
-    name = "${name}-runtime";
-    dontUnpack = true;
-    dontConfigure = true;
-    buildPhase = ''
-      $CXX -std=c++20 -O2 -fPIC -shared -Wall -Wextra -Werror \
-        -I${sdkRoot}/include \
-        -I${dotnet}/share/dotnet/packs/Microsoft.NETCore.App.Host.${rid}/${runtime.version}/runtimes/${rid}/native \
-        -DTSUGUMI_HOSTFXR='"${runtime}/share/dotnet/host/fxr/${runtime.version}/libhostfxr${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-        -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
-        -DTSUGUMI_ASSEMBLY='"${managed}/Card.dll"' \
-        -DTSUGUMI_RUNTIMECONFIG='"${managed}/Card.runtimeconfig.json"' \
-        ${sdkRoot}/csharp/host.cc -o runtime.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
-    '';
-    installPhase = ''
-      mkdir -p $out/lib
-      cp runtime.so $out/lib/
-    '';
-  };
+  setupDotnet = ''
+    export HOME=$TMPDIR/home DOTNET_CLI_HOME=$TMPDIR/home
+    export NUGET_PACKAGES=$TMPDIR/packages NUGET_HTTP_CACHE_PATH=$TMPDIR/http-cache
+    unset NUGET_FALLBACK_PACKAGES
+  '';
+  publishDotnet = ''
+    dotnet publish --no-restore --configuration Release \
+      -p:Deterministic=true -p:ContinuousIntegrationBuild=true \
+      -p:DebugType=None -p:DebugSymbols=false -p:GenerateDocumentationFile=false \
+      -p:PublishReferencesDocumentationFiles=false --output $out
+  '';
+  managedLayer =
+    pkgs.runCommandCC "tsugumi-csharp-managed-layer"
+      (
+        dotnetEnv
+        // {
+          nativeBuildInputs = [ dotnet ];
+        }
+      )
+      ''
+        ${setupDotnet}
+        cp ${../csharp/InvocationScope.cs} InvocationScope.cs
+        cp ${../csharp/Layout.cs} Layout.cs
+        cp ${pkgs.flatbuffers.src}/net/FlatBuffers/*.cs .
+        version=$(sed -n 's/^#define TSUGUMI_ABI_VERSION \([0-9][0-9]*\)u$/\1/p' ${abiHeaders}/tsugumi/sdk/abi.h)
+        cat > AbiVersion.cs <<EOF
+        [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Card")]
+        namespace Tsugumi;
+        internal static class Abi { internal const uint Version = $version; }
+        EOF
+        cat > Tsugumi.Runtime.csproj <<'EOF'
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <TargetFramework>${framework}</TargetFramework>
+            <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+            <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+            <NuGetAudit>false</NuGetAudit>
+          </PropertyGroup>
+        </Project>
+        EOF
+        mkdir "$TMPDIR/empty-feed"
+        dotnet restore --source "$TMPDIR/empty-feed"
+        ${publishDotnet}
+      '';
+  # Card.dll and the assemblies of its packages. The build has no network;
+  # restore reads only nugetConfig above.
+  managed =
+    pkgs.runCommandCC "${name}-managed"
+      (
+        dotnetEnv
+        // {
+          nativeBuildInputs = [
+            dotnet
+            pkgs.python3
+          ];
+        }
+      )
+      ''
+        ${setupDotnet}
+        mkdir project
+        cp -r --no-preserve=mode ${prepared}/. project/
+        cd project
+        dotnet restore Card.csproj --configfile ${nugetConfig} ${
+          lib.optionalString (lock != null) "--locked-mode"
+        }
+        ${publishDotnet}
+        python3 ${../codegen/trim_packages.py} $out
+      '';
   hashTarget = "the NAR hash (sha256) of the .nupkg files that lock names, built as ${packagesName}";
 in
 assert lib.assertMsg (sdk.csharp != null) "csharpCard requires sdk languages = [ \"csharp\" ]";
@@ -193,7 +216,28 @@ assert lib.assertMsg (lock == null || sections ? ${framework})
 assert lib.assertMsg (unsafe == [ ])
   "csharpCard: ${toString lock} names packages that are not plain NuGet ids and versions: ${toString (map file unsafe)}";
 # The folder `hash` covers is still available to `nix build` by hand.
-pkgs.runCommand name { passthru = lib.optionalAttrs (lock != null) { nugetPackages = nupkgs; }; } ''
-  mkdir -p $out/lib
-  printf '%s\n' '${adapter}/lib/runtime.so' > $out/lib/tsugumi-runtime
-''
+(linkAdapter {
+  inherit name;
+  layer = pkgs.runCommandCC "tsugumi-csharp-layer" { } ''
+    mkdir -p $out/lib
+    $CXX -std=c++20 -O2 -fPIC -c -Wall -Wextra -Werror \
+      -I${abiHeaders} \
+      -I${dotnet}/share/dotnet/packs/Microsoft.NETCore.App.Host.${rid}/${runtime.version}/runtimes/${rid}/native \
+      -DTSUGUMI_HOSTFXR='"${runtime}/share/dotnet/host/fxr/${runtime.version}/libhostfxr${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+      -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
+      ${../csharp/host.cc} -o $out/lib/start.o
+  '';
+  paths = {
+    csharp_assembly = "${managed}/Card.dll";
+    csharp_runtimeconfig = "${managed}/Card.runtimeconfig.json";
+  };
+  flags = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl";
+}).overrideAttrs
+  (old: {
+    passthru =
+      old.passthru
+      // {
+        inherit managedLayer;
+      }
+      // lib.optionalAttrs (lock != null) { nugetPackages = nupkgs; };
+  })

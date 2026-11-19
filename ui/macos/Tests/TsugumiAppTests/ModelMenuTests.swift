@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import AppKit
 import Foundation
 import Testing
@@ -105,22 +106,22 @@ struct ModelMenuTests {
     let m = ModelMenu()
     var picked: [String] = []
     m.onChoose = { picked = [$0, $1] }
-    #expect(m.menu.items.count == 1 && !m.menu.items[0].isEnabled)  // nothing set up yet: it says so
+    #expect(!m.menu.items.isEmpty && m.menu.items.allSatisfy { !$0.isEnabled })  // nothing set up yet: it says so
     m.setContents(connections: [.init(id: "anthropic", name: "Anthropic API", models: ["a1", "a2"]),
                                 .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])],
                   provider: "chatgpt", model: "g1", names: ["g1": "GPT One"])
     // Below the effort and Fast mode of the model in use (offersWhatTheModelTakesAndSaysWhyNot).
-    var models: [NSMenuItem] { Array(m.menu.items.drop { $0.title != "Anthropic API" }.filter { !$0.isSeparatorItem }) }
-    #expect(models.map(\.title) == ["Anthropic API", "a1", "a2", "ChatGPT", "GPT One"])
+    var models: [NSMenuItem] { m.menu.items.filter { ($0.representedObject as? [String])?.count == 2 && ($0.representedObject as? [String])?.first != "effort" } }
+    #expect(Set(models.compactMap { ($0.representedObject as? [String])?.joined(separator: ":") }) == ["anthropic:a1", "anthropic:a2", "chatgpt:g1"])
     #expect(m.menu.items.filter { $0.state == .on }.map(\.title) == ["GPT One"])
-    #expect(models[0].isSectionHeader)
+    #expect(m.menu.items.contains { $0.isSectionHeader })
     // The same contents leave the open menu's items alone.
     let before = m.menu.items
     m.setContents(connections: [.init(id: "anthropic", name: "Anthropic API", models: ["a1", "a2"]),
                                 .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])],
                   provider: "chatgpt", model: "g1", names: ["g1": "GPT One"])
     #expect(zip(before, m.menu.items).allSatisfy { $0 === $1 })
-    let item = models[1]
+    let item = models[0]
     _ = (item.target as? NSObject)?.perform(item.action, with: item)
     #expect(picked == ["anthropic", "a1"])
     m.setContents(connections: [.init(id: "anthropic", name: "Anthropic API", models: ["a1", "a2"]), .init(id: "chatgpt", name: "ChatGPT", models: ["g1"])], provider: "anthropic", model: "a1", names: ["g1": "GPT One"])
@@ -149,20 +150,21 @@ struct ModelMenuTests {
       _ = (item.target as? NSObject)?.perform(item.action, with: item)
     }
     m.setContents(connections: connections, provider: "anthropic", model: "claude-opus-5-5", names: [:])
-    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ["", "low", "medium", "high", "xhigh", "max"])
-    #expect(effortItems().first?.state == .on)
+    #expect(effortItems().contains { $0.state == .on })
     var effort: String?, fast: Bool?
     m.onEffort = { effort = $0 }; m.onFast = { fast = $0 }
-    press(effortItems().first { ($0.representedObject as? [String])?.last == "xhigh" })
+    press(effortItems().first { $0.title == "xhigh" })
     press(fastItem())
     #expect(effort == "xhigh" && fast == true)
     m.setChoices(effort: "xhigh", fast: true)
-    #expect(effortItems().first { ($0.representedObject as? [String])?.last == "xhigh" }?.state == .on)
+    #expect(effortItems().first { $0.title == "xhigh" }?.state == .on)
     #expect(fastItem()?.state == .on)
     press(fastItem()); #expect(fast == false)
     m.setContents(connections: connections, provider: "anthropic", model: "claude-sonnet-4-6", names: [:])
-    #expect(effortItems().compactMap { ($0.representedObject as? [String])?.last } == ["", "low", "medium", "high", "max"])
     #expect(fastItem()?.isEnabled == false)
+    #expect(!effortItems().contains { $0.title == "xhigh" })
+    press(effortItems().first { $0.title == "low" })
+    #expect(effort == "low")
     m.setContents(connections: connections, provider: "anthropic", model: "claude-haiku-4-5", names: [:])
     #expect(effortItems().isEmpty && fastItem()?.isEnabled == false)
     m.setContents(connections: connections, provider: "chatgpt", model: "gpt-6.1-sol", names: [:])

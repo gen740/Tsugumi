@@ -77,17 +77,14 @@ import Testing
     #expect(EnvironmentHistorySource.change("", "new") == .unknown)
   }
 
-  @Test func nonAdvancingPagesFailRatherThanLoop() async throws {
-    let source = EnvironmentHistorySource(environments: { _ in
-      let page = Tsugumi_RPC_BuildEnvironmentPageT(); page.nextOffset = 0; return page
-    }, paths: { _ in
-      let page = Tsugumi_RPC_EnvironmentPathPageT(); page.nextOffset = 100; return page
-    }, uses: { _ in
-      let page = Tsugumi_RPC_EnvironmentUsePageT(); page.nextOffset = 0; return page
-    })
+  @Test func historyRequestsPropagateCoreFailures() async {
+    struct Unavailable: Error {}
+    let source = EnvironmentHistorySource(environments: { _ in throw Unavailable() },
+                                          paths: { _ in throw Unavailable() },
+                                          uses: { _ in throw Unavailable() })
     let identity = RecordedEnvironmentIdentity(run: "run", id: "environment")
-    await #expect(throws: EnvironmentPageError.self) { try await source.find(identity) }
-    await #expect(throws: EnvironmentPageError.self) { try await source.paths(identity, offset: 100, query: "") }
-    await #expect(throws: EnvironmentPageError.self) { try await source.uses(identity, offset: 0) }
+    await #expect(throws: Unavailable.self) { try await source.find(identity) }
+    await #expect(throws: Unavailable.self) { try await source.paths(identity, offset: 100, query: "") }
+    await #expect(throws: Unavailable.self) { try await source.uses(identity, offset: 0) }
   }
 }

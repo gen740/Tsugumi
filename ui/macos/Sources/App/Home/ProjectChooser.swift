@@ -26,7 +26,7 @@ struct ProjectChooser: View {
         if showDemos { demos } else { recents }
         if case .ready(let v) = Updater.shared.state {
           HStack {
-            Label("Tsugumi \(v) の準備ができました。次に終了したときに更新します。", systemImage: "arrow.down.circle")
+            Label("Tsugumi \(v) の準備ができました。「再起動して更新」で更新できます。", systemImage: "arrow.down.circle")
             Spacer()
             Button("再起動して更新") { Updater.shared.installAndRelaunch() }
           }
@@ -327,9 +327,8 @@ private struct HomeSidebar: View {
 
 /// Home: the documents, read with their figures (the same window as Help > Learn about Tsugumi).
 private struct OpenExplainerLink: View {
-  @Environment(\.openWindow) private var openWindow
   var body: some View {
-    Button { openWindow(id: "explainer") } label: { Label("Tsugumi を知る", systemImage: "book.closed") }
+    Button { Explainer.open() } label: { Label("Tsugumi を知る", systemImage: "book.closed") }
       .buttonStyle(.link).foregroundStyle(TsugumiPalette.cream)
   }
 }
@@ -351,16 +350,13 @@ private struct TagChip: View {
   }
 }
 
-/// A demo with a thumbnail of its own Workflow (DemoThumbnail.swift).
+/// A demo available to copy and open.
 private struct DemoCard: View {
   let demo: DemoEntry
   let open: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      DemoThumbnail(id: demo.id)
-        .frame(height: 190)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
       Text(demo.title).font(.headline)
       Text(demo.description).font(.callout).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
       // Tags wrap onto further lines: in one row, a demo with many tags had

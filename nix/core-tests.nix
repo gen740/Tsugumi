@@ -40,6 +40,9 @@ clangStdenv.mkDerivation {
       ../hostd/tools/test-binary-cache.py
       ../demos
       ../tests/run-isolated.py
+      ../tests/fixtures/layout-invalid.json
+      ../tests/fixtures/layout-scenes.json
+      ../tests/fixtures/wire-routes.json
       ../tests/fixtures/subgraph-edits.json
       ../tests/fixtures/service-contract.json
       (lib.fileset.fileFilter (

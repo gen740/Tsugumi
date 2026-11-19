@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Find a successful Actions artifact for an evaluated guest identity (gh auth required)."""
-import json
+"""Download the Actions artifact of an evaluated guest identity (gh auth required).
+
+The artifact is named after the identity and uploaded only after its job built
+and verified the image, so any unexpired one will do, whatever the other jobs
+of its run did; the caller verifies it again against the identity."""
 import subprocess
 import sys
 from pathlib import Path
+import json
 
 identity, destination, repository = sys.argv[1:]
 name = f"vm-{identity}"
@@ -15,9 +19,6 @@ for page in json.loads(result.stdout):
         if artifact["expired"] or artifact["name"] != name:
             continue
         run = artifact["workflow_run"]["id"]
-        status = json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/actions/runs/{run}"], text=True))
-        if status["conclusion"] != "success":
-            continue
         subprocess.run(["gh", "run", "download", str(run), "--repo", repository, "--name", name,
                         "--dir", str(Path(destination).resolve())], check=True)
         sys.exit(0)

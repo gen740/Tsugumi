@@ -53,7 +53,7 @@ def assert_belongs(art, meta, run_id, card='line'):
 
 
 def ran(c, run_id, card='line'):
-    st = wait_run(c, run_id, timeout=1800)
+    st = wait_run(c, run_id)
     assert st.state == RunState.succeeded, (text(st.failure.diagnostic) if st.failure else '', stderr(c, run_id, card))
     return st
 
@@ -90,7 +90,7 @@ def test_template_card_edit_save_reload_run(tmp_path):
         # Fewer max_points than points: the Card stops and says what to change.
         edit_card(env, c, 'line', lambda card: set_param(card, 'max_points', 10))
         failed = start_run(c, ['aggregate'], propagate=True)
-        assert wait_run(c, failed, timeout=1800).state == RunState.failed
+        assert wait_run(c, failed).state == RunState.failed
         status = c.call('RunRecordRequest', runId=failed, card=path('line')).status
         assert status.state == CardState.failed and status.failure.kind == VALIDATION_FAILED
         said = text(status.failure.diagnostic) + stderr(c, failed, 'line')
@@ -130,7 +130,7 @@ def test_typed_aggregate_to_three_figures_to_report(tmp_path):
     try:
         c = connect(env)
         run = start_run(c, ['start'], propagate=True)
-        state = wait_run(c, run, timeout=600)
+        state = wait_run(c, run)
         assert state.state == RunState.succeeded, (text(state.failure.diagnostic) if state.failure else '', [stderr(c, run, name) for name in ['aggregate', 'line', 'scatter', 'histogram', 'report']])
         for name in ['line', 'scatter', 'histogram']:
             result = c.call('RunRecordRequest', runId=run, card=path(name))
@@ -149,7 +149,7 @@ def test_typed_aggregate_to_three_figures_to_report(tmp_path):
         before = c.call('RunRecordRequest', runId=run, card=path('line')).record.display
         edit_card(env, c, 'aggregate', lambda card: set_param(card, 'offset', 7))
         updated = start_run(c, ['aggregate'], propagate=True)
-        assert wait_run(c, updated, timeout=600).state == RunState.succeeded
+        assert wait_run(c, updated).state == RunState.succeeded
         after = c.call('RunRecordRequest', runId=updated, card=path('line')).record.display
         assert bytes(after.value.data) != bytes(before.value.data)
         restored = c.call('RunRecordRequest', runId=run, card=path('line')).record.display

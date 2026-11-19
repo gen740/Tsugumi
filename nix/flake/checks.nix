@@ -1,4 +1,5 @@
-# checks (`nix flake check`) and the formatter of the Nix files (`nix fmt`).
+# checks (`nix flake check`) and the formatter (`nix fmt`): nixfmt for Nix,
+# clang-format (.clang-format) for C and C++.
 # The core's tests are not here: `ci-core` packages their binaries and runner,
 # and CI runs them outside the build sandbox (.github/workflows/ci-platform.yml).
 { ... }:
@@ -29,6 +30,31 @@
           inherit web operationDriver;
         };
       };
-      formatter = pkgs.nixfmt-tree;
+      formatter = pkgs.treefmt.withConfig {
+        runtimeInputs = [
+          pkgs.nixfmt
+          pkgs.llvmPackages.clang-unwrapped
+        ];
+        settings = {
+          tree-root-file = "flake.nix";
+          formatter.nixfmt = {
+            command = "nixfmt";
+            includes = [ "*.nix" ];
+          };
+          formatter.clang-format = {
+            command = "clang-format";
+            options = [ "-i" ];
+            includes = [
+              "*.c"
+              "*.cc"
+              "*.cpp"
+              "*.h"
+              "*.hh"
+            ];
+            # Demo Cards are formatted by the app's own Card formatter.
+            excludes = [ "demos/*" ];
+          };
+        };
+      };
     };
 }

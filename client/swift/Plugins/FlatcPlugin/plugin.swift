@@ -10,15 +10,13 @@ struct FlatcPlugin: BuildToolPlugin {
     let flatc = try locateFlatc()
     let out = context.pluginWorkDirectoryURL.appending(path: "generated")
     let schemas = ["tsugumi_enums", "data", "worker", "local_worker", "remote_worker", "tsugumi", "service_common", "agent", "host", "vm_host"]
-    return schemas.map { name in
-      let input = protocolDir.appending(path: "\(name).fbs")
-      return .buildCommand(
-        displayName: "flatc \(name).fbs",
-        executable: flatc,
-        arguments: ["--swift", "--gen-object-api", "-I", protocolDir.path(), "-o", out.path(), input.path()],
-        inputFiles: schemas.map { protocolDir.appending(path: "\($0).fbs") },
-        outputFiles: [out.appending(path: "\(name)_generated.swift")])
-    }
+    let inputs = schemas.map { protocolDir.appending(path: "\($0).fbs") }
+    return [.buildCommand(
+      displayName: "flatc Swift protocol bindings",
+      executable: flatc,
+      arguments: ["--swift", "--gen-object-api", "-I", protocolDir.path(), "-o", out.path()] + inputs.map { $0.path() },
+      inputFiles: inputs,
+      outputFiles: schemas.map { out.appending(path: "\($0)_generated.swift") })]
   }
 
   private func locateFlatc() throws -> URL {

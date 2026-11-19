@@ -14,11 +14,10 @@ table GetBlobRequest { digest:string (required); offset:ulong; limit:uint = 1048
 table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
-  cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:ulong; build_timeout_ms:ulong;
+  cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
-  // The registration policy at submission. Zero missed heartbeats means never.
-  heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0;
+
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
@@ -33,7 +32,7 @@ table ReleaseRequest { fingerprint:string (required); }
 table CatalogRequest {}
 union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest }
 table Request {
-  service:string; server_id:string; instance_id:string;
+  service:string; instance_id:string;
   project_scope:string; job_id:string;
   // Random identity of one tsugumid process. Scoped probes renew its lease.
   core_life_id:string;
@@ -42,15 +41,15 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 7.
+  // Zero means no advertised contract; writers explicitly send contract 9.
   worker_contract:uint;
   active_jobs:uint;
 }
 // The host decides availability and supplies its reason; the core only carries it.
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; grade:ulong; unavailable_reason:string; }
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
-table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; }
+table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
