@@ -205,9 +205,10 @@ auto Access::WaitApproval(std::unique_lock<std::recursive_mutex>& lock,
     if (stop.stop_requested() || stopping) throw Cancelled();
     auto query = db.prepare("SELECT state,preview FROM approvals WHERE id=?");
     query.bind(1, id);
-    if (!query.step() || query.text(0) == "denied")
-      throw Failure("permission_denied", "The user declined this request");
+    if (!query.step()) throw Failure("not_found", "Approval request not found");
     const auto state = query.text(0);
+    if (state == "denied")
+      throw Failure("permission_denied", "The user declined this request");
     if (state == "allowed") return true;
     if (state != "pending")
       throw Failure(

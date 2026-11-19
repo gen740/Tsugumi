@@ -669,12 +669,13 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ASSERT_EQ(readable.size(), 1u);
   EXPECT_EQ(J::String(readable.front()), "selected");
   EXPECT_TRUE(J::Array(J::Get(scope, "write_cards")).empty());
-  EXPECT_NE(snapshot.View().find("Read only:"), std::string::npos);
+  EXPECT_EQ(helpers->Get(0)->state()->str(), "completed");
+  EXPECT_NE(helpers->Get(0)->result_json(), nullptr);
   EXPECT_EQ(model.Requests().size(),
             2u);  // Only the helper; no parent model turn.
   EXPECT_NE(model.Requests()[0].find("INSPECT_SKILL_SENTINEL"),
             std::string::npos);
-  EXPECT_NE(model.Requests()[1].find("Helper scope denied"), std::string::npos);
+  EXPECT_NE(model.Requests()[1].find(R"("is_error":true)"), std::string::npos);
   const auto access =
       Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
         return A::CreateAccessListRequest(b, b.CreateString(conversation))
@@ -682,6 +683,8 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
       });
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->grants()), 0u);
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->requests()), 1u);
+  Grant(conversation);
+  EXPECT_TRUE(Get(conversation).Code().empty());
 }
 }  // namespace
 }  // namespace tsugumi::test
