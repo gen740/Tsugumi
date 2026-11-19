@@ -653,13 +653,17 @@ void Versions::checkout(
           from, preview / name,
           stdfs::copy_options::recursive | stdfs::copy_options::copy_symlinks);
   }
-  git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
+  git_checkout_options opts{};
+  check(git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION),
+        "checkout options");
   opts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_DONT_UPDATE_INDEX |
                            GIT_CHECKOUT_NO_REFRESH;
   opts.baseline = baseline.get();
   opts.target_directory = preview.c_str();
-  check(git_checkout_tree(r.get(), target_tree.get(), &opts),
-        "prepare checkout");
+  Object treeish;
+  check(git_object_lookup(treeish.out(), r.get(), &oid, GIT_OBJECT_COMMIT),
+        "checkout object");
+  check(git_checkout_tree(r.get(), treeish.get(), &opts), "prepare checkout");
   validate(preview);
 
   // Build the outgoing version without changing the branch or HEAD. Advance
