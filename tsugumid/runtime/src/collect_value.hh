@@ -22,6 +22,11 @@
 
 namespace tsugumi {
 
+struct CollectFileLimits {
+  size_t files = 1000;
+  size_t entries = 10000;  // Files, directories and members together.
+};
+
 // Collects `members` (values of the `source` port, in order) into one value of
 // the `output` port. File / Directory members must live below
 // one of `file_roots`; their copies are staged beside
@@ -32,6 +37,7 @@ auto collect_values(const types::PortType& source,
                     std::span<const Value> members,
                     std::span<const std::filesystem::path> file_roots,
                     const std::filesystem::path& output_dir,
-                    const std::atomic<bool>& cancel) -> Value;
+                    const std::atomic<bool>& cancel,
+                    CollectFileLimits limits = {}) -> Value;
 
 }  // namespace tsugumi

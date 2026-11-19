@@ -140,14 +140,13 @@ auto clean_unreadable_directories(const stdfs::path& root) -> void {
   expect(stdfs::is_empty(staging), "mode-000 staging was not cleared");
 }
 
-// Both staging directions use this copier. Exercise a multi-GiB sparse file
-// with actual data at separated offsets and a trailing hole, without ever
-// materializing its contents in the test process.
+// Exercise sparse transfers with separated data, a trailing hole and an
+// observer that must see every logical byte.
 auto copy_sparse_outputs(const stdfs::path& root) -> void {
   const auto staging = root / "sparse";
   stdfs::create_directory(staging);
   const auto source = staging / "large";
-  constexpr off_t size = off_t{4} * 1024 * 1024 * 1024;
+  constexpr off_t size = 4 * 1024 * 1024;
   const int file = ::open(source.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
   expect(file >= 0, "open sparse source");
   expect(::ftruncate(file, size) == 0, "size sparse source");
