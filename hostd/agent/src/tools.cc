@@ -77,15 +77,6 @@ auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
   return catalog.ModelSpecs(guide ? ModelRole::Guide : ModelRole::Main);
 }
 
-auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
-  if (call.name != "tools") return call;
-  const auto args = json::Object(call.arguments);
-  const auto action = json::Text(args, "action");
-  if (action.empty()) return call;
-  return {call.id, catalog.FamilyTool(json::Text(args, "family"), action, role),
-          json::Get(args, "arguments", "{}")};
-}
-
 // Read the exact revision being saved; never clean up a newer client's layout.
 auto Tools::PrepareLayoutSave(const std::string& project,
                               const std::string& args, std::stop_token stop)
@@ -782,9 +773,9 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
 auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
                          ToolResult result, const HelperScope::Reader& read)
     -> ToolResult {
-  const auto call =
-      ResolveCall(requested_call,
-                  scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
+  const auto call = catalog.ResolveCall(
+      requested_call,
+      scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
   if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
     if (catalog.Find(call.name))
@@ -849,7 +840,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                     : boundary && boundary->scoped() ? ModelRole::ScopedHelper
                     : helper                         ? ModelRole::Helper
                                                      : ModelRole::Main;
-  const auto call = ResolveCall(requested_call, role);
+  const auto call = catalog.ResolveCall(requested_call, role);
   if (c.role == "guide" && call.name != "tools" &&
       !catalog.Allows(call.name, role))
     throw Failure("permission_denied", "Tool unavailable for the guide role");
@@ -1556,7 +1547,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
                       : boundary && boundary->scoped() ? ModelRole::ScopedHelper
                       : helper                         ? ModelRole::Helper
                                                        : ModelRole::Main;
-    const auto call = ResolveCall(requested_call, role);
+    const auto call = catalog.ResolveCall(requested_call, role);
     if (call.name == "delegate") {
       conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
@@ -1611,7 +1602,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
             const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
         RequireHelperPermission(id, *boundary);
-        const auto call = ResolveCall(
+        const auto call = catalog.ResolveCall(
             requested_call,
             boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
         if (call.name == "tools") return std::nullopt;
@@ -1671,7 +1662,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       A::CallIdT result;
       const auto* input = r->value_as_CallIdRequest();
       if (input->name() && input->arguments_json()) {
-        const auto call = ResolveCall(
+        const auto call = catalog.ResolveCall(
             {"", input->name()->str(), input->arguments_json()->str()},
             ModelRole::Main);
         if (const auto* spec = catalog.Find(call.name)) {
@@ -1723,7 +1714,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       const auto id = p->conversation_id()->str(),
                  project = Text(p->project_id());
       conversations->OwnConversation(id, human);
-      const auto call = ResolveCall(
+      const auto call = catalog.ResolveCall(
           {p->op_id()->str(), p->name()->str(), p->arguments_json()->str()},
           conversations->GetConversation(id).role == "guide" ? ModelRole::Guide
                                                              : ModelRole::Main);
