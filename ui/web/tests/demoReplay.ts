@@ -12,10 +12,14 @@ const ports = JSON.parse(fs.readFileSync(path.join(dataDir, 'assets', 'ports.jso
 for (const file of fs.readdirSync(dataDir).filter((file) => file.endsWith('.json') && file !== 'index.json')) {
   const data: DemoData = JSON.parse(fs.readFileSync(path.join(dataDir, file), 'utf8'))
   const recording = path.join(dataDir, 'assets', `${data.id}.run.json`)
-  if (fs.existsSync(recording) && Object.keys(JSON.parse(fs.readFileSync(recording, 'utf8')).timeline)
-    .some(card => !Object.hasOwn(ports[data.id], card))) {
-    assert.equal(data.run, undefined, `${file}: a deleted Card's run must not be replayed on the current graph`)
-    assert.deepEqual(data.outputs, {})
+  if (fs.existsSync(recording) && !data.draftOnly) {
+    const retained = JSON.parse(fs.readFileSync(recording, 'utf8'))
+    if (Object.keys(retained.timeline).some(card => !Object.hasOwn(ports[data.id], card))) {
+      assert.equal(data.run, undefined, `${file}: a deleted Card's run must not be replayed on the current graph`)
+      assert.deepEqual(data.outputs, {})
+    } else if (retained.run.state === 'succeeded') {
+      assert.equal(data.run?.id, retained.run.id, `${file}: the current Workflow replays its recorded run`)
+    }
   }
   if (!data.run?.realOrder) continue
   for (const speed of [1, 0.6]) {

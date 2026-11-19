@@ -189,7 +189,7 @@ const display = (runId: string, valueType: D.DisplayValue, value: D.DisplayTable
 const tableValue = (rows: string[][]) => Object.assign(new D.DisplayTableT(), { columns: table.columns, rows: rows.map(cells => Object.assign(new D.TableRowT(), { cells })) })
 a.record!.display = display('left', D.DisplayValue.DisplayTable, tableValue(table.rows))
 const changedRows = structuredClone(table.rows)
-changedRows[0][2] += '1'
+changedRows[0][2] = String(Number(changedRows[0][2]) + 1)
 b.record!.display = display('right', D.DisplayValue.DisplayTable, tableValue(changedRows))
 const shown = (d?: D.DisplayT | null) => d ? recordedDisplay(d) : undefined
 assert.equal(sameDisplay(shown(a.record!.display), shown(b.record!.display)), false)
