@@ -213,6 +213,23 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
   ASSERT_NE(
       R::GetMessage(reloaded.data())->payload_as_Reply()->value_as_SaveResult(),
       nullptr);
+  const auto paths =
+      call(R::RequestPayload::RunDefinitionPathsRequest, [&](Builder& b) {
+        const auto card = Tsugumi::Data::CreateCardPath(
+            b,
+            b.CreateVectorOfStrings(std::vector<std::string>{"group", "leaf"}));
+        return R::CreateRunDefinitionPathsRequest(b, b.CreateString(run_id),
+                                                  card)
+            .Union();
+      });
+  const auto* archived = R::GetMessage(paths.data())
+                             ->payload_as_Reply()
+                             ->value_as_RunDefinitionPaths();
+  ASSERT_NE(archived, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*archived->paths(), [](const auto* file) {
+    return file->string_view() ==
+           "externals/private/definitions/leaf/_card.json";
+  }));
   EXPECT_EQ(Tool(conversation, "run_record", raw_record).Code(), "not_found");
 }
 
