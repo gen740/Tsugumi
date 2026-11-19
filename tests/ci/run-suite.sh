@@ -1,43 +1,85 @@
 #!/usr/bin/env bash
 # One command list for Actions and ci-local. x86 Linux owns shared rules in CI;
 # the local Linux pass represents that full job even on an ARM Mac.
+# --list emits argv as NUL-delimited fields and commands for the static audit.
 set -euo pipefail
+list=false
+if [[ "$1" == --list ]]; then list=true; shift; fi
 suite=$1
 system=$2
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
+run() {
+  if $list; then
+    printf '%s\0' "$@" ''
+  else
+    "$root/build-ci/bin/tsugumi-test-env" "$@"
+  fi
+}
 bin="$root/build-ci/libexec/tsugumi-tests"
 full=false
 if [[ "$system" == x86_64-linux || "${TSUGUMI_FULL_RULES:-0}" == 1 ]]; then full=true; fi
-# Socket-free rules: keep native transport, processes, filesystem and privacy on
-# every target. No wildcard for all Host* or Agent* suites.
-pure='Layout.*:HostLayout.*:HostLayoutSaving.*:HostCardPlacement.*:DocumentConnect.*:DocumentTemplate.*:DocumentCopy.*:DocumentSubgraph.*:HostPermissionKinds.*:AgentPresentation.*:ThoughtScheduleTest.*:AgentCatalog.*:AgentPolicy.*:AgentApprovalDescription.*:AgentSavePolicy.*:AgentContext.*:ContextBudget.*:HostContextWindow.*:HostPolicyTest.*:HostSaveInspection.*:HostSettingsStore.*:AgentContextMeasure.*:ProjectEdit.*:ProjectEditDiagnostics.*:ProjectOperation*.*:FileMiss.*:VersionNote.*:VersionText.*:SchemaEncode.*:HelperScope.*:HelperGraphScope.*:HelperCapability.*:VMResetPolicy.*:WorkerCondition.*:Table/WorkerCondition*.*'
-host_filter='*'
-marker='not environment'
+# Keep the native branches of shell isolation, PTY, credential storage,
+# locking, environment/process lifecycle, path handling and RPC transport.
+native_settings=(
+  'NativeEnvironment.*' 'NativeTerminalTest.*' 'AttachedFolderTest.*' 'HostFormat.*'
+  'BinaryCaches.NixDownloadsFromAPrivateCacheWithTheHostSnapshot'
+  'ConversationStoreTest.ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome'
+  'ConversationStoreTest.KnownConversationsRemainReadableWhileAnotherProjectIsLocked'
+  'ConversationStoreTest.ProjectStateLinksAndForeignConversationIdentitiesStayRejected'
+  'ConversationStoreTest.RecreatedFolderReplacesEvenAnOpenedIdentity'
+)
+native_agent=(
+  'EnvironmentFixture.*' 'RealEnvironmentFixture.*' 'AgentShellProbe.*'
+  'AgentFixture.HostUnixAndWebSocketReturnTypedReplies'
+  'AgentFixture.HostRejectsTheExternalAgentCredentialOnBothTransports'
+  'AgentFixture.UnixAndWebSocketExposeTheSameAgentProtocol'
+  'AgentFixture.ProviderSetAndStatusNeverReturnTheSecretAndFollowPlatformStorage'
+  'ConversationStoreFixture.ASecondHostCannotWriteTheSameProjectUntilTheFirstStops'
+  'ConversationStoreFixture.ProjectStateSymlinksAreRejected'
+  'AgentProjectFixture.*Shell*' 'NestedFileFixture.NestedScratchIsPrivateToEachHelperAtEveryDepth'
+  '*/NestedHelperFiles.ShellStaysInsideEveryParentsExactSets/*'
+  'AgentExclusionRPC.ShellProfileDeniesExcludedProjectDemoAndMountedPaths'
+  'AgentProjectFixture.CopyRefusesAnAttachedRootReplacedAfterItsReadGrant'
+  'SkillsFixture.SwiftUnicodeNamesWhitespaceAndCRLFBehavior'
+  'SkillsFixture.StrictSizeBoundaryAndUnreadableFilesAndFolders'
+  'BrokerFixture.*Handshake*' 'BrokerFixture.WrongWorkerKeyIsRejectedBeforeAnyApplicationRequest'
+  'BrokerFixture.FragmentedFramesWaitForTheCompleteRequest'
+)
+# Python suites that exercise native workers, paths or transports keep their
+# own marker. Shared rules and the rest of each mixed fixture run on x86 Linux.
+core_args=(--ignore=tests/core/integration)
 sdk_marker='not static'
 if ! $full; then
-  host_filter="*-$pure"
-  marker='not environment and not shared_rules'
+  core_args+=(-m native_core)
   sdk_marker='not static and (not sdk_pure or package_smoke)'
 fi
+gtest() {
+  local target=$1
+  shift
+  if $full; then
+    run "$bin/$target"
+  else
+    local IFS=:
+    run "$bin/$target" "--gtest_filter=$*"
+  fi
+}
 case "$suite" in
   agent)
     if $full; then run "$bin/tsugumi_input_types_tests"; fi
     run "$bin/tsugumi_peer_tls_tests"
-    run "$bin/tsugumi_host_settings_tests" "--gtest_filter=$host_filter"
-    run "$bin/tsugumi_agent_rpc_tests" "--gtest_filter=$host_filter"
+    gtest tsugumi_host_settings_tests "${native_settings[@]}"
+    gtest tsugumi_agent_rpc_tests "${native_agent[@]}"
+    if $full; then run python3 -m pytest -q tests/python/test_host_projects_rpc.py; fi
     ;;
   core)
     run "$bin/tsugumi_rpc_trace_tests"
     run "$bin/tsugumi_rpc_cli_tests"
-    remote_filter='*'
-    if ! $full; then remote_filter='*-InitialDocument.*:OpaqueMetadata.*:LayoutBoundary.*:CardIdentity.MetadataIsNonComputationalOnlyAtDefinitionPaths'; fi
-    run "$bin/tsugumi_remote_result_tests" "--gtest_filter=$remote_filter"
+    gtest tsugumi_remote_result_tests 'ShellTest.*' 'RunScratch.*'
     if $full; then run "$bin/tsugumi_worker_condition_tests"; fi
     # Evaluation cache invalidation reads real dependencies and filesystem state.
     run "$bin/tsugumi_definition_evaluation_tests"
-    run python3 -m pytest -q -m "$marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist load --durations=40 tests/core
+    run python3 -m pytest -q -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist load --durations=40 "${core_args[@]}" tests/core
     run "$bin/tsugumi_workerd_tests"
     run "$bin/tsugumi_native_contract_tests"
     run "$bin/tsugumi_execution_service_tests"
@@ -45,6 +87,15 @@ case "$suite" in
     for scenario in large sparse shrink-stream shrink-sparse; do
       run "$bin/tsugumi_file_transfer_tests" "$scenario"
     done
+    ;;
+  host)
+    if [[ "$system" == aarch64-darwin ]]; then
+      run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
+    else
+      host_args=(--ignore=tests/core/integration/test_host_sandbox.py)
+      if ! $full; then host_args+=(--ignore=tests/core/integration/test_definition_evaluation.py); fi
+      run python3 -m pytest -q "${host_args[@]}" tests/core/integration
+    fi
     ;;
   adapters)
     if $full; then
@@ -58,6 +109,7 @@ case "$suite" in
     run "$python" -c 'import matplotlib, plotly, altair'
     run "$python" -m pytest -q -m "$sdk_marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile --durations=40 tests/python \
       --ignore=tests/python/test_sdk_examples.py --ignore=tests/python/test_csharp_sdk.py \
+      --ignore=tests/python/test_host_projects_rpc.py \
       --ignore=tests/python/test_claude_code_plugin.py --ignore=tests/python/test_web_server.py --ignore=tests/python/test_cli.py
     TSUGUMI_TEST_HOST_SANDBOX=1 run "$python" -m pytest -q tests/python/test_csharp_sdk.py
     run "$python" -m pytest -q tests/python/test_sdk_examples.py

@@ -10,6 +10,8 @@ import json
 import subprocess
 import sys
 
+from core_platforms import NATIVE_CORE_CASES, NATIVE_CORE_FILES
+
 
 SYSTEMS = {
     "x86_64-linux": "ubuntu-24.04",
@@ -17,13 +19,16 @@ SYSTEMS = {
     "aarch64-darwin": "macos-26",
 }
 CORE = {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "sdk", "swift", "vm"}
+GUEST = {"vm", "pack-guest"}
 WEB = {"docs", "web-contracts", "adapters", "swift"}
-PLAYER = {"docs", "web-contracts", "swift"}
-ALL = CORE | WEB | {"prompt"}
+ALL = CORE | GUEST | WEB | {"prompt"}
 ADAPTER_TESTS = {
     "tests/python/test_claude_code_plugin.py",
     "tests/python/test_web_server.py",
     "tests/python/test_cli.py",
+}
+WEB_AGENT_ASSETS = {
+    "agent.json", "demo-skill.md", "generate.py", "mcp-transport.md", "system-prompt.md",
 }
 
 
@@ -31,6 +36,22 @@ def consumers(path):
     # Repository metadata (funding, issue templates) is not built or tested.
     if path.startswith(".github/") and not path.startswith((".github/workflows/", ".github/actions/")):
         return set()
+    if path.startswith("tests/core/"):
+        if path in {"tests/core/vm_lifetime_test.cc", "tests/core/cmake/vm.cmake"}:
+            return {"vm"}
+        if path.endswith((".cmake", "/CMakeLists.txt")) or path == "tests/core/agent/document_edit_driver.cc":
+            # The Web checks compile their edit driver from these manifests
+            # against the same installed core as the C++ tests.
+            return {"agent-rpc", "rpc", "web-contracts"}
+        if path.endswith((".cc", ".hh")):
+            return {"agent-rpc", "rpc"}
+        if path.startswith("tests/core/integration/"):
+            return {"host", "remote-execution"} if path.endswith("/test_remote_execution.py") else {"host"}
+        # Shared harness modules are also imported by the Host project RPC
+        # test in Agent RPC and by SDK and adapter tests.
+        if path.startswith("tests/core/test_"):
+            return {"rpc"}
+        return {"agent-rpc", "rpc", "host", "remote-execution", "sdk", "adapters"}
     if path.startswith(("protocol/", "nix/", ".github/", "tests/ci/")) or path in {
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
@@ -39,55 +60,68 @@ def consumers(path):
         return {"docs"}
     if path.startswith("docs/"):
         jobs = {"docs"}
-        # These are inputs to web.sitePlayer and Swift's DemoThumbnailTests.
+        # These are inputs to web.sitePlayer.
         if path.startswith(("docs/site/player/", "docs/site/player-data/assets/")) or path in {
             "docs/CardGuide.md", "docs/assets/tsugumi-icon.svg",
         }:
-            jobs |= PLAYER
-        # ExplainerTests read the built help's page list and assets.
-        if path.startswith("docs/site/"):
-            jobs.add("swift")
+            jobs.add("web-contracts")
         # Runnable examples are extracted from the guide, not copied fixtures.
         if path == "docs/CardGuide.md":
             jobs.add("sdk")
         if path == "docs/features.md":
             jobs.add("prompt")
         return jobs
-    if path.startswith("vm/guest/") or path in {
-        "tests/python/test_vm_artifact.py", "tests/python/test_vm_store_health.py",
-    }:
-        return {"swift", "vm", "sdk", "host"}
+    if path.startswith("vm/guest/"):
+        if path.startswith("vm/guest/tools/"):
+            return {"vm"}
+        # Both guest images share the kernel and native runtime.
+        return {"host", "vm", "pack-guest"}
     if path.startswith("pack/"):
-        # CI builds only tsugumi-pack's guest (ci-platform.yml, pack-guest).
-        return {"vm"}
+        return {"pack-guest"}
     if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
         return {"swift"}
     if path.startswith("ui/web/"):
         return WEB
     if path.startswith("demos/"):
-        # ci-core installs demos for Guide RPC; Swift also reads the sources.
-        return WEB | {"sdk", "agent-rpc"}
+        # Guide and version tests, SDK demo runs, the MCP plugin, and the Web player.
+        return {"docs", "web-contracts", "adapters", "sdk", "agent-rpc", "rpc"}
     if path.startswith("ui/shared/"):
-        return CORE | WEB
+        return CORE | GUEST | WEB
     if path.startswith("sdk/"):
         # The native runtime installs the SDK; C++ and host tests use it too.
-        return CORE | WEB
+        return CORE | GUEST | WEB
     if path.startswith("client/"):
         # Shared native client, Swift C interface and the browser Wasm build.
-        return CORE | WEB
+        return CORE | GUEST | WEB
     if path.startswith(("util/", "rpc/", "tsugumid/document/")):
-        return CORE | WEB
+        return CORE | GUEST | WEB
     if path.startswith("hostd/agent/"):
-        return ALL
-    if path.startswith(("tsugumid/", "hostd/", "workerd/", "tests/core/")):
-        return CORE
+        jobs = {"agent-rpc", "adapters", "swift"}
+        if path.startswith("hostd/agent/Shared/"):
+            asset = path.rsplit("/", 1)[1]
+            if asset in WEB_AGENT_ASSETS:
+                jobs.add("web-contracts")
+            if asset == "helpers-skill.md":
+                jobs.add("prompt")
+        return jobs
+    if path.startswith("hostd/"):
+        # Host RPC is consumed by native clients, the broker and the Web edit
+        # driver. Guest entry points and the Card SDK run through tsugumid.
+        return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "swift", "web-contracts"}
+    if path.startswith(("tsugumid/", "workerd/")):
+        return CORE | GUEST
     if path.startswith("cli/"):
         return {"adapters", "swift"}
     if path.startswith("plugins/") or path in ADAPTER_TESTS:
         return {"adapters"}
+    if path == "tests/python/test_host_projects_rpc.py":
+        return {"agent-rpc"}
     if path.startswith("tests/python/"):
         # Includes shared harness files, not just individual SDK test cases.
-        return {"sdk", "adapters"}
+        jobs = {"sdk", "adapters"}
+        if path == "tests/python/conftest.py":
+            jobs.add("agent-rpc")
+        return jobs
     if path.startswith("tests/remote/"):
         return {"remote-execution"}
     if path.startswith("tests/prompt/"):
@@ -100,25 +134,41 @@ def consumers(path):
 
 
 def select(paths=None):
-    jobs = set(ALL) if not paths else set().union(*(consumers(path) for path in paths))
+    changes = [(path, consumers(path)) for path in paths] if paths else [("", ALL)]
+    jobs = set().union(*(selected for _, selected in changes))
     matrix = []
     for system, runner in SYSTEMS.items():
-        supported = set(CORE | WEB) - {"docs"}
+        supported = set(ALL) - {"docs", "prompt"}
         if system == "aarch64-darwin":
-            supported -= {"web-contracts", "adapters", "sdk", "vm", "remote-execution"}
+            supported -= GUEST | {"web-contracts", "adapters", "sdk", "remote-execution"}
         else:
             supported.remove("swift")
             if system != "aarch64-linux":
-                supported.remove("vm")
+                supported -= GUEST
             if system != "x86_64-linux":
                 supported -= {"remote-execution", "web-contracts"}
-        checks = {job: job in jobs and job in supported for job in sorted((CORE | WEB) - {"docs"})}
+        platform_jobs = set().union(*(selected for path, selected in changes
+                                     if system in systems_for(path)))
+        checks = {job: job in platform_jobs and job in supported for job in sorted(ALL - {"docs", "prompt"})}
         checks["native"] = any(checks[job] for job in CORE)
         checks["web"] = checks["web-contracts"] or checks["adapters"]
         if any(checks.values()):
             matrix.append({"system": system, "runner": runner, "checks": checks})
     return {"docs": "docs" in jobs, "prompt": "prompt" in jobs,
             "platform": bool(matrix), "matrix": {"include": matrix}}
+
+
+def systems_for(path):
+    if path.startswith("demos/") or path in {
+        "tests/core/integration/test_definition_evaluation.py",
+        "tests/python/test_host_projects_rpc.py",
+    }:
+        return {"x86_64-linux"}
+    if path.startswith("tests/core/test_") and path.endswith(".py"):
+        file = path.rsplit("/", 1)[1]
+        if file not in NATIVE_CORE_FILES and file not in NATIVE_CORE_CASES:
+            return {"x86_64-linux"}
+    return SYSTEMS.keys()
 
 
 def changed_paths(event, base, head):

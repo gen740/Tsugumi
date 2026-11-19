@@ -51,9 +51,9 @@ in this checkout; the switch above is introduced here.
 
 Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `tsugumi-hostd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
 
-The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs; static tests always run first and block heavier jobs on failure.
+The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs. Static tests run alongside the platform workflow, and the final gate requires both.
 
-Prose and `README.md` run the documentation build/tests; `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Web, SDK, shared UI and demos run Web/player checks and documentation; demos also run SDK, Guide RPC and Swift tests. Native core/worker changes run runtime consumers on both Linux architectures and macOS; client changes also run Web/player checks. Swift changes run Mac tests; CLI/plugin changes run adapter tests (CLI also selects Mac tests). Build prerequisites follow each selected job. Site tooling also runs Swift help tests.
+Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on both Linux architectures and macOS, including guest builds on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
 
 `protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
@@ -118,16 +118,17 @@ Like the script's `setting` command, this registers a host setting, which remain
 Actions and `ci-local.sh` use [ci/run-suite.sh](ci/run-suite.sh) for the same
 command lists, gtest filters and pytest marker expressions. The canonical CI
 owner of shared rules is **x86_64 Linux**. ARM Linux and macOS retain native
-transport/client smokes and filesystem, process, worker, ABI and sandbox tests.
-The exact shared Python files/cases and package smokes are listed in
-[conftest.py](conftest.py), under `shared_rules`, `sdk_pure` and `package_smoke`.
-Unlisted cases keep running on their existing platforms; selection never assumes
-that a newly added test is platform neutral.
+transport/client, locking, path, process, worker, ABI and sandbox checks. The
+native exceptions are listed in [ci/run-suite.sh](ci/run-suite.sh) and
+[ci/core_platforms.py](ci/core_platforms.py). Add a native exception when a
+test exercises differing OS implementations. The static coverage check audits
+the core pytest routes and the unfiltered CI runs of the C++ test targets.
 
 | Checks | Full owner | Further targets |
 | --- | --- | --- |
-| Host document/layout/validation/policy and context rules | x86_64 Linux | Explicit negative gtest filter; wire/auth, filesystem/privacy and OS adapters remain |
-| Project document/schema/graph/definition/version matrices | x86_64 Linux | `not environment and not shared_rules`; Unix/WebSocket save smoke and process/filesystem scenarios remain |
+| Host settings and public Agent RPC | x86_64 Linux | Native gtest selectors for transport, locks, process lifecycle, credentials and OS adapters |
+| Core RPC and remote results | x86_64 Linux | `native_core` pytest marker and native gtest selectors for scratch and shell tests |
+| Real definition evaluation | x86_64 Linux | Native C++ dependency invalidation tests run on every architecture |
 | Web type and behavior corpus | x86_64 Linux | Web/Wasm package build and packaged server/CLI smoke on ARM Linux |
 | CLI/plugin/Web adapter corpus | x86_64 Linux | `package_smoke`: authenticated packaged server, Wasm policy, resident CLI startup |
 | Python SDK pure libraries | x86_64 Linux | `not sdk_pure or package_smoke`; native plot/notebook import/render and child cleanup remain |
@@ -136,12 +137,11 @@ that a newly added test is platform neutral.
 | Real remote execution | x86_64 Linux | Separate worker admission/protocol and core-to-worker execution suites |
 
 The canonical Agent suite also runs `tsugumi_input_types_tests` for resolver and
-Host input descriptions. `ProjectEditDiagnostics.*`, `HelperScope.*` and
-`FileMiss.*` stay with the shared Host rules; `ToolArguments.*` retains its
-local model transport on every native target. Edit refusal and operation-ID
+Host input descriptions, and `test_host_projects_rpc.py` for the Host's
+project-copy permissions and state exclusions. Edit refusal and operation-ID
 checks stay in `tsugumi_host_settings_tests`, and public edit/read-miss scenarios
 stay in `tsugumi_agent_rpc_tests`. Short-identifier tests link the Host and core
-in `tsugumi_host_settings_tests`, including native filesystem/history checks.
+in `tsugumi_host_settings_tests`.
 Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
 (`large`, `sparse`, `shrink-stream`, `shrink-sparse`). The SDK suite discovers
 `tests/python/test_input_types.py`; core pytest discovers
