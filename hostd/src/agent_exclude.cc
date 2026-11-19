@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "host/comments.hh"
+
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
