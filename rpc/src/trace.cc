@@ -1,12 +1,18 @@
 #include "tsugumi/rpc/trace.hh"
 
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <mutex>
 
 namespace tsugumi::trace {
 namespace {
+const bool kLaunchEnabled = [] {
+  const auto* value = std::getenv(kLaunchVariable);
+  return value && std::string_view(value) == "1";
+}();
+
 using Clock = std::chrono::steady_clock;
 using Key = std::pair<uint64_t, uint64_t>;
 
@@ -29,11 +35,14 @@ auto DecodeMode(uint64_t epoch) -> Mode { return static_cast<Mode>(epoch & 3); }
 
 constinit std::atomic<uint64_t> detail::mode_epoch{0};
 
+auto LaunchEnabled() -> bool { return kLaunchEnabled; }
+
 auto CurrentMode() -> Mode {
   return DecodeMode(detail::mode_epoch.load(std::memory_order_relaxed));
 }
 
 auto SetMode(Mode mode) -> void {
+  if (!LaunchEnabled()) return;
   auto& state = State();
   std::lock_guard lock(state.mutex);
   const auto epoch = detail::mode_epoch.load(std::memory_order_relaxed);

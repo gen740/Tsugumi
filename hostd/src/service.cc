@@ -568,6 +568,9 @@ struct Service::State {
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
     if (const auto* debug = r->value_as_HostTraceRequest()) {
+      if (!trace::LaunchEnabled())
+        throw Failure("permission_denied",
+                      "Host was started without RPC tracing");
       if (request.websocket)
         throw Failure("permission_denied", "RPC capture requires local host access");
       lock.unlock();

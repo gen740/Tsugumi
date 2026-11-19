@@ -338,6 +338,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
               "XDG_CONFIG_HOME=" + home + "/.config",
               "XDG_CACHE_HOME=" + home + "/.cache",
               "MPLCONFIGDIR=" + home + "/.matplotlib"};
+  if (trace::LaunchEnabled())
+    spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
   if (sp.network)
     for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
       if (const char* x = std::getenv(v))

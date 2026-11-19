@@ -4,15 +4,21 @@ import json
 from contextlib import closing
 
 import pytest
-from harness.host import Host
+from harness.host import Host, HostFailure
 from tsugumi_client import RpcFailure
 from Tsugumi.Trace.CoreTraceRequest import CoreTraceRequestT
 from Tsugumi.Trace.Mode import Mode
 
 
-def test_runtime_mode_switch_and_collection(daemon, tmp_path):
+@pytest.fixture
+def debug_core(core_factory):
+    return core_factory(env={"TSUGUMI_RPC_TRACE": "1"})
+
+
+def test_runtime_mode_switch_and_collection(debug_core, tmp_path):
+    daemon = debug_core
     project_id = daemon.ready["project_id"]
-    with closing(Host(tmp_path / "host")) as host, daemon.connect() as core:
+    with closing(Host(tmp_path / "host", rpc_trace=True)) as host, daemon.connect() as core:
         host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{daemon.unix}")
         host.call("HostActivityRequest")
         assert not host.call("HostTraceRequest", source="").snapshot.entries
@@ -46,8 +52,28 @@ def test_runtime_mode_switch_and_collection(daemon, tmp_path):
         assert all(e.contentJson is None for e in snapshot.entries)
 
 
-def test_browser_project_token_cannot_enable_or_read_trace(daemon):
-    with daemon.connect(websocket=True) as browser:
+def test_host_refuses_trace_without_debug_launch(tmp_path):
+    with closing(Host(tmp_path / "host")) as host:
+        for fields in ({"mode": Mode.Capture}, {"source": ""}):
+            with pytest.raises(HostFailure) as failure:
+                host.call("HostTraceRequest", **fields)
+            assert failure.value.code == "permission_denied"
+        assert not host.call("HostActivityRequest").busy
+
+
+def test_core_refuses_trace_without_debug_launch(core_factory):
+    core = core_factory(env={"TSUGUMI_RPC_TRACE": "0"})
+    with core.connect() as client:
+        for mode in (Mode.Capture, None):
+            request = CoreTraceRequestT()
+            request.mode = mode
+            with pytest.raises(RpcFailure) as failure:
+                client.wait_reply(client.send("CoreTraceRequest", request))
+            assert failure.value.kind == "permission_denied"
+
+
+def test_browser_project_token_cannot_enable_or_read_trace(debug_core):
+    with debug_core.connect(websocket=True) as browser:
         with pytest.raises(RpcFailure, match="permission_denied"):
             request = CoreTraceRequestT()
             request.mode = Mode.Capture

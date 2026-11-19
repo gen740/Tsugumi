@@ -28,7 +28,7 @@ class HostFailure(RuntimeError):
 
 
 class Host:
-    def __init__(self, directory):
+    def __init__(self, directory, *, rpc_trace=False):
         self.directory = Path(directory).resolve()
         self.socket_directory = tempfile.TemporaryDirectory(prefix="th-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
         self.log_path = Path(self.socket_directory.name) / "host.log"
@@ -44,7 +44,8 @@ class Host:
                 "--socket-dir", str(Path(self.socket_directory.name) / "b"),
                 "--usage-scratch-dir", str(self.directory / "run-scratch"),
                 "--unix", str(Path(self.socket_directory.name) / "rpc"),
-            ], stdout=self.log, stderr=self.log)
+            ], stdout=self.log, stderr=self.log,
+                env=dict(os.environ, TSUGUMI_RPC_TRACE="1" if rpc_trace else "0"))
             ready = process_file(self.process, self.directory / "host.ready")
             if ready is None:
                 raise RuntimeError(self.log_path.read_text())

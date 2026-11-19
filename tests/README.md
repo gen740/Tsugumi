@@ -160,6 +160,14 @@ TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials ui/macos/tools/run-ui.sh dist/Tsugumi
 
 Like the script's `setting` command, this registers a host setting, which remains until removed in Settings. Supply `TSUGUMI_HOST_STATE` to select an isolated host for a trial when needed. A direct scripted launch can use: `open -g -n --env TSUGUMI_UI_SCRIPT=/absolute/trial.script --env TSUGUMI_UI_TRUSTED_FOLDER=/absolute/trials --env TSUGUMI_HOST_STATE=/absolute/output/host-core dist/Tsugumi.app`. The trust input is ignored without a readable UI script and is never read from a project. Scripts and smoke runs leave the app in the background, including when an existing project window is selected.
 
+To show the RPC Trace tab in the Mac debug panel and permit recording in newly launched host and native project cores, use:
+
+```sh
+open -g -n --env TSUGUMI_RPC_TRACE=1 --env TSUGUMI_HOST_STATE=/absolute/debug-host dist/Tsugumi.app
+```
+
+For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. Reusing a running host or project core leaves its launch setting unchanged. The Web UI and CLI have no RPC Trace view.
+
 ## Execution ownership and timing
 
 Actions and `ci-local.sh` use [ci/run-suite.sh](ci/run-suite.sh) for the same

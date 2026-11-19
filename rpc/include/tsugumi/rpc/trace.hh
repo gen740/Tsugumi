@@ -60,6 +60,8 @@ inline constexpr size_t kMaxContentBytes = 4u << 20;
 inline constexpr size_t kMaxFrameToDecode = 64u << 10;
 inline constexpr size_t kMaxDecodedBytes = 128u << 10;
 
+inline constexpr char kLaunchVariable[] = "TSUGUMI_RPC_TRACE";
+auto LaunchEnabled() -> bool;
 auto SetMode(Mode mode) -> void;
 auto CurrentMode() -> Mode;
 auto Read() -> Snapshot;

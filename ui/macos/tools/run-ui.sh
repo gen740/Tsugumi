@@ -14,6 +14,7 @@
 # TSUGUMI_UI_TRUSTED_FOLDER=/absolute/folder registers that folder before opening
 # projects. Like `setting`, this saves a host setting (remove it in Settings).
 # TSUGUMI_HOST_STATE can select a separate host state for isolated trials.
+# TSUGUMI_RPC_TRACE=1 exposes the RPC Trace tab and allows recording in hostd and project cores.
 # TSUGUMI_UI_LANGUAGE=en (or ja) does the same for the app's language.
 set -u
 absolute() { (cd "$(dirname "$1")" && echo "$(pwd -P)/$(basename "$1")"); }
