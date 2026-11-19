@@ -1902,9 +1902,7 @@ export class ProjectSession extends Observable {
       const dir = this.definitionDir(k)
       if (dir) {
         const selector = ['params', obj([['name', name]])]
-        this.appendEdits([initial.parameter === undefined
-          ? this.fieldEdit(dir + '_card.json', selector, undefined, obj([['name', name], ['type', 'bool'], ['data', value!]]))
-          : this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'), value)])
+        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'), value)])
       }
       return
     }
@@ -1912,9 +1910,6 @@ export class ProjectSession extends Observable {
       const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
       const p = params.find((p) => str(get(p, 'name')) === name)
       if (isObj(p)) p.set('data', value)
-      else if (str(c.get('template')) === 'switch' && name === 'value' && typeof value === 'boolean') {
-        params.push(obj([['name', 'value'], ['type', 'bool'], ['data', value!]]))
-      }
       c.set('params', params)
     })
   }
@@ -2317,7 +2312,6 @@ export class ProjectSession extends Observable {
     const def = definition ?? this.cardDefinition(k)
     const m = meta ?? this.cardMeta(k)
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
-    if (definitionKind(def) === 'switch') return { inputs: [], outputs: [{ name: 'value', typeName: 'tsugumi.builtin.Condition', note: note('outputs', 'value') }] }
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
       inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
@@ -2340,14 +2334,10 @@ export class ProjectSession extends Observable {
     return { inputs: ins, outputs: outs }
   }
 
-  /** Params edited directly on input and Switch Cards. */
+  /** Params edited directly on Input Cards. */
   inlineParams(k: CardKey, definition?: J): ParamData[] {
     const def = definition ?? this.cardDefinition(k)
-    if (!['input', 'switch'].includes(this.kind(k)) || def === undefined) return []
-    if (definitionKind(def) === 'switch') {
-      const value = (arr(get(def, 'params')) ?? []).find(p => str(get(p, 'name')) === 'value')
-      return [{ name: 'value', type: 'bool', value: get(value, 'data') === true ? 'true' : 'false' }]
-    }
+    if (this.kind(k) !== 'input' || def === undefined) return []
     return (arr(get(def, 'params')) ?? []).flatMap((p) => {
       const name = str(get(p, 'name')), type = str(get(p, 'type'))
       if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
@@ -2589,16 +2579,16 @@ export class ProjectSession extends Observable {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'switch' | 'branch' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'branch', 'merge', 'collect', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'branch' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'branch', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), branch: L('分岐'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), input: L('入力'), branch: L('分岐'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', branch: 'arrow.triangle.swap',
+  trigger: 'play.circle', input: 'slider.horizontal.3', branch: 'arrow.triangle.swap',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
@@ -2614,7 +2604,7 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'draft' | 'trigger' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
@@ -2624,7 +2614,6 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'marimo', label: L('marimo ノートブック') },
   { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
-  { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
 ]

@@ -90,7 +90,6 @@ std::vector<UnionField> root_unions(const Type& t, const std::string& prefix);
 
 // Builtin message types.
 TypeRef empty_type();
-TypeRef bool_condition_type();  // table Condition { value:bool; }
 
 // Union wrapper used by merge: `table Merged { value:In; }` with one union
 // member per input port name. Returns nullopt with an error on failure.

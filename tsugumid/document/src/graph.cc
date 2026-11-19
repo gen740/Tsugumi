@@ -36,8 +36,6 @@ const char* template_name(Template t) {
       return "trigger";
     case Template::Input:
       return "input";
-    case Template::Switch:
-      return "switch";
     case Template::Branch:
       return "branch";
     case Template::Merge:
@@ -218,7 +216,6 @@ Template template_of(const DefinitionDoc* def) {
       {"trigger", Template::Trigger}, {"input", Template::Input},
       {"branch", Template::Branch},   {"merge", Template::Merge},
       {"collect", Template::Collect}, {"draft", Template::Draft},
-      {"switch", Template::Switch},
   };
   auto it = m.find(*t);
   return it == m.end() ? Template::Code : it->second;
@@ -497,12 +494,6 @@ class Builder {
             diag(n.path, "missing_param", "param " + p.name + " has no value"));
   }
 
-  const ParamDef* param(const Node& n, const std::string& name) {
-    for (const auto& p : n.settings.params)
-      if (p.name == name) return &p;
-    return nullptr;
-  }
-
   void load_catalog(Node& n) {
     std::string rel = n.def_dir + "_outputs.fbs";
     if (!doc_.sources.count(rel)) {
@@ -616,15 +607,6 @@ class Builder {
           n.input_defs = {{"start", true}};
           load_catalog(n);
           break;
-        case Template::Switch: {
-          if (const auto* value = param(n, "value");
-              value && value->type != ParamType::Bool)
-            n.diags.push_back(
-                diag(n.path, "invalid_param", "switch value must be a bool"));
-          n.outputs.push_back({"value", PortKind::FlatBuffer, false,
-                               types::bool_condition_type()});
-          break;
-        }
         case Template::Trigger:
           n.outputs.push_back(
               {"out", PortKind::FlatBuffer, false, types::empty_type()});

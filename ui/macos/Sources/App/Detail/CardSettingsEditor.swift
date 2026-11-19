@@ -89,9 +89,9 @@ final class CardEditorModel {
     if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
       definition = .object([("language", .string(value))])
     } else { definition = .object([("template", .string(value))]) }
-    if value == "input" || value == "switch" {
-      definition?["params"] = .array([.object([("name", .string("value")), ("type", .string(value == "input" ? "double" : "bool")), ("data", value == "input" ? .number("0") : .bool(false))])])
-      if value == "input", let outputsPath, !files.contains(outputsPath) {
+    if value == "input" {
+      definition?["params"] = .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])
+      if let outputsPath, !files.contains(outputsPath) {
         createFile("_outputs.fbs", text: "namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
       }
     }
@@ -606,12 +606,10 @@ private struct GeneralCategory: View {
         })
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
-        if model.kind != .switchCard {
-          LabeledContent("アイコン") {
-            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
-                                         set: { model.definition?["symbol"] = $0.map { .string($0) } }),
-                         inherited: model.kind.symbol)
-          }
+        LabeledContent("アイコン") {
+          SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
+                                       set: { model.definition?["symbol"] = $0.map { .string($0) } }),
+                       inherited: model.kind.symbol)
         }
         TextField("概要", text: metaString("description"), axis: .vertical)
           .lineLimit(2...5)
@@ -623,12 +621,12 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.definition?["template"]?.string ?? model.definition?["language"]?.string ?? "draft" }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "switch", "trigger", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
+            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "trigger", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
           }
         } header: { Text("Draft を手動で実装") }
           footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }
       }
-      if model.kind != .switchCard, let params = model.definition?["params"]?.array, !params.isEmpty {
+      if let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }

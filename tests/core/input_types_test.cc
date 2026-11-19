@@ -153,25 +153,29 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   EXPECT_EQ(inputs[0].source->path, (CardPath{"src"}));
   EXPECT_EQ(inputs[0].port, "in");
 }
-TEST(InputTypes, CollectMergeBranchAndSwitchUseTheResolverTypes) {
+TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
   const auto graph = Graph(
-      R"([{"id":"src"},{"id":"collect"},{"id":"merge"},{"id":"branch"},{"id":"switch"}])",
+      R"([{"id":"src"},{"id":"collect"},{"id":"merge"},{"id":"branch"},{"id":"condition"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"collect","port":"in"}},
           {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}},
           {"from":{"card":"merge","port":"out"},"to":{"card":"branch","port":"value"}},
-          {"from":{"card":"switch","port":"value"},"to":{"card":"branch","port":"condition"}}])",
+          {"from":{"card":"condition","port":"value"},"to":{"card":"branch","port":"condition"}}])",
       {{"definitions/src/_card.json", "{}"},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/collect/_card.json", R"({"template":"collect"})"},
        {"definitions/merge/_card.json",
         R"({"template":"merge","inputs":[{"name":"items"}]})"},
        {"definitions/branch/_card.json", R"({"template":"branch"})"},
-       {"definitions/switch/_card.json", R"({"template":"switch"})"}});
+       {"definitions/condition/_card.json", R"({"template":"input"})"},
+       {"definitions/condition/_outputs.fbs",
+        "table Condition { value:bool; } table Outputs { value:Condition; } "
+        "root_type Outputs;"}});
   for (const auto& [card, port] :
-       std::vector<std::pair<std::string, std::string>>{{"collect", "out"},
-                                                        {"merge", "out"},
-                                                        {"branch", "a"},
-                                                        {"switch", "value"}}) {
+       std::vector<std::pair<std::string, std::string>>{
+           {"collect", "out"},
+           {"merge", "out"},
+           {"branch", "a"},
+           {"condition", "value"}}) {
     const auto ends = input_types(*graph, {card}, port);
     ASSERT_EQ(ends.size(), 1u);
     ASSERT_TRUE(ends[0].type->type) << card;

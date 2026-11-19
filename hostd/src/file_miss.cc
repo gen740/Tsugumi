@@ -50,8 +50,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
   auto kind = card.empty() ? (files.contains("_link.json") ? "subgraph" : "")
                            : json::Text(json::Object(card), "template", "code");
   if (!card.empty()) {
-    const std::set<std::string> builtins{"trigger", "input", "branch", "merge",
-                                         "collect", "draft", "switch"};
+    const std::set<std::string> builtins{"trigger", "input",   "branch",
+                                         "merge",   "collect", "draft"};
     if (!builtins.contains(kind)) kind = "code";
   }
   if (kind.empty()) return {};

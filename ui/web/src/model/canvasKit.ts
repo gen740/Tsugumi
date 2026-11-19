@@ -143,8 +143,8 @@ export interface CardNodeData {
 
 export const isRouting = (d: CardNodeData) => d.kind === 'branch' || d.kind === 'merge' || d.kind === 'collect'
 
-export type CardShape = 'card' | 'branch' | 'merge' | 'collect' | 'start' | 'switch'
-export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'merge' || k === 'collect' || k === 'switch' ? k : 'card')
+export type CardShape = 'card' | 'branch' | 'merge' | 'collect' | 'start'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'merge' || k === 'collect' ? k : 'card')
 
 /** Whether a wire is drawn dotted: either end is a Draft, with no code behind
  *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
@@ -348,10 +348,6 @@ export class CardGeometry {
   }
 
   get size() {
-    if (this.shape === 'switch') return {
-      width: this.grid ? gridLengthAtLeast(112, this.grid) : 112,
-      height: this.grid && this.flow === 'leftToRight' ? gridLengthAtLeast(38, CardGeometry.rowPitch(this.grid)) : 38,
-    }
     if (this.shape === 'start') return this.routingSize
     if (this.shape !== 'card') {
       const r = this.routingSize
@@ -372,7 +368,7 @@ export class CardGeometry {
   /** The outline's frame inside the Card's box. */
   get outlineRect(): Rect {
     const s = this.size
-    if (this.shape === 'card' || this.shape === 'start' || this.shape === 'switch') return { x: 0, y: 0, ...s }
+    if (this.shape === 'card' || this.shape === 'start') return { x: 0, y: 0, ...s }
     if (this.flow === 'topToBottom') return { x: 0, y: this.bandIn, width: s.width, height: s.height - this.bandIn - this.bandOut }
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
@@ -385,7 +381,7 @@ export class CardGeometry {
     switch (this.shape) {
       case 'card':
         return roundedRect(r, 9 * cornerScale)
-      case 'start': case 'switch':
+      case 'start':
         return roundedRect(r, r.height / 2)
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
@@ -450,7 +446,7 @@ export class CardGeometry {
     // Draft attachment points have no labels.
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
-    if (this.shape === 'start' || this.shape === 'switch') return false
+    if (this.shape === 'start') return false
     if (this.shape === 'merge' || this.shape === 'collect') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
@@ -479,7 +475,7 @@ export class CardGeometry {
     const index = Math.max(0, list.indexOf(name))
     const n = Math.max(list.length, 1)
     const r = this.outlineRect
-    if (this.shape === 'start' || this.shape === 'switch') {
+    if (this.shape === 'start') {
       // Its one output, in the middle of the downstream edge.
       return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height } : { x: r.x + r.width, y: r.y + r.height / 2 }
     }

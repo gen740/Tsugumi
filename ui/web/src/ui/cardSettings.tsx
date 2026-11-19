@@ -113,9 +113,9 @@ export class CardEditorModel extends Observable {
     if (value === 'draft') this.definition = obj([['template', 'draft']])
     else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
     else this.definition = obj([['template', value]])
-    if (value === 'input' || value === 'switch') {
-      this.setSetting('params', [obj([['name', 'value'], ['type', value === 'input' ? 'double' : 'bool'], ['data', value === 'input' ? new JNum('0') : false]])])
-      if (value === 'input' && this.outputsPath && !this.files.includes(this.outputsPath))
+    if (value === 'input') {
+      this.setSetting('params', [obj([['name', 'value'], ['type', 'double'], ['data', new JNum('0')]])])
+      if (this.outputsPath && !this.files.includes(this.outputsPath))
         this.createFile('_outputs.fbs', 'namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n')
     }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
@@ -708,7 +708,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }} />
       {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
-        {def !== undefined && kind !== 'switch' && (
+        {def !== undefined && (
           <Row label={L('アイコン')}>
             <SymbolPicker symbol={str(get(def, 'symbol')) || undefined} inherited={KIND_ICON[kind]}
               onChange={(v) => model.setSetting('symbol', v)} />
@@ -725,10 +725,10 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'trigger', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
         } /></Row>
       </Section>}
-      {kind !== 'switch' && params.length > 0 && (
+      {params.length > 0 && (
         <Section title={L('パラメータ')}>
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
         </Section>

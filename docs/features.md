@@ -6,7 +6,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Build and navigate a Workflow
 
-- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Switch, Branch, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
+- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Branch, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
 - **Sweep inputs and implementations.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one vector or Directory on. [Run lists and Collect](#run-lists-and-collect)
 - **See references between Card definitions.** Turn on **Nix references**, then hover a Card or open the list. Follow `inputs.data` to the Card connected to the `data` input. [Nix references](Usage.md#canvas-tools)
@@ -71,7 +71,6 @@ Every Card has a permanent identifier and a separate human name in `_meta.json.n
 | Code Card | Defines its environment in `default.nix` and runs C++, Python, Bash, R, Julia, Ruby, Go, Rust or C# code |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
-| switch | Sends an editable Boolean on `value`, for example to the `condition` of a Branch |
 | branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (declared inputs to `out`, a union named by input port with root `tsugumi.merge.Merged`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
 | Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |

@@ -212,7 +212,10 @@ TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
     {"from":{"card":"next","port":""},"to":{"card":"collect","port":"in"}}
   ]}})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"switch"})");
+                   R"({"template":"input"})");
+  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
+                   "table Condition { value:bool; } table Outputs { "
+                   "value:Condition; } root_type Outputs;");
   fs::write_atomic(root / "definitions/plan/_card.json",
                    R"({"template":"draft","inputs":[{"name":"ignored"}]})");
   fs::write_atomic(root / "definitions/next/_card.json",
@@ -274,12 +277,17 @@ TEST_F(OpaqueMetadata, DraftEmptyCannotMaskARealTypeDerivedSeveralStepsLater) {
   fs::write_atomic(root / "definitions/relay/_card.json",
                    R"({"template":"branch"})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"switch"})");
+                   R"({"template":"input"})");
+  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
+                   "table Condition { value:bool; } table Outputs { "
+                   "value:Condition; } root_type Outputs;");
   Store store({root, ""});
   store.open();
   const auto* sink = store.current()->resolution->find({"sink"});
-  EXPECT_EQ(sink->input("value")->type, types::bool_condition_type());
-  EXPECT_EQ(sink->output("a")->type, types::bool_condition_type());
+  const auto* source = store.current()->resolution->find({"condition"});
+  ASSERT_TRUE(source->output("value")->type);
+  EXPECT_EQ(sink->input("value")->type, source->output("value")->type);
+  EXPECT_EQ(sink->output("a")->type, source->output("value")->type);
   EXPECT_TRUE(sink->diags.empty());
 }
 

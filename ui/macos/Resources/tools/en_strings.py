@@ -978,7 +978,6 @@ EN = {
 "入力を追加": "Add Input",
 "入力ポート": "Input ports",
 "入力値": "Input value",
-"スイッチ": "Switch",
 "入力元": "Input sources",
 "入力待ち": "Waiting",
 "全体": "All",

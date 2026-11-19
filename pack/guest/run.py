@@ -29,7 +29,7 @@ from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
 # Cards whose parameters are values; a branch's shape the graph.
-SETTABLE = {"code", "input", "switch"}
+SETTABLE = {"code", "input"}
 
 
 def stage(text):

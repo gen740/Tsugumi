@@ -127,12 +127,12 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     }
 
 
-def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(project, core_factory):
-    """A saved Switch condition selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, switch={"template": "switch"}),
-          [card("start", "trigger"), card("src", "msg"), card("toggle", "switch"),
+def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
+    """A saved Boolean Input selects the same branch after reopening the project."""
+    write(project, dict(BASE_DEFS, condition={"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG_FBS}),
+          [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
            card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
-          [conn("src", "msg", "gate", "value"), conn("toggle", "value", "gate", "condition"),
+          [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),
            conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
     d = core_factory()
     c = d.connect()
@@ -144,10 +144,7 @@ def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(proje
         assert states(c, rid, skipped) in ([], [CardState.skipped])
 
     assert_branch("no", "yes")
-    snap = c.call("ProjectInspectRequest")
-    body = {"template": "switch", "params": [{"name": "value", "type": "bool", "data": True}]}
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-           changes=[change("PutDefinition", id="toggle", cardJson=json.dumps(body), keepMeta=True)])
+    set_param(c, "toggle", "value", True)
 
     d.restart()
     c = d.connect()

@@ -102,8 +102,8 @@ def test_nix_exports_follow_the_connected_code_origin(core_factory, project, bui
     definitions = {"source": code(), "sink": code(["data"], body='{ run = inputs.data.command; }'),
                    "bridge": {"template": builtin}}
     if builtin == "branch":
-        definitions["condition"] = {"template": "switch"}
-        connections = [conn("source", "out", "bridge", "value"), conn("condition", "value", "bridge", "condition"),
+        definitions["condition"] = {"template": "input", "_outputs": FLAG}
+        connections = [conn("source", "out", "bridge", "value"), conn("condition", "flag", "bridge", "condition"),
                        conn("bridge", "a", "sink", "data")]
     elif builtin == "merge":
         definitions["bridge"]["inputs"] = [{"name": "a"}, {"name": "b"}]
