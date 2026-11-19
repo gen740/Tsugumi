@@ -1,9 +1,3 @@
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
-  COMMAND ${CMAKE_COMMAND} -DINPUT=${TSUGUMI_GEN_DIR}/bfbs/host.bfbs
-    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc -DSYMBOL=tsugumi_host_bfbs
-    -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
-  DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs VERBATIM)
-
 include(${CMAKE_CURRENT_LIST_DIR}/agent-resources.cmake)
 
 set(_template_files "")
@@ -25,7 +19,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/host-environment-sources.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/host-layout-sources.cmake)
 
 add_library(tsugumi_host_core STATIC
-  ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
   ${_tsugumi_host_agent_sources}
   ${_tsugumi_host_transport_sources}
   ${_tsugumi_host_util_sources}
@@ -71,7 +64,7 @@ else()
 endif()
 target_include_directories(tsugumi_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private ${CMAKE_CURRENT_SOURCE_DIR}/agent/private)
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-target_link_libraries(tsugumi_host_core PUBLIC tsugumi_rpc_schema tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
+target_link_libraries(tsugumi_host_core PUBLIC tsugumi_trace_codec tsugumi_rpc_schema tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
 target_link_libraries(tsugumi_host_core PRIVATE native_sqlite)
 if(NOT APPLE)

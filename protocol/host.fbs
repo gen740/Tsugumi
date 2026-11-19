@@ -4,18 +4,19 @@
 include "service_common.fbs";
 include "tsugumi.fbs";
 namespace Tsugumi.Host;
+attribute "trace_secret";
 // Every optional list in this contract is empty when its vector is omitted.
 
 // Secret input is accepted only by the human-only Host ProviderSet request.
 // context_limit is an optional input-token budget (0 selects the model budget).
 // The host reserves max_tokens and a margin from the model context window.
-table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 0; }
+table ProviderInput { endpoint:string (trace_secret); api_key:string (trace_secret); model:string; max_tokens:uint = 16384; context_limit:uint = 0; }
 
 // Host settings are patched against a revision, never overwritten blindly.
 // Human-owned binary cache configuration; validation and persistence belong to hostd.
 table BinaryCachesGetRequest {}
-table BinaryCachesPutRequest { caches_json:string (required); }
-table BinaryCaches { caches_json:string (required); }
+table BinaryCachesPutRequest { caches_json:string (required, trace_secret); }
+table BinaryCaches { caches_json:string (required, trace_secret); }
 
 // Project grants are human-owned and shared by every conversation/helper.
 // The host lists editable permissions, including attached folders, and validates edits.
@@ -26,7 +27,7 @@ table ProjectPermissions { project_id:string (required); title:string; path:stri
 table ProjectPermissionList { projects:[ProjectPermissions]; }
 table ProviderChanged { profile:string (required); }
 
-table Setting { key:string (required); value_json:string (required); }
+table Setting { key:string (required); value_json:string (required, trace_secret); }
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
 table Settings { revision:ulong; values:[Setting]; }
@@ -41,9 +42,9 @@ table ProviderStatusRequest { profile:string (required); id:string (required); k
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; code:string; }
+table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; storage:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
-table SignInBegin { attempt_id:string (required); url:string (required); }
+table SignInBegin { attempt_id:string (required); url:string (required, trace_secret); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
 table SignInStatusRequest { profile:string (required); attempt_id:string; }
 table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
@@ -67,7 +68,7 @@ table EnvironmentState {
   phase:EnvironmentPhase;
   failure_code:EnvironmentFailureCode;
   endpoint:string;
-  token:string;
+  token:string (trace_secret);
   project_id:string;
   unix_socket:string;
   pid:long;
@@ -95,9 +96,9 @@ table HostActivityRequest {}
 table HostActivity { busy:bool; }
 table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
 enum TerminalAction:ubyte { Open, Input, Resize, Close }
-table HostTerminalRequest { project:string; action:TerminalAction; session:ulong; rows:uint = 24; cols:uint = 80; data:[ubyte]; }
+table HostTerminalRequest { project:string; action:TerminalAction; session:ulong; rows:uint = 24; cols:uint = 80; data:[ubyte] (trace_secret); }
 table HostTerminal { session:ulong; }
-table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
+table HostTerminalData { session:ulong; data:[ubyte] (trace_secret); closed:bool; }
 table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
   virtualization_supported:bool; image_available:bool; image_version:string;
   stage:string; message:string; console:[string];
@@ -117,7 +118,7 @@ table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
 table Event { value:EventPayload; }
-table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
+table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
 // and register every resource. On failure restore the previous folder set.
 // The client reconnects its own project session after this reply.
@@ -505,7 +506,8 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest,
+  HostTraceRequest:Tsugumi.Trace.HostTraceRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -517,7 +519,8 @@ union ReplyPayload {
   LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
-  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity
+  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
+  HostTrace:Tsugumi.Trace.HostTrace,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

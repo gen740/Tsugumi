@@ -17,6 +17,7 @@
 #include "scheduler.hh"
 #include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/document/input_types.hh"
+#include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/runtime_support/cache_usage.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -669,6 +670,10 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 }
 
 void Service::disconnected(ConnId conn) {
+  if (trace_owner_ == conn) {
+    trace::SetMode(trace::Mode::Off);
+    trace_owner_.reset();
+  }
   {
     std::lock_guard lock(cancellations_mu_);
     for (const auto& [key, cancelled] : shell_cancellations_)
@@ -718,7 +723,39 @@ void Service::dispatch(RequestIn req) {
   using P = R::RequestPayload;
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
-  switch (project_request(req)->value_type()) {
+  const auto* request = project_request(req);
+  switch (request->value_type()) {
+    case P::CoreTraceRequest: {
+      namespace T = Tsugumi::Trace;
+      const auto* debug = request->value_as_CoreTraceRequest();
+      if (req.websocket) {
+        const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
+        const auto capability = path ? fs::read_file(path) : std::nullopt;
+        if (!capability || capability->empty() || !debug->capability() ||
+            !crypto::equal_secret(debug->capability()->string_view(), *capability))
+          return fail(req, FailureData::make(FailureKind::permission_denied,
+                                            "RPC capture requires local host access"));
+      }
+      if (trace_owner_ && trace_owner_ != req.conn)
+        return fail(req, FailureData::make(FailureKind::busy,
+                                          "Another host connection owns RPC tracing"));
+      T::SnapshotT snapshot;
+      if (auto mode = debug->mode()) {
+        if (*mode > static_cast<uint8_t>(T::Mode::MAX))
+          return fail(req, FailureData::make(FailureKind::invalid_request,
+                                            "Unknown RPC trace mode"));
+        trace_owner_ = req.conn;
+        trace::SetMode(static_cast<trace::Mode>(*mode));
+        snapshot.mode = static_cast<T::Mode>(*mode);
+      } else {
+        snapshot = trace::ToWire(trace::Read());
+      }
+      FBB b;
+      auto value = T::Snapshot::Pack(b, &snapshot);
+      reply(req, wire::reply(b, req.request_id,
+                             R::ReplyPayload::TraceSnapshot, value.Union()));
+      return;
+    }
     case P::ProjectActivityRequest: {
       // Observe outside the lanes so this query cannot count itself as work.
       flatbuffers::FlatBufferBuilder b;

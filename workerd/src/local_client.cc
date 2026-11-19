@@ -52,8 +52,9 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       ::close(pair[1]);
       fd_ = pair[0];
     }
-    send_local(fd_, message);
-    if (!receive_local(fd_, reply))
+    trace::Link link;
+    send_local(fd_, message, nullptr, &link);
+    if (!receive_local(fd_, reply, &link))
       throw std::runtime_error("local workerd exited");
     if (!reply.message->error.empty())
       throw Failed(reply.message->error_kind, reply.message->error);

@@ -2,12 +2,15 @@
 
 #include "tsugumi/protocol/agent_generated.h"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/trace_codec.hh"
 namespace tsugumi {
 namespace {
 template <class Read, class Verify, class Wrap>
 auto Endpoint(ServerOptions& options, const char* subprotocol, Read read,
               Verify verify, Wrap wrap) -> void {
   options.subprotocol = subprotocol;
+  options.trace_endpoint = "hostd";
+  options.trace_codec = &trace::kFlatBufferCodec;
   options.codec.inspect = [read, verify](std::string_view bytes,
                                          uint32_t) -> std::optional<FrameInfo> {
     flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(bytes.data()),
@@ -19,7 +22,9 @@ auto Endpoint(ServerOptions& options, const char* subprotocol, Read read,
     if (!r || !r->value() || !m->request_id() || r->value_type() == Tag::NONE ||
         r->value_type() > Tag::MAX)
       return std::nullopt;
-    return FrameInfo{m->request_id(), r->value_type() == Tag::HelloRequest};
+    const auto* hello = r->value_as_HelloRequest();
+    return FrameInfo{m->request_id(), hello != nullptr,
+                     hello ? trace::ClientName(hello->client()) : nullptr};
   };
   options.codec.completed = [read](std::string_view bytes) {
     return read(bytes.data())->request_id();

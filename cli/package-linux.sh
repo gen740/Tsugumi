@@ -18,7 +18,7 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
   client/CMakeLists.txt client/cmake client/include client/src sdk workerd \
-  protocol/CMakeLists.txt protocol/include 'protocol/*.fbs' \
+  protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
   nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix \
   third-party cli/third-party/node-linux \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \

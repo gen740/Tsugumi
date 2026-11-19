@@ -19,6 +19,7 @@
 #include "host/access.hh"
 #include "host/binary_caches.hh"
 #include "host/credentials.hh"
+#include "host/debug_trace.hh"
 #include "host/demo_references.hh"
 #include "host/document_edits.hh"
 #include "host/environment.hh"
@@ -96,6 +97,7 @@ struct Service::State {
         demo_references(options.demos_dir),
         guide(options.state_dir, options.demos_dir),
         requests(4),
+        trace_requests(1),
         tool_requests(4),
         wait_requests(4),
         terminal_requests(1),
@@ -356,6 +358,8 @@ struct Service::State {
   std::recursive_mutex& mutex = state_gate.mutex;
   bool stopping = false;
   Lane requests;
+  Lane trace_requests;
+  DebugTrace debug_trace;
   Lane tool_requests;
   Lane wait_requests;
   std::map<ConnId, std::stop_source> connection_stops;
@@ -366,6 +370,45 @@ struct Service::State {
   Lane terminal_closes;
   Lane environment_stops;
 
+  auto TraceTargets() -> DebugTrace::Targets {
+    DebugTrace::Targets targets;
+    auto query = db.prepare(
+        "SELECT p.id,p.endpoint,p.token,e.key FROM projects p "
+        "LEFT JOIN environment_projects e ON e.project=p.id");
+    while (query.step()) {
+      auto endpoint = query.text(1);
+      std::string capability;
+      if (!endpoint.starts_with("unix:")) {
+        // Only the managed guest route may carry a capture snapshot over
+        // WebSocket. Its broker capability is absent from the project RPC
+        // credentials given to browser clients.
+        const auto key = query.text(3);
+        if (options.vm.binary.empty() || key.empty()) continue;
+        capability = fs::read_file(options.environment.directory / key /
+                                  "control/execution-broker-capability")
+                         .value_or("");
+        if (capability.empty()) continue;
+      }
+      targets.emplace(query.text(0),
+                      DebugTrace::Target{std::move(endpoint), query.text(2),
+                                         std::move(capability)});
+    }
+    return targets;
+  }
+
+  auto TraceProjectsChanged() -> void {
+    if (trace::CurrentMode() == trace::Mode::Off) return;
+    trace_requests.submit([this] {
+      DebugTrace::Targets targets;
+      {
+        std::lock_guard lock(mutex);
+        if (stopping || trace::CurrentMode() == trace::Mode::Off) return;
+        targets = TraceTargets();
+      }
+      debug_trace.Reconcile(std::move(targets));
+    });
+  }
+
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
     if (state.phase == H::EnvironmentPhase::Ready) {
@@ -374,6 +417,7 @@ struct Service::State {
                state.phase == H::EnvironmentPhase::Failed) {
       registry.UnregisterEnvironment(state.key);
     }
+    TraceProjectsChanged();
     events->Publish(wire::HostEvent(state));
     if (state.phase == H::EnvironmentPhase::Stopped ||
         state.phase == H::EnvironmentPhase::Failed) {
@@ -523,6 +567,16 @@ struct Service::State {
     const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
+    if (const auto* debug = r->value_as_HostTraceRequest()) {
+      if (request.websocket)
+        throw Failure("permission_denied", "RPC capture requires local host access");
+      lock.unlock();
+      auto result = debug_trace.Handle(*debug, [this] {
+        std::lock_guard lock(mutex);
+        return TraceTargets();
+      });
+      return wire::HostReply(request.request_id, std::move(result));
+    }
     if (r->value_as_HostActivityRequest()) {
       H::HostActivityT activity;
       activity.busy = !turns->running.empty() || requests.pending() > 1 ||
@@ -758,6 +812,7 @@ struct Service::State {
       case H::RequestPayload::RegisterProjectRequest: {
         Human(human);
         registry.RegisterProject(*r->value_as_RegisterProjectRequest());
+        TraceProjectsChanged();
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
       case H::RequestPayload::RegisterFolderRequest: {
@@ -801,6 +856,8 @@ auto Service::Shutdown() -> void {
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
+  state_->trace_requests.stop();
+  trace::SetMode(trace::Mode::Off);
   state_->tool_requests.stop();
   state_->wait_requests.stop();
   state_->terminal_requests.stop();
@@ -922,7 +979,9 @@ auto Service::dispatch(RequestIn request) -> void {
   const auto* environment =
       host_request ? host_request->value_as_EnvironmentRequest() : nullptr;
   auto& lane =
-      environment && environment->action() == H::EnvironmentAction::Stop
+      host_request && host_request->value_as_HostTraceRequest()
+          ? state_->trace_requests
+      : environment && environment->action() == H::EnvironmentAction::Stop
           ? state_->environment_stops
       : terminal && terminal->action() == H::TerminalAction::Close
           ? state_->terminal_closes
