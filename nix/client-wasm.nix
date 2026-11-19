@@ -23,16 +23,7 @@ stdenvNoCC.mkDerivation {
       ../cmake
       ../client/cmake
       ../client/src/wasm_bindings.cc
-      ../protocol/service_common.fbs
-      ../protocol/host.fbs
-      ../protocol/vm_host.fbs
-      ../protocol/agent.fbs
-      ../protocol/tsugumi.fbs
-      ../protocol/tsugumi_enums.fbs
-      ../protocol/data.fbs
-      ../protocol/worker.fbs
-      ../protocol/local_worker.fbs
-      ../protocol/remote_worker.fbs
+      (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ../ui/web/scripts/build-client.sh
     ];
   };

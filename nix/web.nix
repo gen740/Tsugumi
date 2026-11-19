@@ -41,15 +41,7 @@ buildNpmPackage {
       ../hostd/agent/Shared/demo-skill.md
       ../ui/shared/modules
       ../ui/shared/templates
-      ../protocol/remote_worker.fbs
-      ../protocol/local_worker.fbs
-      ../protocol/service_common.fbs
-      ../protocol/host.fbs
-      ../protocol/vm_host.fbs
-      ../protocol/agent.fbs
-      ../protocol/tsugumi.fbs
-      ../protocol/tsugumi_enums.fbs
-      ../protocol/data.fbs
+      (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ../demos
       ../flake.lock
       ../VERSION

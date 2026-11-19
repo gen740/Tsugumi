@@ -4,23 +4,38 @@
 # tsugumi-vmhost, the shared
 # release-built guest archive (the same payload as the app).
 #
-#   cli/package-macos.sh
+#   cli/package-macos.sh [--release]
 #
 # tsugumi-vmhost is signed ad-hoc with the virtualization entitlement, unless
-# TSUGUMI_CODESIGN_IDENTITY names a certificate.
+# TSUGUMI_CODESIGN_IDENTITY names a certificate (ignored with --release).
 set -euo pipefail
 # Runtime files carry no Finder resource forks or AppleDouble sidecars.
 export COPYFILE_DISABLE=1
+release=0
+for arg in "$@"; do
+  case "$arg" in
+    --release) release=1 ;;
+    *) echo "usage: $0 [--release]" >&2; exit 2 ;;
+  esac
+done
+sign_identity="${TSUGUMI_CODESIGN_IDENTITY:--}"
+if [ "$release" -eq 1 ]; then
+  sign_identity="-"
+fi
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$repo/dist"
 tree="$dist/cli/tsugumi"
 source "$repo/cli/node-version.env"
 
 vm="$dist/tsugumi-vm"
-(cd "$repo" && nix run .#guest-image)
+if [ "$release" -eq 1 ]; then
+  (cd "$repo" && nix run .#guest-image -- --release)
+else
+  (cd "$repo" && nix run .#guest-image)
+fi
 
-# The Web UI, built from the pinned packages.
-nix develop "$repo" -c bash -c "cd '$repo/ui/web' && npm ci --ignore-scripts && npm run gen && npm run build"
+# The Web UI, built reproducibly from the pinned Nix package.
+web_out="$(cd "$repo" && nix build --no-link --print-out-paths '.#web^out')"
 
 "$repo/hostd/tools/build-macos.sh"
 
@@ -51,17 +66,18 @@ cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 
 for library in "$tree/Frameworks/"*.dylib; do
   /usr/bin/strip -S "$library"
-  codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$library"
+  codesign --force --sign "$sign_identity" "$library"
 done
 for binary in "$tree/bin/"*; do
   /usr/bin/strip -S "$binary"
 done
-codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/node"
-codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-hostd"
-codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
+codesign --force --sign "$sign_identity" "$tree/bin/node"
+codesign --force --sign "$sign_identity" "$tree/bin/tsugumi-hostd"
+codesign --force --sign "$sign_identity" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
 # The server finds these from ui/web/dist/server.js, as in the repository.
-cp -R "$repo/ui/web/dist" "$tree/ui/web/dist"
+cp -R "$web_out/share/tsugumi/ui/web/dist" "$tree/ui/web/dist"
+chmod -R u+w "$tree/ui/web/dist"
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 
