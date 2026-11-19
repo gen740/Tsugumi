@@ -169,11 +169,12 @@ struct LogWindow {
       defer { pieces.removeAll(keepingCapacity: true) }
       guard let first = pieces.first, let last = pieces.last,
             form == .terminal || (first.starts && last.ends) else { return }
-      // A single very long plain line may span the entire window. Keep
-      // page-relative anchors for its visible pieces so it can still be
-      // browsed in both directions. A redraw needs the whole resident line.
-      if form == .terminal, pieces.reduce(0, { $0 + $1.text.utf8.count }) >= 64 * 1024,
-         !pieces.contains(where: { $0.text.utf8.contains(13) }) {
+      let long = pieces.reduce(0, { $0 + $1.text.utf8.count }) >= 64 * 1024
+      // Keep an incomplete leading line until a prepend reaches its start.
+      // Long lines can outgrow the window, so give their plain fragments
+      // page-relative anchors. A redraw uses the whole resident line.
+      guard first.starts || long else { return }
+      if form == .terminal, long, !pieces.contains(where: { $0.text.utf8.contains(13) }) {
         for piece in pieces where !piece.text.isEmpty {
           next.append(LogBlock(line: piece.line, text: "\(piece.line)\t\(piece.text)\n", fragmentOffset: piece.offset))
         }

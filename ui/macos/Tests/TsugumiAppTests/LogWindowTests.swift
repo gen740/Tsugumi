@@ -16,7 +16,8 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
   window.apply(try #require(window.request(.tail)), tail)
   window.follow(false)
   let old = window.blocks
-  let oldOffset = try #require(old.first).length + 2  // The first letter of "next".
+  #expect(old.map(\.line) == [3])
+  let oldOffset = 2  // The first letter of "next".
   window.apply(try #require(window.request(.earlier)), previous)
   let edit = LogBlockEdit(from: old, to: window.blocks)
   let displayed = window.blocks.map(\.text).joined()
