@@ -85,7 +85,7 @@ TEST(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
       root / "invocation",
       stop,
       [] { return false; },
-      stop,
+      {},
       [&](auto stream, const auto& text) { logs.emplace_back(stream, text); },
       [](const auto&) {},
       [](auto, auto) {},

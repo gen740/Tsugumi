@@ -130,7 +130,7 @@ class Service : public RequestSink {
   auto prepare_early_build(const Node& node, BuildRequest& build) -> bool;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
-  auto remote_targets() const -> std::vector<RemoteTarget>;
+  auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
   static auto execution_diagnostic(const Node& node,
                                    const std::vector<RemoteTarget>& targets)
       -> std::optional<Diag>;

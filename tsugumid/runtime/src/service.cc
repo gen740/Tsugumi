@@ -375,12 +375,18 @@ class SelectedExecution final : public PreparedExecution {
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
-  auto targets = remote_targets();
+  auto targets = remote_targets(build.cancel);
+  std::stop_callback wake(build.cancel, [&] {
+    std::lock_guard lock(worker_selection_mutex_);
+    worker_selection_cv_.notify_all();
+  });
   const auto card = path_key(node.path);
   std::unique_lock lock(worker_selection_mutex_);
   if (!node.settings.reuse_worker) resident_targets_.erase(card);
   std::string selected;
   for (;;) {
+    if (build.cancel.stop_requested())
+      throw Failed(FailureKind::cancelled, "worker selection cancelled");
     std::vector<WorkerCandidate> candidates;
     for (const auto& target : targets) {
       const auto capacity =
@@ -406,7 +412,7 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
         lock.unlock();
         RemoteProbe live;
         try {
-          live = remote_jobs_.probe(target.id, target.server_id);
+          live = remote_jobs_.probe(target.id, target.server_id, build.cancel);
         } catch (...) {
           lock.lock();
           throw;
@@ -426,7 +432,7 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
     lock.unlock();
-    targets = remote_targets();
+    targets = remote_targets(build.cancel);
     lock.lock();
   }
   ++worker_slots_[selected];
@@ -454,7 +460,8 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
 
 auto Service::prepare_early_build(const Node& node, BuildRequest& build)
     -> bool {
-  const auto targets = remote_targets();
+  const auto targets = remote_targets(build.cancel);
+  if (build.cancel.stop_requested()) return false;
   std::vector<WorkerCandidate> candidates;
   for (const auto& target : targets)
     candidates.push_back({target.id, target.grade, target.available});
@@ -482,9 +489,9 @@ auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
 }
 
-auto Service::remote_targets() const -> std::vector<RemoteTarget> {
+auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {
   try {
-    auto targets = remote_jobs_.catalog();
+    auto targets = remote_jobs_.catalog(stop);
     auto local =
         std::ranges::find(targets, kLocalExecutionService, &RemoteTarget::id);
     if (local == targets.end()) {

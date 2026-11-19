@@ -247,7 +247,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Once finalize() has taken the final status it is on its way to the
     // history: a "cancelling" written now would land after it and stay as the
     // run's state.
-    if (interrupted) detaching_.store(true);
+    if (interrupted) detaching_.request_stop();
     if (!interrupted && !finishing_) explicit_cancel_.store(true);
     if (!cancel_ && !finishing_) {
       cancel_ = true;
@@ -1219,7 +1219,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           failure = produced.failure.value_or(
               FailureData::make(FailureKind::interrupted, "batch interrupted"));
           work.cancellation->failed.store(!produced.detached &&
-                                          !detaching_.load());
+                                          !detaching_.stop_requested());
           work.cancellation->request_stop();
         }
         if (failure) produced.outputs.clear();
@@ -1522,7 +1522,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         History& h = svc_.history();
         std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
         const bool failed_batch =
-            out.failure && w.execution && !detaching_.load();
+            out.failure && w.execution && !detaching_.stop_requested();
         if (failed_batch) {
           w.cancellation->failed.store(true);
           w.cancellation->request_stop();
@@ -2012,7 +2012,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&] {
            return explicit_cancel_.load() || w.cancellation->failed.load();
          },
-         detaching_,
+         detaching_.get_token(),
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
@@ -2067,7 +2067,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            stage_begin(s, Phase::validate, StageOutcome::running, begin);
            svc_.server()->broadcast(timeline_note(
                run_id_, node.path, inv, Phase::validate, lane, begin, end));
-         }});
+         },
+         w.cancellation->stop_event.get_token()});
     s.transfer_direction.clear();
     s.transfer_name.clear();
     Produced p;
@@ -2272,7 +2273,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::vector<std::thread> early_threads_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> explicit_cancel_{false};
-  std::atomic<bool> detaching_{false};
+  std::stop_source detaching_;
   bool finishing_ =
       false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;

@@ -31,7 +31,7 @@ from Tsugumi.Worker.WorkerResult import WorkerResultT
 from tsugumi_client import RpcFailure, make, path, text
 
 
-class Gateway(socketserver.UnixStreamServer):
+class Gateway(socketserver.ThreadingUnixStreamServer):
     """Double of hostd's local broker, not its TLS worker connection.
 
     Keep partial/lost replies at the core-facing boundary so these tests still
@@ -65,6 +65,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.results = {}
         self.stall = None
         self.skip_stall = 0
+        self.hold_cancel = False
         self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
         self.resume = threading.Event()
@@ -186,12 +187,17 @@ class Handler(socketserver.StreamRequestHandler):
             q = R.read_broker_request(self.rfile)
         except EOFError:
             return
+        if self.server.hold_cancel and q.bodyType == R.RequestBody.CancelRequest:
+            self.server.resume.wait()
+            return
         mode = self.server.stall
         if mode and q.bodyType == self.server.stall_operation and self.server.skip_stall:
             self.server.skip_stall -= 1
             mode = None
         if mode and q.bodyType == self.server.stall_operation:
             try:
+                if q.bodyType == R.RequestBody.SubmitRequest:
+                    self.server.operation(q)
                 if mode == "trickle":
                     self.wfile.write(struct.pack("<I", 8192) + b"\x00")
                 self.server.stalled.set()
@@ -258,9 +264,9 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
             timeout=5,
         )
         assert client.wait_reply(stop).state == RunState.cancelling
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
     finally:
         remote_gateway.resume.set()
-    assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
     assert remote_gateway.submit_count == 0
 
 
@@ -431,6 +437,30 @@ def test_network_cut_within_same_core_life_resumes(running_job):
     assert gateway.core_ids == original
 
 
+@pytest.mark.parametrize("operation", [R.RequestBody.StatusRequest, R.RequestBody.SubmitRequest],
+                         ids=["pending-status", "pending-submit"])
+def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gateway, core_factory, tmp_path, operation):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    if operation == R.RequestBody.StatusRequest:
+        run_id = start_run(client, "work", propagate=False)
+        wait_for_state(client, run_id, RemoteExecutionState.running)
+    remote_gateway.stall_operation = operation
+    remote_gateway.stall = "blackhole"
+    try:
+        if operation == R.RequestBody.SubmitRequest:
+            run_id = start_run(client, "work", propagate=False)
+        assert remote_gateway.stalled.wait(10), "remote job never reached the gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert remote_gateway.cancel_received.wait(5), "Cancel waited behind the gated reply"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        assert len(remote_gateway.cancelled) == 1
+        assert remote_gateway.submit_count == 1
+    finally:
+        remote_gateway.resume.set()
+
+
 @pytest.mark.parametrize("mode,operation,request_cancel", [
     ("blackhole", R.RequestBody.CancelRequest, True),
     ("trickle", R.RequestBody.StatusRequest, True),
@@ -440,6 +470,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     """SIGTERM stops waiting; the next core interrupts rather than importing."""
     gateway, daemon, client, run_id, job_id = running_job
     gateway.stall_operation = operation
+    gateway.hold_cancel = request_cancel and operation == R.RequestBody.StatusRequest
     gateway.stall = mode
     if request_cancel and operation == R.RequestBody.CancelRequest:
         client.call("RunCancelRequest", runId=run_id)
@@ -452,6 +483,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.receipts[job_id]["state"] == "running"
 
     gateway.stall = None
+    gateway.hold_cancel = False
     gateway.resume.set()
     daemon.restart()
     client = daemon.connect()
