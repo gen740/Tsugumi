@@ -385,11 +385,11 @@ auto ScopedSkillTask(std::string_view text, const std::string& name,
   return task;
 }
 
-auto SelectScopedSkill(
-    const H::SkillsListT& catalog, const std::vector<std::string>& names,
-    const std::string& explicit_name, const std::vector<std::string>& cards,
-    const std::string& instruction,
-    std::function<std::string(const H::SkillT&)> read_skill)
+auto SelectScopedSkill(const H::SkillsListT& catalog,
+                       const std::vector<std::string>& names,
+                       const std::string& explicit_name,
+                       const std::vector<std::string>& cards,
+                       const std::string& instruction)
     -> std::optional<::tsugumi::json::Members> {
   std::set<std::string> selected;
   for (const auto& name : names) selected.insert(SkillNameKey(name));
@@ -404,11 +404,9 @@ auto SelectScopedSkill(
     throw std::runtime_error(
         "Select exactly one unambiguous Skill with a valid scope declaration");
   const auto& skill = *matches.front();
-  const auto bytes = read_skill
-                         ? read_skill(skill)
-                         : (skill.path.starts_with("builtin:")
-                                ? BundledSkill(skill.path)
-                                : ReadSkill(skill.source_folder, skill.path));
+  const auto bytes = skill.path.starts_with("builtin:")
+                         ? BundledSkill(skill.path)
+                         : ReadSkill(skill.source_folder, skill.path);
   auto task = ScopedSkillTask(bytes, skill.name, cards, instruction);
   task["skill_path"] = ::tsugumi::json::Quote(skill.path);
   return task;

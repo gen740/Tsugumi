@@ -179,21 +179,7 @@ auto Access::Require(const std::string& project,
                      const std::string& authorization) -> void {
   std::unique_lock lock(mutex);
   if (!authorization.empty()) {
-    const bool helper_access =
-        access == Tsugumi::Service::Access::Read ||
-        access == Tsugumi::Service::Access::Write ||
-        access == Tsugumi::Service::Access::Run;
-    if (!helper_access || !authorization.starts_with("helper-scope:"))
-      throw Failure("permission_denied",
-                    "The helper scope approval is no longer valid");
-    auto approval = db.prepare(
-        "SELECT 1 FROM access_requests WHERE id=? AND project=? AND "
-        "conversation=? AND access=? AND state='allowed'");
-    approval.bind(1, authorization.substr(13))
-        .bind(2, project)
-        .bind(3, conversation)
-        .bind(4, static_cast<int>(Tsugumi::Service::Access::HelperScope));
-    if (!approval.step())
+    if (!HasGrant(authorization, conversation, Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "The helper scope approval is no longer valid");
     return;

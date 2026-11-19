@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -21,11 +20,11 @@ auto ScopedSkillTask(std::string_view text, const std::string& name,
                      const std::vector<std::string>& cards,
                      const std::string& instruction)
     -> ::tsugumi::json::Members;
-auto SelectScopedSkill(
-    const Tsugumi::Host::SkillsListT& catalog,
-    const std::vector<std::string>& names, const std::string& explicit_name,
-    const std::vector<std::string>& cards, const std::string& instruction,
-    std::function<std::string(const Tsugumi::Host::SkillT&)> read_skill = {})
+auto SelectScopedSkill(const Tsugumi::Host::SkillsListT& catalog,
+                       const std::vector<std::string>& names,
+                       const std::string& explicit_name,
+                       const std::vector<std::string>& cards,
+                       const std::string& instruction)
     -> std::optional<::tsugumi::json::Members>;
 auto BundledSkill(const std::string& path) -> std::string;
 auto ReadSkill(const std::filesystem::path& root,

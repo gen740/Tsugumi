@@ -587,17 +587,14 @@ struct Service::State {
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       if (environment->action() == H::EnvironmentAction::RemoveFolders &&
           environment->folders()) {
-        std::error_code ec;
-        const auto raw_project = environment->project()->str();
-        const auto canonical_project =
-            std::filesystem::weakly_canonical(raw_project, ec);
-        const auto project_path =
-            ec ? raw_project : canonical_project.string();
         for (const auto* folder : *environment->folders()) {
           auto resource = db.prepare(
               "SELECT f.id FROM folders f JOIN project_paths p ON "
               "p.id=f.project WHERE p.path=? AND f.path=?");
-          resource.bind(1, project_path).bind(2, folder->str());
+          resource
+              .bind(1, std::filesystem::canonical(environment->project()->str())
+                           .string())
+              .bind(2, folder->str());
           if (resource.step())
             access->Revoke(resource.text(0), S::Access::Read);
         }
@@ -634,8 +631,6 @@ struct Service::State {
         throw Failure("permission_denied",
                       "This terminal belongs to another connection");
       lock.unlock();
-      if (!environments)
-        throw Failure("unavailable", "Environment service is not running");
       auto result = environments->Terminal(*input);
       lock.lock();
       if (input->action == H::TerminalAction::Open)
@@ -857,13 +852,9 @@ auto Service::dispatch(RequestIn request) -> void {
   bool tool = false, waiting = false;
   if (!host) {
     std::lock_guard lock(state_->mutex);
-    auto principal = state_->events->principals.find(request.conn);
-    auto stop_it = state_->connection_stops.find(request.conn);
-    if (principal == state_->events->principals.end() ||
-        stop_it == state_->connection_stops.end())
-      return;
-    human = principal->second;
-    request.connection_stop = stop_it->second.get_token();
+    human = state_->events->principals.at(request.conn);
+    request.connection_stop =
+        state_->connection_stops.at(request.conn).get_token();
     const auto* payload =
         A::GetMessage(request.frame->data())->payload_as_Request();
     if (payload->value_type() == A::RequestPayload::ToolCallCancelRequest) {
