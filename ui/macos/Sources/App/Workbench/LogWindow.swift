@@ -6,17 +6,81 @@ enum LogForm: Hashable, Sendable {
   case journal
 }
 
-struct LogBlock: Equatable, Sendable {
+struct LogRowID: Hashable, Comparable, Sendable {
   let line: UInt64
-  let fragmentOffset: UInt64?
+  var fragment: UInt64? = nil
+
+  static func < (lhs: Self, rhs: Self) -> Bool {
+    (lhs.line, lhs.fragment == nil ? 0 : 1, lhs.fragment ?? 0) <
+      (rhs.line, rhs.fragment == nil ? 0 : 1, rhs.fragment ?? 0)
+  }
+}
+
+struct LogBlock: Equatable, Sendable {
+  struct Row: Equatable, Sendable {
+    let id: LogRowID
+    let offset: Int
+  }
+
+  var line: UInt64 { rows[0].id.line }
+  var fragmentOffset: UInt64? { rows[0].id.fragment }
   let text: String
   let length: Int
+  let rows: [Row]
 
-  init(line: UInt64, text: String, fragmentOffset: UInt64? = nil) {
-    self.line = line
-    self.fragmentOffset = fragmentOffset
+  init(text: String, rows: [Row]) {
     self.text = text
     self.length = text.utf16.count
+    self.rows = rows
+  }
+
+  init(line: UInt64, text: String, fragmentOffset: UInt64? = nil) {
+    self.init(text: text, rows: [Row(id: LogRowID(line: line, fragment: fragmentOffset), offset: 0)])
+  }
+
+  func range(of row: Int) -> NSRange {
+    let start = rows[row].offset
+    let end = row + 1 == rows.count ? length : rows[row + 1].offset
+    return NSRange(location: start, length: end - start)
+  }
+}
+
+/// The physical line and its position survive a rebuilt page, even when a
+/// CR changes the text or the viewport starts inside a wrapped visual line.
+struct LogAnchor {
+  let row: LogRowID
+  let column: Int
+
+  static func at(_ character: Int, in blocks: [LogBlock]) -> Self? {
+    var offset = character
+    for block in blocks {
+      if offset < block.length {
+        var low = 0, high = block.rows.count
+        while low + 1 < high {
+          let middle = (low + high) / 2
+          if block.rows[middle].offset <= offset { low = middle }
+          else { high = middle }
+        }
+        let row = block.rows[low]
+        return Self(row: row.id, column: offset - row.offset)
+      }
+      offset -= block.length
+    }
+    return nil
+  }
+
+  func character(in blocks: [LogBlock]) -> Int? {
+    var offset = 0
+    for block in blocks {
+      if block.rows.last!.id >= row,
+         let index = block.rows.firstIndex(where: { $0.id >= row }) {
+        let range = block.range(of: index)
+        let inset = block.rows[index].id == row ? min(column, range.length - 1) : 0
+        return offset + range.location + inset
+      }
+      offset += block.length
+    }
+    return offset > 0 ? offset - 1 : nil
   }
 }
 
@@ -35,24 +99,29 @@ struct LogPage: Sendable {
   let truncatedAt: UInt64?
   let line: UInt64
   let startsLine: Bool
-  let raw: String
+  let rawSize: UInt64
+  let reset: Bool
+  let text: String
   let head: Fragment?
   let body: LogBlock?
   let tail: Fragment?
 
   init(offset: UInt64, end: UInt64, size: UInt64, truncatedAt: UInt64? = nil,
-       line: UInt64, startsLine: Bool, raw: String, form: LogForm) {
+       line: UInt64, startsLine: Bool, text: String, form: LogForm,
+       rawSize: UInt64? = nil, reset: Bool = false) {
     self.offset = offset
     self.end = end
     self.size = size
     self.truncatedAt = truncatedAt
     self.line = line
     self.startsLine = startsLine
-    self.raw = raw
+    self.rawSize = rawSize ?? size
+    self.reset = reset
+    self.text = text
 
     // Work in UTF-8. Swift treats CRLF as one Character, but LF alone
     // is the line delimiter in the stored stream.
-    var bytes = raw.utf8[...]
+    var bytes = text.utf8[...]
     var number = line
     if !startsLine, !bytes.isEmpty {
       let lf = bytes.firstIndex(of: 10)
@@ -63,20 +132,24 @@ struct LogPage: Sendable {
     } else {
       head = nil
     }
-    var first: UInt64?
-    var text = ""
+    var rows: [LogBlock.Row] = []
+    var bodyText = ""
+    var position = 0
     while let lf = bytes.firstIndex(of: 10) {
       let rawLine = String(decoding: bytes.prefix(upTo: lf), as: UTF8.self)
       if let rendered = Self.render(rawLine, number: number, form: form) {
-        if first == nil { first = number }
-        text += rendered
-        text += "\n"
+        rows.append(.init(id: LogRowID(line: number), offset: position))
+        bodyText += rendered + "\n"
+        position += rendered.utf16.count + 1
       }
       bytes = bytes.suffix(from: bytes.index(after: lf))
       number += 1
     }
-    body = first.map { LogBlock(line: $0, text: text) }
-    tail = bytes.isEmpty ? nil : Fragment(line: number, offset: end - UInt64(bytes.count),
+    body = rows.isEmpty ? nil : LogBlock(text: bodyText, rows: rows)
+    let tailLength = form == .terminal
+      ? bytes.reduce(into: 0) { $0 += $1 & 0xC0 == 0x80 ? 0 : 4 }
+      : bytes.count
+    tail = bytes.isEmpty ? nil : Fragment(line: number, offset: end - UInt64(tailLength),
                                           text: String(decoding: bytes, as: UTF8.self), starts: true, ends: false)
   }
 
@@ -84,7 +157,7 @@ struct LogPage: Sendable {
     let text: String
     switch form {
     case .terminal:
-      text = terminalText(raw)
+      text = raw
     case .journal:
       guard let record = try? JSONValue.parse(raw), let phase = record["phase"]?.string,
             phase == "validate" || phase == "save" else { return nil }
@@ -100,6 +173,7 @@ struct LogWindow {
     let kind: Kind
     let offset: UInt64
     let limit: UInt32
+    var since: UInt64? = nil
   }
 
   static let readBytes: UInt32 = 1 << 20
@@ -113,14 +187,18 @@ struct LogWindow {
   private var seenEnd: UInt64 = 0
   var loaded = false
   var size: UInt64 = 0
+  var rawSize: UInt64 = 0
+  private var displayedRawSize: UInt64 = 0
+  var visible: ClosedRange<LogRowID>?
   var truncatedAt: UInt64?
 
   var start: UInt64 { pages.first?.offset ?? 0 }
   var end: UInt64 { pages.last?.end ?? 0 }
-  var waiting: Bool { !following && size > seenEnd }
+  var hasUnread: Bool { rawSize > displayedRawSize }
+  var waiting: Bool { !following && rawSize > seenEnd }
 
   mutating func follow(_ value: Bool) {
-    if following && !value { seenEnd = end }
+    if following && !value { seenEnd = displayedRawSize }
     following = value
   }
 
@@ -131,7 +209,8 @@ struct LogWindow {
     case .later: return end >= size ? nil : Read(kind: .later, offset: end, limit: Self.historyBytes)
     case .append:
       if size > end && size - end > Self.readBytes { return request(.tail) }
-      return Read(kind: .append, offset: end, limit: Self.readBytes)
+      return Read(kind: .append, offset: end, limit: Self.readBytes,
+                  since: form == .terminal ? displayedRawSize : nil)
     case .status:
       if !loaded { return request(.tail) }
       return following ? request(.append) : Read(kind: .status, offset: end, limit: 4)
@@ -140,10 +219,13 @@ struct LogWindow {
 
   mutating func apply(_ read: Read, _ page: LogPage, metadataOnly: Bool = false) {
     loaded = true
-    size = max(size, page.size)
+    size = page.size
+    rawSize = max(rawSize, page.rawSize)
     truncatedAt = page.truncatedAt ?? truncatedAt
     if metadataOnly || read.kind == .status { return }
-    if read.kind == .tail { pages.removeAll() }
+    if read.kind == .tail || read.kind == .append { displayedRawSize = page.rawSize }
+    let reset = read.kind == .tail || page.reset
+    if reset { pages.removeAll() }
     if page.end > page.offset {
       if read.kind == .earlier {
         pages.insert(page, at: 0)
@@ -151,7 +233,7 @@ struct LogWindow {
         // Amortize many small live writes with at most 16 KiB of reparsing.
         pages[pages.count - 1] = LogPage(offset: last.offset, end: page.end, size: size,
                                         line: last.line, startsLine: last.startsLine,
-                                        raw: last.raw + page.raw, form: form)
+                                        text: last.text + page.text, form: form)
       } else {
         pages.append(page)
       }
@@ -159,10 +241,10 @@ struct LogWindow {
         if read.kind == .earlier { pages.removeLast() } else { pages.removeFirst() }
       }
     }
-    assemble()
+    assemble(keeping: reset ? nil : visible)
   }
 
-  private mutating func assemble() {
+  private mutating func assemble(keeping visible: ClosedRange<LogRowID>?) {
     var pieces: [LogPage.Fragment] = []
     var next: [LogBlock] = []
     func finish() {
@@ -171,10 +253,10 @@ struct LogWindow {
             form == .terminal || (first.starts && last.ends) else { return }
       let long = pieces.reduce(0, { $0 + $1.text.utf8.count }) >= 64 * 1024
       // Keep an incomplete leading line until a prepend reaches its start.
-      // Long lines can outgrow the window, so give their plain fragments
-      // page-relative anchors. A redraw uses the whole resident line.
+      // Core resolves redraws before sending terminal cells. Long lines
+      // can outgrow the window and retain their page-relative fragments.
       guard first.starts || long else { return }
-      if form == .terminal, long, !pieces.contains(where: { $0.text.utf8.contains(13) }) {
+      if form == .terminal, long {
         for piece in pieces where !piece.text.isEmpty {
           next.append(LogBlock(line: piece.line, text: "\(piece.line)\t\(piece.text)\n", fragmentOffset: piece.offset))
         }
@@ -192,6 +274,19 @@ struct LogWindow {
       if let tail = page.tail { pieces.append(tail) }
     }
     finish()
+    if let visible {
+      func intersects(_ block: LogBlock) -> Bool {
+        block.rows[0].id <= visible.upperBound && block.rows.last!.id >= visible.lowerBound
+      }
+      let present = Set(next.filter(intersects).flatMap { $0.rows.lazy.map(\.id).filter(visible.contains) })
+      for block in blocks.filter(intersects) {
+        for (index, row) in block.rows.enumerated() where visible.contains(row.id) && !present.contains(row.id) {
+          let text = (block.text as NSString).substring(with: block.range(of: index))
+          next.append(LogBlock(line: row.id.line, text: text, fragmentOffset: row.id.fragment))
+        }
+      }
+      next.sort { $0.rows[0].id < $1.rows[0].id }
+    }
     blocks = next
   }
 }
@@ -231,7 +326,6 @@ struct LogBlockEdit {
   let newPrefix: Int
   let shared: Int
   let oldLength: Int
-  let newLength: Int
   let retained: Range<Int>
 
   init(from old: [LogBlock], to new: [LogBlock]) {
@@ -256,11 +350,6 @@ struct LogBlockEdit {
     newPrefix = inserted
     shared = length
     oldLength = old.reduce(0) { $0 + $1.length }
-    newLength = new.reduce(0) { $0 + $1.length }
   }
 
-  func character(_ previous: Int) -> Int {
-    // A change to an unfinished line can replace the anchor itself.
-    min(max(0, previous - oldPrefix + newPrefix), max(0, newLength - 1))
-  }
 }

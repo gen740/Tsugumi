@@ -18,11 +18,11 @@ import TsugumiRPC
   private(set) var truncatedAt: UInt64?
   private(set) var error: String?
 
-  @ObservationIgnored private(set) var window = LogWindow(form: .terminal)
+  @ObservationIgnored private(set) var window: LogWindow
   @ObservationIgnored private var source: Source?
   @ObservationIgnored private weak var session: ProjectSession?
   @ObservationIgnored private var unsubscribe: (() -> Void)?
-  private struct Completed {
+  struct Completed {
     let kind: LogWindow.Kind
     let read: LogWindow.Read
     let result: Result<LogPage, Error>
@@ -36,7 +36,9 @@ import TsugumiRPC
   @ObservationIgnored var onText: (() -> Void)?
   @ObservationIgnored var onFrameNeeded: (() -> Void)?
 
-  var size: UInt64 { window.size }
+  init(form: LogForm = .terminal) { window = LogWindow(form: form) }
+
+  var size: UInt64 { window.rawSize }
   var needsFrame: Bool { frames.needsFrame }
 
   func show(_ next: Source?, form: LogForm = .terminal, session: ProjectSession) {
@@ -84,8 +86,8 @@ import TsugumiRPC
             source.invocation == nil || notice.invocation == source.invocation,
             notice.endOffset == nil || notice.stream == source.stream else { return }
       if let end = notice.endOffset, notice.invocation == source.invocation {
-        guard end > window.size else { return }
-        window.size = end
+        guard end > window.rawSize else { return }
+        window.rawSize = end
         if !window.following {
           wake()
           return
@@ -109,9 +111,11 @@ import TsugumiRPC
   func follow(_ following: Bool) {
     guard window.following != following else { return }
     window.follow(following)
-    publish(draw: false)
-    if following && window.end < window.size { update() }
+    publish()
+    if following && (window.end < window.size || window.hasUnread) { update() }
   }
+
+  func keepVisible(_ rows: ClosedRange<LogRowID>?) { window.visible = rows }
 
   func page(_ kind: LogWindow.Kind) {
     guard demand != .tail, window.request(kind) != nil else { return }
@@ -121,6 +125,7 @@ import TsugumiRPC
 
   func jump() {
     window.follow(true)
+    publish()
     demand = .tail
     wake()
   }
@@ -144,13 +149,14 @@ import TsugumiRPC
         let before = read.kind == .earlier ? read.offset : nil
         let result = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
                                             stream: source.stream, offset: before == nil ? read.offset : 0,
-                                            tail: read.kind == .tail, limit: read.limit, before: before)
+                                            tail: read.kind == .tail, limit: read.limit, before: before,
+                                            terminal: form == .terminal, terminalSince: read.since)
         let raw = result.text, offset = result.offset ?? 0, end = result.nextOffset ?? offset
         let size = result.sizeBytes ?? end, line = result.lineNumber, startsLine = result.startsLine
-        let truncated = result.logTruncatedAtBytes
+        let truncated = result.logTruncatedAtBytes, rawSize = result.rawSizeBytes, reset = result.reset
         completed = await .success(Task.detached(priority: .userInitiated) {
           LogPage(offset: offset, end: end, size: size, truncatedAt: truncated, line: line,
-                  startsLine: startsLine, raw: raw, form: form)
+                  startsLine: startsLine, text: raw, form: form, rawSize: rawSize, reset: reset)
         }.value)
       } catch {
         completed = .failure(error)
@@ -161,7 +167,7 @@ import TsugumiRPC
     }
   }
 
-  private func apply(_ completed: Completed) {
+  func apply(_ completed: Completed) {
     switch completed.result {
     case .success(let slice):
       let read = completed.read, kind = completed.kind
@@ -171,7 +177,7 @@ import TsugumiRPC
       let previous = window.blocks
       window.apply(read, slice, metadataOnly: paused || superseded)
       if error != nil { error = nil }
-      if window.following && window.end < window.size { update() }
+      if window.following && (window.end < window.size || window.hasUnread) { update() }
       if !superseded, (kind == .earlier || kind == .later), demand == nil, window.blocks == previous { page(kind) }
     case .failure(let failure):
       if let rpc = failure as? RPCFailure, rpc.kind == .notFound, !window.loaded {
@@ -186,7 +192,7 @@ import TsugumiRPC
 
   private func publish(draw: Bool = true) {
     if loaded != window.loaded { loaded = window.loaded }
-    if hasBytes != (window.size > 0) { hasBytes = window.size > 0 }
+    if hasBytes != (window.rawSize > 0) { hasBytes = window.rawSize > 0 }
     if waiting != window.waiting { waiting = window.waiting }
     if truncatedAt != window.truncatedAt { truncatedAt = window.truncatedAt }
     if draw { onText?() }
@@ -294,7 +300,7 @@ final class LogScroll: NSScrollView {
   }
 }
 
-private struct LogScrollView: NSViewRepresentable {
+struct LogScrollView: NSViewRepresentable {
   let reader: LogStreamReader
   let placeholder: String
   let fontSize: CGFloat
@@ -308,12 +314,14 @@ private struct LogScrollView: NSViewRepresentable {
     private var shown: [LogBlock] = []
     private var shownPlaceholder: String?
     private var shownFont: NSFont?
+    private var following = false
     private var applying = false
     private var origin: CGFloat = 0
 
     func attach(_ next: LogStreamReader) {
       guard reader !== next else { return }
       reader?.detach()
+      following = false
       reader = next
       next.onText = { [weak self] in self?.apply() }
       next.onFrameNeeded = { [weak self] in self?.updateLink() }
@@ -340,13 +348,25 @@ private struct LogScrollView: NSViewRepresentable {
     func nearEdge(_ direction: CGFloat) {
       guard let scroll, let reader, let view = scroll.documentView, !applying else { return }
       let visible = scroll.documentVisibleRect
+      if (!reader.window.following || direction < 0), let text = view as? NSTextView,
+         let upper = anchor(at: visible.minY, in: text),
+         let lower = anchor(at: visible.maxY, in: text) {
+        reader.keepVisible(upper.row...max(upper.row, lower.row))
+      }
       if direction < 0, visible.minY <= 12, reader.window.start > 0 {
         reader.follow(false)
         reader.page(.earlier)
       } else if direction > 0, visible.maxY >= view.bounds.maxY - 12 {
-        if reader.window.end < reader.size { reader.page(.later) }
+        if reader.window.end < reader.window.size { reader.page(.later) }
         else { reader.follow(true) }
       }
+    }
+
+    private func anchor(at y: CGFloat, in text: NSTextView) -> LogAnchor? {
+      guard !shown.isEmpty, let layout = text.layoutManager, let container = text.textContainer,
+            let storage = text.textStorage, storage.length > 0 else { return nil }
+      let glyph = layout.glyphIndex(for: CGPoint(x: 0, y: max(0, y - text.textContainerOrigin.y)), in: container)
+      return LogAnchor.at(min(storage.length - 1, layout.characterIndexForGlyph(at: glyph)), in: shown)
     }
 
     func apply() {
@@ -357,22 +377,33 @@ private struct LogScrollView: NSViewRepresentable {
       let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
       let empty = blocks.isEmpty
       let message = empty ? placeholder : nil
-      guard shown != blocks || shownFont != font || shownPlaceholder != message else { return }
-      let edit = LogBlockEdit(from: shown, to: blocks)
-      let inset = text.textContainerOrigin
-      let bounds = scroll.documentVisibleRect
-      var anchor: (character: Int, inset: CGFloat)?
-      if !reader.window.following, !shown.isEmpty, storage.length > 0 {
-        let glyph = layout.glyphIndex(for: CGPoint(x: 0, y: max(0, bounds.minY - inset.y)), in: container)
-        let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        anchor = (layout.characterIndexForGlyph(at: glyph), bounds.minY - (line.minY + inset.y))
-      }
+      let changed = shown != blocks || shownFont != font || shownPlaceholder != message
+      let scrollToEnd = reader.window.following && (changed || !following) && !empty
+      following = reader.window.following
+      guard changed || scrollToEnd else { return }
 
       applying = true
       defer {
         origin = scroll.contentView.bounds.minY
         applying = false
       }
+      if !changed {
+        text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
+        return
+      }
+
+      let edit = LogBlockEdit(from: shown, to: blocks)
+      let inset = text.textContainerOrigin
+      let bounds = scroll.documentVisibleRect
+      var anchor: (position: LogAnchor, inset: CGFloat)?
+      if !following, !shown.isEmpty, storage.length > 0 {
+        let glyph = layout.glyphIndex(for: CGPoint(x: 0, y: max(0, bounds.minY - inset.y)), in: container)
+        let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        if let position = LogAnchor.at(layout.characterIndexForGlyph(at: glyph), in: shown) {
+          anchor = (position, bounds.minY - (line.minY + inset.y))
+        }
+      }
+
       let attributes = LogScroll.attributes(font: font)
       storage.beginEditing()
       if let message {
@@ -396,10 +427,9 @@ private struct LogScrollView: NSViewRepresentable {
       shown = blocks
       shownFont = font
       shownPlaceholder = message
-      if reader.window.following, !empty {
+      if scrollToEnd {
         text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
-      } else if let anchor, edit.newLength > 0 {
-        let character = edit.character(anchor.character)
+      } else if let anchor, let character = anchor.position.character(in: blocks) {
         layout.ensureLayout(forCharacterRange: NSRange(location: character, length: 1))
         let glyph = layout.glyphIndexForCharacter(at: character)
         let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)

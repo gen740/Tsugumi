@@ -119,7 +119,8 @@ public extension RPCClient {
 
   func logRange(runId: String, card: [String]?, invocation: UInt64?, stream: Tsugumi_Data_LogStream,
                 offset: UInt64 = 0, tail: Bool = false, limit: UInt32 = 65536,
-                before: UInt64? = nil) async throws -> Tsugumi_RPC_LogSliceT {
+                before: UInt64? = nil,
+                terminal: Bool = false, terminalSince: UInt64? = nil) async throws -> Tsugumi_RPC_LogSliceT {
     let r = Tsugumi_RPC_LogRangeRequestT()
     r.runId = runId
     r.card = card.map { cardPath($0) }
@@ -127,6 +128,8 @@ public extension RPCClient {
     r.stream = stream
     r.offset = tail || before != nil ? nil : offset
     r.before = before
+    r.terminal = terminal
+    r.terminalSince = terminalSince
     r.tail = tail
     r.limitBytes = limit
     return try await call(.lograngerequest, r)
