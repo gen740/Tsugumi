@@ -101,6 +101,7 @@
 .cv-param-bool input { position: absolute; opacity: 0; width: 0; height: 0; }
 .cv-switch { position: relative; display: inline-block; border-radius: 999px; background: var(--separator-strong); transition: background 0.12s; }
 .cv-switch::after { content: ""; position: absolute; top: 1.5px; left: 1.5px; height: calc(100% - 3px); aspect-ratio: 1; border-radius: 50%; background: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.3); transition: left 0.12s; }
+.cv-param-bool input:focus-visible + .cv-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cv-param-bool input:checked + .cv-switch { background: var(--accent); }
 .cv-param-bool input:checked + .cv-switch::after { left: calc(100% - 1.5px); transform: translateX(-100%); }
 .cv-param-bool input:disabled + .cv-switch { opacity: 0.5; }
