@@ -211,9 +211,11 @@ auto Turns::SkillContent(const std::string& id,
   if (sources.step())
     for (const auto& item : json::Array(sources.text(0)))
       folders.push_back(json::String(item));
-  const auto catalog = host::ListSkills(
-      path, folders,
-      host::ProjectTrusted(db, path, host_settings->TrustedFolders()));
+  const bool trusted =
+      host::ProjectTrusted(db, path, host_settings->TrustedFolders());
+  lock.unlock();
+  const auto catalog = host::ListSkills(path, folders, trusted);
+  lock.lock();
   std::set<std::string> names;
   for (const auto& name : requested) names.insert(host::SkillNameKey(name));
   const auto selected = names;
@@ -303,10 +305,11 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     if (sources.step())
       for (const auto& item : json::Array(sources.text(0)))
         folders.push_back(json::String(item));
-    const auto skills =
-        host::ListSkills(project_path, folders,
-                         host::ProjectTrusted(db, project_path,
-                                              host_settings->TrustedFolders()));
+    const bool trusted =
+        host::ProjectTrusted(db, project_path, host_settings->TrustedFolders());
+    lock.unlock();
+    const auto skills = host::ListSkills(project_path, folders, trusted);
+    lock.lock();
     std::vector<std::string> names, cards;
     if (p->skill_names())
       for (const auto* name : *p->skill_names()) names.push_back(name->str());
@@ -314,7 +317,37 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
       for (const auto* card : *p->selected_cards())
         cards.push_back(card->str());
     const auto selected = host::SelectScopedSkill(
-        skills, names, Text(p->scoped_skill()), cards, p->text()->str());
+        skills, names, Text(p->scoped_skill()), cards, p->text()->str(),
+        [&](const Tsugumi::Host::SkillT& skill) -> std::string {
+          conversations->OwnConversation(c.id, true);
+          if (skill.path.starts_with("builtin:"))
+            return host::BundledSkill(skill.path);
+          if (dependencies.excluded &&
+              dependencies.excluded(c.project, skill.path, stop))
+            throw Failure("not_found", "Skill not found");
+          const bool in_project =
+              !project_path.empty() &&
+              fs::valid_relative_path(std::filesystem::path(skill.path)
+                                          .lexically_relative(project_path)
+                                          .string());
+          std::string resource = c.project;
+          if (!in_project) {
+            auto folder = db.prepare(
+                "SELECT id FROM folders WHERE project=? AND path=?");
+            folder.bind(1, c.project).bind(2, skill.source_folder);
+            if (!folder.step())
+              throw Failure("permission_denied",
+                            "The user has not attached this Skill folder");
+            resource = folder.text(0);
+          }
+          lock.unlock();
+          access_service.Require(resource, c.id, S::Access::Read, true, stop,
+                                 "Read the Skill " + skill.name);
+          auto bytes = host::ReadSkill(
+              in_project ? project_path : skill.source_folder, skill.path);
+          lock.lock();
+          return bytes;
+        });
     if (selected) {
       task = json::Encode(*selected);
       const auto reason =

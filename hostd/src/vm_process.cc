@@ -76,11 +76,14 @@ auto Transfer(int fd, char* bytes, size_t size, bool send) -> void {
     offset += static_cast<size_t>(n);
   }
 }
+constexpr uint32_t kMaxVmFrameBytes = 64u * 1024u * 1024u;
 auto Read(int fd) -> std::unique_ptr<V::MessageT> {
   unsigned char prefix[4];
   Transfer(fd, reinterpret_cast<char*>(prefix), 4, false);
   const uint32_t size = uint32_t(prefix[0]) | uint32_t(prefix[1]) << 8 |
                         uint32_t(prefix[2]) << 16 | uint32_t(prefix[3]) << 24;
+  if (size > kMaxVmFrameBytes)
+    throw std::runtime_error("VM helper message exceeds size limit");
   std::string bytes(size, '\0');
   Transfer(fd, bytes.data(), bytes.size(), false);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
@@ -167,6 +170,7 @@ class VMProcess final : public EnvironmentProcess {
     run.mounts = Mounts(launch);
     auto reply = Call(std::move(run));
     const auto* process = reply->value.AsProcess();
+    if (!process) throw std::runtime_error("Unexpected VM helper reply");
     Remember(process->pid, launch.key);
     return process->pid;
   }
@@ -225,12 +229,15 @@ class VMProcess final : public EnvironmentProcess {
                      ? Call(VMResetPolicy())
                      : Call(request);
     const auto* runtime = reply->value.AsHostRuntime();
+    if (!runtime) throw std::runtime_error("Unexpected VM helper runtime reply");
     return *runtime;
   }
   auto Terminal(const H::HostTerminalRequestT& request)
       -> H::HostTerminalT override {
     auto reply = Call(request);
     const auto* terminal = reply->value.AsHostTerminal();
+    if (!terminal)
+      throw std::runtime_error("Unexpected VM helper terminal reply");
     return *terminal;
   }
 
@@ -342,6 +349,7 @@ class VMProcess final : public EnvironmentProcess {
             while (!stop.stop_requested()) {
               auto message = Read(fd);
               const auto* event = message->payload.AsEvent();
+              if (!event) continue;
               if (const auto* progress = event->value.AsProgress())
                 options_.progress(*progress);
               if (const auto* runtime = event->value.AsHostRuntime())
@@ -351,9 +359,12 @@ class VMProcess final : public EnvironmentProcess {
             }
           } catch (...) {
           }
-          ::close(fd);
-          // Watch is re-established by the next explicit operation.
-          watch_fd_ = -1;
+          {
+            std::lock_guard lock(watch_mutex_);
+            // Watch is re-established by the next explicit operation.
+            watch_fd_ = -1;
+            ::close(fd);
+          }
         });
   }
   template <class T>
@@ -378,6 +389,7 @@ class VMProcess final : public EnvironmentProcess {
     Send(socket.fd, std::move(value));
     auto message = Read(socket.fd);
     auto* reply = message->payload.AsReply();
+    if (!reply) throw std::runtime_error("Unexpected VM helper message");
     if (const auto* failure = reply->value.AsFailure())
       throw EnvironmentFailure(failure->message, failure->recovery,
                                failure->log);
@@ -385,7 +397,9 @@ class VMProcess final : public EnvironmentProcess {
   }
   auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {
     auto reply = Call(std::move(request));
-    return std::move(*reply->value.AsProcess());
+    auto* process = reply->value.AsProcess();
+    if (!process) throw std::runtime_error("Unexpected VM helper process reply");
+    return std::move(*process);
   }
 };
 }  // namespace

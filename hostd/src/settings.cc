@@ -105,6 +105,9 @@ auto HTTP(const std::string& url, const j::Members* form = nullptr,
   const auto data = form ? Form(*form) : "";
   curl_easy_setopt(c, CURLOPT_URL, url.c_str());
   curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 15L);
+  curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
+  curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 30L);
   curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
   curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
   curl_easy_setopt(
@@ -542,6 +545,20 @@ struct Settings::State {
     else
       query["agent_name_hint"] = "Tsugumi";
     if (p.consent()) query["prompt"] = "consent";
+    // Cancel any prior pending attempt for this profile and prune old finished
+    // attempts so completed sign-in threads and listeners do not accumulate.
+    for (auto it = attempts.begin(); it != attempts.end();) {
+      auto& prev = it->second;
+      if (prev->profile == a->profile && prev->state == "pending") {
+        prev->worker.request_stop();
+        prev->state = "cancelled";
+      }
+      if (prev->state != "pending" && latest[prev->profile] != it->first) {
+        it = attempts.erase(it);
+      } else {
+        ++it;
+      }
+    }
     attempts[a->id] = a;
     latest[a->profile] = a->id;
     a->worker = std::jthread([this, a](std::stop_token stop) {
@@ -1015,6 +1032,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       default:
         throw std::runtime_error("Unknown settings request");
     }
+  } catch (const std::exception& error) {
+    S::FailureT f;
+    f.code = "invalid_request";
+    f.message = error.what()[0] ? error.what() : "Host settings operation failed";
+    return agent::wire::HostReply(id, std::move(f));
   } catch (...) {
     S::FailureT f;
     f.code = "invalid_request";
