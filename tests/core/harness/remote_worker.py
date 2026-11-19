@@ -8,6 +8,7 @@ sys.path.insert(0, os.environ.get("TSUGUMI_PY_BINDINGS", str(Path(__file__).reso
 
 import flatbuffers
 from Tsugumi.RemoteWorker import BlobChunk
+from Tsugumi.RemoteWorker import PutBlobRequest
 from Tsugumi.RemoteWorker.Ack import AckT
 from Tsugumi.RemoteWorker.BrokerRequest import BrokerRequestT
 from Tsugumi.RemoteWorker.BlobChunk import BlobChunkT
@@ -56,6 +57,23 @@ def blob_chunk(digest, total, offset, contents):
     return reply(ReplyBody.BlobChunk, _ByteBlobChunk(
         digest=digest, total=total, offset=offset, bytes=contents,
     ))
+
+
+class _BytePutBlobRequest(PutBlobRequestT):
+    def Pack(self, builder):
+        # Archive chunks are bytes already. Pack the whole vector in one go.
+        digest = builder.CreateString(self.digest)
+        contents = builder.CreateByteVector(self.bytes)
+        PutBlobRequest.Start(builder)
+        PutBlobRequest.AddDigest(builder, digest)
+        PutBlobRequest.AddTotal(builder, self.total)
+        PutBlobRequest.AddOffset(builder, self.offset)
+        PutBlobRequest.AddBytes(builder, contents)
+        return PutBlobRequest.End(builder)
+
+
+def put_blob_chunk(digest, total, offset, contents):
+    return _BytePutBlobRequest(digest=digest, total=total, offset=offset, bytes=contents)
 
 
 def pack(obj, identifier=None):
