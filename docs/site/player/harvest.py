@@ -105,7 +105,7 @@ def resized(data: bytes, media: str, dest: Path) -> str:
     dest = dest.with_name(f"{dest.name}{suffix}")
     dest.write_bytes(data)
     subprocess.run(["sips", "-Z", str(MAX_IMAGE), str(dest)], check=True, capture_output=True)
-    if dest.stat().st_size > MAX_PNG:  # a photograph-like image: JPEG keeps it small
+    if suffix == ".png" and dest.stat().st_size > MAX_PNG:  # a photograph-like image: JPEG keeps it small
         jpeg = dest.with_suffix(".jpg")
         subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "62", str(dest), "--out", str(jpeg)], check=True, capture_output=True)
         dest.unlink()
@@ -318,7 +318,7 @@ def main() -> int:
         print(f"== {demo}", flush=True)
         with (
             tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp,
-            tempfile.TemporaryDirectory(prefix=".harvest-", dir=OUT) as staging_dir,
+            tempfile.TemporaryDirectory(prefix=".harvest-", dir=OUT.parent) as staging_dir,
         ):
             try:
                 staging = Path(staging_dir)
@@ -326,9 +326,10 @@ def main() -> int:
                 record = staging / f"{demo}.run.json"
                 record.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
                 # Keep the old recording readable until every image for the new one is published.
-                for image in staging.iterdir():
-                    if image != record:
-                        image.rename(OUT / image.name)
+                for output in result["outputs"].values():
+                    if output["type"] == "image":
+                        name = Path(output["src"]).name
+                        (staging / name).rename(OUT / name)
                 record.replace(OUT / record.name)
             except Exception as e:  # one demo failing does not stop the others
                 print(f"{demo}: FAILED {type(e).__name__}: {e}", flush=True)
