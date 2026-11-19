@@ -298,12 +298,14 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert diagnostics(c, nested_card) == accepted
     inspected = c.call("ProjectInspectRequest")
     assert inspected.rev == changed.rev
-    assert {text(s.path): text(s.documentJson) for s in inspected.sources}[card_path] == updated
+    accepted_source = next(s for s in inspected.sources if text(s.path) == card_path)
+    assert text(accepted_source.documentJson) == updated
     content = c.call("ProjectFileReadRequest", path=card_path, atRev=changed.rev)
     assert bytes(content.bytes) == updated.encode()
     with pytest.raises(RpcFailure) as error:
         c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
-               changes=[change("PutSource", path=card_path, bytes=b'{"template":"fork"}')])
+               changes=[change("PutSource", path=card_path, bytes=b'{"template":"fork"}',
+                               baseHash=text(accepted_source.hash))])
     assert error.value.kind == "external_change"
     reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
     assert reloaded.executionRev > changed.executionRev
