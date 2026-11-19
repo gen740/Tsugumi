@@ -28,7 +28,7 @@ from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
-from tsugumi_client import RpcFailure, make, path, text
+from tsugumi_client import RpcFailure, make, new_id, path, text
 
 
 class Gateway(socketserver.ThreadingUnixStreamServer):
@@ -247,14 +247,24 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
                    executionService="cluster")
+    client.ensure_subscription()
+    rev = client.call("ProjectInspectRequest").rev
     remote_gateway.stall_operation = R.RequestBody.CatalogRequest
     # Accept queries the catalog once to validate the run. Hold the next lookup
     # inside the accepted run's early-build selection.
     remote_gateway.skip_stall = 1
     remote_gateway.stall = "blackhole"
     try:
-        run_id = start_run(client, "work", propagate=False)
+        start = client.send("RunRequest", make("RunRequest", baseRev=rev, opId=new_id(),
+                                               origin="test", card=path("work"), propagate=False))
+        accepted = client.wait_notification(
+            lambda n: n.valueType == NotificationPayload.RunEvent
+            and n.value.valueType == RunEventValue.RunAcceptedEvent,
+            timeout=10,
+        )
+        run_id = text(accepted.value.runId)
         assert remote_gateway.stalled.wait(10), "early build never requested the catalog"
+        assert text(client.wait_reply(start).run.runId) == run_id
         stop = client.send("RunCancelRequest", make("RunCancelRequest", runId=run_id))
         client.wait_notification(
             lambda n: n.valueType == NotificationPayload.RunEvent
