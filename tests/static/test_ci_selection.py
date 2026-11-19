@@ -27,6 +27,12 @@ def test_prose_skips_platform_builds_but_checks_documented_contracts():
     assert "swift" in guide["aarch64-darwin"]
 
 
+@pytest.mark.parametrize("path", [".github/FUNDING.yml", ".github/ISSUE_TEMPLATE/bug.md"])
+def test_repository_metadata_selects_nothing(path):
+    result = selection.select([path])
+    assert not result["platform"] and not result["docs"] and not result["prompt"]
+
+
 def test_demos_cover_guide_rpc_sdk_web_and_swift_without_unrelated_core_tests():
     result = selection.select(["demos/ja/casa/definitions/bands/src/main.py"])
     assert result["docs"] and not result["prompt"]
