@@ -241,6 +241,9 @@ struct TerminalHost: NSViewRepresentable {
 /// threads, each with a descriptor of its own.
 final class TerminalConnection: NSObject, TerminalViewDelegate {
   typealias Open = (ProjectIdentity, Int, Int) async throws -> (fd: Int32, session: UInt64)
+  /// Resizes a session's PTY: (session, rows, cols).
+  typealias Resize = (UInt64, Int, Int) async throws -> Void
+  struct Size: Equatable { var rows: Int, cols: Int }
 
   let identity: ProjectIdentity
   var onEnd: (String) -> Void
@@ -258,16 +261,29 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
   /// Opening or open.
   private(set) var live = false
   var opening: Task<Void, Never>?
+  /// The size the shell's PTY has: opened with, or last resized to.
+  private var ptySize: Size?
+  /// The view's latest size, sent by `resizing`.
+  private var wantedSize: Size?
+  /// Sends resizes one at a time until the PTY has `wantedSize`.
+  var resizing: Task<Void, Never>?
+  /// The last resize that failed, kept until one succeeds.
+  private(set) var resizeFailure: String?
   private let openTerminal: Open
+  private let resizeTerminal: Resize
   let writeQueue = DispatchQueue(label: "app.tsugumi.terminal.write")
 
   init(identity: ProjectIdentity, onEnd: @escaping (String) -> Void,
        openTerminal: @escaping Open = { identity, rows, cols in
          try await AppModel.shared.environments.openTerminal(identity, rows: rows, cols: cols)
+       },
+       resizeTerminal: @escaping Resize = { session, rows, cols in
+         try await AppModel.shared.environments.resizeTerminal(session: session, rows: rows, cols: cols)
        }) {
     self.identity = identity
     self.onEnd = onEnd
     self.openTerminal = openTerminal
+    self.resizeTerminal = resizeTerminal
   }
 
   func attach(_ view: TerminalView) {
@@ -277,6 +293,7 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
       view.feed(byteArray: backlog[...])
       backlog = []
     }
+    syncSize()
   }
 
   private func feed(_ bytes: [UInt8]) {
@@ -290,7 +307,7 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
     generation += 1
     let current = generation
     live = true
-    let size = view?.getTerminal().getDims() ?? (cols: 80, rows: 24)
+    let size = laidOutSize() ?? Size(rows: 24, cols: 80)
     opening = Task { @MainActor in
       do {
         let (fd, sid) = try await openTerminal(identity, size.rows, size.cols)
@@ -305,7 +322,11 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         self.fd = fd
         self.sessionId = sid
+        ptySize = size
         read(fd, current)
+        // The view may have been laid out, or resized, while the shell was
+        // opening: those sizes reached no session.
+        syncSize()
       } catch {
         guard current == generation else { return }
         live = false
@@ -346,6 +367,8 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
     generation += 1
     live = false
     sessionId = nil
+    ptySize = nil
+    wantedSize = nil
     if fd >= 0 {
       shutdown(fd, SHUT_RDWR)
       Darwin.close(fd)
@@ -376,8 +399,45 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
   }
 
   func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-    guard let sid = sessionId else { return }
-    Task { await AppModel.shared.environments.resizeTerminal(session: sid, rows: newRows, cols: newCols) }
+    resize(to: Size(rows: newRows, cols: newCols))
+  }
+
+  /// The attached view's size, once it has been laid out.
+  private func laidOutSize() -> Size? {
+    guard let view, !view.bounds.isEmpty else { return nil }
+    let dims = view.getTerminal().getDims()
+    return Size(rows: dims.rows, cols: dims.cols)
+  }
+
+  private func syncSize() {
+    if let size = laidOutSize() { resize(to: size) }
+  }
+
+  /// Asks for the PTY to have `size`. Resizes go one at a time, each with the
+  /// latest size, so quick changes end at the last one. A failure is logged
+  /// and kept; the next size change tries again.
+  private func resize(to size: Size) {
+    wantedSize = size
+    guard resizing == nil else { return }
+    resizing = Task { @MainActor in
+      while let sid = sessionId, let wanted = wantedSize, wanted != ptySize {
+        let current = generation
+        do {
+          try await resizeTerminal(sid, wanted.rows, wanted.cols)
+          if current == generation {
+            ptySize = wanted
+            resizeFailure = nil
+          }
+        } catch {
+          // A shell that closed meanwhile; a new one is synced on its own.
+          guard current == generation else { continue }
+          resizeFailure = String(describing: error)
+          NSLog("Tsugumi terminal resize to \(wanted.cols)x\(wanted.rows) failed: \(error)")
+          break
+        }
+      }
+      resizing = nil
+    }
   }
 
   func setTerminalTitle(source: TerminalView, title: String) {}
