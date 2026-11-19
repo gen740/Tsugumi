@@ -25,7 +25,10 @@ try {
   fs.writeFileSync(document, JSON.stringify(edited))
   assert.equal(build().run?.id, recording.run.id, 'reordering the document keeps the same graph')
 
-  edited.canvas.connections.find(({ to }) => to.card === 'collatz-cpp').to.port = 'other'
+  const cpp = edited.canvas.connections.find(({ to }) => to.card === 'compare' && to.port === 'cpp')
+  const python = edited.canvas.connections.find(({ to }) => to.card === 'compare' && to.port === 'python')
+  cpp.to.port = 'python'
+  python.to.port = 'cpp'
   fs.writeFileSync(document, JSON.stringify(edited))
   let preview = build()
   assert.equal(preview.run, undefined, 'the same Cards wired to different ports do not replay the run')
