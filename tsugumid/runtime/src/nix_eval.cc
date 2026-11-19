@@ -215,9 +215,6 @@ std::string message(const nix::BaseError& e) {
 
 void on_usr1(int) {}  // interrupts a blocking read of the daemon connection
 
-// Interrupt checks and log lines belong to the current Nix call.
-thread_local const NixCall* t_call = nullptr;
-
 bool interrupted(const NixCall& c, bool* timed_out) {
   if (c.cancel.stop_requested()) return true;
   if (c.deadline && std::chrono::steady_clock::now() >= *c.deadline) {
@@ -249,13 +246,15 @@ class CallScope {
         if (!stop.stop_requested()) wake_();
       });
     }
-    t_call = &call;
+    // libnix's hook is thread-local. A call may run on the evaluator
+    // thread or any of the threads realising and exporting derivations.
+    nix::unix::interruptCheck = [&call] { return interrupted(call, nullptr); };
     g_logger->set_thread(call.log ? &call.log : nullptr);
   }
 
   ~CallScope() {
     g_logger->set_thread(nullptr);
-    t_call = nullptr;
+    nix::unix::interruptCheck = {};
   }
 
  private:
@@ -288,9 +287,6 @@ void NixEvaluator::init_process() {
   done = true;
   NixStore::init_process();  // nix.conf: substituters, the daemon socket, ...
   nix::initGC();
-  nix::unix::interruptCheck = [] {
-    return t_call && interrupted(*t_call, nullptr);
-  };
   auto logger = std::make_unique<NixLogSink>();
   g_logger = logger.get();
   nix::logger = std::move(logger);
