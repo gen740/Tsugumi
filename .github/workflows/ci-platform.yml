@@ -274,8 +274,6 @@ jobs:
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos/CoreTests'
       - name: Independent VM adapter tests
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path vm/macos/runtime'
-      - name: Build the application help
-        run: nix run .#build-doc
       - name: Application behavior
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos'
 

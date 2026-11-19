@@ -45,7 +45,7 @@ jobs:
 
   platform:
     name: Platform (${{ matrix.system }})
-    needs: [changes, static]
+    needs: changes
     if: ${{ fromJSON(needs.changes.outputs.selection).platform }}
     strategy:
       fail-fast: false

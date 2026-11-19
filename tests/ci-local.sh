@@ -96,8 +96,6 @@ mac_job() {
   step "Model, RPC, Agent and launcher (ui/macos/CoreTests)"
   core_run /usr/bin/swift test --package-path ui/macos/CoreTests
   core_run /usr/bin/swift test --package-path vm/macos/runtime
-  step "Build the application help"
-  nix --extra-experimental-features 'nix-command flakes' run .#build-doc
   step "App logic (ui/macos/Tests)"
   core_run /usr/bin/swift test --package-path ui/macos
 }
