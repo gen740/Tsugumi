@@ -80,11 +80,13 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
             truncatedAt: result.logTruncatedAtBytes ?? undefined,
           }
           const pausedDuringRead = !window.following && (request.kind === 'append' || request.kind === 'tail')
+          const superseded = (kind === 'earlier' && (window.following || demand === 'later' || demand === 'tail'))
+            || (kind === 'later' && (demand === 'earlier' || demand === 'tail'))
           const previous = window.blocks
-          window.apply(pausedDuringRead ? { ...request, kind: 'status' } : request, slice)
+          window.apply(pausedDuringRead || superseded ? { ...request, kind: 'status' } : request, slice)
           error = undefined
           if (window.following && window.end < window.size) wake()
-          if ((kind === 'earlier' || kind === 'later') && !demand
+          if (!superseded && (kind === 'earlier' || kind === 'later') && !demand
               && previous.length === window.blocks.length && previous.every((b, i) => b === window.blocks[i])
               && window.request(kind)) page(kind)
           publish()
