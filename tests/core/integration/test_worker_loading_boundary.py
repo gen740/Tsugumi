@@ -23,7 +23,6 @@ int tsugumi_main(const tsugumi_call* c) { return 1; }
 #include <tsugumi/sdk/abi.h>
 int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_LOAD) return tsugumi_display_text(c, c->run_id, 0);
-  if (c->phase == TSUGUMI_RUN) return 0;
   return 0;
 }
 ''')

@@ -68,8 +68,6 @@ def send_call(data, tmp_path, call_id=1, deadline=None):
     call.invocation = call_id
     call.inputs = []
     call.outputs = []
-    call.inputSchema = "namespace inputs; table Inputs {} root_type Inputs;"
-    call.outputSchema = "namespace outputs; table Outputs {} root_type Outputs;"
     call.params = FlatBufferDataT()
     call.params.schemaBfbs = []
     call.params.rootType = "Unused"
@@ -152,7 +150,6 @@ __attribute__((constructor)) static void constructor(void) {
 int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_PREPARE) { puts("runtime ready"); fflush(stdout); }
   if (c->phase == TSUGUMI_LOAD) return tsugumi_display_text(c, c->run_id, 0);
-  if (c->phase == TSUGUMI_RUN) return 0;
   return 0;
 }
 ''')
