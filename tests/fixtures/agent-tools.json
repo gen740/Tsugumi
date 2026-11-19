@@ -741,7 +741,7 @@
   {
     "name": "project_connect",
     "payloadType": "project_connect",
-    "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire; inserts or extends a fork when required. Reserve a Card id and supply fork_id if a new fork is needed. project_path selects an external project; omit it for root. New Card placement is part of the same save.",
+    "description": "Connect two Cards in one atomic save against current state. Replaces the destination input wire. An output can feed several inputs. project_path selects an external project; omit it for root. New Card placement is part of the same save.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -758,9 +758,6 @@
           "type": "string"
         },
         "to_port": {
-          "type": "string"
-        },
-        "fork_id": {
           "type": "string"
         }
       },

@@ -129,9 +129,10 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
 // ----
 
 // A layered drawing of the graph, the way a person lays one out by hand: wires
-// that can be straight are, what comes after a fork stays in its own column,
-// gaps follow the real size of each Card, and output frames and notes go in
-// free room near what they belong to. Positions of the scene are not read.
+// that can be straight are, what comes after a split in the graph stays in its
+// own column, gaps follow the real size of each Card, and output frames and
+// notes go in free room near what they belong to. Positions of the scene are
+// not read.
 auto place(const Scene& scene) -> Proposal;
 
 // Fill only missing places, using the same free-room search as frames/notes.

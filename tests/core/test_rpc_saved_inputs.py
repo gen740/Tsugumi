@@ -22,11 +22,11 @@ def saved_file_subgraph(project, core_factory):
                 "_outputs": FILE_FBS,
             },
             "copy": {
-                "template": "fork",
+                "template": "collect",
                 "trigger": "eachInput",
                 "recordIO": True,
                 "retainArtifact": True,
-                "artifactOutput": "out1",
+                "artifactOutput": "out",
             },
         },
         cards=[
@@ -34,7 +34,7 @@ def saved_file_subgraph(project, core_factory):
             card_in_card(
                 "child", [card("inner", "copy")], [],
                 {"inputs": {"in": {"card": "inner", "port": "in"}},
-                 "outputs": {"out": {"card": "inner", "port": "out1"}}},
+                 "outputs": {"out": {"card": "inner", "port": "out"}}},
             ),
         ],
         conns=[conn("source", "doc", "child", "in")],
@@ -52,7 +52,7 @@ def saved_file_subgraph(project, core_factory):
 def artifact_contents(client, run_id):
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("child", "inner")).artifacts
     assert len(artifacts) == 1
-    content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=4096)
+    content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), member="0/report.txt", limitBytes=4096)
     assert content.eof is True
     return bytes(content.bytes).decode()
 

@@ -22,7 +22,6 @@ enum class Template {
   Trigger,
   Input,
   Switch,
-  Fork,
   Branch,
   Merge,
   Collect,

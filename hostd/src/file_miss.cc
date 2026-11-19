@@ -50,9 +50,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
   auto kind = card.empty() ? (files.contains("_link.json") ? "subgraph" : "")
                            : json::Text(json::Object(card), "template", "code");
   if (!card.empty()) {
-    const std::set<std::string> builtins{"trigger", "input", "fork",
-                                         "branch",  "merge", "collect",
-                                         "draft",   "switch"};
+    const std::set<std::string> builtins{"trigger", "input", "branch", "merge",
+                                         "collect", "draft", "switch"};
     if (!builtins.contains(kind)) kind = "code";
   }
   if (kind.empty()) return {};
@@ -73,8 +72,7 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
              "; project_inspect reports resolved port types in "
              "resolution[].inputs/outputs"
              " (root_type and schema_bfbs)";
-      if (kind == "fork" || kind == "branch" || kind == "merge" ||
-          kind == "collect")
+      if (kind == "branch" || kind == "merge" || kind == "collect")
         out += "; their types follow the connected upstream ports";
     }
   }

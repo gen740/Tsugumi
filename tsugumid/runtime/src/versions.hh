@@ -44,7 +44,7 @@ struct VersionCanvasData {
   struct Card {
     std::string id;
     std::string kind = "code";
-    uint32_t fan = 0;  // a fork's outputs or a merge's inputs
+    uint32_t fan = 0;  // a Merge's inputs
   };
   std::vector<Card> cards;
   std::vector<std::pair<std::string, std::string>> wires;  // from, to

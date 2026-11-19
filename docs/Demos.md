@@ -35,9 +35,8 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
-A fork Card only hands values out as the arrows show, so it is left out of each demo's table.
-Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, fork, merge and branch) and in the Card's settings.
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
+Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
 
 ## The basics
 

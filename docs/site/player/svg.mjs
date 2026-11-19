@@ -536,9 +536,9 @@ function tileSvg(id) {
 /** The window of the README's screenshots (docs/assets/screenshots, ui/macos/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
 const WIN = { width: 1440, height: 900, bar: 52, chat: 344 }
 /** Where the Cas A Canvas has the Cards, output frames and the note: the screenshots' arrangement (Cards in one row, the
- *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (ciao, and the forks begin and share). */
+ *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (including ciao). */
 const WINDOW_LAYOUT = {
-  cards: { start: [0, 484], begin: [150, 495], load: [230, 484], ciao: [230, 640], bands: [500, 484], share: [770, 495], rgb: [850, 484], spectrum: [1110, 484] },
+  cards: { start: [0, 484], load: [230, 484], ciao: [230, 640], bands: [500, 484], rgb: [850, 484], spectrum: [1110, 484] },
   displays: { spectrum: [760, 0, 680, 400], bands: [500, 650, 340, 150], rgb: [880, 650, 420, 440] },
   note: [0, 0, 700, 430],
 }

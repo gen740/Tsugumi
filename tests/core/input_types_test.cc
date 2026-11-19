@@ -96,22 +96,20 @@ TEST(InputTypes, PlainWireDefaultLanguageFileAndNoSource) {
   EXPECT_NE(upstream.inputs[0]->definition.find("double noise_sd"),
             std::string::npos);
 }
-TEST(InputTypes, ForkAndDistinctUnnamedDraftEndsUseSynthesizedOutputs) {
+TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
-      R"([{"id":"src"},{"id":"fork"},{"id":"draft"},{"id":"other"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"fork","port":"in"}},
-          {"from":{"card":"fork","port":"out1"},"to":{"card":"draft","port":""}},
+      R"([{"id":"src"},{"id":"draft"},{"id":"other"}])",
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}},
           {"from":{"card":"other","port":"out"},"to":{"card":"draft","port":""}}])",
       {{"definitions/src/_card.json", "{}"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/other/_card.json", R"({"template":"trigger"})"},
-       {"definitions/fork/_card.json", R"({"template":"fork"})"}});
+       {"definitions/other/_card.json", R"({"template":"trigger"})"}});
   const auto ends = input_types(*graph, {"draft"});
   ASSERT_EQ(ends.size(), 2u);
   EXPECT_TRUE(ends[0].port.empty());
   EXPECT_TRUE(ends[1].port.empty());
-  EXPECT_EQ(ends[0].source->path, (CardPath{"fork"}));
-  EXPECT_EQ(ends[0].source_port, "out1");
+  EXPECT_EQ(ends[0].source->path, (CardPath{"src"}));
+  EXPECT_EQ(ends[0].source_port, "out");
   ASSERT_TRUE(ends[0].type);
   EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
   EXPECT_EQ(ends[1].source->path, (CardPath{"other"}));
@@ -131,9 +129,11 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
        {"externals/outer/definitions/inner/_link.json",
         R"({"external":"nested"})"},
        {"externals/outer/externals/nested/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out1"}}}})"},
+        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out"}}}})"},
        {"externals/outer/externals/nested/definitions/leaf/_card.json",
-        R"({"template":"fork"})"}});
+        R"({"inputs":[{"name":"in"}]})"},
+       {"externals/outer/externals/nested/definitions/leaf/_outputs.fbs",
+        kSchema}});
   const auto ends = input_types(*graph, {"dest"});
   ASSERT_EQ(ends.size(), 1u);
   ASSERT_NE(ends[0].type, nullptr);

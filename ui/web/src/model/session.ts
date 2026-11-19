@@ -1864,8 +1864,7 @@ export class ProjectSession extends Observable {
   async connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop(), prefix = this.projectPrefix(scope)
     if (!fromId || !toId || prefix === undefined || !this.isEditable) return
-    const forkId = await this.newCardId('fork', scope)
-    await this.operate(H.ProjectOperationBody.ProjectConnect, new H.ProjectConnectT(prefix.replace(/\/$/, ''), fromId, from[1], toId, to[1], forkId))
+    await this.operate(H.ProjectOperationBody.ProjectConnect, new H.ProjectConnectT(prefix.replace(/\/$/, ''), fromId, from[1], toId, to[1]))
   }
 
   removeConnection(index: number, scope: string[]) {
@@ -2590,16 +2589,16 @@ export class ProjectSession extends Observable {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'collect', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'switch' | 'branch' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'branch', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), branch: L('分岐'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
+  trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', branch: 'arrow.triangle.swap',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
@@ -2615,7 +2614,7 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
@@ -2626,7 +2625,7 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
-  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
+  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]

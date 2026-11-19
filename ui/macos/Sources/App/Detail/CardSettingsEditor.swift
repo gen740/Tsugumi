@@ -623,7 +623,7 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.definition?["template"]?.string ?? model.definition?["language"]?.string ?? "draft" }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "switch", "trigger", "fork", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
+            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "switch", "trigger", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
           }
         } header: { Text("Draft を手動で実装") }
           footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }

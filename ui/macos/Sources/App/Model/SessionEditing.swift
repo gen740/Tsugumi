@@ -6,7 +6,7 @@ import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
-  case trigger, input, fork, branch, merge, collect, draft, subgraph, code
+  case trigger, input, branch, merge, collect, draft, subgraph, code
   case switchCard = "switch"
 
   var editsValueOnCanvas: Bool { self == .input || self == .switchCard }
@@ -16,7 +16,6 @@ enum CardKind: String {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
     case .switchCard: return String(localized: "スイッチ")
-    case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
@@ -31,7 +30,6 @@ enum CardKind: String {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
     case .switchCard: return "switch.2"
-    case .fork: return "arrow.triangle.branch"
     case .branch: return "arrow.triangle.swap"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
@@ -45,7 +43,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge, collect
+  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, merge, collect
   case report_rmarkdown, report_quarto
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
@@ -75,7 +73,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .input: return String(localized: "入力値")
     case .switchCard: return String(localized: "スイッチ")
     case .trigger: return String(localized: "開始")
-    case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
@@ -341,7 +338,6 @@ extension ProjectSession {
     let body = Tsugumi_Host_ProjectConnectT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.fromCard = fromId; body.fromPort = from.1; body.toCard = toId; body.toPort = to.1
-    body.forkId = try await newCardId("fork", in: scope)
     try await operate(.projectconnect, body: body)
   }
 

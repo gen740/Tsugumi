@@ -331,7 +331,7 @@
     {
       "name": "project_connect",
       "mutating": true,
-      "description": "Connect Card ports atomically, replacing the destination wire and adding a fork if needed (reserve fork_id with card_id). Returns the save result. project_path selects an external project; omitted means root.",
+      "description": "Connect Card ports atomically, replacing the destination wire. Returns the save result. project_path selects an external project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -348,9 +348,6 @@
             "type": "string"
           },
           "to_port": {
-            "type": "string"
-          },
-          "fork_id": {
             "type": "string"
           }
         },

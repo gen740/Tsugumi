@@ -267,7 +267,7 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge || kind == .collect }
+  var isRouting: Bool { kind == .branch || kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
@@ -293,14 +293,13 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, collect, start, toggle
+  case card, branch, merge, collect, start, toggle
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
     case .switchCard: self = .toggle
     case .branch: self = .branch
-    case .fork: self = .fork
     case .merge: self = .merge
     case .collect: self = .collect
     default: self = .card
@@ -388,7 +387,6 @@ struct CardGeometry {
       // Its ports are at a quarter and three quarters of this.
       if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
       return CGSize(width: 60, height: 48)
-    case .fork: return CGSize(width: fanWidth(outputs.count), height: fanLength(outputs.count))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
@@ -403,13 +401,13 @@ struct CardGeometry {
     }
   }
 
-  /// The wide edge of a fork or merge: it grows with its ports, so they are never squeezed.
+  /// The wide edge of a Merge: it grows with its ports, so they are never squeezed.
   private func fanWidth(_ count: Int) -> CGFloat {
     guard let grid else { return max(56, CGFloat(count) * 30 + 12) }
     return Self.gridLength(atLeast: max(56, CGFloat(count - 1) * fanPitch(count, grid) + 16), grid)
   }
 
-  /// A fork or merge along the flow: a quarter of its wide edge once that is
+  /// A Merge along the flow: a quarter of its wide edge once that is
   /// past 40, so many ports make a bigger triangle and not a flatter one (its
   /// corners stay at 27 degrees or more). On whole grids, as far as it grows.
   private func fanLength(_ count: Int) -> CGFloat {
@@ -431,7 +429,7 @@ struct CardGeometry {
     grid < portRow ? (portRow / grid).rounded(.up) * grid : grid / (grid / portRow).rounded(.down)
   }
 
-  /// Ports of a fork or merge. Two or four around the middle take twice the
+  /// Ports of a Merge. Two or four around the middle take twice the
   /// pitch to stay on the same lines as a Card's ports across a wire; more
   /// of them would make the mark too wide, and close up onto grid/2 instead.
   private func fanPitch(_ count: Int, _ grid: CGFloat) -> CGFloat {
@@ -478,7 +476,7 @@ struct CardGeometry {
     if shape == .card { return cardWidth / 2 + middle * edgePitch(count, grid) }
     // A triangle's apex is one point: everything on that side is on it.
     let w = routingSize.width
-    return (shape == .fork) == !output ? w / 2 : w / 2 + middle * fanPitch(count, grid)
+    return output ? w / 2 : w / 2 + middle * fanPitch(count, grid)
   }
 
   /// Labels of a routing Card sit outside its outline, in these bands.
@@ -556,31 +554,24 @@ struct CardGeometry {
       }
       return roundedPolygon([point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1),
                              point(0.35, 1), point(0.35, 0.57)], radius: 3 * cornerScale)
-    case .fork, .merge:
-      // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
+    case .merge:
+      // Triangle: downstream apex. The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.
       // Its corners shrink with the zoom, as `r` does.
       let radius = 7 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
-      let pts: [CGPoint]
       if flow == .topToBottom {
-        let apex = CGPoint(x: r.midX, y: shape == .fork ? r.minY : r.maxY)
-        pts = shape == .fork
-          ? [apex, apex, CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex]
-      } else {
-        let apex = CGPoint(x: shape == .fork ? r.minX : r.maxX, y: r.midY)
-        pts = shape == .fork
-          ? [apex, apex, CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)]
+        let apex = CGPoint(x: r.midX, y: r.maxY)
+        return roundedPolygon([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex], radius: radius)
       }
-      return roundedPolygon(pts, radius: radius)
+      let apex = CGPoint(x: r.maxX, y: r.midY)
+      return roundedPolygon([CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)], radius: radius)
     }
   }
 
   /// Where the icon of a routing Card sits in the outline `r`: on the axis of the
   /// flow, and in a triangle toward the wide edge, where it has room.
   func iconCenter(in r: CGRect) -> CGPoint {
-    let along: CGFloat = shape == .fork ? 0.62 : shape == .merge || shape == .collect ? 0.38 : 0.5
+    let along: CGFloat = shape == .merge || shape == .collect ? 0.38 : 0.5
     return flow == .topToBottom ? CGPoint(x: r.midX, y: r.minY + r.height * along)
                                 : CGPoint(x: r.minX + r.width * along, y: r.midY)
   }
@@ -594,10 +585,9 @@ struct CardGeometry {
     case .card, .branch, .start, .toggle:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
-    case .fork, .merge, .collect:
+    case .merge, .collect:
       let w = routingSize.width
-      let narrowSide = (shape == .fork) == input
-      let span = narrowSide ? w * Self.narrow : w
+      let span = input ? w : w * Self.narrow
       return ((w - span) / 2, span, 0)
     }
   }
@@ -625,7 +615,7 @@ struct CardGeometry {
     if shape == .card && collapsed { return false }
     if shape == .start || shape == .toggle { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .fork || shape == .merge || shape == .collect { return false }
+    if shape == .merge || shape == .collect { return false }
     if shape == .branch { return true }
     return spacing(input: input) >= Self.minLabel
   }
@@ -672,8 +662,7 @@ struct CardGeometry {
     case .leftToRight:
       if shape != .card {
         if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: output ? r.maxX : r.minX, y: r.minY + along) }
-        let narrowSide = (shape == .fork) == !output
-        let h = narrowSide ? r.height * Self.narrow : r.height
+        let h = output ? r.height * Self.narrow : r.height
         return CGPoint(x: output ? r.maxX : r.minX, y: r.midY - h / 2 + h * (i + 1) / (n + 1))
       }
       let x = output ? cardWidth : 0
@@ -1275,7 +1264,7 @@ struct CardNodeView: View {
     .position(x: outline.midX, y: outline.midY)
   }
 
-  // MARK: Routing Card (branch, fork, merge)
+  // MARK: Routing Card (branch, merge)
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
@@ -1798,7 +1787,7 @@ struct WireRouter {
 
   /// How far along the flow a port's wire has to run to get out of a Card's box (0: not in it).
   private func depth(_ o: CGRect, _ p: CGPoint, _ dir: CGFloat) -> CGFloat {
-    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // On an edge is not in it: a Card that begins where another Card's box ends is
     // beside the wire, and the wire would otherwise go on through all of it.
     if p.x <= o.minX || p.x >= o.maxX || p.y <= o.minY || p.y >= o.maxY { return 0 }
     return dir > 0 ? o.maxY - p.y : p.y - o.minY

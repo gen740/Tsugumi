@@ -6,9 +6,6 @@
   "trigger": {
     "_card.json": "{\n  \"template\": \"trigger\"\n}\n"
   },
-  "fork": {
-    "_card.json": "{\n  \"template\": \"fork\"\n}\n"
-  },
   "branch": {
     "_card.json": "{\n  \"template\": \"branch\"\n}\n"
   },

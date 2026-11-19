@@ -1691,7 +1691,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       const std::vector<Value>& inputs,
       const std::optional<std::pair<std::string, std::string>>& out_alias)
       -> void {
-    // Files received as inputs may be passed on unchanged (fork, branch, a
+    // Files received as inputs may be passed on unchanged (branch, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
     std::set<std::string> forwarded;
@@ -1920,13 +1920,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           p.outputs.push_back(
               {port.name, port.kind, port.type, std::move(bytes), {}});
         }
-        break;
-      }
-      case Template::Fork: {
-        const Value* v = input(in, "in");
-        if (!v) throw Failed(FailureKind::input_missing, "fork input missing");
-        for (const auto& port : node.outputs)
-          p.outputs.push_back({port.name, v->kind, v->type, v->bytes, {}});
         break;
       }
       case Template::Branch: {

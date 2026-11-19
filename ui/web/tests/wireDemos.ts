@@ -35,10 +35,6 @@ function node(dir: string, id: string): CardNodeData {
       const params = (def.params ?? []).filter((p: { type: string }) => ['int64', 'uint64', 'double', 'bool', 'string'].includes(p.type)).map((p: { name: string; type: string }) => ({ ...p, value: '' }))
       return { ...blank, kind: 'input', params, inputs: [{ name: 'start' }], outputs: typed }
     }
-    case 'fork': {
-      const branches: string[] = def.params?.find((p: { name: string }) => p.name === 'branches')?.data ?? ['out1', 'out2']
-      return { ...blank, kind: 'fork', inputs: [{ name: 'in' }], outputs: branches.map((name) => ({ name })) }
-    }
     case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
@@ -126,25 +122,6 @@ function scopes(name: string, dir: string, grid?: number): Scene[] {
   return out
 }
 
-/** `report` with share directly above the column of generate, aggregate, render and archive. */
-function stacked(shareX: number): Scene {
-  const dir = path.join(root, 'demos/ja/report')
-  return scene(`report stacked, share at ${shareX}`, dir, undefined, {
-    start: { x: 0, y: -190 }, settings: { x: 0, y: 0 }, share: { x: shareX, y: 285 },
-    generate: { x: 0, y: 380 }, aggregate: { x: 0, y: 570 }, render: { x: 0, y: 760 }, archive: { x: 0, y: 950 },
-  }).scene
-}
-
-/** `report` with its fork lowered, so that its output is `gap` above generate's input. */
-function forkNearGenerate(gap: number): Scene {
-  return scene(`report, fork ${gap} above generate`, path.join(root, 'demos/ja/report'), undefined, { share: { x: 300, y: 380 - gap - 40 } }).scene
-}
-
-/** `casa` with the box of its fork ending just where the next Card begins, on a grid of 20. */
-function forkAgainstCard(): Scene {
-  return scene('casa, fork against rgb', path.join(root, 'demos/ja/casa'), undefined, { share: { x: 840, y: 40 }, rgb: { x: 940, y: 0 }, spectrum: { x: 1200, y: 0 } }, 20).scene
-}
-
 /** Cards the path enters and leaves again. A branch's port sits inside its box:
  *  a stay that starts or ends the path is the wire reaching its port. */
 function crossed(pts: Pt[], obstacles: Rect[]): number {
@@ -169,7 +146,6 @@ function crossed(pts: Pt[], obstacles: Rect[]): number {
 
 for (const scene of [
   ...scopes('rna-seq on the grid', path.join(root, 'demos/ja/rna-seq'), 20),
-  forkAgainstCard(),
 ]) {
   const routes = new WireRouter(scene.flow, scene.obstacles).routeAll(scene.wires)
   for (const [index, wire] of scene.wires.entries()) {
@@ -186,7 +162,7 @@ if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
   if (process.env.WIRE_ROUTES_WRITE) {
     const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq']
       .map((name) => demos.find((scene) => scene.name === name)!)
-      .concat(stacked(60), stacked(150), forkNearGenerate(20), forkAgainstCard(),
+      .concat(
         ...['casa', 'rna-seq'].map((name) => scene(`${name}, grid 20`, path.join(root, 'demos/ja', name), undefined, {}, 20).scene))
     const samples = shared.map(({ name, flow, obstacles, wires }) => ({ name, flow, obstacles, wires: wires.map(({ a, b }) => ({ a, b })) }))
     fs.writeFileSync(path.join(root, 'tests/fixtures/wire-routes.json'), JSON.stringify(samples) + '\n')
