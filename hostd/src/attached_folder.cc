@@ -75,10 +75,14 @@ auto ReadAttachedFolder(const std::filesystem::path& root,
     struct CloseDirectory {
       auto operator()(DIR* value) const -> void { ::closedir(value); }
     };
-    std::unique_ptr<DIR, CloseDirectory> directory(
-        ::fdopendir(::dup(file.value)));
-    if (!directory)
+    const int dup_fd = ::fcntl(file.value, F_DUPFD_CLOEXEC, 0);
+    if (dup_fd < 0)
       throw Failure("not_found", "Cannot list attached directory");
+    std::unique_ptr<DIR, CloseDirectory> directory(::fdopendir(dup_fd));
+    if (!directory) {
+      ::close(dup_fd);
+      throw Failure("not_found", "Cannot list attached directory");
+    }
     std::vector<std::string> names;
     while (const auto* entry = ::readdir(directory.get())) {
       const std::string name = entry->d_name;
