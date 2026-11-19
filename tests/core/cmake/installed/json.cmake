@@ -13,11 +13,19 @@ if(NOT APPLE)
   pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
   target_link_libraries(tsugumi_util INTERFACE PkgConfig::CRYPTO)
 endif()
+foreach(target tsugumi_trace_store tsugumi_trace_codec)
+  add_library(${target} STATIC IMPORTED)
+  set_target_properties(${target} PROPERTIES
+    IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/lib${target}.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
+endforeach()
+target_link_libraries(tsugumi_trace_store INTERFACE Threads::Threads)
+target_link_libraries(tsugumi_trace_codec INTERFACE tsugumi_trace_store tsugumi_rpc_schema flatbuffers::flatbuffers)
 add_library(tsugumi_transport STATIC IMPORTED)
 set_target_properties(tsugumi_transport PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_transport.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_transport INTERFACE tsugumi_util tsugumi_json Threads::Threads)
+target_link_libraries(tsugumi_transport INTERFACE tsugumi_util tsugumi_json tsugumi_trace_store Threads::Threads)
 add_library(tsugumi_runtime_support STATIC IMPORTED)
 set_target_properties(tsugumi_runtime_support PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_runtime_support.a"

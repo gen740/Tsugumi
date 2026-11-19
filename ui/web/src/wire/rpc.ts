@@ -11,6 +11,7 @@ import { RequestPayload } from '../../shared/gen/tsugumi/rpc/request-payload'
 import { RequestT } from '../../shared/gen/tsugumi/rpc/request'
 import { NotificationT } from '../../shared/gen/tsugumi/rpc/notification'
 import { L } from '../i18n'
+import { Client } from '../../shared/gen/tsugumi/trace/client'
 
 export { D, R, RequestPayload }
 
@@ -116,7 +117,7 @@ export class RPCClient {
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
   async connect(token: string | undefined, expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { token: token ?? null, expectedProjectId: expectedProjectId ?? null })
+    const req = Object.assign(new R.SessionHelloRequestT(), { token: token ?? null, expectedProjectId: expectedProjectId ?? null, client: Client.Web })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }

@@ -84,6 +84,8 @@ struct TransportServer::Conn {
   std::string wbuf;
   size_t wpos = 0;
   std::set<uint64_t> inflight;
+  const char* peer;
+  trace::Link trace_link;
 };
 
 TransportServer::TransportServer(ServerOptions opts, RequestSink* sink)
@@ -102,21 +104,32 @@ void TransportServer::start() {
   // replace.
   auto listen_unix = [](const std::string& path) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+      throw std::runtime_error("create unix socket: " +
+                               std::string(std::strerror(errno)));
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    if (path.size() >= sizeof addr.sun_path)
+    if (path.size() >= sizeof addr.sun_path) {
+      ::close(fd);
       throw std::runtime_error("unix socket path too long");
+    }
     std::strcpy(addr.sun_path, path.c_str());
     ::unlink(path.c_str());
-    mode_t old = ::umask(0177);
     int rc = ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
-    ::umask(old);
-    if (rc != 0)
+    if (rc != 0) {
+      int err = errno;
+      ::close(fd);
       throw std::runtime_error("bind unix socket: " +
-                               std::string(std::strerror(errno)));
+                               std::string(std::strerror(err)));
+    }
     ::chmod(path.c_str(), 0600);
-    ::listen(fd, 64);
+    if (::listen(fd, 64) != 0) {
+      int err = errno;
+      ::close(fd);
+      throw std::runtime_error("listen unix socket: " +
+                               std::string(std::strerror(err)));
+    }
     set_nonblock(fd);
     return fd;
   };
@@ -279,6 +292,8 @@ bool TransportServer::fill_write(Conn& c) {
     c.out_bytes -= o.raw.size();
     body = std::move(o.raw);
   }
+  trace::Observe(c.trace_link, opts_.trace_endpoint, c.peer, true, body,
+                 opts_.trace_codec);
   if (c.websocket) {
     std::string h;
     h += static_cast<char>(0x82);  // FIN + binary
@@ -342,6 +357,7 @@ void TransportServer::accept_on(int lfd, bool websocket) {
     c->id = next_id_++;
     c->fd = fd;
     c->websocket = websocket;
+    c->peer = websocket ? "WebSocket client" : "Unix client";
     conns_[c->id] = std::move(c);
   }
 }
@@ -551,6 +567,9 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
   RequestIn in{c.id, rid, std::make_shared<const std::string>(std::move(frame)),
                c.websocket};
   if (info->hello) {
+    if (!c.hello_seen && info->peer) c.peer = info->peer;
+    trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false,
+                   *in.frame, opts_.trace_codec);
     if (c.hello_seen) return fail(AdmissionFailure::AlreadyHello);
     c.hello_seen = true;
     auto [bytes, ok] = sink_->hello(in);
@@ -559,6 +578,8 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
     if (!ok) c.close_after_flush = true;
     return;
   }
+  trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false, *in.frame,
+                 opts_.trace_codec);
   if (!c.authenticated) return fail(AdmissionFailure::Unauthenticated);
   c.inflight.insert(rid);
   sink_->dispatch(std::move(in));

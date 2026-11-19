@@ -11,7 +11,9 @@
 
 include "data.fbs";
 
+include "rpc_trace.fbs";
 namespace Tsugumi.RPC;
+attribute "trace_secret";
 
 // ---- Common ------------------------------------------------------------------
 
@@ -253,7 +255,8 @@ table OperationReceipt {
 /// permission_denied. Must be the first request, within 5 s of connecting.
 table SessionHelloRequest {
   expected_project_id:string (id: 0);
-  token:string (id: 1);
+  token:string (id: 1, trace_secret);
+  client:Tsugumi.Trace.Client (id: 2);
 }
 
 /// -> OpenResult. Creates (or replaces) the connection's subscription.
@@ -767,6 +770,7 @@ union RequestPayload {
   ProjectHostRequirementsRequest = 53,
   InputTypesRequest = 54,
   ProjectActivityRequest = 55,
+  CoreTraceRequest:Tsugumi.Trace.CoreTraceRequest = 56,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1136,6 +1140,7 @@ union ReplyPayload {
   ProjectHostRequirements = 41,
   InputTypesResult = 42,
   ProjectActivity = 43,
+  TraceSnapshot:Tsugumi.Trace.Snapshot = 44,
 }
 
 // ---- Notifications -----------------------------------------------------------

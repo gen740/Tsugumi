@@ -1,0 +1,38 @@
+// Local debug control. A source is one recorder process; an empty source is hostd.
+namespace Tsugumi.Trace;
+attribute "trace_secret";
+enum Mode:ubyte { Off, Trace, Capture }
+enum Client:ubyte { Unspecified, MacOS, Web, Host }
+enum Direction:ubyte { Request, Reply, Event, Notification }
+table Entry {
+  sequence:ulong;
+  unix_micros:ulong;
+  from:string (required);
+  to:string (required);
+  direction:Direction;
+  message_type:string (required);
+  request_id:ulong = null;
+  bytes:uint;
+  elapsed_micros:ulong = null;
+  failure:string;
+  content_json:string;
+  content_omission:string;
+}
+table Snapshot { mode:Mode; entries:[Entry]; }
+table CoreTraceRequest {
+  // Required on the guest WebSocket route. Native Unix sockets are private.
+  capability:string (trace_secret);
+  // Optional Mode ordinal. A missing value leaves the recorder as it is.
+  mode:ubyte = null;
+}
+table HostTraceRequest {
+  // Optional Mode ordinal. A missing value leaves the recorder as it is.
+  mode:ubyte = null;
+  // Omitted lists recorders; an empty source retrieves hostd.
+  source:string;
+}
+table Recorder { id:string (required); available:bool; }
+table HostTrace {
+  snapshot:Snapshot (required);
+  recorders:[Recorder];
+}

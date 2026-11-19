@@ -149,6 +149,7 @@ enum ServiceWire {
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
         v.token = fields["token"] as? String ?? ""
+        v.client = .macos
         return (Tsugumi_Host_RequestPayload.hellorequest.rawValue, v)
       case "RegisterProjectRequest":
         let v = Tsugumi_Host_RegisterProjectRequestT()
@@ -223,6 +224,7 @@ enum ServiceWire {
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
         v.token = fields["token"] as? String ?? ""
+        v.client = .macos
         return (Tsugumi_Agent_RequestPayload.hellorequest.rawValue, v)
       case "ConfigureRequest":
         let v = Tsugumi_Agent_ConfigureRequestT()

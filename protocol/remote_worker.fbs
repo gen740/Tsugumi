@@ -5,6 +5,7 @@
 // chunks, with explicit offset/total; no unframed body follows a message.
 // Worker connections use TLS 1.3 with mutually pinned Ed25519 SPKI keys.
 namespace Tsugumi.RemoteWorker;
+attribute "trace_secret";
 
 enum JobState:ubyte { Missing, Uploading, Queued, Running, Cancelling, Succeeded, Failed, Cancelled, Interrupted, Released }
 enum ErrorCode:ubyte { Invalid, Unauthorized, InstanceChanged, RegistrationChanged, Rejected, NotFound, Busy, Internal }
@@ -35,7 +36,7 @@ table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
   // Random identity of one tsugumid process. Scoped probes renew its lease.
-  core_life_id:string;
+  core_life_id:string (trace_secret);
   body:RequestBody (required);
 }
 table Capabilities {
@@ -55,7 +56,7 @@ table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
 table Reply { body:ReplyBody (required); }
 // Private host broker envelope. Never accepted by or forwarded to a worker.
-table BrokerRequest { capability:string (required); request:Request (required); }
+table BrokerRequest { capability:string (required, trace_secret); request:Request (required); }
 union Payload { Request, Reply, BrokerRequest }
 table Message { payload:Payload (required); }
 // Result manifest is a separate FlatBuffer root stored as a job blob.

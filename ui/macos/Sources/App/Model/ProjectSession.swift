@@ -564,7 +564,7 @@ final class ProjectSession {
     let c = RPCClient(endpoint: ep.url)
     do {
       _ = try await withTaskCancellationHandler {
-        try await c.connect(token: ep.token, expectedProjectId: nil)
+        try await c.connect(token: ep.token, expectedProjectId: nil, client: .macos)
       } onCancel: { Task { await c.close() } }
       return c
     } catch {

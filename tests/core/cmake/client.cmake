@@ -10,3 +10,12 @@ target_compile_definitions(tsugumi_rpc_cli_tests PRIVATE
 add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
+
+add_executable(tsugumi_rpc_trace_tests rpc_trace_test.cc)
+target_link_libraries(tsugumi_rpc_trace_tests PRIVATE tsugumi_trace_codec
+  flatbuffers::flatbuffers GTest::gtest_main)
+gtest_discover_tests(tsugumi_rpc_trace_tests TEST_PREFIX "core_rpc_trace."
+  DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_rpc_trace_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
