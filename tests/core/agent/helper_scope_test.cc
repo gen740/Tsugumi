@@ -600,16 +600,15 @@ TEST(HelperCapability, NarrowedChildrenCannotRegainAnAncestorsSets) {
       R"({"depth":3,"count":4,"read_cards":["a","b"],"write_cards":["a","b"],"run_cards":["a","b"]})");
   auto task = json::Object(
       R"({"depth":2,"count":3,"read_cards":["a"],"write_cards":["a"],"run_cards":["a"]})");
-  HelperScope outer(ancestor, "authorization", "outer-scratch");
+  HelperScope outer(ancestor, std::nullopt, "outer-scratch");
   EXPECT_NO_THROW(outer.CheckChild(task));
-  HelperScope parent(task, "authorization", "parent-scratch");
-  EXPECT_EQ(parent.authorization(), "authorization");
+  HelperScope parent(task, std::nullopt, "parent-scratch");
   EXPECT_EQ(parent.scratch_identity(), "parent-scratch");
   EXPECT_EQ(parent.depth(), 2u);
   EXPECT_EQ(parent.count(), 3u);
   task["depth"] = "1";
   EXPECT_NO_THROW(parent.CheckChild(task));
-  HelperScope child(task, "authorization", "child-scratch");
+  HelperScope child(task, std::nullopt, "child-scratch");
   task["depth"] = "0";
   EXPECT_NO_THROW(child.CheckChild(task));
   for (const auto* field : {"read_cards", "write_cards", "run_cards"}) {
