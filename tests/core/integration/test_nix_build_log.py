@@ -64,6 +64,9 @@ in {
 }
 '''.replace("@id@", uuid4().hex).replace("@finish@", finish),
     }
+    if cancelling:
+        # Let the gate fail visibly if a regression prevents live log delivery.
+        definition["buildTimeoutSeconds"] = 120
     write(project, {"probe": definition}, [card("probe", "probe")], [])
     client = core_factory().connect()
     run_id = run(client, "probe", propagate=False)
