@@ -578,7 +578,8 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
             flatbuffers::FlatBufferBuilder b;
             auto h = R::CreateSessionHelloRequest(
                 b, b.CreateString(project),
-                endpoint.token.empty() ? 0 : b.CreateString(endpoint.token));
+                endpoint.token.empty() ? 0 : b.CreateString(endpoint.token),
+                Tsugumi::Trace::Client::Host);
             auto r = R::CreateRequest(b, R::RequestPayload::SessionHelloRequest,
                                       h.Union());
             R::FinishMessageBuffer(

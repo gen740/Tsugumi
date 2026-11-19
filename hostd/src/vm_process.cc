@@ -1,5 +1,7 @@
 #include "host/vm_process.hh"
 
+#include "tsugumi/protocol/trace_codec.hh"
+
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -76,7 +78,7 @@ auto Transfer(int fd, char* bytes, size_t size, bool send) -> void {
     offset += static_cast<size_t>(n);
   }
 }
-auto Read(int fd) -> std::unique_ptr<V::MessageT> {
+auto Read(trace::Link& link, int fd) -> std::unique_ptr<V::MessageT> {
   unsigned char prefix[4];
   Transfer(fd, reinterpret_cast<char*>(prefix), 4, false);
   const uint32_t size = uint32_t(prefix[0]) | uint32_t(prefix[1]) << 8 |
@@ -87,10 +89,12 @@ auto Read(int fd) -> std::unique_ptr<V::MessageT> {
                                  bytes.size());
   if (!V::VerifyMessageBuffer(verifier))
     throw std::runtime_error("Invalid VM helper message");
+  trace::Observe(link, "VM helper", "hostd", false, bytes,
+                 &trace::kFlatBufferCodec);
   return std::unique_ptr<V::MessageT>(V::GetMessage(bytes.data())->UnPack());
 }
 template <class T>
-auto Send(int fd, T value) -> void {
+auto Send(trace::Link& link, int fd, T value) -> void {
   V::RequestT request;
   request.value.Set(std::move(value));
   V::MessageT message;
@@ -105,6 +109,9 @@ auto Send(int fd, T value) -> void {
   Transfer(fd, prefix, 4, true);
   Transfer(fd, reinterpret_cast<char*>(builder.GetBufferPointer()),
            builder.GetSize(), true);
+  trace::Observe(link, "hostd", "VM helper", true,
+                 {reinterpret_cast<const char*>(builder.GetBufferPointer()), size},
+                 &trace::kFlatBufferCodec);
 }
 class VMProcess final : public EnvironmentProcess {
  public:
@@ -132,8 +139,9 @@ class VMProcess final : public EnvironmentProcess {
       try {
         H::HostRuntimeRequestT stop;
         stop.action = H::RuntimeAction::Shutdown;
-        Send(socket.fd, stop);
-        Read(socket.fd);
+        trace::Link link;
+        Send(link, socket.fd, stop);
+        Read(link, socket.fd);
       } catch (...) {
       }
     }
@@ -327,20 +335,21 @@ class VMProcess final : public EnvironmentProcess {
     if (watch_fd_ >= 0) return;
     if (watcher_.joinable()) watcher_.join();
     watch_fd_ = Connect();
+    trace::Link link;
     try {
-      Send(watch_fd_, V::WatchT{});
+      Send(link, watch_fd_, V::WatchT{});
       // The helper acknowledges Watch before subscribing this peer.
-      Read(watch_fd_);
+      Read(link, watch_fd_);
     } catch (...) {
       ::close(watch_fd_);
       watch_fd_ = -1;
       throw;
     }
     watcher_ =
-        std::jthread([this, fd = watch_fd_.load()](std::stop_token stop) {
+        std::jthread([this, link, fd = watch_fd_.load()](std::stop_token stop) mutable {
           try {
             while (!stop.stop_requested()) {
-              auto message = Read(fd);
+              auto message = Read(link, fd);
               const auto* event = message->payload.AsEvent();
               if (const auto* progress = event->value.AsProgress())
                 options_.progress(*progress);
@@ -375,8 +384,9 @@ class VMProcess final : public EnvironmentProcess {
     } finished{*this, socket.fd};
     std::stop_callback cancelled(stop,
                                  [&] { ::shutdown(socket.fd, SHUT_RDWR); });
-    Send(socket.fd, std::move(value));
-    auto message = Read(socket.fd);
+    trace::Link link;
+    Send(link, socket.fd, std::move(value));
+    auto message = Read(link, socket.fd);
     auto* reply = message->payload.AsReply();
     if (const auto* failure = reply->value.AsFailure())
       throw EnvironmentFailure(failure->message, failure->recovery,

@@ -29,6 +29,7 @@ case "$suite" in
     run "$bin/tsugumi_agent_rpc_tests" "--gtest_filter=$host_filter"
     ;;
   core)
+    run "$bin/tsugumi_rpc_trace_tests"
     run "$bin/tsugumi_rpc_cli_tests"
     remote_filter='*'
     if ! $full; then remote_filter='*-InitialDocument.*:OpaqueMetadata.*:LayoutBoundary.*:CardIdentity.MetadataIsNonComputationalOnlyAtDefinitionPaths'; fi

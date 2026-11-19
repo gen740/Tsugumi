@@ -43,6 +43,7 @@ buildNpmPackage {
       ../ui/shared/templates
       ../protocol/remote_worker.fbs
       ../protocol/local_worker.fbs
+      ../protocol/rpc_trace.fbs
       ../protocol/service_common.fbs
       ../protocol/host.fbs
       ../protocol/vm_host.fbs

@@ -19,6 +19,8 @@
 #include <variant>
 #include <vector>
 
+#include "tsugumi/rpc/trace.hh"
+
 namespace tsugumi {
 
 using ConnId = uint64_t;
@@ -36,6 +38,7 @@ struct PendingMessage {
 struct FrameInfo {
   uint64_t request_id;
   bool hello;
+  const char* peer = nullptr;
 };
 enum class AdmissionFailure { AlreadyHello, Unauthenticated, Busy };
 struct FrameCodec {
@@ -66,6 +69,8 @@ class RequestSink {
 
 struct ServerOptions {
   FrameCodec codec;
+  const char* trace_endpoint = "";
+  const trace::Codec* trace_codec = nullptr;
   std::string subprotocol;
   std::string unix_path;  // empty: no Unix socket
   // WebSocket on a Unix socket (0600): the shared VM's projects, reached by

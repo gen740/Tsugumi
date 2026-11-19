@@ -1,6 +1,6 @@
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker local_worker remote_worker tsugumi service_common agent host vm_host)
+set(TSUGUMI_SCHEMAS tsugumi_enums rpc_trace data worker local_worker remote_worker tsugumi service_common agent host vm_host)
 
 function(schema_inputs schema result)
   set(source ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
@@ -34,7 +34,7 @@ foreach(schema ${TSUGUMI_SCHEMAS})
     COMMENT "flatc ${schema}.fbs"
     VERBATIM)
 endforeach()
-foreach(schema tsugumi agent host)
+foreach(schema tsugumi agent host worker local_worker remote_worker vm_host)
   schema_inputs(${schema} _inputs)
   list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
   add_custom_command(

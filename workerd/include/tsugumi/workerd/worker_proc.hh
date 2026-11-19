@@ -1,6 +1,8 @@
 // Owner side of one tsugumi-worker process.
 #pragma once
 
+#include "tsugumi/rpc/trace.hh"
+
 #include <sys/types.h>
 
 #include <array>
@@ -82,6 +84,7 @@ struct WorkerOutcome {
 bool worker_uid_on_host();
 
 class WorkerProc {
+  trace::Link trace_link_;
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;

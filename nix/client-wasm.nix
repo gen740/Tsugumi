@@ -23,6 +23,7 @@ stdenvNoCC.mkDerivation {
       ../cmake
       ../client/cmake
       ../client/src/wasm_bindings.cc
+      ../protocol/rpc_trace.fbs
       ../protocol/service_common.fbs
       ../protocol/host.fbs
       ../protocol/vm_host.fbs
