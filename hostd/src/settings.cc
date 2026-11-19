@@ -312,10 +312,12 @@ struct Settings::State {
     for (auto& [_, a] : attempts)
       if (a->worker.joinable()) a->worker.join();
   }
-  auto Revision() -> uint64_t {
-    auto query = db.prepare("SELECT revision FROM settings_revision");
+  auto Revision() -> std::string {
+    auto query = db.prepare(
+        "SELECT store || ':' || printf('%019lld',revision) FROM "
+        "settings_revision");
     query.step();
-    return query.u64(0);
+    return query.text(0);
   }
   auto Values(const std::string& surface = {}) -> j::Members {
     auto values = Defaults();
@@ -731,7 +733,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
         sql::Transaction tx(s.db);
         const auto surface = p.profile()->str();
         if (surface.empty()) throw std::runtime_error("Missing settings surface");
-        if (s.Revision() != p.revision()) {
+        if (s.Revision() != p.revision()->string_view()) {
           S::FailureT f;
           f.code = "conflict";
           f.message = "Settings changed; read the latest revision";

@@ -72,7 +72,7 @@ enum ServiceWire {
       case "SettingsUpdateRequest":
         let v = Tsugumi_Host_SettingsUpdateRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
-        v.revision = (fields["revision"] as? NSNumber)?.uint64Value ?? 0
+        v.revision = fields["revision"] as? String ?? ""
         v.changes = (fields["changes"] as? [[String: String]] ?? []).map { item in let s = Tsugumi_Host_SettingT(); s.key = item["key"] ?? ""; s.valueJson = item["value_json"] ?? "null"; return s }
         return (Tsugumi_Host_RequestPayload.settingsupdaterequest.rawValue, v)
       case "ProviderSetRequest":

@@ -82,8 +82,8 @@ const SETTINGS_KEYS: Record<string, string> = {
 }
 const localProfile = () => `web:${ctx.support}`
 const providerProfile = () => ctx.desktop ? 'desktop' : localProfile()
-type SettingsReply = { revision: number; values: { key: string; value_json: string }[] }
-let revision = 0
+type SettingsReply = { revision: string; values: { key: string; value_json: string }[] }
+let revision = ''
 let settingsConnection = 0
 let snapshot = {} as Settings
 const settings = (): Settings => snapshot
@@ -468,13 +468,13 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
-  revision = 0
+  revision = ''
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     const connected = event.type === 'Connected'
     if (connected) {
       settingsConnection++
-      revision = 0
+      revision = ''
     }
     if (connected || event.type === 'SettingsChanged') {
       const connection = settingsConnection

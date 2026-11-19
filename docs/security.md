@@ -295,11 +295,28 @@ Helpers have separate scratch and command/output directories, including unscoped
 
 The host service keeps `host.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
 
-When updating from a version that used `host-settings.sqlite`, stop hostd
-and remove `host-settings.sqlite`, `host-settings.sqlite-wal`,
-`host-settings.sqlite-shm` and `host-settings.sqlite-journal` from its
-`host-core/` folder if present. Those files can contain old Linux API keys.
-Start the new host and enter the keys again in Settings.
+When updating from a version that used `host-settings.sqlite`, use the old
+version to sign out of every ChatGPT account on the Mac and in each Web host
+profile. If the app cannot confirm server-side revocation, revoke the old
+authorization through the account before relying on local deletion. Stop hostd
+and remove `host-settings.sqlite` and its `-wal`, `-shm` and `-journal`
+sidecars from `host-core/` if present. These files can contain old Linux API
+keys. After updating, sign in and enter the keys again in Settings.
+
+If you already updated without signing out, the old OAuth credentials may
+still be in `host.sqlite`. Keep hostd stopped, open the existing
+`host-core/host.sqlite` with `sqlite3` and run the following with the updated
+schema. It removes credentials that have no account in any profile and keeps
+credentials linked to current accounts. Revoke the old authorization through
+the account as well, since SQL only removes the local copy.
+
+```sql
+PRAGMA secure_delete = ON;
+DELETE FROM credentials
+WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE accounts.id = credentials.id);
+VACUUM;
+PRAGMA wal_checkpoint(TRUNCATE);
+```
 
 `tsugumi-hostd` writes project conversations through the registered host folder, including on macOS where `tsugumid` runs in the VM. It does not open this database through the VM's shared-folder mount. SQLite uses a rollback journal with full synchronization; a lifetime exclusive lock on `.tsugumi/agent.lock` refuses a second Agent host with `busy` until the first stops. Shared filesystems must honor file locks; independent filesystem copies have separate locks, and file synchronization does not coordinate writers. Registering a second existing folder with the same project identity on one host is refused. Stop the Agent service before copying the project so the database is complete.
 

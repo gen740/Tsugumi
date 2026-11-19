@@ -242,7 +242,7 @@ final class ServiceWireTests: XCTestCase {
   func testSettingsAndSignInUseTheHostContract() throws {
     for (method, fields) in [
       ("SettingsGetRequest", ["profile": "desktop"]),
-      ("SettingsUpdateRequest", ["profile": "desktop", "revision": UInt64.max - 1, "changes": [["key": "agent.webSearch", "value_json": "true"]]]),
+      ("SettingsUpdateRequest", ["profile": "desktop", "revision": "host:0000000000000000001", "changes": [["key": "agent.webSearch", "value_json": "true"]]]),
       ("ProviderSetRequest", ["profile": "desktop", "id": "openai", "remove": true]),
       ("ProviderStatusRequest", ["profile": "desktop", "id": "openai"]),
       ("SignInBeginRequest", ["profile": "desktop"]),

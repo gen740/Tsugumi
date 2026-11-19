@@ -4,7 +4,7 @@ export function mockHostSettings() {
   const environment = CoreHost.prototype.provisionEnvironment
   CoreHost.prototype.provisionEnvironment = async () => {}
   const original = CoreHost.prototype.getSettings
-  CoreHost.prototype.getSettings = async () => ({ revision: 0, values: Object.entries({
+  CoreHost.prototype.getSettings = async () => ({ revision: 'host:0', values: Object.entries({
     'agent.provider': 'anthropic', 'agent.model': 'claude-sonnet-5-5', 'agent.model.openai': 'gpt-6.1-sol', 'agent.model.chatgpt': 'gpt-6.1-sol',
     'agent.fixturePort': 8765, 'agent.effort': '', 'agent.fastModel': '', 'agent.webSearch': false, 'agent.permissions.allowed': [],
     'agent.skillFolders': [], 'agent.trustedFolders': [], 'versions.noteMode': 'mechanical', 'app.language': 'ja',

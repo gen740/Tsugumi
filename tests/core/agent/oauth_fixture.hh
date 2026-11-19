@@ -51,13 +51,15 @@ inline auto SettingsPatch(client::Connection& host, const std::string& profile,
                           const std::map<std::string, std::string>& change)
     -> Reply {
   const auto before = SettingsGet(host, profile);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto revision =
+      before.HostValue()->value_as_Settings()->revision()->str();
   return Call(host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
     std::vector<flatbuffers::Offset<H::Setting>> changes;
     for (const auto& [k, v] : change)
       changes.push_back(
           H::CreateSetting(b, b.CreateString(k), b.CreateString(v)));
-    return H::CreateSettingsUpdateRequest(b, b.CreateString(profile), revision,
+    return H::CreateSettingsUpdateRequest(b, b.CreateString(profile),
+                                          b.CreateString(revision),
                                           b.CreateVector(changes))
         .Union();
   });

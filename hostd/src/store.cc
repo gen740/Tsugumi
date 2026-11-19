@@ -35,8 +35,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
   db.exec(
       "CREATE TABLE IF NOT EXISTS setting_values(scope TEXT NOT NULL, "
       "key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));"
-      "CREATE TABLE IF NOT EXISTS settings_revision(revision INTEGER NOT NULL);"
-      "INSERT INTO settings_revision SELECT 0 WHERE NOT EXISTS "
+      "CREATE TABLE IF NOT EXISTS settings_revision(revision INTEGER NOT NULL,"
+      "store TEXT NOT NULL);"
+      "INSERT INTO settings_revision SELECT 0,lower(hex(randomblob(16))) "
+      "WHERE NOT EXISTS "
       "(SELECT 1 FROM settings_revision);"
       "CREATE TABLE IF NOT EXISTS provider_connections(profile TEXT,id TEXT,"
       "json TEXT NOT NULL,PRIMARY KEY(profile,id));"

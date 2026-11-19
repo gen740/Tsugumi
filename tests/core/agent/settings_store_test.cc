@@ -18,6 +18,19 @@
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
+auto ReadSettingsRevision(host::Settings& service) -> std::string {
+  flatbuffers::FlatBufferBuilder b;
+  const auto get = H::CreateSettingsGetRequest(b, b.CreateString("desktop"));
+  b.Finish(
+      H::CreateRequest(b, H::RequestPayload::SettingsGetRequest, get.Union()));
+  const auto reply = service.Handle(
+      *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+  return H::GetMessage(reply.data())
+      ->payload_as_Reply()
+      ->value_as_Settings()
+      ->revision()
+      ->str();
+}
 class MemorySecrets final : public host::SecretStore {
  public:
   std::map<std::string, std::string> values;
@@ -105,7 +118,8 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
     value.revision = H::GetMessage(before.data())
                          ->payload_as_Reply()
                          ->value_as_Settings()
-                         ->revision();
+                         ->revision()
+                         ->str();
     auto item = std::make_unique<H::SettingT>();
     item->key = "agent.animateWork";
     item->value_json = raw;
@@ -273,7 +287,8 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
     value.revision = H::GetMessage(before.data())
                          ->payload_as_Reply()
                          ->value_as_Settings()
-                         ->revision();
+                         ->revision()
+                         ->str();
     auto item = std::make_unique<H::SettingT>();
     item->key = key;
     item->value_json = raw;
@@ -324,14 +339,15 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
       directory.path, credentials,
       std::move(memory), host::Settings::KeyStorage::Host);
   EXPECT_EQ(service.VersionNoteMode(), "mechanical");
-  const auto update = [&](const std::string& mode, uint64_t revision,
+  const auto update = [&](const std::string& mode,
                           const std::string& key = "versions.noteMode") {
     flatbuffers::FlatBufferBuilder b;
     const auto change =
         H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
-    const auto p =
-        H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"), revision,
-                                       b.CreateVector(std::vector{change}));
+    const auto p = H::CreateSettingsUpdateRequest(
+        b, b.CreateString("desktop"),
+        b.CreateString(ReadSettingsRevision(service)),
+        b.CreateVector(std::vector{change}));
     const auto request = H::CreateRequest(
         b, H::RequestPayload::SettingsUpdateRequest, p.Union());
     H::FinishMessageBuffer(
@@ -340,15 +356,15 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
         *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
   };
   for (const auto& invalid : {"true", "\"unknown\""}) {
-    const auto failure = update(invalid, 0);
+    const auto failure = update(invalid);
     ASSERT_TRUE(
         H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
   }
-  auto reply = update("\"agent\"", 0);
+  auto reply = update("\"agent\"");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteMode(), "agent");
-  reply = update("\"mechanical\"", 1);
+  reply = update("\"mechanical\"");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteMode(), "mechanical");
@@ -359,13 +375,13 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
                 .credential,
             "ANTHROPIC_NOTE_KEY");
-  reply = update("\"openai\"", 2, "agent.provider");
+  reply = update("\"openai\"", "agent.provider");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "")
                 .credential,
             "OPENAI_NOTE_KEY");
-  reply = update("\"custom-small-model\"", 3, "agent.thoughtModel.openai");
+  reply = update("\"custom-small-model\"", "agent.thoughtModel.openai");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
@@ -384,13 +400,14 @@ class HostPolicyTest : public ::testing::Test {
   std::unique_ptr<host::Settings> service;
   MemorySecrets* secrets = nullptr;
   std::vector<std::string> models;
-  uint64_t revision = 0;
+  std::string revision;
   auto Open(host::Settings::KeyStorage storage) -> void {
     auto store = std::make_unique<MemorySecrets>();
     secrets = store.get();
     service = std::make_unique<host::Settings>(
         directory.path, credentials,
         std::move(store), storage, [this] { return models; });
+    revision = ReadSettingsRevision(*service);
   }
   template <typename T>
   auto Call(T value) -> std::unique_ptr<H::ReplyT> {
@@ -1121,7 +1138,7 @@ TEST(HostSettingsStore,
   host::Settings service(
       directory.path, credentials,
       std::make_unique<MemorySecrets>());
-  uint64_t revision = 0;
+  auto revision = ReadSettingsRevision(service);
   auto update = [&](const std::string& raw,
                     const std::string& profile = "desktop") {
     H::RequestT request;
@@ -1142,7 +1159,7 @@ TEST(HostSettingsStore,
         *H::GetMessage(builder.GetBufferPointer())->payload_as_Request(), 1);
     const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
     if (const auto* settings = result->value_as_Settings()) {
-      revision = settings->revision();
+      revision = settings->revision()->str();
       return true;
     }
     return false;

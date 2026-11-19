@@ -34,16 +34,18 @@ TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
 TEST_F(AgentFixture,
        ConcurrentSettingsUpdatesRejectStaleRevisionsWithoutLosingFields) {
   const auto before = SettingsGet(*host);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto revision =
+      before.HostValue()->value_as_Settings()->revision()->str();
   auto websocket = ConnectHost(true);
   auto update = [&](client::Connection& c, const std::string& key,
                     const std::string& value) {
     return Call(c, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
       const auto entry =
           H::CreateSetting(b, b.CreateString(key), b.CreateString(value));
-      return H::CreateSettingsUpdateRequest(b, b.CreateString(key == "agent.model" ? "desktop" : "web:test"),
-                                            revision,
-                                            b.CreateVector(std::vector{entry}))
+      return H::CreateSettingsUpdateRequest(
+                 b,
+                 b.CreateString(key == "agent.model" ? "desktop" : "web:test"),
+                 b.CreateString(revision), b.CreateVector(std::vector{entry}))
           .Union();
     });
   };
@@ -63,7 +65,8 @@ TEST_F(AgentFixture,
           .Code()
           .empty());
   const auto after = SettingsGet(*host);
-  EXPECT_EQ(after.HostValue()->value_as_Settings()->revision(), revision + 2);
+  EXPECT_NE(after.HostValue()->value_as_Settings()->revision()->str(),
+            revision);
   EXPECT_NE(Bytes(after).find("retry after reading"), std::string::npos);
 }
 TEST_F(AgentFixture, MixedSettingsPatchSharesHostValuesAndIsolatesSkillFolders) {
@@ -73,7 +76,8 @@ TEST_F(AgentFixture, MixedSettingsPatchSharesHostValuesAndIsolatesSkillFolders) 
       *host, "web:test", {{"agent.skillFolders", folders},
                            {"agent.allowUnscopedHelpers", "true"}});
   ASSERT_TRUE(patch.Code().empty());
-  const auto before = initial.HostValue()->value_as_Settings()->revision();
+  const auto before =
+      initial.HostValue()->value_as_Settings()->revision()->str();
   const auto desktop = SettingsGet(*host);
   const auto web = SettingsGet(*host, "web:test");
   const auto value = [](const Reply& reply, const std::string& key) {
@@ -81,8 +85,12 @@ TEST_F(AgentFixture, MixedSettingsPatchSharesHostValuesAndIsolatesSkillFolders) 
       if (entry->key()->str() == key) return entry->value_json()->str();
     return std::string{};
   };
-  EXPECT_EQ(desktop.HostValue()->value_as_Settings()->revision(), before + 1);
-  EXPECT_EQ(web.HostValue()->value_as_Settings()->revision(), before + 1);
+  const auto updated =
+      patch.HostValue()->value_as_Settings()->revision()->str();
+  EXPECT_NE(updated, before);
+  EXPECT_EQ(desktop.HostValue()->value_as_Settings()->revision()->str(),
+            updated);
+  EXPECT_EQ(web.HostValue()->value_as_Settings()->revision()->str(), updated);
   EXPECT_EQ(value(desktop, "agent.allowUnscopedHelpers"), "true");
   EXPECT_EQ(value(desktop, "agent.skillFolders"), "[]");
   EXPECT_EQ(value(web, "agent.skillFolders"), folders);
@@ -94,14 +102,15 @@ TEST_F(AgentFixture, WebPermissionUpdatesKeepTheNativeNixPermission) {
           .Code()
           .empty());
   const auto before = SettingsGet(*host);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto revision =
+      before.HostValue()->value_as_Settings()->revision()->str();
   const auto updated =
       Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
         const auto change =
             H::CreateSetting(b, b.CreateString("agent.permissions.allowed"),
                              b.CreateString(R"(["network"])"));
         return H::CreateSettingsUpdateRequest(
-                   b, b.CreateString("desktop"), revision,
+                   b, b.CreateString("desktop"), b.CreateString(revision),
                    b.CreateVector(std::vector{change}), b.CreateString("web"))
             .Union();
       });
@@ -162,12 +171,13 @@ TEST_F(
   OAuthServer oauth;
   ModelServer model;
   const auto revision =
-      SettingsGet(*host).HostValue()->value_as_Settings()->revision();
+      SettingsGet(*host).HostValue()->value_as_Settings()->revision()->str();
   const auto signed_in = oauth.SignIn(*host, model.URL(), "desktop", 0);
   ASSERT_EQ(signed_in.HostValue()->value_as_SignInStatus()->state()->str(),
             "complete");
-  EXPECT_EQ(SettingsGet(*host).HostValue()->value_as_Settings()->revision(),
-            revision);
+  EXPECT_EQ(
+      SettingsGet(*host).HostValue()->value_as_Settings()->revision()->str(),
+      revision);
   for (const auto* secret :
        {"ACCESS_SENTINEL", "REFRESH_SENTINEL", "CODE_SENTINEL"})
     EXPECT_EQ(Bytes(signed_in).find(secret), std::string::npos);

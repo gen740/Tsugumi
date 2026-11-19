@@ -29,7 +29,10 @@ class SkillsFixture : public AgentProjectFixture {
                                b.CreateString(encoded));
           return H::CreateSettingsUpdateRequest(
                      b, b.CreateString("desktop"),
-                     before.HostValue()->value_as_Settings()->revision(),
+                     b.CreateString(before.HostValue()
+                                        ->value_as_Settings()
+                                        ->revision()
+                                        ->str()),
                      b.CreateVector(std::vector{item}))
               .Union();
         });
