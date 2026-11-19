@@ -617,7 +617,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         socket.connect(toPort: port) { result in
           switch result {
           case .success(let conn):
-            let fd = dup(conn.fileDescriptor)
+            let fd = fcntl(conn.fileDescriptor, F_DUPFD_CLOEXEC, 0)
             conn.close()
             if fd >= 0 { noSigPipe(fd) }
             if fd < 0 { c.resume(throwing: LauncherError.notReady("vsock dup failed")) } else { c.resume(returning: fd) }
@@ -656,6 +656,7 @@ func writeAll(_ fd: Int32, _ data: Data) throws {
     var off = 0
     while off < buf.count {
       let n = write(fd, buf.baseAddress! + off, buf.count - off)
+      if n < 0 && errno == EINTR { continue }
       if n <= 0 { throw LauncherError.notReady("write failed") }
       off += n
     }
@@ -669,6 +670,7 @@ func readLine(_ fd: Int32) -> String {
   var c: UInt8 = 0
   while bytes.count < 1 << 20 {
     let n = read(fd, &c, 1)
+    if n < 0 && errno == EINTR { continue }
     if n <= 0 || c == 10 { break }
     bytes.append(c)
   }
@@ -691,6 +693,7 @@ public final class LoopbackBridge: @unchecked Sendable {
     self.projectId = projectId
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { throw LauncherError.startFailed(reason: "no local socket", log: "") }
+    _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
     var one: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
     var addr = sockaddr_in()
@@ -728,7 +731,10 @@ public final class LoopbackBridge: @unchecked Sendable {
   private func acceptLoop() {
     while true {
       let c = accept(listener, nil, nil)
-      if c >= 0 { noSigPipe(c) }
+      if c >= 0 {
+        _ = fcntl(c, F_SETFD, FD_CLOEXEC)
+        noSigPipe(c)
+      }
       if c < 0 {
         stopFlag.lock()
         let done = closed

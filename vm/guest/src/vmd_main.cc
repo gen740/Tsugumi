@@ -625,7 +625,15 @@ auto stop_project(const std::string& id) -> void {
   pid_t pid = it->second.pid;
   ::kill(pid, SIGTERM);
   // tsugumid records interrupted runs on SIGTERM before exiting.
-  exited.wait(l, [&] { return !it->second.running; });
+  if (!exited.wait_for(l, std::chrono::seconds(10),
+                       [&] { return !it->second.running; })) {
+    logf("project %s did not exit after SIGTERM; escalating to cgroup.kill",
+         id.c_str());
+    write_file(cgroup_dir(id) + "/cgroup.kill", "1");
+    ::kill(pid, SIGKILL);
+    exited.wait_for(l, std::chrono::seconds(5),
+                    [&] { return !it->second.running; });
+  }
 }
 
 auto forget_project(const std::string& id, bool stop) -> std::string {
@@ -792,6 +800,19 @@ void shell(int conn, const std::string& id, int rows, int cols) {
   reply(conn, "ok " + std::to_string(sid));
   logf("terminal %llu for %s", static_cast<unsigned long long>(sid),
        id.c_str());
+  auto write_all = [](int fd, const char* data, size_t len) -> bool {
+    size_t off = 0;
+    while (off < len) {
+      ssize_t w = ::write(fd, data + off, len - off);
+      if (w < 0) {
+        if (errno == EINTR) continue;
+        return false;
+      }
+      if (w == 0) return false;
+      off += static_cast<size_t>(w);
+    }
+    return true;
+  };
   char buf[16384];
   pollfd fds[2] = {{conn, POLLIN, 0}, {master, POLLIN, 0}};
   for (;;) {
@@ -801,11 +822,13 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     }
     if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
       ssize_t n = ::read(conn, buf, sizeof buf);
-      if (n <= 0 || ::write(master, buf, n) != n) break;
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0 || !write_all(master, buf, static_cast<size_t>(n))) break;
     }
     if (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
       ssize_t n = ::read(master, buf, sizeof buf);
-      if (n <= 0 || ::write(conn, buf, n) != n) break;
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0 || !write_all(conn, buf, static_cast<size_t>(n))) break;
     }
   }
   ::kill(pid, SIGHUP);
@@ -934,23 +957,33 @@ void control(int conn) {
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";
-  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5))
-    r = start_project(w[1], w[2], std::atoi(w[3].c_str()),
-                      w.size() == 5 ? w[4] : "");
-  else if (w[0] == "stop" && w.size() == 2) {
-    stop_project(w[1]);
-    r = "ok";
+  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5)) {
+    r = valid_id(w[1]) ? start_project(w[1], w[2], std::atoi(w[3].c_str()),
+                                       w.size() == 5 ? w[4] : "")
+                       : "error invalid project id";
+  } else if (w[0] == "stop" && w.size() == 2) {
+    if (!valid_id(w[1])) {
+      r = "error invalid project id";
+    } else {
+      stop_project(w[1]);
+      r = "ok";
+    }
   } else if ((w[0] == "forget" || w[0] == "forget-stopped") && w.size() == 2)
-    r = forget_project(w[1], w[0] == "forget");
+    r = valid_id(w[1]) ? forget_project(w[1], w[0] == "forget")
+                       : "error invalid project id";
   else if (w[0] == "gc" && w.size() == 1)
     r = collect_garbage();
   else if (w[0] == "verify-store" && w.size() == 1)
     r = collect_garbage(true);
   else if (w[0] == "shell" && w.size() == 4) {
-    operation.unlock();
-    shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
-    ::close(conn);
-    return;
+    if (!valid_id(w[1])) {
+      r = "error invalid project id";
+    } else {
+      operation.unlock();
+      shell(conn, w[1], std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
+      ::close(conn);
+      return;
+    }
   } else if (w[0] == "resize" && w.size() == 4)
     r = resize(std::strtoull(w[1].c_str(), nullptr, 10),
                std::atoi(w[2].c_str()), std::atoi(w[3].c_str()));
@@ -974,6 +1007,10 @@ void control(int conn) {
 
 void rpc(int conn) {
   std::string id = read_line(conn);
+  if (!valid_id(id)) {
+    ::close(conn);
+    return;
+  }
   bool running = false;
   {
     std::lock_guard<std::mutex> l(mu);
