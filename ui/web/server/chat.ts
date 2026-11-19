@@ -624,13 +624,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
     if (allow && Array.isArray(b.always) && b.always.length > 0) {
-      const kindsReply = await core.user.call<{ kinds?: { id: string }[] }>('PermissionKindsRequest', { language: settings().language })
-      const valid = new Set((kindsReply.kinds ?? []).map((k) => k.id))
-      const requested = b.always.map(String).filter((id: string) => valid.has(id))
-      if (requested.length > 0) {
-        const merged = [...new Set([...(settings().allowedPermissions ?? []), ...requested])]
-        await patchSettings({ allowedPermissions: merged })
-      }
+      const merged = [...new Set([...(settings().allowedPermissions ?? []), ...b.always.map(String)])]
+      await patchSettings({ allowedPermissions: merged })
     }
     await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
