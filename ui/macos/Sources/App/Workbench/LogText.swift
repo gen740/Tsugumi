@@ -166,11 +166,13 @@ import TsugumiRPC
     case .success(let slice):
       let read = completed.read, kind = completed.kind
       let paused = !window.following && (read.kind == .tail || read.kind == .append)
+      let superseded = (kind == .earlier && (window.following || demand == .later || demand == .tail))
+        || (kind == .later && (demand == .earlier || demand == .tail))
       let previous = window.blocks
-      window.apply(read, slice, metadataOnly: paused)
+      window.apply(read, slice, metadataOnly: paused || superseded)
       if error != nil { error = nil }
       if window.following && window.end < window.size { update() }
-      if (kind == .earlier || kind == .later), demand == nil, window.blocks == previous { page(kind) }
+      if !superseded, (kind == .earlier || kind == .later), demand == nil, window.blocks == previous { page(kind) }
     case .failure(let failure):
       if let rpc = failure as? RPCFailure, rpc.kind == .notFound, !window.loaded {
         error = nil
@@ -359,7 +361,7 @@ private struct LogScrollView: NSViewRepresentable {
       let inset = text.textContainerOrigin
       let bounds = scroll.documentVisibleRect
       var anchor: (character: Int, inset: CGFloat)?
-      if !reader.window.following, !shown.isEmpty, layout.numberOfGlyphs > 0 {
+      if !reader.window.following, !shown.isEmpty, storage.length > 0 {
         let glyph = layout.glyphIndex(for: CGPoint(x: 0, y: max(0, bounds.minY - inset.y)), in: container)
         let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         anchor = (layout.characterIndexForGlyph(at: glyph), bounds.minY - (line.minY + inset.y))
@@ -394,7 +396,7 @@ private struct LogScrollView: NSViewRepresentable {
       shownFont = font
       shownPlaceholder = message
       if reader.window.following, !empty {
-        text.scrollToEndOfDocument(nil)
+        text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
       } else if let anchor, edit.newLength > 0 {
         let character = edit.character(anchor.character)
         layout.ensureLayout(forCharacterRange: NSRange(location: character, length: 1))

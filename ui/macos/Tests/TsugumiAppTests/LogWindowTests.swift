@@ -76,13 +76,15 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
   var frames = LogReadFrames<Int>()
   for _ in 0..<100 { frames.wake() }
   #expect(frames.needsFrame)
-  #expect(frames.begin())
+  let first = frames.begin()
+  #expect(first)
   for _ in 0..<100 { frames.wake() }
   #expect(!frames.needsFrame && !frames.begin())
   frames.finish(1)
   #expect(frames.needsFrame)
   #expect(frames.takeResult() == 1)
-  #expect(frames.begin())
+  let second = frames.begin()
+  #expect(second)
   frames.finish(2)
   #expect(frames.takeResult() == 2)
   #expect(!frames.begin() && !frames.needsFrame)
