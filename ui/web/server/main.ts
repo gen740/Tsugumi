@@ -542,7 +542,7 @@ async function shutdown() {
   try {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
-  endEventStreams()
+  for (const stream of streams.keys()) stream.end()
   for (const t of terminals.values()) stopTerminal(t)
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.
