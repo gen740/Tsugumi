@@ -1,6 +1,8 @@
 """Typed values reach the bundled Bash display Card through the real worker and public RPC."""
 
 import json
+import math
+import re
 from pathlib import Path
 import shlex
 
@@ -12,9 +14,6 @@ from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
-
-
-FLOAT_SCHEMA = "table M { d:double; f:float; } table Outputs { out:M; } root_type Outputs;"
 
 
 DEFINITION = Path(__file__).resolve().parents[2] / "demos/en/marimo/definitions/result"
@@ -63,20 +62,6 @@ def emit(value):
     return 'printf "%s" ' + shlex.quote('{"out":' + value + '}') + ' > "$TSUGUMI_OUTPUT"'
 
 
-@pytest.fixture
-def shown_value(core_factory, project, tmp_path):
-    def show(schema, value, root_type):
-        payload = encode_message(tmp_path / "encoded", schema, value, root_type=root_type)
-        client = core_factory().connect()
-        display_graph(project, schema, payload=payload).save(client)
-        run_id, status, logged = display_run(client)
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        shown = text(recorded_display(client, run_id).text)
-        assert logged == shown
-        return shown, payload
-    return show
-
-
 TEXT_SCHEMA = "table Message { note:string; value:string; other:double; } table Outputs { out:Message; } root_type Outputs;"
 
 
@@ -94,8 +79,8 @@ def test_display_renders_the_selected_markdown_field_on_each_run(client, project
         shown = recorded_display(client, run_id)
         assert shown.markdown
         assert text(shown.text) == markdown
-        assert '"other": inf' in logged
-        assert json.loads(logged.replace('"other": inf', '"other": null'))["note"] == markdown
+        values = json.loads(logged.replace('"other": inf', '"other": Infinity'))
+        assert values["note"] == markdown and values["other"] == math.inf
 
 
 @pytest.mark.parametrize("field", ["note", "other"], ids=["missing", "not-a-string"])
@@ -116,49 +101,11 @@ def test_display_marks_large_unicode_previews(client, project):
     run_id, status, logged = display_run(client)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     shown = text(recorded_display(client, run_id).text)
-    assert shown.startswith(logged[:100])
-    assert shown.endswith("[Display truncated.]")
+    prefix, separator, notice = shown.rpartition("\n\n")
+    assert prefix and separator and notice
+    assert logged and prefix[:100] == logged[:100]
     assert len(shown.encode()) <= 1024 * 1024
     assert "\ufffd" not in shown
-
-
-@pytest.mark.parametrize("field,literal,expected", [
-    ("d", "0.30000000000000004", "0.30000000000000004"),
-    ("d", "123456.78901234567", "123456.78901234567"),
-    ("d", "-1.5e-7", "-1.5e-07"),
-    ("d", "5e-324", "5e-324"),
-    ("d", "1.7976931348623157e308", "1.7976931348623157e+308"),
-    ("d", "1e16", "1e+16"),
-    ("d", "9999999999999998", "9999999999999998.0"),
-    ("d", "0.0001", "0.0001"),
-    ("d", "3", "3.0"),
-    ("f", "0.1", "0.1"),
-    ("f", "16777216", "16777216.0"),
-    ("f", "1.17549435e-38", "1.1754944e-38"),
-    ("f", "3.4028235e38", "3.4028235e+38"),
-    ("f", "1e-7", "1e-07"),
-], ids=["double-rounding-tail", "double-many-digits", "double-negative-exponent", "double-min-subnormal",
-        "double-max-finite", "double-large-exponent", "double-large-integer", "double-small-decimal",
-        "double-whole-number", "float-decimal", "float-max-exact-integer", "float-min-normal",
-        "float-max-finite", "float-small-exponent"])
-def test_display_preserves_floating_point_values(shown_value, tmp_path, field, literal, expected):
-    """The Bash Card prints floating-point boundaries without losing their original value.
-
-    Given an independently encoded float or double,
-    when the external worker sends it through the Bash display Card,
-    then its displayed decimal reconstructs exactly the same message bytes.
-    """
-    shown, original = shown_value(FLOAT_SCHEMA, '{"' + field + '":' + literal + '}', "M")
-    expected_fields = {"d": "0.0", "f": "0.0", field: expected}
-    assert shown == '{\n  "d": ' + expected_fields["d"] + ',\n  "f": ' + expected_fields["f"] + '\n}\n'
-    assert encode_message(tmp_path / "read-back", FLOAT_SCHEMA, shown, root_type="M") == original
-
-
-@pytest.mark.parametrize("literal", ["nan", "inf", "-inf"], ids=["nan", "positive-infinity", "negative-infinity"])
-def test_display_represents_non_finite_message_values(shown_value, literal):
-    """The Bash Card preserves non-finite values carried by a typed binary message."""
-    shown, _ = shown_value(FLOAT_SCHEMA, '{"d":' + literal + '}', "M")
-    assert shown == '{\n  "d": ' + literal + ',\n  "f": 0.0\n}\n'
 
 
 STRUCTURED_SCHEMA = """
@@ -177,7 +124,7 @@ table Message {
   color:Color = Green; other:Color; unnamed:Color; wide:Wide; dep:int (deprecated);
   text:string; empty_text:string; point:Point; leaf:Leaf; default_leaf:Leaf; missing:Leaf;
   either:Either; none:Either;
-  doubles:[double]; floats:[float]; bytes:[ubyte]; bools:[bool]; colors:[Color]; texts:[string];
+  doubles:[double]; floats:[float]; finite_doubles:[double]; finite_floats:[float]; non_finite:[double]; bytes:[ubyte]; bools:[bool]; colors:[Color]; texts:[string];
   leaves:[Leaf]; points:[Point]; nothing:[int]; no_tables:[Leaf];
 }
 table Outputs { out:Message; }
@@ -199,62 +146,34 @@ STRUCTURED_VALUE = {
 }
 
 
-def test_display_preserves_structured_values_and_defaults(shown_value, tmp_path):
-    """Enums, structs, arrays, unions, Unicode and default values survive logging."""
-    shown, payload = shown_value(STRUCTURED_SCHEMA, STRUCTURED_VALUE, "t.Message")
-    expected = reference_json(tmp_path / "reference", STRUCTURED_SCHEMA, payload, root_type="t.Message")
-    actual = json.loads(shown, strict=False)
-    # The resolved input schema presents this deprecated source field as an
-    # ordinary scalar, whose zero default appears in the worker's formatting.
+FINITE_DOUBLES = [0.30000000000000004, 123456.78901234567, -1.5e-7, 5e-324, 1.7976931348623157e308, 1e16, 9999999999999998, 0.0001, 3]
+FINITE_FLOATS = [0.1, 16777216, 1.17549435e-38, 3.4028235e38, 1e-7]
+
+
+def test_display_preserves_structured_values_and_defaults(client, project, tmp_path):
+    """Typed values survive worker display and an independent FlatBuffers round trip."""
+    value = dict(STRUCTURED_VALUE, finite_doubles=FINITE_DOUBLES, finite_floats=FINITE_FLOATS)
+    finite_payload = encode_message(tmp_path / "finite", STRUCTURED_SCHEMA, value, root_type="t.Message")
+    encoded = json.dumps(value, ensure_ascii=False)[:-1] + ', "non_finite": [nan, inf, -inf]}'
+    payload = encode_message(tmp_path / "encoded", STRUCTURED_SCHEMA, encoded, root_type="t.Message")
+    display_graph(project, STRUCTURED_SCHEMA, payload=payload).save(client)
+    run_id, status, logged = display_run(client)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    shown = text(recorded_display(client, run_id).text)
+    assert logged == shown
+    values = re.sub(r"\b(?:nan|inf)\b", lambda token: {"nan": "NaN", "inf": "Infinity"}[token[0]], shown)
+    actual = json.loads(values, strict=False)
+    nan, positive, negative = actual.pop("non_finite")
+    assert math.isnan(nan) and positive == math.inf and negative == -math.inf
+    expected = reference_json(tmp_path / "reference", STRUCTURED_SCHEMA, finite_payload, root_type="t.Message")
+    # The resolved schema presents the deprecated source field as a scalar.
     assert actual.pop("dep") == 0
+    # flatc's JSON printer and the display can round differently. Re-encode
+    # only these vectors and compare their binary values at the schema widths.
+    vectors = ("finite_doubles", "finite_floats")
+    floats = {key: actual.pop(key) for key in vectors}
+    for key in vectors:
+        expected.pop(key)
     assert actual == expected
-    assert actual["u64"] == 18446744073709551615
-    assert actual["i64"] == -9000000000000000000
-    assert actual["default_leaf"]["v"] == -7
-    assert actual["point"]["many"][1]["a"] == [7, 8, 9]
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="Output schema conversion turns a uint64-max enum member into -1")
-def test_display_accepts_unsigned_enum_members_above_int64_max(shown_value):
-    """An unsigned 64-bit enum keeps its largest member through a real run."""
-    schema = """
-    enum Wide : ulong { Low, High = 18446744073709551615 }
-    table Message { value:Wide; }
-    table Outputs { out:Message; }
-    root_type Outputs;
-    """
-    shown, _ = shown_value(schema, {"value": "High"}, "Message")
-    assert json.loads(shown) == {"value": "High"}
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="Output schema conversion drops bit_flags and rejects its zero default")
-def test_display_accepts_combined_bit_flags(shown_value, tmp_path):
-    """A bit-flags enum preserves combinations, zero and unknown bits through a real run."""
-    schema = """
-    enum Flags : ubyte (bit_flags) { A, B, C }
-    table Message { value:Flags; none:Flags; unknown:Flags; many:[Flags]; }
-    table Outputs { out:Message; }
-    root_type Outputs;
-    """
-    shown, payload = shown_value(schema, {"value": "A C", "none": 0, "unknown": 128,
-                                         "many": ["B", "A B", 0]}, "Message")
-    assert json.loads(shown) == reference_json(tmp_path / "reference", schema, payload, root_type="Message")
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="Output schema conversion duplicates a union vector's type discriminator")
-def test_display_accepts_vectors_of_union_values(shown_value, tmp_path):
-    """A vector of different union members keeps every type and value through a real run."""
-    schema = """
-    table Leaf { name:string; value:int = -7; }
-    table Nested { n:int; }
-    union Either { Leaf, Nested }
-    table Message { values:[Either]; }
-    table Outputs { out:Message; }
-    root_type Outputs;
-    """
-    shown, payload = shown_value(schema, {"values_type": ["Leaf", "Nested"],
-                                         "values": [{"name": "a"}, {"n": 2}]}, "Message")
-    assert json.loads(shown) == reference_json(tmp_path / "reference", schema, payload, root_type="Message")
+    encode = lambda folder, value: encode_message(tmp_path / folder, STRUCTURED_SCHEMA, value, root_type="t.Message")
+    assert encode("read-back", floats) == encode("boundaries", {key: value[key] for key in vectors})

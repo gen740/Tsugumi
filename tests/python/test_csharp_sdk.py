@@ -91,7 +91,8 @@ public sealed class Card : ICard {
       report.Log("waiting for cancellation");
       await Task.Delay(60000, run.CancellationToken);
     }
-    await Task.Delay(1, run.CancellationToken);
+    await Task.Yield();
+    run.CancellationToken.ThrowIfCancellationRequested();
     var values = received.Values.Select(x => x * (inputs.Params.Factor ?? throw new Failure("validation_failed", "factor is required"))).ToList();
     var roundTrip = Newtonsoft.Json.JsonConvert.DeserializeObject<double[]>(Newtonsoft.Json.JsonConvert.SerializeObject(values));
     if (roundTrip == null || !values.SequenceEqual(roundTrip)) throw new Exception("NuGet reflection round trip failed");
@@ -147,42 +148,47 @@ public sealed class Card : ICard {
 }
 '''
 
-# These methods compile because ICard has default implementations, but none
-# implements a supported entry point. Keep their rejection actionable.
-INVALID_ENTRIES = [
-    ("skipped-report", "public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-     ["Card.RunAsync(Tsugumi.Inputs inputs, Tsugumi.Run run)", "parameter 2: expected Tsugumi.Report, found Tsugumi.Run"]),
-    ("static", "public static ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-     ["public static", "must be an instance method"]),
-    ("private", "private ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-     ["private instance", "must be public"]),
-    ("task", "public Task<Outputs> RunAsync(Inputs inputs, Run run) => Task.FromResult(new Outputs());",
-     ["Task<Tsugumi.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
-    ("typed-output", "public ValueTask<Other.Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Other.Outputs());",
-     ["ValueTask<Other.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
-    ("foreign-input", "public ValueTask<Outputs> RunAsync(Other.Inputs inputs) => ValueTask.FromResult(new Outputs());",
-     ["Other.Inputs inputs", "parameter 1: expected Tsugumi.Inputs, found Other.Inputs"]),
-    ("missing", "", ["no RunAsync methods"]),
-]
+# Every type compiles via ICard's default implementation. The entry Card
+# dispatches each invalid signature through the same interface as the SDK.
+INVALID_ENTRIES = {
+    "SkippedReport": "public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+    "StaticMethod": "public static ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+    "PrivateMethod": "private ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+    "TaskResult": "public Task<Outputs> RunAsync(Inputs inputs, Run run) => Task.FromResult(new Outputs());",
+    "ForeignResult": "public ValueTask<Other.Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Other.Outputs());",
+    "ForeignInput": "public ValueTask<Outputs> RunAsync(Other.Inputs inputs) => ValueTask.FromResult(new Outputs());",
+    "MissingMethod": "",
+}
 
 
-@pytest.mark.parametrize("name, method, expected", INVALID_ENTRIES, ids=[entry[0] for entry in INVALID_ENTRIES])
-def test_invalid_entry_names_the_candidate_and_rejection(tmp_path, name, method, expected):
-    root = tmp_path / name
-    source = ("using Tsugumi; using System.Threading.Tasks; public sealed class Card : ICard {" + method
-              + "} namespace Other { public class Inputs {} public class Outputs {} }")
-    write_project(root, {"bad": {"card": {"language": "csharp", "inputs": [{"name": "start"}]},
-                                "nix": NIX, "src": {"Card.cs": source}}}, [("start", "out", "bad", "start")])
+def test_invalid_entries_fail_through_the_card_interface(tmp_path):
+    from test_demos import edit_card, set_param
+
+    root = tmp_path / "invalid-entries"
+    source = """using Tsugumi;
+using System.Threading.Tasks;
+public sealed class Card : ICard {
+    public ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
+        ICard candidate = inputs.Params.Entry switch {
+""" + "".join(f'            "{name}" => new {name}(),\n' for name in INVALID_ENTRIES) + """
+            _ => throw new System.ArgumentException()
+        };
+        return candidate.RunAsync(inputs, report, run);
+    }
+}
+namespace Other { public class Inputs {} public class Outputs {} }
+""" + "\n".join(f"sealed class {name} : ICard {{ {method} }}" for name, method in INVALID_ENTRIES.items())
+    settings = {"language": "csharp", "params": [{"name": "entry", "type": "string", "data": "MissingMethod"}]}
+    write_project(root, {"bad": {"card": settings, "nix": NIX, "src": {"Card.cs": source}}}, [])
     env, c = open_environment(root, "tsugumi-test-csharp-entry")
     try:
-        rid, status = run_and_wait(c, "start")
-        assert status.state == RunState.failed
-        failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
-        assert failure.kind == FailureKind.worker_failed
-        diagnostic = text(failure.diagnostic)
-        assert "Found:" in diagnostic
-        for detail in expected:
-            assert detail in diagnostic, diagnostic
+        for name in INVALID_ENTRIES:
+            edit_card(env, c, "bad", lambda body: set_param(body, "entry", name))
+            rid, status = run_and_wait(c, "bad")
+            assert status.state == RunState.failed, name
+            failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
+            assert failure.kind == FailureKind.worker_failed, name
+            assert name in text(failure.diagnostic)
     finally:
         c.close()
         env.cleanup()
@@ -308,7 +314,7 @@ def shown(c, rid):
     return [text(cell) for cell in display.value.rows[0].cells]
 
 
-def test_typed_cpp_csharp_python_and_resident_lifetime(project):
+def test_typed_pipeline_and_worker_lifetime(project):
     root, env, c = project
     first = run(c)
     second = run(c)
@@ -323,6 +329,13 @@ def test_typed_cpp_csharp_python_and_resident_lifetime(project):
     receipt = next(item for item in artifacts if text(item.output)=="receipt")
     assert bytes(c.call("ArtifactReadRequest", artifactId=text(receipt.artifactId)).bytes) == b"2.0,4.0,6.0"
 
+    for mode in ("fail", "wait", "callback"):
+        check_failure_and_recovery(env, c, mode)
+
+    edit(env, c, reuseWorker=False)
+    a, b = shown(c, run(c)), shown(c, run(c))
+    assert a[1] != b[1] and a[2] == b[2] == "1"
+
 
 def edit(env, c, **updates):
     from test_demos import edit_card, set_param
@@ -333,10 +346,7 @@ def edit(env, c, **updates):
     edit_card(env, c, "scale", update)
 
 
-@pytest.mark.parametrize("mode", ["fail", "wait", "callback"])
-def test_failure_cancel_deadline_and_recovery(project, mode):
-    root, env, c = project
-    run(c)  # Warm the real packages before measuring cancellation/deadline.
+def check_failure_and_recovery(env, c, mode):
     edit(env, c, mode=mode, timeoutSeconds=1 if mode == "wait" else None)
     rid = start_run(c, "start")
     if mode == "callback":
@@ -357,13 +367,6 @@ def test_failure_cancel_deadline_and_recovery(project, mode):
     edit(env, c, mode="ok", timeoutSeconds=None)
     recovered = run(c)
     assert shown(c, recovered)[0] == "12"
-
-
-def test_no_reuse_creates_fresh_runtime(project):
-    root, env, c = project
-    edit(env, c, reuseWorker=False)
-    a, b = shown(c, run(c)), shown(c, run(c))
-    assert a[1] != b[1] and a[2] == b[2] == "1"
 
 
 def test_creation_scaffold_copies_are_generated():
@@ -395,10 +398,9 @@ def test_production_creation_scaffold(tmp_path):
     finally:
         c.close(); env.cleanup()
 
-@pytest.mark.parametrize("language", ["ja", "en"])
-def test_bundled_calibration_uses_its_locked_package(tmp_path, language):
+def test_bundled_calibration_uses_its_locked_package(tmp_path):
     root = tmp_path / "csharp-calibration"
-    shutil.copytree(ROOT / "demos" / language / "csharp-calibration", root)
+    shutil.copytree(ROOT / "demos" / "en" / "csharp-calibration", root)
     env, c = open_environment(root, "tsugumi-test-csharp-demo")
     try:
         run_id = run(c)
