@@ -120,7 +120,7 @@ console.log('Guide UI: core events and presentation, absent lists, no model or l
           if (method === 'GuideAdvanceRequest') return {} as T
           throw new Error(`Unexpected request: ${method}`)
         }
-        return { revision: 0, values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': 'fixture', 'app.language': language })
+        return { revision: 'host:0', values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': 'fixture', 'app.language': language })
           .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
       }
       const routes = chatRoutes({ support: '/guide-test', here: '/fixture', envs: {} as never, projectDir: String,

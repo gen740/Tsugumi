@@ -3,7 +3,7 @@ import { modelErrorMessage } from './i18n'
 
 import type { HistoryVersionMismatch } from '../shared/historyVersion'
 
-let settingsRevision: number | undefined
+let settingsRevision: string | undefined
 
 export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   if (path === '/api/settings' && body !== undefined) {
@@ -15,7 +15,7 @@ export async function api<T = any>(path: string, body?: unknown, signal?: AbortS
     : { signal, method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
-  if (path === '/api/settings' && typeof v.revision === 'number') settingsRevision = v.revision
+  if (path === '/api/settings' && typeof v.revision === 'string') settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
   }

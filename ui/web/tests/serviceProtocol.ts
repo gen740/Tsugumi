@@ -159,9 +159,9 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   const { EventPayload } = await import('../shared/gen/tsugumi/host/event-payload')
   const { MessageT } = await import('../shared/gen/tsugumi/host/message')
   const b = new fb.Builder()
-  const message = new MessageT(0n, HostPayload.Event, new EventT(EventPayload.SettingsChanged, new SettingsChangedT(42n)))
+  const message = new MessageT(0n, HostPayload.Event, new EventT(EventPayload.SettingsChanged, new SettingsChangedT('host:42')))
   HostMessage.finishMessageBuffer(b, message.pack(b))
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { revision: 42 } })
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { revision: 'host:42' } })
 }
 
 // Each checkbox travels independently; no implicit Write/Run grant.

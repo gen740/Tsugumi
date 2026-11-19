@@ -723,7 +723,7 @@ struct Service::State {
         lock.lock();
         if (snapshot) {
           H::SettingsChangedT changed;
-          changed.revision = snapshot->revision();
+          changed.revision = snapshot->revision()->str();
           events->Publish(wire::HostEvent(std::move(changed)));
         }
       }

@@ -10,7 +10,7 @@ import TsugumiRPC
 final class CorePreferences {
   static let shared = CorePreferences()
   private var values: [String: Any] = [:]
-  private var revision: UInt64?
+  private var revision: String?
   private var modelValues: [String: Any] = [:]
   private(set) var summarySelection: Tsugumi_Service_ProviderSelectionT?
   private var editGeneration = 0
@@ -51,7 +51,7 @@ final class CorePreferences {
       guard generation == editGeneration else { return await loadSnapshot() }
       let firstSnapshot = revision == nil
       let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
-      let nextRevision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
+      let nextRevision = value["revision"] as? String ?? ""
       if let revision, nextRevision <= revision { return }
       revision = nextRevision
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
@@ -93,10 +93,14 @@ final class CorePreferences {
       await previous?.value
       guard generation == editGeneration else { return }
       do {
-        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision ?? 0),
+        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": revision ?? "",
           "changes": [["key": key, "value_json": raw]]])
         error = nil
-      } catch { editGeneration += 1; self.error = String(describing: error) }
+      } catch {
+        editGeneration += 1
+        revision = nil
+        self.error = String(describing: error)
+      }
       await loadSnapshot()
     }
   }

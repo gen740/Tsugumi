@@ -116,7 +116,7 @@ globalThis.fetch = async (url, init) => {
   calls.push({ path, body })
   if (path === '/api/settings') {
     if (body?.versionNoteMode) mode = body.versionNoteMode
-    return new Response(JSON.stringify({ versionNoteMode: mode, revision: 0 }))
+    return new Response(JSON.stringify({ versionNoteMode: mode, revision: 'host:0' }))
   }
   if (path === '/api/layout/version-canvas') {
     assert.deepEqual(body, rawCanvas, 'opaque layout and Card ids reach the host unchanged')

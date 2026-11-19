@@ -183,7 +183,10 @@ TEST_F(AgentFixture,
                                   b.CreateString(Quote("gpt-6.1-terra")));
              return H::CreateSettingsUpdateRequest(
                         b, b.CreateString("desktop"),
-                        selected.HostValue()->value_as_Settings()->revision(),
+                        b.CreateString(selected.HostValue()
+                                           ->value_as_Settings()
+                                           ->revision()
+                                           ->str()),
                         b.CreateVector(std::vector{item}))
                  .Union();
            })

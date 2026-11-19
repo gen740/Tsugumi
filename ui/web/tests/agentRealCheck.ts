@@ -56,7 +56,7 @@ try {
       if (method === 'AccessListRequest') return { requests: (!fields.conversation_id || fields.conversation_id === 'a') ? [{ id: 'pending-a', state: 'pending', asked: pendingAsked }] : [] } as T
       throw new Error(`Unexpected call: ${method}`)
     }
-    return { revision: 1, values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
+    return { revision: 'host:1', values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
       'agent.effort': '', 'agent.fastModel': '', 'agent.skillFolders': [], 'app.language': 'en' })
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
@@ -64,7 +64,7 @@ try {
     listeners: () => 0, broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
-  host!.event({ type: 'SettingsChanged', value: { revision: 2 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 'host:2' } })
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
@@ -86,12 +86,12 @@ try {
   assert.equal(b.permission, null)
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
-  host!.event({ type: 'SettingsChanged', value: { revision: 3 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 'host:3' } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, model)
   busy = true
   model = 'gpt-6.1-sol'
-  host!.event({ type: 'SettingsChanged', value: { revision: 4 } })
+  host!.event({ type: 'SettingsChanged', value: { revision: 'host:4' } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)

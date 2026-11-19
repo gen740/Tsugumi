@@ -599,7 +599,7 @@ def core_settings(root: Path, changes: dict | None = None):
                             SettingsUpdateRequestT(profile="desktop", revision=settings.revision,
                                 changes=[SettingT(key=k, valueJson=json.dumps(v)) for k, v in changes.items()]),
                             ReplyPayload.Settings)
-        return settings.revision, {s.key.decode(): json.loads(s.valueJson) for s in settings.values or []}
+        return settings.revision.decode(), {s.key.decode(): json.loads(s.valueJson) for s in settings.values or []}
 
 
 @needs_server
@@ -628,13 +628,13 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
     after_revision, after = core_settings(root)
-    assert after_revision == revision + 1
+    assert after_revision != revision
     assert after == {**before, "agent.model": "chosen-here", "agent.webSearch": True}
     # A kind of permission only the app knows stays when the page edits its list.
     s = api(port, cookie, "GET", "/api/settings")
     api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "allowedPermissions": ["network", "sandbox_off"]})
     final_revision, final = core_settings(root)
-    assert final_revision == after_revision + 1
+    assert final_revision != after_revision
     assert sorted(final["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
     assert {k: v for k, v in final.items() if k != "agent.permissions.allowed"} == {
         k: v for k, v in after.items() if k != "agent.permissions.allowed"}

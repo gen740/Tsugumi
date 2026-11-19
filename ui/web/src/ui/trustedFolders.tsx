@@ -6,7 +6,7 @@ import { Button, Row, Section } from './controls'
 import { FolderPicker } from './sidebar'
 
 export function TrustedFoldersSettings() {
-  const [settings, setSettings] = useState<{ trustedFolders: string[]; revision: number }>()
+  const [settings, setSettings] = useState<{ trustedFolders: string[]; revision: string }>()
   const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)

@@ -562,7 +562,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
-| `SettingsUpdateRequest` | `profile: string` (required), `revision: ulong`, `changes: [Setting]`, `client: string` |
+| `SettingsUpdateRequest` | `profile: string` (required), `revision: string` (required), `changes: [Setting]`, `client: string` |
 | `ProviderSetRequest` | `profile: string` (required), `id: string` (required), `provider: ProviderInput`, `remove: bool`, `ephemeral: bool`, `source: string` |
 | `ProviderStatusRequest` | `profile: string` (required), `id: string` (required), `key_profile: string` |
 | `SignInBeginRequest` | `profile: string` (required), `client_id: string`, `consent: bool`, `issuer: string`, `resource: string` |

@@ -210,7 +210,7 @@ export class CoreHost {
     return this.environment ??= this.keys.provisionEnvironment()
   }
 
-  async getSettings(profile: string): Promise<{ revision: number; values: { key: string; value_json: string }[] }> {
+  async getSettings(profile: string): Promise<{ revision: string; values: { key: string; value_json: string }[] }> {
     return this.user.call('SettingsGetRequest', { profile })
   }
 
