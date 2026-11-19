@@ -15,7 +15,15 @@ in
     { pkgs, lib, ... }:
     let
       core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
-      ci-core = pkgs.callPackage ../core-tests.nix { inherit core hosq; };
+      ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
+      ci-core = pkgs.callPackage ../core-tests.nix {
+        inherit core hosq;
+        runtime = ci-runtime;
+        mock = ci-mock;
+        inputTypes = ci-input-types;
+      };
+      ci-mock = ci-core.override { target = "tsugumid-mock"; };
+      ci-input-types = ci-core.override { target = "tsugumi_input_types_tests"; };
       libgit2-local = pkgs.callPackage ../libgit2-local.nix { };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
@@ -29,10 +37,14 @@ in
       packages = {
         inherit
           ci-core
+          ci-runtime
+          ci-mock
+          ci-input-types
           client-wasm
           libgit2-local
           web
           ;
+        ci-vm-tests = ci-core.override { target = "tsugumi_vm_lifetime_tests"; };
         # Current native sources plus the guest definition; no app/site assets.
         guest-source = pkgs.runCommand "tsugumi-guest-source" { } ''
           mkdir -p $out

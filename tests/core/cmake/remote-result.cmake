@@ -17,6 +17,6 @@ gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISC
   PROPERTIES TIMEOUT 30)
 
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi-environment-daemon-double tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
+  install(TARGETS tsugumi-environment-daemon-double tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
     RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

@@ -1,6 +1,5 @@
 # The real core serves its public RPC. Only the external Nix evaluator is
 # replaced: these targets compile its double and do not link tsugumi_nix_eval.
-# This is installed only by ci-core.
 add_executable(tsugumid-mock
   ${_core_main}
   doubles/nix_eval.cc)

@@ -33,7 +33,7 @@ runCommand "tsugumi-web-checks"
     ln -s ${web.testSupport}/node_modules source/ui/web/node_modules
     cp -R ${web.testSupport}/gen source/ui/web/shared/gen
     export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
-    export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/bin/tsugumi_document_edit_driver
+    export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/libexec/tsugumi-tests/tsugumi_document_edit_driver
     cd source/ui/web
     npm run typecheck
     npm test

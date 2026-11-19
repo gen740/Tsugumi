@@ -10,18 +10,8 @@
       inherit (config.packages) web;
       # Reuse the installed production host archives and compile only the
       # operation fixture. Web checks do not build the other C++ test targets.
-      operationDriver = config.packages.ci-core.overrideAttrs {
-        pname = "tsugumi-operation-test-driver";
-        buildPhase = ''
-          runHook preBuild
-          cmake --build . --target tsugumi_document_edit_driver -j
-          runHook postBuild
-        '';
-        installPhase = ''
-          mkdir -p "$out/bin"
-          cp tsugumi_document_edit_driver "$out/bin/"
-        '';
-        postInstall = "";
+      operationDriver = config.packages.ci-core.override {
+        target = "tsugumi_document_edit_driver";
       };
     in
     {
