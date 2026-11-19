@@ -84,6 +84,7 @@ const localProfile = () => `web:${ctx.support}`
 const providerProfile = () => ctx.desktop ? 'desktop' : localProfile()
 type SettingsReply = { revision: number; values: { key: string; value_json: string }[] }
 let revision = 0
+let settingsConnection = 0
 let snapshot = {} as Settings
 const settings = (): Settings => snapshot
 function applySettings(reply: SettingsReply) {
@@ -95,14 +96,22 @@ function applySettings(reply: SettingsReply) {
 }
 async function loadSettings() {
   await core.provisionEnvironment()
-  applySettings(await core.getSettings(localProfile()))
+  let connection: number
+  do {
+    connection = settingsConnection
+    const reply = await core.getSettings(localProfile())
+    if (connection === settingsConnection) applySettings(reply)
+  } while (connection !== settingsConnection)
 }
 async function patchSettings(change: Partial<Settings>, expected = revision) {
   const changes = Object.entries(SETTINGS_KEYS).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
   if (changes.length) {
-    applySettings(await core.user.call<SettingsReply>('SettingsUpdateRequest', {
+    const connection = settingsConnection
+    const reply = await core.user.call<SettingsReply>('SettingsUpdateRequest', {
       profile: localProfile(), revision: expected, changes, client: 'web',
-    }))
+    })
+    if (connection === settingsConnection) applySettings(reply)
+    else await loadSettings()
   }
 }
 const PROVIDERS = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } } as const
@@ -456,9 +465,16 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   revision = 0
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
-    if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
-    if (event.type === 'SettingsChanged') {
-      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }))
+    const connected = event.type === 'Connected'
+    if (connected) {
+      settingsConnection++
+      revision = 0
+    }
+    if (connected || event.type === 'SettingsChanged') {
+      const connection = settingsConnection
+      void loadSettings().then(() => {
+        if (connection === settingsConnection) c.broadcast({ type: connected ? 'reconnected' : 'settingsChanged' })
+      }).catch(error => console.error('Host settings refresh failed:', error))
     }
   })
   const initialSettings = loadSettings()
@@ -473,13 +489,16 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await patchSettings({ animateAgentWork: b.animateWork })
     return { animateWork: settings().animateAgentWork }
   },
-  'GET /api/settings': async () => ({
-    ...settings(),
-    revision,
-    ...await modelCatalogs(),
-    keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
-    keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
-  }),
+  'GET /api/settings': async () => {
+    await loadSettings()
+    return {
+      ...settings(),
+      revision,
+      ...await modelCatalogs(),
+      keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
+      keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
+    }
+  },
   'POST /api/settings': async (b) => {
     await patchSettings(b ?? {}, b?.revision)
     return { ...settings(), revision, ...await modelCatalogs(), chatProvider: await providerInfo() }

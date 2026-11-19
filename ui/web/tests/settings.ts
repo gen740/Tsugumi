@@ -8,16 +8,21 @@ const original = { settings: CoreHost.prototype.getSettings, environment: CoreHo
 try {
   for (const desktop of [false, true]) {
     let reads = 0, current = 0
+    let host: CoreHost
+    let reconnected: () => void
+    const reloaded = new Promise<void>(resolve => { reconnected = resolve })
     const writes: any[] = []
     const values: Record<string, unknown> = { 'agent.model': 'old', 'app.language': 'ja' }
     const snapshot = () => ({ revision: current, values: Object.entries(values).map(([key, v]) => ({ key, value_json: JSON.stringify(v) })) })
     CoreHost.prototype.provisionEnvironment = async () => {}
     CoreHost.prototype.getSettings = async function (surface: string) {
+      host = this
       reads++
       assert.equal(surface, 'web:/settings-test')
       this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
         if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as T
         if (method === 'ModelsListRequest') return [] as T
+        if (method === 'ProviderSetRequest' || method === 'ProviderStatusRequest') return {} as T
         assert.equal(method, 'SettingsUpdateRequest')
         if (fields.revision !== current) throw new Error('conflict')
         writes.push(fields)
@@ -28,7 +33,9 @@ try {
       return snapshot()
     }
     const routes = chatRoutes({ support: '/settings-test', here: '/fixture', desktop,
-      envs: {} as never, projectDir: String, broadcast: () => {}, httpError: (_status, message) => new Error(message),
+      envs: {} as never, projectDir: String, broadcast: (event: any) => {
+        if (event.type === 'reconnected') reconnected()
+      }, httpError: (_status, message) => new Error(message),
     } as ChatContext)
     const url = new URL('http://fixture')
     const skillFolders = [{ path: '/skills', enabled: true }]
@@ -44,6 +51,22 @@ try {
     assert.equal(result.revision, 1)
     await assert.rejects(routes['POST /api/settings']({ revision: 0, model: 'stale' }, url) as Promise<unknown>, /conflict/)
     assert.equal(values['agent.model'], 'new')
+    // The folder editor still displays revision 1. Another tab removes the
+    // folder, and this tab's unrelated settings request sees revision 2.
+    await routes['POST /api/settings']({ revision: 1, skillFolders: [] }, url)
+    assert.equal((await routes['GET /api/settings']({}, url) as any).revision, 2)
+    await assert.rejects(routes['POST /api/settings']({
+      revision: result.revision, skillFolders,
+    }, url) as Promise<unknown>, /conflict/)
+    assert.deepEqual(values['agent.skillFolders'], [])
+
+    current = 0
+    values['agent.model'] = 'after-host-restart'
+    host!.event({ type: 'Connected', value: {} })
+    await reloaded
+    const refreshed = await routes['GET /api/settings']({}, url) as any
+    assert.equal(refreshed.model, 'after-host-restart')
+    assert.equal(refreshed.revision, 0)
   }
 } finally {
   CoreHost.prototype.getSettings = original.settings
@@ -68,9 +91,11 @@ console.log('Host settings: combined patches and stale revisions passed')
     await api('/api/settings')
     await api('/api/settings', { model: 'from-revision-zero' })
     await api('/api/settings', { trustedFolders: ['/stale'], revision: 3 })
+    await api('/api/settings', { skillFolders: [], revision: 2 })
     assert.equal(reads, 1)
     assert.equal(requests[0].revision, 0)
     assert.equal(requests[1].revision, 3)
+    assert.equal(requests[2].revision, 2)
   } finally { globalThis.fetch = originalFetch }
 }
 

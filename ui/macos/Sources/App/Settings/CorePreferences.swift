@@ -19,8 +19,17 @@ final class CorePreferences {
   init() {
     Task { [weak self] in
       _ = await CoreHostClient.shared.observeHost { [weak self] event in
-        if event["type"] as? String == "SettingsChanged" {
-          Task { @MainActor [weak self] in await self?.reload() }
+        let type = event["type"] as? String
+        if type == "Connected" || type == "SettingsChanged" {
+          Task { @MainActor [weak self] in
+            guard let self else { return }
+            if type == "Connected" {
+              self.editGeneration += 1
+              self.revision = nil
+              self.summarySelection = nil
+            }
+            await self.reload()
+          }
         } else if event["type"] as? String == "ProviderChanged", event["profile"] as? String == "desktop" {
           Task { @MainActor [weak self] in
             await self?.refreshProviderAvailability()
@@ -36,12 +45,14 @@ final class CorePreferences {
     await loadSnapshot()
   }
   private func loadSnapshot() async {
+    let generation = editGeneration
     do {
       let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      guard generation == editGeneration else { return }
       let firstSnapshot = revision == nil
       let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
       let nextRevision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
-      if nextRevision == revision { return }
+      if let revision, nextRevision <= revision { return }
       revision = nextRevision
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),
