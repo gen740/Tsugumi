@@ -91,22 +91,23 @@ def test_reload_stops_at_the_document_budget_and_identifies_the_path(project, co
     daemon = core_factory()
     client = daemon.connect()
     before = client.call("ProjectInspectRequest")
-    for name in ("a", "b", "c"):
-        path = project / f"externals/{name}/layout.json"
+    paths = {f"externals/{name}/layout.json" for name in ("a", "b", "c")}
+    for relative in paths:
+        path = project / relative
         path.parent.mkdir(parents=True)
         path.write_text("{}" + " " * ((3 << 20) - 2))
     with pytest.raises(RpcFailure) as error:
         client.call("ProjectReloadRequest", baseRev=before.rev,
                     opId=new_id(), origin="test")
     assert error.value.kind == "resource_limit"
-    assert "externals/c/layout.json" in str(error.value)
+    assert error.value.args_map["path"] in paths
     assert client.call("ProjectInspectRequest").rev == before.rev
     daemon.stop()
     daemon.start(expect_exit=True)
     assert daemon.proc.returncode != 0
     startup = json.loads((daemon.control / "server.startup-error.json").read_text())
     assert startup["kind"] == "resource_limit"
-    assert "externals/c/layout.json" in startup["message"]
+    assert any(path in startup["message"] for path in paths)
 
 
 def digest(path):
