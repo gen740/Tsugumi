@@ -4,6 +4,8 @@ export const LOG_READ_BYTES = 1 << 20
 const HISTORY_BYTES = LOG_READ_BYTES >> 2
 const WINDOW_BYTES = 2 * LOG_READ_BYTES
 const BLOCK_LINES = 128
+// Keep one wrapped row to at most one section of a long terminal line.
+const FRAGMENT_CELLS = 16 * 1024
 
 // LogRange returns the original UTF-8 bytes. A BOM inside the stream is
 // content even if the first byte of a page happens to be its start.
@@ -46,6 +48,25 @@ export function logLineNumber(block: Block, index: number): number {
   return block.numbers?.[index] ?? block.first + index
 }
 
+function cellCount(text: string): number {
+  return text.length - (text.match(/[\uDC00-\uDFFF]/g)?.length ?? 0)
+}
+
+function terminalFragments(text: string, offset: number, startsLine: boolean) {
+  const cells = cellCount(text) === text.length ? text : Array.from(text)
+  const column = (offset / 4) % FRAGMENT_CELLS
+  const fragments: { offset: number; text: string }[] = []
+  // The first grid section needs its full prefix to wrap consistently.
+  let start = startsLine || column === 0 ? 0 : FRAGMENT_CELLS - column
+  while (start < cells.length) {
+    const length = FRAGMENT_CELLS - ((column + start) % FRAGMENT_CELLS)
+    const fragment = cells.slice(start, start + length)
+    fragments.push({ offset: offset + start * 4, text: typeof fragment === 'string' ? fragment : fragment.join('') })
+    start += length
+  }
+  return fragments
+}
+
 function journalLine(text: string): string | undefined {
   try {
     const v = JSON.parse(text)
@@ -60,19 +81,27 @@ function page(slice: LogSlice, form: LogForm): Page {
   let number = slice.line
   let head: Fragment | undefined
   let start = 0
+  let projectedOffset = slice.offset
   if (!slice.startsLine) {
     const lf = slice.text.indexOf('\n')
     head = { number: number++, offset: slice.offset, text: lf < 0 ? slice.text : slice.text.slice(0, lf),
       starts: false, ends: lf >= 0 }
     if (lf < 0) return { slice, head, body }
     start = lf + 1
+    if (form === 'terminal') projectedOffset += 4 * (cellCount(head.text) + 1)
   }
   let block: Block | undefined
   let lf = slice.text.indexOf('\n', start)
   while (lf >= 0) {
     const raw = slice.text.slice(start, lf)
     const line = form === 'terminal' ? raw : journalLine(raw)
-    if (line !== undefined) {
+    const cells = form === 'terminal' ? cellCount(raw) : 0
+    if (cells >= FRAGMENT_CELLS) {
+      for (const part of terminalFragments(raw, projectedOffset, true)) {
+        body.push({ first: number, key: `fragment:${part.offset}`, lines: [part.text] })
+      }
+      block = undefined
+    } else if (line !== undefined) {
       if (!block || block.lines.length === BLOCK_LINES || (line.length > 4096 && block.lines.length > 0)) {
         block = { first: number, key: `lines:${number}`, lines: [], numbers: form === 'journal' ? [] : undefined }
         body.push(block)
@@ -81,6 +110,7 @@ function page(slice: LogSlice, form: LogForm): Page {
       block.numbers?.push(number)
       if (line.length > 4096) block = undefined
     }
+    if (form === 'terminal') projectedOffset += 4 * (cells + 1)
     ++number
     start = lf + 1
     lf = slice.text.indexOf('\n', start)
@@ -89,7 +119,7 @@ function page(slice: LogSlice, form: LogForm): Page {
   if (start < slice.text.length) {
     const text = slice.text.slice(start)
     const length = form === 'terminal'
-      ? 4 * (text.length - (text.match(/[\uDC00-\uDFFF]/g)?.length ?? 0))
+      ? 4 * cellCount(text)
       : new TextEncoder().encode(text).length
     tail = { number, offset: slice.end - length, text, starts: true, ends: false }
   }
@@ -189,17 +219,14 @@ export class LogWindow {
       pieces = []
       const first = line[0], last = line.at(-1)
       if (!first || (this.form === 'journal' && (!first.starts || !last?.ends))) return
-      const long = line.reduce((length, piece) => length + piece.text.length, 0) >= 64 * 1024
-      // Hold a short incomplete leading line until its start is loaded.
-      // Terminal slices already contain the final cells for each position.
-      // Long lines keep their page-relative fragments.
-      if (!first.starts && !long) return
-      if (this.form === 'terminal' && long) {
-        for (const piece of line) {
-          if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
+      const text = line.map((piece) => piece.text).join('')
+      const long = this.form === 'terminal' && cellCount(text) >= FRAGMENT_CELLS
+      if (long) {
+        for (const part of terminalFragments(text, first.offset, first.starts)) {
+          add(`fragment:${part.offset}`, first.number, part.text)
         }
-      } else {
-        add(`edge:${first.number}`, first.number, line.map((piece) => piece.text).join(''))
+      } else if (first.starts) {
+        add(`edge:${first.number}`, first.number, text)
       }
     }
     for (const { head, body, tail } of this.pages) {
