@@ -1470,5 +1470,6 @@
  "default.nix に Card 間の参照はありません": "No Card references in default.nix",
  "この階層には参照がありません（一覧に {0} 件）": "No references at this level ({0} in the list)",
  "inputs.<入力ポート名> と書いた参照を表示します。": "Shows references written as inputs.<input port name>.",
- "説明": "About this"
+ "説明": "About this",
+ "開けるターミナル数の上限に達しました": "Reached the maximum number of open terminals"
 }

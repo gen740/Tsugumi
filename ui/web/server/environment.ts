@@ -70,6 +70,7 @@ export class EnvironmentManager implements Environments {
   private observing = false
   private terminals = new Map<number, { data: (value: string) => void; exit: (value: { exitCode: number }) => void; decoder: TextDecoder }>()
   private terminalOutput = new Map<number, { data: number[]; closed: boolean }>()
+  private openingTerminals = 0
   readonly hostArguments: string[]
 
   constructor(readonly bins: Binaries, readonly support: string, private origins: () => string[],
@@ -106,9 +107,13 @@ export class EnvironmentManager implements Environments {
       if (terminal) {
         if (value.data?.length) terminal.data(terminal.decoder.decode(Uint8Array.from(value.data), { stream: true }))
         if (value.closed) { terminal.exit({ exitCode: 0 }); this.terminals.delete(value.session) }
-      } else {
+      } else if (this.openingTerminals > 0) {
         const pending = this.terminalOutput.get(value.session) ?? { data: [], closed: false }
-        pending.data.push(...(value.data ?? []))
+        const maxBuffered = 1024 * 1024
+        if (value.data?.length && pending.data.length < maxBuffered) {
+          const room = maxBuffered - pending.data.length
+          pending.data.push(...value.data.slice(0, room))
+        }
         pending.closed ||= !!value.closed
         this.terminalOutput.set(value.session, pending)
       }
@@ -160,7 +165,14 @@ export class EnvironmentManager implements Environments {
   async terminal(dir: string, cols: number, rows: number): Promise<VMTerminal> {
     const ready = await this.start(dir)
     if (ready.state !== 'ready') throw new Error(ready.state === 'failed' ? ready.message : L('実行環境が起動していません'))
-    const { session } = await this.request('HostTerminalRequest', { project: dir, action: 'Open', rows, cols })
+    this.openingTerminals++
+    let session: number
+    try {
+      const reply = await this.request('HostTerminalRequest', { project: dir, action: 'Open', rows, cols })
+      session = reply.session
+    } finally {
+      this.openingTerminals--
+    }
     const handlers = { data: (_value: string) => {}, exit: (_value: { exitCode: number }) => {}, decoder: new TextDecoder() }
     this.terminals.set(session, handlers)
     const call = (action: string, fields: unknown = {}) => this.request('HostTerminalRequest', { action, session, ...fields as object }).catch(() => {})

@@ -543,7 +543,7 @@ function RunTimelineView({ session, runId, run, onSelect }: { session: ProjectSe
     const ro = new ResizeObserver(() => setWidth(el.clientWidth || 400))
     ro.observe(el)
     return () => ro.disconnect()
-  })
+  }, [])
   // A past run's invocations, read per Card with RunInvocations.
   useEffect(() => {
     setRange(undefined)

@@ -413,7 +413,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
             <div key="p" className="fill scroll">
               {preview?.kind === 'html' && <ArtifactHTMLPreview html={preview.html} />}
               {preview?.kind === 'text' && <pre className="pad8 mono selectable small-text wrap-pre">{preview.text}</pre>}
-              {preview?.kind === 'image' && (member?.endsWith('.pdf') ? <iframe title="preview" src={preview.url} className="fill" /> : <img src={preview.url} alt={member} className="preview-image" />)}
+              {preview?.kind === 'image' && (/\.pdf$/i.test(member ?? '') ? <iframe title="preview" src={preview.url} className="fill" /> : <img src={preview.url} alt={member} className="preview-image" />)}
               {preview?.kind === 'binary' && <Empty title={L('プレビューできません')} icon="doc.questionmark" description={L('バイナリ {0} bytes。書き出して確認してください。', preview.size)} />}
               {!preview && <Empty title={member ? L('読み込み中…') : L('ファイルを選んでください')} icon="eye" />}
             </div>,
