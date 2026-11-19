@@ -919,6 +919,7 @@
   "使うモデル": "Model provider",
   "使う接続先": "Connection in Use",
   "使用中": "In use",
+  "使用中の ChatGPT アカウントが変わりました。セットアップを完了するには、もう一度サインインしてください。": "The active ChatGPT account changed. Sign in again to finish setup.",
   "使用中のアカウント": "Account in use",
   "例: y 軸を対数にしてください": "e.g. Make the y axis logarithmic",
   "依存": "Dependencies",
