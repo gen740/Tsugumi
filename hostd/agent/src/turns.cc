@@ -330,7 +330,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
               fs::valid_relative_path(std::filesystem::path(skill.path)
                                           .lexically_relative(project_path)
                                           .string());
-          std::string resource = c.project;
           if (!in_project) {
             auto folder = db.prepare(
                 "SELECT id FROM folders WHERE project=? AND path=?");
@@ -338,11 +337,8 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
             if (!folder.step())
               throw Failure("permission_denied",
                             "The user has not attached this Skill folder");
-            resource = folder.text(0);
           }
           lock.unlock();
-          access_service.Require(resource, c.id, S::Access::Read, true, stop,
-                                 "Read the Skill " + skill.name);
           auto bytes = host::ReadSkill(
               in_project ? project_path : skill.source_folder, skill.path);
           lock.lock();
