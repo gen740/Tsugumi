@@ -15,6 +15,7 @@ public actor EnvironmentManager {
   private var observers: [String: [UUID: @Sendable (EnvironmentState) -> Void]] = [:]
   private var pipes: [UInt64: TerminalPipe] = [:]
   private var pendingOutput: [UInt64: [String: Any]] = [:]
+  private var openingTerminals = 0
 
   public init(support: URL? = nil, image: VMImage? = VMImage.find()) {
     let support = support ?? AppChannel.current.supportDirectory
@@ -69,15 +70,20 @@ public actor EnvironmentManager {
     case "HostTerminalData":
       if let value = event["value"] as? [String: Any], let session = value["session"] as? UInt64 {
         if let pipe = pipes[session] { pipe.receive(value) }
-        else {
+        else if openingTerminals > 0 {
           let previous = pendingOutput[session] ?? [:]
-          let bytes = (previous["data"] as? [UInt8] ?? []) + (value["data"] as? [UInt8] ?? [])
+          var bytes = previous["data"] as? [UInt8] ?? []
+          let maxBuffered = 1 << 20
+          if let incoming = value["data"] as? [UInt8], bytes.count < maxBuffered {
+            bytes.append(contentsOf: incoming.prefix(maxBuffered - bytes.count))
+          }
           pendingOutput[session] = ["data": bytes, "closed": (previous["closed"] as? Bool ?? false) || (value["closed"] as? Bool ?? false)]
         }
       }
     case "Disconnected":
       for (key, state) in states { if case .ready = state { set(key, .reconnecting) } }
       for pipe in pipes.values { pipe.stop() }; pipes.removeAll()
+      pendingOutput.removeAll()
     default: break
     }
   }
@@ -193,6 +199,8 @@ public actor EnvironmentManager {
     request.project = id
     request.rows = UInt32(truncatingIfNeeded: rows)
     request.cols = UInt32(truncatingIfNeeded: cols)
+    openingTerminals += 1
+    defer { openingTerminals -= 1 }
     let reply: Tsugumi_Host_HostTerminalT = try await client.hostCall(.hostterminalrequest, request)
     let session = reply.session
     let pipe = try TerminalPipe(client: client, session: session) { [weak self] in Task { await self?.removeTerminal(session) } }

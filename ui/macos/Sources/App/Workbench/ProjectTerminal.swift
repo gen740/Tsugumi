@@ -344,6 +344,8 @@ final class TerminalConnection: NSObject, TerminalViewDelegate {
   /// Ends the shell: vmd hangs it up when its connection closes.
   func close() {
     generation += 1
+    opening?.cancel()
+    opening = nil
     live = false
     sessionId = nil
     if fd >= 0 {
@@ -449,6 +451,7 @@ struct VMConsoleView: View {
     }
     .frame(minWidth: 520, minHeight: 300)
     .onAppear {
+      guard tokens == nil else { return }
       lines = vm.console.snapshot
       let a = vm.console.observe { l in Task { @MainActor in lines.append(l); if lines.count > 5000 { lines.removeFirst(lines.count - 5000) } } }
       let b = vm.observe { s in Task { @MainActor in state = s } }
@@ -458,6 +461,7 @@ struct VMConsoleView: View {
       if let (a, b) = tokens {
         vm.console.stopObserving(a)
         vm.stopObserving(b)
+        tokens = nil
       }
     }
   }

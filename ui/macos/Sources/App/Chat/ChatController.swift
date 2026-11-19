@@ -688,7 +688,7 @@ final class ChatController {
     session.presence.turnStarted()
     thoughts.turnStarted()
     let number = answer
-    return { e in Task { @MainActor in self.handle(e, of: number) } }
+    return { [weak self] e in Task { @MainActor in self?.handle(e, of: number) } }
   }
 
   /// The tsugumi on the canvas follows what the Agent looks at and runs.

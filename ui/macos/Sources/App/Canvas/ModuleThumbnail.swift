@@ -481,10 +481,21 @@ final class ModuleThumbnails {
       let code = try await ModuleSources.source(key.name)
       let message: [String: Any] = ["name": key.name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() }, "code": code, "colorScheme": key.colorScheme, "interactive": false]
       // Drawn, and a moment later (what the libraries leave to a timer), before the picture is taken.
+      // Guard with a timeout so a hanging Card view cannot block the single-lane thumbnail queue.
       let state = try await web.callAsyncJavaScript(
           """
-          await tsugumiRender(message)
-          await new Promise((r) => setTimeout(r, 30))
+          let timer
+          try {
+            await Promise.race([
+              (async () => {
+                await tsugumiRender(message)
+                await new Promise((r) => setTimeout(r, 30))
+              })(),
+              new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('__timeout__')), 15000) }),
+            ])
+          } finally {
+            clearTimeout(timer)
+          }
           return document.body.dataset.state === 'error' ? document.body.dataset.error : ''
           """, arguments: ["message": message], contentWorld: .page) as? String
       try Task.checkCancellation()

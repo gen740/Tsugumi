@@ -198,7 +198,7 @@ struct ModuleViewerHost: NSViewRepresentable {
       let list = #"[{"trigger":{"url-filter":"^(https?|wss?|ftp|file):"},"action":{"type":"block"}}]"#
       WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "tsugumi-module-isolation", encodedContentRuleList: list) { compiled, _ in
         Task { @MainActor in
-          rules = .some(compiled)
+          if let compiled { rules = .some(compiled) }
           let all = waiting; waiting = []
           for f in all { f(compiled) }
         }
