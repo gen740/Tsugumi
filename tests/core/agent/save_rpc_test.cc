@@ -302,7 +302,7 @@ TEST_F(AgentProjectFixture,
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
+TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
@@ -336,7 +336,6 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
   const auto rev = json::Get(snapshot, "rev");
-  const auto before_layout = json::Object(Read(nested / "layout.json"));
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool(
@@ -395,12 +394,14 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
                 "value"));
   EXPECT_EQ(json::UInt(json::Text(final, "rev")),
             json::UInt(json::String(rev, rev)) + 1);
-  const auto positions =
-      json::Object(json::Object(Read(nested / "layout.json")).at("cards"));
-  EXPECT_TRUE(positions.contains(id));
-  for (const auto& [key, value] : json::Object(before_layout.at("cards")))
-    EXPECT_EQ(positions.at(key), value);
-  EXPECT_NE(Read(nested / "tsugumi.json").find("secret"), std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(nested / "layout.json"));
+  const auto canvas =
+      json::Object(json::Object(Read(nested / "tsugumi.json")).at("canvas"));
+  const auto cards = json::Array(canvas.at("cards"));
+  for (const auto& expected : {id, std::string("secret")})
+    EXPECT_TRUE(std::any_of(cards.begin(), cards.end(), [&](const auto& card) {
+      return json::Text(json::Object(card), "id") == expected;
+    }));
   EXPECT_EQ(response.find("secret"), std::string::npos);
 }
 }  // namespace
