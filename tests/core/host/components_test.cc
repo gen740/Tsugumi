@@ -69,6 +69,37 @@ TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
   store.db.exec("INSERT INTO secrets VALUES('desktop:anthropic','new-key')");
   EXPECT_EQ(resolve().credential, "new-key");
 }
+TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {
+  TemporaryDirectory directory;
+  const auto retired_path = directory.path / "host-settings.sqlite";
+  {
+    sql::Db retired(retired_path.string());
+    retired.exec(
+        "CREATE TABLE accounts(profile TEXT,id TEXT,json TEXT NOT NULL,"
+        "PRIMARY KEY(profile,id));"
+        "INSERT INTO accounts VALUES('desktop','retired','{}')");
+    sql::Db old_host((directory.path / "host.sqlite").string());
+    old_host.exec(
+        "CREATE TABLE credentials(id TEXT PRIMARY KEY,json TEXT NOT NULL);"
+        R"(INSERT INTO credentials VALUES('retired','{"refresh_token":"old"}'))");
+  }
+  ASSERT_TRUE(std::filesystem::remove(retired_path));
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::Credentials credentials(gate, store.db, {});
+  credentials.Save("current", {{"refresh_token", Quote("new")}});
+  store.db.exec("INSERT INTO accounts VALUES('web','current','{}')");
+  ASSERT_NO_THROW(credentials.Get("retired"));
+
+  // Apply the offline retirement procedure documented in security.md.
+  store.db.exec(
+      "PRAGMA secure_delete = ON;"
+      "DELETE FROM credentials WHERE NOT EXISTS "
+      "(SELECT 1 FROM accounts WHERE accounts.id = credentials.id);"
+      "VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+  EXPECT_THROW(credentials.Get("retired"), host::Failure);
+  EXPECT_EQ(credentials.Get("current").at("refresh_token"), Quote("new"));
+}
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
