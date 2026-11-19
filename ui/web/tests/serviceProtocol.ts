@@ -105,7 +105,7 @@ console.log('Host list readers: omitted vectors are empty')
 for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   const b = new fb.Builder()
   const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
-    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0)
+    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0, false)
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
@@ -117,12 +117,13 @@ console.log('Settings and sign-in readers: omitted vectors are empty')
   const b = new fb.Builder()
   const attempt = b.createString('attempt-a')
   const client = b.createString('account-a')
-  const status = SignInStatus.createSignInStatus(b, attempt, b.createString('complete'), 0, 0, 0, false, client)
+  const status = SignInStatus.createSignInStatus(b, attempt, b.createString('complete'), 0, 0, 0, false, client, true)
   const reply = HostReply.createReply(b, HostReplyPayload.SignInStatus, status)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
   assert.equal(decoded.attempt_id, 'attempt-a')
   assert.equal(decoded.client_id, 'account-a')
+  assert.equal(decoded.planEnabled, true)
 }
 {
   const b = new fb.Builder()

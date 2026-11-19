@@ -10,7 +10,7 @@ import { Icon } from './icons'
  *  stay in the host service. */
 export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = false, onConnected, onChanged, controller }: {
   model?: string; setModel?: (m: string) => void; inUse?: boolean; onboarding?: boolean
-  onConnected: () => void | Promise<void>; onChanged?: () => void; controller?: ChatGPTSignInModel
+  onConnected: (clientId: string) => void | Promise<void>; onChanged?: () => void; controller?: ChatGPTSignInModel
 }) {
   const [connection] = useState(() => controller ?? new ChatGPTSignInModel())
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
@@ -22,6 +22,10 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
   }, [connection])
   const st = connection.state
   const active = st.accounts.find((a) => a.active)
+  const retry = connection.connectionError && <Row>
+    <span className="caption selectable" role="status">{connection.connectionError}</span>
+    <Button small onClick={() => void connection.synchronize()}>{L('再試行')}</Button>
+  </Row>
   return (
     <>
       <Section info={onboarding ? undefined : <>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}<br />{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</>} title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
@@ -66,12 +70,14 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
         </Row>
         {models.length > 0 && <Row label={L('一覧から選択')}><Select value={model} onChange={setModel ?? (() => {})} options={models.map((m) => ({ value: m.id, label: m.label }))} /></Row>}
       </Section>}
-      {(connection.connectionError || connection.message) && <div className="caption selectable">{connection.connectionError ?? connection.message}</div>}
+      {connection.message && <div className="caption selectable">{connection.message}</div>}
+      {!st.outcome?.welcome && retry}
       {st.outcome?.welcome && (
         <Sheet width={420} onClose={() => connection.welcomed(false)}>
           <div className="sheet-body">
             <b>{L('ChatGPT プランを使っています')}</b>
             <span className="callout secondary" style={{ whiteSpace: 'normal' }}>{L('Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。')}</span>
+            {retry}
             <div className="row gap8" style={{ justifyContent: 'flex-end' }}>
               <Button onClick={() => connection.welcomed(true)}>Manage usage</Button>
               <Button kind="prominent" onClick={() => connection.welcomed(false)}>Got it</Button>
