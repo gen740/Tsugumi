@@ -59,6 +59,7 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "NULL, id TEXT "
       "NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, action INTEGER "
       "NOT NULL, operation TEXT NOT NULL, frame BLOB, message_index INTEGER, "
+      "approval_digest TEXT, "
       "PRIMARY KEY(conversation,id));"
       "CREATE TABLE IF NOT EXISTS receipts(conversation TEXT NOT NULL, id "
       "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "

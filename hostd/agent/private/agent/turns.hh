@@ -68,7 +68,7 @@ struct Turns {
                        const Conversation& conversation) -> std::string;
   auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* request,
                    std::stop_token stop) -> ContentBlock;
-  auto Start(const std::string& id, const std::string& turn,
+  auto Start(bool human, const std::string& id, const std::string& turn,
              const std::string& text,
              Tsugumi::Agent::Action action = Tsugumi::Agent::Action::Resume,
              std::string pending_frame = {}, const std::string& display = {})

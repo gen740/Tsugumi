@@ -1,4 +1,4 @@
-import type { ChatRow } from '../shared/chatPresentation'
+import type { ChatRow, AccessGroup } from '../shared/chatPresentation'
 // Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
 // API; service credentials and binary socket connections stay in this host.
 import { spawn } from 'node:child_process'
@@ -342,7 +342,15 @@ export class RemoteAgent {
         if (identity !== this.observationID) return
         if (result.events.some((e) => e.event.kind === 'finished')) await this.refresh()
         if (identity !== this.observationID) return
-        for (const e of result.events) this.listener?.(e.event)
+        for (const { event } of result.events) {
+          if (event.kind === 'permission' && !event.asked?.length) {
+            const { requests: [request] } = await this.host.user.call<{
+              requests: { state: string; asked: string[]; groups?: AccessGroup[]; call_id?: string }[]
+            }>('AccessListRequest', { conversation_id: this.id, request_id: event.id })
+            if (identity !== this.observationID) return
+            if (request?.state === 'pending') this.listener?.({ ...request, kind: 'permission', id: event.id })
+          } else this.listener?.(event)
+        }
         if (result.hasRows) this.listener?.({ kind: 'presentation', rows: result.rows })
         this.seq = result.next_seq
         const wasBusy = this.busy

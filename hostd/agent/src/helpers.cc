@@ -143,10 +143,13 @@ auto Helpers::RunHelper(
                                      : conversations->Resources(conversation);
       messages.push_back(
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
-      auto insert = conversations->ConversationDatabase(conversation)
-                        .prepare(
-                            "INSERT INTO helpers "
-                            "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
+      auto& store = conversations->ConversationDatabase(conversation);
+      sql::Transaction tx(store);
+      if (authorization)
+        conversations->RememberResource(conversation, authorization->project());
+      auto insert = store.prepare(
+          "INSERT INTO helpers "
+          "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
@@ -167,9 +170,14 @@ auto Helpers::RunHelper(
                         return !message.context_summary;
                       })))
           .run();
+      tx.commit();
     }
     config = providers->ForConversation(conversation);
   }
+  if (authorization)
+    dependencies.event(conversation, json::Encode(json::Members{
+                                         {"kind", json::Quote("helperStarted")},
+                                         {"text", task}}));
   dependencies.event(conversation, json::Encode(json::Members{
                                        {"kind", json::Quote("helper")},
                                        {"id", json::Quote(parent_call)},

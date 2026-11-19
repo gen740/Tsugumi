@@ -184,20 +184,24 @@ auto Access::RequestApproval(ApprovalKind kind, const std::string& project,
       .bind(6, call)
       .bind(7, digest)
       .run();
-  PublishRequest(conversation, id, {ApprovalDescription(kind, preview)},
-                 kind == ApprovalKind::Operation ? call : std::string{});
+  if (kind == ApprovalKind::Turn)
+    PublishRequest(conversation, id, {});
+  else
+    PublishRequest(conversation, id, {ApprovalDescription(kind, preview)},
+                   call);
   return {id, preview};
 }
 
 // The conversation database is authoritative across interruption and restart.
 auto Access::TurnPending(const std::string& conversation,
-                         const std::string& turn) -> bool {
+                         const std::string& turn, const std::string& digest)
+    -> bool {
   auto q =
       conversations->ConversationDatabase(conversation)
           .prepare(
               "SELECT 1 FROM conversation_turns WHERE conversation=? AND id=? "
-              "AND frame IS NOT NULL AND state IN ('running','interrupted')");
-  q.bind(1, conversation).bind(2, turn);
+              "AND approval_digest=? AND state IN ('running','interrupted')");
+  q.bind(1, conversation).bind(2, turn).bind(3, digest);
   return q.step();
 }
 
@@ -246,15 +250,16 @@ auto Access::WaitApproval(std::unique_lock<std::recursive_mutex>& lock,
 
 auto Access::AuthorizeTurn(const std::string& project,
                            const std::string& conversation,
-                           const std::string& turn, const std::string& preview,
-                           std::stop_token stop) -> TurnAuthorization {
+                           const std::string& turn, const std::string& digest,
+                           const std::string& preview, std::stop_token stop)
+    -> TurnAuthorization {
   std::unique_lock lock(mutex);
-  if (stop.stop_requested() || stopping || !TurnPending(conversation, turn))
+  if (stop.stop_requested() || stopping ||
+      !TurnPending(conversation, turn, digest))
     throw Cancelled();
   registry.Lookup(project);
   const auto approval =
-      RequestApproval(ApprovalKind::Turn, project, conversation, turn,
-                      crypto::sha256_hex(preview),
+      RequestApproval(ApprovalKind::Turn, project, conversation, turn, digest,
                       json::Encode(json::Members{{"task", preview}}));
   WaitApproval(lock, approval.id, true, stop);
   return TurnAuthorization(project, conversation);
@@ -398,7 +403,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       auto p = r->value_as_AccessResolveRequest();
       const auto id = p->request_id()->str();
       auto q = db.prepare(
-          "SELECT project,conversation,access,state,call,offered FROM "
+          "SELECT project,conversation,access,state,call,offered,digest FROM "
           "permission_requests "
           "WHERE id=?");
       q.bind(1, id);
@@ -408,7 +413,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       const auto conversation = q.text(1);
       const auto needed = static_cast<S::Access>(q.i64(2));
       if (needed == S::Access::HelperScope &&
-          !TurnPending(conversation, q.text(4)))
+          !TurnPending(conversation, q.text(4), q.text(6)))
         throw Failure("conflict", "The turn no longer needs approval");
       bool allow = p->allow();
       sql::Transaction tx(db);
@@ -474,7 +479,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       }
       A::AccessListT result;
       auto q = db.prepare(
-          "SELECT id,project,conversation,access,reason,state,call,offered "
+          "SELECT id,project,conversation,access,reason,state,call,offered,digest "
           "FROM permission_requests WHERE (?1='' OR conversation=?1) "
           "AND (?2='' OR id=?2) ORDER BY state='pending' DESC,rowid DESC");
       q.bind(1, id).bind(2, request_id);
@@ -491,9 +496,10 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
                                             entry->reason, q.i64(7));
         } else {
           const auto kind = static_cast<ApprovalKind>(entry->access);
+          if (!human && kind == ApprovalKind::Turn) continue;
           if (kind == ApprovalKind::Operation) entry->call_id = q.text(6);
           if (kind == ApprovalKind::Turn && entry->state == "pending" &&
-              !TurnPending(entry->conversation_id, q.text(6)))
+              !TurnPending(entry->conversation_id, q.text(6), q.text(8)))
             continue;
           entry->asked = {ApprovalDescription(kind, entry->reason)};
         }

@@ -138,14 +138,16 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   seq.bind(1, c.id);
   seq.step();
   auto latest = conversations->ConversationDatabase(c.id).prepare(
-      "SELECT state,operation FROM conversation_turns WHERE conversation=? "
+      "SELECT state,operation,approval_digest FROM conversation_turns WHERE "
+      "conversation=? "
       "ORDER BY rowid DESC LIMIT 1");
   latest.bind(1, c.id);
   const auto state = latest.step() ? latest.text(0) : "";
   const bool busy = running.contains(c.id);
   const bool resumable = !busy && state == "interrupted";
   const bool continuable =
-      !busy && (resumable || state == "cancelled" || state == "failed");
+      resumable || (!busy && (state == "cancelled" || state == "failed") &&
+                    latest.is_null(2));
   A::ConversationResultT result;
   result.conversation =
       std::make_unique<A::ConversationT>(conversations->ConversationData(c));
@@ -369,7 +371,7 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
   return block;
 }
 
-auto Turns::Start(const std::string& id, const std::string& turn,
+auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                   const std::string& text, A::Action action,
                   std::string pending_frame, const std::string& display)
     -> void {
@@ -404,17 +406,33 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     throw Failure("invalid_request", "The conversation has no messages");
   size_t pending_index = messages.size() - 1;
   auto active_turn = turn;
+  std::optional<std::string> approval_digest;
   {
-    auto pending = store.prepare(
-        "SELECT id,frame,message_index FROM conversation_turns "
-        "WHERE conversation=? AND state='interrupted' AND frame IS NOT NULL");
-    pending.bind(1, id);
-    if (pending.step()) {
-      if (!turn.empty() || action == A::Action::Compact)
+    auto previous = store.prepare(
+        "SELECT id,state,action,frame,message_index,approval_digest "
+        "FROM conversation_turns WHERE conversation=? ORDER BY rowid DESC "
+        "LIMIT 1");
+    previous.bind(1, id);
+    if (previous.step()) {
+      const auto state = previous.text(1);
+      const bool has_frame = !previous.is_null(3);
+      const bool scoped = !previous.is_null(5);
+      const bool resume = turn.empty() && action == A::Action::Resume;
+      if (state == "interrupted" && has_frame && !resume)
         throw Failure("busy", "Resume or cancel the pending message first");
-      active_turn = pending.text(0);
-      pending_frame = pending.blob(1);
-      pending_index = pending.u64(2);
+      if (resume && scoped && state != "interrupted")
+        throw Failure("conflict",
+                      "Resend the message to start a new Skill turn");
+      if (resume &&
+          (state == "interrupted" || (state == "failed" && has_frame))) {
+        active_turn = previous.text(0);
+        action = static_cast<A::Action>(previous.i64(2));
+        if (has_frame) {
+          pending_frame = previous.blob(3);
+          pending_index = previous.u64(4);
+        }
+        if (scoped) approval_digest = previous.text(5);
+      }
     }
   }
   std::string task;
@@ -430,22 +448,26 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     if (!request || !request->value_as_ConversationSendRequest())
       throw Failure("invalid_request",
                     "The pending message has an invalid operation");
-    task = ScopedSkillTask(request->value_as_ConversationSendRequest(), c);
-  }
-  if (task.empty())
-    access_service.AuthorizeContext(messages);
-  else
-    messages[pending_index].content.front().resource_ids = {c.project};
-  if (active_turn.empty() && action == A::Action::Resume) {
-    auto previous = store.prepare(
-        "SELECT id,state,action FROM conversation_turns WHERE "
-        "conversation=? ORDER BY rowid DESC LIMIT 1");
-    previous.bind(1, id);
-    if (previous.step() && previous.text(1) == "interrupted") {
-      active_turn = previous.text(0);
-      action = static_cast<A::Action>(previous.i64(2));
+    try {
+      task = ScopedSkillTask(request->value_as_ConversationSendRequest(), c);
+    } catch (const std::exception& error) {
+      if (!approval_digest) throw;
+      throw Failure(
+          "conflict",
+          "The pending Skill is unavailable. Cancel and resend the message: " +
+              std::string(error.what()));
     }
+    const auto current =
+        task.empty() ? std::nullopt : std::optional{crypto::sha256_hex(task)};
+    if (turn.empty() && approval_digest != current)
+      throw Failure("conflict",
+                    "The pending Skill changed. Cancel and resend the message");
+    approval_digest = current;
   }
+  if (approval_digest)
+    Human(human);
+  else
+    access_service.AuthorizeContext(messages);
   sql::Transaction tx(store);
   auto binding = store.prepare(
       "INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
@@ -472,14 +494,14 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       active_turn = "action-" + std::to_string(counter.i64(0) + 1);
     }
     auto q = store.prepare(
-        "INSERT INTO conversation_turns VALUES(?,?,?,'running',?,'{}',?,?)");
+        "INSERT INTO conversation_turns VALUES(?,?,?,'running',?,'{}',?,?,?)");
     q.bind(1, id)
         .bind(2, active_turn)
         .bind(3, digest)
         .bind(4, static_cast<int>(action));
     if (!pending_frame.empty())
       q.bind_blob(5, pending_frame).bind(6, static_cast<uint64_t>(pending_index));
-    q.run();
+    q.bind(7, approval_digest).run();
   }
   RecordOperation(id, !pending_frame.empty()         ? "preparing"
                       : action == A::Action::Compact ? "compact"
@@ -500,6 +522,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                                              config, context, role = c.role,
                                              project = c.project,
                                              task = std::move(task),
+                                             approval_digest =
+                                                 std::move(approval_digest),
                                              messages = std::move(messages),
                                              pending_frame =
                                                  std::move(pending_frame),
@@ -507,13 +531,10 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                                                 std::stop_token stop) mutable {
     std::string final_state = "finished";
     try {
-      if (!task.empty()) {
-        const auto authorization =
-            access_service.AuthorizeTurn(project, id, turn, task, stop);
+      if (approval_digest) {
+        const auto authorization = access_service.AuthorizeTurn(
+            project, id, turn, *approval_digest, task, stop);
         RecordOperation(id, "model");
-        dependencies.event(
-            id, json::Encode(json::Members{
-                    {"kind", json::Quote("helperStarted")}, {"text", task}}));
         const auto result = json::Object(
             dependencies.run_helper(id, turn, 0, task, stop, authorization));
         if (stop.stop_requested()) throw Cancelled();
@@ -584,14 +605,22 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     }
     auto& store = conversations->ConversationDatabase(id);
     sql::Transaction tx(store);
-    if (!task.empty() && final_state == "finished")
+    if (approval_digest && final_state == "finished")
       conversations->SaveMessages(id, messages);
+    // A preparation failure leaves the original send available for retry.
+    // Preparation clears the frame in the same transaction as saving input.
+    const bool retain_frame = final_state == "interrupted" ||
+                              (final_state == "failed" && !approval_digest);
     auto q = store.prepare(
         "UPDATE conversation_turns SET state=?1,"
-        "frame=CASE ?1 WHEN 'interrupted' THEN frame END,"
-        "message_index=CASE ?1 WHEN 'interrupted' THEN message_index END "
-        "WHERE conversation=?2 AND id=?3");
-    q.bind(1, final_state).bind(2, id).bind(3, turn).run();
+        "frame=CASE WHEN ?2 THEN frame END,"
+        "message_index=CASE WHEN ?2 THEN message_index END "
+        "WHERE conversation=?3 AND id=?4");
+    q.bind(1, final_state)
+        .bind(2, retain_frame)
+        .bind(3, id)
+        .bind(4, turn)
+        .run();
     tx.commit();
     if (final_state == "cancelled") access_service.CancelTurnApproval(id, turn);
     dependencies.event(id, R"({"kind":"finished"})");
@@ -637,9 +666,9 @@ auto Turns::Handle(const RequestIn& request, bool human,
         throw Failure("invalid_request",
                       "A turn needs a nonempty ID of at most 256 bytes");
       conversations->OwnConversation(p->conversation_id()->str(), human);
-      if (!human && p->scoped_skill()) Human(human);
-      Start(p->conversation_id()->str(), p->turn_id()->str(), p->text()->str(),
-            A::Action::Resume, *request.frame,
+      if (p->scoped_skill()) Human(human);
+      Start(human, p->conversation_id()->str(), p->turn_id()->str(),
+            p->text()->str(), A::Action::Resume, *request.frame,
             p->display() ? p->display()->str() : p->text()->str());
       S::AcknowledgementT result;
       result.accepted = true;
@@ -661,7 +690,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
             "message_index=NULL WHERE conversation=?");
         turns.bind(1, id).run();
       } else
-        Start(id, {}, {}, p->action());
+        Start(human, id, {}, {}, p->action());
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
     case A::RequestPayload::ConversationCancelRequest: {

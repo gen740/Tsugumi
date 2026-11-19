@@ -68,16 +68,16 @@ struct Access {
       -> void;
   auto AuthorizeTurn(const std::string& project,
                      const std::string& conversation, const std::string& turn,
-                     const std::string& preview, std::stop_token stop)
-      -> TurnAuthorization;
+                     const std::string& digest, const std::string& preview,
+                     std::stop_token stop) -> TurnAuthorization;
   auto PublishRequest(const std::string& conversation, const std::string& id,
                       const std::vector<std::string>& descriptions,
                       const std::string& call_id = {}) -> void;
   auto AuthorizeContext(
       const std::vector<agent::Message>& messages,
       const std::optional<TurnAuthorization>& authorization = {}) -> void;
-  auto TurnPending(const std::string& conversation, const std::string& turn)
-      -> bool;
+  auto TurnPending(const std::string& conversation, const std::string& turn,
+                   const std::string& digest) -> bool;
   auto CancelTurnApproval(const std::string& conversation,
                           const std::string& turn) -> void;
   auto HandleHost(const Tsugumi::Host::Request& request, uint64_t id)

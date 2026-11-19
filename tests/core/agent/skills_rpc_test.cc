@@ -5,6 +5,7 @@
 
 #include "project_fixture.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -75,8 +76,8 @@ class SkillsFixture : public AgentProjectFixture {
               .Union();
         });
   }
-  auto ScopedSend(const std::string& conversation, const std::string& turn)
-      -> Reply {
+  auto ScopedSend(const std::string& conversation, const std::string& turn,
+                  bool explicit_scope = true) -> Reply {
     return Call(*human, A::RequestPayload::ConversationSendRequest,
                 [&](Builder& b) {
                   A::ConversationSendRequestT request;
@@ -85,7 +86,7 @@ class SkillsFixture : public AgentProjectFixture {
                   request.text = "$inspect";
                   request.selected_cards = {"selected"};
                   request.skill_names = {"inspect"};
-                  request.scoped_skill = "inspect";
+                  if (explicit_scope) request.scoped_skill = "inspect";
                   return A::ConversationSendRequest::Pack(b, &request).Union();
                 });
   }
@@ -739,10 +740,24 @@ TEST_F(SkillsFixture, CancellingBeforeOrAfterApprovalInvalidatesTheSkillTurn) {
                     .Code()
                     .empty());
     const auto approval = WaitForSkillApproval(conversation);
+    if (!approved) {
+      EXPECT_EQ(Events(conversation).View().find("INSPECT_SKILL_SENTINEL"),
+                std::string::npos);
+      const auto external_access = Call(
+          *external, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+            return A::CreateAccessListRequest(b, b.CreateString(conversation),
+                                              b.CreateString(approval))
+                .Union();
+          });
+      ASSERT_TRUE(external_access.Code().empty());
+      EXPECT_EQ(
+          ListSize(external_access.Value()->value_as_AccessList()->requests()),
+          0u);
+    }
     if (approved) {
       model.Queue(AnthropicText("Cancelled answer."), true);
       ASSERT_TRUE(Approve(approval).Code().empty());
-      ASSERT_TRUE(model.WaitForRequests(1));
+      ASSERT_TRUE(model.WaitForRequests(2));
     }
     ASSERT_TRUE(CancelSkill(conversation).Code().empty());
     if (approved) model.Release();
@@ -753,9 +768,86 @@ TEST_F(SkillsFixture, CancellingBeforeOrAfterApprovalInvalidatesTheSkillTurn) {
     ASSERT_EQ(ListSize(items), 1u);
     EXPECT_EQ(items->Get(0)->state()->string_view(), "cancelled");
     EXPECT_EQ(Approve(approval).Code(), "conflict");
-    EXPECT_EQ(Resume(conversation).Code(), "permission_denied");
+    EXPECT_EQ(Resume(conversation).Code(), "conflict");
+    if (!approved) {
+      model.Queue(AnthropicText("Ordinary conversation after cancellation."));
+      ASSERT_TRUE(
+          Send(conversation, "An ordinary message", "ordinary").Code().empty());
+      ASSERT_TRUE(model.WaitForRequests(1));
+      WaitUntilIdle(conversation);
+      EXPECT_EQ(Get(conversation).Code(), "");
+    }
   }
-  EXPECT_EQ(model.Requests().size(), 1u);
+  EXPECT_EQ(model.Requests().size(), 2u);
+}
+
+TEST_F(SkillsFixture, ResumeRejectsAChangedSkillEvenWithResidentRead) {
+  ModelServer model;
+  const auto conversation = DirectSkill(model);
+  Grant(conversation);
+  ASSERT_TRUE(
+      ScopedSend(conversation, "selected-by-name", false).Code().empty());
+  WaitForSkillApproval(conversation);
+  service.Stop(true);
+  StartHost();
+
+  const auto path = directory.path / "project/skills/inspect.md";
+  Write(path, "---\nname: inspect\n---\nScope removed");
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
+  Write(path, "---\nname: inspect\nscope: [read]\n---\nChanged instructions");
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
+  EXPECT_TRUE(model.Requests().empty());
+  ASSERT_TRUE(CancelSkill(conversation).Code().empty());
+}
+
+TEST_F(SkillsFixture, RetryingFailedAttachmentPreparationRestoresTheSend) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  const auto conversation = Conversation("retry-attachment");
+  const std::string resource = "folder:test-attachment";
+  const auto folder = directory.path / "attached-for-retry";
+  Write(folder / "note.txt", "A host attachment");
+  auto set_read = [&] {
+    return Call(
+        *host, H::RequestPayload::ProjectPermissionSetRequest, [&](Builder& b) {
+          return H::CreateProjectPermissionSetRequest(
+                     b, b.CreateString(project_id), b.CreateString(resource),
+                     Tsugumi::Service::Access::Read, true)
+              .Union();
+        });
+  };
+  ASSERT_TRUE(
+      Call(*human, A::RequestPayload::ConversationSendRequest,
+           [&](Builder& b) {
+             A::ConversationSendRequestT request;
+             request.conversation_id = conversation;
+             request.turn_id = "with-attachment";
+             request.text = "Use this attachment";
+             request.attached_resources = {resource};
+             return A::ConversationSendRequest::Pack(b, &request).Union();
+           })
+          .Code()
+          .empty());
+  EXPECT_TRUE(JsonBool(WaitUntilIdle(conversation), "/continuable"));
+  EXPECT_TRUE(model.Requests().empty());
+  ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
+                   [&](Builder& b) {
+                     return H::CreateRegisterFolderRequest(
+                                b, b.CreateString(project_id),
+                                b.CreateString(resource),
+                                b.CreateString(folder.string()))
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  ASSERT_TRUE(set_read().Code().empty());
+  model.Queue(AnthropicText("Attachment received."));
+  ASSERT_TRUE(Resume(conversation).Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 1u);
+  EXPECT_NE(model.Requests().front().find(folder.filename().string()),
+            std::string::npos);
 }
 
 TEST_F(SkillsFixture, InterruptedSkillRetainsApprovalAndCommitsItsAnswerOnce) {
@@ -764,6 +856,23 @@ TEST_F(SkillsFixture, InterruptedSkillRetainsApprovalAndCommitsItsAnswerOnce) {
   ASSERT_TRUE(ScopedSend(conversation, "recovered").Code().empty());
   const auto approval = WaitForSkillApproval(conversation);
   service.Stop(true);
+  const auto path = directory.path / "project/.tsugumi/agent.sqlite";
+  std::string messages_before, pending_frame;
+  uint64_t message_index = 0;
+  {
+    sql::Db db(path.string());
+    auto messages = db.prepare("SELECT messages FROM conversations WHERE id=?");
+    messages.bind(1, conversation);
+    ASSERT_TRUE(messages.step());
+    messages_before = messages.text(0);
+    auto frame = db.prepare(
+        "SELECT frame,message_index FROM conversation_turns WHERE "
+        "conversation=? AND id='recovered'");
+    frame.bind(1, conversation);
+    ASSERT_TRUE(frame.step());
+    pending_frame = frame.blob(0);
+    message_index = frame.u64(1);
+  }
   StartHost();
   EXPECT_TRUE(JsonBool(Get(conversation, true).View(), "/resumable"));
   // Approval can be answered on an interrupted turn before resuming it.
@@ -772,13 +881,38 @@ TEST_F(SkillsFixture, InterruptedSkillRetainsApprovalAndCommitsItsAnswerOnce) {
   ASSERT_TRUE(Resume(conversation).Code().empty());
   const auto idle = WaitUntilIdle(conversation);
   EXPECT_FALSE(JsonBool(idle, "/resumable"));
-  EXPECT_EQ(Resume(conversation).Code(), "permission_denied");
+  ASSERT_EQ(model.Requests().size(), 1u);
+
+  // Reconstruct the durable state between the helper commit and the parent
+  // commit. The completed helper and its approval stay in the real stores.
+  service.Stop(true);
+  {
+    sql::Db db(path.string());
+    sql::Transaction tx(db);
+    auto parent = db.prepare("UPDATE conversations SET messages=? WHERE id=?");
+    parent.bind(1, messages_before).bind(2, conversation).run();
+    auto turn = db.prepare(
+        "UPDATE conversation_turns SET state='running',frame=?,message_index=? "
+        "WHERE conversation=? AND id='recovered'");
+    turn.bind_blob(1, pending_frame)
+        .bind(2, message_index)
+        .bind(3, conversation)
+        .run();
+    tx.commit();
+  }
+  StartHost();
+  ASSERT_TRUE(Resume(conversation).Code().empty());
+  WaitUntilIdle(conversation);
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
   const auto completed = Get(conversation, true);
   const auto* messages = completed.Value()
                              ->value_as_ConversationResult()
                              ->conversation()
                              ->messages();
   ASSERT_EQ(ListSize(messages), 2u);
+  EXPECT_EQ(
+      JsonString(completed.View(), "/conversation/messages/1/content/0/text"),
+      "RECOVERED_SKILL_ANSWER");
   EXPECT_EQ(model.Requests().size(), 1u);
 }
 }  // namespace
