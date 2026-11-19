@@ -97,19 +97,18 @@ auto Prepare(
       return {{"base_rev", json::Get(base.snapshot, "rev")}, {"changes", "[]"}};
     return PrepareProjectEdits(edits, base, read, authorize);
   }
-  H::ProjectEditsT edits;
-  std::map<std::string, std::optional<std::string>> staged;
-  std::set<std::string> paths;
-  for (const auto& [path, ignored] : base.files) {
-    (void)ignored;
-    paths.insert(path);
-  }
-  for (const auto& raw : json::Array(json::Get(base.snapshot, "sources", "[]")))
-    paths.insert(json::Text(json::Object(raw), "path"));
-  auto original = [&](const std::string& path) -> std::optional<std::string> {
+  EditFiles staged, originals;
+  const auto paths = ProjectPaths(base);
+  auto original =
+      [&](const std::string& path) -> const std::optional<std::string>& {
+    if (const auto found = originals.find(path); found != originals.end())
+      return found->second;
     if (authorize) authorize(path);
-    if (base.files.contains(path)) return base.files.at(path);
-    return read(path);
+    const auto found = base.files.find(path);
+    return originals
+        .emplace(path, found == base.files.end() ? read(path)
+                                                 : std::optional(found->second))
+        .first->second;
   };
   auto get = [&](const std::string& path) -> std::optional<std::string> {
     if (staged.contains(path)) return staged.at(path);
@@ -720,73 +719,27 @@ auto Prepare(
                              layout->action == H::ProjectLayoutAction::Untangle,
                              layout->scene.get()));
   }
-  // Deleting a root definition is a guarded folder replacement; independent
-  // _card.json removals remain invalid in the public edit vocabulary.
-  std::set<std::string> removed;
-  for (const auto& [path, value] : staged) {
-    if (!value && path.ends_with("/_card.json")) {
-      const auto dir = path.substr(0, path.size() - 10);
-      if (removed.contains(dir)) continue;
-      H::ProjectTreeEditT tree;
-      tree.prefix = dir;
-      for (const auto& file : paths) {
-        if (!file.starts_with(dir)) continue;
-        const auto bytes = original(file);
-        if (!bytes) throw Failure("not_found", file);
-        auto hash = std::make_unique<H::ProjectFileHashT>();
-        hash->path = file;
-        hash->hash = crypto::sha256_hex(*bytes);
-        tree.expected.push_back(std::move(hash));
-        const auto now = get(file);
-        if (now) {
-          auto entry = std::make_unique<H::ProjectFileT>();
-          entry->path = file;
-          entry->bytes.assign(now->begin(), now->end());
-          tree.files.push_back(std::move(entry));
-        }
-      }
-      auto entry = std::make_unique<H::ProjectEditT>();
-      entry->value.Set(std::move(tree));
-      edits.edits.push_back(std::move(entry));
-      removed.insert(dir);
-    }
-  }
-  for (const auto& [path, value] : staged) {
-    if (std::any_of(removed.begin(), removed.end(),
-                    [&](const auto& dir) { return path.starts_with(dir); }))
+  std::set<std::string> removed_definitions;
+  for (auto& [path, after] : staged) {
+    const auto& before = original(path);
+    if (before && after && before != after && base.files.contains(path))
+      after = PreserveProjectBytes(*before, *after);
+    if (!before || after || !path.starts_with("definitions/") ||
+        !path.ends_with("/_card.json") ||
+        std::count(path.begin(), path.end(), '/') != 2)
       continue;
-    const auto before = original(path);
-    if (before == value) continue;
-    auto entry = std::make_unique<H::ProjectEditT>();
-    if (value) {
-      auto bytes = *value;
-      if (before && base.files.contains(path))
-        bytes = PreserveProjectBytes(*before, bytes);
-      H::ProjectFilePutT edit;
-      edit.file_path = path;
-      edit.expect_missing = !before;
-      if (before) edit.expected_hash = crypto::sha256_hex(*before);
-      edit.bytes.assign(bytes.begin(), bytes.end());
-      entry->value.Set(std::move(edit));
-    } else {
-      if (!before) continue;
-      H::ProjectFileRemoveT edit;
-      edit.file_path = path;
-      edit.expected_hash = crypto::sha256_hex(*before);
-      entry->value.Set(std::move(edit));
+    const auto dir = path.substr(0, path.size() - 10);
+    // RemoveDefinition deletes the entire confirmed closure. Every member
+    // of that closure must have been selected and authorized for removal.
+    for (auto it = paths.lower_bound(dir);
+         it != paths.end() && it->starts_with(dir); ++it) {
+      original(*it);
+      if (!staged.contains(*it) || staged.at(*it))
+        throw Failure("invalid_request", dir + ": definition root is required");
     }
-    edits.edits.push_back(std::move(entry));
+    removed_definitions.insert(dir.substr(12, dir.size() - 13));
   }
-  auto plan = edits.edits.empty()
-                  ? json::Members{{"base_rev", json::Get(base.snapshot, "rev")},
-                                  {"changes", "[]"}}
-                  : PrepareProjectEdits(edits, base, read, authorize);
-  auto changes = json::Array(plan.at("changes"));
-  // An unchanged layout/connect still uses the existing save idempotence path.
-  if (changes.empty())
-    changes.push_back(Change("SetProject", {{"json", json::Quote(project)}}));
-  plan["changes"] = json::Encode(changes);
-  return plan;
+  return ProjectSaveChanges(base, originals, staged, removed_definitions);
 }
 // Preserve policy/placement changes relative to the bytes explicitly authored
 // by this operation, so even an exact whitespace replacement is retained.

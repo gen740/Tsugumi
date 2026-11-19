@@ -149,16 +149,6 @@ auto EncodedBytes(const std::string& bytes) -> std::string {
   return json::Encode(
       json::Members{{"base64", json::Quote(crypto::base64(bytes))}});
 }
-auto Paths(const SaveBase& base) -> std::set<std::string> {
-  std::set<std::string> paths;
-  for (const auto& [path, ignored] : base.files) {
-    (void)ignored;
-    paths.insert(path);
-  }
-  for (const auto& raw : json::Array(json::Get(base.snapshot, "sources", "[]")))
-    paths.insert(json::Text(json::Object(raw), "path"));
-  return paths;
-}
 auto TreePrefix(const std::string& prefix) -> bool {
   if (!prefix.ends_with('/') || !fs::valid_relative_path(prefix + "file"))
     return false;
@@ -566,7 +556,7 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
       prefix = path.substr(0, path.size() - 10);
     if (!prefix.empty()) trees.insert(prefix);
   }
-  auto paths = Paths(base);
+  auto paths = ProjectPaths(base);
   for (const auto& [path, ignored] : after) {
     (void)ignored;
     paths.insert(path);
@@ -696,10 +686,10 @@ auto PrepareProjectEdits(
   }
   if (edits.edits.empty())
     throw Failure("invalid_request", "project_edit requires at least one edit");
-  std::map<std::string, std::optional<std::string>> originals, files;
+  EditFiles originals, files;
   std::map<std::string, std::set<std::string>> mentioned_inputs;
   std::set<std::string> replaced_projects, removed_definitions;
-  const auto known = Paths(base);
+  const auto known = ProjectPaths(base);
   auto file = [&](const std::string& path) -> std::optional<std::string>& {
     if (authorize) authorize(path);
     if (!files.contains(path)) {
@@ -894,6 +884,23 @@ auto PrepareProjectEdits(
     root["canvas"] = json::Encode(canvas);
     project = PreserveProjectBytes(*project, json::Encode(root));
   }
+  return ProjectSaveChanges(base, originals, files, removed_definitions);
+}
+
+auto ProjectPaths(const SaveBase& base) -> std::set<std::string> {
+  std::set<std::string> paths;
+  for (const auto& [path, ignored] : base.files) {
+    (void)ignored;
+    paths.insert(path);
+  }
+  for (const auto& raw : json::Array(json::Get(base.snapshot, "sources", "[]")))
+    paths.insert(json::Text(json::Object(raw), "path"));
+  return paths;
+}
+auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
+                        const EditFiles& files,
+                        const std::set<std::string>& removed_definitions)
+    -> json::Members {
   std::vector<std::string> changes;
   json::Members definitions;
   for (const auto& [path, content] : files) {

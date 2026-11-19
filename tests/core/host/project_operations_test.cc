@@ -920,6 +920,16 @@ TEST(ProjectOperationCutover,
   project.ExpectConflict(body, "value_conflict");
   EXPECT_FALSE(project.files.contains(put.file_path));
 }
+TEST(ProjectOperationCutover, EmptyNestedSelectionLeavesBothProjectsIntact) {
+  TransformationProject project;
+  const auto before = project.files;
+  H::ProjectSelectionT body;
+  body.project_path = "externals/inner";
+  body.action = H::ProjectSelectionAction::Place;
+  const auto undo = project.Apply(body);
+  EXPECT_TRUE(undo.edits.empty());
+  EXPECT_EQ(project.files, before);
+}
 TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
   TransformationProject project;
   H::ProjectReplaceDocumentsT body;

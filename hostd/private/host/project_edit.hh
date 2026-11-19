@@ -1,7 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "host/save.hh"
@@ -23,6 +25,13 @@ using EditFileRead =
 auto ReverseProjectChanges(const ::tsugumi::json::Members& plan,
                            const SaveBase& base, const EditFileRead& read)
     -> Tsugumi::Host::ProjectEditsT;
+using EditFiles = std::map<std::string, std::optional<std::string>>;
+auto ProjectPaths(const SaveBase& base) -> std::set<std::string>;
+// Convert confirmed before and after bytes into the core's save changes.
+auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
+                        const EditFiles& files,
+                        const std::set<std::string>& removed_definitions)
+    -> ::tsugumi::json::Members;
 // Prepare one atomic concrete save against a revision-pinned confirmed state.
 auto PrepareProjectEdits(
     const Tsugumi::Host::ProjectEditsT& edits, const SaveBase& base,
